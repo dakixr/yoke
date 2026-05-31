@@ -90,7 +90,9 @@ def cli(
         str | None,
         typer.Option(
             "--session",
-            help=("Persist conversation under [bold].yoke/sessions/<name>.json[/bold]."),
+            help=(
+                "Persist conversation under [bold].yoke/sessions/<name>.json[/bold]."
+            ),
         ),
     ] = None,
     model: Annotated[

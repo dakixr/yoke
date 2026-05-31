@@ -133,7 +133,9 @@ def test_build_shell_command_uses_powershell_on_windows(monkeypatch) -> None:
     monkeypatch.setattr(shell.shutil, "which", lambda name: None)
     env = {"ComSpec": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"}
 
-    command = shell.build_shell_command('"C:\\Program Files\\Python\\python.exe" -V && echo ok', env)
+    command = shell.build_shell_command(
+        '"C:\\Program Files\\Python\\python.exe" -V && echo ok', env
+    )
 
     assert command[:5] == [
         env["ComSpec"],

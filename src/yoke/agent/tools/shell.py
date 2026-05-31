@@ -66,7 +66,7 @@ def build_powershell_command(
         "$OutputEncoding = [System.Text.Encoding]::UTF8; "
         f"{profile_loader}"
         "if ($env:YOKE_PYTHON_BIN_DIR) { "
-        "$env:Path = \"$env:YOKE_PYTHON_BIN_DIR;$env:Path\" }; "
+        '$env:Path = "$env:YOKE_PYTHON_BIN_DIR;$env:Path" }; '
         "Invoke-Expression $env:YOKE_COMMAND_TOOL_COMMAND"
     )
     return [

@@ -9,10 +9,12 @@ from .support import *  # noqa: F403, F405
 def test_default_builtin_policy_allows_all_builtin_tools(
     tmp_path: Path,
 ) -> None:
+    home = tmp_path / "home"
     resolved = resolve_agent_config(
         root=tmp_path,
         base_system_prompt=None,
         include_global_tools=False,
+        home=home,
     )
 
     active_names = {entry.tool.name for entry in resolved.tool_report.active_tools}
