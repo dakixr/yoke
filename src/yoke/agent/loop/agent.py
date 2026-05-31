@@ -1,0 +1,320 @@
+"""Agent orchestration loop implementation."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from copy import deepcopy
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from yoke.agent.context import ContextManager
+from yoke.agent.loop.iteration import RuntimeAgentIterationMixin
+from yoke.agent.loop.state import context_for_run
+from yoke.agent.loop.state import persist_run_context
+from yoke.agent.loop.tool_core import index_tools
+from yoke.agent.loop.types import AfterToolCallHook
+from yoke.agent.loop.types import AgentEventHandler
+from yoke.agent.loop.types import AgentResult
+from yoke.agent.loop.types import BeforeToolCallHook
+from yoke.agent.loop.types import MaxIterationsExceededError
+from yoke.agent.loop.types import StopRequested
+from yoke.agent.loop.types import ToolExecutionMode
+from yoke.agent.models import AgentContext
+from yoke.agent.models import ConversationEntry
+from yoke.agent.models import Message
+from yoke.agent.skills.models import ActiveSkill
+from yoke.agent.skills.models import SkillSpec
+from yoke.agent.skills.registry import SkillRegistry
+from yoke.agent.tools import LocalTool
+from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import ProviderError
+
+if TYPE_CHECKING:
+    from yoke.ai.sdk_types import AgentResult as SDKAgentResult
+    from yoke.ai.sdk_types import Image
+    from yoke.ai.sdk_types import RunConfig
+    from yoke.cli.bootstrap.types import ToolLoadReport
+
+
+class RuntimeAgent(RuntimeAgentIterationMixin):
+    """Orchestrates the LLM and tool-calling loop with compaction support."""
+
+    supports_message_history = False
+    supports_user_message = True
+
+    @classmethod
+    def from_run_config(
+        cls,
+        *,
+        provider: Provider,
+        config: RunConfig,
+    ) -> RuntimeAgent:
+        """Build a runtime agent from the public SDK run configuration."""
+        from yoke.ai.sdk_runtime import bind_agent_tools
+        from yoke.ai.sdk_runtime import build_system_messages
+
+        root = Path(config.root).resolve()
+        active_skills = [skill.to_active_skill() for skill in config.skills]
+        available_skills = [
+            skill.to_skill_spec()
+            for skill in config.skills
+            if skill.source_path != "<inline>"
+        ]
+        return RuntimeAgent(
+            provider=provider,
+            tools=bind_agent_tools(config.tools, root=root),
+            max_iterations=config.max_iterations,
+            context_manager=ContextManager(
+                instructions=build_system_messages(
+                    root=root,
+                    sys_prompt=config.sys_prompt,
+                    include_agents_file=config.include_agents_file,
+                ),
+                compaction_policy=config.compaction,
+            ),
+            tool_execution=config.tool_execution,
+            before_tool_call=config.before_tool_call,
+            after_tool_call=config.after_tool_call,
+            available_skills=available_skills,
+            active_skills=active_skills,
+            messages=config.messages,
+            conversation_entries=config.conversation_entries,
+        )
+
+    def __init__(
+        self,
+        provider: Provider,
+        tools: Sequence[LocalTool],
+        max_iterations: int = 30,
+        context_manager: ContextManager | None = None,
+        tool_execution: ToolExecutionMode = "parallel",
+        before_tool_call: BeforeToolCallHook | None = None,
+        after_tool_call: AfterToolCallHook | None = None,
+        skill_registry: SkillRegistry | None = None,
+        available_skills: Sequence[SkillSpec] = (),
+        active_skills: Sequence[ActiveSkill] = (),
+        messages: Sequence[Message] | None = None,
+        conversation_entries: Sequence[ConversationEntry] | None = None,
+    ) -> None:
+        if messages is not None and conversation_entries is not None:
+            raise ValueError(
+                "Provide either messages or conversation_entries, not both."
+            )
+        self.provider = provider
+        self.tools = index_tools(tools)
+        self.max_iterations = max_iterations
+        self.context_manager = context_manager or ContextManager()
+        self.tool_execution = tool_execution
+        self.before_tool_call = before_tool_call
+        self.after_tool_call = after_tool_call
+        self.skill_registry = skill_registry
+        self.available_skills = list(available_skills)
+        self.active_skills = list(active_skills)
+        self.tool_report: ToolLoadReport | None = None
+        self._context: AgentContext | None = None
+        if messages is not None or conversation_entries is not None:
+            self.load_conversation(
+                messages=messages,
+                conversation_entries=conversation_entries,
+            )
+
+    def fork(self) -> RuntimeAgent:
+        """Create an independent runtime copy of this agent."""
+        forked = RuntimeAgent(
+            provider=self.provider,
+            tools=[tool.model_copy(deep=True) for tool in self.tools.values()],
+            max_iterations=self.max_iterations,
+            context_manager=deepcopy(self.context_manager),
+            tool_execution=self.tool_execution,
+            before_tool_call=self.before_tool_call,
+            after_tool_call=self.after_tool_call,
+            skill_registry=deepcopy(self.skill_registry),
+            available_skills=deepcopy(self.available_skills),
+            active_skills=deepcopy(self.active_skills),
+        )
+        if self._context is not None:
+            forked._context = self._context.model_copy(deep=True)
+        return forked
+
+    @property
+    def has_state(self) -> bool:
+        """Return whether the agent currently owns conversation state."""
+        return self._context is not None
+
+    @property
+    def messages(self) -> list[Message]:
+        """Return the current transcript messages."""
+        if self._context is None:
+            return []
+        return self.context_manager.transcript_messages(self._context)
+
+    @property
+    def conversation_entries(self) -> list[ConversationEntry]:
+        """Return the current structured conversation log."""
+        if self._context is None:
+            return []
+        return [
+            entry.model_copy(deep=True)
+            for entry in self._context.conversation_log.entries
+        ]
+
+    def reset(self) -> None:
+        """Clear the owned conversation state and keep runtime config."""
+        self._context = None
+
+    def load_conversation(
+        self,
+        *,
+        messages: Sequence[Message] | None = None,
+        conversation_entries: Sequence[ConversationEntry] | None = None,
+        available_skills: Sequence[SkillSpec] | None = None,
+        active_skills: Sequence[ActiveSkill] | None = None,
+    ) -> None:
+        """Replace the owned conversation state from persisted history."""
+        if messages is not None and conversation_entries is not None:
+            raise ValueError(
+                "Provide either messages or conversation_entries, not both."
+            )
+        self._context = self.context_manager.initialize(
+            "",
+            list(messages) if messages is not None else None,
+            append_prompt=False,
+            conversation_entries=conversation_entries,
+            available_skills=list(
+                available_skills
+                if available_skills is not None
+                else self.available_skills
+            ),
+            active_skills=list(
+                active_skills if active_skills is not None else self.active_skills
+            ),
+        )
+        self.active_skills = [
+            skill.model_copy(deep=True) for skill in self._context.active_skills
+        ]
+
+    def run(
+        self,
+        prompt: str,
+        *,
+        user_message: Message | None = None,
+        on_event: AgentEventHandler | None = None,
+        stop_requested: StopRequested | None = None,
+        before_tool_call: BeforeToolCallHook | None = None,
+        after_tool_call: AfterToolCallHook | None = None,
+        available_skills: Sequence[SkillSpec] | None = None,
+        active_skills: Sequence[ActiveSkill] | None = None,
+    ) -> AgentResult:
+        """Run the agent loop for the given prompt and return the result."""
+        context = context_for_run(
+            self,
+            prompt,
+            user_message=user_message,
+            available_skills=available_skills,
+            active_skills=active_skills,
+        )
+        try:
+            active_before_hook = before_tool_call or self.before_tool_call
+            active_after_hook = after_tool_call or self.after_tool_call
+            if self._is_stopped(stop_requested):
+                stopped = self._stopped_result(context, iterations=0)
+                persist_run_context(self, context)
+                return stopped
+            for iteration in range(1, self.max_iterations + 1):
+                iteration_result = self._run_iteration(
+                    context,
+                    iteration=iteration,
+                    on_event=on_event,
+                    stop_requested=stop_requested,
+                    before_tool_call=active_before_hook,
+                    after_tool_call=active_after_hook,
+                )
+                if iteration_result is not None:
+                    persist_run_context(self, context)
+                    return iteration_result
+            error = MaxIterationsExceededError(
+                f"Agent exceeded max_iterations={self.max_iterations}"
+            )
+            error.partial_messages = context.messages
+            error.partial_conversation_entries = [
+                entry.model_copy(deep=True)
+                for entry in context.conversation_log.entries
+            ]
+            persist_run_context(self, context)
+            raise error
+        except ProviderError as exc:
+            exc.partial_messages = context.messages
+            exc.partial_conversation_entries = [
+                entry.model_copy(deep=True)
+                for entry in context.conversation_log.entries
+            ]
+            persist_run_context(self, context)
+            raise
+        except Exception:
+            persist_run_context(self, context)
+            raise
+
+    def prompt[StructuredT](
+        self,
+        prompt: str,
+        *,
+        images: Sequence[Image | str | Path] = (),
+        image_urls: Sequence[str] = (),
+        output_type: type[StructuredT] | None = None,
+        on_event: AgentEventHandler | None = None,
+        stop_requested: StopRequested | None = None,
+        before_tool_call: BeforeToolCallHook | None = None,
+        after_tool_call: AfterToolCallHook | None = None,
+    ) -> SDKAgentResult[StructuredT]:
+        """Run the SDK-style agent prompt flow and return the public result."""
+        from yoke.ai.sdk_types import AgentResult as SDKAgentResult
+        from yoke.ai.sdk_types import (
+            append_structured_output_instructions,
+        )
+        from yoke.ai.sdk_types import build_user_message_from_images
+        from yoke.ai.sdk_types import normalize_image_inputs
+        from yoke.ai.sdk_types import parse_structured_output
+
+        user_message = None
+        normalized_images, normalized_urls = normalize_image_inputs(
+            images=images,
+            image_urls=image_urls,
+        )
+        if normalized_images or normalized_urls:
+            user_message = build_user_message_from_images(
+                prompt,
+                images=normalized_images,
+                image_urls=normalized_urls,
+            )
+        if output_type is not None:
+            base_message = user_message or Message.user(prompt)
+            user_message = append_structured_output_instructions(
+                base_message,
+                output_type=output_type,
+            )
+        runtime_result = self.run(
+            prompt,
+            user_message=user_message,
+            on_event=on_event,
+            stop_requested=stop_requested,
+            before_tool_call=before_tool_call,
+            after_tool_call=after_tool_call,
+        )
+        structured = parse_structured_output(
+            runtime_result.output,
+            output_type=output_type,
+        )
+        message = (
+            runtime_result.messages[-1]
+            if runtime_result.messages
+            else Message.assistant(runtime_result.output)
+        )
+        return SDKAgentResult(
+            message=message,
+            output=runtime_result.output,
+            messages=runtime_result.messages,
+            iterations=runtime_result.iterations,
+            status=runtime_result.status,
+            conversation_entries=runtime_result.conversation_entries,
+            structured=structured,
+        )

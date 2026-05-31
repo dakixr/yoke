@@ -1,0 +1,122 @@
+# ruff: noqa: D100, D103, S101
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, cast
+
+from yoke.agent.tools import ApplyPatchTool
+from yoke.cli.bootstrap.tools import create_builtin_tools
+
+
+def as_dict(value: object) -> dict[str, Any]:
+    return cast(dict[str, Any], value)
+
+
+def test_apply_patch_can_add_move_update_and_delete_files(
+    tmp_path: Path,
+) -> None:
+    tool = ApplyPatchTool.bind(root=tmp_path)
+    (tmp_path / "notes.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+    (tmp_path / "delete.txt").write_text("remove me\n", encoding="utf-8")
+    patch = """*** Begin Patch
+*** Add File: added.txt
++first
++second
+*** Update File: notes.txt
+*** Move to: renamed.txt
+@@
+-alpha
+-beta
++alpha
++gamma
+*** Delete File: delete.txt
+*** End Patch
+"""
+
+    result = as_dict(tool.parse_arguments({"input": patch}).execute())
+
+    assert result["ok"] is True
+    assert result["changes_applied"] == 3
+    assert cast(str, result["stdout"]).startswith(
+        "Success. Updated the following files:"
+    )
+    assert (tmp_path / "added.txt").read_text(encoding="utf-8") == "first\nsecond\n"
+    assert not (tmp_path / "notes.txt").exists()
+    assert (tmp_path / "renamed.txt").read_text(encoding="utf-8") == "alpha\ngamma\n"
+    assert not (tmp_path / "delete.txt").exists()
+
+
+def test_builtin_tools_include_apply_patch(tmp_path: Path) -> None:
+    names = [tool.name for tool in create_builtin_tools(tmp_path)]
+
+    assert "apply_patch" in names
+
+
+def test_apply_patch_verifies_all_changes_before_mutating_workspace(
+    tmp_path: Path,
+) -> None:
+    tool = ApplyPatchTool.bind(root=tmp_path)
+    original = "alpha\nbeta\n"
+    (tmp_path / "notes.txt").write_text(original, encoding="utf-8")
+    patch = """*** Begin Patch
+*** Add File: added.txt
++hello
+*** Update File: notes.txt
+@@
+-missing
++gamma
+*** End Patch
+"""
+
+    result = as_dict(tool.parse_arguments({"input": patch}).execute())
+
+    assert result["ok"] is False
+    assert "Failed to find expected lines" in cast(str, result["error"])
+    assert not (tmp_path / "added.txt").exists()
+    assert (tmp_path / "notes.txt").read_text(encoding="utf-8") == original
+
+
+def test_apply_patch_accepts_absolute_paths_inside_workspace(
+    tmp_path: Path,
+) -> None:
+    tool = ApplyPatchTool.bind(root=tmp_path)
+    notes_path = tmp_path / "notes.txt"
+    delete_path = tmp_path / "delete.txt"
+    added_path = tmp_path / "added.txt"
+    notes_path.write_text("alpha\nbeta\n", encoding="utf-8")
+    delete_path.write_text("remove me\n", encoding="utf-8")
+    patch = f"""*** Begin Patch
+*** Add File: {added_path}
++first
+*** Update File: {notes_path}
+@@
+-beta
++gamma
+*** Delete File: {delete_path}
+*** End Patch
+"""
+
+    result = as_dict(tool.parse_arguments({"input": patch}).execute())
+
+    assert result["ok"] is True
+    assert added_path.read_text(encoding="utf-8") == "first\n"
+    assert notes_path.read_text(encoding="utf-8") == "alpha\ngamma\n"
+    assert not delete_path.exists()
+
+
+def test_apply_patch_accepts_absolute_paths_outside_workspace(
+    tmp_path: Path,
+) -> None:
+    outside_path = tmp_path.parent / "outside.txt"
+    outside_path.write_text("outside\n", encoding="utf-8")
+    tool = ApplyPatchTool.bind(root=tmp_path)
+    patch = f"""*** Begin Patch
+*** Delete File: {outside_path}
+*** End Patch
+"""
+
+    result = as_dict(tool.parse_arguments({"input": patch}).execute())
+
+    assert result["ok"] is True
+    assert not outside_path.exists()

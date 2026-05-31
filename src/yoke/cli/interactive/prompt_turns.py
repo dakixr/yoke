@@ -1,0 +1,178 @@
+"""Prompt-toolkit turn execution helpers."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from threading import Event
+from threading import Lock
+from threading import Thread
+
+from yoke.agent.loop import AgentStoppedError
+from yoke.agent.models import Message
+from yoke.agent.state import active_branch_entries
+from yoke.cli.config import RUN_ERRORS
+from yoke.cli.interactive.common import PendingPrompt
+from yoke.cli.interactive.common import PromptCliState
+from yoke.cli.interactive.common import (
+    TurnFailure,
+    TurnStopped,
+    TurnSuccess,
+)
+from yoke.cli.interactive.common import (
+    partial_conversation_entries_from_error,
+)
+from yoke.cli.interactive.common import partial_messages_from_error
+from yoke.cli.interactive.common import prompt_turn_tracking
+from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
+from yoke.cli.render import print_scrollback_notice
+from yoke.cli.runtime import ActiveSession, AgentRunner, EventRenderer
+from yoke.cli.runtime import ensure_session_title, execute_turn
+from yoke.cli.runtime import persist_session_state
+
+
+def run_prompt_turn(
+    *,
+    turn_id: int,
+    prompt: str,
+    state: PromptCliState,
+    agent: AgentRunner,
+    active_session: ActiveSession,
+    stop_event: Event,
+    user_message: Message | None,
+    callbacks: dict[str, Callable[..., object]],
+    turn_renderer_factory: Callable[[int], EventRenderer],
+) -> None:
+    """Execute one prompt-toolkit turn in a worker thread."""
+    try:
+        ensure_session_title(active_session, agent, prompt)
+        result = execute_turn(
+            agent,
+            prompt,
+            list(state.messages),
+            indicator=turn_renderer_factory(turn_id),
+            stop_requested=stop_event.is_set,
+            user_message=user_message,
+            conversation_entries=active_branch_entries(
+                active_session.record.conversation_entries,
+                leaf_id=active_session.record.leaf_id,
+            ),
+        )
+        if result.status == "stopped":
+            callbacks["handle_outcome"](turn_id, TurnStopped(result=result))
+            return
+    except AgentStoppedError:
+        callbacks["handle_outcome"](turn_id, TurnStopped())
+        return
+    except RUN_ERRORS as exc:
+        callbacks["handle_outcome"](
+            turn_id,
+            TurnFailure(
+                error=exc,
+                messages=partial_messages_from_error(exc),
+                conversation_entries=partial_conversation_entries_from_error(exc),
+            ),
+        )
+        return
+    callbacks["handle_outcome"](turn_id, TurnSuccess(result=result))
+
+
+def handle_prompt_turn_outcome(
+    *,
+    turn_id: int,
+    outcome: TurnSuccess | TurnFailure | TurnStopped,
+    state: PromptCliState,
+    state_lock: Lock,
+    agent: AgentRunner,
+    active_session: ActiveSession,
+    renderer: PromptToolkitLiveRenderer,
+    scrollback_console,
+    run_in_scrollback: Callable[[Callable[[], None]], None],
+) -> bool | None:
+    """Apply a completed turn outcome to prompt-toolkit session state."""
+    with state_lock:
+        abandoned_turn_ids, steered_turn_ids = prompt_turn_tracking(state)
+        if turn_id in abandoned_turn_ids:
+            abandoned_turn_ids.discard(turn_id)
+            return None
+        was_steered = turn_id in steered_turn_ids
+        steered_turn_ids.discard(turn_id)
+    if isinstance(outcome, TurnFailure):
+        if outcome.messages is not None:
+            with state_lock:
+                state.messages = outcome.messages
+            persist_session_state(
+                active_session,
+                agent,
+                outcome.messages,
+                conversation_entries=outcome.conversation_entries,
+            )
+        renderer.print_error(str(outcome.error))
+        return was_steered
+    if isinstance(outcome, TurnStopped):
+        if outcome.result is not None:
+            with state_lock:
+                state.messages = outcome.result.messages
+            persist_session_state(
+                active_session,
+                agent,
+                outcome.result.messages,
+                conversation_entries=outcome.result.conversation_entries,
+            )
+        run_in_scrollback(
+            lambda: print_scrollback_notice(
+                scrollback_console,
+                "Model steered."
+                if was_steered
+                else ("Stopped current turn. Send a correction to continue from here."),
+            )
+        )
+        return was_steered
+    with state_lock:
+        state.messages = outcome.result.messages
+    persist_session_state(
+        active_session,
+        agent,
+        outcome.result.messages,
+        conversation_entries=outcome.result.conversation_entries,
+    )
+    renderer.print_agent_output(outcome.result.output)
+    print("\a", end="", flush=True)
+    return was_steered
+
+
+def finish_prompt_turn(
+    *,
+    state: PromptCliState,
+    state_lock: Lock,
+    estimate_toolbar_context_usage: Callable[[str], str | None],
+) -> tuple[str | None, Message | None, bool]:
+    """Clear active turn state and return next prompt/shutdown flags."""
+    next_prompt: PendingPrompt | None = None
+    should_finish = False
+    with state_lock:
+        state.worker = None
+        state.active_stop_request = None
+        state.active_user_message = None
+        if state.pending_prompts:
+            next_prompt = state.pending_prompts.pop(0)
+        else:
+            should_finish = state.shutdown_requested
+    state.context_usage_text = estimate_toolbar_context_usage("")
+    if next_prompt is None:
+        return None, None, should_finish
+    return next_prompt.prompt, next_prompt.user_message, should_finish
+
+
+def get_active_turn_state(
+    *,
+    state: PromptCliState,
+    state_lock: Lock,
+) -> tuple[Event | None, Thread | None, int, Message | None]:
+    """Return stop event, worker, and active turn id."""
+    with state_lock:
+        return (
+            state.active_stop_request,
+            state.worker,
+            state.active_turn_id,
+            state.active_user_message,
+        )
