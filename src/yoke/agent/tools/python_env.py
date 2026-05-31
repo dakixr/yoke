@@ -36,6 +36,9 @@ def prepare_python_env(env: dict[str, str]) -> dict[str, str]:
 def ensure_python_alias_bin(python_executable: str | None = None) -> Path:
     """Create a temp bin dir with `python`/`python3` shims to yoke's Python."""
     executable = python_executable or current_python_executable()
+    if os.name == "nt":
+        return ensure_windows_python_alias_bin(executable)
+
     bin_dir = Path(tempfile.gettempdir()) / f"yoke-python-bin-{os.getuid()}"
     bin_dir.mkdir(mode=0o700, exist_ok=True)
     for name in ("python", "python3"):
@@ -47,8 +50,24 @@ def ensure_python_alias_bin(python_executable: str | None = None) -> Path:
     return bin_dir
 
 
+def ensure_windows_python_alias_bin(python_executable: str) -> Path:
+    """Create a temp bin dir with Windows command shims to yoke's Python."""
+    bin_dir = Path(tempfile.gettempdir()) / "yoke-python-bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in ("python", "python3"):
+        shim = bin_dir / f"{name}.cmd"
+        desired = _python_cmd_shim(python_executable)
+        if not _same_file_content(shim, desired):
+            shim.write_text(desired, encoding="utf-8")
+    return bin_dir
+
+
 def _python_shim(executable: str) -> str:
     return f'#!/bin/sh\nexec {shlex.quote(executable)} "$@"\n'
+
+
+def _python_cmd_shim(executable: str) -> str:
+    return f'@echo off\r\n"{executable}" %*\r\nexit /b %ERRORLEVEL%\r\n'
 
 
 def _same_file_content(path: Path, content: str) -> bool:

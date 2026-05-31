@@ -113,6 +113,51 @@ def test_command_tool_is_named_bash_and_runs_zsh() -> None:
     assert command[1:3] == ["-l", "-c"]
 
 
+def test_command_tool_uses_powershell_name_on_windows(monkeypatch) -> None:
+    import importlib
+    import yoke.agent.tools.shell as shell
+
+    real_os_name = shell.os.name
+    monkeypatch.setattr(shell.os, "name", "nt")
+    try:
+        assert importlib.reload(shell).COMMAND_TOOL_NAME == "powershell"
+    finally:
+        monkeypatch.setattr(shell.os, "name", real_os_name)
+        importlib.reload(shell)
+
+
+def test_build_shell_command_uses_powershell_on_windows(monkeypatch) -> None:
+    import yoke.agent.tools.shell as shell
+
+    monkeypatch.setattr(shell.os, "name", "nt")
+    monkeypatch.setattr(shell.shutil, "which", lambda name: None)
+    env = {"ComSpec": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"}
+
+    command = shell.build_shell_command('"C:\\Program Files\\Python\\python.exe" -V && echo ok', env)
+
+    assert command[:5] == [
+        env["ComSpec"],
+        "-NoLogo",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+    ]
+    assert env["YOKE_COMMAND_TOOL_COMMAND"] == (
+        '& "C:\\Program Files\\Python\\python.exe" -V ; echo ok'
+    )
+
+
+def test_build_shell_command_uses_cmd_fallback_on_windows(monkeypatch) -> None:
+    import yoke.agent.tools.shell as shell
+
+    monkeypatch.setattr(shell.os, "name", "nt")
+    monkeypatch.setattr(shell.shutil, "which", lambda name: None)
+
+    command = shell.build_shell_command("echo ok", {"ComSpec": "cmd.exe"})
+
+    assert command == ["cmd.exe", "/d", "/s", "/c", "echo ok"]
+
+
 def test_command_tool_exposes_current_python_as_python_commands(tmp_path: Path) -> None:
     tools = tool_set(tmp_path)
     result = as_dict(

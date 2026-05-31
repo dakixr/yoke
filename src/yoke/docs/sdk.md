@@ -75,7 +75,7 @@ from yoke.agent.tools import ReadTool, EditTool, GrepTool
 | `ReadTool` | `read` | Read text files from the workspace, with pagination for large files. |
 | `EditTool` | `edit` | Replace exact text in files, including targeted occurrences or replace-all edits. |
 | `ApplyPatchTool` | `apply_patch` | Apply codex-style multi-file patches inside the workspace. |
-| `CommandTool` | `bash` | Run shell commands through zsh from the workspace root. |
+| `CommandTool` | `bash` on macOS/Linux, `powershell` on Windows | Run shell commands from the workspace root. |
 | `LsTool` | `ls` | List files and directories under a workspace path. |
 | `FindTool` | `find` | Find files or directories by glob pattern. |
 | `GrepTool` | `grep` | Search text files with a regular expression. |

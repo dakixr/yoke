@@ -60,11 +60,11 @@ class CommandTool(WorkspaceTool):
                 cwd=self.root,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE,
+                stdin=subprocess.PIPE if os.name != "nt" else None,
                 env=env,
                 start_new_session=os.name != "nt",
             )
-            if process.stdin is not None:
+            if os.name != "nt" and process.stdin is not None:
                 process.stdin.write(self.command.encode("utf-8"))
                 process.stdin.close()
                 process.stdin = None
