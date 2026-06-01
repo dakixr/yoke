@@ -30,6 +30,7 @@ yoke --headless --image chart.png --image legend.png "summarize these charts"
 ```bash
 yoke --model codex:gpt-5.4-mini "..."
 yoke --model opencode-go:kimi-k2.6 "..."
+yoke --model opencode-go:minimax-m3 "Review this repository and suggest refactors"
 ```
 
 **Built-in providers**
@@ -37,6 +38,7 @@ yoke --model opencode-go:kimi-k2.6 "..."
 | Provider | Auth |
 |----------|------|
 | `codex` | `~/.codex/auth.json` with account-vault selection from `~/.codex-auth/accounts` |
+| `codex-websockets` | Same Codex auth as `codex`, using the Responses WebSocket transport |
 | `copilot` | `~/.yoke/auth.json` or `YOKE_COPILOT_AUTH_PATH` |
 | `opencode-go` | `OPENCODE_API_KEY` env var |
 | `zai` | `ZAI_API_KEY` env var |
@@ -48,6 +50,11 @@ Codex first tries the best usable account under `~/.codex-auth/accounts`. If no
 account there works, it falls back to `~/.codex/auth.json`. If that token is
 missing, expired, or later rejected by the API, yoke refreshes or re-prompts
 login against `~/.codex/auth.json`.
+
+Use `--model codex-websockets:gpt-5.4` to opt into Codex's persistent Responses
+WebSocket transport. It uses the same auth and account selection as `codex` and
+accepts `YOKE_CODEX_WEBSOCKETS_*` overrides for model, base URL, timeout,
+retries, reasoning effort, text verbosity, and logs.
 
 Outside a session you can inspect and configure models directly:
 

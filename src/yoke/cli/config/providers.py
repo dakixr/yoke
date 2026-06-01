@@ -14,6 +14,12 @@ from yoke.ai.providers.codex_subscription import (
 from yoke.ai.providers.codex_subscription import (
     register_provider as register_codex_provider,
 )
+from yoke.ai.providers.codex_websockets import (
+    list_provider_models as list_codex_websockets_models,
+)
+from yoke.ai.providers.codex_websockets import (
+    register_provider as register_codex_websockets_provider,
+)
 from yoke.ai.providers.github_copilot_subscription import (
     list_provider_models as list_copilot_models,
 )
@@ -42,15 +48,23 @@ if TYPE_CHECKING:
     BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
     BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
 
-BUILTIN_PROVIDER_NAMES = ("codex", "copilot", "opencode-go", "zai")
+BUILTIN_PROVIDER_NAMES = (
+    "codex",
+    "codex-websockets",
+    "copilot",
+    "opencode-go",
+    "zai",
+)
 _BUILTIN_PROVIDER_FACTORIES: dict[str, BuiltinProviderFactory] = {
     "codex": register_codex_provider,
+    "codex-websockets": register_codex_websockets_provider,
     "copilot": register_copilot_provider,
     "opencode-go": register_opencode_go_provider,
     "zai": register_zai_provider,
 }
 _BUILTIN_MODEL_LISTERS: dict[str, BuiltinModelLister] = {
     "codex": list_codex_models,
+    "codex-websockets": list_codex_websockets_models,
     "copilot": list_copilot_models,
     "opencode-go": list_opencode_go_models,
     "zai": list_zai_models,

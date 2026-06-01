@@ -23,7 +23,7 @@ Skills are reusable instruction sets — Markdown files that tell the agent *how
 The CLI persists conversation history so you can resume where you left off. Each session is stored under `~/.yoke/sessions/` as a `.jsonl` file.
 
 ### Providers
-yoke connects to an LLM provider (Codex, GitHub Copilot, OpenCode Go, Z.ai, or any OpenAI-compatible endpoint) to power the agent.
+yoke connects to an LLM provider (Codex, Codex WebSockets, GitHub Copilot, OpenCode Go, Z.ai, or any OpenAI-compatible endpoint) to power the agent.
 
 ## Quick start
 

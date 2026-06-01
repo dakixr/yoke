@@ -37,9 +37,9 @@ print(result.output)
 ```
 
 Built-in provider classes include `CodexSubscriptionProvider`,
-`GitHubCopilotProvider`, `OpenCodeGoProvider`, and `ZAIProvider`. For standard
-OpenAI-compatible endpoints, use `OpenAICompatibleProvider` with
-`OpenAICompatibleConfig.from_env()`.
+`CodexWebSockets`, `GitHubCopilotProvider`, `OpenCodeGoProvider`, and
+`ZAIProvider`. For standard OpenAI-compatible endpoints, use
+`OpenAICompatibleProvider` with `OpenAICompatibleConfig.from_env()`.
 
 `Agent` is stateful. Reuse the same object to keep conversation context across
 prompts.

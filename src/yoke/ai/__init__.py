@@ -8,6 +8,8 @@ from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import MessageTextContentPart
 from yoke.ai.providers.codex_subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
+from yoke.ai.providers.codex_websockets import CodexWebSockets
+from yoke.ai.providers.codex_websockets import CodexWebSocketsConfig
 from yoke.ai.providers.github_copilot_subscription import GitHubCopilotConfig
 from yoke.ai.providers.github_copilot_subscription import GitHubCopilotProvider
 from yoke.ai.providers.opencode_go import OpenCodeGoConfig
@@ -35,6 +37,8 @@ __all__ = [
     "AgentResult",
     "CodexSubscriptionConfig",
     "CodexSubscriptionProvider",
+    "CodexWebSockets",
+    "CodexWebSocketsConfig",
     "CompletionResult",
     "CompactionPolicy",
     "Context",
