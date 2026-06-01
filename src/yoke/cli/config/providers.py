@@ -211,8 +211,6 @@ def _resolve_provider_name(args: CLIArgs) -> str:
 
 
 def _has_codex_auth() -> bool:
-    if os.getenv("YOKE_CODEX_AUTH_PATH") or os.getenv("CXAUTH_CODEX_HOME"):
-        return True
     return (Path.home() / ".codex" / "auth.json").is_file()
 
 

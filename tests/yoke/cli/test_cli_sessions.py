@@ -4,7 +4,7 @@ from __future__ import annotations
 from .support import *  # noqa: F403, F405
 
 
-def test_cli_session_json_keeps_transcript_after_compaction(
+def test_cli_session_jsonl_keeps_transcript_after_compaction(
     tmp_path: Path, monkeypatch
 ) -> None:
     class CompactingProvider(Provider):
@@ -59,7 +59,7 @@ def test_cli_session_json_keeps_transcript_after_compaction(
     )
     assert any(entry.kind == "memory_snapshot" for entry in record.conversation_entries)
     payload = json.loads(
-        (session_dir / "compact-demo.json").read_text(encoding="utf-8")
+        (session_dir / "compact-demo.jsonl").read_text(encoding="utf-8").splitlines()[-1]
     )
     assert "messages" not in payload
     assert any(
@@ -120,7 +120,7 @@ def test_cli_persists_compaction_handoff_after_provider_error(
 
     assert exit_code == 1
     payload = json.loads(
-        (session_dir / "failed-compact.json").read_text(encoding="utf-8")
+        (session_dir / "failed-compact.jsonl").read_text(encoding="utf-8").splitlines()[-1]
     )
     memory_entries = [
         entry
@@ -196,6 +196,8 @@ def test_session_store_list_prunes_expired_sessions(tmp_path: Path) -> None:
 
     assert [record.id for record in records] == ["fresh-session"]
     assert not (tmp_path / "old-session.json").exists()
+    assert (tmp_path / "fresh-session.jsonl").exists()
+    assert not (tmp_path / "fresh-session.json").exists()
     index_payload = json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))
     assert sorted(index_payload["sessions"]) == ["fresh-session"]
 

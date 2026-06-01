@@ -36,13 +36,18 @@ yoke --model opencode-go:kimi-k2.6 "..."
 
 | Provider | Auth |
 |----------|------|
-| `codex` | `~/.codex/auth.json`, `YOKE_CODEX_AUTH_PATH`, or `CXAUTH_CODEX_HOME` |
+| `codex` | `~/.codex/auth.json` with account-vault selection from `~/.codex-auth/accounts` |
 | `copilot` | `~/.yoke/auth.json` or `YOKE_COPILOT_AUTH_PATH` |
 | `opencode-go` | `OPENCODE_API_KEY` env var |
 | `zai` | `ZAI_API_KEY` env var |
 
 If you omit the provider prefix and pass only `--model model-name`, yoke detects
 the provider from available credentials.
+
+Codex first tries the best usable account under `~/.codex-auth/accounts`. If no
+account there works, it falls back to `~/.codex/auth.json`. If that token is
+missing, expired, or later rejected by the API, yoke refreshes or re-prompts
+login against `~/.codex/auth.json`.
 
 Outside a session you can inspect and configure models directly:
 
@@ -151,12 +156,13 @@ yoke resume --all
 yoke resume 20240421-143022-abc1
 ```
 
-Sessions are stored under `~/.yoke/sessions/` and auto-expire after 30 days. The
-CLI owns session files, indexes, ids, and resume selection; the stored agent
-state uses structured conversation entries so memory snapshots, typed
-compaction handoffs, and branched session trees can be restored without
-flattening to transcript text. Older linear sessions are migrated on load by
-assigning entry ids, parent links, timestamps, and an active leaf.
+Sessions are stored under `~/.yoke/sessions/` as `.jsonl` files and auto-expire
+after 30 days. The CLI owns session files, indexes, ids, and resume selection;
+the stored agent state uses structured conversation entries so memory
+snapshots, typed compaction handoffs, and branched session trees can be
+restored without flattening to transcript text. Older `.json` sessions are
+migrated automatically at startup, and older linear sessions are migrated on
+load by assigning entry ids, parent links, timestamps, and an active leaf.
 
 `/tree` is available in the prompt-toolkit TUI. It opens a fullscreen navigator
 over the session entries. Selecting a user entry rewinds to that entry's parent
@@ -418,7 +424,6 @@ yoke --root /path/to/project "..."
 
 | Variable | Description |
 |----------|-------------|
-| `YOKE_CODEX_AUTH_PATH` | Override Codex auth JSON path |
 | `YOKE_COPILOT_AUTH_PATH` | Override GitHub Copilot auth JSON path |
 | `OPENCODE_API_KEY` | OpenCode Go API key |
 | `ZAI_API_KEY` | Z.ai API key |

@@ -98,24 +98,11 @@ def default_reasoning_effort_for_model_id(model_id: str) -> str:
 
 def register_provider(context: Any) -> CodexSubscriptionProvider:
     env = context.env or os.environ
-    cxauth_vault = Path(
-        env.get("YOKE_CODEX_CXAUTH_VAULT")
-        or env.get("CXAUTH_VAULT")
-        or str(context.home / DEFAULT_CXAUTH_VAULT_NAME)
-    )
+    cxauth_vault = context.home / DEFAULT_CXAUTH_VAULT_NAME
     return CodexSubscriptionProvider(
         CodexSubscriptionConfig(
-            auth_path=(
-                Path(env.get("YOKE_CODEX_AUTH_PATH", ""))
-                if env.get("YOKE_CODEX_AUTH_PATH")
-                else Path(env.get("CXAUTH_CODEX_HOME") or str(context.home / ".codex"))
-                / "auth.json"
-            ),
-            accounts_dir=(
-                Path(env.get("YOKE_CODEX_ACCOUNTS_DIR", ""))
-                if env.get("YOKE_CODEX_ACCOUNTS_DIR")
-                else cxauth_vault / "accounts"
-            ),
+            auth_path=context.home / ".codex" / "auth.json",
+            accounts_dir=cxauth_vault / "accounts",
             auths_path=(
                 Path(env.get("YOKE_CODEX_AUTHS_PATH", ""))
                 if env.get("YOKE_CODEX_AUTHS_PATH")
@@ -343,8 +330,33 @@ class CodexSubscriptionProvider(Provider):
                             continue
                         raise last_error
                     if response.is_error:
+                        detail = error_detail(response)
+                        if is_invalid_oauth_token_error(detail):
+                            recovered = self._recover_invalid_oauth_credentials(
+                                auth_profile=auth_profile,
+                                request_id=request_log_id,
+                                attempt=attempt,
+                                detail=detail,
+                                request_metrics=request_metrics,
+                            )
+                            if recovered is not None and attempt < self.config.max_retries:
+                                credentials = recovered
+                                auth_profile = self._active_auth_profile
+                                headers = self._request_headers(credentials)
+                                self._log_event(
+                                    "request_retry",
+                                    request_id=request_log_id,
+                                    attempt=attempt,
+                                    status_code=response.status_code,
+                                    wait_seconds=0.0,
+                                    retry_after_used=False,
+                                    reason="invalid_oauth_token",
+                                    auth_profile=auth_profile,
+                                    **request_metrics,
+                                )
+                                continue
                         raise ProviderError(
-                            f"Codex request failed: {error_detail(response)}",
+                            f"Codex request failed: {detail}",
                             status_code=response.status_code,
                         )
                     message = consume_sse_response(
@@ -513,6 +525,47 @@ class CodexSubscriptionProvider(Provider):
             lambda current: refresh_openai_codex_token(current),
         )
 
+    def _recover_invalid_oauth_credentials(
+        self,
+        *,
+        auth_profile: str | None,
+        request_id: str,
+        attempt: int,
+        detail: str,
+        request_metrics: dict[str, object],
+    ) -> OAuthCredentials | None:
+        self._log_event(
+            "auth_invalidated",
+            request_id=request_id,
+            attempt=attempt,
+            auth_profile=auth_profile,
+            detail=detail,
+            **request_metrics,
+        )
+        self._clear_selection_cache(reason="invalid_oauth_token")
+
+        if auth_profile not in {None, "auth_path"}:
+            self._delete_account_profile(auth_profile)
+            try:
+                credentials = self._fresh_credentials()
+            except Exception as exc:
+                self._log_event(
+                    "auth_fallback",
+                    from_source="accounts_dir",
+                    to_source="auth_path",
+                    reason=exception_summary(exc),
+                )
+            else:
+                return credentials
+
+        self._delete_fallback_auth()
+        storage = AuthStorage(self.config.auth_path)
+        credentials = login_openai_codex(self.config.originator)
+        storage.set_oauth(OAUTH_PROVIDER_ID, credentials)
+        self._active_auth_profile = "auth_path"
+        self._log_auth_profile_change("auth_path", "auth_path")
+        return credentials
+
     def _request_payload(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> dict[str, object]:
@@ -570,12 +623,21 @@ class CodexSubscriptionProvider(Provider):
             self.config.max_retry_backoff_seconds,
         )
 
-    def _clear_selection_cache(self) -> None:
+    def _clear_selection_cache(self, *, reason: str = "rate_limit") -> None:
         """Clear the cached profile selection to force account rotation on the next credential fetch."""
         selection_path = self.config.selection_path.expanduser()
         with contextlib.suppress(FileNotFoundError):
             selection_path.unlink()
-        self._log_event("account_rotation", reason="rate_limit")
+        self._log_event("account_rotation", reason=reason)
+
+    def _delete_account_profile(self, profile_name: str) -> None:
+        path = self.config.accounts_dir.expanduser() / profile_name / "auth.json"
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+
+    def _delete_fallback_auth(self) -> None:
+        with contextlib.suppress(FileNotFoundError):
+            self.config.auth_path.expanduser().unlink()
 
     def _request_log_metrics(
         self, messages: list[Message], tools: list[dict[str, object]]
@@ -1795,6 +1857,16 @@ def error_detail(response: httpx.Response) -> str:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return response.text.strip() or f"HTTP {response.status_code}"
+
+
+def is_invalid_oauth_token_error(detail: str) -> bool:
+    normalized = detail.strip().lower()
+    return (
+        "invalidated oauth token" in normalized
+        or "invalid oauth token" in normalized
+        or ("oauth token" in normalized and "invalid" in normalized)
+        or ("oauth token" in normalized and "revoked" in normalized)
+    )
 
 
 def retry_after_seconds(response: httpx.Response) -> float | None:

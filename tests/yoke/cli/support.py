@@ -313,7 +313,6 @@ def install_builtin_provider(
             )
         )
 
-    monkeypatch.setenv("YOKE_CODEX_AUTH_PATH", "/tmp/yoke-test-codex-auth.json")
     monkeypatch.setitem(
         providers._BUILTIN_PROVIDER_FACTORIES,
         provider_name,

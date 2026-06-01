@@ -27,7 +27,9 @@ def test_build_agent_reports_human_readable_skill_error(
         "# missing frontmatter\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("YOKE_CODEX_AUTH_PATH", str(home / ".codex" / "auth.json"))
+    codex_dir = home / ".codex"
+    codex_dir.mkdir(parents=True)
+    (codex_dir / "auth.json").write_text("{}\n", encoding="utf-8")
 
     with pytest.raises(ValueError) as exc_info:
         build_agent_from_args(CLIArgs(root=str(tmp_path)))

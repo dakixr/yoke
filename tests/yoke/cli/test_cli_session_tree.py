@@ -44,6 +44,8 @@ def test_session_store_migrates_legacy_linear_session_to_tree(
     assert record.leaf_id == record.conversation_entries[-1].id
     assert record.conversation_entries[0].parent_id is None
     assert record.conversation_entries[1].parent_id == record.conversation_entries[0].id
+    assert not (tmp_path / "legacy-tree.json").exists()
+    assert (tmp_path / "legacy-tree.jsonl").exists()
     assert [message.text_content() for message in record.messages] == [
         "one",
         "two",

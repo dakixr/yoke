@@ -91,7 +91,7 @@ def cli(
         typer.Option(
             "--session",
             help=(
-                "Persist conversation under [bold].yoke/sessions/<name>.json[/bold]."
+                "Persist conversation under [bold].yoke/sessions/<name>.jsonl[/bold]."
             ),
         ),
     ] = None,

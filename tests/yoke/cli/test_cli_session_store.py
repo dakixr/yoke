@@ -63,8 +63,9 @@ def test_session_store_load_normalizes_legacy_assistant_null_content(
     assert record.conversation_entries[1].message is not None
     assert record.conversation_entries[1].message.content == ""
     saved_payload = json.loads(
-        (tmp_path / "legacy-null-content.json").read_text(encoding="utf-8")
+        (tmp_path / "legacy-null-content.jsonl").read_text(encoding="utf-8").splitlines()[-1]
     )
+    assert not (tmp_path / "legacy-null-content.json").exists()
     assert saved_payload["conversation_entries"][1]["message"]["content"] == ""
     reloaded = store.load("legacy-null-content")
     assert reloaded.conversation_entries[1].message is not None
@@ -98,3 +99,33 @@ def test_session_store_round_trips_message_usage(tmp_path: Path) -> None:
         "reasoning_tokens": 15,
         "total_tokens": 120,
     }
+
+
+def test_session_store_migrates_legacy_json_file_on_startup(tmp_path: Path) -> None:
+    payload = {
+        "version": 4,
+        "id": "startup-migrate",
+        "conversation_entries": [
+            {
+                "kind": "user",
+                "message": {"role": "user", "content": "hello"},
+                "metadata": {},
+            }
+        ],
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "updated_at": "2024-01-01T00:00:00+00:00",
+        "root": str(tmp_path.resolve()),
+        "title": "Startup migrate",
+    }
+    (tmp_path / "startup-migrate.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+
+    store = SessionStore(directory=tmp_path)
+
+    migrated_path = tmp_path / "startup-migrate.jsonl"
+    assert migrated_path.exists()
+    assert not (tmp_path / "startup-migrate.json").exists()
+    record = store.load("startup-migrate")
+    assert record.id == "startup-migrate"
+    assert record.messages[0].text_content() == "hello"

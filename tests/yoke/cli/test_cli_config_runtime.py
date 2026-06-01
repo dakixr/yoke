@@ -64,7 +64,6 @@ def test_build_agent_honors_explicit_opencode_go_provider(
 def test_cli_prefers_opencode_go_when_only_credentials_exist(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.delenv("YOKE_CODEX_AUTH_PATH", raising=False)
     monkeypatch.delenv("YOKE_COPILOT_AUTH_PATH", raising=False)
     monkeypatch.setattr("yoke.cli.config.providers.Path.home", lambda: tmp_path)
     monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
@@ -73,7 +72,6 @@ def test_cli_prefers_opencode_go_when_only_credentials_exist(
         ConfigOnlyProvider,
         provider_name="opencode-go",
     )
-    monkeypatch.delenv("YOKE_CODEX_AUTH_PATH", raising=False)
 
     agent = build_agent_from_args(CLIArgs(root=str(tmp_path)))
 

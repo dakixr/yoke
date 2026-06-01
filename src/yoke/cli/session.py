@@ -1,8 +1,9 @@
-"""CLI-owned JSON session persistence."""
+"""CLI-owned JSONL session persistence."""
 
 from __future__ import annotations
 
 import builtins
+import json
 import os
 import re
 import secrets
@@ -26,6 +27,8 @@ from yoke.agent.skills.models import ActiveSkill
 
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SESSION_INDEX_NAME = "index.json"
+SESSION_FILE_SUFFIX = ".jsonl"
+LEGACY_SESSION_FILE_SUFFIX = ".json"
 SESSION_RETENTION_DAYS = 30
 
 
@@ -83,19 +86,22 @@ class SessionIndex(BaseModel):
 
 
 class SessionStore:
-    """JSON-backed store for CLI session records."""
+    """JSONL-backed store for CLI session records."""
 
     def __init__(self, directory: Path | None = None) -> None:
         self.directory = (directory or default_session_directory()).resolve()
+        self._migrate_legacy_sessions()
 
     def load(self, session_id: str) -> SessionRecord:
         """Load a session record."""
-        path = self._session_path(session_id)
+        path = self._existing_session_path(session_id)
+        if path is None:
+            path = self._session_path(session_id)
         if not path.exists():
             return SessionRecord(id=session_id)
         try:
             raw_text = path.read_text(encoding="utf-8")
-            record = SessionRecord.model_validate_json(raw_text)
+            record = self._decode_session_record(raw_text)
         except (OSError, ValidationError) as exc:
             raise ValueError(f"Failed to load session {session_id!r}: {exc}") from exc
         raw_missing_tree_fields = _raw_record_missing_tree_fields(raw_text)
@@ -110,6 +116,7 @@ class SessionStore:
             or sanitized_entries != record.conversation_entries
             or tree_changed
             or record.version < 4
+            or path.suffix != SESSION_FILE_SUFFIX
         ):
             record = record.model_copy(
                 update={
@@ -118,7 +125,7 @@ class SessionStore:
                     "leaf_id": leaf_id,
                 }
             )
-            path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+            path = self._write_session_record(record)
             self._update_index(record)
         return record
 
@@ -141,9 +148,8 @@ class SessionStore:
         """Save a session record."""
         self._prune_index_and_sessions(exclude_session_id=session_id)
         path = self._session_path(session_id)
-        existing = (
-            self.load(session_id) if path.exists() else SessionRecord(id=session_id)
-        )
+        existing_path = self._existing_session_path(session_id)
+        existing = self.load(session_id) if existing_path is not None else SessionRecord(id=session_id)
         now = _timestamp()
         resolved_entries, resolved_leaf_id = _resolve_saved_conversation_tree(
             existing,
@@ -172,7 +178,7 @@ class SessionStore:
         )
 
         self.directory.mkdir(parents=True, exist_ok=True)
-        path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+        path = self._write_session_record(record)
         self._update_index(record)
         return path
 
@@ -198,7 +204,24 @@ class SessionStore:
                 "Session id must start with an alphanumeric character and "
                 "use only letters, numbers, dot, underscore, or dash."
             )
-        return self.directory / f"{session_id}.json"
+        return self.directory / f"{session_id}{SESSION_FILE_SUFFIX}"
+
+    def _legacy_session_path(self, session_id: str) -> Path:
+        if not SESSION_ID_PATTERN.fullmatch(session_id):
+            raise ValueError(
+                "Session id must start with an alphanumeric character and "
+                "use only letters, numbers, dot, underscore, or dash."
+            )
+        return self.directory / f"{session_id}{LEGACY_SESSION_FILE_SUFFIX}"
+
+    def _existing_session_path(self, session_id: str) -> Path | None:
+        path = self._session_path(session_id)
+        if path.exists():
+            return path
+        legacy_path = self._legacy_session_path(session_id)
+        if legacy_path.exists():
+            return self._migrate_legacy_session_file(session_id)
+        return None
 
     def _index_path(self) -> Path:
         return self.directory / SESSION_INDEX_NAME
@@ -234,8 +257,9 @@ class SessionStore:
             if session_id == exclude_session_id:
                 continue
 
-            session_path = self._session_path(session_id)
-            if not session_path.exists():
+            session_path = self._existing_session_path(session_id)
+            legacy_path = self._legacy_session_path(session_id)
+            if session_path is None or not session_path.exists():
                 index.sessions.pop(session_id, None)
                 changed = True
                 continue
@@ -250,6 +274,11 @@ class SessionStore:
                 session_path.unlink()
             except OSError:
                 continue
+            if legacy_path.exists():
+                try:
+                    legacy_path.unlink()
+                except OSError:
+                    pass
             index.sessions.pop(session_id, None)
             changed = True
 
@@ -258,6 +287,69 @@ class SessionStore:
             self._index_path().write_text(
                 index.model_dump_json(indent=2), encoding="utf-8"
             )
+
+    def _migrate_legacy_sessions(self) -> None:
+        if not self.directory.exists():
+            return
+        for path in self.directory.glob(f"*{LEGACY_SESSION_FILE_SUFFIX}"):
+            if path.name == SESSION_INDEX_NAME:
+                continue
+            session_id = path.stem
+            if not SESSION_ID_PATTERN.fullmatch(session_id):
+                continue
+            target = self._session_path(session_id)
+            if target.exists():
+                continue
+            self._migrate_legacy_session_file(session_id)
+
+    def _migrate_legacy_session_file(self, session_id: str) -> Path:
+        legacy_path = self._legacy_session_path(session_id)
+        target_path = self._session_path(session_id)
+        if not legacy_path.exists() or target_path.exists():
+            return target_path if target_path.exists() else legacy_path
+        raw_text = legacy_path.read_text(encoding="utf-8")
+        record = self._decode_session_record(raw_text)
+        if record.id != session_id:
+            record = record.model_copy(update={"id": session_id})
+        self._write_session_record(record)
+        self._update_index(record)
+        return target_path
+
+    def _decode_session_record(self, raw_text: str) -> SessionRecord:
+        stripped = raw_text.lstrip()
+        if stripped.startswith('{"type":"session_record"'):
+            return SessionRecord.model_validate_json(
+                self._json_object_from_jsonl(raw_text)
+            )
+        if stripped.startswith("{"):
+            return SessionRecord.model_validate_json(raw_text)
+        return SessionRecord.model_validate_json(self._json_object_from_jsonl(raw_text))
+
+    def _write_session_record(self, record: SessionRecord) -> Path:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        path = self._session_path(record.id)
+        path.write_text(self._record_jsonl(record), encoding="utf-8")
+        legacy_path = self._legacy_session_path(record.id)
+        if legacy_path.exists():
+            legacy_path.unlink()
+        return path
+
+    def _record_jsonl(self, record: SessionRecord) -> str:
+        payload = record.model_dump(mode="json")
+        return "\n".join(
+            [
+                json.dumps({"type": "session_record", "version": 1}, separators=(",", ":"), ensure_ascii=False),
+                json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
+            ]
+        ) + "\n"
+
+    def _json_object_from_jsonl(self, raw_text: str) -> str:
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        if not lines:
+            raise ValueError("Session file is empty.")
+        if len(lines) == 1:
+            return lines[0]
+        return lines[-1]
 
 
 def default_session_directory() -> Path:
