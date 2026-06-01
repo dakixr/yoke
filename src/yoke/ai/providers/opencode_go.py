@@ -67,6 +67,7 @@ MIMO_THINKING_LEVELS = ("low", "medium", "high")
 MINIMAX_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
 
 MODEL_PROTOCOLS = {
+    "minimax-m3": "anthropic",
     "minimax-m2.7": "anthropic",
     "kimi-k2.5": "openai",
     "mimo-v2.5-pro": "openai",
@@ -163,6 +164,14 @@ MODEL_CATALOG = build_model_catalog(
         thinking_levels=MIMO_THINKING_LEVELS,
         default_thinking_level="medium",
         supports_image_inputs=False,
+    ),
+    ProviderModelInfo(
+        id="minimax-m3",
+        display_name="MiniMax M3",
+        context_window_tokens=1_000_000,
+        thinking_levels=ANTHROPIC_THINKING_LEVELS,
+        default_thinking_level="high",
+        supports_image_inputs=True,
     ),
     ProviderModelInfo(
         id="minimax-m2.7",
@@ -537,6 +546,7 @@ def _normalize_model_id(model_id: str) -> str:
 
 def _max_output_tokens(model_id: str) -> int:
     outputs = {
+        "minimax-m3": 65_536,
         "minimax-m2.7": 131_072,
         "qwen3.6-plus": 65_536,
         "qwen3.5-plus": 65_536,
