@@ -12,6 +12,7 @@ from yoke.ai.providers.codex_websockets import CodexWebSocketParseState
 from yoke.ai.providers.codex_websockets import RESPONSES_WEBSOCKETS_BETA
 from yoke.ai.providers.codex_websockets import build_message_from_websocket_state
 from yoke.ai.providers.codex_websockets import handle_websocket_event
+from yoke.ai.providers.codex_websockets import optional_float_env
 from yoke.ai.providers.codex_websockets import websocket_url_for_base
 
 
@@ -30,6 +31,13 @@ def test_websocket_url_for_openai_compatible_v1_base() -> None:
     assert websocket_url_for_base("ws://127.0.0.1:8765/v1") == (
         "ws://127.0.0.1:8765/v1/responses"
     )
+
+
+def test_optional_float_env_parses_disabled_values() -> None:
+    assert optional_float_env(None, default=None) is None
+    assert optional_float_env("off", default=20.0) is None
+    assert optional_float_env("0", default=20.0) is None
+    assert optional_float_env("30", default=None) == 30.0
 
 
 def test_websocket_response_done_builds_message_from_output_item() -> None:
@@ -163,5 +171,7 @@ def test_codex_websockets_complete_sends_request_frame_and_headers(
     assert headers["Authorization"] == "Bearer access-token"
     assert headers["chatgpt-account-id"] == "acct_123"
     assert headers["OpenAI-Beta"] == RESPONSES_WEBSOCKETS_BETA
+    assert factory_calls[0]["ping_interval"] is None
+    assert factory_calls[0]["ping_timeout"] == 20.0
     assert '"type":"response.create"' in sent_payloads[0]
     assert '"model":"gpt-5.4"' in sent_payloads[0]

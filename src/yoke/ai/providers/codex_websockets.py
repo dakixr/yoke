@@ -111,13 +111,29 @@ def register_provider(context: Any) -> CodexWebSockets:
                 or env.get("YOKE_PROVIDER_LOGS_DIR")
                 or str(DEFAULT_LOGS_DIR)
             ),
+            websocket_ping_interval_seconds=optional_float_env(
+                env.get("YOKE_CODEX_WEBSOCKETS_PING_INTERVAL_SECONDS"),
+                default=None,
+            ),
+            websocket_ping_timeout_seconds=optional_float_env(
+                env.get("YOKE_CODEX_WEBSOCKETS_PING_TIMEOUT_SECONDS"),
+                default=20.0,
+            ),
         )
     )
 
 
 class CodexWebSocketsConfig(CodexSubscriptionConfig):
-    websocket_ping_interval_seconds: float | None = 20.0
+    websocket_ping_interval_seconds: float | None = None
     websocket_ping_timeout_seconds: float | None = 20.0
+
+
+def optional_float_env(value: str | None, *, default: float | None) -> float | None:
+    if value is None or value == "":
+        return default
+    if value.lower() in {"none", "off", "false", "0"}:
+        return None
+    return float(value)
 
 
 class CodexWebSocketParseState(BaseModel):

@@ -56,6 +56,11 @@ WebSocket transport. It uses the same auth and account selection as `codex` and
 accepts `YOKE_CODEX_WEBSOCKETS_*` overrides for model, base URL, timeout,
 retries, reasoning effort, text verbosity, and logs.
 
+The WebSocket transport disables library-level idle keepalive pings by default,
+which avoids background ping timeouts while yoke is waiting for your next prompt.
+Set `YOKE_CODEX_WEBSOCKETS_PING_INTERVAL_SECONDS` and optionally
+`YOKE_CODEX_WEBSOCKETS_PING_TIMEOUT_SECONDS` to enable explicit keepalive pings.
+
 Outside a session you can inspect and configure models directly:
 
 ```bash

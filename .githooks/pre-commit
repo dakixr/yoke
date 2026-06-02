@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if command -v uv >/dev/null 2>&1; then
+    exec uv run pytest
+fi
+
+exec python3 -m pytest
