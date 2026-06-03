@@ -9,6 +9,7 @@ from threading import Thread
 
 from yoke.agent.loop import AgentStoppedError
 from yoke.agent.models import Message
+from yoke.agent.state import capture_agent_state
 from yoke.agent.state import active_branch_entries
 from yoke.cli.config import RUN_ERRORS
 from yoke.cli.interactive.common import PendingPrompt
@@ -61,7 +62,14 @@ def run_prompt_turn(
             callbacks["handle_outcome"](turn_id, TurnStopped(result=result))
             return
     except AgentStoppedError:
-        callbacks["handle_outcome"](turn_id, TurnStopped())
+        state_snapshot = capture_agent_state(agent)
+        callbacks["handle_outcome"](
+            turn_id,
+            TurnStopped(
+                messages=state_snapshot.messages,
+                conversation_entries=state_snapshot.conversation_entries,
+            ),
+        )
         return
     except RUN_ERRORS as exc:
         callbacks["handle_outcome"](
@@ -109,14 +117,22 @@ def handle_prompt_turn_outcome(
         renderer.print_error(str(outcome.error))
         return was_steered
     if isinstance(outcome, TurnStopped):
-        if outcome.result is not None:
+        stopped_messages = (
+            outcome.result.messages if outcome.result is not None else outcome.messages
+        )
+        stopped_entries = (
+            outcome.result.conversation_entries
+            if outcome.result is not None
+            else outcome.conversation_entries
+        )
+        if stopped_messages is not None:
             with state_lock:
-                state.messages = outcome.result.messages
+                state.messages = stopped_messages
             persist_session_state(
                 active_session,
                 agent,
-                outcome.result.messages,
-                conversation_entries=outcome.result.conversation_entries,
+                stopped_messages,
+                conversation_entries=stopped_entries,
             )
         run_in_scrollback(
             lambda: print_scrollback_notice(

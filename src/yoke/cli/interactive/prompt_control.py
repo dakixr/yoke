@@ -10,7 +10,6 @@ from threading import Lock
 from threading import Thread
 
 from yoke.agent.models import Message
-from yoke.agent.loop.types import INTERRUPTED_TURN_NOTICE
 from yoke.agent.state import active_branch_entries
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
@@ -31,9 +30,7 @@ from yoke.cli.render import print_scrollback_user
 from yoke.cli.runtime import ActiveSession, AgentRunner
 from yoke.cli.runtime import force_compact_history
 from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime import save_active_session
 from yoke.cli.interactive.prompt_turns import finish_prompt_turn
-from yoke.cli.interactive.prompt_turns import get_active_turn_state
 from yoke.cli.interactive.prompt_turns import handle_prompt_turn_outcome
 from yoke.cli.interactive.prompt_turns import run_prompt_turn
 
@@ -144,46 +141,13 @@ def create_prompt_toolkit_control(
         update_status("")
 
     def stop_active_turn() -> bool:
-        next_prompt: PendingPrompt | None = None
-        stop_event, current_worker, turn_id, user_message = get_active_turn_state(
-            state=state,
-            state_lock=state_lock,
-        )
-        if current_worker is None or stop_event is None or stop_event.is_set():
-            return False
         with state_lock:
-            abandoned_turn_ids, _ = prompt_turn_tracking(state)
+            stop_event = state.active_stop_request
+            current_worker = state.worker
+            if current_worker is None or stop_event is None or stop_event.is_set():
+                return False
             stop_event.set()
-            abandoned_turn_ids.add(turn_id)
-            state.worker = None
-            state.active_stop_request = None
-            if state.pending_prompts:
-                next_prompt = state.pending_prompts.pop(0)
-            interrupted_messages = _interrupted_turn_messages(
-                state.messages,
-                user_message=user_message,
-            )
-            state.messages = interrupted_messages
-            state.active_user_message = None
-        save_active_session(
-            active_session_ref["active_session"],
-            interrupted_messages,
-            agent=agent,
-        )
-        state.context_usage_text = estimate_toolbar_context_usage("")
-        run_in_scrollback(
-            lambda: print_scrollback_notice(
-                scrollback_console,
-                "Stopped current turn. Send a correction to continue from here.",
-            )
-        )
-        if next_prompt is not None:
-            start_turn(
-                next_prompt.prompt,
-                user_message=next_prompt.user_message,
-            )
-        else:
-            update_status("")
+            state.status_message = "Stopping current turn"
         invalidate_prompt()
         return True
 
@@ -204,7 +168,8 @@ def create_prompt_toolkit_control(
                     kind="steering",
                 ),
             )
-        update_status("Stopping current turn for steering")
+            state.status_message = "Stopping current turn for steering"
+        invalidate_prompt()
         return True
 
     callbacks["handle_outcome"] = handle_outcome
@@ -301,18 +266,6 @@ def start_prompt_compaction(
     update_status("Compacting conversation...")
     thread.start()
     return thread
-
-
-def _interrupted_turn_messages(
-    messages: list[Message],
-    *,
-    user_message: Message | None,
-) -> list[Message]:
-    interrupted_messages = [message.model_copy(deep=True) for message in messages]
-    if user_message is not None:
-        interrupted_messages.append(user_message.model_copy(deep=True))
-    interrupted_messages.append(Message.assistant(INTERRUPTED_TURN_NOTICE))
-    return interrupted_messages
 
 
 def _persist_prompt_compaction(

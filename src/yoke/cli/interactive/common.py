@@ -58,6 +58,8 @@ class TurnStopped:
     """Stopped turn result."""
 
     result: AgentResult | None = None
+    messages: list[Message] | None = None
+    conversation_entries: list[ConversationEntry] | None = None
 
 
 @dataclass(slots=True)

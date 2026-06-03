@@ -115,7 +115,9 @@ turn.
 - Press `Tab` to queue the prompt behind the current turn.
 - While slash-command completions are open, use `Up`/`Down` to move between
   options; `Left`/`Right` keep moving the cursor in the prompt text.
-- Press `Esc Esc` to stop the current turn.
+- Press `Esc Esc` to stop the current turn; yoke waits for the turn to record
+  the user prompt, completed/cancelled tool calls, and interruption marker
+  before processing queued prompts or saving the session.
 - Press `Ctrl+J` to insert a newline.
 - Pasting multiline text keeps the entire paste in the current prompt; press
   `Enter` after the paste to submit it.
