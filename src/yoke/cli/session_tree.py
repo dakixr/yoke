@@ -43,6 +43,8 @@ def _resolve_saved_conversation_tree(
             existing.conversation_entries,
             leaf_id or existing.leaf_id,
         )
+    if entries_preserve_active_prefix(existing, message_entries):
+        return _migrated_conversation_tree(message_entries, leaf_id)
     merged_entries, merged_leaf_id = merge_conversation_branch(
         existing.conversation_entries,
         message_entries,
@@ -50,6 +52,28 @@ def _resolve_saved_conversation_tree(
     return _migrated_conversation_tree(
         merged_entries,
         leaf_id or merged_leaf_id or existing.leaf_id,
+    )
+
+
+def entries_preserve_active_prefix(
+    existing: SessionRecord,
+    entries: builtins.list[ConversationEntry],
+) -> bool:
+    active_entries = active_branch_entries(
+        existing.conversation_entries,
+        leaf_id=existing.leaf_id,
+    )
+    if (
+        not active_entries
+        or len(existing.conversation_entries) != len(active_entries)
+        or len(entries) < len(active_entries)
+    ):
+        return False
+    return all(
+        entry.message is not None
+        and active_entry.message is not None
+        and _messages_match(entry.message, active_entry.message)
+        for entry, active_entry in zip(entries, active_entries, strict=False)
     )
 
 
@@ -85,7 +109,7 @@ def _conversation_entries_for_messages(
         if (
             existing_entry is not None
             and existing_entry.message is not None
-            and entry.message == existing_entry.message
+            and _messages_match(entry.message, existing_entry.message)
         ):
             copied = existing_entry.model_copy(deep=True)
             parent_id = copied.id
@@ -95,6 +119,10 @@ def _conversation_entries_for_messages(
         parent_id = copied.id
         reconciled.append(copied)
     return reconciled
+
+
+def _messages_match(left: Message, right: Message) -> bool:
+    return left.model_dump(mode="json") == right.model_dump(mode="json")
 
 
 def _sanitize_conversation_entries(

@@ -30,6 +30,7 @@ from yoke.cli.session import SessionRecord
 from yoke.cli.session import SessionStore
 from yoke.cli.session import fallback_session_title
 from yoke.cli.session import new_session_id
+from yoke.cli.session_tree import entries_preserve_active_prefix
 
 
 def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
@@ -123,11 +124,15 @@ def save_active_session(
 ) -> None:
     """Write the current session state to storage."""
     if conversation_entries is not None:
-        conversation_entries, merged_leaf_id = merge_conversation_branch(
-            active_session.record.conversation_entries,
+        if not entries_preserve_active_prefix(
+            active_session.record,
             conversation_entries,
-        )
-        leaf_id = leaf_id or merged_leaf_id
+        ):
+            conversation_entries, merged_leaf_id = merge_conversation_branch(
+                active_session.record.conversation_entries,
+                conversation_entries,
+            )
+            leaf_id = leaf_id or merged_leaf_id
     provider_state = (
         capture_provider_session_state(agent)
         if agent is not None

@@ -231,13 +231,6 @@ def run_resume_cli(
             ),
             active_skills=record.active_skills,
         )
-    save_active_session(
-        active_session,
-        active_session.record.messages,
-        conversation_entries=active_session.record.conversation_entries,
-        leaf_id=active_session.record.leaf_id,
-        agent=active_agent,
-    )
     print_tool_discovery_message(output_stream, tool_report)
     from yoke.cli.interactive import run_interactive_cli
 

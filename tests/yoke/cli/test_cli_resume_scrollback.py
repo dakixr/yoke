@@ -138,15 +138,18 @@ def test_interactive_cli_persists_partial_messages_on_provider_error(
 
 
 def test_resume_by_id_continues_saved_session(tmp_path: Path) -> None:
+    from uuid import uuid4
+
     store = SessionStore()
+    session_id = f"saved-{uuid4().hex}"
     store.save(
-        "saved",
+        session_id,
         [Message.user("old"), Message.assistant("answer")],
         root=tmp_path,
         title="Saved session",
     )
     agent = FakeAgent(outputs=["resumed"])
-    prompts = iter(["next", "quit"])
+    prompts = iter(["next"])
 
     def fake_input(_: object = "") -> str:
         return next(prompts)
@@ -155,7 +158,7 @@ def test_resume_by_id_continues_saved_session(tmp_path: Path) -> None:
     stderr = CaptureStream()
     exit_code = run_resume_cli(
         CLIArgs(root=str(tmp_path)),
-        "saved",
+        session_id,
         agent=agent,
         input_func=fake_input,
         stdout=stdout,
@@ -168,7 +171,7 @@ def test_resume_by_id_continues_saved_session(tmp_path: Path) -> None:
     assert "user old" in output
     assert "answer" in output
     assert "resumed" in output
-    record = store.load("saved")
+    record = store.load(session_id)
     assert [message.role for message in record.messages] == [
         "user",
         "assistant",

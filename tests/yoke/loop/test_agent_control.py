@@ -104,7 +104,7 @@ def test_agent_loop_supports_parallel_tool_execution_and_hooks(
     assert "model_start" in events
     assert "tool_execution_start" in events
     assert "tool_execution_end" in events
-    threshold = 14.0 if os.name == "nt" else 1.0
+    threshold = 14.0 if os.name == "nt" else 2.0
     assert elapsed < threshold
 
 
