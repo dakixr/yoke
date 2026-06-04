@@ -73,6 +73,7 @@ MODEL_PROTOCOLS = {
     "mimo-v2.5-pro": "openai",
     "glm-5": "openai",
     "mimo-v2.5": "openai",
+    "qwen3.7-plus": "anthropic",
     "qwen3.6-plus": "anthropic",
     "glm-5.1": "openai",
     "deepseek-v4-flash": "openai",
@@ -188,6 +189,14 @@ MODEL_CATALOG = build_model_catalog(
         thinking_levels=MINIMAX_THINKING_LEVELS,
         default_thinking_level="medium",
         supports_image_inputs=False,
+    ),
+    ProviderModelInfo(
+        id="qwen3.7-plus",
+        display_name="Qwen3.7 Plus",
+        context_window_tokens=1_000_000,
+        thinking_levels=ANTHROPIC_THINKING_LEVELS,
+        default_thinking_level="high",
+        supports_image_inputs=True,
     ),
     ProviderModelInfo(
         id="qwen3.6-plus",
@@ -548,6 +557,7 @@ def _max_output_tokens(model_id: str) -> int:
     outputs = {
         "minimax-m3": 65_536,
         "minimax-m2.7": 131_072,
+        "qwen3.7-plus": 65_536,
         "qwen3.6-plus": 65_536,
         "qwen3.5-plus": 65_536,
     }
