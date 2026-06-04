@@ -121,6 +121,9 @@ turn.
 - Press `Ctrl+J` to insert a newline.
 - Pasting multiline text keeps the entire paste in the current prompt; press
   `Enter` after the paste to submit it.
+- Dragging a local image file into the terminal on macOS usually inserts an
+  escaped path. If that path is on its own prompt line, yoke attaches it
+  automatically when you submit.
 - Use `/image path/to/file.png` to attach a local image file explicitly.
 - Use `/tree` to navigate the current session tree, fork from an older point,
   label entries, search/filter history, and optionally summarize the branch you

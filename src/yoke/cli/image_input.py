@@ -76,6 +76,29 @@ def paste_image_from_clipboard() -> ImageAttachment | None:
         return ImageAttachment(path=Path(handle.name).resolve())
 
 
+def attach_standalone_prompt_image_paths(
+    prompt: str,
+    *,
+    root: Path,
+) -> tuple[str, list[ImageAttachment]]:
+    """Convert standalone image path lines in a prompt into attachments."""
+    if not prompt:
+        return prompt, []
+    lines: list[str] = []
+    attachments: list[ImageAttachment] = []
+    for line in prompt.splitlines():
+        try:
+            resolved = resolve_image_path(line, root=root)
+        except ValueError:
+            lines.append(line)
+            continue
+        attachment = ImageAttachment(path=resolved)
+        attachments.append(attachment)
+        indent = line[: len(line) - len(line.lstrip())]
+        lines.append(f"{indent}{format_attachment_reference(attachment)}")
+    return "\n".join(lines), attachments
+
+
 def format_attachment_summary(
     attachments: Sequence[ImageAttachment],
 ) -> str | None:

@@ -11,6 +11,7 @@ from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
 from yoke.cli.config import CLIArgs
 from yoke.cli.config import RUN_ERRORS
+from yoke.cli.image_input import attach_standalone_prompt_image_paths
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.common import BasicCliState
 from yoke.cli.interactive.common import InputFunc
@@ -209,6 +210,11 @@ def _drain_basic_input_queue(
         )
         if handled:
             continue
+        prompt, dropped_images = attach_standalone_prompt_image_paths(
+            prompt,
+            root=active_session.root,
+        )
+        state.pending_images.extend(dropped_images)
         if state.worker is None and not state.pending_prompts:
             print_user_prompt(console, prompt)
             pending_images = [image.path for image in state.pending_images]

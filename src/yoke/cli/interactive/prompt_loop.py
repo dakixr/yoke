@@ -7,6 +7,7 @@ from collections.abc import Callable
 from collections.abc import Mapping
 from threading import Lock, Thread
 
+from yoke.cli.image_input import attach_standalone_prompt_image_paths
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.completion_menu import YokeCompletionsMenu
 from yoke.cli.interactive.completion_menu import COMPLETION_MENU_STYLE
@@ -119,9 +120,15 @@ def process_prompt_toolkit_prompt(
                 state.context_usage_text = context_usage_text
         invalidate_prompt()
         return updated_session
+    prompt, dropped_images = attach_standalone_prompt_image_paths(
+        prompt,
+        root=active_session.root,
+    )
     with state_lock:
         idle = state.worker is None and not state.pending_prompts
-        pending_images = [image.path for image in state.pending_images]
+        pending_images = [
+            image.path for image in [*state.pending_images, *dropped_images]
+        ]
         user_message = build_user_message(prompt, image_paths=pending_images)
         state.pending_images.clear()
         if not idle and action == "queue":

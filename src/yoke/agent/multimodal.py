@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
 from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import unquote
@@ -138,7 +140,7 @@ def _image_omission_placeholder(label: str) -> str:
 
 def resolve_image_path(raw: str, *, root: Path) -> Path:
     """Resolve and validate a local image path."""
-    candidate = raw.strip().strip("\"'")
+    candidate = normalize_local_path_text(raw)
     if candidate.startswith("file://"):
         parsed = urlparse(candidate)
         candidate = unquote(parsed.path)
@@ -155,3 +157,15 @@ def resolve_image_path(raw: str, *, root: Path) -> Path:
             + ", ".join(sorted(IMAGE_EXTENSIONS))
         )
     return path
+
+
+def normalize_local_path_text(raw: str) -> str:
+    """Normalize terminal-friendly local path text into a filesystem path."""
+    candidate = raw.strip().strip("\"'")
+    try:
+        parts = shlex.split(candidate, posix=os.name != "nt")
+    except ValueError:
+        return candidate
+    if len(parts) == 1:
+        return parts[0]
+    return candidate

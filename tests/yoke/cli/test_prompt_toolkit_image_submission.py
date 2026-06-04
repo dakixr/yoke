@@ -73,6 +73,71 @@ def test_process_prompt_toolkit_prompt_preserves_image_reference_text(
     ]
 
 
+def test_process_prompt_toolkit_prompt_attaches_dropped_image_path_line(
+    tmp_path: Path,
+) -> None:
+    from threading import Lock
+
+    from yoke.agent.models import MessageLocalImageContentPart
+    from yoke.agent.models import MessageTextContentPart
+    from yoke.cli.interactive.common import PromptCliState
+    from yoke.cli.interactive.prompt_loop import (
+        process_prompt_toolkit_prompt,
+    )
+
+    image_path = tmp_path / "Screenshot 2026-06-04 at 09.22.53.png"
+    image_path.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0mQAAAAASUVORK5CYII="
+        )
+    )
+    escaped_path = str(image_path).replace(" ", "\\ ")
+    state = PromptCliState(
+        messages=[],
+        pending_prompts=[],
+        abandoned_turn_ids=set(),
+        steered_turn_ids=set(),
+    )
+    submitted: dict[str, object] = {}
+
+    def start_turn(prompt: str, *, user_message: Message | None = None):
+        submitted["prompt"] = prompt
+        submitted["user_message"] = user_message
+        return None
+
+    active_session = active_session_for(tmp_path)
+    process_prompt_toolkit_prompt(
+        f"what is in this screenshot?\n{escaped_path}",
+        state=state,
+        agent=ImageAwareAgent(),
+        active_session_ref={"active_session": active_session},
+        scrollback_console=build_console(CaptureStream()),
+        state_lock=Lock(),
+        update_status=lambda _message: None,
+        invalidate_prompt=lambda: None,
+        request_exit=lambda: None,
+        start_turn=start_turn,
+        steer_active_turn=lambda *_args, **_kwargs: False,
+        format_context_usage_text=lambda _payload: None,
+    )
+
+    assert submitted["prompt"] == (
+        "what is in this screenshot?\n[Screenshot 2026-06-04 at 09.22.53.png]"
+    )
+    message = submitted["user_message"]
+    assert isinstance(message, Message)
+    assert state.pending_images == []
+    content = message.content
+    assert isinstance(content, list)
+    assert content == [
+        MessageTextContentPart(text=submitted["prompt"]),
+        MessageLocalImageContentPart(
+            path=str(image_path.resolve()),
+            label="[Image #1]",
+        ),
+    ]
+
+
 def test_process_prompt_toolkit_prompt_starts_compaction_without_blocking(
     tmp_path: Path,
 ) -> None:
