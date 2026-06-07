@@ -48,7 +48,7 @@ def test_entries_from_messages_pairs_tool_calls_with_full_results() -> None:
     assert entries[0].status == "ok"
 
 
-def test_entries_from_messages_attaches_user_and_assistant_context() -> None:
+def test_entries_from_messages_attaches_user_context_before_tools() -> None:
     messages = [
         Message.user("please inspect the config"),
         Message(
@@ -71,7 +71,6 @@ def test_entries_from_messages_attaches_user_and_assistant_context() -> None:
     assert entries[0].context is not None
     assert [(item.role, item.text) for item in entries[0].context] == [
         ("user", "please inspect the config"),
-        ("assistant", "I will read the config first."),
     ]
 
 
@@ -110,10 +109,41 @@ def test_entries_from_messages_does_not_repeat_user_context_per_tool_batch() -> 
     entries = entries_from_messages(messages)
 
     assert entries[0].context is not None
-    assert [item.role for item in entries[0].context] == ["user", "assistant"]
-    assert entries[1].context is not None
-    assert [(item.role, item.text) for item in entries[1].context] == [
-        ("assistant", "Now I will patch it."),
+    assert [item.role for item in entries[0].context] == ["user"]
+    assert entries[1].context is None
+
+
+def test_entries_from_messages_skips_commentary_assistant_context() -> None:
+    messages = [
+        Message.user("do the thing"),
+        Message(
+            role="assistant",
+            content="I will inspect files.",
+            phase="commentary",
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    function=ToolFunction(
+                        name="read",
+                        arguments=json.dumps({"path": "a.py"}),
+                    ),
+                )
+            ],
+        ),
+        Message.tool("call-1", json.dumps({"ok": True})),
+        Message.commentary("Still working."),
+        Message.assistant("Done."),
+    ]
+
+    entries = entries_from_messages(messages)
+
+    assert entries[0].context is not None
+    assert [(item.role, item.text) for item in entries[0].context] == [
+        ("user", "do the thing"),
+    ]
+    assert entries[0].after_context is not None
+    assert [(item.role, item.text) for item in entries[0].after_context] == [
+        ("assistant", "Done."),
     ]
 
 
@@ -271,7 +301,7 @@ def test_tool_inspector_starts_after_context_rows() -> None:
     )
     state = ToolInspectorState(entries=entries)
 
-    assert state.selected_index == 2
+    assert state.selected_index == 1
 
 
 def test_tool_inspector_footer_shows_detail_scroll_position(
@@ -374,7 +404,6 @@ def test_tool_inspector_sidebar_shows_conversation_context(monkeypatch) -> None:
     html = render_view_html(state, sidebar_items(state.entries))
 
     assert "<ansiwhite>  usr why was this file read?" in html
-    assert "<ansiblue>  asst I need the current implem…</ansiblue>" in html
     assert "&gt; ? read" in html
 
 
@@ -402,13 +431,13 @@ def test_tool_inspector_context_rows_are_selectable(monkeypatch) -> None:
         ]
     )
     state = ToolInspectorState(entries=entries)
-    state.selected_index = 1
+    state.selected_index = 0
 
     html = render_view_html(state, sidebar_items(state.entries))
 
-    assert "&gt; asst Because I need evidence." in html
-    assert "Assistant Message" in html
-    assert "Because I need evidence." in html
+    assert "&gt; usr why this tool?" in html
+    assert "User Message" in html
+    assert "why this tool?" in html
 
 
 def test_tool_inspector_sidebar_shows_final_assistant_after_tools(

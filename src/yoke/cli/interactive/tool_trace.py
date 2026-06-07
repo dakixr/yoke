@@ -139,7 +139,11 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
         if message.role == "assistant":
             assistant_text = message.text_content()
             if not message.tool_calls:
-                if assistant_text and last_tool_call_id in entries:
+                if (
+                    message.phase != "commentary"
+                    and assistant_text
+                    and last_tool_call_id in entries
+                ):
                     entry = entries[last_tool_call_id]
                     entry.after_context = [
                         *(entry.after_context or []),
@@ -156,7 +160,6 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
                     status="pending",
                     context=_message_context(
                         user_text=recent_user_text if pending_user_context else None,
-                        assistant_text=assistant_text,
                     )
                     if index == 0
                     else None,
@@ -244,13 +247,10 @@ def _overlay_entry(
 def _message_context(
     *,
     user_text: str | None,
-    assistant_text: str | None,
 ) -> list[ToolTraceContext] | None:
     context = []
     if user_text:
         context.append(ToolTraceContext(role="user", text=user_text))
-    if assistant_text:
-        context.append(ToolTraceContext(role="assistant", text=assistant_text))
     return context or None
 
 
