@@ -111,6 +111,8 @@ turn.
 
 - Press `Ctrl+V` to attach an image from the clipboard when one is available.
 - Press `Ctrl+U` to remove the last pending image attachment.
+- Press `Ctrl+O` to open the fullscreen tool inspector. It shows complete
+  tool call arguments, executed arguments, results, status, and duration.
 - Press `Enter` to steer/send immediately while a turn is running.
 - Press `Tab` to queue the prompt behind the current turn.
 - While slash-command completions are open, use `Up`/`Down` to move between

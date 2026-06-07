@@ -33,6 +33,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     resolve_image_path: Callable[[str], Path],
     cycle_thinking_effort: Callable[[], str | None],
     update_status: Callable[[str], None],
+    open_tool_inspector: Callable[[], None] | None = None,
 ) -> None:
     """Register prompt-toolkit key bindings."""
 
@@ -101,6 +102,12 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     def _remove_last_image(event) -> None:
         del event
         remove_last_image()
+
+    @key_bindings.add("c-o")
+    def _open_tool_inspector(event) -> None:
+        del event
+        if open_tool_inspector is not None:
+            open_tool_inspector()
 
     try:
         key_bindings.add("s-enter")(_insert_newline)

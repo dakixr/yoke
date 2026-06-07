@@ -37,6 +37,10 @@ from yoke.cli.interactive.prompt_rendering import (
 )
 from yoke.cli.interactive.prompt_rendering import run_scrollback_render
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
+from yoke.cli.interactive.tool_inspector import open_tool_inspector
+from yoke.cli.interactive.tool_trace import ToolTraceStore
+from yoke.cli.interactive.tool_trace import entries_from_messages
+from yoke.cli.interactive.tool_trace import merge_trace_entries
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
 from yoke.cli.render import print_scrollback_agent
@@ -98,6 +102,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
     scrollback_console = build_console(cast(OutputStream, sys.stdout))
     session_ref: dict[str, ActiveSession] = {"active_session": active_session}
     root_label = format_root_label(active_session.root)
+    tool_trace_store = ToolTraceStore()
 
     def estimate_toolbar_context(prompt: str = "") -> str | None:
         with state_lock:
@@ -171,8 +176,28 @@ def run_prompt_toolkit_cli(  # noqa: C901
         ),
         set_status=update_status,
         set_context_usage=update_context_usage,
+        record_tool_event=tool_trace_store.record_event,
     )
     key_bindings = KeyBindings()
+
+    def show_tool_inspector() -> None:
+        with state_lock:
+            message_snapshot = list(state.messages)
+        entries = merge_trace_entries(
+            entries_from_messages(message_snapshot),
+            tool_trace_store.snapshot(),
+        )
+        app = prompt_session.app
+        loop = app.loop
+        if loop is None:
+            open_tool_inspector(entries)
+            return
+        loop.call_soon_threadsafe(
+            lambda: run_in_terminal(
+                lambda: open_tool_inspector(entries),
+                in_executor=True,
+            )
+        )
 
     def attach_image(attachment: ImageAttachment) -> None:
         with state_lock:
@@ -228,6 +253,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
             raw, root=session_ref["active_session"].root
         ),
         cycle_thinking_effort=cycle_thinking_effort,
+        open_tool_inspector=show_tool_inspector,
         update_status=update_status,
     )
     initialize_prompt_toolkit_session(

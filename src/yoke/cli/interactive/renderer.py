@@ -29,6 +29,8 @@ class PromptToolkitLiveRenderer:
         set_status: Callable[[str], None],
         emit_tool_response_divider: Callable[[], None] | None = None,
         set_context_usage: Callable[[str | None], None] | None = None,
+        record_tool_event: Callable[[str, dict[str, object]], None]
+        | None = None,
     ) -> None:
         self._begin_tool_block = begin_tool_block
         self._emit_tool_response_divider = emit_tool_response_divider
@@ -39,6 +41,7 @@ class PromptToolkitLiveRenderer:
         self._emit_notice = emit_notice
         self._set_status = set_status
         self._set_context_usage = set_context_usage
+        self._record_tool_event = record_tool_event
         self._tool_divider_emitted = False
         self._turn_has_tool_output = False
 
@@ -64,6 +67,7 @@ class PromptToolkitLiveRenderer:
 
     def handle_event(self, event: str, payload: dict[str, object]) -> None:
         """Handle one runtime event."""
+        self._record_tool_event_if_needed(event, payload)
         if event == "compaction_summary_start":
             tokens = payload.get("estimated_input_tokens", "?")
             self._ensure_tool_block()
@@ -146,6 +150,16 @@ class PromptToolkitLiveRenderer:
             self._emit_tool("", False)
         self._emit_tool(text, failed)
         self._turn_has_tool_output = True
+
+    def _record_tool_event_if_needed(
+        self,
+        event: str,
+        payload: dict[str, object],
+    ) -> None:
+        if event not in {"tool_execution_start", "tool_execution_end"}:
+            return
+        if self._record_tool_event is not None:
+            self._record_tool_event(event, payload)
 
 
 def format_bottom_toolbar(
