@@ -13,6 +13,7 @@ from yoke.cli.interactive.tool_inspector_render import move_selection
 from yoke.cli.interactive.tool_inspector_render import page_step
 from yoke.cli.interactive.tool_inspector_render import render_view_html
 from yoke.cli.interactive.tool_inspector_render import selected_entry
+from yoke.cli.interactive.tool_inspector_render import sidebar_items
 
 
 @dataclass(slots=True)
@@ -31,9 +32,10 @@ class ToolInspectorState:
     active_pane: Literal["sidebar", "detail"] = "sidebar"
 
     def __post_init__(self) -> None:
-        """Start on the newest tool call by default."""
-        if self.entries:
-            self.selected_index = len(self.entries) - 1
+        """Start on the newest sidebar item by default."""
+        items = sidebar_items(self.entries)
+        if items:
+            self.selected_index = len(items) - 1
 
 
 def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
@@ -49,11 +51,12 @@ def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
     state = ToolInspectorState(entries=list(entries))
     key_bindings = KeyBindings()
 
-    def visible_entries() -> list[ToolTraceEntry]:
+    def visible_entries():
         query = state.search.strip().lower()
+        items = sidebar_items(state.entries)
         if not query:
-            return state.entries
-        return [entry for entry in state.entries if query in entry_text(entry)]
+            return items
+        return [entry for entry in items if query in entry_text(entry)]
 
     def formatted_rows() -> HTML:
         visible = visible_entries()

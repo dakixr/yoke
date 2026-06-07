@@ -16,10 +16,14 @@ from yoke.cli.interactive.tool_inspector_format import format_result
 from yoke.cli.interactive.tool_inspector_format import pretty_json
 from yoke.cli.interactive.tool_inspector_format import section_header
 from yoke.cli.interactive.tool_trace import ToolTraceEntry
+from yoke.cli.interactive.tool_trace import ToolTraceContext
 from yoke.cli.render.base import format_tool_preview
 
 DETAIL_DIM_OPEN = '<style fg="#777777">'
 DETAIL_DIM_CLOSE = "</style>"
+
+
+type ToolInspectorItem = ToolTraceEntry | ToolTraceContext
 
 
 class ToolInspectorRenderState(Protocol):
@@ -39,7 +43,7 @@ class ToolInspectorRenderState(Protocol):
 
 def render_view(
     state: ToolInspectorRenderState,
-    visible: list[ToolTraceEntry],
+    visible: list[ToolInspectorItem],
 ) -> list[str]:
     """Render the complete inspector view as terminal lines."""
     return _render_view(state, visible, html=False)
@@ -47,7 +51,7 @@ def render_view(
 
 def render_view_html(
     state: ToolInspectorRenderState,
-    visible: list[ToolTraceEntry],
+    visible: list[ToolInspectorItem],
 ) -> str:
     """Render the complete inspector view as prompt-toolkit HTML."""
     return "\n".join(_render_view(state, visible, html=True))
@@ -55,7 +59,7 @@ def render_view_html(
 
 def _render_view(
     state: ToolInspectorRenderState,
-    visible: list[ToolTraceEntry],
+    visible: list[ToolInspectorItem],
     *,
     html: bool,
 ) -> list[str]:
@@ -97,10 +101,12 @@ def _render_view(
 
 
 def detail_text(
-    entry: ToolTraceEntry,
+    entry: ToolInspectorItem,
     state: ToolInspectorRenderState,
 ) -> str:
     """Format one trace entry as detailed readable text."""
+    if isinstance(entry, ToolTraceContext):
+        return _context_detail_text(entry, state)
     payload = {
         "tool_call_id": entry.tool_call_id,
         "tool_name": entry.tool_name,
@@ -135,7 +141,7 @@ def detail_text(
 
 def move_selection(
     state: ToolInspectorRenderState,
-    visible: list[ToolTraceEntry],
+    visible: list[ToolInspectorItem],
     delta: int,
 ) -> None:
     """Move the selected row and reset detail scroll."""
@@ -150,8 +156,8 @@ def move_selection(
 
 def selected_entry(
     state: ToolInspectorRenderState,
-    visible: list[ToolTraceEntry],
-) -> ToolTraceEntry | None:
+    visible: list[ToolInspectorItem],
+) -> ToolInspectorItem | None:
     """Return the selected visible entry, if any."""
     if not visible:
         return None
@@ -159,8 +165,10 @@ def selected_entry(
     return visible[state.selected_index]
 
 
-def entry_text(entry: ToolTraceEntry) -> str:
+def entry_text(entry: ToolInspectorItem) -> str:
     """Return searchable text for a trace entry."""
+    if isinstance(entry, ToolTraceContext):
+        return f"{entry.role} {entry.text}".lower()
     return " ".join(
         str(value).lower()
         for value in (
@@ -170,6 +178,7 @@ def entry_text(entry: ToolTraceEntry) -> str:
             entry.executed_arguments,
             entry.result,
             entry.status,
+            entry.context,
         )
         if value is not None
     )
@@ -193,11 +202,21 @@ def terminal_size() -> tuple[int, int]:
     return size.columns, size.lines
 
 
+def sidebar_items(entries: list[ToolTraceEntry]) -> list[ToolInspectorItem]:
+    """Return selectable sidebar items for tool entries and their context."""
+    items: list[ToolInspectorItem] = []
+    for entry in entries:
+        if entry.context:
+            items.extend(entry.context)
+        items.append(entry)
+    return items
+
+
 def _list_lines(
     state: ToolInspectorRenderState,
-    visible: list[ToolTraceEntry],
+    visible: list[ToolInspectorItem],
     width: int,
-    rows: int,
+    row_count: int,
     *,
     html: bool = False,
 ) -> list[str]:
@@ -206,9 +225,9 @@ def _list_lines(
     state.selected_index = max(0, min(state.selected_index, len(visible) - 1))
     if state.selected_index < state.list_scroll:
         state.list_scroll = state.selected_index
-    if state.selected_index >= state.list_scroll + rows:
-        state.list_scroll = state.selected_index - rows + 1
-    window = visible[state.list_scroll : state.list_scroll + rows]
+    if state.selected_index >= state.list_scroll + row_count:
+        state.list_scroll = state.selected_index - row_count + 1
+    window = visible[state.list_scroll : state.list_scroll + row_count]
     return [
         _list_line(state, entry, index, width, html=html)
         for index, entry in enumerate(window, start=state.list_scroll)
@@ -217,12 +236,20 @@ def _list_lines(
 
 def _list_line(
     state: ToolInspectorRenderState,
-    entry: ToolTraceEntry,
+    entry: ToolInspectorItem,
     index: int,
     width: int,
     *,
     html: bool = False,
 ) -> str:
+    if isinstance(entry, ToolTraceContext):
+        return _context_line(
+            entry,
+            index,
+            state,
+            width,
+            html=html,
+        )
     marker = ">" if index == state.selected_index else " "
     status = _status_icon(entry.status)
     duration = format_duration(entry.duration_seconds)
@@ -232,6 +259,41 @@ def _list_line(
         color = _sidebar_style(entry.status, state.active_pane)
         return f"<{color}>{escape(fit(text, width))}</{color}>"
     return fit(text, width)
+
+
+def _context_line(
+    context: ToolTraceContext,
+    index: int,
+    state: ToolInspectorRenderState,
+    width: int,
+    *,
+    html: bool,
+) -> str:
+    marker = ">" if index == state.selected_index else " "
+    label = "usr" if context.role == "user" else "asst"
+    text = fit(f"{marker} {label} {_compact_sidebar_text(context.text)}", width)
+    if not html:
+        return text
+    if state.active_pane != "sidebar":
+        return f"<ansibrightblack>{escape(text)}</ansibrightblack>"
+    if context.role == "assistant":
+        return f"<ansiblue>{escape(text)}</ansiblue>"
+    return escape(text)
+
+
+def _compact_sidebar_text(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _context_detail_text(
+    context: ToolTraceContext,
+    state: ToolInspectorRenderState,
+) -> str:
+    payload = {"role": context.role, "content": context.text}
+    if state.raw:
+        return pretty_json(payload)
+    title = "User Message" if context.role == "user" else "Assistant Message"
+    return "\n".join([title, "", section_header("Message"), context.text or "(empty)"])
 
 
 def _detail_lines(
@@ -425,7 +487,7 @@ def _pane_label(label: str, width: int, *, active: bool) -> str:
 
 def _footer_text(
     state: ToolInspectorRenderState,
-    visible: list[ToolTraceEntry],
+    visible: list[ToolInspectorItem],
     detail_line_count: int,
     body_rows: int,
 ) -> str:
@@ -436,8 +498,9 @@ def _footer_text(
     detail_end = min(detail_line_count, state.detail_scroll + body_rows)
     detail_position = f"detail {detail_start}-{detail_end}/{detail_line_count}"
     if state.active_pane == "sidebar":
+        tool_count = sum(1 for item in visible if isinstance(item, ToolTraceEntry))
         summary = (
-            f"TOOLS focused · j/k move · h/l details · {len(visible)} calls"
+            f"TOOLS focused · j/k move · h/l details · {tool_count} calls"
         )
     else:
         summary = f"DETAIL focused · j/k scroll · h/l tools · {detail_position}"

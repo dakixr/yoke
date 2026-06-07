@@ -79,7 +79,12 @@ def test_agent_loop_supports_parallel_tool_execution_and_hooks(
     before_seen: list[dict[str, object]] = []
     after_seen: list[dict[str, object]] = []
     events: list[str] = []
-    agent = RuntimeAgent(provider=ParallelProvider(), tools=tools(tmp_path))
+    event_payloads: list[tuple[str, dict[str, object]]] = []
+    barrier = Barrier(2, timeout=5)
+    agent = RuntimeAgent(
+        provider=ParallelProvider(tool_name="barrier"),
+        tools=[BarrierTool.bind(barrier=barrier)],
+    )
 
     def record_before(ctx: BeforeToolCallContext) -> None:
         before_seen.append(ctx.arguments)
@@ -89,14 +94,15 @@ def test_agent_loop_supports_parallel_tool_execution_and_hooks(
         after_seen.append(ctx.result)
         return None
 
-    start = time.perf_counter()
     result = agent.run(
         "run in parallel",
-        on_event=lambda event, payload: events.append(event),
+        on_event=lambda event, payload: (
+            events.append(event),
+            event_payloads.append((event, payload)),
+        ),
         before_tool_call=record_before,
         after_tool_call=record_after,
     )
-    elapsed = time.perf_counter() - start
 
     assert result.output == "done"
     assert len(before_seen) == 2
@@ -104,8 +110,18 @@ def test_agent_loop_supports_parallel_tool_execution_and_hooks(
     assert "model_start" in events
     assert "tool_execution_start" in events
     assert "tool_execution_end" in events
-    threshold = 14.0 if os.name == "nt" else 2.0
-    assert elapsed < threshold
+    tool_events = [
+        (event, payload.get("tool_call_id"))
+        for event, payload in event_payloads
+        if event in {"tool_execution_start", "tool_execution_end"}
+    ]
+    first_end_index = next(
+        index for index, (event, _) in enumerate(tool_events) if event == "tool_execution_end"
+    )
+    started_before_first_end = {
+        tool_call_id for event, tool_call_id in tool_events[:first_end_index] if event == "tool_execution_start"
+    }
+    assert started_before_first_end == {"call-1", "call-2"}
 
 
 def test_agent_loop_stops_after_provider_boundary(tmp_path: Path) -> None:

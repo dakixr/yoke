@@ -6,9 +6,18 @@ import json
 import time
 from dataclasses import dataclass
 from threading import Lock
+from typing import Literal
 from typing import cast
 
 from yoke.agent.models import Message
+
+
+@dataclass(slots=True)
+class ToolTraceContext:
+    """Conversation context shown near a tool call."""
+
+    role: Literal["user", "assistant"]
+    text: str
 
 
 @dataclass(slots=True)
@@ -24,6 +33,7 @@ class ToolTraceEntry:
     started_at: float | None = None
     ended_at: float | None = None
     status: str = "pending"
+    context: list[ToolTraceContext] | None = None
 
     @property
     def duration_seconds(self) -> float | None:
@@ -117,9 +127,14 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
     """Build completed trace entries from transcript messages."""
     entries: dict[str, ToolTraceEntry] = {}
     order: list[str] = []
+    recent_user_text: str | None = None
     for message in messages:
+        if message.role == "user":
+            recent_user_text = message.text_content()
+            continue
         if message.role == "assistant":
-            for tool_call in message.tool_calls:
+            assistant_text = message.text_content()
+            for index, tool_call in enumerate(message.tool_calls):
                 if tool_call.id not in entries:
                     order.append(tool_call.id)
                 entries[tool_call.id] = ToolTraceEntry(
@@ -127,6 +142,12 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
                     tool_name=tool_call.function.name,
                     raw_arguments=tool_call.function.arguments,
                     status="pending",
+                    context=_message_context(
+                        user_text=recent_user_text,
+                        assistant_text=assistant_text,
+                    )
+                    if index == 0
+                    else None,
                 )
             continue
         if message.role != "tool" or message.tool_call_id is None:
@@ -177,6 +198,7 @@ def _copy_entry(entry: ToolTraceEntry) -> ToolTraceEntry:
         started_at=entry.started_at,
         ended_at=entry.ended_at,
         status=entry.status,
+        context=list(entry.context) if entry.context is not None else None,
     )
 
 
@@ -195,7 +217,21 @@ def _overlay_entry(
     entry.started_at = update.started_at or entry.started_at
     entry.ended_at = update.ended_at or entry.ended_at
     entry.status = update.status or entry.status
+    entry.context = update.context or entry.context
     return entry
+
+
+def _message_context(
+    *,
+    user_text: str | None,
+    assistant_text: str | None,
+) -> list[ToolTraceContext] | None:
+    context = []
+    if user_text:
+        context.append(ToolTraceContext(role="user", text=user_text))
+    if assistant_text:
+        context.append(ToolTraceContext(role="assistant", text=assistant_text))
+    return context or None
 
 
 def _parse_result(content: str | None) -> dict[str, object]:

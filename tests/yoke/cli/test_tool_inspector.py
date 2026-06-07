@@ -12,6 +12,7 @@ from yoke.cli.interactive.tool_inspector import ToolInspectorState
 from yoke.cli.interactive.tool_inspector_render import detail_text
 from yoke.cli.interactive.tool_inspector_render import render_view
 from yoke.cli.interactive.tool_inspector_render import render_view_html
+from yoke.cli.interactive.tool_inspector_render import sidebar_items
 from yoke.cli.interactive.tool_trace import ToolTraceStore
 from yoke.cli.interactive.tool_trace import ToolTraceEntry
 from yoke.cli.interactive.tool_trace import entries_from_messages
@@ -45,6 +46,33 @@ def test_entries_from_messages_pairs_tool_calls_with_full_results() -> None:
     assert entries[0].raw_arguments == '{"path": "notes.txt"}'
     assert entries[0].result == {"ok": True, "content": "hello"}
     assert entries[0].status == "ok"
+
+
+def test_entries_from_messages_attaches_user_and_assistant_context() -> None:
+    messages = [
+        Message.user("please inspect the config"),
+        Message(
+            role="assistant",
+            content="I will read the config first.",
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    function=ToolFunction(
+                        name="read",
+                        arguments=json.dumps({"path": "config.json"}),
+                    ),
+                )
+            ],
+        ),
+    ]
+
+    entries = entries_from_messages(messages)
+
+    assert entries[0].context is not None
+    assert [(item.role, item.text) for item in entries[0].context] == [
+        ("user", "please inspect the config"),
+        ("assistant", "I will read the config first."),
+    ]
 
 
 def test_live_trace_store_records_executed_arguments_and_failures() -> None:
@@ -141,7 +169,7 @@ def test_tool_inspector_detail_text_formats_text_result_blocks() -> None:
     assert '"exit_status": 0' in text
 
 
-def test_tool_inspector_starts_on_last_tool_call() -> None:
+def test_tool_inspector_starts_on_last_sidebar_item() -> None:
     state = ToolInspectorState(
         entries=[
             ToolTraceEntry(tool_call_id="call-1", tool_name="read"),
@@ -150,6 +178,30 @@ def test_tool_inspector_starts_on_last_tool_call() -> None:
     )
 
     assert state.selected_index == 1
+
+
+def test_tool_inspector_starts_after_context_rows() -> None:
+    entries = entries_from_messages(
+        [
+            Message.user("inspect this"),
+            Message(
+                role="assistant",
+                content="I will read it.",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        function=ToolFunction(
+                            name="read",
+                            arguments=json.dumps({"path": "src/app.py"}),
+                        ),
+                    )
+                ],
+            ),
+        ]
+    )
+    state = ToolInspectorState(entries=entries)
+
+    assert state.selected_index == 2
 
 
 def test_tool_inspector_footer_shows_detail_scroll_position(
@@ -218,10 +270,75 @@ def test_tool_inspector_sidebar_colors_statuses(monkeypatch) -> None:
         ]
     )
 
-    html = render_view_html(state, state.entries)
+    html = render_view_html(state, sidebar_items(state.entries))
 
     assert "<ansigreen>" in html
     assert "<ansired>" in html
+
+
+def test_tool_inspector_sidebar_shows_conversation_context(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        lambda: (100, 16),
+    )
+    entries = entries_from_messages(
+        [
+            Message.user("why was this file read?"),
+            Message(
+                role="assistant",
+                content="I need the current implementation.",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        function=ToolFunction(
+                            name="read",
+                            arguments=json.dumps({"path": "src/app.py"}),
+                        ),
+                    )
+                ],
+            ),
+        ]
+    )
+    state = ToolInspectorState(entries=entries)
+
+    html = render_view_html(state, sidebar_items(state.entries))
+
+    assert "usr why was this file read?" in html
+    assert "<ansiblue>  asst I need the current implem…</ansiblue>" in html
+    assert "&gt; ? read" in html
+
+
+def test_tool_inspector_context_rows_are_selectable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        lambda: (100, 16),
+    )
+    entries = entries_from_messages(
+        [
+            Message.user("why this tool?"),
+            Message(
+                role="assistant",
+                content="Because I need evidence.",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        function=ToolFunction(
+                            name="read",
+                            arguments=json.dumps({"path": "src/app.py"}),
+                        ),
+                    )
+                ],
+            ),
+        ]
+    )
+    state = ToolInspectorState(entries=entries)
+    state.selected_index = 1
+
+    html = render_view_html(state, sidebar_items(state.entries))
+
+    assert "&gt; asst Because I need evidence." in html
+    assert "Assistant Message" in html
+    assert "Because I need evidence." in html
 
 
 def test_tool_inspector_highlights_active_pane_and_dims_inactive_sidebar(
