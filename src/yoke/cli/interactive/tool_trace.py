@@ -34,6 +34,7 @@ class ToolTraceEntry:
     ended_at: float | None = None
     status: str = "pending"
     context: list[ToolTraceContext] | None = None
+    after_context: list[ToolTraceContext] | None = None
 
     @property
     def duration_seconds(self) -> float | None:
@@ -129,6 +130,7 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
     order: list[str] = []
     recent_user_text: str | None = None
     pending_user_context = False
+    last_tool_call_id: str | None = None
     for message in messages:
         if message.role == "user":
             recent_user_text = message.text_content()
@@ -136,6 +138,14 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
             continue
         if message.role == "assistant":
             assistant_text = message.text_content()
+            if not message.tool_calls:
+                if assistant_text and last_tool_call_id in entries:
+                    entry = entries[last_tool_call_id]
+                    entry.after_context = [
+                        *(entry.after_context or []),
+                        ToolTraceContext(role="assistant", text=assistant_text),
+                    ]
+                continue
             for index, tool_call in enumerate(message.tool_calls):
                 if tool_call.id not in entries:
                     order.append(tool_call.id)
@@ -151,6 +161,7 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
                     if index == 0
                     else None,
                 )
+                last_tool_call_id = tool_call.id
             if message.tool_calls:
                 pending_user_context = False
             continue
@@ -167,6 +178,7 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
         result = _parse_result(message.plain_text_content)
         entry.result = result
         entry.status = "ok" if result.get("ok", True) else "failed"
+        last_tool_call_id = message.tool_call_id
     return [entries[tool_call_id] for tool_call_id in order]
 
 
@@ -203,6 +215,9 @@ def _copy_entry(entry: ToolTraceEntry) -> ToolTraceEntry:
         ended_at=entry.ended_at,
         status=entry.status,
         context=list(entry.context) if entry.context is not None else None,
+        after_context=list(entry.after_context)
+        if entry.after_context is not None
+        else None,
     )
 
 
@@ -222,6 +237,7 @@ def _overlay_entry(
     entry.ended_at = update.ended_at or entry.ended_at
     entry.status = update.status or entry.status
     entry.context = update.context or entry.context
+    entry.after_context = update.after_context or entry.after_context
     return entry
 
 

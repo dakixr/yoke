@@ -209,6 +209,8 @@ def sidebar_items(entries: list[ToolTraceEntry]) -> list[ToolInspectorItem]:
         if entry.context:
             items.extend(entry.context)
         items.append(entry)
+        if entry.after_context:
+            items.extend(entry.after_context)
     return items
 
 
@@ -278,7 +280,7 @@ def _context_line(
         return f"<ansibrightblack>{escape(text)}</ansibrightblack>"
     if context.role == "assistant":
         return f"<ansiblue>{escape(text)}</ansiblue>"
-    return escape(text)
+    return f"<ansiwhite>{escape(text)}</ansiwhite>"
 
 
 def _compact_sidebar_text(text: str) -> str:

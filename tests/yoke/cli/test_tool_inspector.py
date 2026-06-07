@@ -117,6 +117,34 @@ def test_entries_from_messages_does_not_repeat_user_context_per_tool_batch() -> 
     ]
 
 
+def test_entries_from_messages_attaches_final_assistant_after_tool_batch() -> None:
+    messages = [
+        Message.user("inspect this"),
+        Message(
+            role="assistant",
+            content="I will read first.",
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    function=ToolFunction(
+                        name="read",
+                        arguments=json.dumps({"path": "a.py"}),
+                    ),
+                )
+            ],
+        ),
+        Message.tool("call-1", json.dumps({"ok": True})),
+        Message.assistant("The file is fine."),
+    ]
+
+    entries = entries_from_messages(messages)
+
+    assert entries[0].after_context is not None
+    assert [(item.role, item.text) for item in entries[0].after_context] == [
+        ("assistant", "The file is fine."),
+    ]
+
+
 def test_live_trace_store_records_executed_arguments_and_failures() -> None:
     store = ToolTraceStore()
 
@@ -345,7 +373,7 @@ def test_tool_inspector_sidebar_shows_conversation_context(monkeypatch) -> None:
 
     html = render_view_html(state, sidebar_items(state.entries))
 
-    assert "usr why was this file read?" in html
+    assert "<ansiwhite>  usr why was this file read?" in html
     assert "<ansiblue>  asst I need the current implem…</ansiblue>" in html
     assert "&gt; ? read" in html
 
@@ -381,6 +409,41 @@ def test_tool_inspector_context_rows_are_selectable(monkeypatch) -> None:
     assert "&gt; asst Because I need evidence." in html
     assert "Assistant Message" in html
     assert "Because I need evidence." in html
+
+
+def test_tool_inspector_sidebar_shows_final_assistant_after_tools(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        lambda: (100, 16),
+    )
+    entries = entries_from_messages(
+        [
+            Message.user("inspect this"),
+            Message(
+                role="assistant",
+                content="I will read first.",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        function=ToolFunction(
+                            name="read",
+                            arguments=json.dumps({"path": "a.py"}),
+                        ),
+                    )
+                ],
+            ),
+            Message.tool("call-1", json.dumps({"ok": True})),
+            Message.assistant("The file is fine."),
+        ]
+    )
+    state = ToolInspectorState(entries=entries)
+
+    html = render_view_html(state, sidebar_items(state.entries))
+
+    assert "<ansiblue>&gt; asst The file is fine." in html
+    assert "Assistant Message" in html
 
 
 def test_tool_inspector_highlights_active_pane_and_dims_inactive_sidebar(
