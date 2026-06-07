@@ -75,6 +75,48 @@ def test_entries_from_messages_attaches_user_and_assistant_context() -> None:
     ]
 
 
+def test_entries_from_messages_does_not_repeat_user_context_per_tool_batch() -> None:
+    messages = [
+        Message.user("do the thing"),
+        Message(
+            role="assistant",
+            content="First I will inspect files.",
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    function=ToolFunction(
+                        name="read",
+                        arguments=json.dumps({"path": "a.py"}),
+                    ),
+                )
+            ],
+        ),
+        Message.tool("call-1", json.dumps({"ok": True})),
+        Message(
+            role="assistant",
+            content="Now I will patch it.",
+            tool_calls=[
+                ToolCall(
+                    id="call-2",
+                    function=ToolFunction(
+                        name="apply_patch",
+                        arguments=json.dumps({"input": "patch"}),
+                    ),
+                )
+            ],
+        ),
+    ]
+
+    entries = entries_from_messages(messages)
+
+    assert entries[0].context is not None
+    assert [item.role for item in entries[0].context] == ["user", "assistant"]
+    assert entries[1].context is not None
+    assert [(item.role, item.text) for item in entries[1].context] == [
+        ("assistant", "Now I will patch it."),
+    ]
+
+
 def test_live_trace_store_records_executed_arguments_and_failures() -> None:
     store = ToolTraceStore()
 

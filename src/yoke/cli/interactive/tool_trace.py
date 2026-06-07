@@ -128,9 +128,11 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
     entries: dict[str, ToolTraceEntry] = {}
     order: list[str] = []
     recent_user_text: str | None = None
+    pending_user_context = False
     for message in messages:
         if message.role == "user":
             recent_user_text = message.text_content()
+            pending_user_context = bool(recent_user_text)
             continue
         if message.role == "assistant":
             assistant_text = message.text_content()
@@ -143,12 +145,14 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
                     raw_arguments=tool_call.function.arguments,
                     status="pending",
                     context=_message_context(
-                        user_text=recent_user_text,
+                        user_text=recent_user_text if pending_user_context else None,
                         assistant_text=assistant_text,
                     )
                     if index == 0
                     else None,
                 )
+            if message.tool_calls:
+                pending_user_context = False
             continue
         if message.role != "tool" or message.tool_call_id is None:
             continue
