@@ -175,13 +175,14 @@ yoke resume --all
 yoke resume 20240421-143022-abc1
 ```
 
-Sessions are stored under `~/.yoke/sessions/` as `.jsonl` files and auto-expire
-after 30 days. The CLI owns session files, indexes, ids, and resume selection;
-the stored agent state uses structured conversation entries so memory
-snapshots, typed compaction handoffs, and branched session trees can be
-restored without flattening to transcript text. Older `.json` sessions are
-migrated automatically at startup, and older linear sessions are migrated on
-load by assigning entry ids, parent links, timestamps, and an active leaf.
+Sessions are stored under `~/.yoke/sessions/` as append-oriented `.jsonl` event
+streams and auto-expire after 30 days. The CLI owns session files, indexes,
+ids, and resume selection; the stored agent state uses structured conversation
+entries so memory snapshots, typed compaction handoffs, and branched session
+trees can be restored without flattening to transcript text. Older `.json`
+sessions are migrated automatically at startup, and older linear sessions are
+migrated on load by assigning entry ids, parent links, timestamps, and an active
+leaf.
 
 `/tree` is available in the prompt-toolkit TUI. It opens a fullscreen navigator
 over the session entries. Selecting a user entry rewinds to that entry's parent
@@ -189,8 +190,9 @@ and puts the selected user text back in the editor, so submitting it creates a
 new branch. Selecting an assistant, tool, compaction, or summary entry continues
 after that entry. Navigation never deletes abandoned history; future turns are
 built only from the active branch. The selector supports search, filter cycling,
-local folding, and entry labels stored as metadata. Before moving branches, yoke
-asks whether to create a branch summary; `No summary` is the default, while
+local folding, color-coded entry types, and entry labels stored as metadata.
+Before moving branches, yoke asks whether to create a branch summary; `No
+summary` is the default, while
 custom summary guidance is appended to the standard summary prompt when chosen.
 
 In a terminal, `yoke resume` opens a keyboard-driven selector with aligned

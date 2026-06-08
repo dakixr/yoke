@@ -20,7 +20,7 @@ directories. The SDK lets you pass exactly the tools you want.
 Skills are reusable instruction sets — Markdown files that tell the agent *how* to approach a class of task (code review, writing tests, debugging, etc.). You create them once and activate them by name.
 
 ### Sessions
-The CLI persists conversation history so you can resume where you left off. Each session is stored under `~/.yoke/sessions/` as a `.jsonl` file.
+The CLI persists conversation history so you can resume where you left off. Each session is stored under `~/.yoke/sessions/` as an append-oriented `.jsonl` event stream.
 
 ### Providers
 yoke connects to an LLM provider (Codex, Codex WebSockets, GitHub Copilot, OpenCode Go, Z.ai, or any OpenAI-compatible endpoint) to power the agent.

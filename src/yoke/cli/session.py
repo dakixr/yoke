@@ -178,7 +178,10 @@ class SessionStore:
         )
 
         self.directory.mkdir(parents=True, exist_ok=True)
-        path = self._write_session_record(record)
+        if existing_path is not None and existing_path.suffix == SESSION_FILE_SUFFIX:
+            path = self._save_session_record(record, existing)
+        else:
+            path = self._write_session_record(record)
         self._update_index(record)
         return path
 
@@ -291,6 +294,11 @@ class SessionStore:
     def _migrate_legacy_sessions(self) -> None:
         if not self.directory.exists():
             return
+        for path in self.directory.glob(f"*{SESSION_FILE_SUFFIX}"):
+            session_id = path.stem
+            if not SESSION_ID_PATTERN.fullmatch(session_id):
+                continue
+            self._migrate_snapshot_session_file(session_id)
         for path in self.directory.glob(f"*{LEGACY_SESSION_FILE_SUFFIX}"):
             if path.name == SESSION_INDEX_NAME:
                 continue
@@ -315,15 +323,63 @@ class SessionStore:
         self._update_index(record)
         return target_path
 
+    def _migrate_snapshot_session_file(self, session_id: str) -> Path:
+        path = self._session_path(session_id)
+        if not path.exists():
+            return path
+        raw_text = path.read_text(encoding="utf-8")
+        if raw_text.lstrip().startswith('{"type":"session_stream"'):
+            return path
+        record = self._decode_session_record(raw_text)
+        if record.id != session_id:
+            record = record.model_copy(update={"id": session_id})
+        self._write_session_record(record)
+        self._update_index(record)
+        return path
+
     def _decode_session_record(self, raw_text: str) -> SessionRecord:
         stripped = raw_text.lstrip()
         if stripped.startswith('{"type":"session_record"'):
             return SessionRecord.model_validate_json(
                 self._json_object_from_jsonl(raw_text)
             )
+        if stripped.startswith('{"type":"session_stream"'):
+            return self._decode_session_event_stream(raw_text)
         if stripped.startswith("{"):
-            return SessionRecord.model_validate_json(raw_text)
-        return SessionRecord.model_validate_json(self._json_object_from_jsonl(raw_text))
+            try:
+                return SessionRecord.model_validate_json(raw_text)
+            except ValidationError:
+                return self._decode_session_event_stream(raw_text)
+        try:
+            return SessionRecord.model_validate_json(self._json_object_from_jsonl(raw_text))
+        except (json.JSONDecodeError, ValidationError, ValueError):
+            return self._decode_session_event_stream(raw_text)
+
+    def _save_session_record(
+        self,
+        record: SessionRecord,
+        existing: SessionRecord,
+    ) -> Path:
+        path = self._session_path(record.id)
+        if self._can_append_session_record(record, existing):
+            with path.open("a", encoding="utf-8") as file:
+                file.write(self._metadata_jsonl(record))
+                for entry in record.conversation_entries[
+                    len(existing.conversation_entries) :
+                ]:
+                    file.write(self._entry_jsonl(entry))
+            return path
+        return self._write_session_record(record)
+
+    def _can_append_session_record(
+        self,
+        record: SessionRecord,
+        existing: SessionRecord,
+    ) -> bool:
+        existing_entry_count = len(existing.conversation_entries)
+        if len(record.conversation_entries) < existing_entry_count:
+            return False
+        return record.conversation_entries[:existing_entry_count] == existing.conversation_entries
 
     def _write_session_record(self, record: SessionRecord) -> Path:
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -335,13 +391,65 @@ class SessionStore:
         return path
 
     def _record_jsonl(self, record: SessionRecord) -> str:
-        payload = record.model_dump(mode="json")
-        return "\n".join(
-            [
-                json.dumps({"type": "session_record", "version": 1}, separators=(",", ":"), ensure_ascii=False),
-                json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
-            ]
+        return (
+            json.dumps(
+                {"type": "session_stream", "version": 1},
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            + "\n"
+            + self._metadata_jsonl(record)
+            + "".join(self._entry_jsonl(entry) for entry in record.conversation_entries)
+        )
+
+    def _metadata_jsonl(self, record: SessionRecord) -> str:
+        payload = record.model_dump(
+            mode="json",
+            exclude={"conversation_entries"},
+        )
+        return json.dumps(
+            {"type": "session_metadata", "record": payload},
+            separators=(",", ":"),
+            ensure_ascii=False,
         ) + "\n"
+
+    def _entry_jsonl(self, entry: ConversationEntry) -> str:
+        return json.dumps(
+            {"type": "conversation_entry", "entry": entry.model_dump(mode="json")},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ) + "\n"
+
+    def _decode_session_event_stream(self, raw_text: str) -> SessionRecord:
+        metadata: dict[str, object] = {}
+        entries: list[ConversationEntry] = []
+        for line in raw_text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            payload = json.loads(stripped)
+            if not isinstance(payload, dict):
+                continue
+            line_type = payload.get("type")
+            if line_type == "session_stream":
+                continue
+            if line_type == "session_metadata" and isinstance(payload.get("record"), dict):
+                metadata.update(payload["record"])
+                continue
+            if line_type == "conversation_entry" and isinstance(payload.get("entry"), dict):
+                entries.append(ConversationEntry.model_validate(payload["entry"]))
+                continue
+            if "kind" in payload and "message" in payload:
+                entries.append(ConversationEntry.model_validate(payload))
+                continue
+            metadata.update(payload)
+        if not entries and not metadata:
+            raise ValueError("No recoverable session events found.")
+        metadata["conversation_entries"] = entries
+        metadata.setdefault("id", "legacy-session")
+        if entries and not metadata.get("leaf_id"):
+            metadata["leaf_id"] = entries[-1].id
+        return SessionRecord.model_validate(metadata)
 
     def _json_object_from_jsonl(self, raw_text: str) -> str:
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]

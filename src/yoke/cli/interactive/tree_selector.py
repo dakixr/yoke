@@ -34,6 +34,19 @@ BRANCH_STYLES: tuple[str, ...] = (
     "ansicyan",
 )
 
+KIND_STYLES: dict[str, str] = {
+    "instruction": "ansibrightblack bold",
+    "user": "ansigreen bold",
+    "assistant": "ansiblue bold",
+    "assistant_tool_calls": "ansimagenta bold",
+    "tool_result": "ansicyan bold",
+    "control": "ansiyellow bold",
+    "memory_snapshot": "ansibrightmagenta bold",
+    "skill_event": "ansibrightcyan bold",
+    "compaction_summary": "ansibrightyellow bold",
+    "branch_summary": "ansibrightblue bold",
+}
+
 
 @dataclass(slots=True)
 class TreeSelectorResult:
@@ -281,9 +294,16 @@ def _format_row(
     text = _entry_text(row.entry)
     prefix = _format_branch_prefix(row.graph_prefix or "")
     marker = [("ansiyellow", "● ")] if row.current else []
-    suffix = f"{folded}{row.entry.kind}{label}: {text}"
+    kind_style = KIND_STYLES.get(row.entry.kind, "bold")
     return _truncate_fragments(
-        [*prefix, *marker, ("", suffix)],
+        [
+            *prefix,
+            *marker,
+            ("", folded),
+            (kind_style, row.entry.kind),
+            ("ansibrightblack", label),
+            ("", f": {text}"),
+        ],
         max(20, terminal_columns - 1),
     )
 

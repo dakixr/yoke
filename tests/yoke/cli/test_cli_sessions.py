@@ -4,6 +4,15 @@ from __future__ import annotations
 from .support import *  # noqa: F403, F405
 
 
+def _jsonl_conversation_entries(path: Path) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        payload = json.loads(line)
+        if payload.get("type") == "conversation_entry":
+            entries.append(payload["entry"])
+    return entries
+
+
 def test_cli_session_jsonl_keeps_transcript_after_compaction(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -58,23 +67,15 @@ def test_cli_session_jsonl_keeps_transcript_after_compaction(
         "older answer alpha" in (message.content or "") for message in record.messages
     )
     assert any(entry.kind == "memory_snapshot" for entry in record.conversation_entries)
-    payload = json.loads(
-        (session_dir / "compact-demo.jsonl").read_text(encoding="utf-8").splitlines()[-1]
-    )
-    assert "messages" not in payload
+    entries = _jsonl_conversation_entries(session_dir / "compact-demo.jsonl")
     assert any(
         "older answer alpha" in (entry["message"].get("content") or "")
-        for entry in payload["conversation_entries"]
+        for entry in entries
         if entry.get("message") is not None
     )
-    assert any(
-        entry["kind"] == "memory_snapshot" for entry in payload["conversation_entries"]
-    )
-    memory_entries = [
-        entry
-        for entry in payload["conversation_entries"]
-        if entry["kind"] == "memory_snapshot"
-    ]
+    assert all("messages" not in entry for entry in entries)
+    assert any(entry["kind"] == "memory_snapshot" for entry in entries)
+    memory_entries = [entry for entry in entries if entry["kind"] == "memory_snapshot"]
     handoff = memory_entries[-1]["metadata"]["compaction_handoff"]
     assert handoff["summary_text"] == "summary of older work"
     assert handoff["reason"] == "threshold"
@@ -119,13 +120,9 @@ def test_cli_persists_compaction_handoff_after_provider_error(
     )
 
     assert exit_code == 1
-    payload = json.loads(
-        (session_dir / "failed-compact.jsonl").read_text(encoding="utf-8").splitlines()[-1]
-    )
+    entries = _jsonl_conversation_entries(session_dir / "failed-compact.jsonl")
     memory_entries = [
-        entry
-        for entry in payload["conversation_entries"]
-        if entry["kind"] == "memory_snapshot"
+        entry for entry in entries if entry["kind"] == "memory_snapshot"
     ]
     assert memory_entries
     handoff = memory_entries[-1]["metadata"]["compaction_handoff"]
