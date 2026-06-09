@@ -232,7 +232,7 @@ class CodexWebSockets(CodexSubscriptionProvider):
             except ProviderError as exc:
                 last_error = exc
                 self._close_websocket()
-                if exc.status_code == 401 or is_invalid_oauth_token_error(exc):
+                if exc.status_code == 401 or is_invalid_oauth_token_error(str(exc)):
                     credentials = self._recover_invalid_oauth_credentials(
                         auth_profile=auth_profile,
                         request_id=request_log_id,

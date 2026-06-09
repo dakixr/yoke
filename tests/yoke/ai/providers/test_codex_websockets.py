@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from yoke.agent.models import Message
+from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex_subscription import OAuthCredentials
 from yoke.ai.providers.codex_websockets import CodexWebSockets
 from yoke.ai.providers.codex_websockets import CodexWebSocketsConfig
@@ -175,3 +178,44 @@ def test_codex_websockets_complete_sends_request_frame_and_headers(
     assert factory_calls[0]["ping_timeout"] == 20.0
     assert '"type":"response.create"' in sent_payloads[0]
     assert '"model":"gpt-5.4"' in sent_payloads[0]
+
+
+def test_codex_websockets_complete_preserves_non_oauth_provider_error(
+    tmp_path: Path,
+) -> None:
+    class FakeWebSocket:
+        def send(self, payload: str) -> None:
+            del payload
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            raise ProviderError("Codex WebSocket closed before response.completed.")
+
+        def close(self) -> None:
+            return None
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / ".codex" / "auth.json",
+            accounts_dir=tmp_path / ".codex-auth" / "accounts",
+            auths_path=tmp_path / ".yoke" / "providers" / "codex-auth" / "auths.json",
+            selection_path=tmp_path
+            / ".yoke"
+            / "providers"
+            / "codex-auth"
+            / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+            model="gpt-5.4",
+            max_retries=0,
+        ),
+        websocket_factory=lambda url, **kwargs: FakeWebSocket(),
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+
+    with pytest.raises(ProviderError, match="closed before response.completed"):
+        provider.complete([Message.user("hello")], [])
