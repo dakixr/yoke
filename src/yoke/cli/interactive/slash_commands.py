@@ -11,6 +11,11 @@ from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import resolve_image_path
 from yoke.cli.interactive.model_commands import handle_switch_model
+from yoke.cli.interactive.common import COMPACTION_IN_PROGRESS_NOTICE
+from yoke.cli.interactive.common import PendingPrompt
+from yoke.cli.interactive.common import SHORTCUTS_NOTICE
+from yoke.cli.interactive.queue_manager import edit_queue_prompt
+from yoke.cli.interactive.queue_manager import open_queue_manager
 from yoke.cli.interactive.tree_selector import prompt_tree_label
 from yoke.cli.interactive.tree_selector import (
     select_tree_entry_interactive,
@@ -29,15 +34,6 @@ from yoke.cli.runtime.tree import get_session_tree
 from yoke.cli.runtime.tree import navigate_session_tree
 from yoke.cli.runtime.tree import set_entry_label
 
-COMPACTION_IN_PROGRESS_NOTICE = "Compacting conversation..."
-SHORTCUTS_NOTICE = (
-    "Keyboard shortcuts: Enter = steer/send, Tab = queue, Shift+Tab = "
-    "cycle thinking effort, Esc Esc = stop current turn, Ctrl+J = "
-    "newline, Ctrl+V = paste image or text, Ctrl+U = "
-    "remove last pending image."
-)
-
-
 def handle_slash_command(  # noqa: C901
     command: str,
     *,
@@ -46,8 +42,10 @@ def handle_slash_command(  # noqa: C901
     messages: list[Message],
     console: Console,
     pending_images: list[ImageAttachment] | None = None,
+    pending_prompts: list[PendingPrompt] | None = None,
     on_context_usage: Callable[[dict[str, object]], None] | None = None,
     on_editor_text: Callable[[str], None] | None = None,
+    on_queue_changed: Callable[[], None] | None = None,
 ) -> tuple[bool, list[Message], ActiveSession]:
     """Handle slash commands and return updated state."""
     from yoke.cli.render import print_scrollback_notice
@@ -68,6 +66,29 @@ def handle_slash_command(  # noqa: C901
             return True, messages, active_session
         pending_images.append(ImageAttachment(path=resolved))
         print_scrollback_notice(console, f"Attached image: {resolved.name}")
+        if on_queue_changed is not None:
+            on_queue_changed()
+        return True, messages, active_session
+    if normalized == "/queue" or normalized.startswith("/queue "):
+        if pending_prompts is None:
+            print_scrollback_notice(
+                console, "/queue is only available in the prompt-toolkit TUI."
+            )
+            return True, messages, active_session
+        if normalized != "/queue":
+            print_scrollback_notice(console, "Use /queue without arguments.")
+            return True, messages, active_session
+        updated = open_queue_manager(
+            pending_prompts,
+            edit_prompt=edit_queue_prompt,
+        )
+        if updated is None:
+            print_scrollback_notice(console, "Queue manager cancelled.")
+            return True, messages, active_session
+        pending_prompts[:] = updated
+        if on_queue_changed is not None:
+            on_queue_changed()
+        print_scrollback_notice(console, f"Queue updated: {len(pending_prompts)} pending.")
         return True, messages, active_session
     if normalized == "/skill" or normalized.startswith("/skill "):
         _handle_skill_load(command, agent, active_session, messages, console)

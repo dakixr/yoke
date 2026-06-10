@@ -169,14 +169,27 @@ def finish_prompt_turn(
         state.worker = None
         state.active_stop_request = None
         state.active_user_message = None
-        if state.pending_prompts:
-            next_prompt = state.pending_prompts.pop(0)
+        if any(not prompt.paused for prompt in state.pending_prompts):
+            next_index = next_pending_prompt_index(state.pending_prompts)
+            if next_index is not None:
+                next_prompt = state.pending_prompts.pop(next_index)
         else:
             should_finish = state.shutdown_requested
     state.context_usage_text = estimate_toolbar_context_usage("")
     if next_prompt is None:
         return None, None, should_finish
     return next_prompt.prompt, next_prompt.user_message, should_finish
+
+
+def next_pending_prompt_index(prompts: list[PendingPrompt]) -> int | None:
+    """Return the next runnable prompt, prioritizing steering items."""
+    for index, prompt in enumerate(prompts):
+        if prompt.kind == "steering" and not prompt.paused:
+            return index
+    for index, prompt in enumerate(prompts):
+        if not prompt.paused:
+            return index
+    return None
 
 
 def get_active_turn_state(

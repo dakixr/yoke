@@ -113,8 +113,12 @@ turn.
 - Press `Ctrl+U` to remove the last pending image attachment.
 - Press `Ctrl+O` to open the fullscreen tool inspector. It shows complete
   tool call arguments, executed arguments, results, status, and duration.
+- Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can
+  edit, delete, promote, reorder, pause, or mark pending prompts as steering.
 - Press `Enter` to steer/send immediately while a turn is running.
-- Press `Tab` to queue the prompt behind the current turn.
+- Press `Tab` to queue the prompt behind the current turn. Queued prompts and
+  pending image attachments are persisted in a per-session sidecar and restored
+  on resume/restart.
 - While slash-command completions are open, use `Up`/`Down` to move between
   options; `Left`/`Right` keep moving the cursor in the prompt text.
 - Press `Esc Esc` to stop the current turn; yoke waits for the turn to record

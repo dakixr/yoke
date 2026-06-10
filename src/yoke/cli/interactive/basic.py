@@ -20,11 +20,11 @@ from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import TurnFailure
 from yoke.cli.interactive.common import TurnStopped
 from yoke.cli.interactive.common import TurnSuccess
-from yoke.cli.interactive.common import handle_slash_command
 from yoke.cli.interactive.common import (
     partial_conversation_entries_from_error,
 )
 from yoke.cli.interactive.common import partial_messages_from_error
+from yoke.cli.interactive.slash_commands import handle_slash_command
 from yoke.cli.render import InteractiveRenderer
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console

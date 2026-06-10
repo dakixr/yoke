@@ -6,10 +6,13 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
+from datetime import UTC
+from datetime import datetime
 from threading import Event
 from threading import Thread
 from typing import Literal
 from typing import Protocol
+from uuid import uuid4
 
 from yoke.agent.context.manager import _drop_incomplete_tool_turns
 from yoke.agent.loop import AgentResult
@@ -18,14 +21,15 @@ from yoke.cli.image_input import ImageAttachment
 from yoke.agent.models import ConversationEntry
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import estimate_context_usage
-from yoke.cli.interactive.slash_commands import (
-    handle_slash_command as handle_slash_command,
-)
-from yoke.cli.interactive.slash_commands import (
-    COMPACTION_IN_PROGRESS_NOTICE as COMPACTION_IN_PROGRESS_NOTICE,
-)
-from yoke.cli.interactive.slash_commands import (
-    SHORTCUTS_NOTICE as SHORTCUTS_NOTICE,
+
+COMPACTION_IN_PROGRESS_NOTICE = "Compacting conversation..."
+SHORTCUTS_NOTICE = (
+    "Keyboard shortcuts: Enter = steer/send, Tab = queue, Shift+Tab = "
+    "cycle thinking effort, Esc Esc = stop current turn, Ctrl+J = "
+    "newline, Ctrl+V = paste image or text, Ctrl+U = "
+    "remove last pending image, Ctrl+O = open tool inspector, "
+    "Ctrl+Q = open queue manager, Ctrl+X M = switch model, "
+    "Ctrl+X T = open tree."
 )
 
 
@@ -35,6 +39,13 @@ class InputFunc(Protocol):
     def __call__(self, prompt: object = "", /) -> str:
         """Read the next input value."""
         ...
+
+
+def handle_slash_command(*args, **kwargs):
+    """Dispatch a slash command without importing the dispatcher eagerly."""
+    from yoke.cli.interactive.slash_commands import handle_slash_command as dispatch
+
+    return dispatch(*args, **kwargs)
 
 
 @dataclass(slots=True)
@@ -74,6 +85,22 @@ class PendingPrompt:
     prompt: str
     kind: Literal["queued", "steering"] = "queued"
     user_message: Message | None = None
+    id: str = field(default_factory=lambda: uuid4().hex[:8])
+    created_at: str = field(
+        default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
+    )
+    paused: bool = False
+
+    def copy_for_queue(self) -> PendingPrompt:
+        """Return a mutable copy preserving queue metadata."""
+        return PendingPrompt(
+            self.prompt,
+            kind=self.kind,
+            user_message=self.user_message,
+            id=self.id,
+            created_at=self.created_at,
+            paused=self.paused,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +130,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         "/tools",
         "Toggle tools for this session, this root, or globally.",
     ),
+    SlashCommand("/queue", "Open the interactive prompt queue manager."),
     SlashCommand("/image", "Attach an image file to the next prompt.", "path"),
     SlashCommand(
         "/skill",

@@ -33,6 +33,7 @@ from yoke.cli.runtime import persist_session_state
 from yoke.cli.interactive.prompt_turns import finish_prompt_turn
 from yoke.cli.interactive.prompt_turns import handle_prompt_turn_outcome
 from yoke.cli.interactive.prompt_turns import run_prompt_turn
+from yoke.cli.interactive.queue_persistence import persist_prompt_queue
 
 
 @dataclass(slots=True)
@@ -168,6 +169,11 @@ def create_prompt_toolkit_control(
                     kind="steering",
                 ),
             )
+            persist_prompt_queue(
+                active_session_ref["active_session"],
+                state.pending_prompts,
+                state.pending_images,
+            )
             state.status_message = "Stopping current turn for steering"
         invalidate_prompt()
         return True
@@ -251,6 +257,11 @@ def start_prompt_compaction(
             estimate_toolbar_context_usage=estimate_toolbar_context_usage,
         )
         if next_prompt is not None:
+            persist_prompt_queue(
+                active_session_ref["active_session"],
+                state.pending_prompts,
+                state.pending_images,
+            )
             start_turn(next_prompt, next_user_message)
             return
         if should_finish:

@@ -34,6 +34,9 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     cycle_thinking_effort: Callable[[], str | None],
     update_status: Callable[[str], None],
     open_tool_inspector: Callable[[], None] | None = None,
+    open_model_selector: Callable[[str], None] | None = None,
+    open_tree_selector: Callable[[str], None] | None = None,
+    open_queue_manager: Callable[[str], None] | None = None,
 ) -> None:
     """Register prompt-toolkit key bindings."""
 
@@ -108,6 +111,30 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         del event
         if open_tool_inspector is not None:
             open_tool_inspector()
+
+    @key_bindings.add("c-q")
+    def _open_queue_manager(event) -> None:
+        if open_queue_manager is None:
+            return
+        open_queue_manager(event.current_buffer.text)
+        event.current_buffer.text = "/queue"
+        event.current_buffer.validate_and_handle()
+
+    @key_bindings.add("c-x", "m")
+    def _open_model_selector(event) -> None:
+        if open_model_selector is None:
+            return
+        open_model_selector(event.current_buffer.text)
+        event.current_buffer.text = "/model"
+        event.current_buffer.validate_and_handle()
+
+    @key_bindings.add("c-x", "t")
+    def _open_tree_selector(event) -> None:
+        if open_tree_selector is None:
+            return
+        open_tree_selector(event.current_buffer.text)
+        event.current_buffer.text = "/tree"
+        event.current_buffer.validate_and_handle()
 
     try:
         key_bindings.add("s-enter")(_insert_newline)

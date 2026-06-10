@@ -300,7 +300,7 @@ class SessionStore:
                 continue
             self._migrate_snapshot_session_file(session_id)
         for path in self.directory.glob(f"*{LEGACY_SESSION_FILE_SUFFIX}"):
-            if path.name == SESSION_INDEX_NAME:
+            if path.name == SESSION_INDEX_NAME or path.name.endswith(".queue.json"):
                 continue
             session_id = path.stem
             if not SESSION_ID_PATTERN.fullmatch(session_id):

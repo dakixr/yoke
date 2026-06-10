@@ -36,6 +36,8 @@ from yoke.cli.interactive.prompt_rendering import (
     initialize_prompt_toolkit_session,
 )
 from yoke.cli.interactive.prompt_rendering import run_scrollback_render
+from yoke.cli.interactive.queue_persistence import load_prompt_queue
+from yoke.cli.interactive.queue_persistence import persist_prompt_queue
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import open_tool_inspector
 from yoke.cli.interactive.tool_trace import ToolTraceStore
@@ -74,9 +76,11 @@ def run_prompt_toolkit_cli(  # noqa: C901
     from prompt_toolkit.application.run_in_terminal import run_in_terminal
     from prompt_toolkit.key_binding import KeyBindings
 
+    restored_prompts, restored_images = load_prompt_queue(active_session)
     state = PromptCliState(
         messages=list(session_messages),
-        pending_prompts=[],
+        pending_prompts=restored_prompts,
+        pending_images=restored_images,
         abandoned_turn_ids=set(),
         steered_turn_ids=set(),
         thinking_effort=args.reasoning_effort,
@@ -103,6 +107,11 @@ def run_prompt_toolkit_cli(  # noqa: C901
     session_ref: dict[str, ActiveSession] = {"active_session": active_session}
     root_label = format_root_label(active_session.root)
     tool_trace_store = ToolTraceStore()
+    if restored_prompts or restored_images:
+        print_scrollback_notice(
+            scrollback_console,
+            f"Restored {len(restored_prompts)} queued prompt(s). Use /queue or Ctrl+Q to review.",
+        )
 
     def estimate_toolbar_context(prompt: str = "") -> str | None:
         with state_lock:
@@ -199,9 +208,26 @@ def run_prompt_toolkit_cli(  # noqa: C901
             )
         )
 
+    def open_model_selector(preserved_text: str) -> None:
+        with state_lock:
+            state.next_editor_text = preserved_text
+
+    def open_tree_selector(preserved_text: str) -> None:
+        with state_lock:
+            state.next_editor_text = preserved_text
+
+    def open_queue_selector(preserved_text: str) -> None:
+        with state_lock:
+            state.next_editor_text = preserved_text
+
     def attach_image(attachment: ImageAttachment) -> None:
         with state_lock:
             state.pending_images.append(attachment)
+            persist_prompt_queue(
+                session_ref["active_session"],
+                state.pending_prompts,
+                state.pending_images,
+            )
         update_status(f"Attached image: {attachment.label}")
 
     def remove_pending_image(index: int = -1) -> None:
@@ -213,6 +239,11 @@ def run_prompt_toolkit_cli(  # noqa: C901
             if index >= len(state.pending_images):
                 return
             removed = state.pending_images.pop(index)
+            persist_prompt_queue(
+                session_ref["active_session"],
+                state.pending_prompts,
+                state.pending_images,
+            )
         update_status(
             "Removed image attachment: "
             f"{removed.label}. Edit its prompt reference if needed."
@@ -254,6 +285,9 @@ def run_prompt_toolkit_cli(  # noqa: C901
         ),
         cycle_thinking_effort=cycle_thinking_effort,
         open_tool_inspector=show_tool_inspector,
+        open_model_selector=open_model_selector,
+        open_tree_selector=open_tree_selector,
+        open_queue_manager=open_queue_selector,
         update_status=update_status,
     )
     initialize_prompt_toolkit_session(
