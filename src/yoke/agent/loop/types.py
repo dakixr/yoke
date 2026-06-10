@@ -110,5 +110,6 @@ INTERRUPTED_TURN_NOTICE = (
 AgentEventHandler = Callable[[str, dict[str, object]], None]
 BeforeToolCallHook = Callable[[BeforeToolCallContext], BeforeToolCallResult | None]
 AfterToolCallHook = Callable[[AfterToolCallContext], AfterToolCallResult | None]
+ToolResultCheckpoint = Callable[[AgentContext], None]
 StopRequested = Callable[[], bool]
 ToolExecutionMode = Literal["parallel", "sequential"]

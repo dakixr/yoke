@@ -124,6 +124,9 @@ turn.
 - Press `Esc Esc` to stop the current turn; yoke waits for the turn to record
   the user prompt, completed/cancelled tool calls, and interruption marker
   before processing queued prompts or saving the session.
+- Completed tool results are saved to the active session immediately after each
+  result is appended, so an interrupted CLI process can resume from the latest
+  completed tool call.
 - Press `Ctrl+J` to insert a newline.
 - Pasting multiline text keeps the entire paste in the current prompt; press
   `Enter` after the paste to submit it.

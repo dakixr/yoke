@@ -21,6 +21,7 @@ from yoke.agent.loop.types import AgentStoppedError
 from yoke.agent.loop.types import BeforeToolCallHook
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.loop.types import ToolExecutionMode
+from yoke.agent.loop.types import ToolResultCheckpoint
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ToolCall
 from yoke.agent.tools import LocalTool
@@ -42,6 +43,7 @@ class RuntimeAgentIterationMixin:
         stop_requested: StopRequested | None,
         before_tool_call: BeforeToolCallHook | None,
         after_tool_call: AfterToolCallHook | None,
+        after_tool_result_appended: ToolResultCheckpoint | None = None,
     ) -> AgentResult | None:
         if self._is_stopped(stop_requested):
             return self._stopped_result(context, iterations=iteration - 1)
@@ -89,6 +91,7 @@ class RuntimeAgentIterationMixin:
             on_event=on_event,
             stop_requested=stop_requested,
             after_tool_call=after_tool_call,
+            after_tool_result_appended=after_tool_result_appended,
         ) or self._is_stopped(stop_requested):
             return self._stopped_result(context, iterations=iteration)
         return None
@@ -126,6 +129,7 @@ class RuntimeAgentIterationMixin:
         on_event: AgentEventHandler | None,
         stop_requested: StopRequested | None,
         after_tool_call: AfterToolCallHook | None,
+        after_tool_result_appended: ToolResultCheckpoint | None,
     ) -> bool:
         tool_results, stopped = execute_tool_calls(
             tools=self.tools,
@@ -149,6 +153,8 @@ class RuntimeAgentIterationMixin:
                 arguments=arguments,
                 result=result,
             )
+            if after_tool_result_appended is not None:
+                after_tool_result_appended(context)
         if tool_results:
             handle_post_tool_results(self, context, iteration, on_event)
         return stopped

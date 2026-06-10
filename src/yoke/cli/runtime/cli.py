@@ -282,6 +282,18 @@ def _run_headless_mode(
             prompt,
             stderr=error_stream,
         )
+
+        def checkpoint_tool_result(
+            messages: list[Message],
+            conversation_entries: list[ConversationEntry],
+        ) -> None:
+            persist_session_state(
+                active_session,
+                active_agent,
+                messages,
+                conversation_entries=conversation_entries,
+            )
+
         result = execute_turn(
             active_agent,
             prompt,
@@ -301,6 +313,7 @@ def _run_headless_mode(
                 if isinstance(active_agent, RuntimeAgent)
                 else []
             ),
+            after_tool_result_appended=checkpoint_tool_result,
         )
     except RUN_ERRORS as exc:
         partial_state = capture_agent_state(

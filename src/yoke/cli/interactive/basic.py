@@ -7,6 +7,7 @@ from queue import Empty
 from queue import Queue
 from threading import Thread
 
+from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
 from yoke.cli.config import CLIArgs
@@ -141,6 +142,17 @@ def _start_basic_turn(
     history = list(state.messages)
     sync_agent_skill_state_to_session(active_session, agent)
 
+    def checkpoint_tool_result(
+        messages: list[Message],
+        conversation_entries: list[ConversationEntry],
+    ) -> None:
+        persist_session_state(
+            active_session,
+            agent,
+            messages,
+            conversation_entries=conversation_entries,
+        )
+
     def run_turn() -> None:
         try:
             ensure_session_title(active_session, agent, prompt, stderr=stderr)
@@ -155,6 +167,7 @@ def _start_basic_turn(
                     active_session.record.conversation_entries,
                     leaf_id=active_session.record.leaf_id,
                 ),
+                after_tool_result_appended=checkpoint_tool_result,
             )
             if result.status == "stopped":
                 result_queue.put(TurnStopped(result=result))

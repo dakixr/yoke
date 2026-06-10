@@ -77,6 +77,8 @@ def execute_turn(
     active_skills: Sequence[object] | None = None,
     available_skills: Sequence[object] | None = None,
     conversation_entries: Sequence[ConversationEntry] | None = None,
+    after_tool_result_appended: Callable[[list[Message], list[ConversationEntry]], None]
+    | None = None,
 ) -> AgentResult:
     """Execute one CLI turn against the agent."""
     active_indicator = indicator or StatusIndicator(stderr or sys.stderr)
@@ -102,6 +104,17 @@ def execute_turn(
                 stop_requested=stop_requested,
                 active_skills=cast(Sequence[ActiveSkill] | None, active_skills),
                 available_skills=cast(Sequence[SkillSpec] | None, available_skills),
+                after_tool_result_appended=(
+                    lambda context: after_tool_result_appended(
+                        list(context.messages),
+                        [
+                            entry.model_copy(deep=True)
+                            for entry in context.conversation_log.entries
+                        ],
+                    )
+                    if after_tool_result_appended is not None
+                    else None
+                ),
             )
         if user_message is not None and getattr(agent, "supports_user_message", False):
             return cast(Any, agent).run(

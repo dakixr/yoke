@@ -19,6 +19,7 @@ from yoke.agent.loop.types import BeforeToolCallHook
 from yoke.agent.loop.types import MaxIterationsExceededError
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.loop.types import ToolExecutionMode
+from yoke.agent.loop.types import ToolResultCheckpoint
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -202,6 +203,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         stop_requested: StopRequested | None = None,
         before_tool_call: BeforeToolCallHook | None = None,
         after_tool_call: AfterToolCallHook | None = None,
+        after_tool_result_appended: ToolResultCheckpoint | None = None,
         available_skills: Sequence[SkillSpec] | None = None,
         active_skills: Sequence[ActiveSkill] | None = None,
     ) -> AgentResult:
@@ -228,6 +230,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
                     stop_requested=stop_requested,
                     before_tool_call=active_before_hook,
                     after_tool_call=active_after_hook,
+                    after_tool_result_appended=after_tool_result_appended,
                 )
                 if iteration_result is not None:
                     persist_run_context(self, context)

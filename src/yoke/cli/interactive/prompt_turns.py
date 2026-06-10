@@ -8,6 +8,7 @@ from threading import Lock
 from threading import Thread
 
 from yoke.agent.loop import AgentStoppedError
+from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import capture_agent_state
 from yoke.agent.state import active_branch_entries
@@ -44,6 +45,18 @@ def run_prompt_turn(
     turn_renderer_factory: Callable[[int], EventRenderer],
 ) -> None:
     """Execute one prompt-toolkit turn in a worker thread."""
+
+    def checkpoint_tool_result(
+        messages: list[Message],
+        conversation_entries: list[ConversationEntry],
+    ) -> None:
+        persist_session_state(
+            active_session,
+            agent,
+            messages,
+            conversation_entries=conversation_entries,
+        )
+
     try:
         ensure_session_title(active_session, agent, prompt)
         result = execute_turn(
@@ -57,6 +70,7 @@ def run_prompt_turn(
                 active_session.record.conversation_entries,
                 leaf_id=active_session.record.leaf_id,
             ),
+            after_tool_result_appended=checkpoint_tool_result,
         )
         if result.status == "stopped":
             callbacks["handle_outcome"](turn_id, TurnStopped(result=result))
