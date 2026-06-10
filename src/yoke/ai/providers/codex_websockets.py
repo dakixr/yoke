@@ -139,6 +139,7 @@ def optional_float_env(value: str | None, *, default: float | None) -> float | N
 
 class CodexWebSocketParseState(BaseModel):
     text_parts: list[str]
+    snapshot_text_parts: list[str] = []
     function_calls: dict[str, dict[str, str]]
     completed_payload: dict[str, Any] | None = None
     usage_payload: object | None = None
@@ -480,7 +481,7 @@ def handle_websocket_output_item(
         if content.get("type") in {"output_text", "text"}:
             text = content.get("text")
             if isinstance(text, str):
-                state.text_parts.append(text)
+                state.snapshot_text_parts.append(text)
 
 
 def build_message_from_websocket_state(
@@ -492,11 +493,12 @@ def build_message_from_websocket_state(
     if state.completed_payload is not None:
         merge_completed_response(
             state.completed_payload,
-            state.text_parts,
+            state.text_parts if state.text_parts else state.snapshot_text_parts,
             state.function_calls,
         )
         state.usage_payload = state.completed_payload.get("usage") or state.usage_payload
     phase = message_phase_from_completed_response(state.completed_payload) or state.phase
+    text_parts = state.text_parts or state.snapshot_text_parts
     tool_calls = [
         ToolCall(
             id=item.get("call_id") or item_id,
@@ -510,7 +512,7 @@ def build_message_from_websocket_state(
     ]
     return Message(
         role="assistant",
-        content="".join(state.text_parts) or None,
+        content="".join(text_parts) or None,
         tool_calls=tool_calls,
         phase=phase,
         usage=parse_token_usage(

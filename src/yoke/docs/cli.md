@@ -46,8 +46,10 @@ yoke --model opencode-go:minimax-m3 "Review this repository and suggest refactor
 If you omit the provider prefix and pass only `--model model-name`, yoke detects
 the provider from available credentials.
 
-Codex first tries the best usable account under `~/.codex-auth/accounts`. If no
-account there works, it falls back to `~/.codex/auth.json`. If that token is
+Codex first tries the best usable account under `~/.codex-auth/accounts`. If
+quota probing is temporarily unavailable, yoke can still use a locally fresh
+account token from that vault instead of falling back immediately. If no account
+there works, it falls back to `~/.codex/auth.json`. If that fallback token is
 missing, expired, or later rejected by the API, yoke refreshes or re-prompts
 login against `~/.codex/auth.json`.
 

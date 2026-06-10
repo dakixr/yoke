@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import httpx
 from yoke.agent.models import Message
 from yoke.ai.providers.codex_subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
+from yoke.ai.providers.codex_subscription import CodexProfileStore
 from yoke.ai.providers.codex_subscription import OAUTH_PROVIDER_ID
 from yoke.ai.providers.codex_subscription import OAuthCredentials
 from yoke.ai.providers.codex_subscription import is_invalid_oauth_token_error
@@ -21,6 +23,20 @@ def _write_fallback_auth(path: Path, credentials: OAuthCredentials) -> None:
         json.dumps({OAUTH_PROVIDER_ID: credentials.to_json()}),
         encoding="utf-8",
     )
+
+
+def _fake_access_token(*, account_id: str, exp: int = 4_102_444_800) -> str:
+    encoded_parts = []
+    for payload in (
+        {"alg": "none"},
+        {
+            "exp": exp,
+            "https://api.openai.com/auth": {"chatgpt_account_id": account_id},
+        },
+    ):
+        raw = json.dumps(payload, separators=(",", ":")).encode()
+        encoded_parts.append(base64.urlsafe_b64encode(raw).decode().rstrip("="))
+    return f"{encoded_parts[0]}.{encoded_parts[1]}."
 
 
 def test_invalid_oauth_token_error_detection() -> None:
@@ -102,3 +118,43 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
     assert login_calls == ["yoke"]
     stored = json.loads(auth_path.read_text(encoding="utf-8"))
     assert stored[OAUTH_PROVIDER_ID]["accountId"] == "acct_fresh"
+
+
+def test_codex_profile_store_keeps_local_profile_when_quota_probe_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    accounts_dir = tmp_path / ".codex-auth" / "accounts"
+    profile_path = accounts_dir / "dr7878" / "auth.json"
+    profile_path.parent.mkdir(parents=True)
+    profile_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": _fake_access_token(account_id="acct_dr7878"),
+                    "refresh_token": "refresh-token",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "yoke.ai.providers.codex_subscription.query_codex_quota",
+        lambda payload: (_ for _ in ()).throw(RuntimeError("usage unavailable")),
+    )
+
+    store = CodexProfileStore(
+        accounts_dir=accounts_dir,
+        auths_path=tmp_path / ".yoke" / "providers" / "codex-auth" / "auths.json",
+        selection_path=tmp_path
+        / ".yoke"
+        / "providers"
+        / "codex-auth"
+        / "selection.json",
+        ttl_seconds=1800,
+    )
+
+    credentials, profile_name = store.fresh_credentials_with_profile()
+
+    assert profile_name == "dr7878"
+    assert credentials.account_id == "acct_dr7878"

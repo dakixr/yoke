@@ -84,6 +84,69 @@ def test_websocket_response_done_builds_message_from_output_item() -> None:
     assert message.usage.total_tokens == 3
 
 
+def test_websocket_response_prefers_deltas_over_output_item_snapshot() -> None:
+    state = CodexWebSocketParseState(text_parts=[], function_calls={})
+    handle_websocket_event(
+        {"type": "response.output_text.delta", "delta": "streamed"},
+        state,
+    )
+    handle_websocket_event(
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "streamed"}],
+            },
+        },
+        state,
+    )
+    handle_websocket_event(
+        {"type": "response.done", "response": {"usage": {}}},
+        state,
+    )
+
+    message = build_message_from_websocket_state(
+        state,
+        provider_name="codex-websockets",
+        model_id="gpt-5.4",
+    )
+
+    assert message.text_content() == "streamed"
+
+
+def test_websocket_response_prefers_deltas_over_completed_snapshot() -> None:
+    state = CodexWebSocketParseState(text_parts=[], function_calls={})
+    handle_websocket_event(
+        {"type": "response.output_text.delta", "delta": "streamed"},
+        state,
+    )
+    handle_websocket_event(
+        {
+            "type": "response.completed",
+            "response": {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "streamed"}],
+                    }
+                ],
+                "usage": {},
+            },
+        },
+        state,
+    )
+
+    message = build_message_from_websocket_state(
+        state,
+        provider_name="codex-websockets",
+        model_id="gpt-5.4",
+    )
+
+    assert message.text_content() == "streamed"
+
+
 def test_websocket_function_call_output_item_builds_tool_call() -> None:
     state = CodexWebSocketParseState(text_parts=[], function_calls={})
     handle_websocket_event(

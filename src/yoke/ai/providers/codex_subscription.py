@@ -546,6 +546,8 @@ class CodexSubscriptionProvider(Provider):
 
         if auth_profile not in {None, "auth_path"}:
             self._delete_account_profile(auth_profile)
+
+        if self.config.accounts_dir.expanduser().exists():
             try:
                 credentials = self._fresh_credentials()
             except Exception as exc:
@@ -819,8 +821,23 @@ class CodexProfileStore:
         cached_name = self._read_selection().get("selected_profile")
         if isinstance(cached_name, str) and cached_name in profiles:
             return profiles[cached_name]
+        fallback_profile = self._first_locally_usable_profile(profiles)
+        if fallback_profile is not None:
+            return fallback_profile
         details = "; ".join(failures) if failures else "no profiles configured"
         raise ProviderError(f"No usable Codex profile found: {details}")
+
+    def _first_locally_usable_profile(
+        self, profiles: dict[str, CodexProfile]
+    ) -> CodexProfile | None:
+        for profile in profiles.values():
+            try:
+                credentials = profile.credentials()
+            except Exception:
+                continue
+            if credentials.expires - int(time.time() * 1000) > 60_000:
+                return profile
+        return None
 
     def _read_profiles(self) -> dict[str, CodexProfile]:
         return self._read_account_profiles()
