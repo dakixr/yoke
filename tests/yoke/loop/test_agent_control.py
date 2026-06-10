@@ -80,7 +80,7 @@ def test_agent_loop_supports_parallel_tool_execution_and_hooks(
     after_seen: list[dict[str, object]] = []
     events: list[str] = []
     event_payloads: list[tuple[str, dict[str, object]]] = []
-    barrier = Barrier(2, timeout=5)
+    barrier = multiprocessing.Barrier(2, timeout=5)
     agent = RuntimeAgent(
         provider=ParallelProvider(tool_name="barrier"),
         tools=[BarrierTool.bind(barrier=barrier)],
@@ -171,3 +171,121 @@ def test_agent_stop_preserves_tool_turn_for_steering(tmp_path: Path) -> None:
 
     assert continued.status == "completed"
     assert continued.output == "corrected"
+
+
+def test_agent_stop_terminates_non_cooperative_tool_process(tmp_path: Path) -> None:
+    class SleepProvider(Provider):
+        supports_image_inputs = True
+        max_images_per_message = 50
+
+        def complete(self, messages: list[Message], tools: list[dict[str, object]]) -> Message:
+            del messages, tools
+            return Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        function=ToolFunction(name="sleep_forever", arguments="{}"),
+                    )
+                ],
+            )
+
+    class SleepForeverTool(LocalTool):
+        name = "sleep_forever"
+        description = "Sleep without checking cancellation."
+
+        def execute(self) -> dict[str, object]:
+            started = self._context.get("started")
+            assert started is not None
+            started.set()
+            time.sleep(30)
+            return {"ok": True}
+
+    stop_event = Event()
+    started = multiprocessing.Event()
+    agent = RuntimeAgent(
+        provider=SleepProvider(),
+        tools=[SleepForeverTool.bind(started=started)],
+    )
+
+    def request_stop() -> None:
+        assert started.wait(timeout=5)
+        stop_event.set()
+
+    stopper = Thread(target=request_stop, daemon=True)
+
+    started_at = time.monotonic()
+    stopper.start()
+    stopped = agent.run(
+        "sleep forever",
+        stop_requested=stop_event.is_set,
+    )
+    stopper.join(timeout=1)
+
+    assert time.monotonic() - started_at < 5
+    assert stopped.status == "stopped"
+    cancelled_result = json.loads(stopped.messages[2].text_content() or "{}")
+    assert cancelled_result["cancelled"] is True
+
+
+def test_agent_stop_terminates_python_exec_process(tmp_path: Path) -> None:
+    from yoke.agent.tools import PythonExecTool
+
+    class PythonSleepProvider(Provider):
+        supports_image_inputs = True
+        max_images_per_message = 50
+
+        def complete(self, messages: list[Message], tools: list[dict[str, object]]) -> Message:
+            del messages, tools
+            return Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        function=ToolFunction(
+                            name="python_exec",
+                            arguments=json.dumps(
+                                {
+                                    "code": (
+                                        "from pathlib import Path\n"
+                                        "import time\n"
+                                        "Path('python-started').write_text('started')\n"
+                                        "time.sleep(30)"
+                                    ),
+                                    "timeout": 60,
+                                }
+                            ),
+                        ),
+                    )
+                ],
+            )
+
+    stop_event = Event()
+    marker = tmp_path / "python-started"
+    agent = RuntimeAgent(
+        provider=PythonSleepProvider(),
+        tools=[PythonExecTool.bind(root=tmp_path)],
+    )
+
+    def request_stop() -> None:
+        while not marker.exists():
+            if time.monotonic() - started_at > 5:
+                raise AssertionError("python_exec process did not start")
+            time.sleep(0.01)
+        stop_event.set()
+
+    started_at = time.monotonic()
+    stopper = Thread(target=request_stop, daemon=True)
+    stopper.start()
+    stopped = agent.run(
+        "sleep in python",
+        stop_requested=stop_event.is_set,
+    )
+    stopper.join(timeout=1)
+
+    assert time.monotonic() - started_at < 5
+    assert stopped.status == "stopped"
+    cancelled_result = json.loads(stopped.messages[2].text_content() or "{}")
+    assert cancelled_result["cancelled"] is True

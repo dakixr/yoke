@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os  # noqa: F401
 import time  # noqa: F401
 
 import pytest  # noqa: F401
 from pathlib import Path
-from threading import Barrier
 from threading import Event
+from threading import Thread
 from pydantic import Field
 
 from yoke.agent.compaction import COMPACTION_SUMMARY_PROMPT
@@ -160,7 +161,7 @@ class BarrierTool(LocalTool):
 
     def execute(self) -> dict[str, object]:
         barrier = self._context.get("barrier")
-        assert isinstance(barrier, Barrier)
+        assert barrier is not None
         barrier.wait()
         return {"ok": True, "label": self.label}
 

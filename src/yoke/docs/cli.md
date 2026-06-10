@@ -116,6 +116,9 @@ turn.
 - Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can
   edit, delete, promote, reorder, pause, or mark pending prompts as steering.
 - Press `Enter` to steer/send immediately while a turn is running.
+- Local tool calls run in isolated child processes. When a turn is stopped or
+  steered, yoke cancels the running tool process instead of waiting for
+  cooperative tool code to return.
 - Press `Tab` to queue the prompt behind the current turn. Queued prompts and
   pending image attachments are persisted in a per-session sidecar and restored
   on resume/restart.

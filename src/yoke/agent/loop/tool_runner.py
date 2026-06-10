@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED
-from concurrent.futures import Future
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import wait
+import time
 
 from yoke.agent.loop.tool_core import cancelled_tool_result
-from yoke.agent.loop.tool_core import execute_tool
 from yoke.agent.loop.tool_core import finalize_tool_result
 from yoke.agent.loop.tool_core import is_stopped
+from yoke.agent.loop.tool_process import ToolProcessInvocation
+from yoke.agent.loop.tool_process import TOOL_POLL_SECONDS
+from yoke.agent.loop.tool_process import wait_for_tool_process
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import ImmediateToolResult
 from yoke.agent.loop.types import PreparedToolCall
@@ -162,11 +161,15 @@ def _execute_sequential(
                 tools=tools,
             )
             return order_results(prepared_calls, results), True
-        raw_result = execute_tool(
-            tools,
-            prepared.tool_call.function.name,
-            prepared.arguments,
-            cancel_requested=stop_requested,
+        invocation = ToolProcessInvocation(
+            tools=tools,
+            name=prepared.tool_call.function.name,
+            arguments=prepared.arguments,
+        )
+        invocation.start()
+        raw_result, stopped = wait_for_tool_process(
+            invocation,
+            stop_requested=stop_requested,
         )
         finalized = finalize_tool_result(
             tools=tools,
@@ -180,6 +183,18 @@ def _execute_sequential(
         )
         results.append((prepared.tool_call, prepared.arguments, finalized))
         completed_ids.add(prepared.tool_call.id)
+        if stopped:
+            append_cancelled_tool_results(
+                prepared_calls=prepared_calls,
+                results=results,
+                completed_ids=completed_ids,
+                iteration=iteration,
+                context=context,
+                emit=emit,
+                after_tool_call=after_tool_call,
+                tools=tools,
+            )
+            return order_results(prepared_calls, results), True
     return order_results(prepared_calls, results), False
 
 
@@ -196,49 +211,21 @@ def _execute_parallel(
     stop_requested: StopRequested | None,
     after_tool_call: AfterToolCallHook | None,
 ) -> tuple[list[tuple[ToolCall, dict[str, object], dict[str, object]]], bool]:
-    executor = ThreadPoolExecutor(max_workers=len(runnable))
-    future_pairs: dict[Future[dict[str, object]], PreparedToolCall] = {}
-    stopped = False
+    invocation_pairs: list[tuple[ToolProcessInvocation, PreparedToolCall]] = []
     try:
         for prepared in runnable:
-            future_pairs[
-                executor.submit(
-                    execute_tool,
-                    tools,
-                    prepared.tool_call.function.name,
-                    prepared.arguments,
-                    cancel_requested=stop_requested,
-                )
-            ] = prepared
-        pending = set(future_pairs)
+            invocation = ToolProcessInvocation(
+                tools=tools,
+                name=prepared.tool_call.function.name,
+                arguments=prepared.arguments,
+            )
+            invocation.start()
+            invocation_pairs.append((invocation, prepared))
+        pending = dict(invocation_pairs)
         while pending:
             if is_stopped(stop_requested):
-                stopped = True
-                done = {future for future in pending if future.done()}
-            else:
-                done, pending = wait(
-                    pending,
-                    timeout=0.05,
-                    return_when=FIRST_COMPLETED,
-                )
-            for future in done:
-                pending.discard(future)
-                prepared = future_pairs[future]
-                finalized = finalize_tool_result(
-                    tools=tools,
-                    iteration=iteration,
-                    tool_call=prepared.tool_call,
-                    arguments=prepared.arguments,
-                    result=future.result(),
-                    context=context,
-                    emit=emit,
-                    after_tool_call=after_tool_call,
-                )
-                results.append((prepared.tool_call, prepared.arguments, finalized))
-                completed_ids.add(prepared.tool_call.id)
-            if stopped:
-                for future in pending:
-                    future.cancel()
+                for invocation in pending:
+                    invocation.cancel()
                 append_cancelled_tool_results(
                     prepared_calls=prepared_calls,
                     results=results,
@@ -250,6 +237,27 @@ def _execute_parallel(
                     tools=tools,
                 )
                 return order_results(prepared_calls, results), True
+            else:
+                done = [invocation for invocation in pending if invocation.done()]
+            if not done:
+                time.sleep(TOOL_POLL_SECONDS)
+                continue
+            for invocation in done:
+                prepared = pending.pop(invocation)
+                raw_result = invocation.result()
+                finalized = finalize_tool_result(
+                    tools=tools,
+                    iteration=iteration,
+                    tool_call=prepared.tool_call,
+                    arguments=prepared.arguments,
+                    result=raw_result,
+                    context=context,
+                    emit=emit,
+                    after_tool_call=after_tool_call,
+                )
+                results.append((prepared.tool_call, prepared.arguments, finalized))
+                completed_ids.add(prepared.tool_call.id)
     finally:
-        executor.shutdown(wait=not stopped, cancel_futures=True)
+        for invocation, _ in invocation_pairs:
+            invocation.cancel()
     return order_results(prepared_calls, results), False
