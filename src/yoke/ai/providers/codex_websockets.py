@@ -50,6 +50,7 @@ from yoke.ai.providers.usage import parse_token_usage
 PROVIDER_NAME = "codex-websockets"
 RESPONSES_WEBSOCKETS_BETA = "responses_websockets=2026-02-06"
 DEFAULT_WS_BASE_URL = DEFAULT_BASE_URL
+STALE_WEBSOCKET_CLOSED_MESSAGE = "Codex WebSocket closed before response.completed."
 
 
 def register_provider(context: Any) -> CodexWebSockets:
@@ -232,6 +233,20 @@ class CodexWebSockets(CodexSubscriptionProvider):
             except ProviderError as exc:
                 last_error = exc
                 self._close_websocket()
+                if str(exc) == STALE_WEBSOCKET_CLOSED_MESSAGE:
+                    if attempt >= self.config.max_retries:
+                        break
+                    self._log_event(
+                        "request_retry",
+                        request_id=request_log_id,
+                        attempt=attempt,
+                        reason="websocket_closed",
+                        wait_seconds=self._backoff_seconds(attempt),
+                        auth_profile=auth_profile,
+                        **request_metrics,
+                    )
+                    self._sleep(self._backoff_seconds(attempt))
+                    continue
                 if exc.status_code == 401 or is_invalid_oauth_token_error(str(exc)):
                     credentials = self._recover_invalid_oauth_credentials(
                         auth_profile=auth_profile,
@@ -360,9 +375,7 @@ class CodexWebSockets(CodexSubscriptionProvider):
                 raise ProviderError("Codex WebSocket timed out waiting for response.") from exc
             except ConnectionClosed as exc:
                 self._close_websocket()
-                raise ProviderError(
-                    "Codex WebSocket closed before response.completed."
-                ) from exc
+                raise ProviderError(STALE_WEBSOCKET_CLOSED_MESSAGE) from exc
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
             if not isinstance(raw, str):

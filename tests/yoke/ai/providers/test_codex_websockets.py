@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from websockets.exceptions import ConnectionClosedError
 
 from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderError
@@ -219,3 +220,76 @@ def test_codex_websockets_complete_preserves_non_oauth_provider_error(
 
     with pytest.raises(ProviderError, match="closed before response.completed"):
         provider.complete([Message.user("hello")], [])
+
+
+def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
+    sent_payloads: list[str] = []
+    factory_calls = 0
+
+    class StaleWebSocket:
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            raise ConnectionClosedError(None, None)
+
+        def close(self) -> None:
+            return None
+
+    class FreshWebSocket:
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    '{"type":"response.output_text.delta","delta":"ok"}',
+                    '{"type":"response.completed","response":{"usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    def fake_factory(url: str, **kwargs: object) -> object:
+        nonlocal factory_calls
+        del url, kwargs
+        factory_calls += 1
+        if factory_calls == 1:
+            return StaleWebSocket()
+        return FreshWebSocket()
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / ".codex" / "auth.json",
+            accounts_dir=tmp_path / ".codex-auth" / "accounts",
+            auths_path=tmp_path / ".yoke" / "providers" / "codex-auth" / "auths.json",
+            selection_path=tmp_path
+            / ".yoke"
+            / "providers"
+            / "codex-auth"
+            / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+            model="gpt-5.4",
+            max_retries=1,
+        ),
+        websocket_factory=fake_factory,
+        sleep=lambda seconds: None,
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+
+    message = provider.complete([Message.user("hello")], [])
+
+    assert message.text_content() == "ok"
+    assert factory_calls == 2
+    assert len(sent_payloads) == 2

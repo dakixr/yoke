@@ -1859,8 +1859,8 @@ def error_detail(response: httpx.Response) -> str:
     return response.text.strip() or f"HTTP {response.status_code}"
 
 
-def is_invalid_oauth_token_error(detail: str) -> bool:
-    normalized = detail.strip().lower()
+def is_invalid_oauth_token_error(detail: object) -> bool:
+    normalized = str(detail).strip().lower()
     return (
         "invalidated oauth token" in normalized
         or "invalid oauth token" in normalized
