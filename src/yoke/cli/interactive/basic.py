@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from queue import Empty
 from queue import Queue
+from threading import Event
 from threading import Thread
 
 from yoke.agent.models import ConversationEntry
@@ -119,6 +120,8 @@ def _request_basic_exit(
     active_session: ActiveSession,
 ) -> None:
     state.shutdown_requested = True
+    if state.active_stop_request is not None:
+        state.active_stop_request.set()
     if state.exit_notice_emitted:
         return
     state.exit_notice_emitted = True
@@ -140,6 +143,8 @@ def _start_basic_turn(
     user_message: Message | None = None,
 ) -> Thread:
     history = list(state.messages)
+    stop_event = Event()
+    state.active_stop_request = stop_event
     sync_agent_skill_state_to_session(active_session, agent)
 
     def checkpoint_tool_result(
@@ -162,6 +167,7 @@ def _start_basic_turn(
                 history,
                 stderr=stderr,
                 indicator=renderer,
+                stop_requested=stop_event.is_set,
                 user_message=user_message,
                 conversation_entries=active_branch_entries(
                     active_session.record.conversation_entries,
@@ -271,6 +277,7 @@ def _handle_basic_outcome(
     result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped],
 ) -> None:
     state.worker = None
+    state.active_stop_request = None
     if isinstance(outcome, TurnFailure):
         if outcome.messages is not None:
             state.messages = outcome.messages

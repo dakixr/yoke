@@ -233,8 +233,8 @@ class CodexWebSockets(CodexSubscriptionProvider):
                 self._sleep(self._backoff_seconds(attempt))
             except ProviderError as exc:
                 last_error = exc
-                self._close_websocket()
                 if str(exc) == STALE_WEBSOCKET_CLOSED_MESSAGE:
+                    self._close_websocket(clear_credentials=False)
                     if attempt >= self.config.max_retries:
                         break
                     self._log_event(
@@ -248,6 +248,7 @@ class CodexWebSockets(CodexSubscriptionProvider):
                     )
                     self._sleep(self._backoff_seconds(attempt))
                     continue
+                self._close_websocket()
                 if exc.status_code == 401 or is_invalid_oauth_token_error(str(exc)):
                     credentials = self._recover_invalid_oauth_credentials(
                         auth_profile=auth_profile,
@@ -375,7 +376,7 @@ class CodexWebSockets(CodexSubscriptionProvider):
             except TimeoutError as exc:
                 raise ProviderError("Codex WebSocket timed out waiting for response.") from exc
             except ConnectionClosed as exc:
-                self._close_websocket()
+                self._close_websocket(clear_credentials=False)
                 raise ProviderError(STALE_WEBSOCKET_CLOSED_MESSAGE) from exc
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
@@ -393,11 +394,12 @@ class CodexWebSockets(CodexSubscriptionProvider):
                     model_id=self.config.model,
                 )
 
-    def _close_websocket(self) -> None:
+    def _close_websocket(self, *, clear_credentials: bool = True) -> None:
         websocket = self._websocket
         self._websocket = None
-        self._websocket_credentials = None
-        self._websocket_auth_profile = None
+        if clear_credentials:
+            self._websocket_credentials = None
+            self._websocket_auth_profile = None
         if websocket is None:
             return
         try:

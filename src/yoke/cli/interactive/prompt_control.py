@@ -70,6 +70,8 @@ def create_prompt_toolkit_control(
 
     def request_exit() -> None:
         state.shutdown_requested = True
+        if state.active_stop_request is not None:
+            state.active_stop_request.set()
         emit_prompt_exit_notice(
             state=state,
             active_session=active_session_ref["active_session"],

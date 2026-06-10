@@ -230,6 +230,19 @@ def test_agent_loop_runs_until_final_answer(tmp_path: Path) -> None:
     ]
 
 
+def test_subagent_tool_runs_in_process(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("hello from nested context", encoding="utf-8")
+    provider = SubagentProvider()
+    subagent = SubagentTool.bind(root=tmp_path, provider=provider)
+    agent = RuntimeAgent(provider=provider, tools=[subagent], tool_execution="sequential")
+
+    result = agent.run("delegate")
+
+    assert result.output == "done"
+    assert provider.calls == 3
+    assert "nested summary" in result.messages[-2].text_content()
+
+
 def test_agent_loop_emits_commentary_before_tool_calls(
     tmp_path: Path,
 ) -> None:

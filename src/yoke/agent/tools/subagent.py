@@ -39,6 +39,7 @@ class SubagentTool(WorkspaceTool):
     is_yoke_tool = True
     name = "subagent"
     description = "Delegate research or implementation work to a nested agent."
+    execute_in_process = True
 
     prompt: str = Field(min_length=1)
     agent_type: Literal["researcher", "worker"] = "researcher"

@@ -33,6 +33,7 @@ from yoke.agent.tools import (
     EditTool,
     LocalTool,
     ReadTool,
+    SubagentTool,
 )
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
@@ -150,6 +151,46 @@ class ParallelProvider(Provider):
                     ),
                 ],
             )
+        return Message.assistant("done")
+
+
+class SubagentProvider(Provider):
+    supports_image_inputs = True
+    max_images_per_message = 50
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(
+        self, messages: list[Message], tools: list[dict[str, object]]
+    ) -> Message:
+        self.calls += 1
+        if self.calls == 1:
+            return Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        function=ToolFunction(
+                            name="subagent",
+                            arguments=json.dumps(
+                                {
+                                    "prompt": "Read notes.txt and summarize it.",
+                                    "agent_type": "researcher",
+                                }
+                            ),
+                        ),
+                    )
+                ],
+            )
+        if self.calls == 2:
+            assert tools
+            return Message.assistant(
+                '{"success": true, "response": "nested summary", "pointers": ["notes.txt"]}'
+            )
+        assert messages[-1].role == "tool"
+        assert "nested summary" in messages[-1].text_content()
         return Message.assistant("done")
 
 

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import atexit
 import multiprocessing
 import os
 import pickle
 import queue
 import signal
 import time
+import weakref
 from multiprocessing.context import BaseContext
 from multiprocessing.context import Process
 from multiprocessing.queues import Queue
@@ -20,6 +22,7 @@ from yoke.agent.tools import LocalTool
 
 TOOL_CANCEL_GRACE_SECONDS = 0.25
 TOOL_POLL_SECONDS = 0.02
+_ACTIVE_INVOCATIONS: weakref.WeakSet[ToolProcessInvocation]
 
 
 class ToolProcessInvocation:
@@ -41,10 +44,15 @@ class ToolProcessInvocation:
         )
         self._result: dict[str, object] | None = None
         self._cancelled = False
+        self._owner_pid = os.getpid()
+        self._started = False
+        self._closed = False
 
     def start(self) -> None:
         """Start the child process."""
         self._process.start()
+        self._started = True
+        _ACTIVE_INVOCATIONS.add(self)
 
     def done(self) -> bool:
         """Return whether the invocation has produced a final result."""
@@ -85,8 +93,15 @@ class ToolProcessInvocation:
 
     def cancel(self) -> None:
         """Request cancellation and terminate the child process if needed."""
+        if os.getpid() != self._owner_pid:
+            return
         self._cancelled = True
         self._cancel_event.set()
+        if not self._started:
+            self._closed = True
+            self._result_queue.close()
+            self._result_queue.join_thread()
+            return
         if not self._process.is_alive():
             self.close()
             return
@@ -103,10 +118,42 @@ class ToolProcessInvocation:
 
     def close(self) -> None:
         """Release multiprocessing resources."""
+        if os.getpid() != self._owner_pid:
+            return
+        if self._closed:
+            return
+        if not self._started:
+            self._result_queue.close()
+            self._result_queue.join_thread()
+            self._closed = True
+            return
+        if self._process.is_alive():
+            self._process.join(timeout=TOOL_CANCEL_GRACE_SECONDS)
+        if self._process.is_alive():
+            _terminate_process_group(self._process)
+            self._process.join(timeout=TOOL_CANCEL_GRACE_SECONDS)
+        if self._process.is_alive():
+            _kill_process_group(self._process)
+            self._process.join(timeout=TOOL_CANCEL_GRACE_SECONDS)
         if self._process.is_alive():
             return
         self._process.join(timeout=0)
         self._result_queue.close()
+        self._result_queue.join_thread()
+        self._closed = True
+        _ACTIVE_INVOCATIONS.discard(self)
+
+
+_ACTIVE_INVOCATIONS = weakref.WeakSet()
+
+
+def cancel_active_tool_processes() -> None:
+    """Cancel any isolated tool processes still owned by this interpreter."""
+    for invocation in list(_ACTIVE_INVOCATIONS):
+        invocation.cancel()
+
+
+atexit.register(cancel_active_tool_processes)
 
 
 def wait_for_tool_process(
@@ -115,12 +162,16 @@ def wait_for_tool_process(
     stop_requested: StopRequested | None,
 ) -> tuple[dict[str, object], bool]:
     """Wait for one tool process, cancelling it if the turn stops."""
-    while not invocation.done():
-        if stop_requested is not None and stop_requested():
-            invocation.cancel()
-            return cancelled_tool_result(), True
-        time.sleep(TOOL_POLL_SECONDS)
-    return invocation.result(), False
+    try:
+        while not invocation.done():
+            if stop_requested is not None and stop_requested():
+                invocation.cancel()
+                return cancelled_tool_result(), True
+            time.sleep(TOOL_POLL_SECONDS)
+        return invocation.result(), False
+    except BaseException:
+        invocation.cancel()
+        raise
 
 
 def _tool_process_main(

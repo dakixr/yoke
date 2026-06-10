@@ -58,6 +58,11 @@ WebSocket transport. It uses the same auth and account selection as `codex` and
 accepts `YOKE_CODEX_WEBSOCKETS_*` overrides for model, base URL, timeout,
 retries, reasoning effort, text verbosity, and logs.
 
+When resuming sessions, Codex request history is normalized to omit orphaned or
+partially saved tool outputs before sending the next request. This prevents
+Responses API errors about `function_call_output` entries whose function call is
+no longer present in the active conversation branch.
+
 The WebSocket transport disables library-level idle keepalive pings by default,
 which avoids background ping timeouts while yoke is waiting for your next prompt.
 Set `YOKE_CODEX_WEBSOCKETS_PING_INTERVAL_SECONDS` and optionally
@@ -118,9 +123,11 @@ turn.
 - Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can
   edit, delete, promote, reorder, pause, or mark pending prompts as steering.
 - Press `Enter` to steer/send immediately while a turn is running.
-- Local tool calls run in isolated child processes. When a turn is stopped or
-  steered, yoke cancels the running tool process instead of waiting for
-  cooperative tool code to return.
+- Local tool calls run in isolated child processes. When a turn is stopped,
+  steered, or the CLI is interrupted or exited, yoke cancels the running tool
+  process instead of waiting for cooperative tool code to return.
+- Provider-nested tools such as `subagent` run in-process so they can safely
+  reuse the active provider connection.
 - Press `Tab` to queue the prompt behind the current turn. Queued prompts and
   pending image attachments are persisted in a per-session sidecar and restored
   on resume/restart.

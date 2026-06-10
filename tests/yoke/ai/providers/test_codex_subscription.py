@@ -9,11 +9,14 @@ from pathlib import Path
 import httpx
 
 from yoke.agent.models import Message
+from yoke.agent.models import ToolCall
+from yoke.agent.models import ToolFunction
 from yoke.ai.providers.codex_subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex_subscription import CodexProfileStore
 from yoke.ai.providers.codex_subscription import OAUTH_PROVIDER_ID
 from yoke.ai.providers.codex_subscription import OAuthCredentials
+from yoke.ai.providers.codex_subscription import convert_messages
 from yoke.ai.providers.codex_subscription import is_invalid_oauth_token_error
 
 
@@ -45,6 +48,88 @@ def test_invalid_oauth_token_error_detection() -> None:
     )
     assert is_invalid_oauth_token_error("OAuth token was revoked")
     assert not is_invalid_oauth_token_error("rate limited")
+
+
+def test_convert_messages_drops_orphan_tool_outputs() -> None:
+    _instructions, input_items = convert_messages(
+        [
+            Message.user("continue"),
+            Message.tool("call_missing", '{"ok": true}'),
+            Message.user("next"),
+        ]
+    )
+
+    assert [item.get("type") for item in input_items] == [None, None]
+    assert all(
+        item.get("type") != "function_call_output" for item in input_items
+    )
+
+
+def test_convert_messages_drops_incomplete_tool_turn_outputs() -> None:
+    _instructions, input_items = convert_messages(
+        [
+            Message.user("run tools"),
+            Message(
+                role="assistant",
+                content="Running tools.",
+                tool_calls=[
+                    ToolCall(
+                        id="call_done",
+                        function=ToolFunction(
+                            name="read",
+                            arguments='{"path":"README.md"}',
+                        ),
+                    ),
+                    ToolCall(
+                        id="call_missing",
+                        function=ToolFunction(
+                            name="bash",
+                            arguments='{"command":"sleep 600"}',
+                        ),
+                    ),
+                ],
+            ),
+            Message.tool("call_done", '{"ok": true}'),
+            Message.user("resume"),
+        ]
+    )
+
+    assert [item.get("type") for item in input_items] == [None, None]
+    assert all(
+        item.get("type") not in {"function_call", "function_call_output"}
+        for item in input_items
+    )
+
+
+def test_convert_messages_keeps_complete_tool_turn_outputs() -> None:
+    _instructions, input_items = convert_messages(
+        [
+            Message.user("run tool"),
+            Message(
+                role="assistant",
+                content="Running tool.",
+                tool_calls=[
+                    ToolCall(
+                        id="call_read",
+                        function=ToolFunction(
+                            name="read",
+                            arguments='{"path":"README.md"}',
+                        ),
+                    )
+                ],
+            ),
+            Message.tool("call_read", '{"ok": true}'),
+            Message.user("resume"),
+        ]
+    )
+
+    assert [item.get("type") for item in input_items] == [
+        None,
+        None,
+        "function_call",
+        "function_call_output",
+        None,
+    ]
 
 
 def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(

@@ -287,6 +287,7 @@ def test_codex_websockets_complete_preserves_non_oauth_provider_error(
 
 def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
     sent_payloads: list[str] = []
+    factory_headers: list[dict[str, str]] = []
     factory_calls = 0
 
     class StaleWebSocket:
@@ -321,8 +322,11 @@ def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
 
     def fake_factory(url: str, **kwargs: object) -> object:
         nonlocal factory_calls
-        del url, kwargs
+        del url
         factory_calls += 1
+        headers = kwargs.get("additional_headers")
+        assert isinstance(headers, dict)
+        factory_headers.append(headers)
         if factory_calls == 1:
             return StaleWebSocket()
         return FreshWebSocket()
@@ -355,4 +359,8 @@ def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
 
     assert message.text_content() == "ok"
     assert factory_calls == 2
+    assert [headers["Authorization"] for headers in factory_headers] == [
+        "Bearer access-token",
+        "Bearer access-token",
+    ]
     assert len(sent_payloads) == 2

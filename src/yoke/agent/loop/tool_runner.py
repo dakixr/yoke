@@ -19,6 +19,38 @@ from yoke.agent.models import ToolCall
 from yoke.agent.tools import LocalTool
 
 
+def _execute_tool_call(
+    *,
+    tools: dict[str, LocalTool],
+    prepared: PreparedToolCall,
+    stop_requested: StopRequested | None,
+) -> tuple[dict[str, object], bool]:
+    tool = tools.get(prepared.tool_call.function.name)
+    if tool is not None and tool.execute_in_process:
+        from yoke.agent.loop.tool_core import execute_tool
+
+        return execute_tool(
+            tools,
+            prepared.tool_call.function.name,
+            prepared.arguments,
+            cancel_requested=stop_requested,
+        ), is_stopped(stop_requested)
+    invocation = ToolProcessInvocation(
+        tools=tools,
+        name=prepared.tool_call.function.name,
+        arguments=prepared.arguments,
+    )
+    try:
+        invocation.start()
+        return wait_for_tool_process(
+            invocation,
+            stop_requested=stop_requested,
+        )
+    except BaseException:
+        invocation.cancel()
+        raise
+
+
 def execute_tool_calls(
     *,
     tools: dict[str, LocalTool],
@@ -62,7 +94,15 @@ def execute_tool_calls(
         )
         results.append((item.tool_call, {}, finalized))
         completed_ids.add(item.tool_call.id)
-    if tool_execution == "sequential" or len(runnable) < 2:
+    if (
+        tool_execution == "sequential"
+        or len(runnable) < 2
+        or any(
+            tools.get(item.tool_call.function.name) is not None
+            and tools[item.tool_call.function.name].execute_in_process
+            for item in runnable
+        )
+    ):
         return _execute_sequential(
             tools=tools,
             prepared_calls=prepared_calls,
@@ -161,14 +201,9 @@ def _execute_sequential(
                 tools=tools,
             )
             return order_results(prepared_calls, results), True
-        invocation = ToolProcessInvocation(
+        raw_result, stopped = _execute_tool_call(
             tools=tools,
-            name=prepared.tool_call.function.name,
-            arguments=prepared.arguments,
-        )
-        invocation.start()
-        raw_result, stopped = wait_for_tool_process(
-            invocation,
+            prepared=prepared,
             stop_requested=stop_requested,
         )
         finalized = finalize_tool_result(

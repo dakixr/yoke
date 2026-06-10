@@ -1482,7 +1482,7 @@ def convert_messages(
 ) -> tuple[str, list[dict[str, Any]]]:
     instructions: list[str] = []
     input_items: list[dict[str, Any]] = []
-    for message in messages:
+    for message in codex_request_messages(messages):
         if message.role == "system":
             text = message.text_content()
             if text:
@@ -1513,6 +1513,55 @@ def convert_messages(
             continue
         input_items.append(convert_text_message(message))
     return "\n\n".join(instructions), input_items
+
+
+def codex_request_messages(messages: list[Message]) -> list[Message]:
+    repaired: list[Message] = []
+    pending_index: int | None = None
+    pending_ids: list[str] = []
+    buffered_follow_ups: list[Message] = []
+    for message in messages:
+        copied = message.model_copy(deep=True)
+        if copied.role == "tool" and copied.tool_calls:
+            copied.tool_calls = []
+        if copied.role == "assistant" and copied.tool_calls:
+            if pending_index is not None:
+                del repaired[pending_index:]
+                repaired.extend(_codex_safe_follow_ups(buffered_follow_ups))
+            pending_index = len(repaired)
+            pending_ids = [tool_call.id for tool_call in copied.tool_calls]
+            buffered_follow_ups = []
+            repaired.append(copied)
+            continue
+        if pending_index is not None:
+            if (
+                copied.role == "tool"
+                and pending_ids
+                and copied.tool_call_id == pending_ids[0]
+            ):
+                repaired.append(copied)
+                pending_ids.pop(0)
+                if not pending_ids:
+                    pending_index = None
+                    buffered_follow_ups = []
+                continue
+            buffered_follow_ups.append(copied)
+            continue
+        if copied.role == "tool":
+            continue
+        repaired.append(copied)
+    if pending_index is not None:
+        del repaired[pending_index:]
+        repaired.extend(_codex_safe_follow_ups(buffered_follow_ups))
+    return repaired
+
+
+def _codex_safe_follow_ups(messages: list[Message]) -> list[Message]:
+    return [
+        message.model_copy(deep=True)
+        for message in messages
+        if message.role != "tool"
+    ]
 
 
 def convert_text_message(message: Message) -> dict[str, Any]:

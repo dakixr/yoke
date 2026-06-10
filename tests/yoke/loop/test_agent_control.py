@@ -229,6 +229,69 @@ def test_agent_stop_terminates_non_cooperative_tool_process(tmp_path: Path) -> N
     assert cancelled_result["cancelled"] is True
 
 
+def test_tool_process_cancelled_when_wait_is_interrupted(tmp_path: Path) -> None:
+    from yoke.agent.loop.tool_process import ToolProcessInvocation
+    from yoke.agent.loop.tool_process import wait_for_tool_process
+
+    class SleepForeverTool(LocalTool):
+        name = "sleep_forever"
+        description = "Sleep without checking cancellation."
+
+        def execute(self) -> dict[str, object]:
+            started = self._context.get("started")
+            assert started is not None
+            started.set()
+            time.sleep(30)
+            return {"ok": True}
+
+    started = multiprocessing.Event()
+    invocation = ToolProcessInvocation(
+        tools={"sleep_forever": SleepForeverTool.bind(started=started)},
+        name="sleep_forever",
+        arguments={},
+    )
+    invocation.start()
+
+    def interrupt_after_start() -> bool:
+        if started.is_set():
+            raise KeyboardInterrupt
+        return False
+
+    with pytest.raises(KeyboardInterrupt):
+        wait_for_tool_process(invocation, stop_requested=interrupt_after_start)
+
+    assert not invocation._process.is_alive()
+
+
+def test_active_tool_process_cleanup_cancels_started_invocation(tmp_path: Path) -> None:
+    from yoke.agent.loop.tool_process import ToolProcessInvocation
+    from yoke.agent.loop.tool_process import cancel_active_tool_processes
+
+    class SleepForeverTool(LocalTool):
+        name = "sleep_forever"
+        description = "Sleep without checking cancellation."
+
+        def execute(self) -> dict[str, object]:
+            started = self._context.get("started")
+            assert started is not None
+            started.set()
+            time.sleep(30)
+            return {"ok": True}
+
+    started = multiprocessing.Event()
+    invocation = ToolProcessInvocation(
+        tools={"sleep_forever": SleepForeverTool.bind(started=started)},
+        name="sleep_forever",
+        arguments={},
+    )
+    invocation.start()
+    assert started.wait(timeout=5)
+
+    cancel_active_tool_processes()
+
+    assert not invocation._process.is_alive()
+
+
 def test_agent_stop_terminates_python_exec_process(tmp_path: Path) -> None:
     from yoke.agent.tools import PythonExecTool
 

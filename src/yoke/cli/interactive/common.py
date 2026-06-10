@@ -148,6 +148,7 @@ class BasicCliState:
     pending_prompts: list[PendingPrompt]
     pending_images: list[ImageAttachment] = field(default_factory=list)
     worker: Thread | None = None
+    active_stop_request: Event | None = None
     shutdown_requested: bool = False
     input_closed: bool = False
     exit_notice_emitted: bool = False
