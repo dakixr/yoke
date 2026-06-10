@@ -178,7 +178,8 @@ def render_available_skills_message(skills: list[SkillSpec]) -> Message:
     """Render a system message listing all available skills."""
     lines = [
         "Available skills:",
-        "Use the `skill` tool to load these by name when relevant.",
+        "Use the `skill` tool to load inactive skills by name when relevant, "
+        "or to intentionally reload an active skill's canonical instructions.",
     ]
     for skill in skills:
         lines.append(f"- {skill.name}: {skill.description}")

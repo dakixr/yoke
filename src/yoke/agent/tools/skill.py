@@ -8,6 +8,7 @@ from pydantic import Field
 from pydantic import PrivateAttr
 
 from yoke.agent.models import AgentContext
+from yoke.agent.skills.activation import activate_skills
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.registry import SkillRegistry
 from yoke.agent.tools.base import LocalTool
@@ -35,46 +36,13 @@ class SkillTool(LocalTool):
 
     def execute(self) -> dict[str, object]:
         """Process load requests and return the updated skill set."""
-        raw_active_skills = self._context.get("active_skills", [])
-        active_skills = (
-            raw_active_skills if isinstance(raw_active_skills, Sequence) else []
-        )
-        active_by_name = {
-            skill.name: skill
-            for skill in active_skills
-            if isinstance(skill, ActiveSkill)
-        }
-        loaded: list[str] = []
-        missing: list[str] = []
-        reloaded: list[str] = []
-        next_active = dict(active_by_name)
-
-        for name in self.load:
-            if self._registry.get(name) is None:
-                missing.append(name)
-                continue
-            if name in next_active:
-                next_active[name].reload_on_next_use = True
-                reloaded.append(name)
-                continue
-            next_active[name] = self._registry.activate(name)
-            next_active[name].reload_on_next_use = True
-            if next_active[name].is_inline:
-                next_active[name].content = next_active[name].load_content()
-                loaded.append(name)
-
         return {
             "ok": True,
-            "loaded": loaded,
-            "reloaded": reloaded,
-            "missing": missing,
-            "active": [
-                skill.model_dump(mode="json")
-                for skill in sorted(
-                    next_active.values(),
-                    key=lambda item: item.name,
-                )
-            ],
+            "requested": list(self.load),
+            "loaded": [],
+            "reloaded": [],
+            "missing": [],
+            "active": [],
         }
 
     def apply_result(
@@ -83,13 +51,17 @@ class SkillTool(LocalTool):
         result: dict[str, object],
     ) -> None:
         """Update the agent context's active skills based on the tool result."""
-        raw_active = result.get("active", [])
-        if not isinstance(raw_active, list):
-            return
-        next_active: list[ActiveSkill] = []
-        for raw_skill in raw_active:
-            if not isinstance(raw_skill, dict):
-                continue
-            next_active.append(ActiveSkill.model_validate(raw_skill))
-        context.active_skills = next_active
+        raw_requested = result.get("requested", [])
+        requested = raw_requested if isinstance(raw_requested, Sequence) else []
+        activation = activate_skills(
+            registry=self._registry,
+            active_skills=context.active_skills,
+            names=[name for name in requested if isinstance(name, str)],
+        )
+        context.active_skills = activation.active_skills
         self._context["active_skills"] = list(context.active_skills)
+        result["ok"] = activation.ok
+        result["loaded"] = activation.loaded
+        result["reloaded"] = activation.reloaded
+        result["missing"] = activation.missing
+        result["active"] = activation.active_payload()

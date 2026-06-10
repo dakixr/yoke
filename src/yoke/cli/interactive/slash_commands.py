@@ -311,20 +311,21 @@ def _handle_skill_load(
     if not isinstance(agent, RuntimeAgent) or agent.skill_registry is None:
         print_scrollback_notice(console, "No skills are available in this session.")
         return
-    for skill in agent.active_skills:
-        if skill.name != skill_name:
-            continue
-        skill.reload_on_next_use = True
-        persist_session_state(active_session, agent, messages)
+    from yoke.agent.skills.activation import activate_skills
+
+    activation = activate_skills(
+        registry=agent.skill_registry,
+        active_skills=agent.active_skills,
+        names=[skill_name],
+    )
+    if activation.missing:
+        print_scrollback_notice(console, f"Unknown skill: {skill_name}")
+        return
+    agent.active_skills = activation.active_skills
+    persist_session_state(active_session, agent, messages)
+    if activation.reloaded:
         print_scrollback_notice(
             console, f"Skill already active; reloading next use: {skill_name}"
         )
         return
-    try:
-        active_skill = agent.skill_registry.activate(skill_name)
-    except KeyError:
-        print_scrollback_notice(console, f"Unknown skill: {skill_name}")
-        return
-    agent.active_skills.append(active_skill)
-    persist_session_state(active_session, agent, messages)
     print_scrollback_notice(console, f"Activated skill: {skill_name}")

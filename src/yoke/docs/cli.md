@@ -259,7 +259,11 @@ Yoke auto-discovers skills from:
 Place skill folders inside these directories and they'll be available by name.
 
 During a session the agent can also activate skills itself when the `skill`
-tool is available.
+tool is available. Manual activation with `/skill <name>` and model activation
+through the `skill` tool use the same activation semantics: existing skills are
+not duplicated, reloading marks the skill to send its canonical instructions on
+the next model call, and active skills are preserved when additional skills are
+loaded.
 
 Yoke ships with a built-in `create-skill` skill in the codebase under
 `yoke/agent/skills/built_in/create-skill/SKILL.md`. It instructs the

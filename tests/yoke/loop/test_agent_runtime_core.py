@@ -6,6 +6,16 @@ from __future__ import annotations
 from .support import *  # noqa: F403, F405
 
 
+def write_test_skill(root: Path, name: str, description: str) -> Path:
+    skill_dir = root / ".yoke" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\nUse {name}.\n",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
 def test_agent_fork_duplicates_runtime_configuration(tmp_path: Path) -> None:
     provider = FakeProvider()
 
@@ -67,6 +77,117 @@ def test_agent_fork_duplicates_runtime_configuration(tmp_path: Path) -> None:
     )
 
     assert [skill.name for skill in agent.active_skills] == ["demo"]
+
+
+def test_skill_tool_uses_current_context_active_skills(tmp_path: Path) -> None:
+    from yoke.agent.skills.registry import load_skill_registry
+    from yoke.agent.tools import SkillTool
+
+    write_test_skill(tmp_path, "manual-skill", "Manual skill.")
+    write_test_skill(tmp_path, "model-skill", "Model skill.")
+    registry = load_skill_registry([tmp_path / ".yoke" / "skills"])
+
+    class SkillLoadingProvider(Provider):
+        supports_image_inputs = True
+        max_images_per_message = 50
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del messages, tools
+            self.calls += 1
+            if self.calls == 1:
+                return Message(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            function=ToolFunction(
+                                name="skill",
+                                arguments='{"load":["model-skill"]}',
+                            ),
+                        )
+                    ],
+                )
+            return Message.assistant("done")
+
+    skill_tool = SkillTool.bind(skill_registry=registry, active_skills=[])
+    manual_skill = registry.activate("manual-skill")
+    agent = RuntimeAgent(
+        provider=SkillLoadingProvider(),
+        tools=[skill_tool],
+        skill_registry=registry,
+        available_skills=registry.skills,
+        active_skills=[manual_skill],
+    )
+
+    result = agent.run("use skills")
+
+    assert result.status == "completed"
+    assert [skill.name for skill in agent.active_skills] == [
+        "manual-skill",
+        "model-skill",
+    ]
+
+
+def test_skill_tool_reloads_active_skill_without_duplicate(tmp_path: Path) -> None:
+    from yoke.agent.skills.registry import load_skill_registry
+    from yoke.agent.tools import SkillTool
+
+    write_test_skill(tmp_path, "manual-skill", "Manual skill.")
+    registry = load_skill_registry([tmp_path / ".yoke" / "skills"])
+
+    class SkillReloadingProvider(Provider):
+        supports_image_inputs = True
+        max_images_per_message = 50
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del messages, tools
+            self.calls += 1
+            if self.calls == 1:
+                return Message(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            function=ToolFunction(
+                                name="skill",
+                                arguments='{"load":["manual-skill"]}',
+                            ),
+                        )
+                    ],
+                )
+            return Message.assistant("done")
+
+    skill_tool = SkillTool.bind(skill_registry=registry, active_skills=[])
+    manual_skill = registry.activate("manual-skill")
+    manual_skill.reload_on_next_use = False
+    agent = RuntimeAgent(
+        provider=SkillReloadingProvider(),
+        tools=[skill_tool],
+        skill_registry=registry,
+        available_skills=registry.skills,
+        active_skills=[manual_skill],
+    )
+
+    result = agent.run("reload skill")
+
+    assert result.status == "completed"
+    assert [skill.name for skill in agent.active_skills] == ["manual-skill"]
+    assert agent.active_skills[0].reload_on_next_use is False
+    tool_messages = [message for message in result.messages if message.role == "tool"]
+    assert tool_messages
+    assert '"reloaded": ["manual-skill"]' in tool_messages[0].text_content()
 
 
 def test_agent_fork_clones_conversation_state(tmp_path: Path) -> None:
