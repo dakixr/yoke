@@ -22,6 +22,7 @@ from yoke.agent.tools import LocalTool
 
 TOOL_CANCEL_GRACE_SECONDS = 0.25
 TOOL_POLL_SECONDS = 0.02
+SPAWN_UNSAFE_CONTEXT_KEYS = {"cancel_requested", "provider"}
 _ACTIVE_INVOCATIONS: weakref.WeakSet[ToolProcessInvocation]
 
 
@@ -36,11 +37,12 @@ class ToolProcessInvocation:
         arguments: dict[str, object],
     ) -> None:
         self._context = _process_context()
+        tool = _tool_for_child_process(tools.get(name), self._context)
         self._cancel_event = self._context.Event()
         self._result_queue: Queue[dict[str, object]] = self._context.Queue(maxsize=1)
         self._process: Process = self._context.Process(
             target=_tool_process_main,
-            args=(tools, name, arguments, self._cancel_event, self._result_queue),
+            args=(tool, name, arguments, self._cancel_event, self._result_queue),
         )
         self._result: dict[str, object] | None = None
         self._cancelled = False
@@ -175,13 +177,14 @@ def wait_for_tool_process(
 
 
 def _tool_process_main(
-    tools: dict[str, LocalTool],
+    tool: LocalTool | None,
     name: str,
     arguments: dict[str, object],
     cancel_event,
     result_queue: Queue[dict[str, object]],
 ) -> None:
     _start_process_group()
+    tools = {tool.name: tool} if tool is not None else {}
     result = execute_tool(
         tools,
         name,
@@ -195,6 +198,38 @@ def _process_context() -> BaseContext:
     if "fork" in multiprocessing.get_all_start_methods():
         return multiprocessing.get_context("fork")
     return multiprocessing.get_context()
+
+
+def _tool_for_child_process(
+    tool: LocalTool | None,
+    context: BaseContext,
+) -> LocalTool | None:
+    if tool is None:
+        return None
+    if context.get_start_method() == "fork":
+        return tool
+    child_tool = tool.model_copy(deep=False)
+    child_tool._context = _spawn_safe_tool_context(tool._context)
+    return child_tool
+
+
+def _spawn_safe_tool_context(context: dict[str, object]) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in context.items()
+        if key not in SPAWN_UNSAFE_CONTEXT_KEYS
+        and _is_spawn_safe_context_value(value)
+    }
+
+
+def _is_spawn_safe_context_value(value: object) -> bool:
+    try:
+        pickle.dumps(value)
+    except RuntimeError as exc:
+        return "should only be shared between processes through inheritance" in str(exc)
+    except Exception:
+        return False
+    return True
 
 
 def _start_process_group() -> None:

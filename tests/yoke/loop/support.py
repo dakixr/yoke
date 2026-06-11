@@ -207,6 +207,19 @@ class BarrierTool(LocalTool):
         return {"ok": True, "label": self.label}
 
 
+class ContextKeysTool(LocalTool):
+    name = "context_keys"
+    description = "Return tool context keys for process-spawn tests."
+
+    def execute(self) -> dict[str, object]:
+        return {
+            "ok": True,
+            "keys": sorted(self._context),
+            "value": self._context.get("value"),
+            "cancelled": self._is_cancel_requested(),
+        }
+
+
 class StoppingProvider(Provider):
     supports_image_inputs = True
     max_images_per_message = 50

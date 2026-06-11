@@ -15,6 +15,9 @@ Tools are the actions the agent can take: read a file, edit a file, run a
 shell command, search the web. The CLI includes built-in tools and
 auto-discovers additional tools from repo `.yoke/` and global `~/.yoke/`
 directories. The SDK lets you pass exactly the tools you want.
+On Windows, isolated tool processes use `spawn`; yoke passes only the invoked
+tool to the child process and strips runtime-only context such as provider
+objects and cancellation callbacks that cannot be pickled.
 
 ### Skills
 Skills are reusable instruction sets — Markdown files that tell the agent *how* to approach a class of task (code review, writing tests, debugging, etc.). You create them once and activate them by name.

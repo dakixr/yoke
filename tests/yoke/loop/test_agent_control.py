@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 # ruff: noqa: F403, F405
 from .support import *  # noqa: F403, F405
 
@@ -261,6 +263,33 @@ def test_tool_process_cancelled_when_wait_is_interrupted(tmp_path: Path) -> None
         wait_for_tool_process(invocation, stop_requested=interrupt_after_start)
 
     assert not invocation._process.is_alive()
+
+
+def test_tool_process_spawn_strips_unpicklable_runtime_context(monkeypatch) -> None:
+    import yoke.agent.loop.tool_process as tool_process
+
+    spawn_context = multiprocessing.get_context("spawn")
+    stop_event = threading.Event()
+    monkeypatch.setattr(tool_process, "_process_context", lambda: spawn_context)
+    invocation = tool_process.ToolProcessInvocation(
+        tools={
+            "context_keys": ContextKeysTool.bind(
+                cancel_requested=stop_event.is_set,
+                provider=threading.RLock(),
+                value="kept",
+            )
+        },
+        name="context_keys",
+        arguments={},
+    )
+
+    invocation.start()
+    result = invocation.result()
+
+    assert result["ok"] is True
+    assert result["value"] == "kept"
+    assert "cancel_requested" in result["keys"]
+    assert "provider" not in result["keys"]
 
 
 def test_active_tool_process_cleanup_cancels_started_invocation(tmp_path: Path) -> None:
