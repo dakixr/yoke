@@ -8,6 +8,7 @@ from yoke.agent.models import MessageTextContentPart
 from prompt_toolkit.buffer import Buffer
 
 from yoke.cli.image_input import ImageAttachment
+from yoke.cli.image_input import attach_standalone_prompt_image_paths
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.prompt_keys import insert_attachment_reference
 
@@ -69,6 +70,18 @@ def test_image_only_built_user_message_uses_stable_label_projection() -> None:
     )
 
     assert message.text_content() == "[Image #1]"
+
+
+def test_standalone_prompt_image_paths_ignores_invalid_long_path() -> None:
+    prompt = "a" * 5000
+
+    updated_prompt, attachments = attach_standalone_prompt_image_paths(
+        prompt,
+        root=Path.cwd(),
+    )
+
+    assert updated_prompt == prompt
+    assert attachments == []
 
 
 def test_insert_attachment_reference_preserves_existing_text() -> None:

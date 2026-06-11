@@ -145,12 +145,15 @@ def resolve_image_path(raw: str, *, root: Path) -> Path:
         parsed = urlparse(candidate)
         candidate = unquote(parsed.path)
     path = Path(candidate)
-    if not path.is_absolute():
-        path = (root / path).resolve()
-    else:
-        path = path.resolve()
-    if not path.is_file():
-        raise ValueError(f"Image file not found: {path}")
+    try:
+        if not path.is_absolute():
+            path = (root / path).resolve()
+        else:
+            path = path.resolve()
+        if not path.is_file():
+            raise ValueError(f"Image file not found: {path}")
+    except OSError as exc:
+        raise ValueError(f"Invalid image path: {candidate}") from exc
     if path.suffix.lower() not in IMAGE_EXTENSIONS:
         raise ValueError(
             "Unsupported image format. Supported extensions: "

@@ -144,7 +144,7 @@ turn.
   `Enter` after the paste to submit it.
 - Dragging a local image file into the terminal on macOS usually inserts an
   escaped path. If that path is on its own prompt line, yoke attaches it
-  automatically when you submit.
+  automatically when you submit; non-image text lines are left unchanged.
 - Use `/image path/to/file.png` to attach a local image file explicitly.
 - Use `/tree` to navigate the current session tree, fork from an older point,
   label entries, search/filter history, and optionally summarize the branch you
