@@ -77,6 +77,7 @@ MODEL_PROTOCOLS = {
     "qwen3.6-plus": "anthropic",
     "glm-5.1": "openai",
     "deepseek-v4-flash": "openai",
+    "kimi-k2.7-code": "openai",
     "kimi-k2.6": "openai",
     "deepseek-v4-pro": "openai",
     "minimax-m2.5": "openai",
@@ -101,6 +102,14 @@ MODEL_CATALOG = build_model_catalog(
         thinking_levels=GLM_THINKING_LEVELS,
         default_thinking_level="medium",
         supports_image_inputs=False,
+    ),
+    ProviderModelInfo(
+        id="kimi-k2.7-code",
+        display_name="Kimi K2.7 Code",
+        context_window_tokens=262_144,
+        thinking_levels=KIMI_THINKING_LEVELS,
+        default_thinking_level="medium",
+        supports_image_inputs=True,
     ),
     ProviderModelInfo(
         id="kimi-k2.6",

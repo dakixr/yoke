@@ -13,6 +13,7 @@ from typer.testing import Result
 
 from yoke.cli.main import app
 from yoke.cli.tools.policy import PiConfig
+from yoke.ai.providers.opencode_go import list_provider_models as list_opencode_go_models
 
 
 def _invoke_models_set_with_home(
@@ -49,6 +50,15 @@ def test_models_list_shows_provider_qualified_models_and_default(
     assert "opencode-go" in result.stdout
     assert "gpt-5.5" in result.stdout
     assert "Configured default model: codex:gpt-5.4-mini" in result.stdout
+
+
+def test_opencode_go_catalog_includes_kimi_k2_7_code() -> None:
+    models = {model.id: model for model in list_opencode_go_models(None)}
+
+    kimi = models["kimi-k2.7-code"]
+    assert kimi.display_name == "Kimi K2.7 Code"
+    assert kimi.supports_image_inputs is True
+    assert kimi.context_window_tokens == 262_144
 
 
 def test_models_set_writes_repo_default_model_and_preserves_tools(
