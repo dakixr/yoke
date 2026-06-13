@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.agent.models import Message
-from yoke.agent.skills import ActiveSkill
-from yoke.agent.skills import SkillRegistry
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
 from yoke.agent.tools.context import normalize_tool_registration
@@ -27,9 +25,6 @@ def bind_agent_tools(
     *,
     context: ToolRegistrationContext,
     register_tools: RegisterTools | None = None,
-    skill_registry: SkillRegistry | None = None,
-    active_skills: Sequence[ActiveSkill] | None = None,
-    enable_skill_tool: bool = True,
 ) -> ToolRegistrationResult:
     """Bind user-provided tool classes or instances for runtime execution."""
     from yoke.agent.tools import LocalTool
@@ -68,15 +63,6 @@ def bind_agent_tools(
         bound_tools.extend(registered)
     else:
         registration = ToolRegistrationResult(tools=())
-    if skill_registry is not None and enable_skill_tool:
-        from yoke.agent.tools import SkillTool
-
-        bound_tools.append(
-            SkillTool.bind(
-                skill_registry=skill_registry,
-                active_skills=list(active_skills or []),
-            )
-        )
     return ToolRegistrationResult(
         tools=bound_tools,
         system_messages=registration.system_messages,
@@ -94,12 +80,12 @@ def build_system_messages(
     if sys_prompt:
         messages.append(Message.system(sys_prompt))
     if include_agents_file:
-        messages.extend(load_agents_messages(root))
+        messages.extend(load_agents_messages(root, home=Path.home()))
     return messages
 
 
-def load_agents_messages(root: Path) -> list[Message]:
+def load_agents_messages(root: Path, *, home: Path) -> list[Message]:
     """Load AGENTS.md messages for a workspace root."""
     from yoke.cli.bootstrap.agents import load_agents_messages as impl
 
-    return impl(root)
+    return impl(root, home=home)

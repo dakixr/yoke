@@ -182,7 +182,7 @@ def test_prompt_toolkit_ctrl_u_removes_last_pending_image() -> None:
     assert removed == ["removed"]
 
 
-def test_prompt_toolkit_enter_accepts_current_completion() -> None:
+def test_prompt_toolkit_tab_accepts_current_completion() -> None:
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.keys import Keys
 
@@ -192,6 +192,102 @@ def test_prompt_toolkit_enter_accepts_current_completion() -> None:
     register_prompt_toolkit_key_bindings(
         key_bindings,
         state=PromptCliState(messages=[], pending_prompts=[]),
+        stop_active_turn=lambda: False,
+        attach_image=lambda _attachment: None,
+        remove_last_image=lambda: None,
+        resolve_image_path=lambda raw: Path(raw),
+        cycle_thinking_effort=lambda: None,
+        update_status=lambda _message: None,
+    )
+
+    binding = next(
+        item for item in key_bindings.bindings if item.keys == (Keys.ControlI,)
+    )
+
+    @dataclass
+    class FakeCompletion:
+        text: str
+
+    @dataclass
+    class FakeCompleteState:
+        current_completion: FakeCompletion
+
+    class FakeBuffer:
+        complete_state = FakeCompleteState(FakeCompletion("/compact"))
+
+        def apply_completion(self, completion: FakeCompletion) -> None:
+            applied.append(completion.text)
+
+        def validate_and_handle(self) -> None:
+            handled.append("submitted")
+
+    class FakeEvent:
+        current_buffer = FakeBuffer()
+
+    binding.handler(cast(KeyPressEvent, FakeEvent()))
+
+    assert applied == ["/compact"]
+    assert handled == []
+
+
+def test_prompt_toolkit_tab_accepts_first_completion_by_default() -> None:
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+
+    applied: list[str] = []
+    key_bindings = KeyBindings()
+    register_prompt_toolkit_key_bindings(
+        key_bindings,
+        state=PromptCliState(messages=[], pending_prompts=[]),
+        stop_active_turn=lambda: False,
+        attach_image=lambda _attachment: None,
+        remove_last_image=lambda: None,
+        resolve_image_path=lambda raw: Path(raw),
+        cycle_thinking_effort=lambda: None,
+        update_status=lambda _message: None,
+    )
+
+    binding = next(
+        item for item in key_bindings.bindings if item.keys == (Keys.ControlI,)
+    )
+
+    @dataclass
+    class FakeCompletion:
+        text: str
+
+    @dataclass
+    class FakeCompleteState:
+        completions: list[FakeCompletion]
+        current_completion = None
+
+    class FakeBuffer:
+        complete_state = FakeCompleteState([FakeCompletion("/model")])
+
+        def apply_completion(self, completion: FakeCompletion) -> None:
+            applied.append(completion.text)
+
+        def validate_and_handle(self) -> None:
+            raise AssertionError("should not submit while completions are open")
+
+    class FakeEvent:
+        current_buffer = FakeBuffer()
+
+    binding.handler(cast(KeyPressEvent, FakeEvent()))
+
+    assert applied == ["/model"]
+
+
+def test_prompt_toolkit_enter_triggers_current_completion() -> None:
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+
+    applied: list[str] = []
+    handled: list[str] = []
+    state = PromptCliState(messages=[], pending_prompts=[])
+    key_bindings = KeyBindings()
+    register_prompt_toolkit_key_bindings(
+        key_bindings,
+        state=state,
         stop_active_turn=lambda: False,
         attach_image=lambda _attachment: None,
         remove_last_image=lambda: None,
@@ -227,54 +323,8 @@ def test_prompt_toolkit_enter_accepts_current_completion() -> None:
     binding.handler(cast(KeyPressEvent, FakeEvent()))
 
     assert applied == ["/compact"]
-    assert handled == []
-
-
-def test_prompt_toolkit_enter_accepts_first_completion_by_default() -> None:
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.keys import Keys
-
-    applied: list[str] = []
-    key_bindings = KeyBindings()
-    register_prompt_toolkit_key_bindings(
-        key_bindings,
-        state=PromptCliState(messages=[], pending_prompts=[]),
-        stop_active_turn=lambda: False,
-        attach_image=lambda _attachment: None,
-        remove_last_image=lambda: None,
-        resolve_image_path=lambda raw: Path(raw),
-        cycle_thinking_effort=lambda: None,
-        update_status=lambda _message: None,
-    )
-
-    binding = next(
-        item for item in key_bindings.bindings if item.keys == (Keys.ControlM,)
-    )
-
-    @dataclass
-    class FakeCompletion:
-        text: str
-
-    @dataclass
-    class FakeCompleteState:
-        completions: list[FakeCompletion]
-        current_completion = None
-
-    class FakeBuffer:
-        complete_state = FakeCompleteState([FakeCompletion("/model")])
-
-        def apply_completion(self, completion: FakeCompletion) -> None:
-            applied.append(completion.text)
-
-        def validate_and_handle(self) -> None:
-            raise AssertionError("should not submit while completions are open")
-
-    class FakeEvent:
-        current_buffer = FakeBuffer()
-
-    binding.handler(cast(KeyPressEvent, FakeEvent()))
-
-    assert applied == ["/model"]
+    assert handled == ["submitted"]
+    assert state.submit_action == "steer"
 
 
 def test_prompt_toolkit_up_down_navigate_completion_menu() -> None:

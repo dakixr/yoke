@@ -37,12 +37,52 @@ print(result.output)
 ```
 
 Built-in provider classes include `CodexSubscriptionProvider`,
-`CodexWebSockets`, `GitHubCopilotProvider`, `OpenCodeGoProvider`, and
+`CodexWebSockets`, `OpenCodeGoProvider`, and
 `ZAIProvider`. For standard OpenAI-compatible endpoints, use
 `OpenAICompatibleProvider` with `OpenAICompatibleConfig.from_env()`.
 
+Providers can contribute model-specific system messages through their model
+catalog. Those messages are inserted only for the active provider/model and are
+refreshed when the selected model changes:
+
+```python
+from yoke.agent.models import Message
+from yoke.ai import ProviderModelInfo
+
+ProviderModelInfo(
+    id="kimi-k2.7-code",
+    display_name="Kimi K2.7 Code",
+    context_window_tokens=262_144,
+    thinking_levels=("low", "medium", "high"),
+    system_messages=(
+        Message.system("Use Kimi-specific coding guidance."),
+    ),
+)
+```
+
+Provider classes that do not expose a model catalog can instead implement
+`current_model_system_messages(self) -> Iterable[Message]`. CLI sessions, SDK
+`Agent`, and direct `complete()` calls all apply the same provider/model prompt
+layer.
+
 `Agent` is stateful. Reuse the same object to keep conversation context across
 prompts.
+
+Initialize an agent with exactly one explicit history representation. Use
+`MessageHistory` for a provider transcript or `ConversationEntryHistory` for
+structured state:
+
+```python
+from yoke.ai import MessageHistory
+
+config = RunConfig(
+    root=Path.cwd(),
+    history=MessageHistory(previous_messages),
+)
+```
+
+The tagged history API prevents transcript messages and structured entries
+from being supplied together.
 
 For applications that persist agent state, capture structured session state
 instead of only transcript messages. Structured entries preserve memory
@@ -79,6 +119,7 @@ from yoke.agent.tools import ReadTool, EditTool, GrepTool
 | `LsTool` | `ls` | List files and directories under a workspace path. |
 | `FindTool` | `find` | Find files or directories by glob pattern. |
 | `GrepTool` | `grep` | Search text files with a regular expression. |
+| `RipgrepTool` | `rg` | Use native ripgrep for file listing and content search. |
 | `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
 | `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
 | `WebFetchTool` | `web_fetch` | Fetch a URL and return readable Markdown or text content. |
@@ -107,6 +148,16 @@ agent = Agent(
     ),
 )
 ```
+
+`register_search_tools` exposes `rg` when the ripgrep executable is available.
+Otherwise it exposes the Python fallback tools `grep`, `find`, and `ls`.
+
+```python
+from yoke.agent.tools import register_search_tools
+```
+
+The CLI and nested agents use this selector automatically. Explicit tool
+classes remain available when an SDK application needs a fixed interface.
 
 ## Provider-Aware Tools
 
@@ -168,9 +219,10 @@ agent = Agent(
 
 `ToolRegistrationContext` exposes `root`, `home`, `provider`,
 `provider_name`, `model_id`/`model_name`, `model_key`, and
-`reasoning_effort`. Yoke invokes the callback again when the provider, model,
-or reasoning effort changes. `ToolRegistrationResult.system_messages`
-contributes system instructions while those registered tools are active.
+`reasoning_effort`. Workspace, home, provider, and cancellation callback are
+always present. Yoke invokes the callback again when the provider, model, or
+reasoning effort changes. `ToolRegistrationResult.system_messages`
+contributes tool-use instructions while those registered tools are active.
 Re-registration replaces the previous tool instruction layer rather than
 appending to it. Plain iterable returns remain supported for callbacks that do
 not need prompt contributions. The resulting tools receive matching

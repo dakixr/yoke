@@ -16,7 +16,9 @@ from yoke.agent.context import CompactionPolicy, ContextManager  # noqa: F401
 from yoke.agent.loop import (
     AfterToolCallContext,  # noqa: F401
     BeforeToolCallContext,  # noqa: F401
+    ConversationEntryHistory,  # noqa: F401
     INTERRUPTED_TURN_NOTICE,
+    MessageHistory,  # noqa: F401
     RuntimeAgent,  # noqa: F401
 )
 from yoke.agent.models import (
@@ -160,6 +162,7 @@ class SubagentProvider(Provider):
 
     def __init__(self) -> None:
         self.calls = 0
+        self.nested_tool_names: set[str] = set()
 
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
@@ -186,6 +189,11 @@ class SubagentProvider(Provider):
             )
         if self.calls == 2:
             assert tools
+            self.nested_tool_names = {
+                str(tool["function"]["name"])
+                for tool in tools
+                if isinstance(tool.get("function"), dict)
+            }
             return Message.assistant(
                 '{"success": true, "response": "nested summary", "pointers": ["notes.txt"]}'
             )
@@ -278,7 +286,7 @@ class TokenCountOverflowRetryProvider(Provider):
             return Message.assistant("Summarized older context")
         if self.calls == 1:
             raise ProviderError(
-                "Copilot request failed: prompt token count of 285458 "
+                "Provider request failed: prompt token count of 285458 "
                 "exceeds the limit of 272000"
             )
         assert any(

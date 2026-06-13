@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop import ConversationEntryHistory
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
@@ -174,9 +175,12 @@ def _load_agent_branch(agent: object, active_session: ActiveSession) -> None:
     if not isinstance(agent, RuntimeAgent):
         return
     agent.load_conversation(
-        conversation_entries=active_branch_entries(
-            active_session.record.conversation_entries,
-            leaf_id=active_session.record.leaf_id,
+        ConversationEntryHistory(
+            active_branch_entries(
+                active_session.record.conversation_entries,
+                leaf_id=active_session.record.leaf_id,
+            )
+            or []
         ),
         available_skills=agent.available_skills,
         active_skills=active_session.record.active_skills,

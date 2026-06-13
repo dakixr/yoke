@@ -7,10 +7,13 @@ from pathlib import Path
 import secrets
 
 from pydantic import BaseModel
+from pydantic import Field
+from pydantic import field_validator
 
 from yoke.agent.models import ConversationEntryKind
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
+from yoke.agent.loop import ConversationEntryHistory
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
 from yoke.agent.usage import compact_usage_payload
@@ -19,9 +22,20 @@ from yoke.agent.usage import compact_usage_payload
 class AgentState(BaseModel):
     """Portable structured state captured from an agent."""
 
-    conversation_entries: list[ConversationEntry] | None = None
-    active_skills: list[ActiveSkill] | None = None
-    skill_dirs: list[str] | None = None
+    conversation_entries: list[ConversationEntry] = Field(default_factory=list)
+    active_skills: list[ActiveSkill] = Field(default_factory=list)
+    skill_dirs: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "conversation_entries",
+        "active_skills",
+        "skill_dirs",
+        mode="before",
+    )
+    @classmethod
+    def normalize_legacy_null_collections(cls, value: object) -> object:
+        """Normalize legacy persisted null collections at the input boundary."""
+        return [] if value is None else value
 
     @property
     def messages(self) -> list[Message]:
@@ -51,8 +65,8 @@ def capture_agent_state(
         )
     return AgentState(
         conversation_entries=resolved_entries,
-        active_skills=_agent_active_skills(agent),
-        skill_dirs=_agent_skill_dirs(agent),
+        active_skills=_agent_active_skills(agent) or [],
+        skill_dirs=_agent_skill_dirs(agent) or [],
     )
 
 
@@ -67,7 +81,7 @@ def hydrate_agent_state(
     if not callable(load_conversation):
         raise TypeError("Agent does not support structured state hydration.")
     load_conversation(
-        conversation_entries=state.conversation_entries,
+        ConversationEntryHistory(state.conversation_entries),
         available_skills=available_skills,
         active_skills=state.active_skills,
     )

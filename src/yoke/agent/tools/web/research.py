@@ -178,14 +178,7 @@ class WebResearchTool(LocalTool):
         query: str,
         sources: list[dict[str, object]],
     ) -> dict[str, object] | None:
-        runtime_context = self.runtime_context
-        provider = (
-            runtime_context.provider
-            if runtime_context is not None
-            else self._context.get("provider")
-        )
-        if provider is None:
-            return None
+        provider = self.context.provider
         try:
             from yoke.ai import Agent
             from yoke.ai import RunConfig

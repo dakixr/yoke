@@ -17,6 +17,7 @@ from yoke.agent.models import (
     ToolFunction,
 )
 from yoke.agent.state import capture_agent_state
+from yoke.agent.state import AgentState
 
 
 def test_memory_message_round_trips() -> None:
@@ -93,6 +94,20 @@ def test_agent_state_capture_prefers_conversation_entries() -> None:
 
     assert state.conversation_entries == entries
     assert [message.role for message in state.messages] == ["user"]
+
+
+def test_agent_state_normalizes_legacy_null_collections() -> None:
+    state = AgentState.model_validate(
+        {
+            "conversation_entries": None,
+            "active_skills": None,
+            "skill_dirs": None,
+        }
+    )
+
+    assert state.conversation_entries == []
+    assert state.active_skills == []
+    assert state.skill_dirs == []
 
 
 def test_compaction_handoff_is_typed_on_memory_snapshot() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from yoke.cli.config import CLIArgs
 from yoke.cli.providers.catalog import ProviderModelChoice
@@ -109,7 +110,7 @@ def _select_provider_model(
 ) -> ProviderModelChoice | None:
     from yoke.cli.render import print_scrollback_notice
 
-    choices = list_all_provider_model_choices(args=args)
+    choices = list_all_provider_model_choices(args=args, home=Path.home())
     if not choices:
         print_scrollback_notice(console, "No models advertised by providers.")
         return None

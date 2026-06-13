@@ -39,12 +39,18 @@ yoke --model opencode-go:minimax-m3 "Review this repository and suggest refactor
 |----------|------|
 | `codex` | `~/.codex/auth.json` with account-vault selection from `~/.codex-auth/accounts` |
 | `codex-websockets` | Same Codex auth as `codex`, using the Responses WebSocket transport |
-| `copilot` | `~/.yoke/auth.json` or `YOKE_COPILOT_AUTH_PATH` |
 | `opencode-go` | `OPENCODE_API_KEY` env var |
 | `zai` | `ZAI_API_KEY` env var |
 
 If you omit the provider prefix and pass only `--model model-name`, yoke detects
 the provider from available credentials.
+
+Provider model catalogs can attach model-specific system messages. Yoke sends
+those messages only for the active `provider:model` and refreshes them when a
+session switches models. Custom provider plugins can do this by returning
+`ProviderModelInfo(system_messages=(Message.system(...),))` from
+`list_provider_models(context)`, or by implementing
+`current_model_system_messages()` on the provider object.
 
 Codex first tries the best usable account under `~/.codex-auth/accounts`. If
 quota probing is temporarily unavailable, yoke can still use a locally fresh
@@ -384,9 +390,11 @@ the SDK. It exposes the current raw `provider` plus stable `provider_name`,
 access the corresponding execution-time values through `self.context`.
 Changing model or provider re-runs registration so model-specific schemas stay
 current. Returning `ToolRegistrationResult` also lets the registration
-contribute system messages. Those messages are active only while at least one
-tool from that registration remains enabled, and they are replaced on
+contribute tool-use system messages. Those messages are active only while at
+least one tool from that registration remains enabled, and they are replaced on
 re-registration. Returning a plain iterable of tools remains supported.
+General provider/model steering should live on provider model metadata instead
+of tool registration.
 
 Tools added any of these ways appear alongside the built-ins. To restrict which tools are active, use a tool policy (see below).
 
@@ -436,6 +444,7 @@ By default yoke starts from this curated tool baseline:
     "grep": "allow",
     "ls": "allow",
     "read": "allow",
+    "rg": "allow",
     "web_research": "allow"
   }
 }
@@ -472,7 +481,9 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke now reports th
 `web_fetch`, `web_research`, `extract_file_context`, and `attach_image`.
 The writing capability is model-aware: model IDs containing `gpt` receive
 `apply_patch`; all other models receive `edit`. Only one writing tool is
-active at a time.
+active at a time. Search is environment-aware: when ripgrep is installed,
+only `rg` is active; otherwise `grep`, `find`, and `ls` are active as the
+fallback set.
 
 The `command`/`bash` tool result mirrors `python_exec` metadata for the agent: `python_executable`, `returncode`, `timeout`, `timed_out`, `elapsed_seconds`, combined `output`, and `outputTruncationDetails`.
 
@@ -494,7 +505,6 @@ yoke --root /path/to/project "..."
 
 | Variable | Description |
 |----------|-------------|
-| `YOKE_COPILOT_AUTH_PATH` | Override GitHub Copilot auth JSON path |
 | `OPENCODE_API_KEY` | OpenCode Go API key |
 | `ZAI_API_KEY` | Z.ai API key |
 | `YOKE_SESSION_DIR` | Override session storage directory |

@@ -20,12 +20,6 @@ from yoke.ai.providers.codex_websockets import (
 from yoke.ai.providers.codex_websockets import (
     register_provider as register_codex_websockets_provider,
 )
-from yoke.ai.providers.github_copilot_subscription import (
-    list_provider_models as list_copilot_models,
-)
-from yoke.ai.providers.github_copilot_subscription import (
-    register_provider as register_copilot_provider,
-)
 from yoke.ai.providers.opencode_go import (
     list_provider_models as list_opencode_go_models,
 )
@@ -51,21 +45,18 @@ if TYPE_CHECKING:
 BUILTIN_PROVIDER_NAMES = (
     "codex",
     "codex-websockets",
-    "copilot",
     "opencode-go",
     "zai",
 )
 _BUILTIN_PROVIDER_FACTORIES: dict[str, BuiltinProviderFactory] = {
     "codex": register_codex_provider,
     "codex-websockets": register_codex_websockets_provider,
-    "copilot": register_copilot_provider,
     "opencode-go": register_opencode_go_provider,
     "zai": register_zai_provider,
 }
 _BUILTIN_MODEL_LISTERS: dict[str, BuiltinModelLister] = {
     "codex": list_codex_models,
     "codex-websockets": list_codex_websockets_models,
-    "copilot": list_copilot_models,
     "opencode-go": list_opencode_go_models,
     "zai": list_zai_models,
 }
@@ -95,6 +86,7 @@ def build_provider_from_args(args: CLIArgs) -> Provider:
         provider_name,
         model=args.model,
         reasoning_effort=args.reasoning_effort,
+        home=Path.home(),
     )
     if custom_provider is not None:
         return custom_provider
@@ -109,7 +101,7 @@ def list_builtin_provider_models(
     *,
     model: str | None = None,
     reasoning_effort: str | None = None,
-    home: Path | None = None,
+    home: Path,
 ) -> list[ProviderModelInfo] | None:
     """Return a built-in provider model catalog."""
     normalized = provider_name.strip().lower()
@@ -131,6 +123,7 @@ def _build_builtin_provider(provider_name: str, args: CLIArgs) -> Provider:
         provider_name,
         model=args.model,
         reasoning_effort=args.reasoning_effort,
+        home=Path.home(),
     )
     try:
         return factory(context)
@@ -145,11 +138,11 @@ def _provider_context(
     *,
     model: str | None,
     reasoning_effort: str | None,
-    home: Path | None = None,
+    home: Path,
 ) -> ProviderPluginContext:
     return ProviderPluginContext(
         name=provider_name,
-        home=(home or Path.home()).resolve(),
+        home=home.resolve(),
         model=model,
         reasoning_effort=reasoning_effort,
         env=os.environ,
@@ -159,7 +152,7 @@ def _provider_context(
 def _apply_config_default_model(args: CLIArgs) -> None:
     if args.model is not None:
         return
-    config = load_effective_yoke_config(root=Path(args.root))
+    config = load_effective_yoke_config(root=Path(args.root), home=Path.home())
     default_model = parse_config_default_model(config.default_model)
     if default_model is None:
         return
@@ -170,7 +163,7 @@ def _apply_config_default_model(args: CLIArgs) -> None:
 def _apply_config_default_reasoning_effort(args: CLIArgs) -> None:
     if args.reasoning_effort is not None:
         return
-    config = load_effective_yoke_config(root=Path(args.root))
+    config = load_effective_yoke_config(root=Path(args.root), home=Path.home())
     if config.default_reasoning_effort is None:
         return
     args.reasoning_effort = config.default_reasoning_effort
@@ -212,14 +205,12 @@ def _resolve_provider_name(args: CLIArgs) -> str:
             return provider
     if _has_codex_auth():
         return "codex"
-    if _has_copilot_auth():
-        return "copilot"
     if os.getenv("OPENCODE_API_KEY"):
         return "opencode-go"
     if os.getenv("ZAI_API_KEY"):
         return "zai"
     raise ValueError(
-        "No provider credentials found. Configure a Codex/Copilot auth file, "
+        "No provider credentials found. Configure a Codex auth file, "
         "set OPENCODE_API_KEY or ZAI_API_KEY, or configure a custom provider."
     )
 
@@ -228,14 +219,13 @@ def _has_codex_auth() -> bool:
     return (Path.home() / ".codex" / "auth.json").is_file()
 
 
-def _has_copilot_auth() -> bool:
-    if os.getenv("YOKE_COPILOT_AUTH_PATH"):
-        return True
-    return (Path.home() / ".yoke" / "auth.json").is_file()
-
-
 def _available_provider_names() -> list[str]:
-    return sorted({*BUILTIN_PROVIDER_NAMES, *available_custom_provider_names()})
+    return sorted(
+        {
+            *BUILTIN_PROVIDER_NAMES,
+            *available_custom_provider_names(home=Path.home()),
+        }
+    )
 
 
 def _build_first_available_provider(args: CLIArgs) -> Provider | None:
@@ -253,7 +243,7 @@ def _build_first_available_custom_provider(
     exclude: set[str] | None = None,
 ) -> Provider | None:
     excluded = exclude or set()
-    for provider_name in available_custom_provider_names():
+    for provider_name in available_custom_provider_names(home=Path.home()):
         if provider_name in excluded:
             continue
         try:
@@ -261,6 +251,7 @@ def _build_first_available_custom_provider(
                 provider_name,
                 model=None,
                 reasoning_effort=args.reasoning_effort,
+                home=Path.home(),
             )
         except ValueError:
             continue

@@ -16,6 +16,9 @@ from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import AgentResult
 from yoke.agent.loop.types import BeforeToolCallHook
+from yoke.agent.loop.types import ConversationEntryHistory
+from yoke.agent.loop.types import ConversationHistory
+from yoke.agent.loop.types import MessageHistory
 from yoke.agent.loop.types import MaxIterationsExceededError
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.loop.types import ToolExecutionMode
@@ -31,16 +34,21 @@ from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import RegisterTools
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRuntimeContext
+from yoke.agent.tools import never_cancel
 from yoke.agent.tools.context import normalize_tool_registration
 from yoke.agent.tools.context import resolve_model_identity
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
+from yoke.ai.providers.base import provider_system_messages
 
 if TYPE_CHECKING:
     from yoke.ai.sdk_types import AgentResult as SDKAgentResult
     from yoke.ai.sdk_types import Image
     from yoke.ai.sdk_types import RunConfig
     from yoke.cli.bootstrap.types import ToolLoadReport
+
+
+_EMPTY_SKILL_REGISTRY = SkillRegistry([])
 
 
 class RuntimeAgent(RuntimeAgentIterationMixin):
@@ -91,8 +99,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             after_tool_call=config.after_tool_call,
             available_skills=available_skills,
             active_skills=active_skills,
-            messages=config.messages,
-            conversation_entries=config.conversation_entries,
+            history=config.history,
         )
 
     def __init__(
@@ -104,26 +111,23 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         tool_execution: ToolExecutionMode = "parallel",
         before_tool_call: BeforeToolCallHook | None = None,
         after_tool_call: AfterToolCallHook | None = None,
-        skill_registry: SkillRegistry | None = None,
+        skill_registry: SkillRegistry = _EMPTY_SKILL_REGISTRY,
         available_skills: Sequence[SkillSpec] = (),
         active_skills: Sequence[ActiveSkill] = (),
-        messages: Sequence[Message] | None = None,
-        conversation_entries: Sequence[ConversationEntry] | None = None,
+        history: ConversationHistory | None = None,
         tool_factory: RegisterTools | None = None,
         tool_root: Path | None = None,
-        tool_home: Path | None = None,
+        tool_home: Path = Path.home(),
         base_instructions: Sequence[Message] | None = None,
     ) -> None:
-        if messages is not None and conversation_entries is not None:
-            raise ValueError(
-                "Provide either messages or conversation_entries, not both."
-            )
+        if tool_factory is not None and tool_root is None:
+            raise ValueError("Provider-aware tool registration requires tool_root.")
         self.provider = provider
         self._tool_factory = tool_factory
         self._tool_root = (
             tool_root or _bound_tool_path(tools, "root") or Path.cwd()
         ).resolve()
-        self._tool_home = tool_home.resolve() if tool_home is not None else None
+        self._tool_home = tool_home.resolve()
         self._tool_provider: Provider | None = None
         self._tool_model: ModelIdentity | None = None
         self.max_iterations = max_iterations
@@ -136,6 +140,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
                 else self.context_manager.instructions
             )
         ]
+        self._provider_system_messages: list[Message] = []
         self._tool_system_messages: list[Message] = []
         self.context_manager.set_instructions(self._base_instructions)
         self._context: AgentContext | None = None
@@ -143,7 +148,9 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         if tool_factory is not None:
             self.refresh_tools(force=True)
         else:
-            self._install_tools(tools)
+            model = resolve_model_identity(self.provider)
+            self._install_tools(tools, model=model)
+            self._set_dynamic_system_messages(tool_messages=[])
         self.tool_execution = tool_execution
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
@@ -151,11 +158,8 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         self.available_skills = list(available_skills)
         self.active_skills = list(active_skills)
         self.tool_report: ToolLoadReport | None = None
-        if messages is not None or conversation_entries is not None:
-            self.load_conversation(
-                messages=messages,
-                conversation_entries=conversation_entries,
-            )
+        if history is not None:
+            self.load_conversation(history)
 
     def fork(self) -> RuntimeAgent:
         """Create an independent runtime copy of this agent."""
@@ -219,6 +223,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
                         home=self._tool_home,
                         provider=self.provider,
                         model=model,
+                        cancel_requested=never_cancel,
                     )
                 )
             )
@@ -229,18 +234,29 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
                     "Tool registration callbacks must return LocalTool instances."
                 )
             self._install_tools(tools, model=model)
-            self._set_tool_system_messages(list(registration.system_messages))
+            self._set_dynamic_system_messages(
+                tool_messages=list(registration.system_messages),
+            )
         else:
             self._install_tools(list(self.tools.values()), model=model)
-            self._set_tool_system_messages([])
+            self._set_dynamic_system_messages(tool_messages=[])
         return True
 
-    def _set_tool_system_messages(self, messages: Sequence[Message]) -> None:
+    def _set_dynamic_system_messages(
+        self,
+        *,
+        tool_messages: Sequence[Message],
+    ) -> None:
+        self._provider_system_messages = provider_system_messages(self.provider)
         self._tool_system_messages = [
-            message.model_copy(deep=True) for message in messages
+            message.model_copy(deep=True) for message in tool_messages
         ]
         self.context_manager.set_instructions(
-            [*self._base_instructions, *self._tool_system_messages],
+            [
+                *self._base_instructions,
+                *self._provider_system_messages,
+                *self._tool_system_messages,
+            ],
             context=self._context,
         )
 
@@ -256,6 +272,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             home=self._tool_home,
             provider=self.provider,
             model=resolved_model,
+            cancel_requested=never_cancel,
         )
         for tool in tools:
             tool.bind_runtime_context(runtime_context)
@@ -265,17 +282,16 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
 
     def load_conversation(
         self,
+        history: ConversationHistory,
         *,
-        messages: Sequence[Message] | None = None,
-        conversation_entries: Sequence[ConversationEntry] | None = None,
         available_skills: Sequence[SkillSpec] | None = None,
         active_skills: Sequence[ActiveSkill] | None = None,
     ) -> None:
         """Replace the owned conversation state from persisted history."""
-        if messages is not None and conversation_entries is not None:
-            raise ValueError(
-                "Provide either messages or conversation_entries, not both."
-            )
+        messages = history.messages if isinstance(history, MessageHistory) else None
+        conversation_entries = (
+            history.entries if isinstance(history, ConversationEntryHistory) else None
+        )
         self._context = self.context_manager.initialize(
             "",
             list(messages) if messages is not None else None,

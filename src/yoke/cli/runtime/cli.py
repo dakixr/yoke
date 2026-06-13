@@ -11,6 +11,7 @@ from pathlib import Path
 from rich.text import Text
 
 from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop import ConversationEntryHistory
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
@@ -108,9 +109,12 @@ def run_cli(
     active_session = create_active_session(args, root=Path(args.root))
     if isinstance(active_agent, RuntimeAgent):
         active_agent.load_conversation(
-            conversation_entries=active_branch_entries(
-                active_session.record.conversation_entries,
-                leaf_id=active_session.record.leaf_id,
+            ConversationEntryHistory(
+                active_branch_entries(
+                    active_session.record.conversation_entries,
+                    leaf_id=active_session.record.leaf_id,
+                )
+                or []
             ),
             active_skills=active_session.record.active_skills,
         )
@@ -225,9 +229,12 @@ def run_resume_cli(
         active_agent.active_skills = list(record.active_skills)
     if isinstance(active_agent, RuntimeAgent):
         active_agent.load_conversation(
-            conversation_entries=active_branch_entries(
-                record.conversation_entries,
-                leaf_id=record.leaf_id,
+            ConversationEntryHistory(
+                active_branch_entries(
+                    record.conversation_entries,
+                    leaf_id=record.leaf_id,
+                )
+                or []
             ),
             active_skills=record.active_skills,
         )

@@ -15,6 +15,8 @@ from typing import runtime_checkable
 from yoke.agent.compaction import TokenEstimate
 from yoke.agent.loop import AgentResult
 from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop import ConversationEntryHistory
+from yoke.agent.loop import MessageHistory
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.protocols import AgentRunner
@@ -92,8 +94,11 @@ def execute_turn(
         if isinstance(agent, RuntimeAgent):
             if not agent.has_state:
                 agent.load_conversation(
-                    messages=messages if conversation_entries is None else None,
-                    conversation_entries=conversation_entries,
+                    (
+                        ConversationEntryHistory(conversation_entries)
+                        if conversation_entries is not None
+                        else MessageHistory(messages)
+                    ),
                     available_skills=cast(Sequence[SkillSpec] | None, available_skills),
                     active_skills=cast(Sequence[ActiveSkill] | None, active_skills),
                 )

@@ -11,6 +11,9 @@ from yoke.agent.loop.types import AgentStoppedError
 from yoke.agent.loop.types import BeforeToolCallContext
 from yoke.agent.loop.types import BeforeToolCallHook
 from yoke.agent.loop.types import BeforeToolCallResult
+from yoke.agent.loop.types import ConversationEntryHistory
+from yoke.agent.loop.types import ConversationHistory
+from yoke.agent.loop.types import MessageHistory
 from yoke.agent.loop.types import MaxIterationsExceededError
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.loop.types import ToolExecutionMode
@@ -20,6 +23,9 @@ __all__ = [
     "BeforeToolCallContext",
     "BeforeToolCallHook",
     "BeforeToolCallResult",
+    "ConversationEntryHistory",
+    "ConversationHistory",
+    "MessageHistory",
     "AfterToolCallContext",
     "AfterToolCallHook",
     "AfterToolCallResult",

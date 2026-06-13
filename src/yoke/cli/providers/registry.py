@@ -25,9 +25,9 @@ class ProviderPluginContext:
 
     name: str
     home: Path
+    env: Mapping[str, str]
     model: str | None = None
     reasoning_effort: str | None = None
-    env: Mapping[str, str] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,11 +46,9 @@ RegisterProviderFunc = Callable[[ProviderPluginContext], Provider]
 ListProviderModelsFunc = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
 
 
-def load_global_provider_plugins(
-    *, home: Path | None = None
-) -> list[LoadedProviderPlugin]:
+def load_global_provider_plugins(*, home: Path) -> list[LoadedProviderPlugin]:
     """load_global_provider_plugins."""
-    resolved_home = (home or Path.home()).resolve()
+    resolved_home = home.resolve()
     provider_dir = resolved_home / ".yoke" / "providers"
     if not provider_dir.is_dir():
         return []
@@ -101,7 +99,7 @@ def create_custom_provider(
     *,
     model: str | None = None,
     reasoning_effort: str | None = None,
-    home: Path | None = None,
+    home: Path,
 ) -> Provider | None:
     """create_custom_provider."""
     normalized = name.strip().lower()
@@ -110,7 +108,7 @@ def create_custom_provider(
             continue
         context = ProviderPluginContext(
             name=plugin.name,
-            home=(home or Path.home()).resolve(),
+            home=home.resolve(),
             model=model,
             reasoning_effort=reasoning_effort,
             env=os.environ,
@@ -133,7 +131,7 @@ def create_custom_provider(
     return None
 
 
-def available_custom_provider_names(*, home: Path | None = None) -> list[str]:
+def available_custom_provider_names(*, home: Path) -> list[str]:
     """available_custom_provider_names."""
     return [plugin.name for plugin in load_global_provider_plugins(home=home)]
 
@@ -143,7 +141,7 @@ def list_custom_provider_models(
     *,
     model: str | None = None,
     reasoning_effort: str | None = None,
-    home: Path | None = None,
+    home: Path,
 ) -> list[ProviderModelInfo] | None:
     """Return a custom provider plugin model catalog when available."""
     normalized = name.strip().lower()
@@ -152,7 +150,7 @@ def list_custom_provider_models(
             continue
         context = ProviderPluginContext(
             name=plugin.name,
-            home=(home or Path.home()).resolve(),
+            home=home.resolve(),
             model=model,
             reasoning_effort=reasoning_effort,
             env=os.environ,

@@ -73,6 +73,11 @@ DEFAULT_ALLOWED_TOOL_NAMES = (
     "web_research",
 )
 
+TOOL_CAPABILITY_ALIASES = (
+    frozenset({"edit", "apply_patch"}),
+    frozenset({"rg", "grep", "find", "ls"}),
+)
+
 
 @dataclass(slots=True, frozen=True)
 class LoadedWorkspaceConfig:
@@ -173,8 +178,9 @@ def unmatched_tool_patterns(config: PiConfig, known_tool_names: set[str]) -> lis
     unmatched: list[str] = []
     for pattern in config.tools:
         if not any(fnmatch(name, pattern) for name in known_tool_names):
-            if pattern in {"edit", "apply_patch"} and known_tool_names.intersection(
-                {"edit", "apply_patch"}
+            if any(
+                pattern in aliases and known_tool_names.intersection(aliases)
+                for aliases in TOOL_CAPABILITY_ALIASES
             ):
                 continue
             unmatched.append(pattern)

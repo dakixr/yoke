@@ -8,9 +8,16 @@ from yoke.agent.models import Message
 from yoke.ai import Agent
 from yoke.ai import RunConfig
 from yoke.ai.providers.base import Provider
-from yoke.cli.bootstrap.config import resolve_agent_config
+from yoke.cli.bootstrap.config import resolve_agent_config as _resolve_agent_config
+from yoke.cli.bootstrap.config import ToolDiscoveryProvider
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.config import build_tool_report
+
+
+def resolve_agent_config(**kwargs):
+    kwargs.setdefault("provider", ToolDiscoveryProvider())
+    kwargs.setdefault("home", Path.home())
+    return _resolve_agent_config(**kwargs)
 
 
 class StaticProvider(Provider):

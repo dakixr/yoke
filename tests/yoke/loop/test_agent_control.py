@@ -34,12 +34,14 @@ def test_compaction_keeps_transcript_and_compacts_provider_context(
                 keep_recent_tokens=80,
             ),
         ),
-        messages=[
-            Message.user("older"),
-            Message.assistant("older answer " + ("alpha " * 200)),
-            Message.user("recent"),
-            Message.assistant("recent answer"),
-        ],
+        history=MessageHistory(
+            [
+                Message.user("older"),
+                Message.assistant("older answer " + ("alpha " * 200)),
+                Message.user("recent"),
+                Message.assistant("recent answer"),
+            ]
+        ),
     )
 
     result = agent.run("follow-up")

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 # ruff: noqa: ANN401, D100, D101, D102, D103, S101
 
+from pathlib import Path
 from typing import Any
 from typing import cast
 
 from yoke.agent.models import Message
+from yoke.agent.tools import ModelIdentity
+from yoke.agent.tools import ToolRuntimeContext
 from yoke.agent.tools.web import WebFetchTool
 from yoke.agent.tools.web import WebResearchTool
 from yoke.agent.tools.web import _search_terms
@@ -59,6 +62,33 @@ class SynthesizingProvider:
                 '"quote":"Make the path absolute, resolving any symlinks."}]}'
             ),
         )
+
+
+class UnavailableSynthesisProvider:
+    supports_image_inputs = False
+    max_images_per_message = None
+
+    def complete(
+        self, messages: list[Message], tools: list[dict[str, object]]
+    ) -> Message:
+        del messages, tools
+        raise RuntimeError("Synthesis unavailable")
+
+
+def bind_web_research(
+    tool: WebResearchTool,
+    provider: object | None = None,
+) -> WebResearchTool:
+    resolved_provider = provider or UnavailableSynthesisProvider()
+    tool.bind_runtime_context(
+        ToolRuntimeContext(
+            root=Path.cwd(),
+            home=Path.home(),
+            provider=cast(Any, resolved_provider),
+            model=ModelIdentity(provider_name="test", model_id="test-model"),
+        )
+    )
+    return tool
 
 
 def test_web_fetch_returns_agent_metadata(monkeypatch: Any) -> None:
@@ -204,7 +234,9 @@ def test_web_research_combines_search_and_fetch(monkeypatch: Any) -> None:
     monkeypatch.setattr("httpx.Client", FakeClient)
     monkeypatch.setattr("httpx.get", fake_get)
 
-    result = WebResearchTool(question="How to use example?").execute()
+    result = bind_web_research(
+        WebResearchTool(question="How to use example?")
+    ).execute()
 
     assert result["ok"] is True
     assert "Research brief" in str(result["answer"])
@@ -243,7 +275,9 @@ def test_web_research_falls_back_to_raw_question(monkeypatch: Any) -> None:
     monkeypatch.setattr("httpx.Client", FakeClient)
     monkeypatch.setattr("httpx.get", fake_get)
 
-    result = WebResearchTool(question="What is ExampleThing?").execute()
+    result = bind_web_research(
+        WebResearchTool(question="What is ExampleThing?")
+    ).execute()
 
     assert calls[-1] == "What is ExampleThing?"
     assert result["sources"]
@@ -300,8 +334,12 @@ def test_web_research_uses_precise_find_terms_for_docs_pages(
     monkeypatch.setattr("httpx.Client", FakeClient)
     monkeypatch.setattr("httpx.get", fake_get)
 
-    result = WebResearchTool(
-        question=("What is Python pathlib Path.resolve() and when should it be used?"),
+    result = bind_web_research(
+        WebResearchTool(
+            question=(
+                "What is Python pathlib Path.resolve() and when should it be used?"
+            ),
+        )
     ).execute()
 
     sources = cast(list[dict[str, object]], result["sources"])
@@ -337,8 +375,10 @@ def test_web_research_uses_provider_for_structured_synthesis(
 
     monkeypatch.setattr("httpx.Client", FakeClient)
     monkeypatch.setattr("httpx.get", fake_get)
-    tool = WebResearchTool(question="What is Python pathlib Path.resolve()?")
-    tool._bind_context(provider=SynthesizingProvider())
+    tool = bind_web_research(
+        WebResearchTool(question="What is Python pathlib Path.resolve()?"),
+        SynthesizingProvider(),
+    )
 
     result = tool.execute()
 

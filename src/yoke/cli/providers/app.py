@@ -33,7 +33,7 @@ def print_provider_inventory(stream: OutputStream) -> None:
     table.add_column("Location")
     for name in BUILTIN_PROVIDER_NAMES:
         table.add_row(name, "builtin", "builtin")
-    for plugin in load_global_provider_plugins():
+    for plugin in load_global_provider_plugins(home=Path.home()):
         table.add_row(
             plugin.name,
             "global",
@@ -116,7 +116,7 @@ def providers_doctor() -> None:
     """providers_doctor."""
     console = build_console(cast(OutputStream, sys.stdout))
     try:
-        load_global_provider_plugins()
+        load_global_provider_plugins(home=Path.home())
     except ValueError as exc:
         typer.echo(f"Provider loading failed: {exc}")
         raise typer.Exit(1) from exc

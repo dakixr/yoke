@@ -5,6 +5,7 @@ from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.command import CommandTool
 from yoke.agent.tools.context import ModelIdentity
+from yoke.agent.tools.context import never_cancel
 from yoke.agent.tools.context import RegisterTools
 from yoke.agent.tools.context import ToolRegistration
 from yoke.agent.tools.context import ToolRegistrationContext
@@ -18,6 +19,7 @@ from yoke.agent.tools.rg import RipgrepTool
 from yoke.agent.tools.search import FindTool
 from yoke.agent.tools.search import GrepTool
 from yoke.agent.tools.search import LsTool
+from yoke.agent.tools.search_registration import register_search_tools
 from yoke.agent.tools.shell import COMMAND_TOOL_NAME
 from yoke.agent.tools.skill import SkillTool
 from yoke.agent.tools.subagent import SubagentTool
@@ -53,5 +55,7 @@ __all__ = [
     "ToolRegistrationResult",
     "ToolRuntimeContext",
     "model_prefers_apply_patch",
+    "never_cancel",
     "register_write_tool",
+    "register_search_tools",
 ]

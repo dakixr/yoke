@@ -24,6 +24,7 @@ from yoke.ai import Skill
 from yoke.ai import StructuredOutputError
 from yoke.ai import complete
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import ProviderModelInfo
 
 
 class RecordingProvider(Provider):
@@ -53,6 +54,64 @@ class Summary(BaseModel):
     risks: list[str]
 
 
+class ModelPromptProvider(RecordingProvider):
+    provider_name = "demo"
+
+    def __init__(self, *responses: Message, model: str = "gpt-demo") -> None:
+        super().__init__(*responses)
+        self.config = SimpleNamespace(model=model)
+
+    def current_model_id(self) -> str | None:
+        return self.config.model
+
+    def current_model_info(self) -> ProviderModelInfo | None:
+        if self.config.model == "gpt-demo":
+            return ProviderModelInfo(
+                id="gpt-demo",
+                display_name="GPT Demo",
+                context_window_tokens=100_000,
+                thinking_levels=("low",),
+                system_messages=(
+                    Message.system("Use GPT Demo provider steering."),
+                ),
+            )
+        if self.config.model == "kimi-demo":
+            return ProviderModelInfo(
+                id="kimi-demo",
+                display_name="Kimi Demo",
+                context_window_tokens=100_000,
+                thinking_levels=("low",),
+                system_messages=(
+                    Message.system("Use Kimi Demo provider steering."),
+                ),
+            )
+        return None
+
+    def list_models(self) -> list[ProviderModelInfo]:
+        return [
+            model
+            for model in [
+                self.current_model_info(),
+                ProviderModelInfo(
+                    id="other-demo",
+                    display_name="Other Demo",
+                    context_window_tokens=100_000,
+                    thinking_levels=("low",),
+                ),
+            ]
+            if model is not None
+        ]
+
+    def set_model(
+        self,
+        model_id: str,
+        *,
+        reasoning_effort: str | None = None,
+    ) -> None:
+        del reasoning_effort
+        self.config.model = model_id
+
+
 def test_complete_uses_sys_prompt_images_and_no_tools() -> None:
     provider = RecordingProvider(Message.assistant("done"))
 
@@ -74,6 +133,22 @@ def test_complete_uses_sys_prompt_images_and_no_tools() -> None:
             path=str(Path("shot.png").expanduser().resolve()),
             label="[Image #1]",
         ),
+    ]
+
+
+def test_complete_includes_current_provider_model_system_messages() -> None:
+    provider = ModelPromptProvider(Message.assistant("done"))
+
+    complete(
+        provider=provider,
+        sys_prompt="Base instructions.",
+        prompt="hello",
+    )
+
+    messages, _tools = provider.calls[-1]
+    assert [message.content for message in messages[:2]] == [
+        "Base instructions.",
+        "Use GPT Demo provider steering.",
     ]
 
 
@@ -138,6 +213,31 @@ def test_public_agent_prompt_is_stateful_and_uses_sys_prompt(
     ]
     assert second_messages[0].content == "You are concise."
     assert second_messages[-1].content == "second"
+
+
+def test_public_agent_refreshes_provider_model_system_messages(
+    tmp_path: Path,
+) -> None:
+    provider = ModelPromptProvider(Message.assistant("first"), Message.assistant("second"))
+    agent = Agent(
+        provider=provider,
+        config=RunConfig(
+            root=tmp_path,
+            sys_prompt="Base instructions.",
+            tools=[],
+            include_agents_file=False,
+        ),
+    )
+
+    agent.prompt("first")
+    provider.config.model = "kimi-demo"
+    agent.prompt("second")
+
+    messages, _tools = provider.calls[-1]
+    contents = [message.content for message in messages if message.role == "system"]
+    assert "Base instructions." in contents
+    assert "Use Kimi Demo provider steering." in contents
+    assert "Use GPT Demo provider steering." not in contents
 
 
 def test_public_agent_prompt_accepts_images(tmp_path: Path) -> None:

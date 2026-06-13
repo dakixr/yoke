@@ -114,6 +114,33 @@ def test_build_agent_preserves_agents_file_system_message(
     assert agent.context_manager.max_total_tokens == 400_000
 
 
+def test_build_agent_includes_provider_model_system_message(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class PromptCatalogProvider(CatalogProvider):
+        def current_model_info(self):
+            from yoke.ai.providers.base import ProviderModelInfo
+
+            return ProviderModelInfo(
+                id=self.config.model,
+                display_name=self.config.model,
+                context_window_tokens=self.context_window_tokens,
+                thinking_levels=("low", "medium", "high"),
+                supports_image_inputs=True,
+                system_messages=(
+                    Message.system(f"Provider steering for {self.config.model}."),
+                ),
+            )
+
+    install_builtin_provider(monkeypatch, PromptCatalogProvider)
+
+    agent = build_agent_from_args(CLIArgs(model="codex:gpt-5.4", root=str(tmp_path)))
+
+    system_messages = agent.context_manager.instructions
+    assert system_messages[1].content == "Provider steering for gpt-5.4."
+    assert "Use the `apply_patch` tool" in (system_messages[2].content or "")
+
+
 def test_cli_rejects_unknown_provider(capsys) -> None:
     exit_code = main(["--model", "other:gpt-test", "hello"])
 
@@ -143,7 +170,6 @@ def test_build_agent_honors_explicit_opencode_go_provider(
 def test_cli_prefers_opencode_go_when_only_credentials_exist(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.delenv("YOKE_COPILOT_AUTH_PATH", raising=False)
     monkeypatch.setattr("yoke.cli.config.providers.Path.home", lambda: tmp_path)
     monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
     install_builtin_provider(

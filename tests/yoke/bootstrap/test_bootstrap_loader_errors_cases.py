@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from yoke.cli.bootstrap.config import ToolDiscoveryProvider
 from yoke.cli.bootstrap.config import resolve_agent_config
 
 
@@ -34,6 +35,8 @@ def test_invalid_global_config_reports_human_readable_json_error(
             root=tmp_path,
             base_system_prompt=None,
             include_global_tools=False,
+            home=home,
+            provider=ToolDiscoveryProvider(),
         )
 
     message = str(exc_info.value)
@@ -56,6 +59,8 @@ def test_invalid_repo_tool_plugin_does_not_block_startup(
         root=tmp_path,
         base_system_prompt=None,
         include_global_tools=False,
+        home=tmp_path / "home",
+        provider=ToolDiscoveryProvider(),
     )
 
     assert config.tools
@@ -97,6 +102,8 @@ def relative_echo() -> dict[str, object]:
         root=tmp_path,
         base_system_prompt=None,
         include_global_tools=False,
+        home=tmp_path / "home",
+        provider=ToolDiscoveryProvider(),
     )
 
     tool_names = {entry.tool.name for entry in resolved.tool_report.discovered_tools}
@@ -129,6 +136,8 @@ def legacy_echo() -> dict[str, object]:
         root=tmp_path,
         base_system_prompt=None,
         include_global_tools=True,
+        home=home,
+        provider=ToolDiscoveryProvider(),
     )
 
     tool_names = {entry.tool.name for entry in resolved.tool_report.discovered_tools}

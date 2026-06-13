@@ -230,7 +230,14 @@ def test_agent_loop_runs_until_final_answer(tmp_path: Path) -> None:
     ]
 
 
-def test_subagent_tool_runs_in_process(tmp_path: Path) -> None:
+def test_subagent_tool_runs_in_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "yoke.agent.tools.search_registration.shutil.which",
+        lambda name: "/usr/bin/rg" if name == "rg" else None,
+    )
     (tmp_path / "notes.txt").write_text("hello from nested context", encoding="utf-8")
     provider = SubagentProvider()
     subagent = SubagentTool.bind(root=tmp_path, provider=provider)
@@ -240,6 +247,8 @@ def test_subagent_tool_runs_in_process(tmp_path: Path) -> None:
 
     assert result.output == "done"
     assert provider.calls == 3
+    assert "rg" in provider.nested_tool_names
+    assert {"grep", "find", "ls"}.isdisjoint(provider.nested_tool_names)
     assert "nested summary" in result.messages[-2].text_content()
 
 
@@ -352,10 +361,12 @@ def test_agent_loop_can_continue_existing_history(tmp_path: Path) -> None:
         context_manager=ContextManager(
             instructions=[Message.system("system prompt")],
         ),
-        messages=[
-            Message.user("previous task"),
-            Message.assistant("previous answer"),
-        ],
+        history=MessageHistory(
+            [
+                Message.user("previous task"),
+                Message.assistant("previous answer"),
+            ]
+        ),
     )
 
     result = agent.run("next task")
@@ -424,7 +435,11 @@ def test_agent_loop_rejects_newest_message_over_provider_image_limit(
     newest_message = Message.user(
         [MessageTextContentPart(text="Too many images."), *image_parts]
     )
-    agent = RuntimeAgent(provider=FakeProvider(), tools=[], messages=[newest_message])
+    agent = RuntimeAgent(
+        provider=FakeProvider(),
+        tools=[],
+        history=MessageHistory([newest_message]),
+    )
 
     with pytest.raises(ProviderError, match="exceeds provider image limit"):
         agent.run("", user_message=newest_message)
@@ -459,7 +474,7 @@ def test_agent_loop_omits_historical_images_for_text_only_provider(
     agent = RuntimeAgent(
         provider=provider,
         tools=[],
-        messages=[image_message, Message.assistant("Reviewed.")],
+        history=MessageHistory([image_message, Message.assistant("Reviewed.")]),
     )
 
     result = agent.run("continue")

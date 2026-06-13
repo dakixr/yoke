@@ -65,7 +65,7 @@ def test_agent_loop_retries_after_provider_overflow_by_compacting_history(
                 keep_recent_tokens=120,
             ),
         ),
-        messages=[*older_messages, newest_message],
+        history=MessageHistory([*older_messages, newest_message]),
     )
 
     result = agent.run("", user_message=newest_message)
@@ -92,11 +92,13 @@ def test_agent_loop_forces_compaction_after_provider_token_count_overflow(
                 keep_recent_tokens=2_000,
             ),
         ),
-        messages=[
-            Message.user("older request"),
-            Message.assistant("older response"),
-            newest_message,
-        ],
+        history=MessageHistory(
+            [
+                Message.user("older request"),
+                Message.assistant("older response"),
+                newest_message,
+            ]
+        ),
     )
 
     result = agent.run(
@@ -140,19 +142,21 @@ def test_pre_model_compaction_ignores_provider_usage_before_snapshot(
                 recent_user_tokens=500,
             ),
         ),
-        conversation_entries=[
-            ConversationEntry(kind="user", message=Message.user("older")),
-            ConversationEntry(
-                kind="assistant",
-                message=Message(
-                    role="assistant",
-                    content="older response",
-                    usage=TokenUsage(input_tokens=75_000),
+        history=ConversationEntryHistory(
+            [
+                ConversationEntry(kind="user", message=Message.user("older")),
+                ConversationEntry(
+                    kind="assistant",
+                    message=Message(
+                        role="assistant",
+                        content="older response",
+                        usage=TokenUsage(input_tokens=75_000),
+                    ),
                 ),
-            ),
-            ConversationEntry(kind="memory_snapshot"),
-            ConversationEntry(kind="user", message=Message.user("recent")),
-        ],
+                ConversationEntry(kind="memory_snapshot"),
+                ConversationEntry(kind="user", message=Message.user("recent")),
+            ]
+        ),
     )
 
     result = agent.run(
@@ -183,11 +187,13 @@ def test_forced_compaction_updates_runtime_agent_state() -> None:
         context_manager=ContextManager(
             compaction_policy=CompactionPolicy(keep_recent_tokens=1),
         ),
-        messages=[
-            Message.user("older request " + ("alpha " * 80)),
-            Message.assistant("older response " + ("beta " * 80)),
-            Message.user("recent request"),
-        ],
+        history=MessageHistory(
+            [
+                Message.user("older request " + ("alpha " * 80)),
+                Message.assistant("older response " + ("beta " * 80)),
+                Message.user("recent request"),
+            ]
+        ),
     )
 
     compacted = force_compact_agent(agent, agent.messages)
@@ -225,12 +231,14 @@ def test_agent_loop_stops_when_compaction_summary_is_empty(
                 keep_recent_tokens=30,
             ),
         ),
-        messages=[
-            Message.user("older"),
-            Message.assistant("older answer " + ("alpha " * 200)),
-            Message.user("recent"),
-            Message.assistant("recent answer"),
-        ],
+        history=MessageHistory(
+            [
+                Message.user("older"),
+                Message.assistant("older answer " + ("alpha " * 200)),
+                Message.user("recent"),
+                Message.assistant("recent answer"),
+            ]
+        ),
     )
 
     result = agent.run(

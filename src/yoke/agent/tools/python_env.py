@@ -33,17 +33,16 @@ def prepare_python_env(env: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def ensure_python_alias_bin(python_executable: str | None = None) -> Path:
+def ensure_python_alias_bin(python_executable: str) -> Path:
     """Create a temp bin dir with `python`/`python3` shims to yoke's Python."""
-    executable = python_executable or current_python_executable()
     if os.name == "nt":
-        return ensure_windows_python_alias_bin(executable)
+        return ensure_windows_python_alias_bin(python_executable)
 
     bin_dir = Path(tempfile.gettempdir()) / f"yoke-python-bin-{os.getuid()}"
     bin_dir.mkdir(mode=0o700, exist_ok=True)
     for name in ("python", "python3"):
         shim = bin_dir / name
-        desired = _python_shim(executable)
+        desired = _python_shim(python_executable)
         if not _same_file_content(shim, desired):
             shim.write_text(desired, encoding="utf-8")
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR)

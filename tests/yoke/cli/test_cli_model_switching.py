@@ -13,6 +13,7 @@ from .support import active_session_for
 from yoke.agent.compaction import CompactionPreparation
 from yoke.agent.compaction import Compactor
 from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop import MessageHistory
 from yoke.agent.models import Message
 from yoke.agent.tools import LocalTool
 from yoke.agent.tools import ToolRegistrationContext
@@ -60,6 +61,7 @@ class SwitchableProvider:
                 context_window_tokens=1000,
                 thinking_levels=("low", "medium", "high"),
                 supports_image_inputs=False,
+                system_messages=(Message.system("Use GPT A steering."),),
             ),
             ProviderModelInfo(
                 id="gpt-b",
@@ -67,6 +69,7 @@ class SwitchableProvider:
                 context_window_tokens=2000,
                 thinking_levels=("low", "medium", "high"),
                 supports_image_inputs=False,
+                system_messages=(Message.system("Use GPT B steering."),),
             ),
         ]
 
@@ -103,6 +106,28 @@ def test_session_store_persists_provider_state(tmp_path: Path) -> None:
     assert record.model_id == "gpt-5.4"
     assert record.reasoning_effort == "high"
     assert record.context_window_tokens == 400_000
+
+
+def test_set_agent_model_refreshes_provider_system_messages() -> None:
+    provider = SwitchableProvider()
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        context_manager=ContextManager(
+            instructions=[Message.system("Base instructions.")]
+        ),
+    )
+
+    set_agent_model(agent, model_id="gpt-b")
+
+    contents = [
+        message.content
+        for message in agent.context_manager.instructions
+        if message.role == "system"
+    ]
+    assert "Base instructions." in contents
+    assert "Use GPT B steering." in contents
+    assert "Use GPT A steering." not in contents
 
 
 def test_resume_defaults_provider_state_from_session(tmp_path: Path) -> None:
@@ -196,6 +221,7 @@ def test_same_provider_switch_reregisters_model_aware_tools(
         tools=[],
         tool_factory=register_tools,
         tool_root=tmp_path,
+        tool_home=tmp_path,
         context_manager=build_context_manager(),
     )
 
@@ -236,11 +262,12 @@ def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
         tools=[],
         tool_factory=register_write_tool,
         tool_root=tmp_path,
+        tool_home=tmp_path,
         context_manager=ContextManager(
             instructions=[Message.system("base instructions")]
         ),
     )
-    agent.load_conversation(messages=[Message.user("existing conversation")])
+    agent.load_conversation(MessageHistory([Message.user("existing conversation")]))
 
     assert set(agent.tools) == {"apply_patch"}
     assert "Use the `apply_patch` tool" in (
@@ -293,7 +320,7 @@ def test_same_provider_switch_does_not_copy_provider(
         agent.context_manager,
         provider=agent.provider,
     )
-    agent.load_conversation(messages=[Message.user("hello")])
+    agent.load_conversation(MessageHistory([Message.user("hello")]))
     stream = CaptureStream()
     console = build_console(stream)
 
@@ -340,7 +367,7 @@ def test_slash_model_switch_preserves_compaction_handoff(
         context_manager=build_context_manager(),
     )
     agent.load_conversation(
-        messages=[Message.user("older"), Message.assistant("older answer")]
+        MessageHistory([Message.user("older"), Message.assistant("older answer")])
     )
     preparation = CompactionPreparation(
         reason="manual",
@@ -417,10 +444,12 @@ def test_legacy_model_args_do_not_trigger_context_budget_switch(
     )
     long_text = "alpha " * 500
     agent.load_conversation(
-        messages=[
-            Message.user(long_text),
-            Message.assistant("done"),
-        ]
+        MessageHistory(
+            [
+                Message.user(long_text),
+                Message.assistant("done"),
+            ]
+        )
     )
     stream = CaptureStream()
     console = build_console(stream)

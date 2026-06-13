@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -12,6 +13,23 @@ from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
+
+
+@dataclass(slots=True, frozen=True)
+class MessageHistory:
+    """Conversation history represented as provider transcript messages."""
+
+    messages: Sequence[Message]
+
+
+@dataclass(slots=True, frozen=True)
+class ConversationEntryHistory:
+    """Conversation history represented as structured conversation entries."""
+
+    entries: Sequence[ConversationEntry]
+
+
+type ConversationHistory = MessageHistory | ConversationEntryHistory
 
 
 @dataclass(slots=True)

@@ -6,8 +6,6 @@ from yoke.ai.providers.codex_subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex_websockets import CodexWebSockets
 from yoke.ai.providers.codex_websockets import CodexWebSocketsConfig
-from yoke.ai.providers.github_copilot_subscription import GitHubCopilotConfig
-from yoke.ai.providers.github_copilot_subscription import GitHubCopilotProvider
 from yoke.ai.providers.opencode_go import OpenCodeGoConfig
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 from yoke.ai.providers.openai_compat import OpenAICompatibleConfig
@@ -20,8 +18,6 @@ __all__ = [
     "CodexSubscriptionProvider",
     "CodexWebSockets",
     "CodexWebSocketsConfig",
-    "GitHubCopilotConfig",
-    "GitHubCopilotProvider",
     "OpenCodeGoConfig",
     "OpenCodeGoProvider",
     "OpenAICompatibleConfig",

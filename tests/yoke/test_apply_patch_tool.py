@@ -55,11 +55,11 @@ def test_builtin_tools_select_apply_patch_for_gpt_models(tmp_path: Path) -> None
     provider = SimpleNamespace()
     context = ToolRegistrationContext(
         root=tmp_path,
-        home=None,
+        home=tmp_path,
         provider=cast(Any, provider),
         model=ModelIdentity(provider_name="demo", model_id="my-gpt-coder"),
     )
-    tools = create_builtin_tools(tmp_path, context=context)
+    tools = create_builtin_tools(context)
     names = [tool.name for tool in tools]
 
     assert "apply_patch" in names
@@ -71,11 +71,11 @@ def test_builtin_tools_select_edit_for_non_gpt_models(tmp_path: Path) -> None:
     provider = SimpleNamespace()
     context = ToolRegistrationContext(
         root=tmp_path,
-        home=None,
+        home=tmp_path,
         provider=cast(Any, provider),
         model=ModelIdentity(provider_name="demo", model_id="kimi-k2.7-code"),
     )
-    tools = create_builtin_tools(tmp_path, context=context)
+    tools = create_builtin_tools(context)
     names = [tool.name for tool in tools]
 
     assert "edit" in names

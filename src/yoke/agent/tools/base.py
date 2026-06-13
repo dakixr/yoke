@@ -72,10 +72,8 @@ class LocalTool(BaseModel, ABC):
         self._context["model_key"] = context.model_key
         self._context["reasoning_effort"] = context.reasoning_effort
         self._context["root"] = context.root
-        if context.home is not None:
-            self._context["home"] = context.home
-        if context.cancel_requested is not None:
-            self._context["cancel_requested"] = context.cancel_requested
+        self._context["home"] = context.home
+        self._context["cancel_requested"] = context.cancel_requested
 
     def _is_cancel_requested(self) -> bool:
         runtime_context = self._context.get("runtime_context")

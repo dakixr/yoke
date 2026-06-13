@@ -258,7 +258,7 @@ def tools_list(
     print_tool_inventory_table(cast(OutputStream, sys.stdout), report)
     if report.config_path is not None:
         console.print(f"Config: {report.config_path}")
-    for pattern in report.unmatched_config_patterns or []:
+    for pattern in report.unmatched_config_patterns:
         console.print(
             Text(
                 f"Warning: tool rule did not match any loaded tool: {pattern}",

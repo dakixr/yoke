@@ -12,20 +12,16 @@ from typing import cast
 
 from yoke.agent.tools import AttachImageTool
 from yoke.agent.tools import CommandTool
-from yoke.agent.tools import EditTool
 from yoke.agent.tools import ExtractFileContextTool
-from yoke.agent.tools import FindTool
-from yoke.agent.tools import GrepTool
 from yoke.agent.tools import LocalTool
-from yoke.agent.tools import LsTool
 from yoke.agent.tools import PythonExecTool
 from yoke.agent.tools import ReadTool
-from yoke.agent.tools import RipgrepTool
 from yoke.agent.tools import SubagentTool
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
 from yoke.agent.tools import WebFetchTool
 from yoke.agent.tools import WebResearchTool
+from yoke.agent.tools import register_search_tools
 from yoke.agent.tools import register_write_tool
 from yoke.agent.tools.context import normalize_tool_registration
 from yoke.cli.bootstrap.types import LoadedTool
@@ -46,14 +42,9 @@ def load_tools(
     include_repo_tools: bool,
     include_global_tools: bool,
     context: ToolRegistrationContext,
-    cancel_requested=None,
 ) -> ToolDiscoveryResult:
     """Load built-in and plugin tools."""
-    builtin_registration = _register_builtin_tools(
-        root,
-        context=context,
-        cancel_requested=cancel_requested,
-    )
+    builtin_registration = _register_builtin_tools(context)
     builtin_tools = list(builtin_registration.tools)
     loaded_tools: list[LoadedTool] = [
         LoadedTool(tool=tool, source_kind="default", source_label="default:builtin")
@@ -101,51 +92,30 @@ def load_tools(
     )
 
 
-def create_builtin_tools(
-    root: Path,
-    *,
-    context: ToolRegistrationContext | None = None,
-    cancel_requested=None,
-) -> list[LocalTool]:
+def create_builtin_tools(context: ToolRegistrationContext) -> list[LocalTool]:
     """Create the default built-in tool set."""
-    return list(
-        _register_builtin_tools(
-            root,
-            context=context,
-            cancel_requested=cancel_requested,
-        ).tools
-    )
+    return list(_register_builtin_tools(context).tools)
 
 
 def _register_builtin_tools(
-    root: Path,
-    *,
-    context: ToolRegistrationContext | None,
-    cancel_requested,
+    context: ToolRegistrationContext,
 ) -> ToolRegistrationResult:
+    root = context.root
+    cancel_requested = context.cancel_requested
     tools: list[LocalTool] = [
         ReadTool.bind(root=root, cancel_requested=cancel_requested),
         CommandTool.bind(root=root, cancel_requested=cancel_requested),
-        GrepTool.bind(root=root, cancel_requested=cancel_requested),
-        FindTool.bind(root=root, cancel_requested=cancel_requested),
-        LsTool.bind(root=root, cancel_requested=cancel_requested),
         ExtractFileContextTool.bind(root=root, cancel_requested=cancel_requested),
         AttachImageTool.bind(root=root, cancel_requested=cancel_requested),
         WebFetchTool.bind(cancel_requested=cancel_requested),
         WebResearchTool.bind(cancel_requested=cancel_requested),
         PythonExecTool.bind(root=root, cancel_requested=cancel_requested),
-        RipgrepTool.bind(root=root, cancel_requested=cancel_requested),
         SubagentTool.bind(root=root, cancel_requested=cancel_requested),
     ]
-    if context is not None:
-        write_registration = normalize_tool_registration(register_write_tool(context))
-        tools.insert(1, list(write_registration.tools)[0])
-    else:
-        write_registration = ToolRegistrationResult(tools=())
-        tools.insert(
-            1,
-            EditTool.bind(root=root, cancel_requested=cancel_requested),
-        )
+    search_tools = register_search_tools(context)
+    tools[2:2] = search_tools
+    write_registration = normalize_tool_registration(register_write_tool(context))
+    tools.insert(1, list(write_registration.tools)[0])
     return ToolRegistrationResult(
         tools=tools,
         system_messages=write_registration.system_messages,

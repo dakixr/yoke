@@ -10,16 +10,19 @@ from pydantic import Field
 
 from yoke.agent.tools.attach_image import AttachImageTool
 from yoke.agent.tools.base import WorkspaceTool
+from yoke.agent.tools.context import ToolRegistrationContext
+from yoke.agent.tools.context import ToolRegistrationResult
+from yoke.agent.tools.context import normalize_tool_registration
 from yoke.agent.tools.document_extract import ExtractFileContextTool
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.agent.tools.read import ReadTool
-from yoke.agent.tools.rg import RipgrepTool
+from yoke.agent.tools.search_registration import register_search_tools
 from yoke.agent.tools.web import WebFetchTool
 from yoke.agent.tools.web import WebResearchTool
+from yoke.agent.tools.write import register_write_tool
 from yoke.ai import Agent
 from yoke.ai import RunConfig
 from yoke.ai.providers.base import Provider
-from yoke.agent.tools.write import register_write_tool
 
 
 class SubAgentResponse(BaseModel):
@@ -46,17 +49,9 @@ class SubagentTool(WorkspaceTool):
     root_dir: Path = Path(".")
 
     def execute(self) -> dict[str, object]:
-        runtime_context = self.runtime_context
-        provider = (
-            runtime_context.provider
-            if runtime_context is not None
-            else self._context.get("provider")
-        )
-        if provider is None:
-            return self._error("subagent requires a bound provider")
+        provider = self.context.provider
 
         read_only_tools = [
-            RipgrepTool,
             AttachImageTool,
             ExtractFileContextTool,
             ReadTool,
@@ -66,6 +61,7 @@ class SubagentTool(WorkspaceTool):
 
         if self.agent_type == "researcher":
             tools = read_only_tools
+            register_tools = register_search_tools
             sys_prompt = (
                 "Your task is to explore and gather information based on the "
                 "given prompt. Be thorough and provide detailed responses. "
@@ -78,6 +74,7 @@ class SubagentTool(WorkspaceTool):
             from yoke.cli.config.runtime import DEFAULT_SYSTEM_PROMPT
 
             tools = [*read_only_tools, PythonExecTool]
+            register_tools = _register_worker_tools
             sys_prompt = DEFAULT_SYSTEM_PROMPT
             output_type = None
         else:
@@ -92,7 +89,7 @@ class SubagentTool(WorkspaceTool):
                 config=RunConfig(
                     root=self.root_dir,
                     tools=tools,
-                    register_tools=register_write_tool,
+                    register_tools=register_tools,
                     max_iterations=1_000_000,
                     sys_prompt=sys_prompt,
                 ),
@@ -107,3 +104,14 @@ class SubagentTool(WorkspaceTool):
         if result.structured is None:
             return {"ok": True, "response": result.output}
         return {"ok": True, **result.structured.model_dump()}
+
+
+def _register_worker_tools(
+    context: ToolRegistrationContext,
+) -> ToolRegistrationResult:
+    search = normalize_tool_registration(register_search_tools(context))
+    write = normalize_tool_registration(register_write_tool(context))
+    return ToolRegistrationResult(
+        tools=[*search.tools, *write.tools],
+        system_messages=[*search.system_messages, *write.system_messages],
+    )

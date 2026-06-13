@@ -14,7 +14,7 @@ def build_system_messages(
     root: Path,
     base_system_prompt: str | None,
     include_agents_file: bool = True,
-    home: Path | None = None,
+    home: Path,
 ) -> list[Message]:
     """Build system messages from the base prompt and AGENTS files."""
     messages: list[Message] = []
@@ -26,9 +26,9 @@ def build_system_messages(
     return messages
 
 
-def load_agents_messages(root: Path, *, home: Path | None = None) -> list[Message]:
+def load_agents_messages(root: Path, *, home: Path) -> list[Message]:
     """Load global and repository AGENTS.md messages."""
-    resolved_home = (home or Path.home()).resolve()
+    resolved_home = home.resolve()
     messages: list[Message] = []
     global_path = resolved_home / ".yoke" / "AGENTS.md"
     repo_path = root / "AGENTS.md"

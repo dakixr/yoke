@@ -99,6 +99,25 @@ def test_sdk_agent_prompt_is_stateful(tmp_path: Path) -> None:
     assert provider.calls[1][-1].content == "second"
 
 
+def test_sdk_agent_accepts_tagged_message_history(tmp_path: Path) -> None:
+    agent = Agent(
+        provider=StaticProvider(Message.assistant("done")),
+        config=RunConfig(
+            root=tmp_path,
+            tools=[],
+            include_agents_file=False,
+            history=MessageHistory([Message.user("previous")]),
+        ),
+    )
+
+    result = agent.prompt("next")
+
+    assert [message.content for message in result.messages[:2]] == [
+        "previous",
+        "next",
+    ]
+
+
 def test_sdk_agent_does_not_load_repo_tools_by_default(
     tmp_path: Path,
 ) -> None:

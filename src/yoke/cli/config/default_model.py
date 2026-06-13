@@ -31,9 +31,9 @@ def parse_config_default_model(value: str | None) -> ConfigDefaultModel | None:
     )
 
 
-def load_effective_yoke_config(*, root: Path, home: Path | None = None) -> PiConfig:
+def load_effective_yoke_config(*, root: Path, home: Path) -> PiConfig:
     """Load the merged yoke config used by CLI startup."""
-    resolved_home = (home or Path.home()).resolve()
+    resolved_home = home.resolve()
     return merge_configs(
         default_yoke_config(),
         load_global_config(resolved_home).config,

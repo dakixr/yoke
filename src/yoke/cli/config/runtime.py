@@ -19,6 +19,7 @@ from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
 from yoke.agent.budget import build_provider_context_manager
 from yoke.cli.bootstrap.agents import build_system_messages
+from yoke.cli.bootstrap.config import ToolDiscoveryProvider
 from yoke.cli.bootstrap.config import resolve_agent_config
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.config.providers import build_provider_from_args
@@ -100,6 +101,7 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
         root=root,
         base_system_prompt=DEFAULT_SYSTEM_PROMPT,
         include_agents_file=True,
+        home=Path.home(),
     )
     context_manager = build_provider_context_manager(
         provider=provider,
@@ -115,7 +117,7 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
         max_iterations=42_000_000,
         context_manager=context_manager,
         skill_registry=skill_registry,
-        available_skills=(skill_registry.skills if skill_registry is not None else []),
+        available_skills=skill_registry.skills,
         active_skills=initial_active_skills,
     )
     agent_holder.append(agent)
@@ -137,6 +139,7 @@ def build_tool_report(*, root: Path) -> ToolLoadReport:
         root=root,
         skill_registry=_load_cli_skill_registry(root),
         active_skills=[],
+        provider=ToolDiscoveryProvider(),
     ).tool_report
 
 
@@ -153,36 +156,33 @@ def format_tool_discovery_message(report: ToolLoadReport) -> str:
     return message
 
 
-def _load_cli_skill_registry(root: Path) -> SkillRegistry | None:
+def _load_cli_skill_registry(root: Path) -> SkillRegistry:
     skill_dirs = default_cli_skill_dirs(root)
-    return load_skill_registry(skill_dirs) if skill_dirs else None
+    return load_skill_registry(skill_dirs)
 
 
 def _activate_cli_skills(
-    skill_registry: SkillRegistry | None,
+    skill_registry: SkillRegistry,
     skill_names: tuple[str, ...],
 ) -> list[ActiveSkill]:
-    if skill_registry is None:
-        return []
     return [skill_registry.activate(name) for name in skill_names]
 
 
 def _resolve_cli_agent_config(
     *,
     root: Path,
-    skill_registry: SkillRegistry | None,
+    skill_registry: SkillRegistry,
     active_skills: Sequence[ActiveSkill],
-    provider: Provider | None = None,
+    provider: Provider,
 ) -> ResolvedAgentConfig:
     resolved = resolve_agent_config(
         root=root,
         base_system_prompt=DEFAULT_SYSTEM_PROMPT,
         include_repo_tools=True,
         include_global_tools=True,
+        home=Path.home(),
         provider=provider,
     )
-    if skill_registry is None:
-        return resolved
     from yoke.agent.tools import SkillTool
     from yoke.cli.bootstrap.types import ResolvedAgentConfig
 

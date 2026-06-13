@@ -16,6 +16,7 @@ from yoke.agent.loop.types import (
     BeforeToolCallHook,
     ToolExecutionMode,
 )
+from yoke.agent.loop.types import ConversationHistory
 from yoke.agent.models import (
     ConversationEntry,
     Message,
@@ -187,8 +188,7 @@ class RunConfig:
     tool_execution: ToolExecutionMode = "parallel"
     before_tool_call: BeforeToolCallHook | None = None
     after_tool_call: AfterToolCallHook | None = None
-    messages: Sequence[Message] | None = None
-    conversation_entries: Sequence[ConversationEntry] | None = None
+    history: ConversationHistory | None = None
 
 
 @dataclass(slots=True)

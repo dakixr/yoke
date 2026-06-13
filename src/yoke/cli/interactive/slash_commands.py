@@ -329,7 +329,7 @@ def _handle_skill_load(
     if not skill_name:
         print_scrollback_notice(console, "Usage: /skill <name>")
         return
-    if not isinstance(agent, RuntimeAgent) or agent.skill_registry is None:
+    if not isinstance(agent, RuntimeAgent):
         print_scrollback_notice(console, "No skills are available in this session.")
         return
     from yoke.agent.skills.activation import activate_skills

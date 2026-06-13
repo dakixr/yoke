@@ -16,6 +16,11 @@ if TYPE_CHECKING:
     from yoke.agent.tools.base import LocalTool
 
 
+def never_cancel() -> bool:
+    """Return False for runtimes without an external cancellation source."""
+    return False
+
+
 @dataclass(slots=True, frozen=True)
 class ModelIdentity:
     """Stable provider and model identity exposed to tools."""
@@ -42,10 +47,10 @@ class ToolRegistrationContext:
     """Context passed to a provider-aware tool registration callback."""
 
     root: Path
-    home: Path | None
+    home: Path
     provider: Provider
     model: ModelIdentity
-    cancel_requested: Callable[[], bool] | None = None
+    cancel_requested: Callable[[], bool] = never_cancel
 
     @property
     def provider_name(self) -> str:
@@ -78,10 +83,10 @@ class ToolRuntimeContext:
     """Current provider and workspace context available during tool execution."""
 
     root: Path
-    home: Path | None
+    home: Path
     provider: Provider
     model: ModelIdentity
-    cancel_requested: Callable[[], bool] | None = None
+    cancel_requested: Callable[[], bool] = never_cancel
 
     @property
     def provider_name(self) -> str:

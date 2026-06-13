@@ -7,6 +7,7 @@ from pathlib import Path
 
 from yoke.agent.models import Message
 from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools import never_cancel
 from yoke.agent.tools.context import resolve_model_identity
 from yoke.ai.providers.base import Provider
 from yoke.cli.bootstrap.agents import build_system_messages
@@ -30,21 +31,20 @@ def resolve_agent_config(
     include_repo_tools: bool = True,
     include_global_tools: bool = True,
     include_agents_file: bool = True,
-    home: Path | None = None,
+    home: Path,
     cancel_requested: Callable[[], bool] | None = None,
     include_workspace_config: bool = True,
-    provider: Provider | None = None,
+    provider: Provider,
 ) -> ResolvedAgentConfig:
     """Resolve system messages and enabled tools for the active root."""
     resolved_root = root.resolve()
-    resolved_home = (home or Path.home()).resolve()
-    resolved_provider = provider or _UnavailableToolProvider()
+    resolved_home = home.resolve()
     registration_context = ToolRegistrationContext(
         root=resolved_root,
         home=resolved_home,
-        provider=resolved_provider,
-        model=resolve_model_identity(resolved_provider),
-        cancel_requested=cancel_requested,
+        provider=provider,
+        model=resolve_model_identity(provider),
+        cancel_requested=cancel_requested or never_cancel,
     )
     discovery = load_tools(
         root=resolved_root,
@@ -52,7 +52,6 @@ def resolve_agent_config(
         include_repo_tools=include_repo_tools,
         include_global_tools=include_global_tools,
         context=registration_context,
-        cancel_requested=cancel_requested,
     )
     discovered_tools = discovery.tools
     workspace_config = load_effective_workspace_config(
@@ -98,6 +97,7 @@ def resolve_agent_config(
             root=resolved_root,
             base_system_prompt=base_system_prompt,
             include_agents_file=include_agents_file,
+            home=resolved_home,
         ),
         tools=[entry.tool for entry in active_tools],
         tool_report=tool_report,
@@ -105,7 +105,7 @@ def resolve_agent_config(
     )
 
 
-class _UnavailableToolProvider:
+class ToolDiscoveryProvider(Provider):
     """Non-executable provider used by provider-less discovery commands."""
 
     provider_name = "unavailable"
@@ -124,11 +124,11 @@ class _UnavailableToolProvider:
 def load_effective_workspace_config(
     *,
     root: Path,
-    home: Path | None = None,
+    home: Path,
     include_workspace_config: bool = True,
 ) -> LoadedWorkspaceConfig:
     """Load the merged default/global/repo workspace config."""
-    resolved_home = (home or Path.home()).resolve()
+    resolved_home = home.resolve()
     if include_workspace_config:
         default_config = default_yoke_config()
         global_config = load_global_config(resolved_home)

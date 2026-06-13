@@ -18,6 +18,7 @@ from yoke.ai import (
     Agent,
     CompactionPolicy,
     Context,
+    MessageHistory,
     OpenAICompatibleConfig,
     OpenAICompatibleProvider,
     RunConfig,

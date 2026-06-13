@@ -6,7 +6,11 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from yoke.agent.models import Message
+from yoke.agent.loop.types import ConversationEntryHistory as ConversationEntryHistory
+from yoke.agent.loop.types import ConversationHistory as ConversationHistory
+from yoke.agent.loop.types import MessageHistory as MessageHistory
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import insert_provider_system_messages
 from yoke.ai.sdk_agent import Agent as Agent
 from yoke.ai.sdk_types import AgentResult as AgentResult
 from yoke.ai.sdk_types import CompletionResult
@@ -47,6 +51,10 @@ def complete[StructuredT](
         sys_prompt=sys_prompt,
         images=normalized_images,
         image_urls=normalized_urls,
+    )
+    resolved_messages = insert_provider_system_messages(
+        resolved_messages,
+        provider,
     )
     if output_type is not None:
         resolved_messages = _with_structured_output_instructions(

@@ -44,7 +44,7 @@ def parse_provider_model_identifier(value: str) -> tuple[str, str]:
 def list_all_provider_model_choices(
     *,
     args: CLIArgs,
-    home: Path | None = None,
+    home: Path,
 ) -> list[ProviderModelChoice]:
     """Return provider-qualified model choices across all providers."""
     choices: list[ProviderModelChoice] = []
@@ -85,7 +85,7 @@ def list_all_provider_model_choices(
 def provider_qualified_model_choices(
     *,
     args: CLIArgs,
-    home: Path | None = None,
+    home: Path,
 ) -> list[str]:
     """Return provider-qualified model ids for prompt completion."""
     return [

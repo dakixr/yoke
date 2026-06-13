@@ -110,7 +110,8 @@ def _prompt_for_default_model(
     reasoning_effort: str | None = None,
 ) -> str:
     choices = list_all_provider_model_choices(
-        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort)
+        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort),
+        home=Path.home(),
     )
     if not choices:
         raise ValueError("No models advertised by providers.")
@@ -231,7 +232,7 @@ def print_model_inventory(
 ) -> None:
     """Print the provider-qualified model catalog known to the CLI."""
     console = build_console(stream)
-    effective_config = load_effective_yoke_config(root=root)
+    effective_config = load_effective_yoke_config(root=root, home=Path.home())
     table = Table(
         title="Model Inventory",
         show_header=True,
@@ -243,7 +244,8 @@ def print_model_inventory(
     table.add_column("Context")
     table.add_column("Thinking")
     choices = list_all_provider_model_choices(
-        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort)
+        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort),
+        home=Path.home(),
     )
     for choice in choices:
         is_default = effective_config.default_model == choice.qualified_id

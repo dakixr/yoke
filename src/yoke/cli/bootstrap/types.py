@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from typing import Literal
 
@@ -62,7 +63,7 @@ class ToolLoadReport:
     active_tools: list[LoadedTool]
     denied_tools: list[LoadedTool]
     config_path: Path | None = None
-    unmatched_config_patterns: list[str] | None = None
+    unmatched_config_patterns: list[str] = field(default_factory=list)
 
     def count(self, source_kind: ToolSourceKind) -> int:
         """Count active tools by source kind."""

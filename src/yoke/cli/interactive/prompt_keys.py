@@ -53,12 +53,16 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         completion = selected_completion(complete_state)
         if completion is not None:
             event.current_buffer.apply_completion(completion)
-            return
         state.submit_action = "steer"
         event.current_buffer.validate_and_handle()
 
     @key_bindings.add("tab")
-    def _queue_prompt(event) -> None:
+    def _complete_or_queue_prompt(event) -> None:
+        complete_state = getattr(event.current_buffer, "complete_state", None)
+        completion = selected_completion(complete_state)
+        if completion is not None:
+            event.current_buffer.apply_completion(completion)
+            return
         state.submit_action = "queue"
         event.current_buffer.validate_and_handle()
 

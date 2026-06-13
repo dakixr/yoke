@@ -7,8 +7,12 @@ from .support import *  # noqa: F403, F405
 
 
 def test_default_builtin_policy_allows_all_builtin_tools(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "yoke.agent.tools.search_registration.shutil.which",
+        lambda name: "/usr/bin/rg" if name == "rg" else None,
+    )
     home = tmp_path / "home"
     resolved = resolve_agent_config(
         root=tmp_path,
@@ -25,9 +29,6 @@ def test_default_builtin_policy_allows_all_builtin_tools(
         "bash",
         "edit",
         "extract_file_context",
-        "find",
-        "grep",
-        "ls",
         "python_exec",
         "read",
         "rg",
@@ -36,6 +37,27 @@ def test_default_builtin_policy_allows_all_builtin_tools(
         "web_research",
     }
     assert not denied_names
+    assert resolved.tool_report.unmatched_config_patterns == []
+
+
+def test_default_builtin_policy_uses_search_fallback_without_rg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "yoke.agent.tools.search_registration.shutil.which",
+        lambda _name: None,
+    )
+
+    resolved = resolve_agent_config(
+        root=tmp_path,
+        base_system_prompt=None,
+        include_global_tools=False,
+        home=tmp_path / "home",
+    )
+    active_names = {entry.tool.name for entry in resolved.tool_report.active_tools}
+
+    assert {"grep", "find", "ls"}.issubset(active_names)
+    assert "rg" not in active_names
     assert resolved.tool_report.unmatched_config_patterns == []
 
 

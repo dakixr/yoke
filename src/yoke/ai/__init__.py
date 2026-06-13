@@ -10,8 +10,7 @@ from yoke.ai.providers.codex_subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex_websockets import CodexWebSockets
 from yoke.ai.providers.codex_websockets import CodexWebSocketsConfig
-from yoke.ai.providers.github_copilot_subscription import GitHubCopilotConfig
-from yoke.ai.providers.github_copilot_subscription import GitHubCopilotProvider
+from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.opencode_go import OpenCodeGoConfig
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 from yoke.ai.providers.openai_compat import OpenAICompatibleConfig
@@ -21,8 +20,11 @@ from yoke.ai.providers.zai import ZAIProvider
 from yoke.ai.sdk import Agent
 from yoke.ai.sdk import AgentResult
 from yoke.ai.sdk import CompletionResult
+from yoke.ai.sdk import ConversationEntryHistory
+from yoke.ai.sdk import ConversationHistory
 from yoke.ai.sdk import Context
 from yoke.ai.sdk import Image
+from yoke.ai.sdk import MessageHistory
 from yoke.ai.sdk import RunConfig
 from yoke.ai.sdk import Skill
 from yoke.ai.sdk import StructuredOutputError
@@ -40,12 +42,13 @@ __all__ = [
     "CodexWebSockets",
     "CodexWebSocketsConfig",
     "CompletionResult",
+    "ConversationEntryHistory",
+    "ConversationHistory",
     "CompactionPolicy",
     "Context",
-    "GitHubCopilotConfig",
-    "GitHubCopilotProvider",
     "Image",
     "Message",
+    "MessageHistory",
     "MessageImageURL",
     "MessageImageURLContentPart",
     "MessageLocalImageContentPart",
@@ -54,6 +57,7 @@ __all__ = [
     "OpenCodeGoProvider",
     "OpenAICompatibleConfig",
     "OpenAICompatibleProvider",
+    "ProviderModelInfo",
     "RunConfig",
     "Skill",
     "StructuredOutputError",
