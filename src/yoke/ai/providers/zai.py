@@ -25,6 +25,14 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 PROVIDER_NAME = "zai"
 MODEL_CATALOG = (
     ProviderModelInfo(
+        id="glm-5.2",
+        display_name="GLM-5.2",
+        context_window_tokens=200_000,
+        thinking_levels=("none", "minimal", "low", "medium", "high", "xhigh"),
+        default_thinking_level="medium",
+        supports_image_inputs=False,
+    ),
+    ProviderModelInfo(
         id="glm-5.1",
         display_name="GLM-5.1",
         context_window_tokens=200_000,

@@ -78,7 +78,6 @@ class WebResearchTool(LocalTool):
     search_result_target: ClassVar[int] = 30
 
     question: str = Field(min_length=1)
-    max_sources: int | None = Field(default=None, ge=1)
 
     def execute(self) -> dict[str, object]:
         """Execute a compact search+fetch research workflow."""
@@ -132,8 +131,7 @@ class WebResearchTool(LocalTool):
                 source["error"] = fetched.get("error", "fetch failed")
             sources.append(source)
             seen_domains.add(domain)
-            source_target = self.max_sources or self.fetched_source_target
-            if len(sources) >= source_target:
+            if len(sources) >= self.fetched_source_target:
                 break
 
         synthesized = self._synthesize_with_provider(

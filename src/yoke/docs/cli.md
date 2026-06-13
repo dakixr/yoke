@@ -73,6 +73,7 @@ Outside a session you can inspect and configure models directly:
 ```bash
 yoke models list
 yoke models set codex:gpt-5.4-mini
+yoke models set zai:glm-5.2
 yoke models set zai:glm-5.1
 yoke models set codex:gpt-5.4-mini --reasoning-effort high
 yoke models set

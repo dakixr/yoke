@@ -181,6 +181,7 @@ def test_internal_web_search_returns_empty_results_list(
 
 
 def test_web_research_combines_search_and_fetch(monkeypatch: Any) -> None:
+    monkeypatch.setattr(WebResearchTool, "fetched_source_target", 1)
     search_html = """
     <a class="result__a" href="https://docs.example.test/guide">Guide</a>
     <a class="result__snippet">Official guide text.</a>
@@ -203,7 +204,7 @@ def test_web_research_combines_search_and_fetch(monkeypatch: Any) -> None:
     monkeypatch.setattr("httpx.Client", FakeClient)
     monkeypatch.setattr("httpx.get", fake_get)
 
-    result = WebResearchTool(question="How to use example?", max_sources=1).execute()
+    result = WebResearchTool(question="How to use example?").execute()
 
     assert result["ok"] is True
     assert "Research brief" in str(result["answer"])
@@ -213,6 +214,7 @@ def test_web_research_combines_search_and_fetch(monkeypatch: Any) -> None:
 
 
 def test_web_research_falls_back_to_raw_question(monkeypatch: Any) -> None:
+    monkeypatch.setattr(WebResearchTool, "fetched_source_target", 1)
     calls: list[str] = []
 
     class FakeClient:
@@ -241,10 +243,7 @@ def test_web_research_falls_back_to_raw_question(monkeypatch: Any) -> None:
     monkeypatch.setattr("httpx.Client", FakeClient)
     monkeypatch.setattr("httpx.get", fake_get)
 
-    result = WebResearchTool(
-        question="What is ExampleThing?",
-        max_sources=1,
-    ).execute()
+    result = WebResearchTool(question="What is ExampleThing?").execute()
 
     assert calls[-1] == "What is ExampleThing?"
     assert result["sources"]
@@ -264,6 +263,7 @@ def test_search_terms_prioritize_symbol_like_terms() -> None:
 def test_web_research_uses_precise_find_terms_for_docs_pages(
     monkeypatch: Any,
 ) -> None:
+    monkeypatch.setattr(WebResearchTool, "fetched_source_target", 1)
     search_html = """
     <a class="result__a" href="https://docs.python.org/3/library/pathlib.html">
       pathlib — Object-oriented filesystem paths
@@ -302,7 +302,6 @@ def test_web_research_uses_precise_find_terms_for_docs_pages(
 
     result = WebResearchTool(
         question=("What is Python pathlib Path.resolve() and when should it be used?"),
-        max_sources=1,
     ).execute()
 
     sources = cast(list[dict[str, object]], result["sources"])
@@ -314,6 +313,7 @@ def test_web_research_uses_precise_find_terms_for_docs_pages(
 def test_web_research_uses_provider_for_structured_synthesis(
     monkeypatch: Any,
 ) -> None:
+    monkeypatch.setattr(WebResearchTool, "fetched_source_target", 1)
     search_html = """
     <a class="result__a" href="https://docs.python.org/3/library/pathlib.html">
       pathlib docs
@@ -337,9 +337,7 @@ def test_web_research_uses_provider_for_structured_synthesis(
 
     monkeypatch.setattr("httpx.Client", FakeClient)
     monkeypatch.setattr("httpx.get", fake_get)
-    tool = WebResearchTool(
-        question="What is Python pathlib Path.resolve()?", max_sources=1
-    )
+    tool = WebResearchTool(question="What is Python pathlib Path.resolve()?")
     tool._bind_context(provider=SynthesizingProvider())
 
     result = tool.execute()
