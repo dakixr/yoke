@@ -363,10 +363,30 @@ If you need runtime configuration (credentials, feature flags, …) return tools
 
 ```python
 # .yoke/tools.py
+from yoke.agent.models import Message
+from yoke.agent.tools import ToolRegistrationResult
+
+
 def register_tools(context):
-    api_key = context.get("env", {}).get("MY_API_KEY")
-    return [MyApiTool.bind(root=context.root, api_key=api_key)]
+    if context.model_key == "opencode-go:kimi-k2.7-code":
+        return ToolRegistrationResult(
+            tools=[KimiWriteTool.bind(root=context.root)],
+            system_messages=[
+                Message.system("Follow the Kimi write-tool instructions.")
+            ],
+        )
+    return [SimpleEditTool.bind(root=context.root)]
 ```
+
+The registration context is the same public `ToolRegistrationContext` used by
+the SDK. It exposes the current raw `provider` plus stable `provider_name`,
+`model_id`/`model_name`, `model_key`, and `reasoning_effort` strings. Tools can
+access the corresponding execution-time values through `self.context`.
+Changing model or provider re-runs registration so model-specific schemas stay
+current. Returning `ToolRegistrationResult` also lets the registration
+contribute system messages. Those messages are active only while at least one
+tool from that registration remains enabled, and they are replaced on
+re-registration. Returning a plain iterable of tools remains supported.
 
 Tools added any of these ways appear alongside the built-ins. To restrict which tools are active, use a tool policy (see below).
 
@@ -410,6 +430,7 @@ By default yoke starts from this curated tool baseline:
   "tools": {
     "*": "deny",
     "apply_patch": "allow",
+    "edit": "allow",
     "extract_file_context": "allow",
     "find": "allow",
     "grep": "allow",
@@ -447,7 +468,11 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke now reports th
 }
 ```
 
-**Always-available built-in tool names:** `read`, `edit`, `apply_patch`, `ls`, `find`, `grep`, `command`, `web_fetch`, `web_research`, `extract_file_context`, `attach_image`
+**Built-in tool names:** `read`, `ls`, `find`, `grep`, `command`,
+`web_fetch`, `web_research`, `extract_file_context`, and `attach_image`.
+The writing capability is model-aware: model IDs containing `gpt` receive
+`apply_patch`; all other models receive `edit`. Only one writing tool is
+active at a time.
 
 The `command`/`bash` tool result mirrors `python_exec` metadata for the agent: `python_executable`, `returncode`, `timeout`, `timed_out`, `elapsed_seconds`, combined `output`, and `outputTruncationDetails`.
 

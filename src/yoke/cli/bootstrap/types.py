@@ -2,26 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from yoke.agent.models import Message
 from yoke.agent.tools import LocalTool
+from yoke.agent.tools import RegisterTools
+from yoke.agent.tools import ToolRegistrationContext
 
 ToolSourceKind = Literal["default", "global", "repo"]
-RegisterToolsFunc = Callable[["ToolPluginContext"], Iterable[LocalTool]]
-
-
-@dataclass(slots=True, frozen=True)
-class ToolPluginContext:
-    """Context passed to external tool plugins."""
-
-    root: Path
-    home: Path
-    cancel_requested: Callable[[], bool] | None = None
+RegisterToolsFunc = RegisterTools
+ToolPluginContext = ToolRegistrationContext
 
 
 @dataclass(slots=True)
@@ -31,6 +23,7 @@ class ResolvedAgentConfig:
     system_messages: list[Message]
     tools: list[LocalTool]
     tool_report: ToolLoadReport
+    tool_system_messages: list[Message]
 
 
 @dataclass(slots=True, frozen=True)
@@ -41,6 +34,24 @@ class LoadedTool:
     source_kind: ToolSourceKind
     source_label: str
     source_path: Path | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class LoadedToolContribution:
+    """System messages associated with one tool registration."""
+
+    system_messages: tuple[Message, ...]
+    tool_names: frozenset[str]
+    source_kind: ToolSourceKind
+    source_label: str
+
+
+@dataclass(slots=True)
+class ToolDiscoveryResult:
+    """Discovered tools and their registration-time prompt contributions."""
+
+    tools: list[LoadedTool]
+    contributions: list[LoadedToolContribution]
 
 
 @dataclass(slots=True)

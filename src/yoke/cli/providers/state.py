@@ -12,7 +12,6 @@ from yoke.ai.providers.base import ProviderModelInfo
 from yoke.agent.budget import current_context_fits_provider_budget
 from yoke.agent.budget import rebind_context_manager_budget
 from yoke.cli.config import CLIArgs
-from yoke.cli.config import build_cli_agent_from_args
 from yoke.cli.providers.catalog import parse_provider_model_identifier
 
 
@@ -134,6 +133,8 @@ def set_agent_model(
         reasoning_effort=reasoning_effort,
     )
     provider.set_model(model_id, reasoning_effort=reasoning_effort)
+    if isinstance(agent, RuntimeAgent):
+        agent.refresh_tools(force=True)
     context_manager = _agent_context_manager(agent)
     if context_manager is not None:
         rebind_context_manager_budget(context_manager, provider=provider)
@@ -175,6 +176,7 @@ def switch_agent_provider_model(
     )
     _ensure_context_fits_target_model(agent, provider=target_provider)
     agent.provider = target_provider
+    agent.refresh_tools(force=True)
     rebind_context_manager_budget(
         agent.context_manager,
         provider=target_provider,
@@ -213,16 +215,18 @@ def _build_provider_for_model(
     model_id: str,
     reasoning_effort: str | None,
 ) -> Provider:
-    built = build_cli_agent_from_args(
-        CLIArgs(
-            model=f"{provider_name}:{model_id}",
-            reasoning_effort=reasoning_effort,
-            root=args.root,
-            skills=args.skills,
-            images=args.images,
-        )
+    from yoke.cli.config.providers import build_provider_from_args
+    from yoke.cli.config.providers import prepare_provider_args
+
+    provider_args = CLIArgs(
+        model=f"{provider_name}:{model_id}",
+        reasoning_effort=reasoning_effort,
+        root=args.root,
+        skills=args.skills,
+        images=args.images,
     )
-    return built.agent.provider
+    prepare_provider_args(provider_args)
+    return build_provider_from_args(provider_args)
 
 
 def _ensure_context_fits_target_model(

@@ -92,13 +92,89 @@ interpreter and virtual environment as the running yoke process.
 Most workspace tools can be passed as classes and are bound to `RunConfig.root`
 automatically. Pass already-bound instances when you need custom context.
 
-When the CLI builds tools, it also injects the current provider into tool
-context. Provider-aware tools such as `web_research` can use that provider to
-spawn a scoped sub-agent with a restricted tool set and return synthesized
-structured output. `web_research` chooses its own research depth and encourages
-the scoped sub-agent to review many sources, commonly 20+ for non-trivial
-questions. SDK-bound tool classes do not receive a provider unless you bind one
-explicitly.
+`register_write_tool` exposes one model-appropriate writing interface: models
+whose ID contains `gpt` receive `apply_patch`; every other model receives
+`edit`.
+
+```python
+from yoke.agent.tools import register_write_tool
+
+agent = Agent(
+    provider=provider,
+    config=RunConfig(
+        root=Path.cwd(),
+        register_tools=register_write_tool,
+    ),
+)
+```
+
+## Provider-Aware Tools
+
+CLI and SDK tools receive the same public runtime context. Use `self.context`
+inside a `LocalTool`:
+
+```python
+class ProviderBackedTool(LocalTool):
+    name = "provider_backed"
+    description = "Run a provider-backed operation."
+    execute_in_process = True
+
+    def execute(self) -> dict[str, object]:
+        provider = self.context.provider
+        return {
+            "ok": True,
+            "provider_name": self.context.provider_name,
+            "model_id": self.context.model_id,
+            "model_key": self.context.model_key,
+            "reasoning_effort": self.context.reasoning_effort,
+        }
+```
+
+The raw provider supports direct completions and nested agents. Stable string
+metadata should be preferred for provider/model routing. Provider-backed tools
+should set `execute_in_process = True`; provider objects are not guaranteed to
+be serializable into isolated tool worker processes.
+
+Use a custom `RunConfig.register_tools` callback for other model-dependent
+implementations or schemas:
+
+```python
+from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools import ToolRegistrationResult
+from yoke.agent.models import Message
+
+
+def register_tools(context: ToolRegistrationContext):
+    if context.model_key == "opencode-go:kimi-k2.7-code":
+        return ToolRegistrationResult(
+            tools=[KimiWriteTool.bind(root=context.root)],
+            system_messages=[
+                Message.system("Use the Kimi write schema conservatively.")
+            ],
+        )
+    return ToolRegistrationResult(
+        tools=[SimpleEditTool.bind(root=context.root)],
+    )
+
+
+agent = Agent(
+    provider=provider,
+    config=RunConfig(
+        root=Path.cwd(),
+        register_tools=register_tools,
+    ),
+)
+```
+
+`ToolRegistrationContext` exposes `root`, `home`, `provider`,
+`provider_name`, `model_id`/`model_name`, `model_key`, and
+`reasoning_effort`. Yoke invokes the callback again when the provider, model,
+or reasoning effort changes. `ToolRegistrationResult.system_messages`
+contributes system instructions while those registered tools are active.
+Re-registration replaces the previous tool instruction layer rather than
+appending to it. Plain iterable returns remain supported for callbacks that do
+not need prompt contributions. The resulting tools receive matching
+`ToolRuntimeContext` metadata.
 
 ## Direct Completion
 

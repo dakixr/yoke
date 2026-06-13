@@ -8,7 +8,6 @@ from typing import cast
 from pydantic import BaseModel
 from pydantic import Field
 
-from yoke.agent.tools.apply_patch import ApplyPatchTool
 from yoke.agent.tools.attach_image import AttachImageTool
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.document_extract import ExtractFileContextTool
@@ -20,6 +19,7 @@ from yoke.agent.tools.web import WebResearchTool
 from yoke.ai import Agent
 from yoke.ai import RunConfig
 from yoke.ai.providers.base import Provider
+from yoke.agent.tools.write import register_write_tool
 
 
 class SubAgentResponse(BaseModel):
@@ -46,7 +46,12 @@ class SubagentTool(WorkspaceTool):
     root_dir: Path = Path(".")
 
     def execute(self) -> dict[str, object]:
-        provider = self._context.get("provider")
+        runtime_context = self.runtime_context
+        provider = (
+            runtime_context.provider
+            if runtime_context is not None
+            else self._context.get("provider")
+        )
         if provider is None:
             return self._error("subagent requires a bound provider")
 
@@ -72,7 +77,7 @@ class SubagentTool(WorkspaceTool):
         elif self.agent_type == "worker":
             from yoke.cli.config.runtime import DEFAULT_SYSTEM_PROMPT
 
-            tools = [*read_only_tools, PythonExecTool, ApplyPatchTool]
+            tools = [*read_only_tools, PythonExecTool]
             sys_prompt = DEFAULT_SYSTEM_PROMPT
             output_type = None
         else:
@@ -87,6 +92,7 @@ class SubagentTool(WorkspaceTool):
                 config=RunConfig(
                     root=self.root_dir,
                     tools=tools,
+                    register_tools=register_write_tool,
                     max_iterations=1_000_000,
                     sys_prompt=sys_prompt,
                 ),

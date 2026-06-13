@@ -21,7 +21,6 @@ def test_default_builtin_policy_allows_all_builtin_tools(
     denied_names = {entry.tool.name for entry in resolved.tool_report.denied_tools}
 
     assert active_names == {
-        "apply_patch",
         "attach_image",
         "bash",
         "edit",
@@ -37,6 +36,7 @@ def test_default_builtin_policy_allows_all_builtin_tools(
         "web_research",
     }
     assert not denied_names
+    assert resolved.tool_report.unmatched_config_patterns == []
 
 
 def test_global_config_can_override_builtin_defaults(

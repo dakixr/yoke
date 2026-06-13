@@ -10,7 +10,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import cast
 
-from yoke.agent.tools import ApplyPatchTool
 from yoke.agent.tools import AttachImageTool
 from yoke.agent.tools import CommandTool
 from yoke.agent.tools import EditTool
@@ -23,11 +22,16 @@ from yoke.agent.tools import PythonExecTool
 from yoke.agent.tools import ReadTool
 from yoke.agent.tools import RipgrepTool
 from yoke.agent.tools import SubagentTool
+from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools import ToolRegistrationResult
 from yoke.agent.tools import WebFetchTool
 from yoke.agent.tools import WebResearchTool
+from yoke.agent.tools import register_write_tool
+from yoke.agent.tools.context import normalize_tool_registration
 from yoke.cli.bootstrap.types import LoadedTool
+from yoke.cli.bootstrap.types import LoadedToolContribution
 from yoke.cli.bootstrap.types import RegisterToolsFunc
-from yoke.cli.bootstrap.types import ToolPluginContext
+from yoke.cli.bootstrap.types import ToolDiscoveryResult
 from yoke.cli.bootstrap.types import ToolSourceKind
 
 
@@ -41,49 +45,87 @@ def load_tools(
     home: Path,
     include_repo_tools: bool,
     include_global_tools: bool,
+    context: ToolRegistrationContext,
     cancel_requested=None,
-) -> list[LoadedTool]:
+) -> ToolDiscoveryResult:
     """Load built-in and plugin tools."""
-    builtin_tools = create_builtin_tools(root, cancel_requested=cancel_requested)
-    plugin_context = ToolPluginContext(
-        root=root,
-        home=home,
+    builtin_registration = _register_builtin_tools(
+        root,
+        context=context,
         cancel_requested=cancel_requested,
     )
+    builtin_tools = list(builtin_registration.tools)
     loaded_tools: list[LoadedTool] = [
         LoadedTool(tool=tool, source_kind="default", source_label="default:builtin")
         for tool in builtin_tools
     ]
+    builtin_messages = tuple(
+        message.model_copy(deep=True)
+        for message in builtin_registration.system_messages
+    )
+    contributions = (
+        [
+            LoadedToolContribution(
+                system_messages=builtin_messages,
+                tool_names=frozenset(
+                    tool.name
+                    for tool in builtin_tools
+                    if tool.name in {"apply_patch", "edit"}
+                ),
+                source_kind="default",
+                source_label="default:builtin",
+            )
+        ]
+        if builtin_messages
+        else []
+    )
     if include_global_tools:
-        loaded_tools.extend(
-            _load_tools_from_directory(
-                home / ".yoke",
-                plugin_context,
-                source_kind="global",
-            )
+        discovered = _load_tools_from_directory(
+            home / ".yoke",
+            context,
+            source_kind="global",
         )
+        loaded_tools.extend(discovered.tools)
+        contributions.extend(discovered.contributions)
     if include_repo_tools:
-        loaded_tools.extend(
-            _load_tools_from_directory(
-                root / ".yoke",
-                plugin_context,
-                source_kind="repo",
-            )
+        discovered = _load_tools_from_directory(
+            root / ".yoke",
+            context,
+            source_kind="repo",
         )
-    return loaded_tools
+        loaded_tools.extend(discovered.tools)
+        contributions.extend(discovered.contributions)
+    return ToolDiscoveryResult(
+        tools=loaded_tools,
+        contributions=contributions,
+    )
 
 
 def create_builtin_tools(
     root: Path,
     *,
+    context: ToolRegistrationContext | None = None,
     cancel_requested=None,
 ) -> list[LocalTool]:
     """Create the default built-in tool set."""
-    return [
+    return list(
+        _register_builtin_tools(
+            root,
+            context=context,
+            cancel_requested=cancel_requested,
+        ).tools
+    )
+
+
+def _register_builtin_tools(
+    root: Path,
+    *,
+    context: ToolRegistrationContext | None,
+    cancel_requested,
+) -> ToolRegistrationResult:
+    tools: list[LocalTool] = [
         ReadTool.bind(root=root, cancel_requested=cancel_requested),
-        ApplyPatchTool.bind(root=root, cancel_requested=cancel_requested),
         CommandTool.bind(root=root, cancel_requested=cancel_requested),
-        EditTool.bind(root=root, cancel_requested=cancel_requested),
         GrepTool.bind(root=root, cancel_requested=cancel_requested),
         FindTool.bind(root=root, cancel_requested=cancel_requested),
         LsTool.bind(root=root, cancel_requested=cancel_requested),
@@ -95,28 +137,43 @@ def create_builtin_tools(
         RipgrepTool.bind(root=root, cancel_requested=cancel_requested),
         SubagentTool.bind(root=root, cancel_requested=cancel_requested),
     ]
+    if context is not None:
+        write_registration = normalize_tool_registration(register_write_tool(context))
+        tools.insert(1, list(write_registration.tools)[0])
+    else:
+        write_registration = ToolRegistrationResult(tools=())
+        tools.insert(
+            1,
+            EditTool.bind(root=root, cancel_requested=cancel_requested),
+        )
+    return ToolRegistrationResult(
+        tools=tools,
+        system_messages=write_registration.system_messages,
+    )
 
 
 def _load_tools_from_directory(
     directory: Path,
-    context: ToolPluginContext,
+    context: ToolRegistrationContext,
     *,
     source_kind: ToolSourceKind,
-) -> list[LoadedTool]:
+) -> ToolDiscoveryResult:
     if not directory.is_dir():
-        return []
+        return ToolDiscoveryResult(tools=[], contributions=[])
     loaded: list[LoadedTool] = []
+    contributions: list[LoadedToolContribution] = []
     for path in _iter_tool_module_paths(directory):
         try:
             module = _load_tool_module(path, source_kind=source_kind)
             register_tools = getattr(module, "register_tools", None)
             if callable(register_tools):
-                tools = _call_register_tools(
+                registration = _call_register_tools(
                     cast(RegisterToolsFunc, register_tools),
                     context=context,
                     path=path,
                     source_kind=source_kind,
                 )
+                tools = list(registration.tools)
             else:
                 tools = _discover_module_tools(
                     module,
@@ -124,6 +181,7 @@ def _load_tools_from_directory(
                     path=path,
                     source_kind=source_kind,
                 )
+                registration = ToolRegistrationResult(tools=tools)
         except Exception:  # noqa: S112
             continue
         for tool in tools:
@@ -135,7 +193,14 @@ def _load_tools_from_directory(
                     source_path=path,
                 )
             )
-    return loaded
+        contributions.extend(
+            _registration_contributions(
+                registration,
+                source_kind=source_kind,
+                source_label=f"{source_kind}:{path}",
+            )
+        )
+    return ToolDiscoveryResult(tools=loaded, contributions=contributions)
 
 
 def _iter_tool_module_paths(directory: Path) -> Iterable[Path]:
@@ -182,12 +247,12 @@ def _ensure_tool_package(directory: Path) -> str:
 def _call_register_tools(
     register_tools: RegisterToolsFunc,
     *,
-    context: ToolPluginContext,
+    context: ToolRegistrationContext,
     path: Path,
     source_kind: ToolSourceKind,
-) -> list[LocalTool]:
+) -> ToolRegistrationResult:
     try:
-        tools = register_tools(context)
+        tools = normalize_tool_registration(register_tools(context))
     except Exception as exc:
         raise ValueError(
             f"Could not register tools from "
@@ -195,7 +260,7 @@ def _call_register_tools(
             f"`register_tools(context)` raised: {exc}"
         ) from exc
     try:
-        tool_list = list(tools)
+        tool_list = list(tools.tools)
     except TypeError as exc:
         raise ValueError(
             f"Tool plugin `{path}` is invalid. "
@@ -209,13 +274,37 @@ def _call_register_tools(
             "`register_tools(context)` returned objects "
             "that are not yoke tools."
         )
-    return tool_list
+    return ToolRegistrationResult(
+        tools=tool_list,
+        system_messages=tools.system_messages,
+    )
+
+
+def _registration_contributions(
+    registration: ToolRegistrationResult,
+    *,
+    source_kind: ToolSourceKind,
+    source_label: str,
+) -> list[LoadedToolContribution]:
+    system_messages = tuple(
+        message.model_copy(deep=True) for message in registration.system_messages
+    )
+    if not system_messages:
+        return []
+    return [
+        LoadedToolContribution(
+            system_messages=system_messages,
+            tool_names=frozenset(tool.name for tool in registration.tools),
+            source_kind=source_kind,
+            source_label=source_label,
+        )
+    ]
 
 
 def _discover_module_tools(
     module: ModuleType,
     *,
-    context: ToolPluginContext,
+    context: ToolRegistrationContext,
     path: Path,
     source_kind: ToolSourceKind,
 ) -> list[LocalTool]:

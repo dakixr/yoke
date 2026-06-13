@@ -12,10 +12,87 @@ def test_build_agent_binds_provider_into_tool_context(
 ) -> None:
     install_builtin_provider(monkeypatch, ConfigOnlyProvider)
 
-    agent = build_agent_from_args(CLIArgs(root=str(tmp_path)))
+    agent = build_agent_from_args(
+        CLIArgs(model="codex:gpt-5.4", root=str(tmp_path))
+    )
 
     web_research = agent.tools["web_research"]
     assert web_research._context["provider"] is agent.provider
+    assert web_research.context.provider is agent.provider
+    assert web_research.context.provider_name == "codex"
+    assert web_research.context.model_key == "codex:gpt-5.4"
+
+
+def test_cli_registration_context_matches_runtime_context(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tools_dir = tmp_path / ".yoke"
+    tools_dir.mkdir()
+    (tools_dir / "config.json").write_text(
+        '{"tools": {"inspect_model": "allow"}}\n',
+        encoding="utf-8",
+    )
+    (tools_dir / "inspect_model.py").write_text(
+        """
+from yoke.agent.tools import LocalTool
+
+
+class InspectModelTool(LocalTool):
+    name = "inspect_model"
+    description = "Inspect registration and runtime model metadata."
+
+    def execute(self) -> dict[str, object]:
+        return {
+            "ok": True,
+            "registration_model": self._context["registration_model"],
+            "registration_provider": self._context["registration_provider"],
+            "runtime_model": self.context.model_key,
+            "runtime_provider": self.context.provider,
+        }
+
+
+def register_tools(context):
+    return [
+        InspectModelTool.bind(
+            registration_model=context.model_key,
+            registration_provider=context.provider,
+        )
+    ]
+""".strip(),
+        encoding="utf-8",
+    )
+    install_builtin_provider(monkeypatch, ConfigOnlyProvider)
+
+    agent = build_agent_from_args(
+        CLIArgs(model="codex:gpt-5.4", root=str(tmp_path))
+    )
+    result = agent.tools["inspect_model"].execute()
+
+    assert result == {
+        "ok": True,
+        "registration_model": "codex:gpt-5.4",
+        "registration_provider": agent.provider,
+        "runtime_model": "codex:gpt-5.4",
+        "runtime_provider": agent.provider,
+    }
+
+
+def test_cli_selects_one_write_tool_from_model_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_builtin_provider(monkeypatch, ConfigOnlyProvider)
+
+    gpt_agent = build_agent_from_args(
+        CLIArgs(model="codex:gpt-5.4", root=str(tmp_path))
+    )
+    non_gpt_agent = build_agent_from_args(
+        CLIArgs(model="codex:kimi-k2.7-code", root=str(tmp_path))
+    )
+
+    assert "apply_patch" in gpt_agent.tools
+    assert "edit" not in gpt_agent.tools
+    assert "edit" in non_gpt_agent.tools
+    assert "apply_patch" not in non_gpt_agent.tools
 
 
 def test_build_agent_preserves_agents_file_system_message(
@@ -29,9 +106,11 @@ def test_build_agent_preserves_agents_file_system_message(
     agent = build_agent_from_args(CLIArgs(model="codex:gpt-5.4", root=str(tmp_path)))
 
     system_messages = agent.context_manager.instructions
-    assert len(system_messages) == 2
+    assert len(system_messages) == 3
     assert "You are yoke running in the yoke CLI" in (system_messages[0].content or "")
+    assert "Use the `apply_patch` tool" not in (system_messages[0].content or "")
     assert "Always inspect todo.json first." in (system_messages[1].content or "")
+    assert "Use the `apply_patch` tool" in (system_messages[2].content or "")
     assert agent.context_manager.max_total_tokens == 400_000
 
 

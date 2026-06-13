@@ -79,6 +79,72 @@ def register_tools(context):
     assert result["root"] == str(tmp_path.resolve())
 
 
+def test_repo_tool_registration_can_contribute_system_messages(
+    tmp_path: Path,
+) -> None:
+    tools_dir = tmp_path / ".yoke"
+    tools_dir.mkdir()
+    (tools_dir / "config.json").write_text(
+        '{"tools": {"prompt_tool": "allow"}}\n',
+        encoding="utf-8",
+    )
+    (tools_dir / "prompt_tool.py").write_text(
+        """
+from yoke.agent.models import Message
+from yoke.agent.tools import LocalTool, ToolRegistrationResult
+
+
+class PromptTool(LocalTool):
+    name = "prompt_tool"
+    description = "A tool with registration-time instructions."
+
+    def execute(self) -> dict[str, object]:
+        return {"ok": True}
+
+
+def register_tools(context):
+    return ToolRegistrationResult(
+        tools=[PromptTool.bind()],
+        system_messages=[Message.system("Use prompt_tool carefully.")],
+    )
+""".strip(),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_agent_config(
+        root=tmp_path,
+        base_system_prompt=None,
+        include_global_tools=False,
+    )
+
+    assert "Use prompt_tool carefully." in {
+        message.content for message in resolved.tool_system_messages
+    }
+
+
+def test_denied_tool_does_not_contribute_system_messages(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        '{"tools": {"apply_patch": "deny"}}\n',
+        encoding="utf-8",
+    )
+
+    class GPTProvider:
+        provider_name = "demo"
+        config = type("Config", (), {"model": "gpt-coder"})()
+
+    resolved = resolve_agent_config(
+        root=tmp_path,
+        base_system_prompt=None,
+        include_global_tools=False,
+        provider=GPTProvider(),
+    )
+
+    assert "apply_patch" not in {tool.name for tool in resolved.tools}
+    assert resolved.tool_system_messages == []
+
+
 def test_resolve_agent_config_loads_recursive_repo_tools_under_dot_pi(
     tmp_path: Path,
 ) -> None:

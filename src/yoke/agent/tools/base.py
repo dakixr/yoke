@@ -19,6 +19,7 @@ from pydantic import PrivateAttr
 
 from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
+from yoke.agent.tools.context import ToolRuntimeContext
 
 DEFAULT_GLOB = "*"
 
@@ -47,8 +48,42 @@ class LocalTool(BaseModel, ABC):
     def _inherit_context(self, prototype: LocalTool) -> None:
         self._bind_context(**prototype._context)
 
+    @property
+    def context(self) -> ToolRuntimeContext:
+        """Return the public runtime context bound by an agent."""
+        context = self.runtime_context
+        if context is None:
+            raise RuntimeError("Tool is not bound to an agent runtime context")
+        return context
+
+    @property
+    def runtime_context(self) -> ToolRuntimeContext | None:
+        """Return the runtime context, or None for a standalone bound tool."""
+        context = self._context.get("runtime_context")
+        return context if isinstance(context, ToolRuntimeContext) else None
+
+    def bind_runtime_context(self, context: ToolRuntimeContext) -> None:
+        """Bind the current public runtime context to this tool."""
+        self._context["runtime_context"] = context
+        self._context["provider"] = context.provider
+        self._context["provider_name"] = context.provider_name
+        self._context["model_id"] = context.model_id
+        self._context["model_name"] = context.model_name
+        self._context["model_key"] = context.model_key
+        self._context["reasoning_effort"] = context.reasoning_effort
+        self._context["root"] = context.root
+        if context.home is not None:
+            self._context["home"] = context.home
+        if context.cancel_requested is not None:
+            self._context["cancel_requested"] = context.cancel_requested
+
     def _is_cancel_requested(self) -> bool:
-        callback = self._context.get("cancel_requested")
+        runtime_context = self._context.get("runtime_context")
+        callback = (
+            runtime_context.cancel_requested
+            if isinstance(runtime_context, ToolRuntimeContext)
+            else self._context.get("cancel_requested")
+        )
         if not callable(callback):
             return False
         callback_fn = cast(Callable[[], object], callback)

@@ -178,7 +178,12 @@ class WebResearchTool(LocalTool):
         query: str,
         sources: list[dict[str, object]],
     ) -> dict[str, object] | None:
-        provider = self._context.get("provider")
+        runtime_context = self.runtime_context
+        provider = (
+            runtime_context.provider
+            if runtime_context is not None
+            else self._context.get("provider")
+        )
         if provider is None:
             return None
         try:

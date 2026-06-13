@@ -24,13 +24,23 @@ class Agent:
         """Create a public SDK agent."""
         from yoke.agent.loop.agent import RuntimeAgent
 
-        self.provider = provider
         self.config = config
         self.root = Path(config.root).resolve()
         self._runtime = RuntimeAgent.from_run_config(
             provider=provider,
             config=config,
         )
+
+    @property
+    def provider(self) -> Provider:
+        """Return the provider currently used by this agent."""
+        return self._runtime.provider
+
+    @provider.setter
+    def provider(self, provider: Provider) -> None:
+        """Replace the provider and refresh provider-aware tools."""
+        self._runtime.provider = provider
+        self._runtime.refresh_tools(force=True)
 
     @property
     def messages(self) -> list[Message]:

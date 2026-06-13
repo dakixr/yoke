@@ -14,6 +14,9 @@ from yoke.agent.compaction import CompactionPreparation
 from yoke.agent.compaction import Compactor
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import Message
+from yoke.agent.tools import LocalTool
+from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools import register_write_tool
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.agent.context import ContextManager
 from yoke.cli.config import CLIArgs
@@ -162,6 +165,119 @@ def test_same_provider_switch_rebinds_context_budget(tmp_path: Path) -> None:
     assert state.context_window_tokens == 2000
     assert agent.context_manager.max_total_tokens == 2000
     assert agent.context_manager.compactor.model == "gpt-b"
+
+
+def test_same_provider_switch_reregisters_model_aware_tools(
+    tmp_path: Path,
+) -> None:
+    registrations: list[str | None] = []
+
+    class ModelTool(LocalTool):
+        name = "model_tool"
+        description = "Report the model used to register and execute this tool."
+
+        registered_model: str
+
+        def execute(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "registered_model": self.registered_model,
+                "runtime_model": self.context.model_key,
+                "provider": self.context.provider,
+            }
+
+    def register_tools(context: ToolRegistrationContext):
+        registrations.append(context.model_key)
+        return [ModelTool(registered_model=context.model_key or "unknown")]
+
+    provider = SwitchableProvider()
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        tool_factory=register_tools,
+        tool_root=tmp_path,
+        context_manager=build_context_manager(),
+    )
+
+    set_agent_model(agent, model_id="gpt-b", reasoning_effort="high")
+    result = agent.tools["model_tool"].execute()
+
+    assert registrations == ["demo:gpt-a", "demo:gpt-b"]
+    assert result == {
+        "ok": True,
+        "registered_model": "demo:gpt-b",
+        "runtime_model": "demo:gpt-b",
+        "provider": provider,
+    }
+
+
+def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
+    class MixedModelProvider(SwitchableProvider):
+        def list_models(self) -> list[ProviderModelInfo]:
+            return [
+                ProviderModelInfo(
+                    id="gpt-coder",
+                    display_name="GPT Coder",
+                    context_window_tokens=2000,
+                    thinking_levels=("low", "high"),
+                ),
+                ProviderModelInfo(
+                    id="kimi-code",
+                    display_name="Kimi Code",
+                    context_window_tokens=2000,
+                    thinking_levels=("low", "high"),
+                ),
+            ]
+
+    provider = MixedModelProvider()
+    provider.config.model = "gpt-coder"
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        tool_factory=register_write_tool,
+        tool_root=tmp_path,
+        context_manager=ContextManager(
+            instructions=[Message.system("base instructions")]
+        ),
+    )
+    agent.load_conversation(messages=[Message.user("existing conversation")])
+
+    assert set(agent.tools) == {"apply_patch"}
+    assert "Use the `apply_patch` tool" in (
+        agent.context_manager.instructions[-1].content or ""
+    )
+
+    set_agent_model(agent, model_id="kimi-code")
+
+    assert set(agent.tools) == {"edit"}
+    combined = "\n".join(
+        message.content or "" for message in agent.context_manager.instructions
+    )
+    assert "base instructions" in combined
+    assert "Use the `edit` tool" in combined
+    assert "Use the `apply_patch` tool" not in combined
+    assert agent._context is not None
+    context_combined = "\n".join(
+        message.content or "" for message in agent._context.instructions
+    )
+    assert context_combined == combined
+    instruction_entries = [
+        entry
+        for entry in agent._context.conversation_log.entries
+        if entry.kind == "instruction"
+    ]
+    assert [entry.message for entry in instruction_entries] == (
+        agent._context.instructions
+    )
+
+    set_agent_model(agent, model_id="gpt-coder")
+
+    round_trip = "\n".join(
+        message.content or "" for message in agent.context_manager.instructions
+    )
+    assert "Use the `apply_patch` tool" in round_trip
+    assert "Use the `edit` tool" not in round_trip
+    assert len(agent.context_manager.instructions) == 2
 
 
 def test_same_provider_switch_does_not_copy_provider(

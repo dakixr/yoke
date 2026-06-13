@@ -5,6 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from yoke.agent.models import Message
+from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools.context import resolve_model_identity
+from yoke.ai.providers.base import Provider
 from yoke.cli.bootstrap.agents import build_system_messages
 from yoke.cli.bootstrap.tools import load_tools
 from yoke.cli.bootstrap.tools import resolve_tool_overrides
@@ -29,17 +33,28 @@ def resolve_agent_config(
     home: Path | None = None,
     cancel_requested: Callable[[], bool] | None = None,
     include_workspace_config: bool = True,
+    provider: Provider | None = None,
 ) -> ResolvedAgentConfig:
     """Resolve system messages and enabled tools for the active root."""
     resolved_root = root.resolve()
     resolved_home = (home or Path.home()).resolve()
-    discovered_tools = load_tools(
+    resolved_provider = provider or _UnavailableToolProvider()
+    registration_context = ToolRegistrationContext(
+        root=resolved_root,
+        home=resolved_home,
+        provider=resolved_provider,
+        model=resolve_model_identity(resolved_provider),
+        cancel_requested=cancel_requested,
+    )
+    discovery = load_tools(
         root=resolved_root,
         home=resolved_home,
         include_repo_tools=include_repo_tools,
         include_global_tools=include_global_tools,
+        context=registration_context,
         cancel_requested=cancel_requested,
     )
+    discovered_tools = discovery.tools
     workspace_config = load_effective_workspace_config(
         root=resolved_root,
         home=resolved_home,
@@ -66,6 +81,18 @@ def resolve_agent_config(
             {entry.tool.name for entry in overridden_tools},
         ),
     )
+    active_source_tools = {
+        (entry.source_label, entry.tool.name) for entry in active_tools
+    }
+    tool_system_messages = [
+        message.model_copy(deep=True)
+        for contribution in discovery.contributions
+        if any(
+            (contribution.source_label, tool_name) in active_source_tools
+            for tool_name in contribution.tool_names
+        )
+        for message in contribution.system_messages
+    ]
     return ResolvedAgentConfig(
         system_messages=build_system_messages(
             root=resolved_root,
@@ -74,7 +101,24 @@ def resolve_agent_config(
         ),
         tools=[entry.tool for entry in active_tools],
         tool_report=tool_report,
+        tool_system_messages=tool_system_messages,
     )
+
+
+class _UnavailableToolProvider:
+    """Non-executable provider used by provider-less discovery commands."""
+
+    provider_name = "unavailable"
+    supports_image_inputs = False
+    max_images_per_message = None
+
+    def complete(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+    ) -> Message:
+        del messages, tools
+        raise RuntimeError("No provider is active during tool discovery")
 
 
 def load_effective_workspace_config(

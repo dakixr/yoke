@@ -9,9 +9,13 @@ from typing import TYPE_CHECKING
 from yoke.agent.models import Message
 from yoke.agent.skills import ActiveSkill
 from yoke.agent.skills import SkillRegistry
+from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools import ToolRegistrationResult
+from yoke.agent.tools.context import normalize_tool_registration
 
 if TYPE_CHECKING:
     from yoke.agent.tools import LocalTool
+    from yoke.agent.tools import RegisterTools
 
     type AgentTool = LocalTool | type[LocalTool]
 else:
@@ -21,11 +25,12 @@ else:
 def bind_agent_tools(
     tools: Sequence[AgentTool],
     *,
-    root: Path,
+    context: ToolRegistrationContext,
+    register_tools: RegisterTools | None = None,
     skill_registry: SkillRegistry | None = None,
     active_skills: Sequence[ActiveSkill] | None = None,
     enable_skill_tool: bool = True,
-) -> list[LocalTool]:
+) -> ToolRegistrationResult:
     """Bind user-provided tool classes or instances for runtime execution."""
     from yoke.agent.tools import LocalTool
     from yoke.agent.tools import WorkspaceTool
@@ -36,13 +41,33 @@ def bind_agent_tools(
             bound_tools.append(tool)
             continue
         if isinstance(tool, type) and issubclass(tool, LocalTool):
-            context = {"root": root} if issubclass(tool, WorkspaceTool) else {}
-            bound_tools.append(tool.bind(**context))
+            bind_context = (
+                {
+                    "root": context.root,
+                    "home": context.home,
+                    "provider": context.provider,
+                }
+                if issubclass(tool, WorkspaceTool)
+                else {"provider": context.provider}
+            )
+            bound_tools.append(tool.bind(**bind_context))
             continue
         raise TypeError(
             "Agent tools must be LocalTool instances or LocalTool classes. "
             f"Got {tool!r}."
         )
+    if register_tools is not None:
+        registration = normalize_tool_registration(register_tools(context))
+        registered = list(registration.tools)
+        invalid = [tool for tool in registered if not isinstance(tool, LocalTool)]
+        if invalid:
+            raise TypeError(
+                "RunConfig.register_tools must return LocalTool instances. "
+                f"Got {invalid[0]!r}."
+            )
+        bound_tools.extend(registered)
+    else:
+        registration = ToolRegistrationResult(tools=())
     if skill_registry is not None and enable_skill_tool:
         from yoke.agent.tools import SkillTool
 
@@ -52,7 +77,10 @@ def bind_agent_tools(
                 active_skills=list(active_skills or []),
             )
         )
-    return bound_tools
+    return ToolRegistrationResult(
+        tools=bound_tools,
+        system_messages=registration.system_messages,
+    )
 
 
 def build_system_messages(

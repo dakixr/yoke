@@ -27,6 +27,12 @@ from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
 from yoke.agent.skills.registry import SkillRegistry
 from yoke.agent.tools import LocalTool
+from yoke.agent.tools import ModelIdentity
+from yoke.agent.tools import RegisterTools
+from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools import ToolRuntimeContext
+from yoke.agent.tools.context import normalize_tool_registration
+from yoke.agent.tools.context import resolve_model_identity
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
 
@@ -63,7 +69,14 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         ]
         return RuntimeAgent(
             provider=provider,
-            tools=bind_agent_tools(config.tools, root=root),
+            tools=[],
+            tool_factory=lambda context: bind_agent_tools(
+                config.tools,
+                context=context,
+                register_tools=config.register_tools,
+            ),
+            tool_root=root,
+            tool_home=Path.home().resolve(),
             max_iterations=config.max_iterations,
             context_manager=ContextManager(
                 instructions=build_system_messages(
@@ -96,15 +109,41 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         active_skills: Sequence[ActiveSkill] = (),
         messages: Sequence[Message] | None = None,
         conversation_entries: Sequence[ConversationEntry] | None = None,
+        tool_factory: RegisterTools | None = None,
+        tool_root: Path | None = None,
+        tool_home: Path | None = None,
+        base_instructions: Sequence[Message] | None = None,
     ) -> None:
         if messages is not None and conversation_entries is not None:
             raise ValueError(
                 "Provide either messages or conversation_entries, not both."
             )
         self.provider = provider
-        self.tools = index_tools(tools)
+        self._tool_factory = tool_factory
+        self._tool_root = (
+            tool_root or _bound_tool_path(tools, "root") or Path.cwd()
+        ).resolve()
+        self._tool_home = tool_home.resolve() if tool_home is not None else None
+        self._tool_provider: Provider | None = None
+        self._tool_model: ModelIdentity | None = None
         self.max_iterations = max_iterations
         self.context_manager = context_manager or ContextManager()
+        self._base_instructions = [
+            message.model_copy(deep=True)
+            for message in (
+                base_instructions
+                if base_instructions is not None
+                else self.context_manager.instructions
+            )
+        ]
+        self._tool_system_messages: list[Message] = []
+        self.context_manager.set_instructions(self._base_instructions)
+        self._context: AgentContext | None = None
+        self.tools: dict[str, LocalTool] = {}
+        if tool_factory is not None:
+            self.refresh_tools(force=True)
+        else:
+            self._install_tools(tools)
         self.tool_execution = tool_execution
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
@@ -112,7 +151,6 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         self.available_skills = list(available_skills)
         self.active_skills = list(active_skills)
         self.tool_report: ToolLoadReport | None = None
-        self._context: AgentContext | None = None
         if messages is not None or conversation_entries is not None:
             self.load_conversation(
                 messages=messages,
@@ -124,6 +162,10 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         forked = RuntimeAgent(
             provider=self.provider,
             tools=[tool.model_copy(deep=True) for tool in self.tools.values()],
+            tool_factory=self._tool_factory,
+            tool_root=self._tool_root,
+            tool_home=self._tool_home,
+            base_instructions=self._base_instructions,
             max_iterations=self.max_iterations,
             context_manager=deepcopy(self.context_manager),
             tool_execution=self.tool_execution,
@@ -162,6 +204,64 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
     def reset(self) -> None:
         """Clear the owned conversation state and keep runtime config."""
         self._context = None
+
+    def refresh_tools(self, *, force: bool = False) -> bool:
+        """Refresh tool registration and runtime context for the active model."""
+        model = resolve_model_identity(self.provider)
+        changed = self._tool_provider is not self.provider or self._tool_model != model
+        if not force and not changed:
+            return False
+        if self._tool_factory is not None:
+            registration = normalize_tool_registration(
+                self._tool_factory(
+                    ToolRegistrationContext(
+                        root=self._tool_root,
+                        home=self._tool_home,
+                        provider=self.provider,
+                        model=model,
+                    )
+                )
+            )
+            tools = list(registration.tools)
+            invalid = [tool for tool in tools if not isinstance(tool, LocalTool)]
+            if invalid:
+                raise TypeError(
+                    "Tool registration callbacks must return LocalTool instances."
+                )
+            self._install_tools(tools, model=model)
+            self._set_tool_system_messages(list(registration.system_messages))
+        else:
+            self._install_tools(list(self.tools.values()), model=model)
+            self._set_tool_system_messages([])
+        return True
+
+    def _set_tool_system_messages(self, messages: Sequence[Message]) -> None:
+        self._tool_system_messages = [
+            message.model_copy(deep=True) for message in messages
+        ]
+        self.context_manager.set_instructions(
+            [*self._base_instructions, *self._tool_system_messages],
+            context=self._context,
+        )
+
+    def _install_tools(
+        self,
+        tools: Sequence[LocalTool],
+        *,
+        model: ModelIdentity | None = None,
+    ) -> None:
+        resolved_model = model or resolve_model_identity(self.provider)
+        runtime_context = ToolRuntimeContext(
+            root=self._tool_root,
+            home=self._tool_home,
+            provider=self.provider,
+            model=resolved_model,
+        )
+        for tool in tools:
+            tool.bind_runtime_context(runtime_context)
+        self.tools = index_tools(tools)
+        self._tool_provider = self.provider
+        self._tool_model = resolved_model
 
     def load_conversation(
         self,
@@ -208,6 +308,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         active_skills: Sequence[ActiveSkill] | None = None,
     ) -> AgentResult:
         """Run the agent loop for the given prompt and return the result."""
+        self.refresh_tools()
         context = context_for_run(
             self,
             prompt,
@@ -321,3 +422,13 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             conversation_entries=runtime_result.conversation_entries,
             structured=structured,
         )
+
+
+def _bound_tool_path(tools: Sequence[LocalTool], key: str) -> Path | None:
+    for tool in tools:
+        value = tool._context.get(key)
+        if isinstance(value, Path):
+            return value
+        if isinstance(value, str):
+            return Path(value)
+    return None

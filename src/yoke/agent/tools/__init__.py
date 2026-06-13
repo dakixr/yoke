@@ -4,6 +4,12 @@ from yoke.agent.tools.base import DEFAULT_GLOB
 from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.command import CommandTool
+from yoke.agent.tools.context import ModelIdentity
+from yoke.agent.tools.context import RegisterTools
+from yoke.agent.tools.context import ToolRegistration
+from yoke.agent.tools.context import ToolRegistrationContext
+from yoke.agent.tools.context import ToolRegistrationResult
+from yoke.agent.tools.context import ToolRuntimeContext
 from yoke.agent.tools.document_extract import ExtractFileContextTool
 from yoke.agent.tools.edit import EditTool
 from yoke.agent.tools.python_exec import PythonExecTool
@@ -17,6 +23,8 @@ from yoke.agent.tools.skill import SkillTool
 from yoke.agent.tools.subagent import SubagentTool
 from yoke.agent.tools.web import WebFetchTool
 from yoke.agent.tools.web import WebResearchTool
+from yoke.agent.tools.write import model_prefers_apply_patch
+from yoke.agent.tools.write import register_write_tool
 
 __all__ = [
     "ApplyPatchTool",
@@ -30,12 +38,20 @@ __all__ = [
     "GrepTool",
     "LsTool",
     "LocalTool",
+    "ModelIdentity",
     "PythonExecTool",
     "ReadTool",
+    "RegisterTools",
     "RipgrepTool",
     "SkillTool",
     "WebFetchTool",
     "WebResearchTool",
     "WorkspaceTool",
     "SubagentTool",
+    "ToolRegistrationContext",
+    "ToolRegistration",
+    "ToolRegistrationResult",
+    "ToolRuntimeContext",
+    "model_prefers_apply_patch",
+    "register_write_tool",
 ]

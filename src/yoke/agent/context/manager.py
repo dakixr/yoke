@@ -65,6 +65,55 @@ class ContextManager:
         )
         self.keep_recent_tokens = self.compaction_policy.keep_recent_tokens
 
+    def set_instructions(
+        self,
+        instructions: Sequence[Message],
+        *,
+        context: AgentContext | None = None,
+    ) -> None:
+        """Replace system instructions and update an existing context."""
+        normalized = normalize_instructions(instructions)
+        self.instructions = normalized
+        self.system_prompt = (
+            normalized[0].plain_text_content if normalized else None
+        )
+        if context is None:
+            return
+        context.instructions = [
+            message.model_copy(deep=True) for message in normalized
+        ]
+        context.system_prompt = self.system_prompt
+        existing = [
+            entry
+            for entry in context.conversation_log.entries
+            if entry.kind == "instruction"
+        ]
+        replacement: list[ConversationEntry] = []
+        for index, message in enumerate(normalized):
+            if index < len(existing):
+                replacement.append(
+                    existing[index].model_copy(
+                        update={"message": message.model_copy(deep=True)}
+                    )
+                )
+            else:
+                replacement.append(
+                    ConversationEntry(
+                        kind="instruction",
+                        message=message.model_copy(deep=True),
+                    )
+                )
+        instruction_ids = {entry.id for entry in existing}
+        replacement_parent = replacement[-1].id if replacement else None
+        remaining: list[ConversationEntry] = []
+        for entry in context.conversation_log.entries:
+            if entry.kind == "instruction":
+                continue
+            if entry.parent_id in instruction_ids:
+                entry = entry.model_copy(update={"parent_id": replacement_parent})
+            remaining.append(entry)
+        context.conversation_log.entries = [*replacement, *remaining]
+
     def initialize(
         self,
         prompt: str,

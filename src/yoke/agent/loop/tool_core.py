@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 
 from pydantic import ValidationError
 
@@ -17,6 +18,7 @@ from yoke.agent.loop.types import StopRequested
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ToolCall
 from yoke.agent.tools import LocalTool
+from yoke.agent.tools import ToolRuntimeContext
 
 
 def index_tools(tools: Sequence[LocalTool]) -> dict[str, LocalTool]:
@@ -81,6 +83,14 @@ def execute_tool(
                 **invocation._context,
                 "cancel_requested": cancel_requested,
             }
+            runtime_context = invocation._context.get("runtime_context")
+            if isinstance(runtime_context, ToolRuntimeContext):
+                invocation.bind_runtime_context(
+                    replace(
+                        runtime_context,
+                        cancel_requested=cancel_requested,
+                    )
+                )
         return invocation.execute()
     except KeyError as exc:
         return {"ok": False, "error": str(exc)}

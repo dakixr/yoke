@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
@@ -14,6 +15,8 @@ from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
 from yoke.agent.tools import EditTool
 from yoke.agent.tools import LocalTool
+from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools import ToolRegistrationResult
 from yoke.ai import Agent
 from yoke.ai import Image
 from yoke.ai import RunConfig
@@ -231,6 +234,103 @@ def test_local_tool_public_alias_supports_user_tools() -> None:
             return {"ok": True, "text": self.text}
 
     assert EchoTool.bind().name == "echo"
+
+
+def test_sdk_tool_context_exposes_provider_and_refreshes_model_metadata(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingProvider(Message.assistant("done"))
+    provider.provider_name = "Demo"
+    provider.config = SimpleNamespace(
+        model="model-a",
+        reasoning_effort="High",
+    )
+    registrations: list[tuple[str, str | None, object]] = []
+
+    class InspectContextTool(LocalTool):
+        name = "inspect_context"
+        description = "Inspect the public tool runtime context."
+
+        def execute(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "provider": self.context.provider,
+                "provider_name": self.context.provider_name,
+                "model_key": self.context.model_key,
+                "reasoning_effort": self.context.reasoning_effort,
+            }
+
+    def register_tools(context: ToolRegistrationContext):
+        registrations.append(
+            (context.provider_name, context.model_key, context.provider)
+        )
+        return [InspectContextTool.bind()]
+
+    agent = Agent(
+        provider=provider,
+        config=RunConfig(
+            root=tmp_path,
+            register_tools=register_tools,
+            include_agents_file=False,
+        ),
+    )
+
+    tool = agent._runtime.tools["inspect_context"]
+    initial = tool.execute()
+
+    assert registrations == [("demo", "demo:model-a", provider)]
+    assert initial == {
+        "ok": True,
+        "provider": provider,
+        "provider_name": "demo",
+        "model_key": "demo:model-a",
+        "reasoning_effort": "high",
+    }
+
+    provider.config.model = "model-b"
+    agent.prompt("refresh tools")
+
+    assert registrations[-1] == ("demo", "demo:model-b", provider)
+    assert agent._runtime.tools["inspect_context"].context.model_key == (
+        "demo:model-b"
+    )
+
+
+def test_sdk_registration_result_contributes_system_messages(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingProvider(Message.assistant("done"))
+
+    class PromptTool(LocalTool):
+        name = "prompt_tool"
+        description = "A tool with model-facing instructions."
+
+        def execute(self) -> dict[str, object]:
+            return {"ok": True}
+
+    def register_tools(context: ToolRegistrationContext):
+        del context
+        return ToolRegistrationResult(
+            tools=[PromptTool.bind()],
+            system_messages=[Message.system("Use prompt_tool carefully.")],
+        )
+
+    agent = Agent(
+        provider=provider,
+        config=RunConfig(
+            root=tmp_path,
+            sys_prompt="Base instructions.",
+            register_tools=register_tools,
+            include_agents_file=False,
+        ),
+    )
+    agent.prompt("hello")
+
+    messages, _tools = provider.calls[-1]
+    assert [message.content for message in messages[:2]] == [
+        "Base instructions.",
+        "Use prompt_tool carefully.",
+    ]
 
 
 def test_public_agent_renders_inline_skill(tmp_path: Path) -> None:

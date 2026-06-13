@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 from yoke.agent.tools import ApplyPatchTool
+from yoke.agent.tools import EditTool
+from yoke.agent.tools import ModelIdentity
+from yoke.agent.tools import ToolRegistrationContext
 from yoke.cli.bootstrap.tools import create_builtin_tools
 
 
@@ -47,10 +51,36 @@ def test_apply_patch_can_add_move_update_and_delete_files(
     assert not (tmp_path / "delete.txt").exists()
 
 
-def test_builtin_tools_include_apply_patch(tmp_path: Path) -> None:
-    names = [tool.name for tool in create_builtin_tools(tmp_path)]
+def test_builtin_tools_select_apply_patch_for_gpt_models(tmp_path: Path) -> None:
+    provider = SimpleNamespace()
+    context = ToolRegistrationContext(
+        root=tmp_path,
+        home=None,
+        provider=cast(Any, provider),
+        model=ModelIdentity(provider_name="demo", model_id="my-gpt-coder"),
+    )
+    tools = create_builtin_tools(tmp_path, context=context)
+    names = [tool.name for tool in tools]
 
     assert "apply_patch" in names
+    assert "edit" not in names
+    assert isinstance(tools[1], ApplyPatchTool)
+
+
+def test_builtin_tools_select_edit_for_non_gpt_models(tmp_path: Path) -> None:
+    provider = SimpleNamespace()
+    context = ToolRegistrationContext(
+        root=tmp_path,
+        home=None,
+        provider=cast(Any, provider),
+        model=ModelIdentity(provider_name="demo", model_id="kimi-k2.7-code"),
+    )
+    tools = create_builtin_tools(tmp_path, context=context)
+    names = [tool.name for tool in tools]
+
+    assert "edit" in names
+    assert "apply_patch" not in names
+    assert isinstance(tools[1], EditTool)
 
 
 def test_apply_patch_verifies_all_changes_before_mutating_workspace(

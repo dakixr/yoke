@@ -22,7 +22,7 @@ from yoke.agent.tools import LocalTool
 
 TOOL_CANCEL_GRACE_SECONDS = 0.25
 TOOL_POLL_SECONDS = 0.02
-SPAWN_UNSAFE_CONTEXT_KEYS = {"cancel_requested", "provider"}
+SPAWN_UNSAFE_CONTEXT_KEYS = {"cancel_requested", "provider", "runtime_context"}
 _ACTIVE_INVOCATIONS: weakref.WeakSet[ToolProcessInvocation]
 
 

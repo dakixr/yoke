@@ -33,6 +33,7 @@ from yoke.ai.sdk_helpers import image_part, remote_image_part, text_part
 
 if TYPE_CHECKING:
     from yoke.agent.tools import LocalTool
+    from yoke.agent.tools import RegisterTools
 
     type AgentTool = LocalTool | type[LocalTool]
 else:
@@ -178,6 +179,7 @@ class RunConfig:
     root: str | Path
     sys_prompt: str | None = None
     tools: Sequence[AgentTool] = ()
+    register_tools: RegisterTools | None = None
     skills: Sequence[Skill] = ()
     include_agents_file: bool = True
     max_iterations: int = 10

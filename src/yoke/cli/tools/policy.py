@@ -173,5 +173,9 @@ def unmatched_tool_patterns(config: PiConfig, known_tool_names: set[str]) -> lis
     unmatched: list[str] = []
     for pattern in config.tools:
         if not any(fnmatch(name, pattern) for name in known_tool_names):
+            if pattern in {"edit", "apply_patch"} and known_tool_names.intersection(
+                {"edit", "apply_patch"}
+            ):
+                continue
             unmatched.append(pattern)
     return unmatched
