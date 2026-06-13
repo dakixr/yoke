@@ -62,7 +62,7 @@ GLM_THINKING_LEVELS = (
     "xhigh",
     "max",
 )
-KIMI_THINKING_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
+KIMI_THINKING_LEVELS = ("minimal", "low", "medium", "high")
 MIMO_THINKING_LEVELS = ("low", "medium", "high")
 MINIMAX_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
 

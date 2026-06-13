@@ -59,6 +59,8 @@ def test_opencode_go_catalog_includes_kimi_k2_7_code() -> None:
     assert kimi.display_name == "Kimi K2.7 Code"
     assert kimi.supports_image_inputs is True
     assert kimi.context_window_tokens == 262_144
+    assert kimi.thinking_levels == ("minimal", "low", "medium", "high")
+    assert kimi.default_thinking_level == "medium"
 
 
 def test_models_set_writes_repo_default_model_and_preserves_tools(
