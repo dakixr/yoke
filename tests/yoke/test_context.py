@@ -168,8 +168,8 @@ def test_drop_incomplete_tool_turns_removes_dangling_assistant_tool_call() -> No
         drop_incomplete_assistant=True,
     )
 
-    assert [message.role for message in repaired] == ["user", "tool", "user"]
-    assert repaired[1].tool_call_id == "call-image-1"
+    assert [message.role for message in repaired] == ["user", "user"]
+    assert repaired[1].content == "Continue"
 
 
 def test_drop_incomplete_tool_turns_keeps_completed_tool_turn() -> None:
@@ -292,12 +292,15 @@ def test_drop_incomplete_tool_turns_keeps_follow_up_messages_after_bad_tool_turn
 
     assert [message.role for message in repaired] == [
         "user",
-        "tool",
         "user",
         "user",
         "user",
     ]
-    assert repaired[1].tool_call_id == "call-image-1"
+    assert [message.content for message in repaired[1:]] == [
+        "page 1 preview",
+        "page 2 preview",
+        "continue",
+    ]
 
 
 def test_normalize_openai_request_messages_drops_invalid_tool_turn_and_tool_calls_on_tool() -> (
@@ -344,5 +347,31 @@ def test_normalize_openai_request_messages_drops_invalid_tool_turn_and_tool_call
 
     normalized = normalize_openai_request_messages(messages)
 
-    assert [message.role for message in normalized] == ["user", "tool", "user"]
-    assert normalized[1].tool_calls == []
+    assert [message.role for message in normalized] == ["user", "user"]
+
+
+def test_normalize_openai_request_messages_drops_orphan_tool_result() -> None:
+    messages = [
+        Message.user("Start"),
+        Message(
+            role="assistant",
+            content="Need two tools.",
+            tool_calls=[
+                ToolCall(
+                    id="call-found",
+                    function=ToolFunction(name="read", arguments='{"path":"a.py"}'),
+                ),
+                ToolCall(
+                    id="call-missing",
+                    function=ToolFunction(name="read", arguments='{"path":"b.py"}'),
+                ),
+            ],
+        ),
+        Message.tool("call-found", '{"ok": true}'),
+        Message.user("Switch models and continue"),
+    ]
+
+    normalized = normalize_openai_request_messages(messages)
+
+    assert [message.role for message in normalized] == ["user", "user"]
+    assert all(message.tool_call_id is None for message in normalized)

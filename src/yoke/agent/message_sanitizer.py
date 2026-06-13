@@ -15,14 +15,25 @@ def normalize_tool_call_sequence(
     pending_index: int | None = None
     pending_ids: list[str] = []
     buffered_follow_ups: list[Message] = []
+
+    def drop_pending_turn() -> None:
+        nonlocal pending_index, pending_ids, buffered_follow_ups
+        if pending_index is not None:
+            del repaired[pending_index:]
+            repaired.extend(
+                message for message in buffered_follow_ups if message.role != "tool"
+            )
+        pending_index = None
+        pending_ids = []
+        buffered_follow_ups = []
+
     for message in messages:
         copied = message.model_copy(deep=True)
         if copied.role == "tool" and copied.tool_calls:
             copied.tool_calls = []
         if copied.role == "assistant" and copied.tool_calls:
             if pending_index is not None and drop_incomplete_assistant:
-                del repaired[pending_index]
-                repaired.extend(buffered_follow_ups)
+                drop_pending_turn()
             pending_index = len(repaired)
             pending_ids = [tool_call.id for tool_call in copied.tool_calls]
             buffered_follow_ups = []
@@ -44,6 +55,5 @@ def normalize_tool_call_sequence(
             continue
         repaired.append(copied)
     if pending_index is not None and drop_incomplete_assistant:
-        del repaired[pending_index]
-        repaired.extend(buffered_follow_ups)
+        drop_pending_turn()
     return repaired
