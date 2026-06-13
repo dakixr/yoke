@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from threading import Thread
+
 # ruff: noqa: F403, F405
 # ruff: noqa: ANN002,ANN003,ANN202,D100,D103,F405,S101
 
@@ -38,7 +40,7 @@ def test_process_prompt_toolkit_prompt_preserves_image_reference_text(
     def start_turn(prompt: str, *, user_message: Message | None = None):
         submitted["prompt"] = prompt
         submitted["user_message"] = user_message
-        return None
+        return Thread()
 
     active_session = active_session_for(tmp_path)
     updated_session = process_prompt_toolkit_prompt(
@@ -103,7 +105,7 @@ def test_process_prompt_toolkit_prompt_attaches_dropped_image_path_line(
     def start_turn(prompt: str, *, user_message: Message | None = None):
         submitted["prompt"] = prompt
         submitted["user_message"] = user_message
-        return None
+        return Thread()
 
     active_session = active_session_for(tmp_path)
     process_prompt_toolkit_prompt(
@@ -129,8 +131,10 @@ def test_process_prompt_toolkit_prompt_attaches_dropped_image_path_line(
     assert state.pending_images == []
     content = message.content
     assert isinstance(content, list)
+    submitted_prompt = submitted["prompt"]
+    assert isinstance(submitted_prompt, str)
     assert content == [
-        MessageTextContentPart(text=submitted["prompt"]),
+        MessageTextContentPart(text=submitted_prompt),
         MessageLocalImageContentPart(
             path=str(image_path.resolve()),
             label="[Image #1]",

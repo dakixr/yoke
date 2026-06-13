@@ -108,9 +108,7 @@ class ToolTraceStore:
                 else entry.executed_arguments
             )
             entry.result = (
-                cast(dict[str, object], result)
-                if isinstance(result, dict)
-                else None
+                cast(dict[str, object], result) if isinstance(result, dict) else None
             )
             entry.status = "ok" if payload.get("ok", False) else "failed"
 
@@ -231,9 +229,7 @@ def _overlay_entry(
     entry = _copy_entry(base)
     entry.tool_name = update.tool_name or entry.tool_name
     entry.raw_arguments = update.raw_arguments or entry.raw_arguments
-    entry.executed_arguments = (
-        update.executed_arguments or entry.executed_arguments
-    )
+    entry.executed_arguments = update.executed_arguments or entry.executed_arguments
     entry.result = update.result or entry.result
     entry.iteration = update.iteration or entry.iteration
     entry.started_at = update.started_at or entry.started_at

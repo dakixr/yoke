@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 # ruff: noqa: F403, F405
-# ruff: noqa: ANN002, ANN003, ANN401, D100, D103, F401, F403, F405, S101
+# ruff: noqa: ANN002, ANN003, ANN401, D100, D103, F403, F405, S101
 
 from .support import *  # noqa: F403, F405
-from yoke.agent.compaction import CompactionPreparation
-from yoke.agent.compaction import Compactor
-from yoke.agent.prompting import MEMORY_MESSAGE_PREFIX
 
 
 def test_interactive_cli_reports_tool_failures(tmp_path: Path) -> None:

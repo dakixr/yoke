@@ -1,7 +1,27 @@
 from __future__ import annotations
 
+from typing import cast
+
 # ruff: noqa: F403, F405
 from .support import *  # noqa: F403, F405
+
+
+def _entry_message(entry: dict[str, object]) -> dict[str, object]:
+    message = entry["message"]
+    assert isinstance(message, dict)
+    return cast(dict[str, object], message)
+
+
+def _entry_metadata(entry: dict[str, object]) -> dict[str, object]:
+    metadata = entry["metadata"]
+    assert isinstance(metadata, dict)
+    return cast(dict[str, object], metadata)
+
+
+def _compaction_handoff(entry: dict[str, object]) -> dict[str, object]:
+    handoff = _entry_metadata(entry)["compaction_handoff"]
+    assert isinstance(handoff, dict)
+    return cast(dict[str, object], handoff)
 
 
 def _jsonl_conversation_entries(path: Path) -> list[dict[str, object]]:
@@ -69,14 +89,14 @@ def test_cli_session_jsonl_keeps_transcript_after_compaction(
     assert any(entry.kind == "memory_snapshot" for entry in record.conversation_entries)
     entries = _jsonl_conversation_entries(session_dir / "compact-demo.jsonl")
     assert any(
-        "older answer alpha" in (entry["message"].get("content") or "")
+        "older answer alpha" in str(_entry_message(entry).get("content") or "")
         for entry in entries
         if entry.get("message") is not None
     )
     assert all("messages" not in entry for entry in entries)
     assert any(entry["kind"] == "memory_snapshot" for entry in entries)
     memory_entries = [entry for entry in entries if entry["kind"] == "memory_snapshot"]
-    handoff = memory_entries[-1]["metadata"]["compaction_handoff"]
+    handoff = _compaction_handoff(memory_entries[-1])
     assert handoff["summary_text"] == "summary of older work"
     assert handoff["reason"] == "threshold"
     assert handoff["retained_messages"]
@@ -121,11 +141,9 @@ def test_cli_persists_compaction_handoff_after_provider_error(
 
     assert exit_code == 1
     entries = _jsonl_conversation_entries(session_dir / "failed-compact.jsonl")
-    memory_entries = [
-        entry for entry in entries if entry["kind"] == "memory_snapshot"
-    ]
+    memory_entries = [entry for entry in entries if entry["kind"] == "memory_snapshot"]
     assert memory_entries
-    handoff = memory_entries[-1]["metadata"]["compaction_handoff"]
+    handoff = _compaction_handoff(memory_entries[-1])
     assert handoff["summary_text"] == "handoff before failure"
 
 

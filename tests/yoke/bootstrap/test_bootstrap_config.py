@@ -117,9 +117,9 @@ def register_tools(context):
         include_global_tools=False,
     )
 
-    assert "Use prompt_tool carefully." in {
+    assert "Use prompt_tool carefully." in [
         message.content for message in resolved.tool_system_messages
-    }
+    ]
 
 
 def test_denied_tool_does_not_contribute_system_messages(tmp_path: Path) -> None:

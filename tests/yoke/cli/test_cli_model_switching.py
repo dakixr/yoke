@@ -41,7 +41,7 @@ class SwitchableConfig:
 class SwitchableProvider:
     provider_name = "demo"
     supports_image_inputs = False
-    max_images_per_message = None
+    max_images_per_message: int | None = None
 
     def __init__(self) -> None:
         self.config = SwitchableConfig()
@@ -278,14 +278,14 @@ def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
 
     assert set(agent.tools) == {"edit"}
     combined = "\n".join(
-        message.content or "" for message in agent.context_manager.instructions
+        str(message.content or "") for message in agent.context_manager.instructions
     )
     assert "base instructions" in combined
     assert "Use the `edit` tool" in combined
     assert "Use the `apply_patch` tool" not in combined
     assert agent._context is not None
     context_combined = "\n".join(
-        message.content or "" for message in agent._context.instructions
+        str(message.content or "") for message in agent._context.instructions
     )
     assert context_combined == combined
     instruction_entries = [
@@ -300,7 +300,7 @@ def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
     set_agent_model(agent, model_id="gpt-coder")
 
     round_trip = "\n".join(
-        message.content or "" for message in agent.context_manager.instructions
+        str(message.content or "") for message in agent.context_manager.instructions
     )
     assert "Use the `apply_patch` tool" in round_trip
     assert "Use the `edit` tool" not in round_trip

@@ -4,6 +4,7 @@ from __future__ import annotations
 # ruff: noqa: D100, D103, F403, F405, S101
 
 from .support import *  # noqa: F403, F405
+from yoke.agent.tools import SubagentTool
 
 
 def write_test_skill(root: Path, name: str, description: str) -> Path:
@@ -187,7 +188,7 @@ def test_skill_tool_reloads_active_skill_without_duplicate(tmp_path: Path) -> No
     assert agent.active_skills[0].reload_on_next_use is False
     tool_messages = [message for message in result.messages if message.role == "tool"]
     assert tool_messages
-    assert '"reloaded": ["manual-skill"]' in tool_messages[0].text_content()
+    assert '"reloaded": ["manual-skill"]' in (tool_messages[0].text_content() or "")
 
 
 def test_agent_fork_clones_conversation_state(tmp_path: Path) -> None:
@@ -241,7 +242,9 @@ def test_subagent_tool_runs_in_process(
     (tmp_path / "notes.txt").write_text("hello from nested context", encoding="utf-8")
     provider = SubagentProvider()
     subagent = SubagentTool.bind(root=tmp_path, provider=provider)
-    agent = RuntimeAgent(provider=provider, tools=[subagent], tool_execution="sequential")
+    agent = RuntimeAgent(
+        provider=provider, tools=[subagent], tool_execution="sequential"
+    )
 
     result = agent.run("delegate")
 
@@ -249,7 +252,7 @@ def test_subagent_tool_runs_in_process(
     assert provider.calls == 3
     assert "rg" in provider.nested_tool_names
     assert {"grep", "find", "ls"}.isdisjoint(provider.nested_tool_names)
-    assert "nested summary" in result.messages[-2].text_content()
+    assert "nested summary" in (result.messages[-2].text_content() or "")
 
 
 def test_agent_loop_emits_commentary_before_tool_calls(

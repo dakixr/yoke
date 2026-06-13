@@ -168,9 +168,9 @@ def test_session_store_migrates_snapshot_jsonl_file_on_startup(tmp_path: Path) -
 
     store = SessionStore(directory=tmp_path)
 
-    migrated_lines = (tmp_path / "snapshot-migrate.jsonl").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    migrated_lines = (
+        (tmp_path / "snapshot-migrate.jsonl").read_text(encoding="utf-8").splitlines()
+    )
     assert json.loads(migrated_lines[0]) == {"type": "session_stream", "version": 1}
     assert [json.loads(line)["type"] for line in migrated_lines[1:]] == [
         "session_metadata",
@@ -211,10 +211,7 @@ def test_session_store_loads_legacy_append_only_entry_stream(tmp_path: Path) -> 
     template_record = store.load("template")
     payload = template_record.conversation_entries[0].model_dump_json()
     (tmp_path / "legacy-stream.jsonl").write_text(
-        json.dumps({"id": entry.id, "title": "Legacy stream"})
-        + "\n"
-        + payload
-        + "\n",
+        json.dumps({"id": entry.id, "title": "Legacy stream"}) + "\n" + payload + "\n",
         encoding="utf-8",
     )
     template_path.unlink()

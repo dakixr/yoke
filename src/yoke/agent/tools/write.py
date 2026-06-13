@@ -12,11 +12,9 @@ from yoke.agent.tools.edit import EditTool
 
 _TOOLS_DIR = Path(__file__).parent
 APPLY_PATCH_SYSTEM_PROMPT = (
-    _TOOLS_DIR / "apply_patch" / "prompt.md"
-).read_text(encoding="utf-8").strip()
-EDIT_SYSTEM_PROMPT = (
-    _TOOLS_DIR / "edit_prompt.md"
-).read_text(encoding="utf-8").strip()
+    (_TOOLS_DIR / "apply_patch" / "prompt.md").read_text(encoding="utf-8").strip()
+)
+EDIT_SYSTEM_PROMPT = (_TOOLS_DIR / "edit_prompt.md").read_text(encoding="utf-8").strip()
 
 
 def register_write_tool(context: ToolRegistrationContext) -> ToolRegistrationResult:

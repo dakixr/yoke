@@ -108,6 +108,7 @@ def _conversation_entries_for_messages(
         )
         if (
             existing_entry is not None
+            and entry.message is not None
             and existing_entry.message is not None
             and _messages_match(entry.message, existing_entry.message)
         ):

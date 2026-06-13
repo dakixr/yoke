@@ -2,40 +2,42 @@ from __future__ import annotations
 
 import json
 import multiprocessing
-import os  # noqa: F401
-import time  # noqa: F401
+import multiprocessing.synchronize
+import os as os
+import time as time
+from typing import cast
 
-import pytest  # noqa: F401
+import pytest as pytest
 from pathlib import Path
 from threading import Event
-from threading import Thread
 from pydantic import Field
 
 from yoke.agent.compaction import COMPACTION_SUMMARY_PROMPT
-from yoke.agent.context import CompactionPolicy, ContextManager  # noqa: F401
+from yoke.agent.context import CompactionPolicy as CompactionPolicy
+from yoke.agent.context import ContextManager as ContextManager
 from yoke.agent.loop import (
-    AfterToolCallContext,  # noqa: F401
-    BeforeToolCallContext,  # noqa: F401
-    ConversationEntryHistory,  # noqa: F401
+    AfterToolCallContext as AfterToolCallContext,
+    BeforeToolCallContext as BeforeToolCallContext,
+    ConversationEntryHistory as ConversationEntryHistory,
     INTERRUPTED_TURN_NOTICE,
-    MessageHistory,  # noqa: F401
-    RuntimeAgent,  # noqa: F401
+    MessageHistory as MessageHistory,
+    RuntimeAgent as RuntimeAgent,
 )
 from yoke.agent.models import (
     Message,
-    MessageLocalImageContentPart,  # noqa: F401
-    MessageTextContentPart,  # noqa: F401
+    MessageLocalImageContentPart as MessageLocalImageContentPart,
+    MessageTextContentPart as MessageTextContentPart,
     ToolCall,
     ToolFunction,
 )
-from yoke.agent.skills.models import ActiveSkill, SkillSpec  # noqa: F401
+from yoke.agent.skills.models import ActiveSkill as ActiveSkill
+from yoke.agent.skills.models import SkillSpec as SkillSpec
 from yoke.agent.tools import (
     COMMAND_TOOL_NAME,
     CommandTool,
     EditTool,
     LocalTool,
     ReadTool,
-    SubagentTool,
 )
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
@@ -190,15 +192,15 @@ class SubagentProvider(Provider):
         if self.calls == 2:
             assert tools
             self.nested_tool_names = {
-                str(tool["function"]["name"])
+                str(cast(dict[str, object], function)["name"])
                 for tool in tools
-                if isinstance(tool.get("function"), dict)
+                if isinstance(function := tool.get("function"), dict)
             }
             return Message.assistant(
                 '{"success": true, "response": "nested summary", "pointers": ["notes.txt"]}'
             )
         assert messages[-1].role == "tool"
-        assert "nested summary" in messages[-1].text_content()
+        assert "nested summary" in (messages[-1].text_content() or "")
         return Message.assistant("done")
 
 
@@ -211,6 +213,7 @@ class BarrierTool(LocalTool):
     def execute(self) -> dict[str, object]:
         barrier = self._context.get("barrier")
         assert barrier is not None
+        assert isinstance(barrier, multiprocessing.synchronize.Barrier)
         barrier.wait()
         return {"ok": True, "label": self.label}
 

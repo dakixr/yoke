@@ -34,6 +34,7 @@ from yoke.cli.runtime.tree import get_session_tree
 from yoke.cli.runtime.tree import navigate_session_tree
 from yoke.cli.runtime.tree import set_entry_label
 
+
 def handle_slash_command(  # noqa: C901
     command: str,
     *,
@@ -88,7 +89,9 @@ def handle_slash_command(  # noqa: C901
         pending_prompts[:] = updated
         if on_queue_changed is not None:
             on_queue_changed()
-        print_scrollback_notice(console, f"Queue updated: {len(pending_prompts)} pending.")
+        print_scrollback_notice(
+            console, f"Queue updated: {len(pending_prompts)} pending."
+        )
         return True, messages, active_session
     if normalized == "/skill" or normalized.startswith("/skill "):
         _handle_skill_load(command, agent, active_session, messages, console)

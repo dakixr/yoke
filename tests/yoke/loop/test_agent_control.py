@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import multiprocessing.synchronize
 import threading
+from threading import Thread
+from typing import cast
 
 # ruff: noqa: F403, F405
 from .support import *  # noqa: F403, F405
@@ -98,12 +101,13 @@ def test_agent_loop_supports_parallel_tool_execution_and_hooks(
         after_seen.append(ctx.result)
         return None
 
+    def record_event(event: str, payload: dict[str, object]) -> None:
+        events.append(event)
+        event_payloads.append((event, payload))
+
     result = agent.run(
         "run in parallel",
-        on_event=lambda event, payload: (
-            events.append(event),
-            event_payloads.append((event, payload)),
-        ),
+        on_event=record_event,
         before_tool_call=record_before,
         after_tool_call=record_after,
     )
@@ -120,10 +124,14 @@ def test_agent_loop_supports_parallel_tool_execution_and_hooks(
         if event in {"tool_execution_start", "tool_execution_end"}
     ]
     first_end_index = next(
-        index for index, (event, _) in enumerate(tool_events) if event == "tool_execution_end"
+        index
+        for index, (event, _) in enumerate(tool_events)
+        if event == "tool_execution_end"
     )
     started_before_first_end = {
-        tool_call_id for event, tool_call_id in tool_events[:first_end_index] if event == "tool_execution_start"
+        tool_call_id
+        for event, tool_call_id in tool_events[:first_end_index]
+        if event == "tool_execution_start"
     }
     assert started_before_first_end == {"call-1", "call-2"}
 
@@ -182,7 +190,9 @@ def test_agent_stop_terminates_non_cooperative_tool_process(tmp_path: Path) -> N
         supports_image_inputs = True
         max_images_per_message = 50
 
-        def complete(self, messages: list[Message], tools: list[dict[str, object]]) -> Message:
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
             del messages, tools
             return Message(
                 role="assistant",
@@ -202,6 +212,7 @@ def test_agent_stop_terminates_non_cooperative_tool_process(tmp_path: Path) -> N
         def execute(self) -> dict[str, object]:
             started = self._context.get("started")
             assert started is not None
+            assert isinstance(started, multiprocessing.synchronize.Event)
             started.set()
             time.sleep(30)
             return {"ok": True}
@@ -244,6 +255,7 @@ def test_tool_process_cancelled_when_wait_is_interrupted(tmp_path: Path) -> None
         def execute(self) -> dict[str, object]:
             started = self._context.get("started")
             assert started is not None
+            assert isinstance(started, multiprocessing.synchronize.Event)
             started.set()
             time.sleep(30)
             return {"ok": True}
@@ -290,8 +302,9 @@ def test_tool_process_spawn_strips_unpicklable_runtime_context(monkeypatch) -> N
 
     assert result["ok"] is True
     assert result["value"] == "kept"
-    assert "cancel_requested" in result["keys"]
-    assert "provider" not in result["keys"]
+    keys = cast(list[str], result["keys"])
+    assert "cancel_requested" in keys
+    assert "provider" not in keys
 
 
 def test_active_tool_process_cleanup_cancels_started_invocation(tmp_path: Path) -> None:
@@ -305,6 +318,7 @@ def test_active_tool_process_cleanup_cancels_started_invocation(tmp_path: Path) 
         def execute(self) -> dict[str, object]:
             started = self._context.get("started")
             assert started is not None
+            assert isinstance(started, multiprocessing.synchronize.Event)
             started.set()
             time.sleep(30)
             return {"ok": True}
@@ -330,7 +344,9 @@ def test_agent_stop_terminates_python_exec_process(tmp_path: Path) -> None:
         supports_image_inputs = True
         max_images_per_message = 50
 
-        def complete(self, messages: list[Message], tools: list[dict[str, object]]) -> Message:
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
             del messages, tools
             return Message(
                 role="assistant",

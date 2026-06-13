@@ -120,7 +120,10 @@ def process_prompt_toolkit_prompt(
                     pending.kind == "steering" and not pending.paused
                     for pending in state.pending_prompts
                 ):
-                    if state.worker is not None and state.active_stop_request is not None:
+                    if (
+                        state.worker is not None
+                        and state.active_stop_request is not None
+                    ):
                         if not state.active_stop_request.is_set():
                             state.active_stop_request.set()
                             if state.steered_turn_ids is not None:
@@ -137,7 +140,9 @@ def process_prompt_toolkit_prompt(
                             )
             invalidate_prompt()
             if next_prompt_to_start is not None:
-                start_turn(next_prompt_to_start.prompt, next_prompt_to_start.user_message)
+                start_turn(
+                    next_prompt_to_start.prompt, next_prompt_to_start.user_message
+                )
             return updated_session
     if prompt.strip().lower() == "/compact" and start_compaction is not None:
         with state_lock:
@@ -198,7 +203,9 @@ def process_prompt_toolkit_prompt(
                     kind="queued",
                 )
             )
-            persist_prompt_queue(active_session, state.pending_prompts, state.pending_images)
+            persist_prompt_queue(
+                active_session, state.pending_prompts, state.pending_images
+            )
     if idle:
         start_turn(prompt, user_message=user_message)
         return active_session_ref["active_session"]
@@ -215,7 +222,9 @@ def process_prompt_toolkit_prompt(
                 kind="queued",
             )
         )
-        persist_prompt_queue(active_session, state.pending_prompts, state.pending_images)
+        persist_prompt_queue(
+            active_session, state.pending_prompts, state.pending_images
+        )
     invalidate_prompt()
     return active_session_ref["active_session"]
 

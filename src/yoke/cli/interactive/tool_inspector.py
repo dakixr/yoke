@@ -61,6 +61,7 @@ def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
     def formatted_rows() -> HTML:
         visible = visible_entries()
         return HTML(render_view_html(state, visible))
+
     _register_tool_inspector_keys(
         key_bindings,
         state=state,

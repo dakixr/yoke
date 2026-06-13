@@ -13,6 +13,7 @@ import weakref
 from multiprocessing.context import BaseContext
 from multiprocessing.context import Process
 from multiprocessing.queues import Queue
+from typing import Any
 
 from yoke.agent.loop.tool_core import cancelled_tool_result
 from yoke.agent.loop.tool_core import execute_tool
@@ -40,7 +41,8 @@ class ToolProcessInvocation:
         tool = _tool_for_child_process(tools.get(name), self._context)
         self._cancel_event = self._context.Event()
         self._result_queue: Queue[dict[str, object]] = self._context.Queue(maxsize=1)
-        self._process: Process = self._context.Process(
+        context: Any = self._context
+        self._process: Process = context.Process(
             target=_tool_process_main,
             args=(tool, name, arguments, self._cancel_event, self._result_queue),
         )
@@ -217,8 +219,7 @@ def _spawn_safe_tool_context(context: dict[str, object]) -> dict[str, object]:
     return {
         key: value
         for key, value in context.items()
-        if key not in SPAWN_UNSAFE_CONTEXT_KEYS
-        and _is_spawn_safe_context_value(value)
+        if key not in SPAWN_UNSAFE_CONTEXT_KEYS and _is_spawn_safe_context_value(value)
     }
 
 

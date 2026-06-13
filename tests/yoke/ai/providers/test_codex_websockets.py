@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 from websockets.exceptions import ConnectionClosedError
@@ -12,6 +13,7 @@ from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex_subscription import OAuthCredentials
 from yoke.ai.providers.codex_websockets import CodexWebSockets
 from yoke.ai.providers.codex_websockets import CodexWebSocketsConfig
+from yoke.ai.providers.codex_websockets import CodexWebSocketConnection
 from yoke.ai.providers.codex_websockets import CodexWebSocketParseState
 from yoke.ai.providers.codex_websockets import RESPONSES_WEBSOCKETS_BETA
 from yoke.ai.providers.codex_websockets import build_message_from_websocket_state
@@ -233,7 +235,7 @@ def test_codex_websockets_complete_sends_request_frame_and_headers(
 
     assert message.text_content() == "ok"
     assert factory_calls[0]["url"] == "ws://127.0.0.1:8765/v1/responses"
-    headers = factory_calls[0]["additional_headers"]
+    headers = cast(dict[str, str], factory_calls[0]["additional_headers"])
     assert isinstance(headers, dict)
     assert headers["Authorization"] == "Bearer access-token"
     assert headers["chatgpt-account-id"] == "acct_123"
@@ -320,12 +322,11 @@ def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
         def close(self) -> None:
             return None
 
-    def fake_factory(url: str, **kwargs: object) -> object:
+    def fake_factory(url: str, **kwargs: object) -> CodexWebSocketConnection:
         nonlocal factory_calls
         del url
         factory_calls += 1
-        headers = kwargs.get("additional_headers")
-        assert isinstance(headers, dict)
+        headers = cast(dict[str, str], kwargs.get("additional_headers"))
         factory_headers.append(headers)
         if factory_calls == 1:
             return StaleWebSocket()

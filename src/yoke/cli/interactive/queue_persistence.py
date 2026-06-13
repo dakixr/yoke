@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
@@ -37,7 +36,9 @@ class PersistedPromptQueue(BaseModel):
     pending_images: list[str] = Field(default_factory=list)
 
 
-def load_prompt_queue(active_session: ActiveSession) -> tuple[list[PendingPrompt], list[ImageAttachment]]:
+def load_prompt_queue(
+    active_session: ActiveSession,
+) -> tuple[list[PendingPrompt], list[ImageAttachment]]:
     """Load the persisted prompt queue sidecar for a session."""
     path = prompt_queue_path(active_session)
     if not path.exists():

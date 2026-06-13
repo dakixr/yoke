@@ -182,11 +182,10 @@ class WebResearchTool(LocalTool):
         try:
             from yoke.ai import Agent
             from yoke.ai import RunConfig
-            from yoke.ai.providers.base import Provider
 
             prompt = self._research_agent_prompt(query=query, sources=sources)
             agent = Agent(
-                provider=cast(Provider, provider),
+                provider=provider,
                 config=RunConfig(
                     root=".",
                     tools=[

@@ -189,11 +189,13 @@ def _run_queue_manager(
         event.app.exit(result=state.prompts if changed else list(prompts))
 
     control = FormattedTextControl(formatted_rows, focusable=True)
-    app: Application[list[PendingPrompt] | _QueueManagerEditRequest | None] = Application(
-        layout=Layout(Window(content=control, always_hide_cursor=True)),
-        key_bindings=key_bindings,
-        full_screen=True,
-        mouse_support=False,
+    app: Application[list[PendingPrompt] | _QueueManagerEditRequest | None] = (
+        Application(
+            layout=Layout(Window(content=control, always_hide_cursor=True)),
+            key_bindings=key_bindings,
+            full_screen=True,
+            mouse_support=False,
+        )
     )
     with suppress(EOFError, KeyboardInterrupt):
         return app.run()
@@ -295,8 +297,4 @@ def _wrap(text: str, width: int) -> list[str]:
 
 
 def _escape(text: str) -> str:
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

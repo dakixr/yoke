@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # ruff: noqa: F403, F405
-# ruff: noqa: ANN003, ANN202, D100, D103, E501, F401, F403, F405, S101
+# ruff: noqa: ANN003, ANN202, D100, D103, E501, F403, F405, S101
 
 import re
 

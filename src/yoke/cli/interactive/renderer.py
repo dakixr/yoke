@@ -29,8 +29,7 @@ class PromptToolkitLiveRenderer:
         set_status: Callable[[str], None],
         emit_tool_response_divider: Callable[[], None] | None = None,
         set_context_usage: Callable[[str | None], None] | None = None,
-        record_tool_event: Callable[[str, dict[str, object]], None]
-        | None = None,
+        record_tool_event: Callable[[str, dict[str, object]], None] | None = None,
     ) -> None:
         self._begin_tool_block = begin_tool_block
         self._emit_tool_response_divider = emit_tool_response_divider

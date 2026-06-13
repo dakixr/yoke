@@ -18,21 +18,22 @@ def test_prompt_toolkit_stop_persists_interrupted_runtime_state(tmp_path: Path) 
         max_images_per_message = 50
 
         def complete(
-            self, messages: list[Message], tools: list[dict[str, object]]) -> Message:
-                del messages, tools
-                return Message(
-                    role="assistant",
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="call-1",
-                            function=ToolFunction(
-                                name="blocking_tool",
-                                arguments="{}",
-                            ),
-                        )
-                    ],
-                )
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del messages, tools
+            return Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        function=ToolFunction(
+                            name="blocking_tool",
+                            arguments="{}",
+                        ),
+                    )
+                ],
+            )
 
     class BlockingTool(LocalTool):
         name = "blocking_tool"
@@ -80,7 +81,7 @@ def test_prompt_toolkit_stop_persists_interrupted_runtime_state(tmp_path: Path) 
         run_in_scrollback=lambda callback: callback(),
     )
 
-    worker = control.start_turn("please run tool")
+    worker = control.start_turn("please run tool", None)
     deadline = time.monotonic() + 2
     while not any(status == "Waiting on tool result" for status in statuses):
         if time.monotonic() > deadline:
@@ -100,7 +101,9 @@ def test_prompt_toolkit_stop_persists_interrupted_runtime_state(tmp_path: Path) 
     ]
     assert record.messages[0].content == "please run tool"
     assert record.messages[-1].content == INTERRUPTED_TURN_NOTICE
-    assert any(entry.kind == "assistant_tool_calls" for entry in record.conversation_entries)
+    assert any(
+        entry.kind == "assistant_tool_calls" for entry in record.conversation_entries
+    )
     tool_result = json.loads(record.messages[2].text_content() or "{}")
     assert tool_result["cancelled"] is True
     assert [message.role for message in state.messages] == [

@@ -30,10 +30,12 @@ from yoke.ai.providers.base import ProviderModelInfo
 class RecordingProvider(Provider):
     supports_image_inputs = True
     max_images_per_message = None
+    provider_name = "recording"
 
     def __init__(self, *responses: Message) -> None:
         self.responses = list(responses) or [Message.assistant("done")]
         self.calls: list[tuple[list[Message], list[dict[str, object]]]] = []
+        self.config = SimpleNamespace(model="recording", reasoning_effort=None)
 
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
@@ -71,9 +73,7 @@ class ModelPromptProvider(RecordingProvider):
                 display_name="GPT Demo",
                 context_window_tokens=100_000,
                 thinking_levels=("low",),
-                system_messages=(
-                    Message.system("Use GPT Demo provider steering."),
-                ),
+                system_messages=(Message.system("Use GPT Demo provider steering."),),
             )
         if self.config.model == "kimi-demo":
             return ProviderModelInfo(
@@ -81,9 +81,7 @@ class ModelPromptProvider(RecordingProvider):
                 display_name="Kimi Demo",
                 context_window_tokens=100_000,
                 thinking_levels=("low",),
-                system_messages=(
-                    Message.system("Use Kimi Demo provider steering."),
-                ),
+                system_messages=(Message.system("Use Kimi Demo provider steering."),),
             )
         return None
 
@@ -218,7 +216,9 @@ def test_public_agent_prompt_is_stateful_and_uses_sys_prompt(
 def test_public_agent_refreshes_provider_model_system_messages(
     tmp_path: Path,
 ) -> None:
-    provider = ModelPromptProvider(Message.assistant("first"), Message.assistant("second"))
+    provider = ModelPromptProvider(
+        Message.assistant("first"), Message.assistant("second")
+    )
     agent = Agent(
         provider=provider,
         config=RunConfig(
@@ -391,9 +391,7 @@ def test_sdk_tool_context_exposes_provider_and_refreshes_model_metadata(
     agent.prompt("refresh tools")
 
     assert registrations[-1] == ("demo", "demo:model-b", provider)
-    assert agent._runtime.tools["inspect_context"].context.model_key == (
-        "demo:model-b"
-    )
+    assert agent._runtime.tools["inspect_context"].context.model_key == ("demo:model-b")
 
 
 def test_sdk_registration_result_contributes_system_messages(

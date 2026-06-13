@@ -339,7 +339,10 @@ class CodexSubscriptionProvider(Provider):
                                 detail=detail,
                                 request_metrics=request_metrics,
                             )
-                            if recovered is not None and attempt < self.config.max_retries:
+                            if (
+                                recovered is not None
+                                and attempt < self.config.max_retries
+                            ):
                                 credentials = recovered
                                 auth_profile = self._active_auth_profile
                                 headers = self._request_headers(credentials)
@@ -544,7 +547,7 @@ class CodexSubscriptionProvider(Provider):
         )
         self._clear_selection_cache(reason="invalid_oauth_token")
 
-        if auth_profile not in {None, "auth_path"}:
+        if auth_profile is not None and auth_profile != "auth_path":
             self._delete_account_profile(auth_profile)
 
         if self.config.accounts_dir.expanduser().exists():
@@ -955,7 +958,7 @@ class AuthStorage:
         raw = payload.get(provider_id)
         if not isinstance(raw, dict):
             return None
-        if raw.get("type") != "oauth":  # ty:ignore[invalid-argument-type]
+        if raw.get("type") != "oauth":
             return None
         return OAuthCredentials.from_json(raw)  # ty:ignore[invalid-argument-type]
 
@@ -1102,7 +1105,8 @@ def wait_for_callback(expected_state: str) -> AuthorizationCallback | None:
     done = threading.Event()
 
     class CallbackHandler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, _format: str, *_args: object) -> None:  # ty:ignore[invalid-method-override]
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
             return
 
         def do_GET(self) -> None:  # noqa: N802
@@ -1558,9 +1562,7 @@ def codex_request_messages(messages: list[Message]) -> list[Message]:
 
 def _codex_safe_follow_ups(messages: list[Message]) -> list[Message]:
     return [
-        message.model_copy(deep=True)
-        for message in messages
-        if message.role != "tool"
+        message.model_copy(deep=True) for message in messages if message.role != "tool"
     ]
 
 
@@ -1572,15 +1574,17 @@ def convert_text_message(message: Message) -> dict[str, Any]:
         for part in content:
             if not isinstance(part, dict):
                 continue
-            if part.get("type") == "text":  # ty:ignore[invalid-argument-type]
+            if part.get("type") == "text":
                 converted_parts.append(
-                    {"type": "input_text", "text": part.get("text", "")}  # ty:ignore[no-matching-overload]
+                    {"type": "input_text", "text": part.get("text", "")}
                 )
-            elif part.get("type") == "image_url":  # ty:ignore[invalid-argument-type]
+            elif part.get("type") == "image_url":
+                image_url = part.get("image_url")
+                url = image_url.get("url", "") if isinstance(image_url, dict) else ""
                 converted_parts.append(
                     {
                         "type": "input_image",
-                        "image_url": part.get("image_url", {}).get("url", ""),  # ty:ignore[no-matching-overload]
+                        "image_url": url,
                     }
                 )
         return {"role": message.role, "content": converted_parts}
@@ -1601,9 +1605,9 @@ def convert_tools(tools: list[dict[str, object]]) -> list[dict[str, object]]:
                 converted.append(
                     {
                         "type": "function",
-                        "name": function.get("name"),  # ty:ignore[invalid-argument-type]
-                        "description": function.get("description", ""),  # ty:ignore[no-matching-overload]
-                        "parameters": function.get("parameters", {}),  # ty:ignore[no-matching-overload]
+                        "name": function.get("name"),
+                        "description": function.get("description", ""),
+                        "parameters": function.get("parameters", {}),
                         "strict": None,
                     }
                 )
@@ -1832,21 +1836,24 @@ def merge_completed_response(
     for index, item in enumerate(output):
         if not isinstance(item, dict):
             continue
-        if item.get("type") == "message":  # ty:ignore[invalid-argument-type]
-            for content in item.get("content") or []:  # ty:ignore[invalid-argument-type]
+        if item.get("type") == "message":
+            content_items = item.get("content")
+            if not isinstance(content_items, list):
+                content_items = []
+            for content in content_items:
                 if not isinstance(content, dict):
                     continue
                 if content.get("type") in {"output_text", "text"}:
                     text = content.get("text")
                     if isinstance(text, str) and text not in existing_text:
                         text_parts.append(text)
-        if item.get("type") == "function_call":  # ty:ignore[invalid-argument-type]
-            item_id = str(item.get("id") or item.get("call_id") or index)  # ty:ignore[invalid-argument-type]
+        if item.get("type") == "function_call":
+            item_id = str(item.get("id") or item.get("call_id") or index)
             stored = function_calls.setdefault(item_id, {})
-            stored["call_id"] = str(item.get("call_id") or item_id)  # ty:ignore[invalid-argument-type]
-            stored["name"] = str(item.get("name") or "")  # ty:ignore[invalid-argument-type]
+            stored["call_id"] = str(item.get("call_id") or item_id)
+            stored["name"] = str(item.get("name") or "")
             stored["arguments"] = str(
-                item.get("arguments") or stored.get("arguments") or "{}"  # ty:ignore[invalid-argument-type]
+                item.get("arguments") or stored.get("arguments") or "{}"
             )
 
 

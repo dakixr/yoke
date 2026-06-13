@@ -184,9 +184,7 @@ def test_tool_inspector_vim_navigation_key_bindings() -> None:
     )
 
     def press(key: str) -> None:
-        binding = next(
-            item for item in key_bindings.bindings if item.keys == (key,)
-        )
+        binding = next(item for item in key_bindings.bindings if item.keys == (key,))
 
         class FakeApp:
             def invalidate(self) -> None:

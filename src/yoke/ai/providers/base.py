@@ -143,8 +143,8 @@ class ModelCatalogProvider(Protocol):
 class Provider(Protocol):
     """Protocol for AI provider implementations."""
 
-    supports_image_inputs: bool
-    max_images_per_message: int | None
+    supports_image_inputs: bool = False
+    max_images_per_message: int | None = None
 
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]

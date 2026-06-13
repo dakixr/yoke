@@ -12,9 +12,7 @@ def test_build_agent_binds_provider_into_tool_context(
 ) -> None:
     install_builtin_provider(monkeypatch, ConfigOnlyProvider)
 
-    agent = build_agent_from_args(
-        CLIArgs(model="codex:gpt-5.4", root=str(tmp_path))
-    )
+    agent = build_agent_from_args(CLIArgs(model="codex:gpt-5.4", root=str(tmp_path)))
 
     web_research = agent.tools["web_research"]
     assert web_research._context["provider"] is agent.provider
@@ -63,9 +61,7 @@ def register_tools(context):
     )
     install_builtin_provider(monkeypatch, ConfigOnlyProvider)
 
-    agent = build_agent_from_args(
-        CLIArgs(model="codex:gpt-5.4", root=str(tmp_path))
-    )
+    agent = build_agent_from_args(CLIArgs(model="codex:gpt-5.4", root=str(tmp_path)))
     result = agent.tools["inspect_model"].execute()
 
     assert result == {
@@ -77,9 +73,7 @@ def register_tools(context):
     }
 
 
-def test_cli_selects_one_write_tool_from_model_id(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_cli_selects_one_write_tool_from_model_id(tmp_path: Path, monkeypatch) -> None:
     install_builtin_provider(monkeypatch, ConfigOnlyProvider)
 
     gpt_agent = build_agent_from_args(

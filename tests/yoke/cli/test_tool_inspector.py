@@ -505,9 +505,7 @@ def test_tool_inspector_arguments_decode_escaped_newlines() -> None:
     entry = ToolTraceEntry(
         tool_call_id="call-1",
         tool_name="apply_patch",
-        raw_arguments=json.dumps(
-            {"input": "line 1\\nline 2", "timeout": 180}
-        ),
+        raw_arguments=json.dumps({"input": "line 1\\nline 2", "timeout": 180}),
     )
 
     text = detail_text(entry, ToolInspectorState(entries=[]))

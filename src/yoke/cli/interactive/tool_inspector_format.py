@@ -45,9 +45,7 @@ def _format_mapping(mapping: dict[str, object]) -> str:
         if isinstance(value, str) and value:
             text_fields.append(_format_text_block(key, value))
     remaining = {
-        key: value
-        for key, value in mapping.items()
-        if key not in set(TEXT_KEYS)
+        key: value for key, value in mapping.items() if key not in set(TEXT_KEYS)
     }
     if remaining:
         text_fields.append(_format_metadata(remaining))
@@ -99,7 +97,9 @@ def _label(key: str, width: int) -> str:
 def _numbered_lines(text: str) -> str:
     lines = text.splitlines() or [""]
     width = len(str(len(lines)))
-    return "\n".join(f"{index:>{width}} │ {line}" for index, line in enumerate(lines, 1))
+    return "\n".join(
+        f"{index:>{width}} │ {line}" for index, line in enumerate(lines, 1)
+    )
 
 
 def _decode_text_escapes(text: str) -> str:

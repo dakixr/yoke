@@ -3,7 +3,6 @@ from __future__ import annotations
 # ruff: noqa: D100, D101, D103
 from pathlib import Path
 from typing import Literal
-from typing import cast
 
 from pydantic import BaseModel
 from pydantic import Field
@@ -22,7 +21,6 @@ from yoke.agent.tools.web import WebResearchTool
 from yoke.agent.tools.write import register_write_tool
 from yoke.ai import Agent
 from yoke.ai import RunConfig
-from yoke.ai.providers.base import Provider
 
 
 class SubAgentResponse(BaseModel):
@@ -85,7 +83,7 @@ class SubagentTool(WorkspaceTool):
 
         try:
             agent = Agent(
-                provider=cast(Provider, provider),
+                provider=provider,
                 config=RunConfig(
                     root=self.root_dir,
                     tools=tools,

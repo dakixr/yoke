@@ -13,7 +13,9 @@ from typer.testing import Result
 
 from yoke.cli.main import app
 from yoke.cli.tools.policy import PiConfig
-from yoke.ai.providers.opencode_go import list_provider_models as list_opencode_go_models
+from yoke.ai.providers.opencode_go import (
+    list_provider_models as list_opencode_go_models,
+)
 
 
 def _invoke_models_set_with_home(

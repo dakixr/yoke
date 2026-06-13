@@ -392,8 +392,8 @@ class ZAIProvider(Provider):
         merged_content = "\n\n".join(
             content
             for message in leading_system_messages
-            if (content := message.content) and content.strip()  # ty:ignore[unresolved-attribute]
-        )  # ty:ignore[no-matching-overload]
+            if (content := _message_text(message))
+        )
         return [
             Message.system(merged_content),
             *messages[len(leading_system_messages) :],
@@ -413,9 +413,9 @@ class ZAIProvider(Provider):
                 pending_assistant = None
                 return
             replacement: list[Message] = []
-            content = pending_assistant.content or ""
-            if content.strip():  # ty:ignore[unresolved-attribute]
-                replacement.append(Message.assistant(content))  # ty:ignore[invalid-argument-type]
+            content = _message_text(pending_assistant)
+            if content:
+                replacement.append(Message.assistant(content))
             del sanitized[exchange_start:]
             sanitized.extend(replacement)
             pending_tool_ids.clear()
@@ -455,7 +455,7 @@ class ZAIProvider(Provider):
             if not (
                 message.role == "assistant"
                 and not message.tool_calls
-                and not (message.content or "").strip()  # ty:ignore[unresolved-attribute]
+                and not _message_text(message)
             )
         ]
 
@@ -504,14 +504,11 @@ class ZAIProvider(Provider):
                     rendered.append(Message.assistant(content))
                 index = lookahead
                 continue
-            if (
-                message.role in {"user", "assistant"}
-                and (message.content or "").strip()  # ty:ignore[unresolved-attribute]
-            ):
+            if message.role in {"user", "assistant"} and _message_text(message):
                 rendered.append(
                     Message(
                         role=message.role,
-                        content=(message.content or "").strip(),  # ty:ignore[unresolved-attribute]
+                        content=_message_text(message),
                     )
                 )
             index += 1
@@ -521,7 +518,7 @@ class ZAIProvider(Provider):
         self, assistant_message: Message, tool_results: list[Message]
     ) -> str:
         parts: list[str] = []
-        if assistant_content := (assistant_message.content or "").strip():  # ty:ignore[unresolved-attribute]
+        if assistant_content := _message_text(assistant_message):
             parts.append(assistant_content)
         calls = [
             f"{tool_call.function.name}({tool_call.function.arguments})"
@@ -530,7 +527,7 @@ class ZAIProvider(Provider):
         if calls:
             parts.append(f"[Assistant tool calls] {'; '.join(calls)}")
         for tool_message in tool_results:
-            if tool_content := (tool_message.content or "").strip():  # ty:ignore[unresolved-attribute]
+            if tool_content := _message_text(tool_message):
                 parts.append(
                     f"[Tool result] {self._truncate_text(tool_content, limit=1_200)}"
                 )
@@ -547,11 +544,11 @@ class ZAIProvider(Provider):
                 merged_content = "\n\n".join(
                     part
                     for part in [
-                        coalesced[-1].content or "",
-                        message.content or "",
+                        _message_text(coalesced[-1]),
+                        _message_text(message),
                     ]
                     if part
-                )  # ty:ignore[no-matching-overload]
+                )
                 coalesced[-1] = Message(role=message.role, content=merged_content)
                 continue
             coalesced.append(message)
@@ -628,3 +625,10 @@ class ZAIProvider(Provider):
             if isinstance(error, str) and error.strip():
                 return error.strip()
         return response.reason_phrase or f"HTTP {response.status_code}"
+
+
+def _message_text(message: Message) -> str:
+    content = message.content
+    if isinstance(content, str):
+        return content.strip()
+    return message.text_content() or ""

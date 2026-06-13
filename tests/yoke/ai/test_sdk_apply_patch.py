@@ -64,14 +64,16 @@ def test_sdk_write_registration_selects_schema_from_model_id(
     )
     gpt_schema = gpt_agent._runtime.tools["apply_patch"].to_definition()
     non_gpt_schema = non_gpt_agent._runtime.tools["edit"].to_definition()
-    assert "input" in cast(
-        dict[str, object],
+    gpt_parameters = cast(
+        dict[str, dict[str, object]],
         cast(dict[str, object], gpt_schema["function"])["parameters"],
-    )["properties"]
-    assert "oldText" in cast(
-        dict[str, object],
+    )
+    non_gpt_parameters = cast(
+        dict[str, dict[str, object]],
         cast(dict[str, object], non_gpt_schema["function"])["parameters"],
-    )["properties"]
+    )
+    assert "input" in gpt_parameters["properties"]
+    assert "oldText" in non_gpt_parameters["properties"]
 
 
 def test_sdk_agent_accepts_raw_apply_patch_tool_arguments(

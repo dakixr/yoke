@@ -12,13 +12,14 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from typing import Protocol
+from typing import cast
 from urllib.parse import urlparse
 from urllib.parse import urlunparse
 
 from pydantic import BaseModel
 from websockets.exceptions import ConnectionClosed
 from websockets.exceptions import InvalidStatus
-from websockets.sync.client import ClientConnection
 from websockets.sync.client import connect
 
 from yoke.agent.models import Message
@@ -37,7 +38,6 @@ from yoke.ai.providers.codex_subscription import OAuthCredentials
 from yoke.ai.providers.codex_subscription import clamp_reasoning_effort
 from yoke.ai.providers.codex_subscription import convert_messages
 from yoke.ai.providers.codex_subscription import convert_tools
-from yoke.ai.providers.codex_subscription import count_message_images
 from yoke.ai.providers.codex_subscription import default_reasoning_effort_for_model_id
 from yoke.ai.providers.codex_subscription import exception_summary
 from yoke.ai.providers.codex_subscription import is_invalid_oauth_token_error
@@ -146,6 +146,14 @@ class CodexWebSocketParseState(BaseModel):
     phase: MessagePhase | None = None
 
 
+class CodexWebSocketConnection(Protocol):
+    def send(self, payload: str) -> None: ...
+
+    def recv(self, timeout: float | None = None) -> str: ...
+
+    def close(self) -> None: ...
+
+
 class CodexWebSockets(CodexSubscriptionProvider):
     provider_name = PROVIDER_NAME
 
@@ -153,12 +161,12 @@ class CodexWebSockets(CodexSubscriptionProvider):
         self,
         config: CodexWebSocketsConfig,
         *,
-        websocket_factory: Callable[..., ClientConnection] | None = None,
+        websocket_factory: Callable[..., CodexWebSocketConnection] | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         super().__init__(config, sleep=sleep)
         self._websocket_factory = websocket_factory or connect
-        self._websocket: ClientConnection | None = None
+        self._websocket: CodexWebSocketConnection | None = None
         self._websocket_credentials: OAuthCredentials | None = None
         self._websocket_auth_profile: str | None = None
 
@@ -344,29 +352,35 @@ class CodexWebSockets(CodexSubscriptionProvider):
         metrics["transport"] = "websocket"
         return metrics
 
-    def _fresh_websocket(self) -> ClientConnection:
+    def _fresh_websocket(self) -> CodexWebSocketConnection:
         if self._websocket is not None:
             return self._websocket
         credentials = self._websocket_credentials or self._fresh_credentials()
         self._websocket_credentials = credentials
         self._websocket_auth_profile = self._active_auth_profile
         try:
-            self._websocket = self._websocket_factory(
-                self._responses_url(),
-                additional_headers=self._request_headers(credentials),
-                open_timeout=self.config.timeout_seconds,
-                close_timeout=min(self.config.timeout_seconds, 10),
-                ping_interval=self.config.websocket_ping_interval_seconds,
-                ping_timeout=self.config.websocket_ping_timeout_seconds,
-                ssl=ssl_context_for_websocket_url(self._responses_url()),
+            websocket = cast(
+                CodexWebSocketConnection,
+                self._websocket_factory(
+                    self._responses_url(),
+                    additional_headers=self._request_headers(credentials),
+                    open_timeout=self.config.timeout_seconds,
+                    close_timeout=min(self.config.timeout_seconds, 10),
+                    ping_interval=self.config.websocket_ping_interval_seconds,
+                    ping_timeout=self.config.websocket_ping_timeout_seconds,
+                    ssl=ssl_context_for_websocket_url(self._responses_url()),
+                ),
             )
-            return self._websocket
+            self._websocket = websocket
+            return websocket
         except InvalidStatus as exc:
             raise map_websocket_status_error(exc) from exc
         except Exception as exc:
             raise ProviderError(f"Codex WebSocket connection failed: {exc}") from exc
 
-    def _consume_websocket_response(self, websocket: ClientConnection) -> Message:
+    def _consume_websocket_response(
+        self, websocket: CodexWebSocketConnection
+    ) -> Message:
         state = CodexWebSocketParseState(text_parts=[], function_calls={})
         deadline = time.monotonic() + self.config.timeout_seconds
         while True:
@@ -374,7 +388,9 @@ class CodexWebSockets(CodexSubscriptionProvider):
             try:
                 raw = websocket.recv(timeout=timeout)
             except TimeoutError as exc:
-                raise ProviderError("Codex WebSocket timed out waiting for response.") from exc
+                raise ProviderError(
+                    "Codex WebSocket timed out waiting for response."
+                ) from exc
             except ConnectionClosed as exc:
                 self._close_websocket(clear_credentials=False)
                 raise ProviderError(STALE_WEBSOCKET_CLOSED_MESSAGE) from exc
@@ -421,7 +437,14 @@ def websocket_url_for_base(base_url: str) -> str:
     else:
         response_path = f"{path}/codex/responses"
     return urlunparse(
-        (scheme, parsed.netloc, response_path, parsed.params, parsed.query, parsed.fragment)
+        (
+            scheme,
+            parsed.netloc,
+            response_path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )
     )
 
 
@@ -466,11 +489,15 @@ def handle_websocket_output_item(
     item: dict[str, Any], state: CodexWebSocketParseState
 ) -> None:
     if item.get("type") == "function_call":
-        item_id = str(item.get("id") or item.get("call_id") or len(state.function_calls))
+        item_id = str(
+            item.get("id") or item.get("call_id") or len(state.function_calls)
+        )
         stored = state.function_calls.setdefault(item_id, {})
         stored["call_id"] = str(item.get("call_id") or item_id)
         stored["name"] = str(item.get("name") or "")
-        stored["arguments"] = str(item.get("arguments") or stored.get("arguments") or "{}")
+        stored["arguments"] = str(
+            item.get("arguments") or stored.get("arguments") or "{}"
+        )
         return
     if item.get("type") != "message":
         return
@@ -498,8 +525,12 @@ def build_message_from_websocket_state(
             state.text_parts if state.text_parts else state.snapshot_text_parts,
             state.function_calls,
         )
-        state.usage_payload = state.completed_payload.get("usage") or state.usage_payload
-    phase = message_phase_from_completed_response(state.completed_payload) or state.phase
+        state.usage_payload = (
+            state.completed_payload.get("usage") or state.usage_payload
+        )
+    phase = (
+        message_phase_from_completed_response(state.completed_payload) or state.phase
+    )
     text_parts = state.text_parts or state.snapshot_text_parts
     tool_calls = [
         ToolCall(
@@ -567,13 +598,17 @@ def map_websocket_error_event(event: dict[str, Any]) -> ProviderError:
 
 def map_websocket_status_error(exc: InvalidStatus) -> ProviderError:
     response = getattr(exc, "response", None)
-    status_code = getattr(response, "status_code", None) or getattr(response, "status", None)
+    status_code = getattr(response, "status_code", None) or getattr(
+        response, "status", None
+    )
     message = f"Codex WebSocket handshake failed: {exc}"
     if status_code == 429:
         return ProviderRateLimitError(message)
     if status_code in {500, 502, 503, 504}:
         return ProviderServerError(message, status_code=status_code)
-    return ProviderError(message, status_code=status_code if isinstance(status_code, int) else None)
+    return ProviderError(
+        message, status_code=status_code if isinstance(status_code, int) else None
+    )
 
 
 __all__ = [

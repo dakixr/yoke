@@ -117,7 +117,10 @@ def test_prompt_queue_persistence_round_trips_pending_prompts(tmp_path: Path) ->
     )
 
     restored_prompts, restored_images = load_prompt_queue(active_session)
-    assert [(prompt.id, prompt.prompt, prompt.kind, prompt.paused) for prompt in restored_prompts] == [
+    assert [
+        (prompt.id, prompt.prompt, prompt.kind, prompt.paused)
+        for prompt in restored_prompts
+    ] == [
         ("one", "queued", "queued", False),
         ("two", "steer", "steering", True),
     ]
@@ -174,7 +177,10 @@ def test_finish_prompt_turn_prioritizes_steering_items() -> None:
 
     assert next_prompt == "steer"
     assert should_finish is False
-    assert [prompt.prompt for prompt in state.pending_prompts] == ["queued 1", "queued 2"]
+    assert [prompt.prompt for prompt in state.pending_prompts] == [
+        "queued 1",
+        "queued 2",
+    ]
 
 
 def test_first_non_steering_index_places_steering_before_queued() -> None:

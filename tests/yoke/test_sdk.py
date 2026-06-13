@@ -18,7 +18,7 @@ from yoke.agent.models import MessageTextContentPart
 
 class RecordingProvider:
     supports_image_inputs = True
-    max_images_per_message = None
+    max_images_per_message: int | None = None
 
     def __init__(self) -> None:
         self.messages: list[Message] | None = None

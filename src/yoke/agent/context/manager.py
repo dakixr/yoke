@@ -74,14 +74,10 @@ class ContextManager:
         """Replace system instructions and update an existing context."""
         normalized = normalize_instructions(instructions)
         self.instructions = normalized
-        self.system_prompt = (
-            normalized[0].plain_text_content if normalized else None
-        )
+        self.system_prompt = normalized[0].plain_text_content if normalized else None
         if context is None:
             return
-        context.instructions = [
-            message.model_copy(deep=True) for message in normalized
-        ]
+        context.instructions = [message.model_copy(deep=True) for message in normalized]
         context.system_prompt = self.system_prompt
         existing = [
             entry

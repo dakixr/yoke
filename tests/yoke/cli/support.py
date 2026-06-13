@@ -139,7 +139,7 @@ class ImageAwareAgent:
 
 class TitleProvider:
     supports_image_inputs = False
-    max_images_per_message = None
+    max_images_per_message: int | None = None
 
     def __init__(self, title: str) -> None:
         self.title = title
@@ -160,7 +160,7 @@ class ProviderConfig:
 class FakeProvider:
     config = ProviderConfig()
     supports_image_inputs = False
-    max_images_per_message = None
+    max_images_per_message: int | None = None
 
 
 class CaptureStream(io.StringIO):

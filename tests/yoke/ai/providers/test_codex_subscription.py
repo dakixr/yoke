@@ -60,9 +60,7 @@ def test_convert_messages_drops_orphan_tool_outputs() -> None:
     )
 
     assert [item.get("type") for item in input_items] == [None, None]
-    assert all(
-        item.get("type") != "function_call_output" for item in input_items
-    )
+    assert all(item.get("type") != "function_call_output" for item in input_items)
 
 
 def test_convert_messages_drops_incomplete_tool_turn_outputs() -> None:
@@ -178,7 +176,7 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
             )
         return httpx.Response(
             200,
-            text="event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
+            text='event: response.completed\ndata: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 

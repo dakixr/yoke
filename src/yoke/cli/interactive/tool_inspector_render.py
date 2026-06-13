@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import textwrap
+from collections.abc import Sequence
 from contextlib import suppress
 from html import escape
 from typing import Literal
@@ -43,7 +44,7 @@ class ToolInspectorRenderState(Protocol):
 
 def render_view(
     state: ToolInspectorRenderState,
-    visible: list[ToolInspectorItem],
+    visible: Sequence[ToolInspectorItem],
 ) -> list[str]:
     """Render the complete inspector view as terminal lines."""
     return _render_view(state, visible, html=False)
@@ -51,7 +52,7 @@ def render_view(
 
 def render_view_html(
     state: ToolInspectorRenderState,
-    visible: list[ToolInspectorItem],
+    visible: Sequence[ToolInspectorItem],
 ) -> str:
     """Render the complete inspector view as prompt-toolkit HTML."""
     return "\n".join(_render_view(state, visible, html=True))
@@ -59,7 +60,7 @@ def render_view_html(
 
 def _render_view(
     state: ToolInspectorRenderState,
-    visible: list[ToolInspectorItem],
+    visible: Sequence[ToolInspectorItem],
     *,
     html: bool,
 ) -> list[str]:
@@ -79,9 +80,7 @@ def _render_view(
     detail_lines = _detail_lines(selected, state, detail_width)
     max_detail_scroll = max(0, len(detail_lines) - body_rows)
     state.detail_scroll = max(0, min(state.detail_scroll, max_detail_scroll))
-    detail_window = detail_lines[
-        state.detail_scroll : state.detail_scroll + body_rows
-    ]
+    detail_window = detail_lines[state.detail_scroll : state.detail_scroll + body_rows]
     footer = _footer_text(state, visible, len(detail_lines), body_rows)
     lines = [
         _escape_line(_title(columns), html),
@@ -133,7 +132,11 @@ def detail_text(
     ]
     if entry.executed_arguments is not None:
         parts.extend(
-            ["", section_header("Executed Arguments"), pretty_json(entry.executed_arguments)]
+            [
+                "",
+                section_header("Executed Arguments"),
+                pretty_json(entry.executed_arguments),
+            ]
         )
     parts.extend(["", section_header("Output"), format_result(entry.result)])
     return "\n".join(parts)
@@ -141,7 +144,7 @@ def detail_text(
 
 def move_selection(
     state: ToolInspectorRenderState,
-    visible: list[ToolInspectorItem],
+    visible: Sequence[ToolInspectorItem],
     delta: int,
 ) -> None:
     """Move the selected row and reset detail scroll."""
@@ -156,7 +159,7 @@ def move_selection(
 
 def selected_entry(
     state: ToolInspectorRenderState,
-    visible: list[ToolInspectorItem],
+    visible: Sequence[ToolInspectorItem],
 ) -> ToolInspectorItem | None:
     """Return the selected visible entry, if any."""
     if not visible:
@@ -216,7 +219,7 @@ def sidebar_items(entries: list[ToolTraceEntry]) -> list[ToolInspectorItem]:
 
 def _list_lines(
     state: ToolInspectorRenderState,
-    visible: list[ToolInspectorItem],
+    visible: Sequence[ToolInspectorItem],
     width: int,
     row_count: int,
     *,
@@ -299,7 +302,7 @@ def _context_detail_text(
 
 
 def _detail_lines(
-    entry: ToolTraceEntry | None,
+    entry: ToolInspectorItem | None,
     state: ToolInspectorRenderState,
     width: int,
 ) -> list[str]:
@@ -489,7 +492,7 @@ def _pane_label(label: str, width: int, *, active: bool) -> str:
 
 def _footer_text(
     state: ToolInspectorRenderState,
-    visible: list[ToolInspectorItem],
+    visible: Sequence[ToolInspectorItem],
     detail_line_count: int,
     body_rows: int,
 ) -> str:
@@ -501,9 +504,7 @@ def _footer_text(
     detail_position = f"detail {detail_start}-{detail_end}/{detail_line_count}"
     if state.active_pane == "sidebar":
         tool_count = sum(1 for item in visible if isinstance(item, ToolTraceEntry))
-        summary = (
-            f"TOOLS focused · j/k move · h/l details · {tool_count} calls"
-        )
+        summary = f"TOOLS focused · j/k move · h/l details · {tool_count} calls"
     else:
         summary = f"DETAIL focused · j/k scroll · h/l tools · {detail_position}"
     return state.notice or search or summary

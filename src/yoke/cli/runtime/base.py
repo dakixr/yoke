@@ -110,15 +110,17 @@ def execute_turn(
                 active_skills=cast(Sequence[ActiveSkill] | None, active_skills),
                 available_skills=cast(Sequence[SkillSpec] | None, available_skills),
                 after_tool_result_appended=(
-                    lambda context: after_tool_result_appended(
-                        list(context.messages),
-                        [
-                            entry.model_copy(deep=True)
-                            for entry in context.conversation_log.entries
-                        ],
+                    lambda context: (
+                        after_tool_result_appended(
+                            list(context.messages),
+                            [
+                                entry.model_copy(deep=True)
+                                for entry in context.conversation_log.entries
+                            ],
+                        )
+                        if after_tool_result_appended is not None
+                        else None
                     )
-                    if after_tool_result_appended is not None
-                    else None
                 ),
             )
         if user_message is not None and getattr(agent, "supports_user_message", False):

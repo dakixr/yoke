@@ -23,12 +23,20 @@ yoke = "yoke.cli.main:main"
 
 [dependency-groups]
 dev = [
+    "pyright>=1.1",
     "pytest>=7.4",
+    "ruff>=0.8",
+    "ty>=0.0.1a0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+extraPaths = ["src"]
+reportMissingImports = "none"
 
 [build-system]
 requires = ["uv_build>=0.8.4,<0.9.0"]
