@@ -87,10 +87,7 @@ class ProviderModelInfo(BaseModel):
     @classmethod
     def validate_thinking_levels(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         """Normalize and validate thinking levels for a provider model."""
-        normalized = tuple(level.strip().lower() for level in value if level.strip())
-        if not normalized:
-            raise ValueError("thinking_levels must not be empty")
-        return normalized
+        return tuple(level.strip().lower() for level in value if level.strip())
 
     @field_validator("default_thinking_level")
     @classmethod

@@ -14,6 +14,8 @@ from typer.testing import Result
 from yoke.cli.main import app
 from yoke.cli.tools.policy import PiConfig
 from yoke.ai.providers.opencode_go import (
+    OpenCodeGoConfig,
+    OpenCodeGoProvider,
     list_provider_models as list_opencode_go_models,
 )
 
@@ -61,8 +63,61 @@ def test_opencode_go_catalog_includes_kimi_k2_7_code() -> None:
     assert kimi.display_name == "Kimi K2.7 Code"
     assert kimi.supports_image_inputs is True
     assert kimi.context_window_tokens == 262_144
-    assert kimi.thinking_levels == ("minimal", "low", "medium", "high")
-    assert kimi.default_thinking_level == "medium"
+    assert kimi.thinking_levels == ()
+    assert kimi.default_thinking_level is None
+
+
+def test_opencode_go_catalog_matches_current_reasoning_efforts() -> None:
+    expected = {
+        "glm-5.1": (),
+        "glm-5": (),
+        "kimi-k2.7-code": (),
+        "kimi-k2.6": (),
+        "kimi-k2.5": (),
+        "deepseek-v4-pro": ("high", "max"),
+        "deepseek-v4-flash": ("high", "max"),
+        "mimo-v2.5": (),
+        "mimo-v2-omni": (),
+        "mimo-v2-pro": (),
+        "mimo-v2.5-pro": (),
+        "minimax-m3": ("none", "thinking"),
+        "minimax-m2.7": (),
+        "minimax-m2.5": (),
+        "qwen3.7-plus": (),
+        "qwen3.6-plus": (),
+        "qwen3.5-plus": (),
+    }
+    models = {model.id: model for model in list_opencode_go_models(None)}
+
+    assert {
+        model_id: models[model_id].thinking_levels for model_id in expected
+    } == expected
+
+
+def test_opencode_go_accepts_only_catalog_reasoning_efforts() -> None:
+    invalid_efforts = (
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "thinking",
+    )
+    provider = OpenCodeGoProvider(OpenCodeGoConfig(api_key="test"))
+
+    try:
+        for model in list_opencode_go_models(None):
+            for effort in model.thinking_levels:
+                provider.set_model(model.id, reasoning_effort=effort)
+                assert provider.config.model == model.id
+                assert provider.config.reasoning_effort == effort
+            for effort in set(invalid_efforts) - set(model.thinking_levels):
+                with pytest.raises(ValueError, match="Unsupported reasoning effort"):
+                    provider.set_model(model.id, reasoning_effort=effort)
+    finally:
+        provider.close()
 
 
 def test_models_set_writes_repo_default_model_and_preserves_tools(

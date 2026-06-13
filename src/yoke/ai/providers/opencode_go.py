@@ -51,20 +51,13 @@ ENV_API_KEY = "OPENCODE_API_KEY"
 OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
 ANTHROPIC_BASE_URL = "https://opencode.ai/zen/go"
 
-ANTHROPIC_THINKING_LEVELS = ("high", "max")
-DEEPSEEK_THINKING_LEVELS = ("low", "medium", "high", "xhigh", "max")
-GLM_THINKING_LEVELS = (
-    "none",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-)
-KIMI_THINKING_LEVELS = ("minimal", "low", "medium", "high")
-MIMO_THINKING_LEVELS = ("low", "medium", "high")
-MINIMAX_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
+ANTHROPIC_THINKING_LEVELS = ()
+DEEPSEEK_THINKING_LEVELS = ("high", "max")
+GLM_THINKING_LEVELS = ()
+KIMI_THINKING_LEVELS = ()
+MIMO_THINKING_LEVELS = ()
+MINIMAX_THINKING_LEVELS = ()
+MINIMAX_TOGGLE_THINKING_LEVELS = ("none", "thinking")
 
 MODEL_PROTOCOLS = {
     "minimax-m3": "anthropic",
@@ -92,7 +85,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="GLM-5.1",
         context_window_tokens=202_752,
         thinking_levels=GLM_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
@@ -100,7 +93,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="GLM-5",
         context_window_tokens=202_752,
         thinking_levels=GLM_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
@@ -108,7 +101,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="Kimi K2.7 Code",
         context_window_tokens=262_144,
         thinking_levels=KIMI_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -116,7 +109,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="Kimi K2.6",
         context_window_tokens=262_144,
         thinking_levels=KIMI_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -124,7 +117,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="Kimi K2.5",
         context_window_tokens=262_144,
         thinking_levels=KIMI_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -132,7 +125,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="DeepSeek V4 Pro",
         context_window_tokens=1_000_000,
         thinking_levels=DEEPSEEK_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level="high",
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
@@ -140,7 +133,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="DeepSeek V4 Flash",
         context_window_tokens=1_000_000,
         thinking_levels=DEEPSEEK_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level="high",
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
@@ -148,7 +141,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="MiMo V2.5",
         context_window_tokens=1_000_000,
         thinking_levels=MIMO_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -156,7 +149,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="MiMo V2 Omni",
         context_window_tokens=262_144,
         thinking_levels=MIMO_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -164,7 +157,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="MiMo V2 Pro",
         context_window_tokens=1_048_576,
         thinking_levels=MIMO_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
@@ -172,15 +165,15 @@ MODEL_CATALOG = build_model_catalog(
         display_name="MiMo V2.5 Pro",
         context_window_tokens=1_048_576,
         thinking_levels=MIMO_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
         id="minimax-m3",
         display_name="MiniMax M3",
-        context_window_tokens=1_000_000,
-        thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level="high",
+        context_window_tokens=512_000,
+        thinking_levels=MINIMAX_TOGGLE_THINKING_LEVELS,
+        default_thinking_level="thinking",
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -188,7 +181,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="MiniMax M2.7",
         context_window_tokens=204_800,
         thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level="high",
+        default_thinking_level=None,
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
@@ -196,7 +189,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="MiniMax M2.5",
         context_window_tokens=204_800,
         thinking_levels=MINIMAX_THINKING_LEVELS,
-        default_thinking_level="medium",
+        default_thinking_level=None,
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
@@ -204,15 +197,15 @@ MODEL_CATALOG = build_model_catalog(
         display_name="Qwen3.7 Plus",
         context_window_tokens=1_000_000,
         thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level="high",
+        default_thinking_level=None,
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
         id="qwen3.6-plus",
         display_name="Qwen3.6 Plus",
-        context_window_tokens=262_144,
+        context_window_tokens=1_000_000,
         thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level="high",
+        default_thinking_level=None,
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -220,7 +213,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="Qwen3.5 Plus",
         context_window_tokens=262_144,
         thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level="high",
+        default_thinking_level=None,
         supports_image_inputs=True,
     ),
 )
@@ -235,6 +228,7 @@ ALL_THINKING_LEVELS = tuple(
             KIMI_THINKING_LEVELS,
             MIMO_THINKING_LEVELS,
             MINIMAX_THINKING_LEVELS,
+            MINIMAX_TOGGLE_THINKING_LEVELS,
         )
         for level in levels
     )
@@ -579,12 +573,17 @@ def _anthropic_thinking_config(
 ) -> dict[str, object] | None:
     if MODEL_PROTOCOLS.get(model_id) != "anthropic":
         return None
-    level = (reasoning_effort or "high").strip().lower()
+    if reasoning_effort is None:
+        return None
+    level = reasoning_effort.strip().lower()
+    if level == "none":
+        return None
+    if level != "thinking":
+        return None
     output_tokens = _max_output_tokens(model_id)
-    budget_tokens = 16_000 if level == "high" else 31_999
     return {
         "type": "enabled",
-        "budget_tokens": min(budget_tokens, output_tokens - 1),
+        "budget_tokens": min(31_999, output_tokens - 1),
     }
 
 
