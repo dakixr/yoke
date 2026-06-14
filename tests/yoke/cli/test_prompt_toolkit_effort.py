@@ -19,6 +19,17 @@ def test_cycle_prompt_thinking_effort_advances_and_wraps() -> None:
     assert cycle_prompt_thinking_effort("xhigh") == "none"
 
 
+def test_cycle_prompt_thinking_effort_uses_model_capabilities() -> None:
+    assert cycle_prompt_thinking_effort(None, ("high", "max")) == "max"
+    assert cycle_prompt_thinking_effort("high", ("high", "max")) == "max"
+    assert cycle_prompt_thinking_effort("max", ("high", "max")) == "high"
+    assert cycle_prompt_thinking_effort("low", ("thinking",)) == "thinking"
+
+
+def test_cycle_prompt_thinking_effort_returns_none_without_capabilities() -> None:
+    assert cycle_prompt_thinking_effort("high", ()) is None
+
+
 def test_idle_toolbar_shows_provider_with_effort_before_context() -> None:
     toolbar = _format_bottom_toolbar(
         worker_active=False,

@@ -106,6 +106,36 @@ def test_openai_compatible_provider_includes_reasoning_effort() -> None:
     }
 
 
+def test_openai_compatible_provider_includes_max_tokens_when_configured() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "done"}}]},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleConfig(
+            api_key="test-key",
+            model="gpt-test",
+            base_url="https://example.openai.com/v1",
+            max_tokens=65_536,
+        ),
+        http_client=client,
+    )
+
+    provider.complete([Message.user("hello")], [])
+
+    assert captured["payload"] == {
+        "model": "gpt-test",
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 65_536,
+    }
+
+
 def test_openai_compatible_provider_preserves_reasoning_content() -> None:
     captured_payloads: list[dict[str, object]] = []
 

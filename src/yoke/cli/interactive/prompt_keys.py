@@ -146,13 +146,21 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         key_bindings.add("escape", "enter")(_insert_newline)
 
 
-def cycle_prompt_thinking_effort(current: str | None) -> str:
+def cycle_prompt_thinking_effort(
+    current: str | None,
+    available_efforts: tuple[str, ...] | None = None,
+) -> str | None:
     """Return the next configured thinking effort value."""
+    values = THINKING_EFFORT_VALUES if available_efforts is None else available_efforts
+    if not values:
+        return None
+    normalized_current = current.strip().lower() if current else None
+    default_index = max(len(values) - 2, 0)
     try:
-        index = THINKING_EFFORT_VALUES.index(current or "high")
+        index = values.index(normalized_current or values[default_index])
     except ValueError:
-        index = THINKING_EFFORT_VALUES.index("high")
-    return THINKING_EFFORT_VALUES[(index + 1) % len(THINKING_EFFORT_VALUES)]
+        index = default_index
+    return values[(index + 1) % len(values)]
 
 
 def insert_attachment_reference(buffer, attachment: ImageAttachment) -> None:

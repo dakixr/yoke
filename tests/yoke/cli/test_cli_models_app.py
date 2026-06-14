@@ -7,10 +7,12 @@ from typing import Any
 from typing import Callable
 from typing import cast
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 from typer.testing import Result
 
+from yoke.agent.models import Message
 from yoke.cli.main import app
 from yoke.cli.tools.policy import PiConfig
 from yoke.ai.providers.opencode_go import (
@@ -92,6 +94,50 @@ def test_opencode_go_catalog_matches_current_reasoning_efforts() -> None:
     assert {
         model_id: models[model_id].thinking_levels for model_id in expected
     } == expected
+
+
+def test_opencode_go_config_accepts_persisted_reasoning_efforts() -> None:
+    assert (
+        OpenCodeGoConfig(
+            api_key="test",
+            model="kimi-k2.7-code",
+            reasoning_effort="Low",
+        ).reasoning_effort
+        == "low"
+    )
+
+
+def test_opencode_go_config_rejects_unknown_reasoning_effort() -> None:
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        OpenCodeGoConfig(
+            api_key="test",
+            model="kimi-k2.7-code",
+            reasoning_effort="turbo",
+        )
+
+
+def test_opencode_go_openai_models_send_high_max_tokens() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = request.read().decode("utf-8")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "done"}}]},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = OpenCodeGoProvider(
+        OpenCodeGoConfig(api_key="test", model="kimi-k2.7-code"),
+        http_client=client,
+    )
+
+    try:
+        provider.complete([Message.user("hello")], [])
+    finally:
+        provider.close()
+
+    assert '"max_tokens":65536' in cast(str, captured["payload"])
 
 
 def test_opencode_go_accepts_only_catalog_reasoning_efforts() -> None:

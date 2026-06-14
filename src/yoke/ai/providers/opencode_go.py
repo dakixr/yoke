@@ -234,6 +234,17 @@ ALL_THINKING_LEVELS = tuple(
     )
 )
 
+OPENCODE_GO_REASONING_EFFORTS = (
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "thinking",
+)
+
 
 def list_provider_models(context: Any) -> list[ProviderModelInfo]:
     del context
@@ -284,10 +295,10 @@ class OpenCodeGoConfig(BaseModel):
         if value is None:
             return None
         normalized = value.strip().lower()
-        if normalized not in ALL_THINKING_LEVELS:
+        if normalized not in OPENCODE_GO_REASONING_EFFORTS:
             raise ValueError(
                 "reasoning_effort must be one of none, minimal, low, "
-                "medium, high, xhigh, or max"
+                "medium, high, xhigh, max, or thinking"
             )
         return normalized
 
@@ -370,6 +381,7 @@ class OpenCodeGoProvider(Provider):
                 max_retries=config.max_retries,
                 retry_backoff_seconds=config.retry_backoff_seconds,
                 max_retry_backoff_seconds=config.max_retry_backoff_seconds,
+                max_tokens=_max_output_tokens(config.model),
                 reasoning_effort=config.reasoning_effort,
                 provider_name=PROVIDER_NAME,
                 model_catalog=config.model_catalog,
@@ -412,6 +424,7 @@ class OpenCodeGoProvider(Provider):
 
     def _sync_openai_config(self) -> None:
         self._openai_provider.config.model = self.config.model
+        self._openai_provider.config.max_tokens = _max_output_tokens(self.config.model)
         self._openai_provider.config.reasoning_effort = self.config.reasoning_effort
 
     def _complete_anthropic(

@@ -157,6 +157,13 @@ turn.
 - Completed tool results are saved to the active session immediately after each
   result is appended, so an interrupted CLI process can resume from the latest
   completed tool call.
+- `Shift+Tab` cycles only through the active model's advertised thinking
+  levels. Models without advertised levels leave thinking effort at the default.
+- OpenCode Go chat-completions requests include a high output-token cap so
+  large tool calls are less likely to be truncated by provider defaults.
+- Persisted provider reasoning effort is normalized on resume; provider configs
+  accept saved effort values even when a model catalog omits explicit thinking
+  levels.
 - Press `Ctrl+J` to insert a newline.
 - Pasting multiline text keeps the entire paste in the current prompt; press
   `Enter` after the paste to submit it.

@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.input.base import Input
     from prompt_toolkit.output.base import Output
+    from yoke.ai.providers.base import ProviderModelInfo
 
 
 def run_prompt_toolkit_cli(  # noqa: C901
@@ -266,10 +267,22 @@ def run_prompt_toolkit_cli(  # noqa: C901
         run_in_scrollback=run_in_scrollback,
     )
 
-    def cycle_thinking_effort() -> str:
-        config = getattr(getattr(agent, "provider", None), "config", None)
+    def cycle_thinking_effort() -> str | None:
+        provider = getattr(agent, "provider", None)
+        config = getattr(provider, "config", None)
         current = getattr(config, "reasoning_effort", None)
-        next_effort = cycle_prompt_thinking_effort(current)
+        current_model_info = getattr(provider, "current_model_info", None)
+        model_info = (
+            cast("ProviderModelInfo | None", current_model_info())
+            if callable(current_model_info)
+            else None
+        )
+        next_effort = cycle_prompt_thinking_effort(
+            current,
+            available_efforts=(
+                model_info.thinking_levels if model_info is not None else None
+            ),
+        )
         if config is not None and hasattr(config, "reasoning_effort"):
             config.reasoning_effort = next_effort
         nonlocal provider_model_text
