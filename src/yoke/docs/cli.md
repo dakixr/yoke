@@ -92,6 +92,13 @@ provider-wide guarantee. The Thinking column reports selectable controls only:
 for example, Z.ai GLM models expose `none` and `thinking`, which yoke maps to
 Z.ai's documented `thinking.type` disabled/enabled request field.
 
+Z.ai and OpenCode Go chat-completions models use standard OpenAI-compatible
+tool-call history: assistant `tool_calls` are followed by `tool` messages with
+matching `tool_call_id` values. Some OpenCode Go models, such as
+`kimi-k2.7-code`, can return intermediate `reasoning_content`; yoke preserves
+that text and uses it as fallback output if the visible response content is
+empty.
+
 If you omit the model argument from `yoke models set`, yoke opens an interactive
 selector when running in a TTY and otherwise falls back to a numbered prompt.
 By default `yoke models set` writes to `~/.yoke/config.json`; use `--repo` to write

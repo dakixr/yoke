@@ -206,7 +206,12 @@ class Message(BaseModel):
         """Return assistant text that should count as final answer output."""
         if self.role == "assistant" and self.phase == "commentary":
             return None
-        return self.display_text_content()
+        text = self.display_text_content()
+        if text:
+            return text
+        if self.role == "assistant" and not self.tool_calls:
+            return self.reasoning_content
+        return text
 
     def commentary_text_content(self) -> str | None:
         """Return assistant text that should be shown as mid-turn commentary."""

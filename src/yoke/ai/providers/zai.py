@@ -19,6 +19,7 @@ from yoke.ai.providers.base import (
     ProviderRateLimitError,
     ProviderServerError,
 )
+from yoke.ai.providers.openai_compat.content import normalize_openai_request_messages
 from yoke.ai.providers.usage import parse_token_usage
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -58,6 +59,7 @@ def register_provider(context):
         ZAIConfig(
             ayoke_key=api_key,
             model=context.model or "glm-5.1",
+            reasoning_effort=context.reasoning_effort,
             debug_log_path=env.get("ZAI_DEBUG_LOG_PATH") or None,
         )
     )
@@ -325,60 +327,13 @@ class ZAIProvider(Provider):
             self._client.close()
 
     def _prepare_messages(self, messages: list[Message]) -> list[Message]:
-        prepared = [message.model_copy(deep=True) for message in messages]
+        prepared = normalize_openai_request_messages(messages)
         prepared = self._merge_leading_system_messages(prepared)
         for message in prepared:
             if message.role == "assistant" and message.content is None:
                 message.content = ""
-        prepared = self._sanitize_message_sequence(prepared)
-        prepared = self._project_messages_for_zai(prepared)
         prepared = self._drop_empty_assistant_messages(prepared)
         return prepared
-
-    def _project_messages_for_zai(self, messages: list[Message]) -> list[Message]:
-        system_messages: list[Message] = []
-        start = 0
-        while start < len(messages) and messages[start].role == "system":
-            system_messages.append(messages[start].model_copy(deep=True))
-            start += 1
-
-        conversation = messages[start:]
-        trailing_exchange_start = self._trailing_structured_exchange_start(conversation)
-        if trailing_exchange_start is None:
-            projected = self._coalesce_text_messages(
-                self._render_tool_messages_as_text(conversation)
-            )
-            return [*system_messages, *projected]
-
-        prefix = self._render_tool_messages_as_text(
-            conversation[:trailing_exchange_start]
-        )
-        suffix = [
-            message.model_copy(deep=True)
-            for message in conversation[trailing_exchange_start:]
-        ]
-        return [
-            *system_messages,
-            *self._coalesce_text_messages([*prefix, *suffix]),
-        ]
-
-    def _trailing_structured_exchange_start(
-        self, messages: list[Message]
-    ) -> int | None:
-        trailing_tool_ids: list[str] = []
-        index = len(messages) - 1
-        while index >= 0 and messages[index].role == "tool":
-            tool_call_id = messages[index].tool_call_id
-            if tool_call_id:
-                trailing_tool_ids.append(tool_call_id)
-            index -= 1
-        if not trailing_tool_ids or index < 0:
-            return None
-        assistant_message = messages[index]
-        if assistant_message.role != "assistant" or not assistant_message.tool_calls:
-            return None
-        expected_ids = {tool_call.id for tool_call in assistant_message.tool_calls}
-        return index if expected_ids == set(trailing_tool_ids) else None
 
     def _merge_leading_system_messages(self, messages: list[Message]) -> list[Message]:
         leading_system_messages: list[Message] = []
@@ -397,55 +352,6 @@ class ZAIProvider(Provider):
             Message.system(merged_content),
             *messages[len(leading_system_messages) :],
         ]
-
-    def _sanitize_message_sequence(self, messages: list[Message]) -> list[Message]:
-        sanitized: list[Message] = []
-        exchange_start: int | None = None
-        pending_tool_ids: set[str] = set()
-        pending_assistant: Message | None = None
-
-        def drop_pending_exchange() -> None:
-            nonlocal exchange_start, pending_tool_ids, pending_assistant
-            if exchange_start is None or pending_assistant is None:
-                pending_tool_ids.clear()
-                exchange_start = None
-                pending_assistant = None
-                return
-            replacement: list[Message] = []
-            content = _message_text(pending_assistant)
-            if content:
-                replacement.append(Message.assistant(content))
-            del sanitized[exchange_start:]
-            sanitized.extend(replacement)
-            pending_tool_ids.clear()
-            exchange_start = None
-            pending_assistant = None
-
-        for message in messages:
-            if message.role == "assistant" and message.tool_calls:
-                if pending_tool_ids:
-                    drop_pending_exchange()
-                sanitized.append(message)
-                exchange_start = len(sanitized) - 1
-                pending_assistant = message
-                pending_tool_ids = {tool_call.id for tool_call in message.tool_calls}
-                continue
-            if message.role == "tool":
-                if not pending_tool_ids or message.tool_call_id not in pending_tool_ids:
-                    continue
-                sanitized.append(message)
-                pending_tool_ids.remove(message.tool_call_id)
-                if not pending_tool_ids:
-                    exchange_start = None
-                    pending_assistant = None
-                continue
-            if pending_tool_ids:
-                drop_pending_exchange()
-            sanitized.append(message)
-
-        if pending_tool_ids:
-            drop_pending_exchange()
-        return sanitized
 
     def _drop_empty_assistant_messages(self, messages: list[Message]) -> list[Message]:
         return [

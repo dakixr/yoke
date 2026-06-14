@@ -152,6 +152,47 @@ def test_openai_compatible_provider_preserves_reasoning_content() -> None:
     assert second_payload_messages[1]["reasoning_content"] == "hidden chain"
 
 
+def test_reasoning_only_assistant_message_is_not_empty_final_output() -> None:
+    message = Message(
+        role="assistant", content=None, reasoning_content="reasoned answer"
+    )
+
+    assert message.final_text_content() == "reasoned answer"
+
+
+def test_openai_compatible_reasoning_only_response_has_final_output() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "reasoning_content": "reasoned answer",
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleConfig(
+            api_key="test-key",
+            model="kimi-k2.7-code",
+            base_url="https://example.com/v1",
+        ),
+        http_client=client,
+    )
+
+    message = provider.complete([Message.user("hello")], [])
+
+    assert message.final_text_content() == "reasoned answer"
+
+
 def test_openai_compatible_provider_preserves_usage() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         del request
