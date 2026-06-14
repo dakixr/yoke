@@ -496,11 +496,15 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke now reports th
 ```
 
 **Built-in tool names:** `read`, `ls`, `find`, `grep`, `command`,
-`web_fetch`, `web_research`, `extract_file_context`, and `attach_image`.
+`web_fetch`, `web_research`, `extract_file_context`, `attach_image`, and
+`image_generation`.
 The writing capability is model-aware: model IDs containing `gpt` receive
 `apply_patch`; all other models receive `edit`. Only one writing tool is
 active at a time. `attach_image` is also model-aware and is only registered
-when the active model advertises image input support. Search is environment-aware:
+when the active model advertises image input support. `image_generation` is only
+registered for Codex-backed providers and saves/attaches generated PNG files;
+it can also use `referenced_image_paths` or `num_last_images_to_include` for
+image-edit/reference workflows. Search is environment-aware:
 when ripgrep is installed, only `rg` is active; otherwise `grep`, `find`, and
 `ls` are active as the fallback set.
 

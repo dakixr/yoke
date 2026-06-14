@@ -13,6 +13,7 @@ from typing import cast
 from yoke.agent.tools import AttachImageTool
 from yoke.agent.tools import CommandTool
 from yoke.agent.tools import ExtractFileContextTool
+from yoke.agent.tools import ImageGenerationTool
 from yoke.agent.tools import LocalTool
 from yoke.agent.tools import PythonExecTool
 from yoke.agent.tools import ReadTool
@@ -23,6 +24,7 @@ from yoke.agent.tools import ToolRuntimeContext
 from yoke.agent.tools import WebFetchTool
 from yoke.agent.tools import WebResearchTool
 from yoke.agent.tools import WebSearchTool
+from yoke.agent.tools import provider_supports_image_generation
 from yoke.agent.tools import register_search_tools
 from yoke.agent.tools import register_write_tool
 from yoke.agent.tools.context import normalize_tool_registration
@@ -126,6 +128,11 @@ def _register_builtin_tools(
         tools.insert(
             3,
             AttachImageTool.bind(root=root, cancel_requested=cancel_requested),
+        )
+    if provider_supports_image_generation(context.provider):
+        tools.insert(
+            4,
+            ImageGenerationTool.bind(root=root, cancel_requested=cancel_requested),
         )
     for tool in tools:
         tool.bind_runtime_context(runtime_context)

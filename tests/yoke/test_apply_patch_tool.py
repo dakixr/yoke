@@ -134,6 +134,42 @@ def test_builtin_tools_include_attach_image_for_image_models(tmp_path: Path) -> 
     assert "attach_image" in names
 
 
+def test_builtin_tools_include_image_generation_only_for_codex_providers(
+    tmp_path: Path,
+) -> None:
+    class CodexProvider:
+        provider_name = "codex"
+        supports_image_inputs = True
+        supports_image_generation = True
+
+        def generate_image(self, *, prompt: str) -> str:
+            del prompt
+            return ""
+
+    class VisionProvider:
+        provider_name = "demo"
+        supports_image_inputs = True
+
+    codex_context = ToolRegistrationContext(
+        root=tmp_path,
+        home=tmp_path,
+        provider=cast(Any, CodexProvider()),
+        model=ModelIdentity(provider_name="codex", model_id="gpt-5.4"),
+    )
+    vision_context = ToolRegistrationContext(
+        root=tmp_path,
+        home=tmp_path,
+        provider=cast(Any, VisionProvider()),
+        model=ModelIdentity(provider_name="demo", model_id="vision"),
+    )
+
+    codex_names = [tool.name for tool in create_builtin_tools(codex_context)]
+    vision_names = [tool.name for tool in create_builtin_tools(vision_context)]
+
+    assert "image_generation" in codex_names
+    assert "image_generation" not in vision_names
+
+
 def test_apply_patch_verifies_all_changes_before_mutating_workspace(
     tmp_path: Path,
 ) -> None:

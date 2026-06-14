@@ -64,6 +64,7 @@ DEFAULT_ALLOWED_TOOL_NAMES = (
     "extract_file_context",
     "find",
     "grep",
+    "image_generation",
     "ls",
     "python_exec",
     "read",
@@ -78,6 +79,8 @@ TOOL_CAPABILITY_ALIASES = (
     frozenset({"edit", "apply_patch"}),
     frozenset({"rg", "grep", "find", "ls"}),
 )
+
+PROVIDER_GATED_BUILTIN_TOOL_NAMES = frozenset({"image_generation"})
 
 
 @dataclass(slots=True, frozen=True)
@@ -179,6 +182,8 @@ def unmatched_tool_patterns(config: PiConfig, known_tool_names: set[str]) -> lis
     unmatched: list[str] = []
     for pattern in config.tools:
         if not any(fnmatch(name, pattern) for name in known_tool_names):
+            if pattern in PROVIDER_GATED_BUILTIN_TOOL_NAMES:
+                continue
             if any(
                 pattern in aliases and known_tool_names.intersection(aliases)
                 for aliases in TOOL_CAPABILITY_ALIASES

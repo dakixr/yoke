@@ -23,12 +23,14 @@ def _execute_tool_call(
     *,
     tools: dict[str, LocalTool],
     prepared: PreparedToolCall,
+    context: AgentContext,
     stop_requested: StopRequested | None,
 ) -> tuple[dict[str, object], bool]:
     tool = tools.get(prepared.tool_call.function.name)
     if tool is not None and tool.execute_in_process:
         from yoke.agent.loop.tool_core import execute_tool
 
+        tool._context["messages"] = list(context.messages)
         return execute_tool(
             tools,
             prepared.tool_call.function.name,
@@ -204,6 +206,7 @@ def _execute_sequential(
         raw_result, stopped = _execute_tool_call(
             tools=tools,
             prepared=prepared,
+            context=context,
             stop_requested=stop_requested,
         )
         finalized = finalize_tool_result(

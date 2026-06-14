@@ -122,6 +122,7 @@ from yoke.agent.tools import ReadTool, EditTool, GrepTool
 | `RipgrepTool` | `rg` | Use native ripgrep for file listing and content search. |
 | `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
 | `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
+| `ImageGenerationTool` | `image_generation` | Generate a PNG through Codex subscription auth and attach it to context. |
 | `WebFetchTool` | `web_fetch` | Fetch a URL and return readable Markdown or text content. |
 | `WebSearchTool` | `web_search` | Search the web using DuckDuckGo HTML results. |
 | `WebResearchTool` | `web_research` | Answer a web research question with concise sources and notes. |
@@ -132,6 +133,13 @@ uses Codex's hosted Responses `web_search` tool in-process through
 `ToolRuntimeContext`. Other providers and standalone tool instances use YOKE's
 local search-and-fetch pipeline with fast HTML parsing for fetched research
 pages; the local synthesis agent can call both `web_fetch` and `web_search`.
+
+`ImageGenerationTool` is registered only for Codex-backed providers. It sends
+the `prompt` to Codex's subscription image endpoint, writes the PNG
+to the requested output path, and appends the generated image as follow-up
+multimodal context. Optional `referenced_image_paths` and
+`num_last_images_to_include` inputs switch it to Codex's image-edit endpoint
+with up to five reference images.
 
 `CommandTool` and `PythonExecTool` put shims for `python` and `python3` at the
 front of `PATH`, so shell commands and Python subprocesses use the same

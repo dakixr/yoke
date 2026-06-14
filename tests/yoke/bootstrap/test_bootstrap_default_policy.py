@@ -4,6 +4,7 @@ from __future__ import annotations
 # ruff: noqa: D100, D103, F405, S101
 
 from .support import *  # noqa: F403, F405
+from yoke.cli.tools.policy import DEFAULT_ALLOWED_TOOL_NAMES
 
 
 def test_default_builtin_policy_allows_all_builtin_tools(
@@ -39,6 +40,7 @@ def test_default_builtin_policy_allows_all_builtin_tools(
     }
     assert not denied_names
     assert resolved.tool_report.unmatched_config_patterns == []
+    assert "image_generation" in DEFAULT_ALLOWED_TOOL_NAMES
 
 
 def test_default_builtin_policy_uses_search_fallback_without_rg(

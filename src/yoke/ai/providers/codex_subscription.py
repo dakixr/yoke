@@ -202,6 +202,7 @@ class CodexSubscriptionProvider(Provider):
     provider_name = PROVIDER_NAME
     supports_image_inputs = True
     max_images_per_message = None
+    supports_image_generation = True
 
     def __init__(
         self,
@@ -490,6 +491,67 @@ class CodexSubscriptionProvider(Provider):
         if self._owns_client:
             self._client.close()
 
+    def generate_image(self, *, prompt: str) -> str:
+        """Generate an image through the Codex subscription image endpoint."""
+        credentials = self._fresh_credentials()
+        response = self._client.post(
+            self._image_generation_url(),
+            json={
+                "prompt": prompt,
+                "background": "auto",
+                "model": "gpt-image-2",
+                "quality": "auto",
+                "size": "auto",
+            },
+            headers=self._image_request_headers(credentials),
+        )
+        if response.is_error:
+            raise ProviderError(
+                f"Codex image generation failed: {error_detail(response)}",
+                status_code=response.status_code,
+            )
+        return self._b64_json_from_image_response(response.json())
+
+    def edit_image(self, *, prompt: str, image_urls: list[str]) -> str:
+        """Generate an edited image using reference image data URLs."""
+        if not image_urls:
+            raise ProviderError(
+                "Codex image edit requires at least one reference image."
+            )
+        credentials = self._fresh_credentials()
+        response = self._client.post(
+            self._image_edit_url(),
+            json={
+                "images": [{"image_url": image_url} for image_url in image_urls],
+                "prompt": prompt,
+                "background": "auto",
+                "model": "gpt-image-2",
+                "quality": "auto",
+                "size": "auto",
+            },
+            headers=self._image_request_headers(credentials),
+        )
+        if response.is_error:
+            raise ProviderError(
+                f"Codex image edit failed: {error_detail(response)}",
+                status_code=response.status_code,
+            )
+        return self._b64_json_from_image_response(response.json())
+
+    def _b64_json_from_image_response(self, payload: object) -> str:
+        if not isinstance(payload, dict):
+            raise ProviderError("Codex image response was not a JSON object.")
+        data = payload.get("data")
+        if not isinstance(data, list) or not data:
+            raise ProviderError("Codex image response did not include image data.")
+        first = data[0]
+        if not isinstance(first, dict):
+            raise ProviderError("Codex image response included invalid image data.")
+        b64_json = first.get("b64_json")
+        if not isinstance(b64_json, str) or not b64_json:
+            raise ProviderError("Codex image response did not include b64_json.")
+        return b64_json
+
     def _fresh_credentials(self) -> OAuthCredentials:
         if self.config.accounts_dir.expanduser().exists():
             try:
@@ -614,6 +676,11 @@ class CodexSubscriptionProvider(Provider):
             "x-client-request-id": request_id,
         }
 
+    def _image_request_headers(self, credentials: OAuthCredentials) -> dict[str, str]:
+        headers = self._request_headers(credentials)
+        headers["Accept"] = "application/json"
+        return headers
+
     def _responses_url(self) -> str:
         base_url = self.config.base_url.rstrip("/")
         if base_url.endswith("/codex/responses"):
@@ -621,6 +688,22 @@ class CodexSubscriptionProvider(Provider):
         if base_url.endswith("/codex"):
             return f"{base_url}/responses"
         return f"{base_url}/codex/responses"
+
+    def _image_generation_url(self) -> str:
+        base_url = self.config.base_url.rstrip("/")
+        if base_url.endswith("/codex/images/generations"):
+            return base_url
+        if base_url.endswith("/codex"):
+            return f"{base_url}/images/generations"
+        return f"{base_url}/codex/images/generations"
+
+    def _image_edit_url(self) -> str:
+        base_url = self.config.base_url.rstrip("/")
+        if base_url.endswith("/codex/images/edits"):
+            return base_url
+        if base_url.endswith("/codex"):
+            return f"{base_url}/images/edits"
+        return f"{base_url}/codex/images/edits"
 
     def _backoff_seconds(self, attempt: int) -> float:
         return min(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from typing import Any
 from typing import cast
 
 import httpx
@@ -19,6 +20,9 @@ from yoke.agent.models import MessageTextContentPart
 from yoke.agent.multimodal import omit_image_inputs_for_text_model
 from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.agent.tools import AttachImageTool
+from yoke.agent.tools import ImageGenerationTool
+from yoke.agent.tools import ModelIdentity
+from yoke.agent.tools import ToolRuntimeContext
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.openai_compat import OpenAICompatibleConfig
 from yoke.ai.providers.openai_compat import OpenAICompatibleProvider
@@ -112,6 +116,164 @@ def test_attach_image_tool_accepts_external_absolute_path(
 
     assert result["ok"] is True
     assert result["path"] == str(image_path.resolve())
+
+
+def test_image_generation_tool_writes_and_attaches_generated_image(
+    tmp_path: Path,
+) -> None:
+    class ImageGenerationProvider:
+        provider_name = "codex"
+        supports_image_generation = True
+
+        def generate_image(self, *, prompt: str) -> str:
+            assert prompt == "draw a tiny red fox"
+            return TINY_PNG
+
+    context_manager = ContextManager()
+    context = context_manager.initialize("create an image")
+    tool = ImageGenerationTool.bind(root=tmp_path, messages=list(context.messages))
+    tool.bind_runtime_context(
+        ToolRuntimeContext(
+            root=tmp_path,
+            home=tmp_path,
+            provider=cast(Any, ImageGenerationProvider()),
+            model=ModelIdentity(provider_name="codex", model_id="gpt-5.4"),
+        )
+    )
+    invocation = tool.parse_arguments(
+        {
+            "prompt": "draw a tiny red fox",
+            "output_path": "artifacts/fox.png",
+        }
+    )
+
+    result = invocation.execute()
+    invocation.apply_result(context, result)
+    pending = invocation.pending_context_messages(result)
+
+    output_path = tmp_path / "artifacts" / "fox.png"
+    assert result["ok"] is True
+    assert result["path"] == str(output_path.resolve())
+    assert result["label"] == "[Image #1]"
+    assert output_path.read_bytes() == base64.b64decode(TINY_PNG)
+    assert len(pending) == 1
+    appended = pending[0]
+    assert isinstance(appended.content, list)
+    assert appended.content[0] == MessageTextContentPart(
+        text="Generated image for: draw a tiny red fox"
+    )
+    assert appended.content[1] == MessageLocalImageContentPart(
+        path=str(output_path.resolve()),
+        label="[Image #1]",
+    )
+
+
+def test_image_generation_tool_sends_referenced_image_paths(
+    tmp_path: Path,
+) -> None:
+    reference_path = tmp_path / "reference.png"
+    reference_path.write_bytes(base64.b64decode(TINY_PNG))
+    seen_urls: list[str] = []
+
+    class ImageGenerationProvider:
+        provider_name = "codex"
+        supports_image_generation = True
+
+        def generate_image(self, *, prompt: str) -> str:
+            raise AssertionError(f"unexpected text-to-image prompt: {prompt}")
+
+        def edit_image(self, *, prompt: str, image_urls: list[str]) -> str:
+            assert prompt == "put a hat on the fox"
+            seen_urls.extend(image_urls)
+            return TINY_PNG
+
+    tool = ImageGenerationTool.bind(root=tmp_path, messages=[])
+    tool.bind_runtime_context(
+        ToolRuntimeContext(
+            root=tmp_path,
+            home=tmp_path,
+            provider=cast(Any, ImageGenerationProvider()),
+            model=ModelIdentity(provider_name="codex", model_id="gpt-5.4"),
+        )
+    )
+    invocation = tool.parse_arguments(
+        {
+            "prompt": "put a hat on the fox",
+            "output_path": "hat.png",
+            "referenced_image_paths": ["reference.png"],
+        }
+    )
+
+    result = invocation.execute()
+
+    assert result["ok"] is True
+    assert result["reference_image_count"] == 1
+    assert len(seen_urls) == 1
+    assert seen_urls[0].startswith("data:image/png;base64,")
+
+
+def test_image_generation_tool_uses_recent_conversation_images(
+    tmp_path: Path,
+) -> None:
+    first_path = tmp_path / "first.png"
+    second_path = tmp_path / "second.png"
+    first_path.write_bytes(base64.b64decode(TINY_PNG))
+    second_path.write_bytes(base64.b64decode(TINY_PNG))
+    seen_urls: list[str] = []
+
+    class ImageGenerationProvider:
+        provider_name = "codex"
+        supports_image_generation = True
+
+        def generate_image(self, *, prompt: str) -> str:
+            raise AssertionError(f"unexpected text-to-image prompt: {prompt}")
+
+        def edit_image(self, *, prompt: str, image_urls: list[str]) -> str:
+            assert prompt == "blend the recent images"
+            seen_urls.extend(image_urls)
+            return TINY_PNG
+
+    messages = [
+        Message.user(
+            [
+                MessageLocalImageContentPart(
+                    path=str(first_path),
+                    label="[Image #1]",
+                )
+            ]
+        ),
+        Message.user(
+            [
+                MessageLocalImageContentPart(
+                    path=str(second_path),
+                    label="[Image #2]",
+                )
+            ]
+        ),
+    ]
+    tool = ImageGenerationTool.bind(root=tmp_path, messages=messages)
+    tool.bind_runtime_context(
+        ToolRuntimeContext(
+            root=tmp_path,
+            home=tmp_path,
+            provider=cast(Any, ImageGenerationProvider()),
+            model=ModelIdentity(provider_name="codex", model_id="gpt-5.4"),
+        )
+    )
+    invocation = tool.parse_arguments(
+        {
+            "prompt": "blend the recent images",
+            "output_path": "blend.png",
+            "num_last_images_to_include": 2,
+        }
+    )
+
+    result = invocation.execute()
+
+    assert result["ok"] is True
+    assert result["reference_image_count"] == 2
+    assert len(seen_urls) == 2
+    assert all(url.startswith("data:image/png;base64,") for url in seen_urls)
 
 
 def test_attach_image_serializes_like_normal_multimodal_message(
