@@ -3,7 +3,10 @@ from __future__ import annotations
 import multiprocessing.synchronize
 import threading
 from threading import Thread
+from collections.abc import Callable
 from typing import cast
+
+from yoke.ai.providers.base import ProviderCancelledError
 
 # ruff: noqa: F403, F405
 from .support import *  # noqa: F403, F405
@@ -147,8 +150,50 @@ def test_agent_loop_stops_after_provider_boundary(tmp_path: Path) -> None:
     assert [message.role for message in result.messages] == [
         "user",
         "assistant",
-        "assistant",
     ]
+    assert result.messages[-1].content == INTERRUPTED_TURN_NOTICE
+
+
+def test_agent_loop_cancels_cancellable_provider_call(tmp_path: Path) -> None:
+    class CancellableProviderStub(Provider):
+        def __init__(self) -> None:
+            self.cancel_seen = False
+
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del messages, tools
+            raise AssertionError("expected cancellable completion path")
+
+        def complete_with_cancel(
+            self,
+            messages: list[Message],
+            tools: list[dict[str, object]],
+            *,
+            cancel_requested: Callable[[], bool],
+        ) -> Message:
+            del messages, tools
+            while not cancel_requested():
+                time.sleep(0.01)
+            self.cancel_seen = True
+            raise ProviderCancelledError()
+
+    stop_event = Event()
+    provider = CancellableProviderStub()
+    agent = RuntimeAgent(provider=provider, tools=tools(tmp_path))
+
+    def request_stop() -> None:
+        time.sleep(0.05)
+        stop_event.set()
+
+    stopper = Thread(target=request_stop)
+    stopper.start()
+    result = agent.run("stop during model", stop_requested=stop_event.is_set)
+    stopper.join(timeout=1)
+
+    assert provider.cancel_seen is True
+    assert result.status == "stopped"
+    assert [message.role for message in result.messages] == ["user", "assistant"]
     assert result.messages[-1].content == INTERRUPTED_TURN_NOTICE
 
 

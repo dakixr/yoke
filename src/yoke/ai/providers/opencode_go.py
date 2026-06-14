@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -19,10 +20,12 @@ from yoke.agent.models import (
 )
 from yoke.ai.providers.base import (
     Provider,
+    ProviderCancelledError,
     ProviderError,
     ProviderModelInfo,
     ProviderRateLimitError,
     ProviderServerError,
+    sleep_with_cancel,
 )
 from yoke.ai.providers.model_selection import (
     cloned_model_catalog,
@@ -364,15 +367,25 @@ class OpenCodeGoProvider(Provider):
         self.config = config
         self._sleep = sleep or time.sleep
         self._owns_client = http_client is None
-        self._client = http_client or httpx.Client(
-            timeout=config.timeout_seconds,
+        self._client = http_client or self._new_client()
+        self._openai_provider = self._build_openai_provider(config, http_client)
+
+    def _new_client(self) -> httpx.Client:
+        return httpx.Client(
+            timeout=self.config.timeout_seconds,
             verify=False,  # noqa: S501
             headers={
-                "Authorization": f"Bearer {config.api_key}",
+                "Authorization": f"Bearer {self.config.api_key}",
                 "Content-Type": "application/json",
             },
         )
-        self._openai_provider = OpenAICompatibleProvider(
+
+    def _build_openai_provider(
+        self,
+        config: OpenCodeGoConfig,
+        http_client: httpx.Client | None,
+    ) -> OpenAICompatibleProvider:
+        return OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key=config.api_key,
                 model=config.model,
@@ -414,8 +427,35 @@ class OpenCodeGoProvider(Provider):
     ) -> Message:
         self._sync_openai_config()
         if MODEL_PROTOCOLS.get(self.config.model) == "anthropic":
-            return self._complete_anthropic(messages, tools)
+            return self._complete_anthropic(
+                messages,
+                tools,
+                cancel_requested=lambda: False,
+            )
         return self._openai_provider.complete(messages, tools)
+
+    def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        self._sync_openai_config()
+        if MODEL_PROTOCOLS.get(self.config.model) == "anthropic":
+            return self._with_request_cancellation(
+                lambda: self._complete_anthropic(
+                    messages,
+                    tools,
+                    cancel_requested=cancel_requested,
+                ),
+                cancel_requested=cancel_requested,
+            )
+        return self._openai_provider.complete_with_cancel(
+            messages,
+            tools,
+            cancel_requested=cancel_requested,
+        )
 
     def close(self) -> None:
         self._openai_provider.close()
@@ -428,7 +468,11 @@ class OpenCodeGoProvider(Provider):
         self._openai_provider.config.reasoning_effort = self.config.reasoning_effort
 
     def _complete_anthropic(
-        self, messages: list[Message], tools: list[dict[str, object]]
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
     ) -> Message:
         payload: dict[str, Any] = {
             "model": self.config.model,
@@ -449,6 +493,8 @@ class OpenCodeGoProvider(Provider):
             payload["tools"] = anthropic_tools
         last_error: ProviderError | None = None
         for attempt in range(self.config.max_retries + 1):
+            if cancel_requested():
+                raise ProviderCancelledError()
             try:
                 response = self._client.post(
                     f"{ANTHROPIC_BASE_URL}/v1/messages",
@@ -463,10 +509,16 @@ class OpenCodeGoProvider(Provider):
             except httpx.TimeoutException as exc:
                 last_error = ProviderError("OpenCode Go request timed out.")
                 if attempt < self.config.max_retries:
-                    self._sleep(self._backoff_seconds(attempt))
+                    sleep_with_cancel(
+                        self._backoff_seconds(attempt),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 raise last_error from exc
             except httpx.RequestError as exc:
+                if cancel_requested():
+                    raise ProviderCancelledError() from exc
                 raise ProviderError(f"OpenCode Go request failed: {exc}") from exc
 
             if response.status_code == 429:
@@ -476,7 +528,11 @@ class OpenCodeGoProvider(Provider):
                     retry_after_seconds=retry_after,
                 )
                 if attempt < self.config.max_retries:
-                    self._sleep(self._sleep_seconds(attempt, retry_after))
+                    sleep_with_cancel(
+                        self._sleep_seconds(attempt, retry_after),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 raise last_error
             if 500 <= response.status_code < 600:
@@ -485,7 +541,11 @@ class OpenCodeGoProvider(Provider):
                     status_code=response.status_code,
                 )
                 if attempt < self.config.max_retries:
-                    self._sleep(self._backoff_seconds(attempt))
+                    sleep_with_cancel(
+                        self._backoff_seconds(attempt),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 raise last_error
             if response.is_error:
@@ -508,6 +568,35 @@ class OpenCodeGoProvider(Provider):
         if last_error is not None:
             raise last_error
         raise ProviderError("OpenCode Go request failed unexpectedly.")
+
+    def _with_request_cancellation(
+        self,
+        action: Callable[[], Message],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        if not self._owns_client:
+            return action()
+        finished = threading.Event()
+        client_closed = threading.Event()
+
+        def close_on_cancel() -> None:
+            while not finished.wait(0.05):
+                if cancel_requested():
+                    client_closed.set()
+                    self._client.close()
+                    return
+
+        threading.Thread(target=close_on_cancel, daemon=True).start()
+        try:
+            message = action()
+            if cancel_requested():
+                raise ProviderCancelledError()
+            return message
+        finally:
+            finished.set()
+            if client_closed.is_set():
+                self._client = self._new_client()
 
     def _backoff_seconds(self, attempt: int) -> float:
         return min(

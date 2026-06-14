@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from collections.abc import Iterable
 from typing import Protocol
 from typing import runtime_checkable
@@ -53,6 +55,13 @@ class ProviderServerError(ProviderError):
     """Error raised for 5xx server errors from the provider."""
 
     pass
+
+
+class ProviderCancelledError(ProviderError):
+    """Error raised when a provider request is cancelled by the caller."""
+
+    def __init__(self, message: str = "Provider request cancelled.") -> None:
+        super().__init__(message)
 
 
 class ProviderModelInfo(BaseModel):
@@ -148,6 +157,73 @@ class Provider(Protocol):
     ) -> Message:
         """Send messages to the provider and return the assistant response."""
         ...
+
+
+@runtime_checkable
+class CancellableProvider(Protocol):
+    """Optional protocol for providers that can abort in-flight requests."""
+
+    def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        """Send messages and abort promptly when cancellation is requested."""
+        ...
+
+
+def complete_with_cancel(
+    provider: Provider,
+    messages: list[Message],
+    tools: list[dict[str, object]],
+    *,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> Message:
+    """Run a provider completion, using provider-native cancellation when available."""
+    if cancel_requested is not None and cancel_requested():
+        raise ProviderCancelledError()
+    if isinstance(provider, CancellableProvider):
+        return provider.complete_with_cancel(
+            messages,
+            tools,
+            cancel_requested=cancel_requested or never_cancel,
+        )
+    response = provider.complete(messages, tools)
+    if cancel_requested is not None and cancel_requested():
+        raise ProviderCancelledError()
+    return response
+
+
+def never_cancel() -> bool:
+    """Return false for APIs that require a cancellation callback."""
+    return False
+
+
+def sleep_with_cancel(
+    seconds: float,
+    *,
+    cancel_requested: Callable[[], bool],
+    sleep: Callable[[float], None] = time.sleep,
+    interval_seconds: float = 0.1,
+) -> None:
+    """Sleep in small increments so provider retry backoff can be cancelled."""
+    if sleep is not time.sleep:
+        if cancel_requested():
+            raise ProviderCancelledError()
+        sleep(max(0.0, seconds))
+        if cancel_requested():
+            raise ProviderCancelledError()
+        return
+    deadline = time.monotonic() + max(0.0, seconds)
+    while True:
+        if cancel_requested():
+            raise ProviderCancelledError()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(interval_seconds, remaining))
 
 
 @runtime_checkable

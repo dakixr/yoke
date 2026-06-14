@@ -65,6 +65,12 @@ Provider classes that do not expose a model catalog can instead implement
 `Agent`, and direct `complete()` calls all apply the same provider/model prompt
 layer.
 
+Providers can optionally implement
+`complete_with_cancel(messages, tools, *, cancel_requested)` to abort in-flight
+model requests when a turn is stopped or steered. Providers without this hook
+remain compatible; yoke checks cancellation before and after their synchronous
+`complete()` call.
+
 `Agent` is stateful. Reuse the same object to keep conversation context across
 prompts.
 

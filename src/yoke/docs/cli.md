@@ -141,6 +141,9 @@ turn.
 - Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can
   edit, delete, promote, reorder, pause, or mark pending prompts as steering.
 - Press `Enter` to steer/send immediately while a turn is running.
+- While a model request is in flight, steering or `Esc Esc` asks providers with
+  cancellation support to abort the request immediately. Providers without the
+  optional cancellation hook still stop at the next safe boundary.
 - Local tool calls run in isolated child processes. When a turn is stopped,
   steered, or the CLI is interrupted or exited, yoke cancels the running tool
   process instead of waiting for cooperative tool code to return.
@@ -151,8 +154,9 @@ turn.
   on resume/restart.
 - While slash-command completions are open, use `Up`/`Down` to move between
   options; `Left`/`Right` keep moving the cursor in the prompt text.
-- Press `Esc Esc` to stop the current turn; yoke waits for the turn to record
-  the user prompt, completed/cancelled tool calls, and interruption marker
+- Press `Esc Esc` to stop the current turn; yoke cancels supported in-flight
+  model requests, then waits for the turn to record the user prompt,
+  completed/cancelled tool calls, and interruption marker
   before processing queued prompts or saving the session.
 - Completed tool results are saved to the active session immediately after each
   result is appended, so an interrupted CLI process can resume from the latest

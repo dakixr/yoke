@@ -128,7 +128,9 @@ def process_prompt_toolkit_prompt(
                             state.active_stop_request.set()
                             if state.steered_turn_ids is not None:
                                 state.steered_turn_ids.add(state.active_turn_id)
-                            state.status_message = "Stopping current turn for steering"
+                            state.status_message = (
+                                "Cancelling model request for steering"
+                            )
                     else:
                         next_index = next_pending_prompt_index(state.pending_prompts)
                         if next_index is not None:

@@ -1,4 +1,6 @@
+from yoke.ai.providers.base import CancellableProvider
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import ProviderRateLimitError
 from yoke.ai.providers.base import ProviderServerError
@@ -18,11 +20,13 @@ __all__ = [
     "CodexSubscriptionProvider",
     "CodexWebSockets",
     "CodexWebSocketsConfig",
+    "CancellableProvider",
     "OpenCodeGoConfig",
     "OpenCodeGoProvider",
     "OpenAICompatibleConfig",
     "OpenAICompatibleProvider",
     "Provider",
+    "ProviderCancelledError",
     "ProviderError",
     "ProviderRateLimitError",
     "ProviderServerError",

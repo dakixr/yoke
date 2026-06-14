@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa
 
 import json
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -14,10 +15,12 @@ import httpx
 from yoke.agent.models import Message, MessagePhase, Role, ToolCall
 from yoke.ai.providers.base import (
     Provider,
+    ProviderCancelledError,
     ProviderError,
     ProviderModelInfo,
     ProviderRateLimitError,
     ProviderServerError,
+    sleep_with_cancel,
 )
 from yoke.ai.providers.openai_compat.content import normalize_openai_request_messages
 from yoke.ai.providers.usage import parse_token_usage
@@ -137,12 +140,15 @@ class ZAIProvider(Provider):
         self.config = config
         self._owns_client = http_client is None
         self._sleep = sleep or time.sleep
-        self._client = http_client or httpx.Client(
-            base_url=config.base_url.rstrip("/"),
-            timeout=config.timeout_seconds,
+        self._client = http_client or self._new_client()
+
+    def _new_client(self) -> httpx.Client:
+        return httpx.Client(
+            base_url=self.config.base_url.rstrip("/"),
+            timeout=self.config.timeout_seconds,
             verify=False,
             headers={
-                "Authorization": f"Bearer {config.ayoke_key}",
+                "Authorization": f"Bearer {self.config.ayoke_key}",
                 "Content-Type": "application/json",
             },
         )
@@ -196,7 +202,31 @@ class ZAIProvider(Provider):
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
         """Send one request to Z.AI and return the first completion message."""
+        return self._complete_impl(messages, tools, cancel_requested=lambda: False)
 
+    def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        return self._with_request_cancellation(
+            lambda: self._complete_impl(
+                messages,
+                tools,
+                cancel_requested=cancel_requested,
+            ),
+            cancel_requested=cancel_requested,
+        )
+
+    def _complete_impl(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
         prepared_messages = self._prepare_messages(messages)
         payload: dict[str, Any] = {
             "model": self.config.model,
@@ -213,6 +243,8 @@ class ZAIProvider(Provider):
         attempted_message_recovery = False
 
         for attempt in range(self.config.max_retries + 1):
+            if cancel_requested():
+                raise ProviderCancelledError()
             try:
                 response = self._client.post(
                     f"{self.config.base_url.rstrip('/')}/chat/completions",
@@ -227,10 +259,16 @@ class ZAIProvider(Provider):
                     )
                 )
                 if attempt < self.config.max_retries:
-                    self._sleep(self._backoff_seconds(attempt))
+                    sleep_with_cancel(
+                        self._backoff_seconds(attempt),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 raise last_error from exc
             except httpx.RequestError as exc:
+                if cancel_requested():
+                    raise ProviderCancelledError() from exc
                 raise ProviderError(f"ZAI request failed: {exc}") from exc
 
             if response.status_code == 429:
@@ -245,7 +283,11 @@ class ZAIProvider(Provider):
                     retry_after_seconds=retry_after,
                 )
                 if attempt < self.config.max_retries:
-                    self._sleep(retry_after or self._backoff_seconds(attempt))
+                    sleep_with_cancel(
+                        retry_after or self._backoff_seconds(attempt),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 raise last_error
 
@@ -260,7 +302,11 @@ class ZAIProvider(Provider):
                     status_code=response.status_code,
                 )
                 if attempt < self.config.max_retries:
-                    self._sleep(self._backoff_seconds(attempt))
+                    sleep_with_cancel(
+                        self._backoff_seconds(attempt),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 raise last_error
 
@@ -319,6 +365,35 @@ class ZAIProvider(Provider):
         if last_error is not None:
             raise last_error
         raise ProviderError("ZAI request failed unexpectedly.")
+
+    def _with_request_cancellation(
+        self,
+        action: Callable[[], Message],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        if not self._owns_client:
+            return action()
+        finished = threading.Event()
+        client_closed = threading.Event()
+
+        def close_on_cancel() -> None:
+            while not finished.wait(0.05):
+                if cancel_requested():
+                    client_closed.set()
+                    self._client.close()
+                    return
+
+        threading.Thread(target=close_on_cancel, daemon=True).start()
+        try:
+            message = action()
+            if cancel_requested():
+                raise ProviderCancelledError()
+            return message
+        finally:
+            finished.set()
+            if client_closed.is_set():
+                self._client = self._new_client()
 
     def close(self) -> None:
         """Close the owned HTTP client, if this provider created it."""

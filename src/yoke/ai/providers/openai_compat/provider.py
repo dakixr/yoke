@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -20,10 +21,12 @@ from yoke.agent.models import MessagePhase
 from yoke.agent.models import Role
 from yoke.agent.models import ToolCall
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.base import ProviderRateLimitError
 from yoke.ai.providers.base import ProviderServerError
+from yoke.ai.providers.base import sleep_with_cancel
 from yoke.ai.providers.model_selection import cloned_model_catalog
 from yoke.ai.providers.model_selection import (
     current_model_id_from_config,
@@ -186,9 +189,12 @@ class OpenAICompatibleProvider(Provider):
             "Content-Type": "application/json",
             **config.headers,
         }
-        self._client = http_client or httpx.Client(
-            base_url=config.base_url.rstrip("/"),
-            timeout=config.timeout_seconds,
+        self._client = http_client or self._new_client()
+
+    def _new_client(self) -> httpx.Client:
+        return httpx.Client(
+            base_url=self.config.base_url.rstrip("/"),
+            timeout=self.config.timeout_seconds,
             headers=self._headers,
             verify=False,  # noqa: S501
         )
@@ -245,6 +251,32 @@ class OpenAICompatibleProvider(Provider):
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
         """Send one request and return the first completion message."""
+        return self._complete_impl(messages, tools, cancel_requested=lambda: False)
+
+    def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        """Send one request, aborting the owned HTTP client when cancelled."""
+        return self._with_request_cancellation(
+            lambda: self._complete_impl(
+                messages,
+                tools,
+                cancel_requested=cancel_requested,
+            ),
+            cancel_requested=cancel_requested,
+        )
+
+    def _complete_impl(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
         provider_messages = normalize_openai_request_messages(messages)
         payload: dict[str, Any] = {
             "model": self.config.model,
@@ -262,6 +294,8 @@ class OpenAICompatibleProvider(Provider):
 
         last_error: ProviderError | None = None
         for attempt in range(self.config.max_retries + 1):
+            if cancel_requested():
+                raise ProviderCancelledError()
             try:
                 response = self._client.post(
                     self._chat_completions_url(),
@@ -271,17 +305,36 @@ class OpenAICompatibleProvider(Provider):
             except httpx.TimeoutException as exc:
                 last_error = ProviderError("Provider request timed out.")
                 if attempt < self.config.max_retries:
-                    self._sleep(self._sleep_seconds(attempt))
+                    sleep_with_cancel(
+                        self._sleep_seconds(attempt),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 raise last_error from exc
             except httpx.RequestError as exc:
+                if cancel_requested():
+                    raise ProviderCancelledError() from exc
                 last_error = self._handle_request_error(exc, attempt=attempt)
                 if last_error is not None:
+                    sleep_with_cancel(
+                        self._sleep_seconds(attempt),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 raise ProviderError(f"Provider request failed: {exc}") from exc
 
             last_error = self._handle_error_response(response, attempt=attempt)
             if last_error is not None:
+                sleep_with_cancel(
+                    self._sleep_seconds(
+                        attempt,
+                        getattr(last_error, "retry_after_seconds", None),
+                    ),
+                    cancel_requested=cancel_requested,
+                    sleep=self._sleep,
+                )
                 continue
 
             try:
@@ -306,6 +359,36 @@ class OpenAICompatibleProvider(Provider):
         if last_error is not None:
             raise last_error
         raise ProviderError("Provider request failed unexpectedly.")
+
+    def _with_request_cancellation(
+        self,
+        action: Callable[[], Message],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        if not self._owns_client:
+            return action()
+        finished = threading.Event()
+        client_closed = threading.Event()
+
+        def close_on_cancel() -> None:
+            while not finished.wait(0.05):
+                if cancel_requested():
+                    client_closed.set()
+                    self._client.close()
+                    return
+
+        watcher = threading.Thread(target=close_on_cancel, daemon=True)
+        watcher.start()
+        try:
+            message = action()
+            if cancel_requested():
+                raise ProviderCancelledError()
+            return message
+        finally:
+            finished.set()
+            if client_closed.is_set():
+                self._client = self._new_client()
 
     def close(self) -> None:
         """Close the owned HTTP client, if this provider created it."""
@@ -340,7 +423,6 @@ class OpenAICompatibleProvider(Provider):
             return None
         provider_error = ProviderError(f"Provider request failed: {error}")
         if attempt < self.config.max_retries:
-            self._sleep(self._sleep_seconds(attempt))
             return provider_error
         raise provider_error from error
 
@@ -357,7 +439,6 @@ class OpenAICompatibleProvider(Provider):
                 retry_after_seconds=retry_after,
             )
             if attempt < self.config.max_retries:
-                self._sleep(self._sleep_seconds(attempt, retry_after))
                 return provider_error
             raise provider_error
         if 500 <= response.status_code < 600:
@@ -366,7 +447,6 @@ class OpenAICompatibleProvider(Provider):
                 status_code=response.status_code,
             )
             if attempt < self.config.max_retries:
-                self._sleep(self._sleep_seconds(attempt))
                 return provider_error
             raise provider_error
         if response.is_error:

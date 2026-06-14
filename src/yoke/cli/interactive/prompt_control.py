@@ -150,7 +150,7 @@ def create_prompt_toolkit_control(
             if current_worker is None or stop_event is None or stop_event.is_set():
                 return False
             stop_event.set()
-            state.status_message = "Stopping current turn"
+            state.status_message = "Cancelling model request"
         invalidate_prompt()
         return True
 
@@ -176,7 +176,7 @@ def create_prompt_toolkit_control(
                 state.pending_prompts,
                 state.pending_images,
             )
-            state.status_message = "Stopping current turn for steering"
+            state.status_message = "Cancelling model request for steering"
         invalidate_prompt()
         return True
 

@@ -10,6 +10,8 @@ from yoke.ai.providers.codex_subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex_websockets import CodexWebSockets
 from yoke.ai.providers.codex_websockets import CodexWebSocketsConfig
+from yoke.ai.providers.base import CancellableProvider
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.opencode_go import OpenCodeGoConfig
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
@@ -42,6 +44,7 @@ __all__ = [
     "CodexWebSockets",
     "CodexWebSocketsConfig",
     "CompletionResult",
+    "CancellableProvider",
     "ConversationEntryHistory",
     "ConversationHistory",
     "CompactionPolicy",
@@ -58,6 +61,7 @@ __all__ = [
     "OpenAICompatibleConfig",
     "OpenAICompatibleProvider",
     "ProviderModelInfo",
+    "ProviderCancelledError",
     "RunConfig",
     "Skill",
     "StructuredOutputError",

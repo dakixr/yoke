@@ -14,11 +14,14 @@ from yoke.agent.loop.types import AgentResult
 from yoke.agent.loop.types import AgentStoppedError
 from yoke.agent.loop.types import CompactionAttempt
 from yoke.agent.loop.types import INTERRUPTED_TURN_NOTICE
+from yoke.agent.loop.types import StopRequested
 from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
 from yoke.agent.usage import compact_usage_payload
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
+from yoke.ai.providers.base import complete_with_cancel
 
 
 def handle_pre_model_compaction(
@@ -53,6 +56,7 @@ def complete_iteration_model(
     *,
     iteration: int,
     on_event: AgentEventHandler | None,
+    stop_requested: StopRequested | None,
 ) -> Message:
     """Run one provider completion call."""
     guard_newest_user_message_images(agent, context)
@@ -65,14 +69,18 @@ def complete_iteration_model(
         {"iteration": iteration, "message_count": len(provider_messages)},
     )
     try:
-        assistant_message = agent.provider.complete(
+        assistant_message = complete_with_cancel(
+            agent.provider,
             provider_messages,
             agent._tool_definitions(),
+            cancel_requested=stop_requested,
         )
         for skill in context.active_skills:
             if skill.is_inline:
                 continue
             skill.reload_on_next_use = False
+    except ProviderCancelledError as exc:
+        raise AgentStoppedError() from exc
     except ProviderError as exc:
         if should_retry_after_overflow(exc):
             recovered = retry_with_compacted_history(

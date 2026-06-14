@@ -31,10 +31,12 @@ from yoke.agent.models import (
 )
 from yoke.ai.providers.base import (
     Provider,
+    ProviderCancelledError,
     ProviderError,
     ProviderModelInfo,
     ProviderRateLimitError,
     ProviderServerError,
+    sleep_with_cancel,
 )
 from yoke.ai.providers.model_selection import (
     default_reasoning_effort_for_model,
@@ -267,6 +269,19 @@ class CodexSubscriptionProvider(Provider):
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
+        return self.complete_with_cancel(
+            messages,
+            tools,
+            cancel_requested=lambda: False,
+        )
+
+    def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
         request_started = time.monotonic()
         request_log_id = secrets.token_hex(8)
         request_metrics = self._request_log_metrics(messages, tools)
@@ -306,7 +321,11 @@ class CodexSubscriptionProvider(Provider):
                                 auth_profile=auth_profile,
                                 **request_metrics,
                             )
-                            self._sleep(wait_seconds)
+                            sleep_with_cancel(
+                                wait_seconds,
+                                cancel_requested=cancel_requested,
+                                sleep=self._sleep,
+                            )
                             continue
                         raise last_error
                     if 500 <= response.status_code < 600:
@@ -327,7 +346,11 @@ class CodexSubscriptionProvider(Provider):
                                 auth_profile=auth_profile,
                                 **request_metrics,
                             )
-                            self._sleep(wait_seconds)
+                            sleep_with_cancel(
+                                wait_seconds,
+                                cancel_requested=cancel_requested,
+                                sleep=self._sleep,
+                            )
                             continue
                         raise last_error
                     if response.is_error:
@@ -367,6 +390,7 @@ class CodexSubscriptionProvider(Provider):
                         response,
                         provider_name=self.provider_name,
                         model_id=self.config.model,
+                        cancel_requested=cancel_requested,
                     )
                     usage = message.usage
                     self._log_event(
@@ -402,7 +426,11 @@ class CodexSubscriptionProvider(Provider):
                         auth_profile=auth_profile,
                         **request_metrics,
                     )
-                    self._sleep(wait_seconds)
+                    sleep_with_cancel(
+                        wait_seconds,
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 self._log_request_failure(
                     request_log_id,
@@ -428,7 +456,11 @@ class CodexSubscriptionProvider(Provider):
                         auth_profile=auth_profile,
                         **request_metrics,
                     )
-                    self._sleep(wait_seconds)
+                    sleep_with_cancel(
+                        wait_seconds,
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 self._log_request_failure(
                     request_log_id,
@@ -453,7 +485,11 @@ class CodexSubscriptionProvider(Provider):
                         auth_profile=auth_profile,
                         **request_metrics,
                     )
-                    self._sleep(wait_seconds)
+                    sleep_with_cancel(
+                        wait_seconds,
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 self._log_request_failure(
                     request_log_id,
@@ -464,6 +500,16 @@ class CodexSubscriptionProvider(Provider):
                     request_metrics,
                 )
                 raise last_error from exc
+            except ProviderCancelledError:
+                self._log_event(
+                    "request_cancelled",
+                    request_id=request_log_id,
+                    attempt=attempt,
+                    duration_seconds=round(time.monotonic() - request_started, 3),
+                    auth_profile=auth_profile,
+                    **request_metrics,
+                )
+                raise
             except httpx.RequestError as exc:
                 last_error = ProviderError(f"Codex request failed: {exc}")
                 self._log_request_failure(
@@ -1770,6 +1816,7 @@ def consume_sse_response(
     *,
     provider_name: str | None = None,
     model_id: str | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
 ) -> Message:
     text_parts: list[str] = []
     function_calls: dict[str, dict[str, str]] = {}
@@ -1777,6 +1824,8 @@ def consume_sse_response(
     usage_payload: object | None = None
     event_lines: list[str] = []
     for line in response.iter_lines():
+        if cancel_requested is not None and cancel_requested():
+            raise ProviderCancelledError()
         if line == "":
             completed_payload, usage_payload = handle_sse_event(
                 event_lines,

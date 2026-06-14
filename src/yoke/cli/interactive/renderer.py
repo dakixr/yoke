@@ -199,9 +199,14 @@ def format_bottom_toolbar(
     right = f" · {core}" if core else ""
     if worker_active:
         if stop_pending:
+            pending_status = (
+                status_message
+                if status_message.startswith("Cancelling ")
+                else "Cancelling model request"
+            )
             lines.append(
                 _format_toolbar_line(
-                    f" Stopping current turn...{right} ",
+                    f" {pending_status}...{right} ",
                     session_title=session_title,
                     columns=columns,
                 )

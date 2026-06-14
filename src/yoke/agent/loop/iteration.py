@@ -49,12 +49,16 @@ class RuntimeAgentIterationMixin:
             return self._stopped_result(context, iterations=iteration - 1)
         if handle_pre_model_compaction(self, context, iteration, on_event):
             return self._stopped_result(context, iterations=iteration - 1)
-        assistant_message = complete_iteration_model(
-            self,
-            context,
-            iteration=iteration,
-            on_event=on_event,
-        )
+        try:
+            assistant_message = complete_iteration_model(
+                self,
+                context,
+                iteration=iteration,
+                on_event=on_event,
+                stop_requested=stop_requested,
+            )
+        except AgentStoppedError:
+            return self._stopped_result(context, iterations=iteration - 1)
         self.context_manager.append_message(context, assistant_message)
         if self._is_stopped(stop_requested):
             self._append_cancelled_context_tool_results(

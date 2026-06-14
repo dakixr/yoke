@@ -43,7 +43,7 @@ def test_prompt_toolkit_toolbar_labels_steering_prompts() -> None:
     assert toolbar == [
         (
             "class:bottom-toolbar",
-            " steering 1: use config.py instead \n Stopping current turn... ",
+            " steering 1: use config.py instead \n Cancelling model request... ",
         )
     ]
 

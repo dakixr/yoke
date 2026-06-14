@@ -26,9 +26,11 @@ from yoke.agent.models import Message
 from yoke.agent.models import MessagePhase
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import ProviderRateLimitError
 from yoke.ai.providers.base import ProviderServerError
+from yoke.ai.providers.base import sleep_with_cancel
 from yoke.ai.providers.codex_subscription import DEFAULT_BASE_URL
 from yoke.ai.providers.codex_subscription import DEFAULT_CXAUTH_VAULT_NAME
 from yoke.ai.providers.codex_subscription import DEFAULT_LOGS_DIR
@@ -181,6 +183,19 @@ class CodexWebSockets(CodexSubscriptionProvider):
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
+        return self.complete_with_cancel(
+            messages,
+            tools,
+            cancel_requested=lambda: False,
+        )
+
+    def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
         request_started = time.monotonic()
         request_log_id = secrets.token_hex(8)
         request_metrics = self._request_log_metrics(messages, tools)
@@ -193,7 +208,10 @@ class CodexWebSockets(CodexSubscriptionProvider):
             try:
                 websocket = self._fresh_websocket()
                 websocket.send(json.dumps(payload, separators=(",", ":")))
-                message = self._consume_websocket_response(websocket)
+                message = self._consume_websocket_response(
+                    websocket,
+                    cancel_requested=cancel_requested,
+                )
                 usage = message.usage
                 self._log_event(
                     "request_ok",
@@ -223,7 +241,11 @@ class CodexWebSockets(CodexSubscriptionProvider):
                     auth_profile=auth_profile,
                     **request_metrics,
                 )
-                self._sleep(self._backoff_seconds(attempt))
+                sleep_with_cancel(
+                    self._backoff_seconds(attempt),
+                    cancel_requested=cancel_requested,
+                    sleep=self._sleep,
+                )
             except ProviderServerError as exc:
                 last_error = exc
                 self._close_websocket()
@@ -238,7 +260,22 @@ class CodexWebSockets(CodexSubscriptionProvider):
                     auth_profile=auth_profile,
                     **request_metrics,
                 )
-                self._sleep(self._backoff_seconds(attempt))
+                sleep_with_cancel(
+                    self._backoff_seconds(attempt),
+                    cancel_requested=cancel_requested,
+                    sleep=self._sleep,
+                )
+            except ProviderCancelledError:
+                self._close_websocket(clear_credentials=False)
+                self._log_event(
+                    "request_cancelled",
+                    request_id=request_log_id,
+                    attempt=attempt,
+                    duration_seconds=round(time.monotonic() - request_started, 3),
+                    auth_profile=auth_profile,
+                    **request_metrics,
+                )
+                raise
             except ProviderError as exc:
                 last_error = exc
                 if str(exc) == STALE_WEBSOCKET_CLOSED_MESSAGE:
@@ -254,7 +291,11 @@ class CodexWebSockets(CodexSubscriptionProvider):
                         auth_profile=auth_profile,
                         **request_metrics,
                     )
-                    self._sleep(self._backoff_seconds(attempt))
+                    sleep_with_cancel(
+                        self._backoff_seconds(attempt),
+                        cancel_requested=cancel_requested,
+                        sleep=self._sleep,
+                    )
                     continue
                 self._close_websocket()
                 if exc.status_code == 401 or is_invalid_oauth_token_error(str(exc)):
@@ -291,7 +332,11 @@ class CodexWebSockets(CodexSubscriptionProvider):
                 )
                 if attempt >= self.config.max_retries:
                     break
-                self._sleep(self._backoff_seconds(attempt))
+                sleep_with_cancel(
+                    self._backoff_seconds(attempt),
+                    cancel_requested=cancel_requested,
+                    sleep=self._sleep,
+                )
         if last_error is not None:
             raise last_error
         raise ProviderError("Codex WebSocket request failed without a response.")
@@ -379,11 +424,16 @@ class CodexWebSockets(CodexSubscriptionProvider):
             raise ProviderError(f"Codex WebSocket connection failed: {exc}") from exc
 
     def _consume_websocket_response(
-        self, websocket: CodexWebSocketConnection
+        self,
+        websocket: CodexWebSocketConnection,
+        *,
+        cancel_requested: Callable[[], bool] | None = None,
     ) -> Message:
         state = CodexWebSocketParseState(text_parts=[], function_calls={})
         deadline = time.monotonic() + self.config.timeout_seconds
         while True:
+            if cancel_requested is not None and cancel_requested():
+                raise ProviderCancelledError()
             timeout = max(0.1, deadline - time.monotonic())
             try:
                 raw = websocket.recv(timeout=timeout)
