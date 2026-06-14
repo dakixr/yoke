@@ -490,9 +490,10 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke now reports th
 `web_fetch`, `web_research`, `extract_file_context`, and `attach_image`.
 The writing capability is model-aware: model IDs containing `gpt` receive
 `apply_patch`; all other models receive `edit`. Only one writing tool is
-active at a time. Search is environment-aware: when ripgrep is installed,
-only `rg` is active; otherwise `grep`, `find`, and `ls` are active as the
-fallback set.
+active at a time. `attach_image` is also model-aware and is only registered
+when the active model advertises image input support. Search is environment-aware:
+when ripgrep is installed, only `rg` is active; otherwise `grep`, `find`, and
+`ls` are active as the fallback set.
 
 The `command`/`bash` tool result mirrors `python_exec` metadata for the agent: `python_executable`, `returncode`, `timeout`, `timed_out`, `elapsed_seconds`, combined `output`, and `outputTruncationDetails`.
 

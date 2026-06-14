@@ -68,7 +68,7 @@ class SwitchableProvider:
                 display_name="GPT B",
                 context_window_tokens=2000,
                 thinking_levels=("low", "medium", "high"),
-                supports_image_inputs=False,
+                supports_image_inputs=True,
                 system_messages=(Message.system("Use GPT B steering."),),
             ),
         ]
@@ -235,6 +235,39 @@ def test_same_provider_switch_reregisters_model_aware_tools(
         "runtime_model": "demo:gpt-b",
         "provider": provider,
     }
+
+
+def test_same_provider_switch_updates_attach_image_builtin(tmp_path: Path) -> None:
+    from yoke.cli.bootstrap.config import resolve_agent_config
+
+    provider = SwitchableProvider()
+
+    def register_cli_tools(context: ToolRegistrationContext):
+        resolved = resolve_agent_config(
+            root=tmp_path,
+            home=tmp_path,
+            provider=context.provider,
+        )
+        return resolved.tools
+
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        tool_factory=register_cli_tools,
+        tool_root=tmp_path,
+        tool_home=tmp_path,
+        context_manager=build_context_manager(),
+    )
+
+    assert "attach_image" not in agent.tools
+
+    set_agent_model(agent, model_id="gpt-b", reasoning_effort="high")
+
+    assert "attach_image" in agent.tools
+
+    set_agent_model(agent, model_id="gpt-a", reasoning_effort="high")
+
+    assert "attach_image" not in agent.tools
 
 
 def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:

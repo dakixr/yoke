@@ -26,6 +26,7 @@ from yoke.agent.tools import WebSearchTool
 from yoke.agent.tools import register_search_tools
 from yoke.agent.tools import register_write_tool
 from yoke.agent.tools.context import normalize_tool_registration
+from yoke.agent.multimodal import provider_supports_image_inputs
 from yoke.cli.bootstrap.types import LoadedTool
 from yoke.cli.bootstrap.types import LoadedToolContribution
 from yoke.cli.bootstrap.types import RegisterToolsFunc
@@ -115,13 +116,17 @@ def _register_builtin_tools(
         ReadTool.bind(root=root, cancel_requested=cancel_requested),
         CommandTool.bind(root=root, cancel_requested=cancel_requested),
         ExtractFileContextTool.bind(root=root, cancel_requested=cancel_requested),
-        AttachImageTool.bind(root=root, cancel_requested=cancel_requested),
         WebFetchTool.bind(cancel_requested=cancel_requested),
         WebSearchTool.bind(cancel_requested=cancel_requested),
         WebResearchTool.bind(cancel_requested=cancel_requested),
         PythonExecTool.bind(root=root, cancel_requested=cancel_requested),
         SubagentTool.bind(root=root, cancel_requested=cancel_requested),
     ]
+    if _context_supports_image_inputs(context) is not False:
+        tools.insert(
+            3,
+            AttachImageTool.bind(root=root, cancel_requested=cancel_requested),
+        )
     for tool in tools:
         tool.bind_runtime_context(runtime_context)
     search_tools = register_search_tools(context)
@@ -136,6 +141,15 @@ def _register_builtin_tools(
         tools=tools,
         system_messages=write_registration.system_messages,
     )
+
+
+def _context_supports_image_inputs(context: ToolRegistrationContext) -> bool | None:
+    if getattr(context.provider, "provider_name", None) == "unavailable":
+        return None
+    model_support = getattr(context.model, "supports_image_inputs", None)
+    if isinstance(model_support, bool):
+        return model_support
+    return provider_supports_image_inputs(context.provider)
 
 
 def _load_tools_from_directory(

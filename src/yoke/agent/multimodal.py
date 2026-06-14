@@ -89,12 +89,13 @@ def messages_for_provider_capabilities(
     messages: Sequence[Message], provider: object
 ) -> list[Message]:
     """Adapt provider-bound messages to the active provider capabilities."""
-    if _provider_supports_image_inputs(provider) is False:
+    if provider_supports_image_inputs(provider) is False:
         return omit_image_inputs_for_text_model(messages)
     return [message.model_copy(deep=True) for message in messages]
 
 
-def _provider_supports_image_inputs(provider: object) -> bool | None:
+def provider_supports_image_inputs(provider: object) -> bool | None:
+    """Return image-input support for the active provider model when known."""
     current_model_info = getattr(provider, "current_model_info", None)
     if callable(current_model_info):
         model_info = current_model_info()

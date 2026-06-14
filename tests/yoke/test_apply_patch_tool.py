@@ -10,6 +10,7 @@ from yoke.agent.tools import ApplyPatchTool
 from yoke.agent.tools import EditTool
 from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import ToolRegistrationContext
+from yoke.ai.providers.base import ProviderModelInfo
 from yoke.cli.bootstrap.tools import create_builtin_tools
 
 
@@ -81,6 +82,56 @@ def test_builtin_tools_select_edit_for_non_gpt_models(tmp_path: Path) -> None:
     assert "edit" in names
     assert "apply_patch" not in names
     assert isinstance(tools[1], EditTool)
+
+
+def test_builtin_tools_skip_attach_image_for_text_only_models(tmp_path: Path) -> None:
+    class TextOnlyProvider:
+        supports_image_inputs = True
+
+        def current_model_info(self) -> ProviderModelInfo:
+            return ProviderModelInfo(
+                id="text-only",
+                display_name="Text Only",
+                context_window_tokens=1000,
+                supports_image_inputs=False,
+            )
+
+    provider = TextOnlyProvider()
+    context = ToolRegistrationContext(
+        root=tmp_path,
+        home=tmp_path,
+        provider=cast(Any, provider),
+        model=ModelIdentity(provider_name="demo", model_id="text-only"),
+    )
+
+    names = [tool.name for tool in create_builtin_tools(context)]
+
+    assert "attach_image" not in names
+
+
+def test_builtin_tools_include_attach_image_for_image_models(tmp_path: Path) -> None:
+    class ImageProvider:
+        supports_image_inputs = False
+
+        def current_model_info(self) -> ProviderModelInfo:
+            return ProviderModelInfo(
+                id="vision",
+                display_name="Vision",
+                context_window_tokens=1000,
+                supports_image_inputs=True,
+            )
+
+    provider = ImageProvider()
+    context = ToolRegistrationContext(
+        root=tmp_path,
+        home=tmp_path,
+        provider=cast(Any, provider),
+        model=ModelIdentity(provider_name="demo", model_id="vision"),
+    )
+
+    names = [tool.name for tool in create_builtin_tools(context)]
+
+    assert "attach_image" in names
 
 
 def test_apply_patch_verifies_all_changes_before_mutating_workspace(
