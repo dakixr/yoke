@@ -1823,20 +1823,43 @@ def consume_sse_response(
     completed_payload: dict[str, Any] | None = None
     usage_payload: object | None = None
     event_lines: list[str] = []
-    for line in response.iter_lines():
+    finished = threading.Event()
+    response_closed = threading.Event()
+
+    def close_on_cancel() -> None:
+        if cancel_requested is None:
+            return
+        while not finished.wait(0.05):
+            if cancel_requested():
+                response_closed.set()
+                response.close()
+                return
+
+    watcher = threading.Thread(target=close_on_cancel, daemon=True)
+    watcher.start()
+    try:
+        for line in response.iter_lines():
+            if cancel_requested is not None and cancel_requested():
+                raise ProviderCancelledError()
+            if line == "":
+                completed_payload, usage_payload = handle_sse_event(
+                    event_lines,
+                    text_parts,
+                    function_calls,
+                    completed_payload,
+                    usage_payload,
+                )
+                event_lines = []
+                continue
+            event_lines.append(line)
+    except httpx.HTTPError as exc:
         if cancel_requested is not None and cancel_requested():
-            raise ProviderCancelledError()
-        if line == "":
-            completed_payload, usage_payload = handle_sse_event(
-                event_lines,
-                text_parts,
-                function_calls,
-                completed_payload,
-                usage_payload,
-            )
-            event_lines = []
-            continue
-        event_lines.append(line)
+            raise ProviderCancelledError() from exc
+        raise
+    finally:
+        finished.set()
+    if response_closed.is_set() and cancel_requested is not None and cancel_requested():
+        raise ProviderCancelledError()
     if event_lines:
         completed_payload, usage_payload = handle_sse_event(
             event_lines,

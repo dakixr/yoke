@@ -9,6 +9,7 @@ import pytest
 from websockets.exceptions import ConnectionClosedError
 
 from yoke.agent.models import Message
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex_subscription import OAuthCredentials
 from yoke.ai.providers.codex_websockets import CodexWebSockets
@@ -147,6 +148,39 @@ def test_websocket_response_prefers_deltas_over_completed_snapshot() -> None:
     )
 
     assert message.text_content() == "streamed"
+
+
+def test_websocket_consume_uses_short_cancel_poll_timeout(tmp_path: Path) -> None:
+    cancelled = False
+    seen_timeouts: list[float | None] = []
+
+    class FakeWebSocket:
+        def recv(self, timeout: float | None = None) -> str:
+            nonlocal cancelled
+            seen_timeouts.append(timeout)
+            cancelled = True
+            return "{}"
+
+        def close(self) -> None:
+            return None
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            timeout_seconds=60.0,
+        )
+    )
+
+    with pytest.raises(ProviderCancelledError):
+        provider._consume_websocket_response(
+            cast(CodexWebSocketConnection, FakeWebSocket()),
+            cancel_requested=lambda: cancelled,
+        )
+
+    assert seen_timeouts == [pytest.approx(0.1)]
 
 
 def test_websocket_function_call_output_item_builds_tool_call() -> None:

@@ -434,10 +434,15 @@ class CodexWebSockets(CodexSubscriptionProvider):
         while True:
             if cancel_requested is not None and cancel_requested():
                 raise ProviderCancelledError()
-            timeout = max(0.1, deadline - time.monotonic())
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ProviderError("Codex WebSocket timed out waiting for response.")
+            timeout = min(0.1, remaining)
             try:
                 raw = websocket.recv(timeout=timeout)
             except TimeoutError as exc:
+                if time.monotonic() < deadline:
+                    continue
                 raise ProviderError(
                     "Codex WebSocket timed out waiting for response."
                 ) from exc
