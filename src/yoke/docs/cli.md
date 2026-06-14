@@ -136,6 +136,8 @@ turn.
 - Press `Ctrl+U` to remove the last pending image attachment.
 - Press `Ctrl+O` to open the fullscreen tool inspector. It shows complete
   tool call arguments, executed arguments, results, status, and duration.
+- While a fullscreen menu is open, live turn output is deferred and replayed
+  after the menu closes so background tool updates do not overwrite the view.
 - Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can
   edit, delete, promote, reorder, pause, or mark pending prompts as steering.
 - Press `Enter` to steer/send immediately while a turn is running.

@@ -12,6 +12,9 @@ from yoke.cli.runtime.selector_ui import build_table_selector_view
 from yoke.cli.runtime.selector_ui import selector_page_step
 from yoke.cli.runtime.selector_ui import SelectorTableColumns
 from yoke.cli.runtime.selector_ui import selector_terminal_size
+from yoke.cli.runtime.terminal_output_gate import (
+    suppress_terminal_output_for_fullscreen,
+)
 
 ItemT = TypeVar("ItemT")
 
@@ -176,5 +179,6 @@ def _run_multiselect_application(control, key_bindings) -> set[int] | None:
         mouse_support=False,
     )
     with suppress(EOFError, KeyboardInterrupt):
-        return app.run()
+        with suppress_terminal_output_for_fullscreen():
+            return app.run()
     return None

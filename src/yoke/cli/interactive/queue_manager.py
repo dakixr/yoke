@@ -9,6 +9,9 @@ from contextlib import suppress
 from dataclasses import dataclass
 
 from yoke.cli.interactive.common import PendingPrompt
+from yoke.cli.runtime.terminal_output_gate import (
+    suppress_terminal_output_for_fullscreen,
+)
 
 
 @dataclass(slots=True)
@@ -198,7 +201,8 @@ def _run_queue_manager(
         )
     )
     with suppress(EOFError, KeyboardInterrupt):
-        return app.run()
+        with suppress_terminal_output_for_fullscreen():
+            return app.run()
     return None
 
 

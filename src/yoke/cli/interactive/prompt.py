@@ -53,6 +53,7 @@ from yoke.cli.render import print_scrollback_tool
 from yoke.cli.render import print_tool_response_divider
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
+from yoke.cli.runtime.terminal_output_gate import defer_until_fullscreen_exits
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
@@ -145,6 +146,8 @@ def run_prompt_toolkit_cli(  # noqa: C901
         invalidate_prompt()
 
     def run_in_scrollback(render: Callable[[], None]) -> None:
+        if defer_until_fullscreen_exits(lambda: run_in_scrollback(render)):
+            return
         app = prompt_session.app
         loop = app.loop
         if loop is None:

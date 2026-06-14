@@ -14,6 +14,9 @@ from yoke.cli.interactive.tool_inspector_render import page_step
 from yoke.cli.interactive.tool_inspector_render import render_view_html
 from yoke.cli.interactive.tool_inspector_render import selected_entry
 from yoke.cli.interactive.tool_inspector_render import sidebar_items
+from yoke.cli.runtime.terminal_output_gate import (
+    suppress_terminal_output_for_fullscreen,
+)
 
 
 @dataclass(slots=True)
@@ -77,7 +80,8 @@ def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
         mouse_support=False,
     )
     with suppress(EOFError, KeyboardInterrupt):
-        app.run()
+        with suppress_terminal_output_for_fullscreen():
+            app.run()
 
 
 def _register_tool_inspector_keys(

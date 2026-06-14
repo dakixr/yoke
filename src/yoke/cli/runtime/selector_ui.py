@@ -22,6 +22,9 @@ from yoke.cli.runtime.selector_format import (
 )
 from yoke.cli.runtime.selector_format import SelectorTableColumns
 from yoke.cli.runtime.selector_format import truncate_selector_line
+from yoke.cli.runtime.terminal_output_gate import (
+    suppress_terminal_output_for_fullscreen,
+)
 
 ItemT = TypeVar("ItemT")
 
@@ -254,7 +257,8 @@ def select_table_item_interactive(
         mouse_support=False,
     )
     with suppress(EOFError, KeyboardInterrupt):
-        return app.run()
+        with suppress_terminal_output_for_fullscreen():
+            return app.run()
     return None
 
 
