@@ -88,7 +88,9 @@ yoke models set --repo
 
 `yoke models list` includes each model's advertised image-input support. For
 providers such as `opencode-go`, this is model-specific rather than a single
-provider-wide guarantee.
+provider-wide guarantee. The Thinking column reports selectable controls only:
+for example, Z.ai GLM models expose `none` and `thinking`, which yoke maps to
+Z.ai's documented `thinking.type` disabled/enabled request field.
 
 If you omit the model argument from `yoke models set`, yoke opens an interactive
 selector when running in a TTY and otherwise falls back to a numbered prompt.

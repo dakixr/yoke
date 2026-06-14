@@ -23,21 +23,22 @@ from yoke.ai.providers.usage import parse_token_usage
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 PROVIDER_NAME = "zai"
+THINKING_LEVELS = ("none", "thinking")
 MODEL_CATALOG = (
     ProviderModelInfo(
         id="glm-5.2",
         display_name="GLM-5.2",
         context_window_tokens=200_000,
-        thinking_levels=("none", "minimal", "low", "medium", "high", "xhigh"),
-        default_thinking_level="medium",
+        thinking_levels=THINKING_LEVELS,
+        default_thinking_level="thinking",
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
         id="glm-5.1",
         display_name="GLM-5.1",
         context_window_tokens=200_000,
-        thinking_levels=("none", "minimal", "low", "medium", "high", "xhigh"),
-        default_thinking_level="medium",
+        thinking_levels=THINKING_LEVELS,
+        default_thinking_level="thinking",
         supports_image_inputs=False,
     ),
 )
@@ -72,6 +73,7 @@ class ZAIConfig(BaseModel):
     base_url: str = "https://api.z.ai/api/coding/paas/v4"
     timeout_seconds: float | None = None
     debug_log_path: str | None = None
+    reasoning_effort: str | None = None
     max_retries: int = 5
     retry_backoff_seconds: float = 1.0
     max_retry_backoff_seconds: float = 32.0
@@ -161,15 +163,8 @@ class ZAIProvider(Provider):
             id=current_model,
             display_name=current_model,
             context_window_tokens=128_000,
-            thinking_levels=(
-                "none",
-                "minimal",
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-            ),
-            default_thinking_level="medium",
+            thinking_levels=THINKING_LEVELS,
+            default_thinking_level="thinking",
             supports_image_inputs=False,
         )
 
@@ -192,6 +187,7 @@ class ZAIProvider(Provider):
                     f"Unsupported reasoning effort {reasoning_effort!r} for "
                     f"model {normalized_model!r}. Allowed: {allowed}."
                 )
+            self.config.reasoning_effort = normalized_reasoning
         self.config.model = normalized_model
 
     def complete(
@@ -204,6 +200,9 @@ class ZAIProvider(Provider):
             "model": self.config.model,
             "messages": [message.to_api_dict() for message in prepared_messages],
         }
+        thinking = _thinking_config(self.config.reasoning_effort)
+        if thinking is not None:
+            payload["thinking"] = thinking
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -625,6 +624,17 @@ class ZAIProvider(Provider):
             if isinstance(error, str) and error.strip():
                 return error.strip()
         return response.reason_phrase or f"HTTP {response.status_code}"
+
+
+def _thinking_config(reasoning_effort: str | None) -> dict[str, str] | None:
+    if reasoning_effort is None:
+        return None
+    normalized = reasoning_effort.strip().lower()
+    if normalized == "none":
+        return {"type": "disabled"}
+    if normalized == "thinking":
+        return {"type": "enabled"}
+    return None
 
 
 def _message_text(message: Message) -> str:
