@@ -10,13 +10,16 @@ from typing import cast
 from pydantic import BaseModel
 from pydantic import Field
 
+from yoke.agent.models import Message
 from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.web.common import domain_for
 from yoke.agent.tools.web.common import search_terms
 from yoke.agent.tools.web.common import source_type_for
 from yoke.agent.tools.web.common import summarize_text
 from yoke.agent.tools.web.fetch import WebFetchTool
+from yoke.agent.tools.web.fetch import WebSearchTool
 from yoke.agent.tools.web.fetch import web_search
+from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
 
 
 class ResearchSource(BaseModel):
@@ -73,6 +76,7 @@ class WebResearchTool(LocalTool):
         "Research a question by searching the web, fetching top sources, "
         "and returning concise evidence with links."
     )
+    execute_in_process = True
 
     fetched_source_target: ClassVar[int] = 25
     search_result_target: ClassVar[int] = 30
@@ -81,6 +85,11 @@ class WebResearchTool(LocalTool):
 
     def execute(self) -> dict[str, object]:
         """Execute a compact search+fetch research workflow."""
+        hosted = self._research_with_codex_hosted_web_search()
+        if hosted is not None:
+            return hosted
+        codex_provider = self._codex_provider()
+
         query, search = self._search_with_fallback()
         if not search.get("ok"):
             return search
@@ -97,6 +106,8 @@ class WebResearchTool(LocalTool):
         sources: list[dict[str, object]] = []
         seen_domains: set[str] = set()
         for result in rank_results_by_source_type(results):
+            if self._is_cancel_requested():
+                return {"ok": False, "cancelled": True}
             if not isinstance(result, dict):
                 continue
             search_result = cast(dict[str, object], result)
@@ -114,6 +125,7 @@ class WebResearchTool(LocalTool):
                 mode="chunks",
                 timeout_s=30,
                 max_chars=5000,
+                use_markitdown=False,
             ).execute()
             source: dict[str, object] = {
                 "title": search_result.get("title", ""),
@@ -134,10 +146,12 @@ class WebResearchTool(LocalTool):
             if len(sources) >= self.fetched_source_target:
                 break
 
-        synthesized = self._synthesize_with_provider(
-            query=query,
-            sources=sources,
-        )
+        synthesized = None
+        if codex_provider is None:
+            synthesized = self._synthesize_with_provider(
+                query=query,
+                sources=sources,
+            )
         if synthesized is not None:
             return synthesized
 
@@ -154,6 +168,8 @@ class WebResearchTool(LocalTool):
         queries = self._queries_for_mode()
         last_search: dict[str, object] = {"ok": True, "results": []}
         for query in queries:
+            if self._is_cancel_requested():
+                return query, {"ok": False, "cancelled": True}
             search = web_search(
                 query,
                 max_results=self.search_result_target,
@@ -172,13 +188,75 @@ class WebResearchTool(LocalTool):
         terms = " ".join(search_terms(question)) or question
         return [f"{terms} official docs", f"{terms} documentation", question]
 
+    def _research_with_codex_hosted_web_search(self) -> dict[str, object] | None:
+        provider = self._codex_provider()
+        if provider is None:
+            return None
+        try:
+            prompt = (
+                "Research the question using the hosted web_search tool. "
+                "Search live/current web sources as needed, then answer concisely. "
+                "Include URLs for the best supporting sources and do not invent facts.\n\n"
+                f"Question: {self.question.strip()}"
+            )
+            message = self._complete_codex_hosted_search(provider, prompt)
+            content = message.text_content() or ""
+            return {
+                "ok": True,
+                "answer": content.strip(),
+                "notes": ["Used Codex hosted web_search."],
+                "sources": [],
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"Codex hosted web_search failed: {exc}",
+                "notes": [
+                    "Skipped local web_research fallback because a Codex provider "
+                    "should use hosted web_search."
+                ],
+                "sources": [],
+            }
+
+    def _codex_provider(self) -> CodexSubscriptionProvider | None:
+        runtime_context = self.runtime_context
+        if runtime_context is None:
+            return None
+        provider = runtime_context.provider
+        return provider if isinstance(provider, CodexSubscriptionProvider) else None
+
+    def _complete_codex_hosted_search(
+        self,
+        provider: CodexSubscriptionProvider,
+        prompt: str,
+    ) -> Message:
+        return provider.complete(
+            [
+                Message.system(
+                    "You are a concise web research tool. Use hosted web "
+                    "search when available and cite source URLs in your answer."
+                ),
+                Message.user(prompt),
+            ],
+            [
+                {
+                    "type": "web_search",
+                    "external_web_access": True,
+                    "search_context_size": "high",
+                }
+            ],
+        )
+
     def _synthesize_with_provider(
         self,
         *,
         query: str,
         sources: list[dict[str, object]],
     ) -> dict[str, object] | None:
-        provider = self.context.provider
+        runtime_context = self.runtime_context
+        if runtime_context is None:
+            return None
+        provider = runtime_context.provider
         try:
             from yoke.ai import Agent
             from yoke.ai import RunConfig
@@ -189,7 +267,11 @@ class WebResearchTool(LocalTool):
                 config=RunConfig(
                     root=".",
                     tools=[
-                        WebFetchTool.bind(cancel_requested=self._is_cancel_requested)
+                        WebFetchTool.bind(
+                            cancel_requested=self._is_cancel_requested,
+                            use_markitdown=False,
+                        ),
+                        WebSearchTool.bind(cancel_requested=self._is_cancel_requested),
                     ],
                     max_iterations=8,
                     sys_prompt=RESEARCH_AGENT_SYSTEM_PROMPT,

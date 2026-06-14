@@ -71,6 +71,7 @@ DEFAULT_ALLOWED_TOOL_NAMES = (
     "subagent",
     "web_fetch",
     "web_research",
+    "web_search",
 )
 
 TOOL_CAPABILITY_ALIASES = (

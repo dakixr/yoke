@@ -35,6 +35,7 @@ def test_default_builtin_policy_allows_all_builtin_tools(
         "subagent",
         "web_fetch",
         "web_research",
+        "web_search",
     }
     assert not denied_names
     assert resolved.tool_report.unmatched_config_patterns == []

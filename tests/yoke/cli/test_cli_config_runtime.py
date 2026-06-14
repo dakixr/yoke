@@ -21,6 +21,24 @@ def test_build_agent_binds_provider_into_tool_context(
     assert web_research.context.model_key == "codex:gpt-5.4"
 
 
+def test_builtin_tools_are_runtime_bound_during_registration(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_builtin_provider(monkeypatch, ConfigOnlyProvider)
+
+    agent = build_agent_from_args(CLIArgs(model="codex:gpt-5.4", root=str(tmp_path)))
+    assert agent.tool_report is not None
+
+    web_research = agent.tool_report.discovered_tools[0].tool
+    for loaded_tool in agent.tool_report.discovered_tools:
+        if loaded_tool.tool.name == "web_research":
+            web_research = loaded_tool.tool
+            break
+
+    assert web_research.context.provider is agent.provider
+    assert web_research.context.model_key == "codex:gpt-5.4"
+
+
 def test_cli_registration_context_matches_runtime_context(
     tmp_path: Path, monkeypatch
 ) -> None:

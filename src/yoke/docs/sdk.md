@@ -123,8 +123,15 @@ from yoke.agent.tools import ReadTool, EditTool, GrepTool
 | `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
 | `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
 | `WebFetchTool` | `web_fetch` | Fetch a URL and return readable Markdown or text content. |
+| `WebSearchTool` | `web_search` | Search the web using DuckDuckGo HTML results. |
 | `WebResearchTool` | `web_research` | Answer a web research question with concise sources and notes. |
 | `SkillTool` | `skill` | Let the agent load configured skills at runtime. |
+
+When the active provider is `codex` or `codex-websockets`, `WebResearchTool`
+uses Codex's hosted Responses `web_search` tool in-process through
+`ToolRuntimeContext`. Other providers and standalone tool instances use YOKE's
+local search-and-fetch pipeline with fast HTML parsing for fetched research
+pages; the local synthesis agent can call both `web_fetch` and `web_search`.
 
 `CommandTool` and `PythonExecTool` put shims for `python` and `python3` at the
 front of `PATH`, so shell commands and Python subprocesses use the same

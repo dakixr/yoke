@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: ANN401, D100, D101, D102, D103, S101
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from typing import cast
 
@@ -11,8 +12,10 @@ from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import ToolRuntimeContext
 from yoke.agent.tools.web import WebFetchTool
 from yoke.agent.tools.web import WebResearchTool
+from yoke.agent.tools.web import WebSearchTool
 from yoke.agent.tools.web import _search_terms
 from yoke.agent.tools.web import _web_search
+from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
 
 
 class FakeResponse:
@@ -43,12 +46,16 @@ class FakeResponse:
 class SynthesizingProvider:
     supports_image_inputs = False
     max_images_per_message = None
+    config = SimpleNamespace(timeout_seconds=600.0)
 
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
         functions = [cast(dict[str, object], tool["function"]) for tool in tools]
-        assert [function["name"] for function in functions] == ["web_fetch"]
+        assert [function["name"] for function in functions] == [
+            "web_fetch",
+            "web_search",
+        ]
         prompt = str(messages[-1].content)
         assert "Fetched source payload" in prompt
         return Message(
@@ -75,6 +82,26 @@ class UnavailableSynthesisProvider:
         raise RuntimeError("Synthesis unavailable")
 
 
+class HostedSearchProvider(CodexSubscriptionProvider):
+    def __init__(self) -> None:
+        self.config = cast(Any, SimpleNamespace(timeout_seconds=600.0))
+        self.calls: list[tuple[list[Message], list[dict[str, object]]]] = []
+
+    def complete(
+        self, messages: list[Message], tools: list[dict[str, object]]
+    ) -> Message:
+        self.calls.append((messages, tools))
+        return Message.assistant("Codex searched the web. Source: https://example.test")
+
+
+class FailingHostedSearchProvider(HostedSearchProvider):
+    def complete(
+        self, messages: list[Message], tools: list[dict[str, object]]
+    ) -> Message:
+        self.calls.append((messages, tools))
+        raise RuntimeError("hosted unavailable")
+
+
 def bind_web_research(
     tool: WebResearchTool,
     provider: object | None = None,
@@ -89,6 +116,94 @@ def bind_web_research(
         )
     )
     return tool
+
+
+def test_web_research_uses_codex_hosted_web_search() -> None:
+    provider = HostedSearchProvider()
+    result = bind_web_research(
+        WebResearchTool(question="what is current?"),
+        provider,
+    ).execute()
+
+    assert result["ok"] is True
+    assert result["answer"] == "Codex searched the web. Source: https://example.test"
+    assert provider.calls
+    messages, tools = provider.calls[0]
+    assert messages[0].role == "system"
+    assert "hosted web_search" in (messages[1].text_content() or "")
+    assert tools == [
+        {
+            "type": "web_search",
+            "external_web_access": True,
+            "search_context_size": "high",
+        }
+    ]
+    notes = cast(list[str], result["notes"])
+    assert "Used Codex hosted web_search." in notes
+    assert result["sources"] == []
+
+
+def test_web_research_executes_in_process_for_runtime_context() -> None:
+    assert WebResearchTool.execute_in_process is True
+
+
+def test_web_research_does_not_use_legacy_search_for_codex_failure(
+    monkeypatch: Any,
+) -> None:
+    def fail_search(
+        query: str, *, max_results: int, timeout_s: int
+    ) -> dict[str, object]:
+        del query, max_results, timeout_s
+        raise AssertionError("legacy search should not run")
+
+    monkeypatch.setattr("yoke.agent.tools.web.research.web_search", fail_search)
+
+    result = bind_web_research(
+        WebResearchTool(question="current info?"),
+        FailingHostedSearchProvider(),
+    ).execute()
+
+    assert result["ok"] is False
+    assert "Codex hosted web_search failed" in str(result["error"])
+
+
+def test_web_research_unbound_tool_uses_legacy_fallback(monkeypatch: Any) -> None:
+    monkeypatch.setattr(WebResearchTool, "fetched_source_target", 1)
+
+    def fake_search(
+        query: str, *, max_results: int, timeout_s: int
+    ) -> dict[str, object]:
+        del query, max_results, timeout_s
+        return {
+            "ok": True,
+            "results": [
+                {
+                    "title": "Example",
+                    "url": "https://example.test/docs",
+                    "domain": "example.test",
+                    "sourceType": "docs",
+                    "snippet": "Example docs snippet.",
+                }
+            ],
+        }
+
+    def fake_fetch(self: WebFetchTool) -> dict[str, object]:
+        return {
+            "ok": True,
+            "content": "Example docs fetched content.",
+            "summary": "Example docs fetched content.",
+        }
+
+    monkeypatch.setattr("yoke.agent.tools.web.research.web_search", fake_search)
+    monkeypatch.setattr(WebFetchTool, "execute", fake_fetch)
+
+    result = WebResearchTool(question="Example docs?").execute()
+
+    assert result["ok"] is True
+    assert "fallback summary" in cast(list[str], result["notes"])[0]
+    assert cast(list[dict[str, str]], result["sources"])[0]["url"] == (
+        "https://example.test/docs"
+    )
 
 
 def test_web_fetch_returns_agent_metadata(monkeypatch: Any) -> None:
@@ -210,8 +325,30 @@ def test_internal_web_search_returns_empty_results_list(
     assert result == {"ok": True, "results": []}
 
 
+def test_web_search_tool_wraps_duckduckgo_search(monkeypatch: Any) -> None:
+    calls: list[tuple[str, int, int]] = []
+
+    def fake_search(
+        query: str, *, max_results: int, timeout_s: int
+    ) -> dict[str, object]:
+        calls.append((query, max_results, timeout_s))
+        return {"ok": True, "results": [{"title": "Example"}]}
+
+    monkeypatch.setattr("yoke.agent.tools.web.fetch.web_search", fake_search)
+
+    result = WebSearchTool(
+        query="example",
+        max_results=3,
+        timeout_s=7,
+    ).execute()
+
+    assert result == {"ok": True, "results": [{"title": "Example"}]}
+    assert calls == [("example", 3, 7)]
+
+
 def test_web_research_combines_search_and_fetch(monkeypatch: Any) -> None:
     monkeypatch.setattr(WebResearchTool, "fetched_source_target", 1)
+    fetch_kwargs: list[dict[str, object]] = []
     search_html = """
     <a class="result__a" href="https://docs.example.test/guide">Guide</a>
     <a class="result__snippet">Official guide text.</a>
@@ -229,6 +366,8 @@ def test_web_research_combines_search_and_fetch(monkeypatch: Any) -> None:
             return FakeResponse(search_html)
 
     def fake_get(*args: object, **kwargs: object) -> FakeResponse:
+        del args
+        fetch_kwargs.append(dict(kwargs))
         return FakeResponse(page_html, url="https://docs.example.test/guide")
 
     monkeypatch.setattr("httpx.Client", FakeClient)
@@ -243,6 +382,83 @@ def test_web_research_combines_search_and_fetch(monkeypatch: Any) -> None:
     assert result["notes"]
     sources = cast(list[dict[str, object]], result["sources"])
     assert sources[0]["url"] == "https://docs.example.test/guide"
+    assert fetch_kwargs[0]["timeout"] == 30
+
+
+def test_web_research_uses_fast_fetch_without_markitdown(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(WebResearchTool, "fetched_source_target", 1)
+
+    def fake_search(
+        query: str, *, max_results: int, timeout_s: int
+    ) -> dict[str, object]:
+        del query, max_results, timeout_s
+        return {
+            "ok": True,
+            "results": [
+                {
+                    "title": "Example",
+                    "url": "https://example.test/docs",
+                    "sourceType": "docs",
+                    "snippet": "Example docs snippet.",
+                }
+            ],
+        }
+
+    seen_use_markitdown: list[bool] = []
+
+    def fake_fetch(self: WebFetchTool) -> dict[str, object]:
+        seen_use_markitdown.append(self.use_markitdown)
+        return {
+            "ok": True,
+            "content": "Example docs fetched content.",
+            "summary": "Example docs fetched content.",
+        }
+
+    monkeypatch.setattr("yoke.agent.tools.web.research.web_search", fake_search)
+    monkeypatch.setattr(WebFetchTool, "execute", fake_fetch)
+
+    result = WebResearchTool(question="Example docs?").execute()
+
+    assert result["ok"] is True
+    assert seen_use_markitdown == [False]
+
+
+def test_web_research_keeps_fetching_until_source_target(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(WebResearchTool, "fetched_source_target", 2)
+
+    def fake_search(
+        query: str, *, max_results: int, timeout_s: int
+    ) -> dict[str, object]:
+        del query, max_results, timeout_s
+        return {
+            "ok": True,
+            "results": [
+                {"title": "One", "url": "https://one.test", "snippet": "one"},
+                {"title": "Two", "url": "https://two.test", "snippet": "two"},
+            ],
+        }
+
+    def fake_fetch(self: WebFetchTool) -> dict[str, object]:
+        return {
+            "ok": True,
+            "content": f"fetched {self.url}",
+            "summary": f"fetched {self.url}",
+        }
+
+    monkeypatch.setattr("yoke.agent.tools.web.research.web_search", fake_search)
+    monkeypatch.setattr(WebFetchTool, "execute", fake_fetch)
+
+    result = WebResearchTool(question="Example docs?").execute()
+
+    assert result["ok"] is True
+    sources = cast(list[dict[str, str]], result["sources"])
+    assert len(sources) == 2
+    assert sources[0]["url"] == "https://one.test"
+    assert sources[1]["url"] == "https://two.test"
 
 
 def test_web_research_falls_back_to_raw_question(monkeypatch: Any) -> None:
@@ -375,9 +591,10 @@ def test_web_research_uses_provider_for_structured_synthesis(
 
     monkeypatch.setattr("httpx.Client", FakeClient)
     monkeypatch.setattr("httpx.get", fake_get)
+    provider = SynthesizingProvider()
     tool = bind_web_research(
         WebResearchTool(question="What is Python pathlib Path.resolve()?"),
-        SynthesizingProvider(),
+        provider,
     )
 
     result = tool.execute()
@@ -391,3 +608,4 @@ def test_web_research_uses_provider_for_structured_synthesis(
         "url": "https://docs.python.org/3/library/pathlib.html",
         "quote": "Make the path absolute, resolving any symlinks.",
     }
+    assert provider.config.timeout_seconds == 600.0

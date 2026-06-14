@@ -19,8 +19,10 @@ from yoke.agent.tools import ReadTool
 from yoke.agent.tools import SubagentTool
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
+from yoke.agent.tools import ToolRuntimeContext
 from yoke.agent.tools import WebFetchTool
 from yoke.agent.tools import WebResearchTool
+from yoke.agent.tools import WebSearchTool
 from yoke.agent.tools import register_search_tools
 from yoke.agent.tools import register_write_tool
 from yoke.agent.tools.context import normalize_tool_registration
@@ -102,20 +104,34 @@ def _register_builtin_tools(
 ) -> ToolRegistrationResult:
     root = context.root
     cancel_requested = context.cancel_requested
+    runtime_context = ToolRuntimeContext(
+        root=context.root,
+        home=context.home,
+        provider=context.provider,
+        model=context.model,
+        cancel_requested=cancel_requested,
+    )
     tools: list[LocalTool] = [
         ReadTool.bind(root=root, cancel_requested=cancel_requested),
         CommandTool.bind(root=root, cancel_requested=cancel_requested),
         ExtractFileContextTool.bind(root=root, cancel_requested=cancel_requested),
         AttachImageTool.bind(root=root, cancel_requested=cancel_requested),
         WebFetchTool.bind(cancel_requested=cancel_requested),
+        WebSearchTool.bind(cancel_requested=cancel_requested),
         WebResearchTool.bind(cancel_requested=cancel_requested),
         PythonExecTool.bind(root=root, cancel_requested=cancel_requested),
         SubagentTool.bind(root=root, cancel_requested=cancel_requested),
     ]
+    for tool in tools:
+        tool.bind_runtime_context(runtime_context)
     search_tools = register_search_tools(context)
+    for tool in search_tools:
+        tool.bind_runtime_context(runtime_context)
     tools[2:2] = search_tools
     write_registration = normalize_tool_registration(register_write_tool(context))
-    tools.insert(1, list(write_registration.tools)[0])
+    write_tool = list(write_registration.tools)[0]
+    write_tool.bind_runtime_context(runtime_context)
+    tools.insert(1, write_tool)
     return ToolRegistrationResult(
         tools=tools,
         system_messages=write_registration.system_messages,

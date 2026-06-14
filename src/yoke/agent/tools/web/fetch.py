@@ -90,6 +90,27 @@ def web_search(
         return {"ok": False, "error": str(exc), "query": query}
 
 
+class WebSearchTool(LocalTool):
+    """Search the web using DuckDuckGo HTML results."""
+
+    name = "web_search"
+    description = "Search the web using DuckDuckGo HTML results."
+
+    query: str = Field(min_length=1)
+    max_results: int = Field(default=10, ge=1, le=50)
+    timeout_s: int = Field(default=30, ge=1, le=180)
+
+    def execute(self) -> dict[str, object]:
+        """Run a DuckDuckGo HTML search and return parsed results."""
+        if self._is_cancel_requested():
+            return {"ok": False, "cancelled": True}
+        return web_search(
+            self.query,
+            max_results=self.max_results,
+            timeout_s=self.timeout_s,
+        )
+
+
 class WebFetchTool(LocalTool):
     """Fetch a URL and convert the page into readable text/markdown."""
 
@@ -101,6 +122,7 @@ class WebFetchTool(LocalTool):
     find: str | None = Field(default=None, min_length=1)
     timeout_s: int = Field(default=30, ge=1, le=180)
     max_chars: int = Field(default=20_000, ge=500, le=200_000)
+    use_markitdown: bool = True
 
     def execute(self) -> dict[str, object]:
         """Fetch the URL and return its content as text or markdown."""
@@ -123,20 +145,21 @@ class WebFetchTool(LocalTool):
             content_type = response.headers.get("content-type", "").lower()
             text: str
             converter = None
-            try:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        message=r".*Couldn't find ffmpeg or avconv.*",
-                        category=RuntimeWarning,
-                    )
-                    from markitdown import (  # ty: ignore[unresolved-import]
-                        MarkItDown,  # type: ignore[import-not-found]
-                    )
+            if self.use_markitdown:
+                try:
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings(
+                            "ignore",
+                            message=r".*Couldn't find ffmpeg or avconv.*",
+                            category=RuntimeWarning,
+                        )
+                        from markitdown import (  # ty: ignore[unresolved-import]
+                            MarkItDown,  # type: ignore[import-not-found]
+                        )
 
-                converter = MarkItDown()
-            except ImportError:
-                converter = None
+                    converter = MarkItDown()
+                except ImportError:
+                    converter = None
 
             looks_like_markup = response.text.lstrip().startswith("<")
             is_markup = (

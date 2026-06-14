@@ -25,6 +25,7 @@ from yoke.agent.tools.skill import SkillTool
 from yoke.agent.tools.subagent import SubagentTool
 from yoke.agent.tools.web import WebFetchTool
 from yoke.agent.tools.web import WebResearchTool
+from yoke.agent.tools.web import WebSearchTool
 from yoke.agent.tools.write import model_prefers_apply_patch
 from yoke.agent.tools.write import register_write_tool
 
@@ -48,6 +49,7 @@ __all__ = [
     "SkillTool",
     "WebFetchTool",
     "WebResearchTool",
+    "WebSearchTool",
     "WorkspaceTool",
     "SubagentTool",
     "ToolRegistrationContext",

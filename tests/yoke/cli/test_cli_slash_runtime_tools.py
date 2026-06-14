@@ -409,7 +409,88 @@ def test_tools_menu_preserves_hidden_runtime_only_tools(
 
     tools_menu.handle_tools_menu(
         agent=agent,
-        console=build_console(CaptureStream()),
+        console=build_console(stdout := CaptureStream()),
     )
 
     assert set(agent.tools) == {"web_fetch", "skill"}
+    output = stdout.getvalue()
+    assert "disabled skill" not in output
+    assert "Updated tools for this session: enabled web_fetch; disabled read" in output
+
+
+def test_tools_menu_does_not_persist_hidden_runtime_only_tools(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from yoke.agent.skills.registry import load_skill_registry
+    from yoke.agent.tools import ReadTool
+    from yoke.agent.tools import SkillTool
+    from yoke.agent.tools import WebFetchTool
+    from yoke.cli.bootstrap.types import LoadedTool
+    from yoke.cli.bootstrap.types import ToolLoadReport
+    from yoke.cli.interactive import tools_menu
+
+    skill_dir = tmp_path / ".yoke" / "skills" / "code-review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: code-review\ndescription: Review code.\n---\n\nBe strict.\n",
+        encoding="utf-8",
+    )
+    registry = load_skill_registry([tmp_path / ".yoke" / "skills"])
+    read_tool = ReadTool.bind(root=tmp_path)
+    web_tool = WebFetchTool.bind()
+    skill_tool = SkillTool.bind(skill_registry=registry, active_skills=[])
+    agent = RuntimeAgent(
+        provider=TitleProvider("done"),
+        tools=[read_tool, skill_tool],
+        skill_registry=registry,
+        available_skills=registry.skills,
+    )
+    agent.tool_report = ToolLoadReport(
+        discovered_tools=[
+            LoadedTool(
+                tool=read_tool,
+                source_kind="default",
+                source_label="builtin",
+            ),
+            LoadedTool(
+                tool=web_tool,
+                source_kind="default",
+                source_label="builtin",
+            ),
+        ],
+        active_tools=[
+            LoadedTool(
+                tool=read_tool,
+                source_kind="default",
+                source_label="builtin",
+            ),
+        ],
+        denied_tools=[
+            LoadedTool(
+                tool=web_tool,
+                source_kind="default",
+                source_label="builtin",
+            ),
+        ],
+    )
+
+    monkeypatch.setattr(
+        tools_menu,
+        "select_table_items_interactive",
+        lambda *args, **kwargs: {1},
+    )
+    monkeypatch.setattr(
+        tools_menu,
+        "select_list_item_interactive",
+        lambda items, *args, **kwargs: items[1],
+    )
+
+    tools_menu.handle_tools_menu(
+        agent=agent,
+        console=build_console(CaptureStream()),
+        root=tmp_path,
+    )
+
+    config = json.loads((tmp_path / ".yoke" / "config.json").read_text())
+    assert config["tools"] == {"read": "deny", "web_fetch": "allow"}

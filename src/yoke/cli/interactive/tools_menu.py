@@ -79,6 +79,8 @@ def handle_tools_menu(
         return
 
     active_names = set(agent.tools)
+    visible_names = {row.name for row in rows}
+    visible_active_names = active_names & visible_names
     selected_indexes = {
         index for index, row in enumerate(rows) if row.name in active_names
     }
@@ -98,7 +100,7 @@ def handle_tools_menu(
         return
 
     new_names = {rows[index].name for index in result}
-    if new_names == active_names:
+    if new_names == visible_active_names:
         print_scrollback_notice(console, "No tool changes applied.")
         return
 
@@ -124,7 +126,7 @@ def handle_tools_menu(
     print_scrollback_notice(
         console,
         _format_tool_change_summary(
-            before=active_names,
+            before=visible_active_names,
             after=new_names,
             scope=scope,
         ),
