@@ -538,25 +538,11 @@ class CodexSubscriptionProvider(Provider):
             self._client.close()
 
     def generate_image(self, *, prompt: str) -> str:
-        """Generate an image through the Codex subscription image endpoint."""
-        credentials = self._fresh_credentials()
-        response = self._client.post(
-            self._image_generation_url(),
-            json={
-                "prompt": prompt,
-                "background": "auto",
-                "model": "gpt-image-2",
-                "quality": "auto",
-                "size": "auto",
-            },
-            headers=self._image_request_headers(credentials),
+        """Generate an image through Codex's hosted Responses image tool."""
+        return self._generate_hosted_image(
+            prompt=prompt,
+            reference_image_urls=[],
         )
-        if response.is_error:
-            raise ProviderError(
-                f"Codex image generation failed: {error_detail(response)}",
-                status_code=response.status_code,
-            )
-        return self._b64_json_from_image_response(response.json())
 
     def edit_image(self, *, prompt: str, image_urls: list[str]) -> str:
         """Generate an edited image using reference image data URLs."""
@@ -564,25 +550,65 @@ class CodexSubscriptionProvider(Provider):
             raise ProviderError(
                 "Codex image edit requires at least one reference image."
             )
-        credentials = self._fresh_credentials()
-        response = self._client.post(
-            self._image_edit_url(),
-            json={
-                "images": [{"image_url": image_url} for image_url in image_urls],
-                "prompt": prompt,
-                "background": "auto",
-                "model": "gpt-image-2",
-                "quality": "auto",
-                "size": "auto",
-            },
-            headers=self._image_request_headers(credentials),
+        return self._generate_hosted_image(
+            prompt=prompt,
+            reference_image_urls=image_urls,
         )
-        if response.is_error:
-            raise ProviderError(
-                f"Codex image edit failed: {error_detail(response)}",
-                status_code=response.status_code,
-            )
-        return self._b64_json_from_image_response(response.json())
+
+    def _generate_hosted_image(
+        self, *, prompt: str, reference_image_urls: list[str]
+    ) -> str:
+        credentials = self._fresh_credentials()
+        payload = self._hosted_image_payload(
+            prompt=prompt,
+            reference_image_urls=reference_image_urls,
+        )
+        with self._client.stream(
+            "POST",
+            self._responses_url(),
+            json=payload,
+            headers=self._request_headers(credentials),
+        ) as response:
+            if response.is_error:
+                operation = "edit" if reference_image_urls else "generation"
+                raise ProviderError(
+                    f"Codex image {operation} failed: {error_detail(response)}",
+                    status_code=response.status_code,
+                )
+            return consume_hosted_image_sse_response(response)
+
+    def _hosted_image_payload(
+        self, *, prompt: str, reference_image_urls: list[str]
+    ) -> dict[str, object]:
+        content: list[dict[str, object]] = [
+            {"type": "input_text", "text": prompt},
+        ]
+        content.extend(
+            {"type": "input_image", "image_url": image_url}
+            for image_url in reference_image_urls
+        )
+        return {
+            "model": self.config.model,
+            "store": False,
+            "stream": True,
+            "instructions": (
+                "Use the hosted image_generation tool to generate exactly one PNG "
+                "image for the user's prompt."
+            ),
+            "input": [{"role": "user", "content": content}],
+            "tools": [{"type": "image_generation", "output_format": "png"}],
+            "tool_choice": "auto",
+            "parallel_tool_calls": True,
+            "reasoning": {
+                "effort": clamp_reasoning_effort(
+                    self.config.model, self.config.reasoning_effort
+                ),
+                "summary": "auto",
+            },
+            "text": {"verbosity": self.config.text_verbosity},
+            "include": ["reasoning.encrypted_content"],
+            "prompt_cache_key": secrets.token_hex(16),
+        }
 
     def _b64_json_from_image_response(self, payload: object) -> str:
         if not isinstance(payload, dict):
@@ -1894,6 +1920,62 @@ def consume_sse_response(
             model_id=model_id,
         ),
     )
+
+
+def consume_hosted_image_sse_response(response: httpx.Response) -> str:
+    latest_image: str | None = None
+    event_lines: list[str] = []
+    for line in response.iter_lines():
+        if line == "":
+            latest_image = handle_hosted_image_sse_event(event_lines, latest_image)
+            event_lines = []
+            continue
+        event_lines.append(line)
+    if event_lines:
+        latest_image = handle_hosted_image_sse_event(event_lines, latest_image)
+    if not latest_image:
+        raise ProviderError("Codex image generation did not return image data.")
+    return latest_image
+
+
+def handle_hosted_image_sse_event(
+    lines: list[str], latest_image: str | None
+) -> str | None:
+    data_lines = [line[5:].strip() for line in lines if line.startswith("data:")]
+    if not data_lines:
+        return latest_image
+    raw_data = "\n".join(data_lines)
+    if raw_data == "[DONE]":
+        return latest_image
+    try:
+        event = json.loads(raw_data)
+    except json.JSONDecodeError:
+        return latest_image
+    event_type = event.get("type")
+    if event_type in {"error", "response.failed"}:
+        raise ProviderError(f"Codex image generation failed: {event}")
+    if event_type == "response.image_generation_call.partial_image":
+        partial_image = event.get("partial_image_b64")
+        if isinstance(partial_image, str) and partial_image:
+            return partial_image
+    if event_type == "response.output_item.done":
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "image_generation_call":
+            result = item.get("result")
+            if isinstance(result, str) and result:
+                return result
+    if event_type in {"response.completed", "response.done"}:
+        response_payload = event.get("response")
+        if isinstance(response_payload, dict):
+            for item in response_payload.get("output") or []:
+                if (
+                    isinstance(item, dict)
+                    and item.get("type") == "image_generation_call"
+                ):
+                    result = item.get("result")
+                    if isinstance(result, str) and result:
+                        return result
+    return latest_image
 
 
 def handle_sse_event(

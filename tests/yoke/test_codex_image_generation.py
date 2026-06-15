@@ -35,7 +35,12 @@ def test_codex_provider_generate_image_posts_to_subscription_endpoint(
         requests.append(request)
         return httpx.Response(
             200,
-            json={"created": 1, "data": [{"b64_json": TINY_PNG}]},
+            headers={"Content-Type": "text/event-stream"},
+            content=(
+                'data: {"type":"response.image_generation_call.partial_image",'
+                f'"partial_image_b64":"{TINY_PNG}"}}\n\n'
+                'data: {"type":"response.completed","response":{"output":[]}}\n\n'
+            ),
         )
 
     provider = TestCodexProvider(
@@ -56,19 +61,18 @@ def test_codex_provider_generate_image_posts_to_subscription_endpoint(
     assert base64.b64decode(encoded) == base64.b64decode(TINY_PNG)
     assert len(requests) == 1
     request = requests[0]
-    assert (
-        str(request.url) == "https://chatgpt.com/backend-api/codex/images/generations"
-    )
+    assert str(request.url) == "https://chatgpt.com/backend-api/codex/responses"
     assert request.headers["Authorization"] == "Bearer access-token"
     assert request.headers["chatgpt-account-id"] == "account-id"
     payload = cast(dict[str, Any], json.loads(request.content.decode("utf-8")))
-    assert payload == {
-        "prompt": "a small fox",
-        "background": "auto",
-        "model": "gpt-image-2",
-        "quality": "auto",
-        "size": "auto",
-    }
+    assert payload["stream"] is True
+    assert payload["tools"] == [{"type": "image_generation", "output_format": "png"}]
+    assert payload["input"] == [
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "a small fox"}],
+        }
+    ]
 
 
 def test_codex_provider_edit_image_posts_to_subscription_endpoint(
@@ -89,7 +93,11 @@ def test_codex_provider_edit_image_posts_to_subscription_endpoint(
         requests.append(request)
         return httpx.Response(
             200,
-            json={"created": 1, "data": [{"b64_json": TINY_PNG}]},
+            headers={"Content-Type": "text/event-stream"},
+            content=(
+                'data: {"type":"response.output_item.done","item":{'
+                f'"type":"image_generation_call","result":"{TINY_PNG}"}}}}\n\n'
+            ),
         )
 
     provider = TestCodexProvider(
@@ -113,14 +121,15 @@ def test_codex_provider_edit_image_posts_to_subscription_endpoint(
     assert base64.b64decode(encoded) == base64.b64decode(TINY_PNG)
     assert len(requests) == 1
     request = requests[0]
-    assert str(request.url) == "https://chatgpt.com/backend-api/codex/images/edits"
+    assert str(request.url) == "https://chatgpt.com/backend-api/codex/responses"
     assert request.headers["Authorization"] == "Bearer access-token"
     payload = cast(dict[str, Any], json.loads(request.content.decode("utf-8")))
-    assert payload == {
-        "images": [{"image_url": "data:image/png;base64,Zm9v"}],
-        "prompt": "add a hat",
-        "background": "auto",
-        "model": "gpt-image-2",
-        "quality": "auto",
-        "size": "auto",
-    }
+    assert payload["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "add a hat"},
+                {"type": "input_image", "image_url": "data:image/png;base64,Zm9v"},
+            ],
+        }
+    ]

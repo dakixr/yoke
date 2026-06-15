@@ -508,7 +508,9 @@ active at a time. `attach_image` is also model-aware and is only registered
 when the active model advertises image input support. `image_generation` is only
 registered for Codex-backed providers and saves/attaches generated PNG files;
 it can also use `referenced_image_paths` or `num_last_images_to_include` for
-image-edit/reference workflows. Search is environment-aware:
+image-edit/reference workflows. Codex image requests use the hosted Responses
+`image_generation` tool rather than the removed direct `/images/*` subscription
+endpoints. Search is environment-aware:
 when ripgrep is installed, only `rg` is active; otherwise `grep`, `find`, and
 `ls` are active as the fallback set.
 
