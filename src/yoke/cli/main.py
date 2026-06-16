@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from yoke.cli.config import build_agent_from_args as build_agent_from_args
     from yoke.cli.interactive import PromptToolkitLiveRenderer
     from yoke.cli.interactive import run_prompt_toolkit_cli as run_prompt_toolkit_cli
+    from yoke.cli.runtime import run_continue_cli as run_continue_cli
     from yoke.cli.runtime import run_cli as run_cli
     from yoke.cli.runtime import run_resume_cli as run_resume_cli
 
@@ -246,8 +247,73 @@ def resume(
     )
 
 
+@app.command("continue")
+def continue_command(
+    global_sessions: Annotated[
+        bool,
+        typer.Option(
+            "--global",
+            "-g",
+            help="Resume the most recent session across all workspace roots.",
+        ),
+    ] = False,
+    model: Annotated[
+        str | None,
+        typer.Option(
+            "--model",
+            help=(
+                "Model to send to the provider. Use `provider-name:model-name` "
+                "to override the continued provider as well."
+            ),
+        ),
+    ] = None,
+    reasoning_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--reasoning-effort",
+            help=(
+                "Reasoning effort for supported chat-completions models: "
+                "none, low, medium, high, or xhigh."
+            ),
+        ),
+    ] = None,
+    root: Annotated[
+        Path,
+        typer.Option(
+            "--root",
+            help="Workspace root for selecting sessions.",
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ] = CWD,
+) -> None:
+    """Resume the most recent saved session for this workspace."""
+    from yoke.cli.runtime import run_continue_cli
+
+    raise typer.Exit(
+        run_continue_cli(
+            build_cli_args(
+                model=model,
+                reasoning_effort=reasoning_effort,
+                root=root,
+            ),
+            all_sessions=global_sessions,
+        )
+    )
+
+
 _SUBCOMMANDS = frozenset(
-    {"version", "login", "resume", "tools", "models", "providers", "skills"}
+    {
+        "version",
+        "login",
+        "resume",
+        "continue",
+        "tools",
+        "models",
+        "providers",
+        "skills",
+    }
 )
 _OPTIONS_WITH_VALUES = frozenset(
     {
@@ -523,6 +589,7 @@ __all__ = [
     "app",
     "build_agent_from_args",
     "main",
+    "run_continue_cli",
     "run_cli",
     "run_prompt_toolkit_cli",
     "run_resume_cli",
@@ -534,6 +601,7 @@ _EXPORTS = {
         "PromptToolkitLiveRenderer",
     ),
     "build_agent_from_args": ("yoke.cli.config", "build_agent_from_args"),
+    "run_continue_cli": ("yoke.cli.runtime", "run_continue_cli"),
     "run_cli": ("yoke.cli.runtime", "run_cli"),
     "run_prompt_toolkit_cli": ("yoke.cli.interactive", "run_prompt_toolkit_cli"),
     "run_resume_cli": ("yoke.cli.runtime", "run_resume_cli"),

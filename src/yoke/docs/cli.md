@@ -224,6 +224,12 @@ yoke resume --all
 
 # Resume a specific session by id
 yoke resume 20240421-143022-abc1
+
+# Continue the most recent session for this directory
+yoke continue
+
+# Continue the most recent session across all directories
+yoke continue --global
 ```
 
 Sessions are stored under `~/.yoke/sessions/` as append-oriented `.jsonl` event
@@ -251,7 +257,10 @@ columns for the session title, last activity, and session id. Use `Up`/`Down`
 or `j`/`k` to move, `PgUp`/`PgDn` to scroll faster, `Home`/`End` to jump, and
 `Enter` to resume. Press `q` or `Esc` to cancel. Pass `--all` to list saved
 sessions across every workspace root instead of only the current root; that
-view adds a root-path column before the session id.
+view adds a root-path column before the session id. Use `yoke continue` to skip
+selection and immediately resume the most recent session for the current root,
+or `yoke continue --global` / `yoke continue -g` to ignore root and continue the
+most recent saved session overall.
 
 ---
 

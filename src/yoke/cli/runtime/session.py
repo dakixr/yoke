@@ -249,6 +249,21 @@ def select_session_id(
     )
 
 
+def select_latest_session_id(
+    store: SessionStore,
+    *,
+    root: Path,
+    all_sessions: bool = False,
+) -> str:
+    """Return the most recently updated saved session id."""
+    records = store.list(root=None if all_sessions else root)
+    if not records:
+        if all_sessions:
+            raise ValueError("No saved sessions found.")
+        raise ValueError(f"No sessions found for root: {root.resolve()}")
+    return records[0].id
+
+
 def _select_session_id_by_number(
     records: list[SessionRecord],
     *,

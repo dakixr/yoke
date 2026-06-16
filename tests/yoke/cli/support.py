@@ -62,6 +62,7 @@ from yoke.cli.main import (
     PromptToolkitLiveRenderer,
     app,
     main,
+    run_continue_cli,
     run_cli,
     run_prompt_toolkit_cli,
     run_resume_cli,

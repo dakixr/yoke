@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
+from yoke.cli.main import _inject_prompt_flag
 from yoke.cli.main import _load_source_dotenv
+from yoke.cli.main import main
 
 
 def test_load_source_dotenv_sets_variables(
@@ -53,3 +58,33 @@ def test_load_source_dotenv_skips_missing_file(
 
     if "MISSING_ENV" in os.environ:
         pytest.fail("Missing .env should not introduce new environment keys")
+
+
+def test_continue_is_not_treated_as_prompt() -> None:
+    """Leaves the continue command as a subcommand during prompt injection."""
+    assert _inject_prompt_flag(["continue"]) == ["continue"]
+    assert _inject_prompt_flag(["continue", "--global"]) == ["continue", "--global"]
+
+
+@pytest.mark.parametrize("global_flag", ["--global", "-g"])
+def test_continue_command_passes_global_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    global_flag: str,
+) -> None:
+    """Parses continue global aliases and forwards the resolved root."""
+    fake_runtime = ModuleType("yoke.cli.runtime")
+    calls: list[tuple[Any, bool]] = []
+
+    def fake_run_continue_cli(args: Any, *, all_sessions: bool = False) -> int:
+        calls.append((args, all_sessions))
+        return 7
+
+    setattr(fake_runtime, "run_continue_cli", fake_run_continue_cli)
+    monkeypatch.setitem(sys.modules, "yoke.cli.runtime", fake_runtime)
+
+    assert main(["continue", global_flag, "--root", str(tmp_path)]) == 7
+    assert len(calls) == 1
+    args, all_sessions = calls[0]
+    assert all_sessions is True
+    assert args.root == str(tmp_path.resolve())

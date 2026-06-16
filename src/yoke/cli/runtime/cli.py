@@ -35,6 +35,7 @@ from yoke.cli.runtime.session import ensure_session_title
 from yoke.cli.runtime.session import persist_session_state
 from yoke.cli.runtime.session import save_active_session
 from yoke.cli.runtime.session import save_agent_session_state
+from yoke.cli.runtime.session import select_latest_session_id
 from yoke.cli.runtime.session import select_session_id
 from yoke.cli.session import SessionStore
 
@@ -255,6 +256,42 @@ def run_resume_cli(
         stdout=output_stream,
         stderr=error_stream,
         replay_session=True,
+    )
+
+
+def run_continue_cli(
+    args: CLIArgs,
+    *,
+    all_sessions: bool = False,
+    agent: AgentRunner | None = None,
+    input_func=input,
+    stdout: OutputStream | None = None,
+    stderr: OutputStream | None = None,
+) -> int:
+    """Resume the most recent saved yoke session."""
+    output_stream = stdout or sys.stdout
+    error_stream = stderr or sys.stderr
+    error_console = build_console(error_stream)
+    store = SessionStore()
+    root = Path(args.root).resolve()
+    try:
+        session_id = select_latest_session_id(
+            store,
+            root=root,
+            all_sessions=all_sessions,
+        )
+    except ValueError as exc:
+        print_error(error_console, str(exc))
+        return 1
+    build_console(output_stream).print(f"Continuing session {session_id}")
+    return run_resume_cli(
+        args,
+        session_id,
+        all_sessions=all_sessions,
+        agent=agent,
+        input_func=input_func,
+        stdout=output_stream,
+        stderr=error_stream,
     )
 
 

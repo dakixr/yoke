@@ -22,6 +22,7 @@ from yoke.cli.runtime.cli import (
     print_tool_discovery_message as print_tool_discovery_message,
 )
 from yoke.cli.runtime.cli import resolve_cli_mode as resolve_cli_mode
+from yoke.cli.runtime.cli import run_continue_cli as run_continue_cli
 from yoke.cli.runtime.cli import run_cli as run_cli
 from yoke.cli.runtime.cli import run_resume_cli as run_resume_cli
 from yoke.cli.runtime.session import (
@@ -44,6 +45,9 @@ from yoke.cli.runtime.session import (
 )
 from yoke.cli.runtime.session import (
     select_session_id as select_session_id,
+)
+from yoke.cli.runtime.session import (
+    select_latest_session_id as select_latest_session_id,
 )
 from yoke.cli.runtime.session import (
     sync_agent_skill_state_to_session as sync_agent_skill_state_to_session,

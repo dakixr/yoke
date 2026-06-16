@@ -115,6 +115,99 @@ def test_resume_without_id_reports_cancelled_keyboard_selector(
     assert "Session selection cancelled." in stderr.getvalue()
 
 
+def test_continue_resumes_latest_session_for_current_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
+    current_root = tmp_path / "current"
+    other_root = tmp_path / "other"
+    current_root.mkdir()
+    other_root.mkdir()
+    store = SessionStore()
+    store.save("current-old", [], root=current_root, title="Current old")
+    store.save("other-new", [], root=other_root, title="Other new")
+    store.save("current-new", [], root=current_root, title="Current new")
+    prompts = iter(["quit"])
+
+    def fake_input(_: object = "") -> str:
+        return next(prompts)
+
+    stdout = CaptureStream()
+    stderr = CaptureStream()
+    exit_code = run_continue_cli(
+        CLIArgs(root=str(current_root)),
+        agent=FakeAgent(),
+        input_func=fake_input,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    output = stdout.getvalue()
+    assert "Continuing session current-new" in output
+    assert "current-old" not in output
+    assert "other-new" not in output
+
+
+def test_continue_global_resumes_latest_session_across_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
+    current_root = tmp_path / "current"
+    other_root = tmp_path / "other"
+    current_root.mkdir()
+    other_root.mkdir()
+    store = SessionStore()
+    store.save("current-old", [], root=current_root, title="Current old")
+    store.save("other-new", [], root=other_root, title="Other new")
+    prompts = iter(["quit"])
+
+    def fake_input(_: object = "") -> str:
+        return next(prompts)
+
+    stdout = CaptureStream()
+    stderr = CaptureStream()
+    exit_code = run_continue_cli(
+        CLIArgs(root=str(current_root)),
+        all_sessions=True,
+        agent=FakeAgent(),
+        input_func=fake_input,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    output = stdout.getvalue()
+    assert "Continuing session other-new" in output
+    assert "current-old" not in output
+
+
+def test_continue_reports_missing_current_root_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
+    current_root = tmp_path / "current"
+    other_root = tmp_path / "other"
+    current_root.mkdir()
+    other_root.mkdir()
+    SessionStore().save("other-new", [], root=other_root, title="Other new")
+
+    stderr = CaptureStream()
+    exit_code = run_continue_cli(
+        CLIArgs(root=str(current_root)),
+        agent=FakeAgent(),
+        stderr=stderr,
+    )
+
+    assert exit_code == 1
+    output = stderr.getvalue()
+    assert "No sessions found for root:" in output
+    assert current_root.name in output
+
+
 @pytest.mark.parametrize("exit_mode", ["keyboard_interrupt", "quit"])
 def test_basic_interactive_exit_prints_resume_hint(
     tmp_path: Path, exit_mode: str
