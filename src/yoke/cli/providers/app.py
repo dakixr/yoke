@@ -11,7 +11,7 @@ from typing import cast
 import typer
 from rich.table import Table
 
-from yoke.cli.config import BUILTIN_PROVIDER_NAMES
+from yoke.cli.config.providers import BUILTIN_PROVIDER_NAMES
 from yoke.cli.path_display import format_root_label
 from yoke.cli.providers.registry import load_global_provider_plugins
 from yoke.cli.render import OutputStream

@@ -7,7 +7,7 @@ from contextlib import suppress
 
 from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
-from yoke.cli.config import CLIArgs
+from yoke.cli.config.args import CLIArgs
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import resolve_image_path
 from yoke.cli.interactive.model_commands import handle_switch_model

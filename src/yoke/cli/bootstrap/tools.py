@@ -77,7 +77,7 @@ def load_tools(
     )
     if include_global_tools:
         discovered = _load_tools_from_directory(
-            home / ".yoke",
+            home / ".yoke" / "tools",
             context,
             source_kind="global",
         )
@@ -85,7 +85,7 @@ def load_tools(
         contributions.extend(discovered.contributions)
     if include_repo_tools:
         discovered = _load_tools_from_directory(
-            root / ".yoke",
+            root / ".yoke" / "tools",
             context,
             source_kind="repo",
         )

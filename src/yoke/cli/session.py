@@ -90,7 +90,6 @@ class SessionStore:
 
     def __init__(self, directory: Path | None = None) -> None:
         self.directory = (directory or default_session_directory()).resolve()
-        self._migrate_legacy_sessions()
 
     def load(self, session_id: str) -> SessionRecord:
         """Load a session record."""
@@ -191,6 +190,7 @@ class SessionStore:
 
     def list(self, *, root: Path | str | None = None) -> builtins.list[SessionRecord]:
         """List session records."""
+        self._ensure_session_index()
         self._prune_index_and_sessions()
         root_value = _normalize_root(root)
         entries = self._load_index().sessions.values()
@@ -241,6 +241,54 @@ class SessionStore:
             return SessionIndex.model_validate_json(path.read_text(encoding="utf-8"))
         except (OSError, ValidationError):
             return SessionIndex()
+
+    def _ensure_session_index(self) -> None:
+        if self._index_path().exists() or not self.directory.exists():
+            return
+        index = SessionIndex()
+        changed = False
+        for path in self.directory.glob(f"*{SESSION_FILE_SUFFIX}"):
+            session_id = path.stem
+            if not SESSION_ID_PATTERN.fullmatch(session_id):
+                continue
+            try:
+                raw_text = path.read_text(encoding="utf-8")
+                record = self._decode_session_record(raw_text)
+            except (OSError, ValidationError, ValueError):
+                continue
+            index.sessions[session_id] = SessionIndexEntry(
+                id=session_id,
+                root=record.root,
+                title=record.title,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
+            changed = True
+        for path in self.directory.glob(f"*{LEGACY_SESSION_FILE_SUFFIX}"):
+            if path.name == SESSION_INDEX_NAME or path.name.endswith(".queue.json"):
+                continue
+            session_id = path.stem
+            if not SESSION_ID_PATTERN.fullmatch(session_id):
+                continue
+            try:
+                migrated_path = self._migrate_legacy_session_file(session_id)
+                raw_text = migrated_path.read_text(encoding="utf-8")
+                record = self._decode_session_record(raw_text)
+            except (OSError, ValidationError, ValueError):
+                continue
+            index.sessions[session_id] = SessionIndexEntry(
+                id=session_id,
+                root=record.root,
+                title=record.title,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
+            changed = True
+        if changed:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            self._index_path().write_text(
+                index.model_dump_json(indent=2), encoding="utf-8"
+            )
 
     def _update_index(self, record: SessionRecord) -> None:
         index = self._load_index()

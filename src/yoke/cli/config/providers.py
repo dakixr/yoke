@@ -2,32 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from importlib import import_module
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+from typing import cast
 
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
-from yoke.ai.providers.codex_subscription import (
-    list_provider_models as list_codex_models,
-)
-from yoke.ai.providers.codex_subscription import (
-    register_provider as register_codex_provider,
-)
-from yoke.ai.providers.codex_websockets import (
-    list_provider_models as list_codex_websockets_models,
-)
-from yoke.ai.providers.codex_websockets import (
-    register_provider as register_codex_websockets_provider,
-)
-from yoke.ai.providers.opencode_go import (
-    list_provider_models as list_opencode_go_models,
-)
-from yoke.ai.providers.opencode_go import (
-    register_provider as register_opencode_go_provider,
-)
-from yoke.ai.providers.zai import list_provider_models as list_zai_models
-from yoke.ai.providers.zai import register_provider as register_zai_provider
 from yoke.cli.config.default_model import load_effective_yoke_config
 from yoke.cli.config.default_model import parse_config_default_model
 from yoke.cli.providers import available_custom_provider_names
@@ -35,10 +18,11 @@ from yoke.cli.providers import create_custom_provider
 from yoke.cli.providers.registry import ProviderPluginContext
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from yoke.cli.config.runtime import CLIArgs
 
+    BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
+    BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
+else:
     BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
     BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
 
@@ -48,18 +32,20 @@ BUILTIN_PROVIDER_NAMES = (
     "opencode-go",
     "zai",
 )
-_BUILTIN_PROVIDER_FACTORIES: dict[str, BuiltinProviderFactory] = {
-    "codex": register_codex_provider,
-    "codex-websockets": register_codex_websockets_provider,
-    "opencode-go": register_opencode_go_provider,
-    "zai": register_zai_provider,
+_BUILTIN_PROVIDER_TARGETS = {
+    "codex": ("yoke.ai.providers.codex_subscription", "register_provider"),
+    "codex-websockets": ("yoke.ai.providers.codex_websockets", "register_provider"),
+    "opencode-go": ("yoke.ai.providers.opencode_go", "register_provider"),
+    "zai": ("yoke.ai.providers.zai", "register_provider"),
 }
-_BUILTIN_MODEL_LISTERS: dict[str, BuiltinModelLister] = {
-    "codex": list_codex_models,
-    "codex-websockets": list_codex_websockets_models,
-    "opencode-go": list_opencode_go_models,
-    "zai": list_zai_models,
+_BUILTIN_MODEL_LISTER_TARGETS = {
+    "codex": ("yoke.ai.providers.codex_subscription", "list_provider_models"),
+    "codex-websockets": ("yoke.ai.providers.codex_websockets", "list_provider_models"),
+    "opencode-go": ("yoke.ai.providers.opencode_go", "list_provider_models"),
+    "zai": ("yoke.ai.providers.zai", "list_provider_models"),
 }
+_BUILTIN_PROVIDER_FACTORIES: dict[str, BuiltinProviderFactory] = {}
+_BUILTIN_MODEL_LISTERS: dict[str, BuiltinModelLister] = {}
 
 
 def prepare_provider_args(args: CLIArgs) -> None:
@@ -105,7 +91,7 @@ def list_builtin_provider_models(
 ) -> list[ProviderModelInfo] | None:
     """Return a built-in provider model catalog."""
     normalized = provider_name.strip().lower()
-    lister = _BUILTIN_MODEL_LISTERS.get(normalized)
+    lister = _builtin_model_lister(normalized)
     if lister is None:
         return None
     context = _provider_context(
@@ -118,7 +104,9 @@ def list_builtin_provider_models(
 
 
 def _build_builtin_provider(provider_name: str, args: CLIArgs) -> Provider:
-    factory = _BUILTIN_PROVIDER_FACTORIES[provider_name]
+    factory = _builtin_provider_factory(provider_name)
+    if factory is None:
+        raise ValueError(f"Unsupported built-in provider `{provider_name}`.")
     context = _provider_context(
         provider_name,
         model=args.model,
@@ -146,6 +134,49 @@ def _provider_context(
         model=model,
         reasoning_effort=reasoning_effort,
         env=os.environ,
+    )
+
+
+def _resolve_target(
+    targets: dict[str, tuple[str, str]],
+    cache: dict[str, Callable[..., object]],
+    provider_name: str,
+) -> Callable[..., object] | None:
+    cached = cache.get(provider_name)
+    if cached is not None:
+        return cached
+    target = targets.get(provider_name)
+    if target is None:
+        return None
+    module_name, attribute = target
+    resolved = getattr(import_module(module_name), attribute)
+    if not callable(resolved):
+        raise ValueError(
+            f"Built-in provider target is not callable: {module_name}:{attribute}"
+        )
+    cache[provider_name] = resolved
+    return resolved
+
+
+def _builtin_provider_factory(provider_name: str) -> BuiltinProviderFactory | None:
+    return cast(
+        BuiltinProviderFactory | None,
+        _resolve_target(
+            _BUILTIN_PROVIDER_TARGETS,
+            cast(dict[str, Callable[..., object]], _BUILTIN_PROVIDER_FACTORIES),
+            provider_name,
+        ),
+    )
+
+
+def _builtin_model_lister(provider_name: str) -> BuiltinModelLister | None:
+    return cast(
+        BuiltinModelLister | None,
+        _resolve_target(
+            _BUILTIN_MODEL_LISTER_TARGETS,
+            cast(dict[str, Callable[..., object]], _BUILTIN_MODEL_LISTERS),
+            provider_name,
+        ),
     )
 
 

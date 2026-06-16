@@ -12,7 +12,7 @@ from .support import *  # noqa: F403, F405
 def test_cli_prints_tool_discovery_message_in_interactive_mode(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    tools_dir = tmp_path / ".yoke"
+    tools_dir = tmp_path / ".yoke" / "tools"
     tools_dir.mkdir(parents=True)
     (tools_dir / "repo_echo.py").write_text(
         """
@@ -42,7 +42,7 @@ def register_tools(context):
     out = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "repo tools from .yoke" in out
+    assert "repo tools from .yoke/tools" in out
 
 
 def test_cli_omits_provider_and_model_interactive_scrollback_note() -> None:
@@ -72,7 +72,7 @@ def test_tools_init_creates_scaffold(tmp_path: Path) -> None:
     result = runner.invoke(app, ["tools", "init", "--root", str(tmp_path)])
 
     assert result.exit_code == 0
-    created = tmp_path / ".yoke" / "example_tools.py"
+    created = tmp_path / ".yoke" / "tools" / "example_tools.py"
     assert created.exists()
     text = created.read_text(encoding="utf-8")
     assert "@function_tool" in text
@@ -84,7 +84,7 @@ def test_tools_list_shows_loaded_tools_and_success_message(
 ) -> None:
     from typer.testing import CliRunner
 
-    tools_dir = tmp_path / ".yoke"
+    tools_dir = tmp_path / ".yoke" / "tools"
     tools_dir.mkdir(parents=True)
     (tools_dir / "repo_echo.py").write_text(
         """
@@ -118,7 +118,7 @@ def register_tools(context):
 def test_tools_list_returns_non_zero_on_conflict(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
-    tools_dir = tmp_path / ".yoke"
+    tools_dir = tmp_path / ".yoke" / "tools"
     tools_dir.mkdir(parents=True)
     (tools_dir / "one.py").write_text(
         """
@@ -246,7 +246,8 @@ def test_tools_list_colors_success_warning_and_failure_messages(
         output,
     )
 
-    broken_dir = tmp_path / ".yoke"
+    broken_dir = tmp_path / ".yoke" / "tools"
+    broken_dir.mkdir(parents=True)
     (broken_dir / "broken.py").write_text(
         "raise RuntimeError('boom')\n",
         encoding="utf-8",

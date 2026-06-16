@@ -42,9 +42,10 @@ def test_builtin_tools_are_runtime_bound_during_registration(
 def test_cli_registration_context_matches_runtime_context(
     tmp_path: Path, monkeypatch
 ) -> None:
-    tools_dir = tmp_path / ".yoke"
-    tools_dir.mkdir()
-    (tools_dir / "config.json").write_text(
+    config_dir = tmp_path / ".yoke"
+    tools_dir = config_dir / "tools"
+    tools_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
         '{"tools": {"inspect_model": "allow"}}\n',
         encoding="utf-8",
     )

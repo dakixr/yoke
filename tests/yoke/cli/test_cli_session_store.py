@@ -108,7 +108,7 @@ def test_session_store_round_trips_message_usage(tmp_path: Path) -> None:
     }
 
 
-def test_session_store_migrates_legacy_json_file_on_startup(tmp_path: Path) -> None:
+def test_session_store_migrates_legacy_json_file_on_load(tmp_path: Path) -> None:
     payload = {
         "version": 4,
         "id": "startup-migrate",
@@ -128,17 +128,19 @@ def test_session_store_migrates_legacy_json_file_on_startup(tmp_path: Path) -> N
         json.dumps(payload, indent=2), encoding="utf-8"
     )
 
-    store = SessionStore(directory=tmp_path)
-
     migrated_path = tmp_path / "startup-migrate.jsonl"
+    assert not migrated_path.exists()
+
+    store = SessionStore(directory=tmp_path)
+    record = store.load("startup-migrate")
+
     assert migrated_path.exists()
     assert not (tmp_path / "startup-migrate.json").exists()
-    record = store.load("startup-migrate")
     assert record.id == "startup-migrate"
     assert record.messages[0].text_content() == "hello"
 
 
-def test_session_store_migrates_snapshot_jsonl_file_on_startup(tmp_path: Path) -> None:
+def test_session_store_migrates_snapshot_jsonl_file_on_load(tmp_path: Path) -> None:
     payload = {
         "version": 4,
         "id": "snapshot-migrate",
@@ -167,6 +169,7 @@ def test_session_store_migrates_snapshot_jsonl_file_on_startup(tmp_path: Path) -
     )
 
     store = SessionStore(directory=tmp_path)
+    record = store.load("snapshot-migrate")
 
     migrated_lines = (
         (tmp_path / "snapshot-migrate.jsonl").read_text(encoding="utf-8").splitlines()
@@ -176,7 +179,6 @@ def test_session_store_migrates_snapshot_jsonl_file_on_startup(tmp_path: Path) -
         "session_metadata",
         "conversation_entry",
     ]
-    record = store.load("snapshot-migrate")
     assert record.id == "snapshot-migrate"
     assert record.messages[0].text_content() == "hello"
 

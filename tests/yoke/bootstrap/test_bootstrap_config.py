@@ -82,9 +82,10 @@ def register_tools(context):
 def test_repo_tool_registration_can_contribute_system_messages(
     tmp_path: Path,
 ) -> None:
-    tools_dir = tmp_path / ".yoke"
-    tools_dir.mkdir()
-    (tools_dir / "config.json").write_text(
+    config_dir = tmp_path / ".yoke"
+    tools_dir = config_dir / "tools"
+    tools_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
         '{"tools": {"prompt_tool": "allow"}}\n',
         encoding="utf-8",
     )
@@ -148,7 +149,7 @@ def test_denied_tool_does_not_contribute_system_messages(tmp_path: Path) -> None
 def test_resolve_agent_config_loads_recursive_repo_tools_under_dot_pi(
     tmp_path: Path,
 ) -> None:
-    tools_dir = tmp_path / ".yoke" / "nested" / "utilities"
+    tools_dir = tmp_path / ".yoke" / "tools" / "nested" / "utilities"
     tools_dir.mkdir(parents=True)
     (tmp_path / ".yoke" / "config.json").write_text(
         '{"tools": {"deep_echo": "allow"}}\n', encoding="utf-8"
@@ -190,9 +191,10 @@ def register_tools(context):
 def test_resolve_agent_config_discovers_class_and_function_tools(
     tmp_path: Path,
 ) -> None:
-    tools_dir = tmp_path / ".yoke"
+    config_dir = tmp_path / ".yoke"
+    tools_dir = config_dir / "tools"
     tools_dir.mkdir(parents=True)
-    (tools_dir / "config.json").write_text(
+    (config_dir / "config.json").write_text(
         '{"tools": {"shout": "allow", "count_chars": "allow"}}\n',
         encoding="utf-8",
     )
@@ -353,7 +355,7 @@ def test_conflicting_same_precedence_tools_raise_clear_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
-    global_tools_dir = home / ".yoke"
+    global_tools_dir = home / ".yoke" / "tools"
     global_tools_dir.mkdir(parents=True)
     (global_tools_dir / "one.py").write_text(
         """

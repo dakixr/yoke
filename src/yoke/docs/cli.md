@@ -325,7 +325,7 @@ custom location), then scaffold it with `yoke skills init`.
 
 ## Adding extra tools
 
-Place Python files in `.yoke/` (workspace) or `~/.yoke/` (global) and yoke will load your tools automatically alongside the built-ins.
+Place Python files in `.yoke/tools/` (workspace) or `~/.yoke/tools/` (global) and yoke will load your tools automatically alongside the built-ins.
 
 There are three ways to define tools in these files.
 
@@ -334,7 +334,7 @@ There are three ways to define tools in these files.
 Decorate a typed function and yoke turns it into a tool. The function name becomes the tool name, the docstring becomes the description, and every parameter becomes an argument the agent can pass.
 
 ```python
-# .yoke/tools.py
+# .yoke/tools/tools.py
 from yoke.cli.tools.decorators import function_tool
 
 @function_tool
@@ -365,7 +365,7 @@ Rules:
 For tools that need more logic, workspace access, or Pydantic validation, write a `LocalTool` subclass and mark it with `@class_tool`.
 
 ```python
-# .yoke/tools.py
+# .yoke/tools/tools.py
 from pydantic import Field
 from yoke.cli.tools.decorators import class_tool
 from yoke.agent.tools import WorkspaceTool
@@ -393,7 +393,7 @@ Use `@class_tool(name=..., description=...)` to override the class-level attribu
 If you need runtime configuration (credentials, feature flags, …) return tools from a `register_tools` function. When this function is present, yoke uses it instead of scanning for decorated classes.
 
 ```python
-# .yoke/tools.py
+# .yoke/tools/tools.py
 from yoke.agent.models import Message
 from yoke.agent.tools import ToolRegistrationResult
 

@@ -10,8 +10,8 @@ from typing import cast
 
 from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
-from yoke.cli.config import CLIArgs
-from yoke.cli.config import format_provider_model_status
+from yoke.cli.config.args import CLIArgs
+from yoke.cli.config.runtime import format_provider_model_status
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import resolve_image_path
 from yoke.cli.interactive.completion import SlashCommandCompleter

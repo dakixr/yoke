@@ -11,7 +11,7 @@ from yoke.agent.models import Message
 from yoke.agent.state import AgentState
 from yoke.agent.state import capture_agent_state
 from yoke.agent.state import merge_conversation_branch
-from yoke.cli.config import CLIArgs
+from yoke.cli.config.args import CLIArgs
 from yoke.cli.providers.state import apply_session_provider_defaults
 from yoke.cli.providers.state import capture_provider_session_state
 from yoke.cli.providers.state import provider_session_state_from_values

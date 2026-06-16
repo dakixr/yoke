@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from yoke.ai.providers.base import ProviderModelInfo
-from yoke.cli.config import CLIArgs
+from yoke.cli.config.args import CLIArgs
 from yoke.cli.config.providers import BUILTIN_PROVIDER_NAMES
 from yoke.cli.config.providers import list_builtin_provider_models
 from yoke.cli.providers import available_custom_provider_names

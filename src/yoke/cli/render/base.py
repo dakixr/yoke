@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from yoke import __version__
+from yoke._version import __version__
 
 
 def truncate_cli_text(text: str, limit: int) -> str:

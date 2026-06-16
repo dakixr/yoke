@@ -11,7 +11,7 @@ from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.agent.budget import current_context_fits_provider_budget
 from yoke.agent.budget import rebind_context_manager_budget
-from yoke.cli.config import CLIArgs
+from yoke.cli.config.args import CLIArgs
 from yoke.cli.providers.catalog import parse_provider_model_identifier
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +21,7 @@ from yoke.cli.bootstrap.agents import build_system_messages
 from yoke.cli.bootstrap.config import ToolDiscoveryProvider
 from yoke.cli.bootstrap.config import resolve_agent_config
 from yoke.cli.bootstrap.types import ToolLoadReport
+from yoke.cli.config.args import CLIArgs
 from yoke.cli.config.providers import build_provider_from_args
 from yoke.cli.config.providers import prepare_provider_args
 
@@ -38,22 +38,6 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 RUN_ERRORS = (ProviderError, MaxIterationsExceededError)
-
-
-@dataclass(slots=True)
-class CLIArgs:
-    """CLIArgs."""
-
-    prompt: str | None = None
-    headless: bool = False
-    session: str | None = None
-    model: str | None = None
-    provider_name: str | None = None
-    provider_from_default: bool = False
-    reasoning_effort: str | None = None
-    root: str = os.getcwd()
-    skills: tuple[str, ...] = ()
-    images: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -147,8 +131,8 @@ def format_tool_discovery_message(report: ToolLoadReport) -> str:
     """format_tool_discovery_message."""
     message = (
         f"Loaded {report.count('default')} builtin tools, "
-        f"{report.count('repo')} repo tools from .yoke, "
-        f"{report.count('global')} global tools from ~/.yoke"
+        f"{report.count('repo')} repo tools from .yoke/tools, "
+        f"{report.count('global')} global tools from ~/.yoke/tools"
     )
     config_denied_count = len(report.denied_tools)
     if config_denied_count:

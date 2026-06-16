@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from yoke.cli.config import CLIArgs
+from yoke.cli.config.args import CLIArgs
 from yoke.cli.providers.catalog import ProviderModelChoice
 from yoke.cli.providers.catalog import list_all_provider_model_choices
 from yoke.cli.providers.state import switch_agent_provider_model

@@ -13,8 +13,8 @@ from rich.table import Table
 from rich.text import Text
 
 from yoke.cli.providers.catalog import ProviderModelChoice
-from yoke.cli.config import CLIArgs
-from yoke.cli.config import load_effective_yoke_config
+from yoke.cli.config.args import CLIArgs
+from yoke.cli.config.default_model import load_effective_yoke_config
 from yoke.cli.path_display import format_root_label
 from yoke.cli.providers.catalog import list_all_provider_model_choices
 from yoke.cli.providers.catalog import parse_provider_model_identifier

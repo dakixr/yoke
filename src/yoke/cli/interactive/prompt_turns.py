@@ -12,7 +12,7 @@ from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import capture_agent_state
 from yoke.agent.state import active_branch_entries
-from yoke.cli.config import RUN_ERRORS
+from yoke.cli.config.runtime import RUN_ERRORS
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import (

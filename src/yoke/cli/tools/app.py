@@ -104,7 +104,7 @@ def tools_init(
     ] = False,
 ) -> None:
     """tools_init."""
-    target = root / ".yoke" / "example_tools.py"
+    target = root / ".yoke" / "tools" / "example_tools.py"
     if target.exists() and not force:
         typer.echo(f"Refusing to overwrite existing file: {target}")
         raise typer.Exit(1)

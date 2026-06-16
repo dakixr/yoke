@@ -11,8 +11,8 @@ from threading import Thread
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
-from yoke.cli.config import CLIArgs
-from yoke.cli.config import RUN_ERRORS
+from yoke.cli.config.args import CLIArgs
+from yoke.cli.config.runtime import RUN_ERRORS
 from yoke.cli.image_input import attach_standalone_prompt_image_paths
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.common import BasicCliState

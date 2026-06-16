@@ -7,23 +7,21 @@ import sys
 from pathlib import Path
 from typing import Annotated
 from typing import Any
+from typing import TYPE_CHECKING
 from typing import cast
 
 import click
 import typer
 
-from yoke import __version__
-from yoke.cli.config import CLIArgs
-from yoke.cli.config import build_agent_from_args
-from yoke.cli.interactive import PromptToolkitLiveRenderer
-from yoke.cli.interactive import run_prompt_toolkit_cli
-from yoke.cli.models_app import models_app
-from yoke.cli.providers.app import providers_app
-from yoke.cli.providers.app import providers_login
-from yoke.cli.runtime import run_cli
-from yoke.cli.runtime import run_resume_cli
-from yoke.cli.skills_app import skills_app
-from yoke.cli.tools.app import tools_app
+from yoke._version import __version__
+from yoke.cli.config.args import CLIArgs
+
+if TYPE_CHECKING:
+    from yoke.cli.config import build_agent_from_args as build_agent_from_args
+    from yoke.cli.interactive import PromptToolkitLiveRenderer
+    from yoke.cli.interactive import run_prompt_toolkit_cli as run_prompt_toolkit_cli
+    from yoke.cli.runtime import run_cli as run_cli
+    from yoke.cli.runtime import run_resume_cli as run_resume_cli
 
 CWD = Path.cwd().absolute()
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +31,19 @@ app = typer.Typer(
     rich_markup_mode="rich",
     no_args_is_help=False,
     invoke_without_command=True,
+)
+
+
+tools_app = typer.Typer(help="Manage dynamically loaded tools.")
+models_app = typer.Typer(
+    help="Inspect available models and configure the default model."
+)
+providers_app = typer.Typer(help="Manage dynamically loaded providers.")
+skills_app = typer.Typer(
+    help=(
+        "Manage skills. The CLI discovers built-in skills from the yoke "
+        "codebase plus ~/.yoke/skills and <repo>/.yoke/skills by default."
+    )
 )
 app.add_typer(tools_app, name="tools")
 app.add_typer(models_app, name="models")
@@ -145,6 +156,8 @@ def cli(
     image = [] if image is None else image
     if ctx.invoked_subcommand is not None:
         return
+    from yoke.cli.runtime import run_cli
+
     raise typer.Exit(
         run_cli(
             build_cli_args(
@@ -169,6 +182,8 @@ def login(
     ],
 ) -> None:
     """Interactively store credentials for a provider."""
+    from yoke.cli.providers.app import providers_login
+
     providers_login(name)
 
 
@@ -216,6 +231,8 @@ def resume(
         ),
     ] = CWD,
 ) -> None:
+    from yoke.cli.runtime import run_resume_cli
+
     raise typer.Exit(
         run_resume_cli(
             build_cli_args(
@@ -294,6 +311,10 @@ def _inject_prompt_flag(argv: list[str]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     argv = _inject_prompt_flag(list(argv) if argv is not None else sys.argv[1:])
+    preflight_error = _preflight_startup_error(argv)
+    if preflight_error is not None:
+        click.echo(f"Error: {preflight_error}", err=True)
+        return 1
     try:
         result = app(args=argv, prog_name="yoke", standalone_mode=False)
     except click.ClickException as exc:
@@ -311,6 +332,191 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _option_present(argv: list[str], option: str) -> bool:
+    return option in argv or any(arg.startswith(f"{option}=") for arg in argv)
+
+
+def _preflight_startup_error(argv: list[str]) -> str | None:
+    if not argv or argv[0] in _SUBCOMMANDS or "--help" in argv or "-h" in argv:
+        return None
+    if _option_present(argv, "--image") and not _option_present(argv, "--prompt"):
+        return "Interactive startup images require --prompt as well."
+    if "--headless" not in argv:
+        return None
+    if _option_present(argv, "--prompt"):
+        return None
+    if sys.stdin.isatty():
+        return "Headless mode requires --prompt or prompt text from stdin."
+    try:
+        prompt = input().strip()
+    except EOFError:
+        return "Headless mode requires --prompt or prompt text from stdin."
+    if not prompt:
+        return "Headless mode requires non-empty prompt text from stdin."
+    argv.extend(["--prompt", prompt])
+    return None
+
+
+@tools_app.callback(invoke_without_command=True)
+def _tools_callback(ctx: typer.Context) -> None:
+    """Load the tools app only when a tools command is invoked."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
+
+_LAZY_COMMAND_CONTEXT = {"allow_extra_args": True, "ignore_unknown_options": True}
+
+
+@tools_app.command("init", context_settings=_LAZY_COMMAND_CONTEXT)
+def _tools_init(ctx: typer.Context) -> None:
+    """tools_init."""
+    from yoke.cli.tools.app import tools_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "init", ctx.args))
+
+
+@tools_app.command("activate", context_settings=_LAZY_COMMAND_CONTEXT)
+def _tools_activate(ctx: typer.Context) -> None:
+    """tools_activate."""
+    from yoke.cli.tools.app import tools_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "activate", ctx.args))
+
+
+@tools_app.command("deactivate", context_settings=_LAZY_COMMAND_CONTEXT)
+def _tools_deactivate(ctx: typer.Context) -> None:
+    """tools_deactivate."""
+    from yoke.cli.tools.app import tools_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "deactivate", ctx.args))
+
+
+@tools_app.command("list", context_settings=_LAZY_COMMAND_CONTEXT)
+def _tools_list(ctx: typer.Context) -> None:
+    """tools_list."""
+    from yoke.cli.tools.app import tools_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+
+
+@models_app.callback(invoke_without_command=True)
+def _models_callback(ctx: typer.Context) -> None:
+    """Load the models app only when a models command is invoked."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
+
+@models_app.command("list", context_settings=_LAZY_COMMAND_CONTEXT)
+def _models_list(ctx: typer.Context) -> None:
+    """List all provider-qualified models exposed by yoke providers."""
+    from yoke.cli.models_app import models_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+
+
+@models_app.command("set", context_settings=_LAZY_COMMAND_CONTEXT)
+def _models_set(ctx: typer.Context) -> None:
+    """Set the configured default model in yoke config."""
+    from yoke.cli.models_app import models_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "set", ctx.args))
+
+
+@providers_app.callback(invoke_without_command=True)
+def _providers_callback(ctx: typer.Context) -> None:
+    """Load the providers app only when a providers command is invoked."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
+
+@providers_app.command("login", context_settings=_LAZY_COMMAND_CONTEXT)
+def _providers_login(ctx: typer.Context) -> None:
+    """Interactively store credentials for a provider."""
+    from yoke.cli.providers.app import providers_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "login", ctx.args))
+
+
+@providers_app.command("list", context_settings=_LAZY_COMMAND_CONTEXT)
+def _providers_list(ctx: typer.Context) -> None:
+    """providers_list."""
+    from yoke.cli.providers.app import providers_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+
+
+@providers_app.command("doctor", context_settings=_LAZY_COMMAND_CONTEXT)
+def _providers_doctor(ctx: typer.Context) -> None:
+    """providers_doctor."""
+    from yoke.cli.providers.app import providers_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "doctor", ctx.args))
+
+
+@providers_app.command("init", context_settings=_LAZY_COMMAND_CONTEXT)
+def _providers_init(ctx: typer.Context) -> None:
+    """providers_init."""
+    from yoke.cli.providers.app import providers_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "init", ctx.args))
+
+
+@skills_app.callback(invoke_without_command=True)
+def _skills_callback(ctx: typer.Context) -> None:
+    """Load the skills app only when a skills command is invoked."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
+
+@skills_app.command("list", context_settings=_LAZY_COMMAND_CONTEXT)
+def _skills_list(ctx: typer.Context) -> None:
+    """List discovered skills from built-in and default CLI skill directories."""
+    from yoke.cli.skills_app import skills_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+
+
+@skills_app.command("show", context_settings=_LAZY_COMMAND_CONTEXT)
+def _skills_show(ctx: typer.Context) -> None:
+    """Show the full contents of a discovered skill."""
+    from yoke.cli.skills_app import skills_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "show", ctx.args))
+
+
+@skills_app.command("init", context_settings=_LAZY_COMMAND_CONTEXT)
+def _skills_init(ctx: typer.Context) -> None:
+    """Create a new skill scaffold under .yoke/skills/<name>/SKILL.md."""
+    from yoke.cli.skills_app import skills_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "init", ctx.args))
+
+
+def _invoke_loaded_subcommand(
+    loaded_app: typer.Typer,
+    command_name: str,
+    args: list[str],
+) -> int:
+    try:
+        result = loaded_app(
+            args=[command_name, *args],
+            prog_name=f"yoke {command_name}",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show()
+        return int(exc.exit_code)
+    except typer.Exit as exc:
+        return int(exc.exit_code)
+    if isinstance(result, int):
+        return result
+    return 0
+
+
 __all__ = [
     "CLIArgs",
     "PromptToolkitLiveRenderer",
@@ -321,3 +527,26 @@ __all__ = [
     "run_prompt_toolkit_cli",
     "run_resume_cli",
 ]
+
+_EXPORTS = {
+    "PromptToolkitLiveRenderer": (
+        "yoke.cli.interactive",
+        "PromptToolkitLiveRenderer",
+    ),
+    "build_agent_from_args": ("yoke.cli.config", "build_agent_from_args"),
+    "run_cli": ("yoke.cli.runtime", "run_cli"),
+    "run_prompt_toolkit_cli": ("yoke.cli.interactive", "run_prompt_toolkit_cli"),
+    "run_resume_cli": ("yoke.cli.runtime", "run_resume_cli"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve compatibility exports from this module."""
+    target = _EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute = target
+    module = __import__(module_name, fromlist=[attribute])
+    value = getattr(module, attribute)
+    globals()[name] = value
+    return value

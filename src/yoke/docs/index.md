@@ -13,7 +13,7 @@
 ### Tools
 Tools are the actions the agent can take: read a file, edit a file, run a
 shell command, search the web. The CLI includes built-in tools and
-auto-discovers additional tools from repo `.yoke/` and global `~/.yoke/`
+auto-discovers additional tools from repo `.yoke/tools/` and global `~/.yoke/tools/`
 directories. The SDK lets you pass exactly the tools you want.
 On Windows, isolated tool processes use `spawn`; yoke passes only the invoked
 tool to the child process and strips runtime-only context such as provider

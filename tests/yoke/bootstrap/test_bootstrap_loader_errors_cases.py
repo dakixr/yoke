@@ -48,7 +48,7 @@ def test_invalid_global_config_reports_human_readable_json_error(
 def test_invalid_repo_tool_plugin_does_not_block_startup(
     tmp_path: Path,
 ) -> None:
-    tools_dir = tmp_path / ".yoke"
+    tools_dir = tmp_path / ".yoke" / "tools"
     tools_dir.mkdir(parents=True)
     (tools_dir / "broken.py").write_text(
         "raise RuntimeError('boom during import')\n",
@@ -70,7 +70,7 @@ def test_invalid_repo_tool_plugin_does_not_block_startup(
 def test_repo_tool_plugin_can_relative_import_sibling_module(
     tmp_path: Path,
 ) -> None:
-    tools_dir = tmp_path / ".yoke"
+    tools_dir = tmp_path / ".yoke" / "tools"
     tools_dir.mkdir(parents=True)
     (tools_dir / "helper.py").write_text(
         """
@@ -114,7 +114,7 @@ def test_global_tool_plugin_can_import_cli_tool_decorators(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
-    tools_dir = home / ".yoke"
+    tools_dir = home / ".yoke" / "tools"
     tools_dir.mkdir(parents=True)
     (tools_dir / "legacy_tool.py").write_text(
         """

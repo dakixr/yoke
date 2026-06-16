@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from yoke.agent.models import Message
-from yoke.cli.config import CLIArgs
+from yoke.cli.config.args import CLIArgs
 from yoke.cli.interactive.basic import run_basic_interactive_cli
 from yoke.cli.interactive.common import (
     COMPACTION_IN_PROGRESS_NOTICE as COMPACTION_IN_PROGRESS_NOTICE,

@@ -17,9 +17,9 @@ from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
 from yoke.agent.state import capture_agent_state
 from yoke.cli.bootstrap.types import ToolLoadReport
-from yoke.cli.config import CLIArgs
-from yoke.cli.config import RUN_ERRORS
-from yoke.cli.config import build_cli_agent_from_args
+from yoke.cli.config.args import CLIArgs
+from yoke.cli.config.runtime import RUN_ERRORS
+from yoke.cli.config.runtime import build_cli_agent_from_args
 from yoke.cli.image_input import build_user_message
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
@@ -54,7 +54,7 @@ def print_tool_discovery_message(
     """Print the formatted tool discovery summary."""
     if report is None:
         return
-    from yoke.cli.config import format_tool_discovery_message
+    from yoke.cli.config.runtime import format_tool_discovery_message
 
     build_console(stream).print(
         Text(format_tool_discovery_message(report), style="dim")
@@ -78,7 +78,12 @@ def resolve_cli_mode(
             raise ValueError(
                 "Headless mode requires --prompt or prompt text from stdin."
             )
-        prompt = input_func().strip()
+        try:
+            prompt = input_func().strip()
+        except EOFError as exc:
+            raise ValueError(
+                "Headless mode requires --prompt or prompt text from stdin."
+            ) from exc
         if not prompt:
             raise ValueError("Headless mode requires non-empty prompt text from stdin.")
         return CLIMode(kind="headless", prompt=prompt, images=args.images)
@@ -101,8 +106,8 @@ def run_cli(
     error_console = build_console(error_stream)
     tool_report: ToolLoadReport | None = None
     try:
-        active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
         mode = resolve_cli_mode(args, input_func=input_func)
+        active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
     except ValueError as exc:
         print_error(error_console, str(exc))
         return 1
