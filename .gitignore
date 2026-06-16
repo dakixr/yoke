@@ -11,3 +11,6 @@ wheels/
 
 # External checkouts
 codex-cli/
+
+# Local temp files
+tmp/
