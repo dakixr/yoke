@@ -9,7 +9,7 @@ from yoke.agent import ContextManager
 from yoke.agent import RuntimeAgent
 from yoke.agent.skills import load_skill_registry
 
-__version__ = "0.12.1"
+__version__ = "0.14.0"
 
 __all__ = [
     "AfterToolCallContext",

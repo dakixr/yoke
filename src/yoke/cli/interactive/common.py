@@ -23,14 +23,23 @@ from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import estimate_context_usage
 
 COMPACTION_IN_PROGRESS_NOTICE = "Compacting conversation..."
-SHORTCUTS_NOTICE = (
-    "Keyboard shortcuts: Enter = steer/send, Tab = queue, Shift+Tab = "
-    "cycle thinking effort, Esc Esc = stop current turn, Ctrl+J = "
-    "newline, Ctrl+V = paste image or text, Ctrl+U = "
-    "remove last pending image, Ctrl+O = open tool inspector, "
-    "Ctrl+Q = open queue manager, Ctrl+X M = switch model, "
-    "Ctrl+X T = open tree."
+SHORTCUT_LINES = (
+    "Type `exit` or `quit` to leave.",
+    "Press `Enter` to send, or to steer during a turn.",
+    "Press `Tab` to queue behind the current turn.",
+    "Press `Shift+Tab` to cycle thinking effort.",
+    "Press `Esc` twice to stop the current turn.",
+    "Press `Ctrl+J` or `Shift+Enter` to insert a newline.",
+    "Press `Esc` then `Enter` to insert a newline.",
+    "Press `Ctrl+V` to paste text or attach an image.",
+    "Press `Ctrl+U` to remove the last pending image.",
+    "Press `Ctrl+O` to open the tool inspector.",
+    "Press `Ctrl+Q` to open the queue manager.",
+    "Press `Ctrl+X` then `M` to switch model.",
+    "Press `Ctrl+X` then `T` to open the session tree.",
+    "Use `/shortcuts` or `?` to show this list again.",
 )
+SHORTCUTS_NOTICE = "Keyboard shortcuts:\n" + "\n".join(SHORTCUT_LINES)
 
 
 class InputFunc(Protocol):

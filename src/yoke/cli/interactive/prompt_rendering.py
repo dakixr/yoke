@@ -12,6 +12,7 @@ from rich.text import Text
 from yoke.cli.image_input import format_attachment_lines
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
+from yoke.cli.interactive.common import SHORTCUT_LINES
 from yoke.cli.interactive.renderer import format_bottom_toolbar
 from yoke.cli.render import print_version_banner
 from yoke.cli.render import print_session_scrollback
@@ -49,13 +50,7 @@ def initialize_prompt_toolkit_session(
     print_version_banner(scrollback_console)
     scrollback_console.print(
         Text(
-            "Type `exit` or `quit` to leave.\n"
-            "Press `Esc` twice to stop the current turn.\n"
-            "Press `Enter` during a turn to steer, `Tab` to queue, or "
-            "`Shift+Tab` to cycle thinking effort.\n"
-            "Use Ctrl+J for a new line.\n"
-            "Use `Ctrl+V` or `/image <path>` to attach images.\n"
-            "Use `Ctrl+U` to remove the last image.\n",
+            "\n".join(SHORTCUT_LINES) + "\n",
             style="dim",
         )
     )

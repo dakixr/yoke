@@ -141,6 +141,8 @@ turn.
 - Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can
   edit, delete, promote, reorder, pause, or mark pending prompts as steering.
 - Press `Enter` to steer/send immediately while a turn is running.
+- Press `Ctrl+X` then `M` or run `/model` to open the fullscreen model switcher.
+- Press `Ctrl+X` then `T` or run `/tree` to open the session tree.
 - While a model request is in flight, steering or `Esc Esc` asks providers with
   cancellation support to abort the request immediately. Providers without the
   optional cancellation hook still stop at the next safe boundary.
@@ -168,7 +170,8 @@ turn.
 - Persisted provider reasoning effort is normalized on resume; provider configs
   accept saved effort values even when a model catalog omits explicit thinking
   levels.
-- Press `Ctrl+J` to insert a newline.
+- Press `Ctrl+J` or `Shift+Enter` to insert a newline when supported by the terminal.
+- Press `Esc` then `Enter` to insert a newline when `Shift+Enter` is unavailable.
 - Pasting multiline text keeps the entire paste in the current prompt; press
   `Enter` after the paste to submit it.
 - Dragging a local image file into the terminal on macOS usually inserts an
