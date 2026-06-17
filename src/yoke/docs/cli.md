@@ -29,6 +29,7 @@ yoke --headless --image chart.png --image legend.png "summarize these charts"
 
 ```bash
 yoke --model codex:gpt-5.4-mini "..."
+yoke --model opencode-go:glm-5.2 "..."
 yoke --model opencode-go:kimi-k2.7-code "..."
 yoke --model opencode-go:minimax-m3 "Review this repository and suggest refactors"
 ```
@@ -79,6 +80,7 @@ Outside a session you can inspect and configure models directly:
 ```bash
 yoke models list
 yoke models set codex:gpt-5.4-mini
+yoke models set opencode-go:glm-5.2
 yoke models set zai:glm-5.2
 yoke models set zai:glm-5.1
 yoke models set codex:gpt-5.4-mini --reasoning-effort high

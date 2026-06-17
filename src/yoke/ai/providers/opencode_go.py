@@ -67,6 +67,7 @@ MODEL_PROTOCOLS = {
     "minimax-m2.7": "anthropic",
     "kimi-k2.5": "openai",
     "mimo-v2.5-pro": "openai",
+    "glm-5.2": "openai",
     "glm-5": "openai",
     "mimo-v2.5": "openai",
     "qwen3.7-plus": "anthropic",
@@ -83,6 +84,14 @@ MODEL_PROTOCOLS = {
 }
 
 MODEL_CATALOG = build_model_catalog(
+    ProviderModelInfo(
+        id="glm-5.2",
+        display_name="GLM-5.2",
+        context_window_tokens=200_000,
+        thinking_levels=GLM_THINKING_LEVELS,
+        default_thinking_level=None,
+        supports_image_inputs=False,
+    ),
     ProviderModelInfo(
         id="glm-5.1",
         display_name="GLM-5.1",

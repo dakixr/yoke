@@ -71,6 +71,7 @@ def test_opencode_go_catalog_includes_kimi_k2_7_code() -> None:
 
 def test_opencode_go_catalog_matches_current_reasoning_efforts() -> None:
     expected = {
+        "glm-5.2": (),
         "glm-5.1": (),
         "glm-5": (),
         "kimi-k2.7-code": (),
