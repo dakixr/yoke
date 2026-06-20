@@ -23,7 +23,12 @@ from yoke.agent.tools import LocalTool
 
 TOOL_CANCEL_GRACE_SECONDS = 0.25
 TOOL_POLL_SECONDS = 0.02
-SPAWN_UNSAFE_CONTEXT_KEYS = {"cancel_requested", "provider", "runtime_context"}
+SPAWN_UNSAFE_CONTEXT_KEYS = {
+    "cancel_requested",
+    "provider",
+    "runtime_context",
+    "tool_event",
+}
 _ACTIVE_INVOCATIONS: weakref.WeakSet[ToolProcessInvocation]
 
 
@@ -41,10 +46,18 @@ class ToolProcessInvocation:
         tool = _tool_for_child_process(tools.get(name), self._context)
         self._cancel_event = self._context.Event()
         self._result_queue: Queue[dict[str, object]] = self._context.Queue(maxsize=1)
+        self._event_queue: Queue[tuple[str, dict[str, object]]] = self._context.Queue()
         context: Any = self._context
         self._process: Process = context.Process(
             target=_tool_process_main,
-            args=(tool, name, arguments, self._cancel_event, self._result_queue),
+            args=(
+                tool,
+                name,
+                arguments,
+                self._cancel_event,
+                self._result_queue,
+                self._event_queue,
+            ),
         )
         self._result: dict[str, object] | None = None
         self._cancelled = False
@@ -105,6 +118,8 @@ class ToolProcessInvocation:
             self._closed = True
             self._result_queue.close()
             self._result_queue.join_thread()
+            self._event_queue.close()
+            self._event_queue.join_thread()
             return
         if not self._process.is_alive():
             self.close()
@@ -129,6 +144,8 @@ class ToolProcessInvocation:
         if not self._started:
             self._result_queue.close()
             self._result_queue.join_thread()
+            self._event_queue.close()
+            self._event_queue.join_thread()
             self._closed = True
             return
         if self._process.is_alive():
@@ -144,8 +161,19 @@ class ToolProcessInvocation:
         self._process.join(timeout=0)
         self._result_queue.close()
         self._result_queue.join_thread()
+        self._event_queue.close()
+        self._event_queue.join_thread()
         self._closed = True
         _ACTIVE_INVOCATIONS.discard(self)
+
+    def drain_events(self) -> list[tuple[str, dict[str, object]]]:
+        """Return runtime events produced by the child tool since the last drain."""
+        events: list[tuple[str, dict[str, object]]] = []
+        while True:
+            try:
+                events.append(self._event_queue.get_nowait())
+            except queue.Empty:
+                return events
 
 
 _ACTIVE_INVOCATIONS = weakref.WeakSet()
@@ -164,14 +192,18 @@ def wait_for_tool_process(
     invocation: ToolProcessInvocation,
     *,
     stop_requested: StopRequested | None,
+    emit=None,
+    event_payload: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], bool]:
     """Wait for one tool process, cancelling it if the turn stops."""
     try:
         while not invocation.done():
+            _emit_invocation_events(invocation, emit, event_payload)
             if stop_requested is not None and stop_requested():
                 invocation.cancel()
                 return cancelled_tool_result(), True
             time.sleep(TOOL_POLL_SECONDS)
+        _emit_invocation_events(invocation, emit, event_payload)
         return invocation.result(), False
     except BaseException:
         invocation.cancel()
@@ -184,8 +216,14 @@ def _tool_process_main(
     arguments: dict[str, object],
     cancel_event,
     result_queue: Queue[dict[str, object]],
+    event_queue: Queue[tuple[str, dict[str, object]]],
 ) -> None:
     _start_process_group()
+    if tool is not None:
+        tool._context = {
+            **tool._context,
+            "tool_event": _queue_tool_event(event_queue),
+        }
     tools = {tool.name: tool} if tool is not None else {}
     result = execute_tool(
         tools,
@@ -194,6 +232,24 @@ def _tool_process_main(
         cancel_requested=cancel_event.is_set,
     )
     result_queue.put(_pickle_safe_result(result))
+
+
+def _queue_tool_event(event_queue: Queue[tuple[str, dict[str, object]]]):
+    def emit_tool_event(event: str, payload: dict[str, object]) -> None:
+        event_queue.put((event, _pickle_safe_event_payload(payload)))
+
+    return emit_tool_event
+
+
+def _emit_invocation_events(
+    invocation: ToolProcessInvocation,
+    emit,
+    event_payload: dict[str, object] | None,
+) -> None:
+    if emit is None:
+        return
+    for event, payload in invocation.drain_events():
+        emit(event, {**(event_payload or {}), **payload})
 
 
 def _process_context() -> BaseContext:
@@ -275,3 +331,11 @@ def _pickle_safe_result(result: dict[str, object]) -> dict[str, object]:
             "error": f"Tool returned a non-serializable result: {exc}",
         }
     return result
+
+
+def _pickle_safe_event_payload(payload: dict[str, object]) -> dict[str, object]:
+    try:
+        pickle.dumps(payload)
+    except Exception as exc:
+        return {"error": f"Tool emitted a non-serializable event payload: {exc}"}
+    return payload

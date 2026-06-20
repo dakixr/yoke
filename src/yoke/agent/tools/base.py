@@ -74,6 +74,7 @@ class LocalTool(BaseModel, ABC):
         self._context["root"] = context.root
         self._context["home"] = context.home
         self._context["cancel_requested"] = context.cancel_requested
+        self._context["tool_event"] = context.tool_event
 
     def _is_cancel_requested(self) -> bool:
         runtime_context = self._context.get("runtime_context")
@@ -86,6 +87,16 @@ class LocalTool(BaseModel, ABC):
             return False
         callback_fn = cast(Callable[[], object], callback)
         return bool(callback_fn())
+
+    def _emit_tool_event(self, event: str, payload: dict[str, object]) -> None:
+        runtime_context = self._context.get("runtime_context")
+        callback = self._context.get("tool_event")
+        if isinstance(runtime_context, ToolRuntimeContext):
+            callback = runtime_context.tool_event or callback
+        if not callable(callback):
+            return
+        callback_fn = cast(Callable[[str, dict[str, object]], object], callback)
+        callback_fn(event, payload)
 
     def to_definition(self) -> dict[str, object]:
         """Return the tool definition dict for the provider API."""

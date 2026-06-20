@@ -74,6 +74,7 @@ def execute_tool(
     arguments: dict[str, object],
     *,
     cancel_requested: StopRequested | None = None,
+    tool_event=None,
 ) -> dict[str, object]:
     """Execute a named tool with parsed arguments."""
     try:
@@ -90,6 +91,13 @@ def execute_tool(
                         runtime_context,
                         cancel_requested=cancel_requested,
                     )
+                )
+        if tool_event is not None:
+            invocation._context = {**invocation._context, "tool_event": tool_event}
+            runtime_context = invocation._context.get("runtime_context")
+            if isinstance(runtime_context, ToolRuntimeContext):
+                invocation.bind_runtime_context(
+                    replace(runtime_context, tool_event=tool_event)
                 )
         return invocation.execute()
     except KeyError as exc:
@@ -205,6 +213,7 @@ def finalize_tool_result(
             "tool_call_id": tool_call.id,
             "ok": finalized.get("ok", False),
             "result": finalized,
+            "executed_arguments": arguments,
         },
     )
     return finalized

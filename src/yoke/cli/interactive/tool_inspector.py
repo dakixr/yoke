@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
 from yoke.cli.interactive.tool_trace import ToolTraceEntry
+from yoke.cli.interactive.tool_trace import ToolTraceContext
+from yoke.cli.interactive.tool_trace import ToolTraceStore
 from yoke.cli.interactive.tool_inspector_render import detail_text
 from yoke.cli.interactive.tool_inspector_render import entry_text
 from yoke.cli.interactive.tool_inspector_render import move_selection
@@ -14,6 +17,7 @@ from yoke.cli.interactive.tool_inspector_render import page_step
 from yoke.cli.interactive.tool_inspector_render import render_view_html
 from yoke.cli.interactive.tool_inspector_render import selected_entry
 from yoke.cli.interactive.tool_inspector_render import sidebar_items
+from yoke.cli.interactive.tool_inspector_render import terminal_size
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )
@@ -43,6 +47,15 @@ class ToolInspectorState:
 
 def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
     """Open a fullscreen alternate-buffer view of tool calls."""
+    open_live_tool_inspector(lambda: list(entries))
+
+
+def open_live_tool_inspector(
+    entries_provider: Callable[[], Sequence[ToolTraceEntry]],
+    *,
+    trace_store: ToolTraceStore | None = None,
+) -> None:
+    """Open a fullscreen alternate-buffer view of live tool calls."""
     from prompt_toolkit.application import Application
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.key_binding import KeyBindings
@@ -50,11 +63,13 @@ def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
     from prompt_toolkit.layout import Layout
     from prompt_toolkit.layout.containers import Window
     from prompt_toolkit.layout.controls import FormattedTextControl
+    from prompt_toolkit.mouse_events import MouseEvent
 
-    state = ToolInspectorState(entries=list(entries))
+    state = ToolInspectorState(entries=list(entries_provider()))
     key_bindings = KeyBindings()
 
     def visible_entries():
+        _refresh_entries(state, entries_provider)
         query = state.search.strip().lower()
         items = sidebar_items(state.entries)
         if not query:
@@ -65,6 +80,12 @@ def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
         visible = visible_entries()
         return HTML(render_view_html(state, visible))
 
+    def handle_mouse(mouse_event: MouseEvent):
+        visible = visible_entries()
+        _handle_mouse_event(state, visible, mouse_event)
+        app.invalidate()
+        return None
+
     _register_tool_inspector_keys(
         key_bindings,
         state=state,
@@ -72,16 +93,27 @@ def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
         any_key=Keys.Any,
     )
 
-    control = FormattedTextControl(formatted_rows, focusable=True)
+    class ToolInspectorControl(FormattedTextControl):
+        def mouse_handler(self, mouse_event: MouseEvent):
+            return handle_mouse(mouse_event)
+
+    control = ToolInspectorControl(formatted_rows, focusable=True)
     app: Application[None] = Application(
         layout=Layout(Window(content=control, always_hide_cursor=True)),
         key_bindings=key_bindings,
         full_screen=True,
-        mouse_support=False,
+        mouse_support=True,
     )
+    unsubscribe = None
+    if trace_store is not None:
+        unsubscribe = trace_store.subscribe(lambda: app.invalidate())
     with suppress(EOFError, KeyboardInterrupt):
         with suppress_terminal_output_for_fullscreen():
-            app.run()
+            try:
+                app.run()
+            finally:
+                if unsubscribe is not None:
+                    unsubscribe()
 
 
 def _register_tool_inspector_keys(
@@ -266,3 +298,75 @@ def _register_copy_and_exit_keys(key_bindings, state, visible_entries) -> None:
 def _other_pane(pane: str) -> Literal["sidebar", "detail"]:
     """Return the opposite inspector pane."""
     return "detail" if pane == "sidebar" else "sidebar"
+
+
+def _refresh_entries(
+    state: ToolInspectorState,
+    entries_provider: Callable[[], Sequence[ToolTraceEntry]],
+) -> None:
+    """Refresh state entries while preserving selection when possible."""
+    current_items = sidebar_items(state.entries)
+    current_key = _item_key(selected_entry(state, current_items))
+    was_at_tail = bool(current_items) and state.selected_index >= len(current_items) - 1
+    next_entries = list(entries_provider())
+    if next_entries == state.entries:
+        return
+    state.entries = next_entries
+    next_items = sidebar_items(state.entries)
+    if not next_items:
+        state.selected_index = 0
+        return
+    if was_at_tail:
+        state.selected_index = len(next_items) - 1
+        return
+    if current_key is None:
+        state.selected_index = min(state.selected_index, len(next_items) - 1)
+        return
+    for index, item in enumerate(next_items):
+        if _item_key(item) == current_key:
+            state.selected_index = index
+            return
+    state.selected_index = min(state.selected_index, len(next_items) - 1)
+
+
+def _item_key(item: ToolTraceEntry | ToolTraceContext | None) -> tuple[str, str] | None:
+    if item is None:
+        return None
+    if isinstance(item, ToolTraceContext):
+        return ("context", f"{item.role}:{item.text}")
+    return ("tool", item.tool_call_id)
+
+
+def _handle_mouse_event(state, visible, mouse_event) -> None:
+    from prompt_toolkit.mouse_events import MouseEventType
+
+    columns, rows = terminal_size()
+    columns = max(60, columns)
+    body_rows = max(4, rows - 5)
+    list_width = min(max(28, columns // 3), 46)
+    x = mouse_event.position.x
+    y = mouse_event.position.y
+    if x <= list_width:
+        state.active_pane = "sidebar"
+    elif x >= list_width + 3:
+        state.active_pane = "detail"
+    if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+        if state.active_pane == "sidebar":
+            move_selection(state, visible, 3)
+        else:
+            state.detail_scroll += 3
+        return
+    if mouse_event.event_type == MouseEventType.SCROLL_UP:
+        if state.active_pane == "sidebar":
+            move_selection(state, visible, -3)
+        else:
+            state.detail_scroll = max(0, state.detail_scroll - 3)
+        return
+    if mouse_event.event_type != MouseEventType.MOUSE_UP:
+        return
+    row = y - 3
+    if state.active_pane == "sidebar" and 0 <= row < body_rows:
+        index = state.list_scroll + row
+        if 0 <= index < len(visible):
+            state.selected_index = index
+            state.detail_scroll = 0

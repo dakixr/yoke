@@ -39,7 +39,7 @@ from yoke.cli.interactive.prompt_rendering import run_scrollback_render
 from yoke.cli.interactive.queue_persistence import load_prompt_queue
 from yoke.cli.interactive.queue_persistence import persist_prompt_queue
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
-from yoke.cli.interactive.tool_inspector import open_tool_inspector
+from yoke.cli.interactive.tool_inspector import open_live_tool_inspector
 from yoke.cli.interactive.tool_trace import ToolTraceStore
 from yoke.cli.interactive.tool_trace import entries_from_messages
 from yoke.cli.interactive.tool_trace import merge_trace_entries
@@ -194,20 +194,28 @@ def run_prompt_toolkit_cli(  # noqa: C901
     key_bindings = KeyBindings()
 
     def show_tool_inspector() -> None:
-        with state_lock:
-            message_snapshot = list(state.messages)
-        entries = merge_trace_entries(
-            entries_from_messages(message_snapshot),
-            tool_trace_store.snapshot(),
-        )
+        def current_entries():
+            with state_lock:
+                message_snapshot = list(state.messages)
+            return merge_trace_entries(
+                entries_from_messages(message_snapshot),
+                tool_trace_store.snapshot(),
+            )
+
         app = prompt_session.app
         loop = app.loop
         if loop is None:
-            open_tool_inspector(entries)
+            open_live_tool_inspector(
+                current_entries,
+                trace_store=tool_trace_store,
+            )
             return
         loop.call_soon_threadsafe(
             lambda: run_in_terminal(
-                lambda: open_tool_inspector(entries),
+                lambda: open_live_tool_inspector(
+                    current_entries,
+                    trace_store=tool_trace_store,
+                ),
                 in_executor=True,
             )
         )

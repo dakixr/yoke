@@ -155,7 +155,11 @@ class PromptToolkitLiveRenderer:
         event: str,
         payload: dict[str, object],
     ) -> None:
-        if event not in {"tool_execution_start", "tool_execution_end"}:
+        if event not in {
+            "tool_execution_start",
+            "tool_execution_output_delta",
+            "tool_execution_end",
+        }:
             return
         if self._record_tool_event is not None:
             self._record_tool_event(event, payload)

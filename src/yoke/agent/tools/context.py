@@ -87,6 +87,7 @@ class ToolRuntimeContext:
     provider: Provider
     model: ModelIdentity
     cancel_requested: Callable[[], bool] = never_cancel
+    tool_event: Callable[[str, dict[str, object]], None] | None = None
 
     @property
     def provider_name(self) -> str:

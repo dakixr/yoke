@@ -152,6 +152,8 @@ turn.
 - Press `Ctrl+U` to remove the last pending image attachment.
 - Press `Ctrl+O` to open the fullscreen tool inspector. It shows complete
   tool call arguments, executed arguments, results, status, and duration.
+- The tool inspector updates while it is open, supports mouse click/scroll, and
+  shows streamed output from `bash` and `python_exec` while commands run.
 - While a fullscreen menu is open, live turn output is deferred and replayed
   after the menu closes so background tool updates do not overwrite the view.
 - Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can

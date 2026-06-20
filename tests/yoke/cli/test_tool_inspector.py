@@ -9,6 +9,8 @@ from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
 from yoke.cli.interactive.tool_inspector import ToolInspectorState
+from yoke.cli.interactive.tool_inspector import _handle_mouse_event
+from yoke.cli.interactive.tool_inspector import _refresh_entries
 from yoke.cli.interactive.tool_inspector_render import detail_text
 from yoke.cli.interactive.tool_inspector_render import render_view
 from yoke.cli.interactive.tool_inspector_render import render_view_html
@@ -209,6 +211,47 @@ def test_live_trace_store_records_executed_arguments_and_failures() -> None:
     assert entry.duration_seconds is not None
 
 
+def test_live_trace_store_records_streamed_output_and_notifies() -> None:
+    store = ToolTraceStore()
+    notifications = 0
+
+    def notify() -> None:
+        nonlocal notifications
+        notifications += 1
+
+    unsubscribe = store.subscribe(notify)
+    store.record_event(
+        "tool_execution_output_delta",
+        {
+            "iteration": 1,
+            "tool_name": "bash",
+            "tool_call_id": "call-stream",
+            "stream": "stdout",
+            "text": "hello\n",
+        },
+    )
+    unsubscribe()
+    store.record_event(
+        "tool_execution_output_delta",
+        {
+            "tool_call_id": "call-stream",
+            "stream": "stderr",
+            "text": "ignored notification\n",
+        },
+    )
+
+    entry = store.snapshot()[0]
+
+    assert notifications == 1
+    assert store.version() == 2
+    assert entry.status == "running"
+    assert entry.output_chunks is not None
+    assert [(chunk.stream, chunk.text) for chunk in entry.output_chunks] == [
+        ("stdout", "hello\n"),
+        ("stderr", "ignored notification\n"),
+    ]
+
+
 def test_merge_trace_entries_prefers_live_details() -> None:
     completed = entries_from_messages(
         [
@@ -267,6 +310,32 @@ def test_tool_inspector_detail_text_formats_text_result_blocks() -> None:
     assert "Output" in text
     assert "[STDOUT]\n1 │ line 1\n2 │ line 2" in text
     assert '"exit_status": 0' in text
+
+
+def test_tool_inspector_detail_text_shows_live_output() -> None:
+    store = ToolTraceStore()
+    store.record_event(
+        "tool_execution_start",
+        {
+            "tool_name": "bash",
+            "tool_call_id": "call-live",
+            "tool_arguments": '{"command":"pytest"}',
+        },
+    )
+    store.record_event(
+        "tool_execution_output_delta",
+        {
+            "tool_name": "bash",
+            "tool_call_id": "call-live",
+            "stream": "stdout",
+            "text": "collecting\n",
+        },
+    )
+
+    text = detail_text(store.snapshot()[0], ToolInspectorState(entries=[]))
+
+    assert "Live Output" in text
+    assert "[STDOUT]\ncollecting" in text
 
 
 def test_tool_inspector_starts_on_last_sidebar_item() -> None:
@@ -643,3 +712,65 @@ def test_tool_inspector_scroll_wheel_uses_active_pane() -> None:
 
     assert state.selected_index == 1
     assert state.detail_scroll == 1
+
+
+def test_tool_inspector_refresh_preserves_selection_and_follows_tail() -> None:
+    first = [
+        ToolTraceEntry(tool_call_id="call-1", tool_name="read"),
+        ToolTraceEntry(tool_call_id="call-2", tool_name="edit"),
+    ]
+    second = [
+        *first,
+        ToolTraceEntry(tool_call_id="call-3", tool_name="bash"),
+    ]
+    state = ToolInspectorState(entries=first)
+
+    _refresh_entries(state, lambda: second)
+
+    assert state.selected_index == 2
+
+    state.selected_index = 0
+    third = [
+        ToolTraceEntry(tool_call_id="call-1", tool_name="read", status="ok"),
+        *second[1:],
+    ]
+    _refresh_entries(state, lambda: third)
+
+    assert state.selected_index == 0
+
+
+def test_tool_inspector_mouse_selects_sidebar_row(monkeypatch) -> None:
+    from prompt_toolkit.data_structures import Point
+    from prompt_toolkit.mouse_events import MouseButton
+    from prompt_toolkit.mouse_events import MouseEvent
+    from prompt_toolkit.mouse_events import MouseEventType
+
+    monkeypatch.setattr(
+        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        lambda: (80, 10),
+    )
+    monkeypatch.setattr(
+        "yoke.cli.interactive.tool_inspector.terminal_size",
+        lambda: (80, 10),
+    )
+    state = ToolInspectorState(
+        entries=[
+            ToolTraceEntry(tool_call_id="call-1", tool_name="read"),
+            ToolTraceEntry(tool_call_id="call-2", tool_name="edit"),
+        ]
+    )
+    state.selected_index = 0
+
+    _handle_mouse_event(
+        state,
+        sidebar_items(state.entries),
+        MouseEvent(
+            position=Point(x=1, y=4),
+            event_type=MouseEventType.MOUSE_UP,
+            button=MouseButton.LEFT,
+            modifiers=frozenset(),
+        ),
+    )
+
+    assert state.active_pane == "sidebar"
+    assert state.selected_index == 1

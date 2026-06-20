@@ -137,8 +137,8 @@ def test_prompt_toolkit_ctrl_o_runs_inspector_in_executor(
     )
     monkeypatch.setattr(
         prompt_module,
-        "open_tool_inspector",
-        lambda _entries: None,
+        "open_live_tool_inspector",
+        lambda _entries_provider, *, trace_store=None: None,
     )
 
     exit_code = run_prompt_toolkit_cli(

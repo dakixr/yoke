@@ -24,9 +24,12 @@ def _execute_tool_call(
     tools: dict[str, LocalTool],
     prepared: PreparedToolCall,
     context: AgentContext,
+    iteration: int,
+    emit,
     stop_requested: StopRequested | None,
 ) -> tuple[dict[str, object], bool]:
     tool = tools.get(prepared.tool_call.function.name)
+    event_payload = _tool_event_payload(prepared.tool_call, iteration)
     if tool is not None and tool.execute_in_process:
         from yoke.agent.loop.tool_core import execute_tool
 
@@ -36,6 +39,10 @@ def _execute_tool_call(
             prepared.tool_call.function.name,
             prepared.arguments,
             cancel_requested=stop_requested,
+            tool_event=lambda event, payload: emit(
+                event,
+                {**event_payload, **payload},
+            ),
         ), is_stopped(stop_requested)
     invocation = ToolProcessInvocation(
         tools=tools,
@@ -47,6 +54,8 @@ def _execute_tool_call(
         return wait_for_tool_process(
             invocation,
             stop_requested=stop_requested,
+            emit=emit,
+            event_payload=event_payload,
         )
     except BaseException:
         invocation.cancel()
@@ -207,6 +216,8 @@ def _execute_sequential(
             tools=tools,
             prepared=prepared,
             context=context,
+            iteration=iteration,
+            emit=emit,
             stop_requested=stop_requested,
         )
         finalized = finalize_tool_result(
@@ -261,6 +272,15 @@ def _execute_parallel(
             invocation_pairs.append((invocation, prepared))
         pending = dict(invocation_pairs)
         while pending:
+            for invocation, prepared in pending.items():
+                for event, payload in invocation.drain_events():
+                    emit(
+                        event,
+                        {
+                            **_tool_event_payload(prepared.tool_call, iteration),
+                            **payload,
+                        },
+                    )
             if is_stopped(stop_requested):
                 for invocation in pending:
                     invocation.cancel()
@@ -282,6 +302,14 @@ def _execute_parallel(
                 continue
             for invocation in done:
                 prepared = pending.pop(invocation)
+                for event, payload in invocation.drain_events():
+                    emit(
+                        event,
+                        {
+                            **_tool_event_payload(prepared.tool_call, iteration),
+                            **payload,
+                        },
+                    )
                 raw_result = invocation.result()
                 finalized = finalize_tool_result(
                     tools=tools,
@@ -299,3 +327,11 @@ def _execute_parallel(
         for invocation, _ in invocation_pairs:
             invocation.cancel()
     return order_results(prepared_calls, results), False
+
+
+def _tool_event_payload(tool_call: ToolCall, iteration: int) -> dict[str, object]:
+    return {
+        "iteration": iteration,
+        "tool_name": tool_call.function.name,
+        "tool_call_id": tool_call.id,
+    }

@@ -189,6 +189,35 @@ def test_command_tool_exposes_current_python_as_python_commands(tmp_path: Path) 
     assert lines == [sys.executable, sys.executable]
 
 
+def test_command_tool_streams_output_chunks(tmp_path: Path) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    tool = CommandTool.bind(
+        root=tmp_path,
+        tool_event=lambda event, payload: events.append((event, payload)),
+    )
+
+    result = as_dict(
+        tool.parse_arguments(
+            {
+                "command": (
+                    f"{shlex.quote(sys.executable)} -c "
+                    '\'import sys; print("out"); print("err", file=sys.stderr)\''
+                )
+            }
+        ).execute()
+    )
+
+    assert result["ok"] is True
+    assert (
+        "tool_execution_output_delta",
+        {"stream": "stdout", "text": "out\n"},
+    ) in events
+    assert (
+        "tool_execution_output_delta",
+        {"stream": "stderr", "text": "err\n"},
+    ) in events
+
+
 def test_command_tool_reports_timeout_metadata(tmp_path: Path) -> None:
     tools = tool_set(tmp_path)
     result = as_dict(
@@ -236,6 +265,30 @@ def test_python_exec_exposes_current_python_to_subprocesses(tmp_path: Path) -> N
     assert result["python_executable"] == sys.executable
     lines = cast(str, result["output"]).splitlines()
     assert lines == [sys.executable] * 4
+
+
+def test_python_exec_streams_output_chunks(tmp_path: Path) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    tool = PythonExecTool.bind(
+        root=tmp_path,
+        tool_event=lambda event, payload: events.append((event, payload)),
+    )
+
+    result = as_dict(
+        tool.parse_arguments(
+            {"code": "import sys\nprint('out')\nprint('err', file=sys.stderr)"}
+        ).execute()
+    )
+
+    assert result["ok"] is True
+    assert (
+        "tool_execution_output_delta",
+        {"stream": "stdout", "text": "out\n"},
+    ) in events
+    assert (
+        "tool_execution_output_delta",
+        {"stream": "stderr", "text": "err\n"},
+    ) in events
 
 
 def test_command_tool_preserves_quoted_heredoc_content(tmp_path: Path) -> None:

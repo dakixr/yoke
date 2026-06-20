@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock
 from typing import Literal
@@ -12,11 +13,22 @@ from typing import cast
 from yoke.agent.models import Message
 
 
+MAX_LIVE_OUTPUT_CHARS = 50_000
+
+
 @dataclass(slots=True)
 class ToolTraceContext:
     """Conversation context shown near a tool call."""
 
     role: Literal["user", "assistant"]
+    text: str
+
+
+@dataclass(slots=True)
+class ToolTraceOutputChunk:
+    """A streamed output chunk produced while a tool is running."""
+
+    stream: str
     text: str
 
 
@@ -35,6 +47,7 @@ class ToolTraceEntry:
     status: str = "pending"
     context: list[ToolTraceContext] | None = None
     after_context: list[ToolTraceContext] | None = None
+    output_chunks: list[ToolTraceOutputChunk] | None = None
 
     @property
     def duration_seconds(self) -> float | None:
@@ -52,11 +65,16 @@ class ToolTraceStore:
         self._entries: dict[str, ToolTraceEntry] = {}
         self._order: list[str] = []
         self._lock = Lock()
+        self._subscribers: list[Callable[[], None]] = []
+        self._version = 0
 
     def record_event(self, event: str, payload: dict[str, object]) -> None:
         """Record one runtime event if it describes a tool call."""
         if event == "tool_execution_start":
             self.record_start(payload)
+            return
+        if event == "tool_execution_output_delta":
+            self.record_output_delta(payload)
             return
         if event == "tool_execution_end":
             self.record_end(payload)
@@ -81,6 +99,38 @@ class ToolTraceStore:
             entry.iteration = _payload_int(payload, "iteration")
             entry.started_at = time.monotonic()
             entry.status = "running"
+            subscribers = self._changed_locked()
+        self._notify(subscribers)
+
+    def record_output_delta(self, payload: dict[str, object]) -> None:
+        """Record a streamed output chunk for a running tool."""
+        tool_call_id = _payload_text(payload, "tool_call_id")
+        tool_name = _payload_text(payload, "tool_name") or "tool"
+        text = _payload_text(payload, "text")
+        if not tool_call_id or not text:
+            return
+        stream = _payload_text(payload, "stream") or "output"
+        with self._lock:
+            entry = self._entries.get(tool_call_id)
+            if entry is None:
+                entry = ToolTraceEntry(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                )
+                self._entries[tool_call_id] = entry
+                self._order.append(tool_call_id)
+            entry.tool_name = tool_name
+            entry.iteration = _payload_int(payload, "iteration") or entry.iteration
+            if entry.started_at is None:
+                entry.started_at = time.monotonic()
+            if entry.status == "pending":
+                entry.status = "running"
+            chunks = entry.output_chunks if entry.output_chunks is not None else []
+            chunks.append(ToolTraceOutputChunk(stream=stream, text=text))
+            _trim_output_chunks(chunks)
+            entry.output_chunks = chunks
+            subscribers = self._changed_locked()
+        self._notify(subscribers)
 
     def record_end(self, payload: dict[str, object]) -> None:
         """Record a tool completion event."""
@@ -111,6 +161,8 @@ class ToolTraceStore:
                 cast(dict[str, object], result) if isinstance(result, dict) else None
             )
             entry.status = "ok" if payload.get("ok", False) else "failed"
+            subscribers = self._changed_locked()
+        self._notify(subscribers)
 
     def snapshot(self) -> list[ToolTraceEntry]:
         """Return a stable snapshot of live trace entries."""
@@ -120,6 +172,31 @@ class ToolTraceStore:
                 for tool_call_id in self._order
                 if tool_call_id in self._entries
             ]
+
+    def version(self) -> int:
+        """Return a monotonically increasing trace version."""
+        with self._lock:
+            return self._version
+
+    def subscribe(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Call callback after future trace changes and return an unsubscribe hook."""
+        with self._lock:
+            self._subscribers.append(callback)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if callback in self._subscribers:
+                    self._subscribers.remove(callback)
+
+        return unsubscribe
+
+    def _changed_locked(self) -> list[Callable[[], None]]:
+        self._version += 1
+        return list(self._subscribers)
+
+    def _notify(self, subscribers: list[Callable[[], None]]) -> None:
+        for callback in subscribers:
+            callback()
 
 
 def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
@@ -219,6 +296,9 @@ def _copy_entry(entry: ToolTraceEntry) -> ToolTraceEntry:
         after_context=list(entry.after_context)
         if entry.after_context is not None
         else None,
+        output_chunks=list(entry.output_chunks)
+        if entry.output_chunks is not None
+        else None,
     )
 
 
@@ -237,6 +317,7 @@ def _overlay_entry(
     entry.status = update.status or entry.status
     entry.context = update.context or entry.context
     entry.after_context = update.after_context or entry.after_context
+    entry.output_chunks = update.output_chunks or entry.output_chunks
     return entry
 
 
@@ -268,3 +349,16 @@ def _payload_text(payload: dict[str, object], key: str) -> str | None:
 def _payload_int(payload: dict[str, object], key: str) -> int | None:
     value = payload.get(key)
     return value if isinstance(value, int) else None
+
+
+def _trim_output_chunks(chunks: list[ToolTraceOutputChunk]) -> None:
+    total = sum(len(chunk.text) for chunk in chunks)
+    while chunks and total > MAX_LIVE_OUTPUT_CHARS:
+        excess = total - MAX_LIVE_OUTPUT_CHARS
+        first = chunks[0]
+        if len(first.text) <= excess:
+            total -= len(first.text)
+            chunks.pop(0)
+            continue
+        first.text = first.text[excess:]
+        return

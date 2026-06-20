@@ -115,6 +115,10 @@ def detail_text(
         "raw_arguments": entry.raw_arguments,
         "executed_arguments": entry.executed_arguments,
         "result": entry.result,
+        "output_chunks": [
+            {"stream": chunk.stream, "text": chunk.text}
+            for chunk in entry.output_chunks or []
+        ],
     }
     if state.raw:
         return pretty_json(payload)
@@ -138,6 +142,8 @@ def detail_text(
                 pretty_json(entry.executed_arguments),
             ]
         )
+    if entry.output_chunks:
+        parts.extend(["", section_header("Live Output"), _format_output_chunks(entry)])
     parts.extend(["", section_header("Output"), format_result(entry.result)])
     return "\n".join(parts)
 
@@ -180,6 +186,7 @@ def entry_text(entry: ToolInspectorItem) -> str:
             entry.raw_arguments,
             entry.executed_arguments,
             entry.result,
+            "".join(chunk.text for chunk in entry.output_chunks or []),
             entry.status,
             entry.context,
         )
@@ -330,6 +337,31 @@ def _argument_summary(entry: ToolTraceEntry) -> str:
         return ""
     preview = format_tool_preview(entry.tool_name, entry.raw_arguments)
     return preview.removeprefix(entry.tool_name).strip()
+
+
+def _format_output_chunks(entry: ToolTraceEntry) -> str:
+    parts: list[str] = []
+    current_stream: str | None = None
+    current_text: list[str] = []
+    for chunk in entry.output_chunks or []:
+        if current_stream is not None and chunk.stream != current_stream:
+            parts.append(
+                _format_output_chunk_group(current_stream, "".join(current_text))
+            )
+            current_text = []
+        current_stream = chunk.stream
+        current_text.append(chunk.text)
+    if current_stream is not None:
+        parts.append(_format_output_chunk_group(current_stream, "".join(current_text)))
+    return "\n".join(part for part in parts if part)
+
+
+def _format_output_chunk_group(stream: str, text: str) -> str:
+    label = "STDERR" if stream == "stderr" else "STDOUT"
+    body = text.rstrip("\n")
+    if not body:
+        return f"[{label}]"
+    return f"[{label}]\n{body}"
 
 
 def _status_icon(status: str) -> str:

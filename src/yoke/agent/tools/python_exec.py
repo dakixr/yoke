@@ -5,6 +5,7 @@ import subprocess
 import time
 
 from yoke.agent.tools.base import WorkspaceTool
+from yoke.agent.tools.command import _ProcessOutputReader
 from yoke.agent.tools.python_env import current_python_executable
 from yoke.agent.tools.python_env import prepare_python_env
 from yoke.agent.truncate import truncate_tail
@@ -30,45 +31,79 @@ class PythonExecTool(WorkspaceTool):
         prepare_python_env(env)
         env["PYTHONIOENCODING"] = "utf-8:replace"
         env.setdefault("PYTHONUTF8", "1")
+        env.setdefault("PYTHONUNBUFFERED", "1")
         python_executable = current_python_executable()
 
         try:
-            completed = subprocess.run(
-                [python_executable, "-c", self.code],
+            process = subprocess.Popen(  # noqa: S603
+                [python_executable, "-u", "-c", self.code],
                 cwd=self.root,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 env=env,
-                timeout=self.timeout,
-                check=False,
             )
-        except subprocess.TimeoutExpired as exc:
-            elapsed_seconds = time.perf_counter() - started_at
-            stdout = self._decode_output(exc.stdout)
-            stderr = self._decode_output(exc.stderr)
-            return self._result(
-                returncode=-1,
-                stdout=stdout,
-                stderr=stderr,
-                timed_out=True,
-                error=f"Python execution timed out after {self.timeout} seconds",
-                elapsed_seconds=elapsed_seconds,
-            )
+            output_reader = _ProcessOutputReader(process)
+            output_reader.start()
+            deadline = time.monotonic() + self.timeout
+            while process.poll() is None:
+                output_reader.emit_pending(self._emit_output_chunk)
+                if self._is_cancel_requested():
+                    self._terminate_process(process)
+                    stdout, stderr = output_reader.finish(self._emit_output_chunk)
+                    return self._result(
+                        returncode=process.returncode
+                        if process.returncode is not None
+                        else -1,
+                        stdout=stdout,
+                        stderr=stderr,
+                        timed_out=False,
+                        error="Python execution cancelled",
+                        elapsed_seconds=time.perf_counter() - started_at,
+                    )
+                if time.monotonic() >= deadline:
+                    self._terminate_process(process)
+                    stdout, stderr = output_reader.finish(self._emit_output_chunk)
+                    elapsed_seconds = time.perf_counter() - started_at
+                    return self._result(
+                        returncode=-1,
+                        stdout=stdout,
+                        stderr=stderr,
+                        timed_out=True,
+                        error=f"Python execution timed out after {self.timeout} seconds",
+                        elapsed_seconds=elapsed_seconds,
+                    )
+                time.sleep(0.05)
+            stdout, stderr = output_reader.finish(self._emit_output_chunk)
         except Exception as exc:
             return self._error(str(exc))
 
         elapsed_seconds = time.perf_counter() - started_at
 
         return self._result(
-            returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            returncode=process.returncode or 0,
+            stdout=stdout,
+            stderr=stderr,
             timed_out=False,
             error=None,
             elapsed_seconds=elapsed_seconds,
         )
+
+    def _terminate_process(self, process: subprocess.Popen[bytes]) -> None:
+        if process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=0.2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+    def _emit_output_chunk(self, stream: str, text: str) -> None:
+        if text:
+            self._emit_tool_event(
+                "tool_execution_output_delta",
+                {"stream": stream, "text": text},
+            )
 
     def _result(
         self,
