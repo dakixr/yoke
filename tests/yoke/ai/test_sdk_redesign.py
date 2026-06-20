@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
+from yoke.agent.capabilities import FileSearchCapability
 from yoke.agent.models import Message
 from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import MessageTextContentPart
@@ -392,6 +393,28 @@ def test_sdk_tool_context_exposes_provider_and_refreshes_model_metadata(
 
     assert registrations[-1] == ("demo", "demo:model-b", provider)
     assert agent._runtime.tools["inspect_context"].context.model_key == ("demo:model-b")
+
+
+def test_sdk_capabilities_register_contextual_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "yoke.agent.capabilities.core.shutil.which",
+        lambda name: "/usr/bin/rg" if name == "rg" else None,
+    )
+    provider = RecordingProvider(Message.assistant("done"))
+
+    agent = Agent(
+        provider=provider,
+        config=RunConfig(
+            root=tmp_path,
+            capabilities=[FileSearchCapability],
+            include_agents_file=False,
+        ),
+    )
+
+    assert list(agent._runtime.tools) == ["rg"]
 
 
 def test_sdk_registration_result_contributes_system_messages(

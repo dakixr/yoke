@@ -334,7 +334,7 @@ def test_tools_menu_can_persist_runtime_tool_overrides_to_root_config(
     assert handled is True
     assert set(agent.tools) == {"web_fetch"}
     config = json.loads((tmp_path / ".yoke" / "config.json").read_text())
-    assert config["tools"] == {"read": "deny", "web_fetch": "allow"}
+    assert config["tools"] == {"read": "deny"}
     assert "Updated tools for this root path" in stdout.getvalue()
 
 
@@ -493,4 +493,4 @@ def test_tools_menu_does_not_persist_hidden_runtime_only_tools(
     )
 
     config = json.loads((tmp_path / ".yoke" / "config.json").read_text())
-    assert config["tools"] == {"read": "deny", "web_fetch": "allow"}
+    assert config["tools"] == {"read": "deny"}

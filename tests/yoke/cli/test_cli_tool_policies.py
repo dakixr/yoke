@@ -148,7 +148,7 @@ def b(text: str) -> dict[str, object]:
     assert "Tool loading failed:" in list_result.stdout
 
 
-def test_tools_list_reports_unmatched_config_patterns(tmp_path: Path) -> None:
+def test_tools_list_reports_unmatched_exact_tool_names(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
     config_dir = tmp_path / ".yoke"
@@ -157,7 +157,7 @@ def test_tools_list_reports_unmatched_config_patterns(tmp_path: Path) -> None:
         """
 {
   "tools": {
-    "missing_*": "deny",
+    "missing_tool": "deny",
     "edit": "deny"
   }
 }
@@ -172,7 +172,7 @@ def test_tools_list_reports_unmatched_config_patterns(tmp_path: Path) -> None:
     assert "Tool Inventory" in list_result.stdout
     assert "edit" in list_result.stdout
     assert (
-        "Warning: tool rule did not match any loaded tool: missing_*"
+        "Warning: tool rule did not match any loaded tool: missing_tool"
         in list_result.stdout
     )
 
@@ -186,10 +186,12 @@ def test_tools_list_shows_document_and_web_tools_as_builtins(
     list_result = runner.invoke(app, ["tools", "list", "--root", str(tmp_path)])
 
     assert list_result.exit_code == 0
+    assert "file.context" in list_result.stdout
     assert "extract_file_context" in list_result.stdout
+    assert "web" in list_result.stdout
     assert "web_fetch" in list_result.stdout
     assert "web_research" in list_result.stdout
-    assert "default" in list_result.stdout
+    assert "builtin capability" in list_result.stdout
     assert "active" in list_result.stdout
 
 
@@ -201,7 +203,7 @@ def test_print_tool_inventory_table_colors_active_and_disabled_statuses(
     config_dir = tmp_path / ".yoke"
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(
-        json.dumps({"tools": {"edit": "deny"}}),
+        json.dumps({"tools": {"file.edit": "deny"}}),
         encoding="utf-8",
     )
 
@@ -223,7 +225,7 @@ def test_tools_list_colors_success_warning_and_failure_messages(
     config_dir = tmp_path / ".yoke"
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(
-        json.dumps({"tools": {"missing_*": "deny"}}),
+        json.dumps({"tools": {"missing_tool": "deny"}}),
         encoding="utf-8",
     )
 
@@ -242,7 +244,7 @@ def test_tools_list_colors_success_warning_and_failure_messages(
     assert re.search(r"\x1b\[[0-9;]*32mTool loading OK\.\x1b\[0m", output)
     assert re.search(
         r"\x1b\[[0-9;]*33mWarning: tool rule did not match any loaded "
-        r"tool: missing_\*\x1b\[0m",
+        r"tool: missing_tool\x1b\[0m",
         output,
     )
 
@@ -279,9 +281,7 @@ def test_tools_activate_writes_repo_policy(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     config_path = tmp_path / ".yoke" / "config.json"
-    assert json.loads(config_path.read_text(encoding="utf-8")) == {
-        "tools": {"extract_file_context": "allow"}
-    }
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {"tools": {}}
 
     report = build_tool_report(root=tmp_path)
     names = {entry.tool.name for entry in report.active_tools}
@@ -294,13 +294,20 @@ def test_tools_deactivate_writes_repo_policy(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["tools", "deactivate", "edit", "--repo", "--root", str(tmp_path)],
+        [
+            "tools",
+            "deactivate",
+            "file.edit",
+            "--repo",
+            "--root",
+            str(tmp_path),
+        ],
     )
 
     assert result.exit_code == 0
     config_path = tmp_path / ".yoke" / "config.json"
     assert json.loads(config_path.read_text(encoding="utf-8")) == {
-        "tools": {"edit": "deny"}
+        "tools": {"file.edit": "deny"}
     }
 
     report = build_tool_report(root=tmp_path)
@@ -330,13 +337,50 @@ def test_tools_activate_writes_global_policy(tmp_path: Path, monkeypatch) -> Non
 
     assert result.exit_code == 0
     config_path = home / ".yoke" / "config.json"
-    assert json.loads(config_path.read_text(encoding="utf-8")) == {
-        "tools": {"extract_file_context": "allow"}
-    }
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {"tools": {}}
 
     report = build_tool_report(root=tmp_path)
     names = {entry.tool.name for entry in report.active_tools}
     assert "extract_file_context" in names
+
+
+def test_tools_activate_removes_exact_deny_rule(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps({"tools": {"web": "deny"}}),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["tools", "activate", "web", "--root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads((config_dir / "config.json").read_text()) == {"tools": {}}
+
+
+def test_tools_list_rejects_glob_policy_keys(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps({"tools": {"web_*": "deny"}}),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["tools", "list", "--root", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "exact" in result.stdout
+    assert "glob" in result.stdout
+    assert "patterns" in result.stdout
 
 
 def test_tools_policy_scope_flags_are_mutually_exclusive(

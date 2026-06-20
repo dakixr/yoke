@@ -127,7 +127,7 @@ def test_denied_tool_does_not_contribute_system_messages(tmp_path: Path) -> None
     config_dir = tmp_path / ".yoke"
     config_dir.mkdir()
     (config_dir / "config.json").write_text(
-        '{"tools": {"apply_patch": "deny"}}\n',
+        '{"tools": {"file.edit": "deny"}}\n',
         encoding="utf-8",
     )
 
@@ -406,15 +406,15 @@ def register_tools(context):
         )
 
 
-def test_workspace_config_can_deny_tools_with_wildcards(tmp_path: Path) -> None:
+def test_workspace_config_can_deny_tools_by_exact_name(tmp_path: Path) -> None:
     config_dir = tmp_path / ".yoke"
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(
         """
 {
   "tools": {
-    "e*": "deny",
-    "read": "allow"
+    "file.edit": "deny",
+    "file.read": "allow"
   }
 }
 """.strip(),

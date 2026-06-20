@@ -169,8 +169,6 @@ turn.
 - Local tool calls run in isolated child processes. When a turn is stopped,
   steered, or the CLI is interrupted or exited, yoke cancels the running tool
   process instead of waiting for cooperative tool code to return.
-- Provider-nested tools such as `subagent` run in-process so they can safely
-  reuse the active provider connection.
 - Press `Tab` to queue the prompt behind the current turn. Queued prompts and
   pending image attachments are persisted in a per-session sidecar and restored
   on resume/restart.
@@ -475,45 +473,44 @@ Never edit migration files directly.
 
 Control which tools the agent can use via `config.json`.
 
-Use `yoke tools list` to inspect the current tool inventory and surface tool-loading or config problems. It exits non-zero when discovery fails and warns about unmatched tool policy patterns.
+Use `yoke tools list` to inspect the current tool inventory and surface tool-loading or config problems. It exits non-zero when discovery fails and warns about unmatched exact-name tool policy entries.
 
 Use `/tools` in interactive mode to toggle tools. After selecting tools, yoke asks whether to apply the change only to the current session, persist it to this workspace root's `.yoke/config.json`, or persist it globally to `~/.yoke/config.json`.
 
-- Built-in defaults — applied even when no config file exists
 - `~/.yoke/config.json` — global policy
-- `.yoke/config.json` — workspace policy (workspace overrides global and defaults)
+- `.yoke/config.json` — workspace policy (workspace overrides global)
 
-The effective precedence order is: built-in defaults, then `~/.yoke/config.json`, then `.yoke/config.json`.
+The effective precedence order is: discovered tools are enabled by default,
+then `~/.yoke/config.json`, then `.yoke/config.json`.
 
-By default yoke starts from this curated tool baseline:
-
-```json
-{
-  "tools": {
-    "*": "deny",
-    "apply_patch": "allow",
-    "edit": "allow",
-    "extract_file_context": "allow",
-    "find": "allow",
-    "grep": "allow",
-    "ls": "allow",
-    "read": "allow",
-    "rg": "allow",
-    "web_research": "allow"
-  }
-}
-```
+By default, discovered built-in, repo, and global tools are enabled. Add exact
+tool-name entries to disable tools:
 
 ```json
 {
   "tools": {
-    "command": "deny",
+    "bash": "deny",
     "web_fetch": "deny"
   }
 }
 ```
 
-Values are `"allow"` or `"deny"`. Patterns use glob syntax (`*`, `?`). Tools not listed follow the effective merged policy; under the built-in defaults, unspecified tools are denied unless a global or workspace config allows them.
+Use `"allow"` only to override a deny from a lower-priority config:
+
+```json
+{
+  "tools": {
+    "web_fetch": "allow"
+  }
+}
+```
+
+Values are `"allow"` or `"deny"`. Built-ins are keyed by exact capability name
+such as `file.edit`, `file.search`, `command_execution`, or `web`; repo and
+global custom tools are keyed by exact tool name. Targets not listed are enabled
+by default after discovery. Use `"deny"` to disable a built-in capability,
+repo tool, or global tool. Use `"allow"` only to override a deny from a
+lower-priority config.
 
 If a `config.json`, tool plugin, or skill file is malformed, yoke now reports the file path and a short plain-English reason such as invalid JSON syntax, missing `SKILL.md` frontmatter, or a plugin import failure.
 
@@ -522,18 +519,15 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke now reports th
 ```json
 {
   "tools": {
-    "*": "deny",
-    "read": "allow",
-    "grep": "allow",
-    "find": "allow",
-    "ls": "allow"
+    "command_execution": "deny",
+    "file.edit": "deny"
   }
 }
 ```
 
-**Built-in tool names:** `read`, `ls`, `find`, `grep`, `command`,
-`web_fetch`, `web_research`, `extract_file_context`, `attach_image`, and
-`image_generation`.
+**Built-in capability names:** `file.read`, `file.context`, `file.search`,
+`file.edit`, `command_execution`, `web`, `image.input`, and
+`image.generation`.
 The writing capability is model-aware: model IDs containing `gpt` receive
 `apply_patch`; all other models receive `edit` and `write`. `attach_image` is also model-aware and is only registered
 when the active model advertises image input support. `image_generation` is only

@@ -11,7 +11,7 @@ def test_default_builtin_policy_allows_all_builtin_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "yoke.agent.tools.search_registration.shutil.which",
+        "yoke.agent.capabilities.core.shutil.which",
         lambda name: "/usr/bin/rg" if name == "rg" else None,
     )
     home = tmp_path / "home"
@@ -33,7 +33,6 @@ def test_default_builtin_policy_allows_all_builtin_tools(
         "python_exec",
         "read",
         "rg",
-        "subagent",
         "web_fetch",
         "web_research",
         "web_search",
@@ -41,14 +40,14 @@ def test_default_builtin_policy_allows_all_builtin_tools(
     }
     assert not denied_names
     assert resolved.tool_report.unmatched_config_patterns == []
-    assert "image_generation" in DEFAULT_ALLOWED_TOOL_NAMES
+    assert "image.generation" in DEFAULT_ALLOWED_TOOL_NAMES
 
 
 def test_default_builtin_policy_uses_search_fallback_without_rg(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "yoke.agent.tools.search_registration.shutil.which",
+        "yoke.agent.capabilities.core.shutil.which",
         lambda _name: None,
     )
 
@@ -75,7 +74,7 @@ def test_global_config_can_override_builtin_defaults(
         """
 {
   "tools": {
-    "web_fetch": "allow"
+    "web": "allow"
   }
 }
 """.strip(),
@@ -104,7 +103,7 @@ def test_repo_config_overrides_global_config(
         """
 {
   "tools": {
-    "web_fetch": "allow"
+    "web": "allow"
   }
 }
 """.strip(),
@@ -116,7 +115,7 @@ def test_repo_config_overrides_global_config(
         """
 {
   "tools": {
-    "web_fetch": "deny"
+    "web": "deny"
   }
 }
 """.strip(),

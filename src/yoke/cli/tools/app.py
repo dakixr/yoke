@@ -12,6 +12,7 @@ import typer
 from rich.table import Table
 from rich.text import Text
 
+from yoke.cli.bootstrap.types import LoadedTool
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.config import build_tool_report
 from yoke.cli.config import format_tool_discovery_message
@@ -33,24 +34,44 @@ def print_tool_inventory_table(stream: OutputStream, report: ToolLoadReport) -> 
     table.add_column("Status")
     table.add_column("Source")
     table.add_column("Location")
-    active_names = {entry.tool.name for entry in report.active_tools}
-    all_entries = sorted(
-        [*report.active_tools, *report.denied_tools],
-        key=lambda item: (
-            item.tool.name,
-            item.source_kind,
-            str(item.source_path or ""),
-        ),
-    )
-    for entry in all_entries:
-        source = "builtin" if entry.source_path is None else str(entry.source_path)
-        if entry.tool.name in active_names:
+    active_targets = {_tool_policy_target(entry) for entry in report.active_tools}
+    for target, entries in _inventory_rows(report).items():
+        first = entries[0]
+        if first.capability_name is not None:
+            source = "builtin capability"
+            location = ", ".join(entry.tool.name for entry in entries)
+        else:
+            source = first.source_kind
+            location = (
+                "builtin" if first.source_path is None else str(first.source_path)
+            )
+        if target in active_targets:
             status = "active"
         else:
             status = "disabled"
         status_text = Text(status, style="green" if status == "active" else "red")
-        table.add_row(entry.tool.name, status_text, entry.source_kind, source)
+        table.add_row(target, status_text, source, location)
     console.print(table)
+
+
+def _tool_policy_target(entry: LoadedTool) -> str:
+    return entry.capability_name or entry.tool.name
+
+
+def _inventory_rows(report: ToolLoadReport) -> dict[str, list[LoadedTool]]:
+    rows: dict[str, list[LoadedTool]] = {}
+    for entry in report.discovered_tools:
+        rows.setdefault(_tool_policy_target(entry), []).append(entry)
+    return dict(
+        sorted(
+            rows.items(),
+            key=lambda item: (
+                item[0],
+                item[1][0].source_kind,
+                str(item[1][0].source_path or ""),
+            ),
+        )
+    )
 
 
 TOOLS_INIT_TEMPLATE = '''from __future__ import annotations
@@ -137,7 +158,10 @@ def _load_config(path: Path) -> PiConfig:
 def _write_tool_policy(path: Path, tool_name: str, policy: ToolPolicy) -> None:
     config = _load_config(path)
     tools = dict(config.tools)
-    tools[tool_name] = policy
+    if policy == ToolPolicy.allow:
+        tools.pop(tool_name, None)
+    else:
+        tools[tool_name] = policy
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -171,7 +195,10 @@ def _set_tool_policy(
 
 @tools_app.command("activate")
 def tools_activate(
-    tool_name: Annotated[str, typer.Argument(help="Tool name or glob pattern.")],
+    tool_name: Annotated[
+        str,
+        typer.Argument(help="Exact built-in capability or custom tool name."),
+    ],
     root: Annotated[
         Path,
         typer.Option(
@@ -203,7 +230,10 @@ def tools_activate(
 
 @tools_app.command("deactivate")
 def tools_deactivate(
-    tool_name: Annotated[str, typer.Argument(help="Tool name or glob pattern.")],
+    tool_name: Annotated[
+        str,
+        typer.Argument(help="Exact built-in capability or custom tool name."),
+    ],
     root: Annotated[
         Path,
         typer.Option(

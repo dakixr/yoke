@@ -17,10 +17,11 @@ from yoke.cli.bootstrap.types import ResolvedAgentConfig
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.tools.policy import LoadedWorkspaceConfig
 from yoke.cli.tools.policy import default_yoke_config
-from yoke.cli.tools.policy import is_tool_allowed
+from yoke.cli.tools.policy import is_loaded_tool_allowed
 from yoke.cli.tools.policy import load_global_config
 from yoke.cli.tools.policy import load_workspace_config
 from yoke.cli.tools.policy import merge_configs
+from yoke.cli.tools.policy import policy_targets_for_tool
 from yoke.cli.tools.policy import unmatched_tool_patterns
 
 
@@ -63,12 +64,12 @@ def resolve_agent_config(
     active_tools = [
         entry
         for entry in overridden_tools
-        if is_tool_allowed(entry.tool.name, workspace_config.config)
+        if is_loaded_tool_allowed(entry, workspace_config.config)
     ]
     denied_tools = [
         entry
         for entry in overridden_tools
-        if not is_tool_allowed(entry.tool.name, workspace_config.config)
+        if not is_loaded_tool_allowed(entry, workspace_config.config)
     ]
     tool_report = ToolLoadReport(
         discovered_tools=list(discovered_tools),
@@ -77,7 +78,11 @@ def resolve_agent_config(
         config_path=workspace_config.path,
         unmatched_config_patterns=unmatched_tool_patterns(
             workspace_config.config,
-            {entry.tool.name for entry in overridden_tools},
+            {
+                target
+                for entry in overridden_tools
+                for target in policy_targets_for_tool(entry)
+            },
         ),
     )
     active_source_tools = {

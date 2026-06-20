@@ -2,70 +2,73 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from yoke.agent.capabilities import BaseCapability
+from yoke.agent.capabilities import ExplicitToolsCapability
+from yoke.agent.capabilities import RegisterToolsCapability
+from yoke.agent.capabilities import instantiate_capabilities
 from yoke.agent.models import Message
-from yoke.agent.tools import ToolRegistrationContext
-from yoke.agent.tools import ToolRegistrationResult
-from yoke.agent.tools.context import normalize_tool_registration
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from yoke.agent.capabilities import CapabilityInput
     from yoke.agent.tools import LocalTool
     from yoke.agent.tools import RegisterTools
 
     type AgentTool = LocalTool | type[LocalTool]
 else:
     type AgentTool = object
+    type CapabilityInput = object
+
+
+def build_agent_capabilities(
+    *,
+    capabilities: Sequence[CapabilityInput] | None,
+    tools: Sequence[AgentTool],
+    register_tools: RegisterTools | None,
+) -> tuple[BaseCapability, ...]:
+    """Build SDK capabilities while preserving legacy tool configuration."""
+    resolved: list[BaseCapability] = []
+    if capabilities is not None:
+        resolved.extend(instantiate_capabilities(capabilities))
+    if tools:
+        resolved.append(ExplicitToolsCapability(tools))
+    if register_tools is not None:
+        resolved.append(RegisterToolsCapability(register_tools))
+    return tuple(resolved)
 
 
 def bind_agent_tools(
     tools: Sequence[AgentTool],
     *,
-    context: ToolRegistrationContext,
+    context,
     register_tools: RegisterTools | None = None,
-) -> ToolRegistrationResult:
-    """Bind user-provided tool classes or instances for runtime execution."""
-    from yoke.agent.tools import LocalTool
-    from yoke.agent.tools import WorkspaceTool
+) -> object:
+    """Bind legacy SDK tools for callers that still use this helper."""
+    from yoke.agent.capabilities import CapabilityContext
+    from yoke.agent.tools import ToolRegistrationResult
 
-    bound_tools: list[LocalTool] = []
-    for tool in tools:
-        if isinstance(tool, LocalTool):
-            bound_tools.append(tool)
-            continue
-        if isinstance(tool, type) and issubclass(tool, LocalTool):
-            bind_context = (
-                {
-                    "root": context.root,
-                    "home": context.home,
-                    "provider": context.provider,
-                }
-                if issubclass(tool, WorkspaceTool)
-                else {"provider": context.provider}
-            )
-            bound_tools.append(tool.bind(**bind_context))
-            continue
-        raise TypeError(
-            "Agent tools must be LocalTool instances or LocalTool classes. "
-            f"Got {tool!r}."
+    capability_context = CapabilityContext.from_tool_registration(context)
+    registrations = [
+        capability.register(capability_context)
+        for capability in build_agent_capabilities(
+            capabilities=None,
+            tools=tools,
+            register_tools=register_tools,
         )
-    if register_tools is not None:
-        registration = normalize_tool_registration(register_tools(context))
-        registered = list(registration.tools)
-        invalid = [tool for tool in registered if not isinstance(tool, LocalTool)]
-        if invalid:
-            raise TypeError(
-                "RunConfig.register_tools must return LocalTool instances. "
-                f"Got {invalid[0]!r}."
-            )
-        bound_tools.extend(registered)
-    else:
-        registration = ToolRegistrationResult(tools=())
+    ]
     return ToolRegistrationResult(
-        tools=bound_tools,
-        system_messages=registration.system_messages,
+        tools=tuple(
+            tool for registration in registrations for tool in registration.tools
+        ),
+        system_messages=tuple(
+            message
+            for registration in registrations
+            for message in registration.system_messages
+        ),
     )
 
 

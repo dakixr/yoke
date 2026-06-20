@@ -24,7 +24,6 @@ from yoke.agent.tools.search import LsTool
 from yoke.agent.tools.search_registration import register_search_tools
 from yoke.agent.tools.shell import COMMAND_TOOL_NAME
 from yoke.agent.tools.skill import SkillTool
-from yoke.agent.tools.subagent import SubagentTool
 from yoke.agent.tools.web import WebFetchTool
 from yoke.agent.tools.web import WebResearchTool
 from yoke.agent.tools.web import WebSearchTool
@@ -56,7 +55,6 @@ __all__ = [
     "WebSearchTool",
     "WorkspaceTool",
     "WriteTool",
-    "SubagentTool",
     "ToolRegistrationContext",
     "ToolRegistration",
     "ToolRegistrationResult",

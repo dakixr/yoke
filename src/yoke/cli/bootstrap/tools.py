@@ -10,25 +10,13 @@ from pathlib import Path
 from types import ModuleType
 from typing import cast
 
-from yoke.agent.tools import AttachImageTool
-from yoke.agent.tools import CommandTool
-from yoke.agent.tools import ExtractFileContextTool
-from yoke.agent.tools import ImageGenerationTool
+from yoke.agent.capabilities import CapabilityContext
+from yoke.agent.capabilities import CapabilityResolver
+from yoke.agent.capabilities import default_capabilities
 from yoke.agent.tools import LocalTool
-from yoke.agent.tools import PythonExecTool
-from yoke.agent.tools import ReadTool
-from yoke.agent.tools import SubagentTool
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
-from yoke.agent.tools import ToolRuntimeContext
-from yoke.agent.tools import WebFetchTool
-from yoke.agent.tools import WebResearchTool
-from yoke.agent.tools import WebSearchTool
-from yoke.agent.tools import provider_supports_image_generation
-from yoke.agent.tools import register_search_tools
-from yoke.agent.tools import register_write_tool
 from yoke.agent.tools.context import normalize_tool_registration
-from yoke.agent.multimodal import provider_supports_image_inputs
 from yoke.cli.bootstrap.types import LoadedTool
 from yoke.cli.bootstrap.types import LoadedToolContribution
 from yoke.cli.bootstrap.types import RegisterToolsFunc
@@ -51,9 +39,16 @@ def load_tools(
     """Load built-in and plugin tools."""
     builtin_registration = _register_builtin_tools(context)
     builtin_tools = list(builtin_registration.tools)
+    builtin_capabilities = _register_builtin_capabilities(context)
     loaded_tools: list[LoadedTool] = [
-        LoadedTool(tool=tool, source_kind="default", source_label="default:builtin")
-        for tool in builtin_tools
+        LoadedTool(
+            tool=tool,
+            source_kind="default",
+            source_label=f"default:{capability_name}",
+            capability_name=capability_name,
+        )
+        for capability_name, tools in builtin_capabilities.items()
+        for tool in tools
     ]
     builtin_messages = tuple(
         message.model_copy(deep=True)
@@ -69,7 +64,7 @@ def load_tools(
                     if tool.name in {"apply_patch", "edit", "write"}
                 ),
                 source_kind="default",
-                source_label="default:builtin",
+                source_label="default:file.edit",
             )
         ]
         if builtin_messages
@@ -105,59 +100,31 @@ def create_builtin_tools(context: ToolRegistrationContext) -> list[LocalTool]:
 def _register_builtin_tools(
     context: ToolRegistrationContext,
 ) -> ToolRegistrationResult:
-    root = context.root
-    cancel_requested = context.cancel_requested
-    runtime_context = ToolRuntimeContext(
-        root=context.root,
-        home=context.home,
-        provider=context.provider,
-        model=context.model,
-        cancel_requested=cancel_requested,
+    capability_context = CapabilityContext.from_tool_registration(context)
+    resolution = CapabilityResolver(default_capabilities()).resolve(capability_context)
+    tools = tuple(
+        tool
+        for _capability, registration in resolution.registrations
+        for tool in registration.tools
     )
-    tools: list[LocalTool] = [
-        ReadTool.bind(root=root, cancel_requested=cancel_requested),
-        CommandTool.bind(root=root, cancel_requested=cancel_requested),
-        ExtractFileContextTool.bind(root=root, cancel_requested=cancel_requested),
-        WebFetchTool.bind(cancel_requested=cancel_requested),
-        WebSearchTool.bind(cancel_requested=cancel_requested),
-        WebResearchTool.bind(cancel_requested=cancel_requested),
-        PythonExecTool.bind(root=root, cancel_requested=cancel_requested),
-        SubagentTool.bind(root=root, cancel_requested=cancel_requested),
-    ]
-    if _context_supports_image_inputs(context) is not False:
-        tools.insert(
-            3,
-            AttachImageTool.bind(root=root, cancel_requested=cancel_requested),
-        )
-    if provider_supports_image_generation(context.provider):
-        tools.insert(
-            4,
-            ImageGenerationTool.bind(root=root, cancel_requested=cancel_requested),
-        )
-    for tool in tools:
-        tool.bind_runtime_context(runtime_context)
-    search_tools = register_search_tools(context)
-    for tool in search_tools:
-        tool.bind_runtime_context(runtime_context)
-    tools[2:2] = search_tools
-    write_registration = normalize_tool_registration(register_write_tool(context))
-    write_tools = list(write_registration.tools)
-    for write_tool in write_tools:
-        write_tool.bind_runtime_context(runtime_context)
-    tools[1:1] = write_tools
-    return ToolRegistrationResult(
-        tools=tools,
-        system_messages=write_registration.system_messages,
+    system_messages = tuple(
+        message.model_copy(deep=True)
+        for _capability, registration in resolution.registrations
+        for message in registration.system_messages
     )
+    return ToolRegistrationResult(tools=tools, system_messages=system_messages)
 
 
-def _context_supports_image_inputs(context: ToolRegistrationContext) -> bool | None:
-    if getattr(context.provider, "provider_name", None) == "unavailable":
-        return None
-    model_support = getattr(context.model, "supports_image_inputs", None)
-    if isinstance(model_support, bool):
-        return model_support
-    return provider_supports_image_inputs(context.provider)
+def _register_builtin_capabilities(
+    context: ToolRegistrationContext,
+) -> dict[str, tuple[LocalTool, ...]]:
+    resolution = CapabilityResolver(default_capabilities()).resolve(
+        CapabilityContext.from_tool_registration(context)
+    )
+    return {
+        capability.name: registration.tools
+        for capability, registration in resolution.registrations
+    }
 
 
 def _load_tools_from_directory(

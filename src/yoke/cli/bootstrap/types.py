@@ -35,6 +35,7 @@ class LoadedTool:
     source_kind: ToolSourceKind
     source_label: str
     source_path: Path | None = None
+    capability_name: str | None = None
 
 
 @dataclass(slots=True, frozen=True)

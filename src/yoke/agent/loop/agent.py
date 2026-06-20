@@ -7,6 +7,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from yoke.agent.capabilities import BaseCapability
+from yoke.agent.capabilities import CapabilityContext
+from yoke.agent.capabilities import CapabilityResolver
 from yoke.agent.context import ContextManager
 from yoke.agent.loop.iteration import RuntimeAgentIterationMixin
 from yoke.agent.loop.state import context_for_run
@@ -65,7 +68,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         config: RunConfig,
     ) -> RuntimeAgent:
         """Build a runtime agent from the public SDK run configuration."""
-        from yoke.ai.sdk_runtime import bind_agent_tools
+        from yoke.ai.sdk_runtime import build_agent_capabilities
         from yoke.ai.sdk_runtime import build_system_messages
 
         root = Path(config.root).resolve()
@@ -78,9 +81,9 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         return RuntimeAgent(
             provider=provider,
             tools=[],
-            tool_factory=lambda context: bind_agent_tools(
-                config.tools,
-                context=context,
+            capabilities=build_agent_capabilities(
+                capabilities=config.capabilities,
+                tools=config.tools,
                 register_tools=config.register_tools,
             ),
             tool_root=root,
@@ -116,14 +119,20 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         active_skills: Sequence[ActiveSkill] = (),
         history: ConversationHistory | None = None,
         tool_factory: RegisterTools | None = None,
+        capabilities: Sequence[BaseCapability] | None = None,
         tool_root: Path | None = None,
         tool_home: Path = Path.home(),
         base_instructions: Sequence[Message] | None = None,
     ) -> None:
+        if tool_factory is not None and capabilities is not None:
+            raise ValueError("Use either tool_factory or capabilities, not both.")
         if tool_factory is not None and tool_root is None:
             raise ValueError("Provider-aware tool registration requires tool_root.")
         self.provider = provider
         self._tool_factory = tool_factory
+        self._capability_resolver = (
+            CapabilityResolver(capabilities) if capabilities is not None else None
+        )
         self._tool_root = (
             tool_root or _bound_tool_path(tools, "root") or Path.cwd()
         ).resolve()
@@ -145,7 +154,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         self.context_manager.set_instructions(self._base_instructions)
         self._context: AgentContext | None = None
         self.tools: dict[str, LocalTool] = {}
-        if tool_factory is not None:
+        if tool_factory is not None or self._capability_resolver is not None:
             self.refresh_tools(force=True)
         else:
             model = resolve_model_identity(self.provider)
@@ -167,6 +176,11 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             provider=self.provider,
             tools=[tool.model_copy(deep=True) for tool in self.tools.values()],
             tool_factory=self._tool_factory,
+            capabilities=(
+                self._capability_resolver.capabilities
+                if self._capability_resolver is not None
+                else None
+            ),
             tool_root=self._tool_root,
             tool_home=self._tool_home,
             base_instructions=self._base_instructions,
@@ -236,6 +250,24 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             self._install_tools(tools, model=model)
             self._set_dynamic_system_messages(
                 tool_messages=list(registration.system_messages),
+            )
+        elif self._capability_resolver is not None:
+            resolution = self._capability_resolver.resolve(
+                CapabilityContext(
+                    root=self._tool_root,
+                    home=self._tool_home,
+                    provider=self.provider,
+                    model=model,
+                    cancel_requested=never_cancel,
+                )
+            )
+            tools = list(resolution.tools)
+            invalid = [tool for tool in tools if not isinstance(tool, LocalTool)]
+            if invalid:
+                raise TypeError("Capabilities must register LocalTool instances.")
+            self._install_tools(tools, model=model)
+            self._set_dynamic_system_messages(
+                tool_messages=list(resolution.system_messages),
             )
         else:
             self._install_tools(list(self.tools.values()), model=model)

@@ -107,6 +107,28 @@ Custom runner objects used with CLI runtime helpers should implement
 or `supports_user_message = True` to receive explicit multimodal
 `user_message=...` payloads.
 
+## Capabilities
+
+Capabilities are context-aware bundles that register one or more tools based on
+the active provider, model, operating system, and workspace environment.
+
+```python
+from yoke.agent.capabilities import FileEditCapability, FileSearchCapability
+
+agent = Agent(
+    provider=provider,
+    config=RunConfig(
+        root=Path.cwd(),
+        capabilities=[FileSearchCapability, FileEditCapability],
+    ),
+)
+```
+
+Built-in capability names include `file.read`, `file.context`, `file.search`,
+`file.edit`, `command_execution`, `web`, `image.input`, and
+`image.generation`. The CLI uses these same agent-owned capabilities for its
+built-in tool set, then applies CLI-specific plugin discovery and tool policy.
+
 ## Built-In Tools
 
 Import built-in tools from `yoke.agent.tools` and pass the classes or
@@ -154,10 +176,13 @@ interpreter and virtual environment as the running yoke process.
 
 Most workspace tools can be passed as classes and are bound to `RunConfig.root`
 automatically. Pass already-bound instances when you need custom context.
+Explicit `RunConfig.tools` and `RunConfig.register_tools` are preserved as
+compatibility paths and are internally wrapped as capabilities.
 
-`register_write_tool` exposes model-appropriate writing tools: models whose ID
+`FileEditCapability` exposes model-appropriate writing tools: models whose ID
 contains `gpt` receive `apply_patch`; every other model receives `edit` and
-`write`.
+`write`. The legacy `register_write_tool` callback delegates to this
+capability.
 
 ```python
 from yoke.agent.tools import register_write_tool
@@ -171,15 +196,16 @@ agent = Agent(
 )
 ```
 
-`register_search_tools` exposes `rg` when the ripgrep executable is available.
-Otherwise it exposes the Python fallback tools `grep`, `find`, and `ls`.
+`FileSearchCapability` exposes `rg` when the ripgrep executable is available.
+Otherwise it exposes the Python fallback tools `grep`, `find`, and `ls`. The
+legacy `register_search_tools` callback delegates to this capability.
 
 ```python
 from yoke.agent.tools import register_search_tools
 ```
 
-The CLI and nested agents use this selector automatically. Explicit tool
-classes remain available when an SDK application needs a fixed interface.
+The CLI uses these selectors automatically. Explicit tool classes remain
+available when an SDK application needs a fixed interface.
 
 ## Provider-Aware Tools
 

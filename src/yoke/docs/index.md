@@ -10,11 +10,18 @@
 
 ## Core concepts
 
-### Tools
-Tools are the actions the agent can take: read a file, edit a file, run a
-shell command, search the web. The CLI includes built-in tools and
-auto-discovers additional tools from repo `.yoke/tools/` and global `~/.yoke/tools/`
-directories. The SDK lets you pass exactly the tools you want.
+### Capabilities and tools
+Capabilities are context-aware bundles of tools, selected from the active
+provider, model, operating system, and workspace environment. For example,
+`file.search` exposes native `rg` when ripgrep is installed and Python fallback
+tools otherwise; `file.edit` exposes `apply_patch` for GPT-style models and
+`edit` plus `write` for other models.
+
+Tools are the executable actions the agent can call: read a file, edit a file,
+run a shell command, search the web. The CLI resolves yoke's built-in
+capabilities and auto-discovers additional tools from repo `.yoke/tools/` and
+global `~/.yoke/tools/` directories. The SDK can use capabilities, explicit
+tools, or legacy tool registration callbacks.
 On Windows, isolated tool processes use `spawn`; yoke passes only the invoked
 tool to the child process and strips runtime-only context such as provider
 objects and cancellation callbacks that cannot be pickled.

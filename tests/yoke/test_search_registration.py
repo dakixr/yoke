@@ -28,7 +28,7 @@ def test_search_registration_prefers_rg_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "yoke.agent.tools.search_registration.shutil.which",
+        "yoke.agent.capabilities.core.shutil.which",
         lambda name: "/usr/bin/rg" if name == "rg" else None,
     )
 
@@ -42,7 +42,7 @@ def test_search_registration_uses_fallback_when_rg_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "yoke.agent.tools.search_registration.shutil.which",
+        "yoke.agent.capabilities.core.shutil.which",
         lambda _name: None,
     )
 

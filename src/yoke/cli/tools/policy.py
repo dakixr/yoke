@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from fnmatch import fnmatch
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -12,6 +11,8 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import ValidationError
 from pydantic import field_validator
+
+from yoke.cli.bootstrap.types import LoadedTool
 
 
 class ToolPolicy(str, Enum):
@@ -29,6 +30,21 @@ class PiConfig(BaseModel):
     tools: dict[str, ToolPolicy] = Field(default_factory=dict)
     default_model: str | None = None
     default_reasoning_effort: str | None = None
+
+    @field_validator("tools")
+    @classmethod
+    def _validate_tool_names(
+        cls,
+        value: dict[str, ToolPolicy],
+    ) -> dict[str, ToolPolicy]:
+        invalid = sorted(name for name in value if _looks_like_glob(name))
+        if invalid:
+            joined = ", ".join(repr(name) for name in invalid)
+            raise ValueError(
+                "Tool policy keys must be exact tool names, not glob patterns. "
+                f"Invalid: {joined}."
+            )
+        return value
 
     @field_validator("default_model")
     @classmethod
@@ -56,32 +72,27 @@ class PiConfig(BaseModel):
         return normalized
 
 
-DEFAULT_ALLOWED_TOOL_NAMES = (
-    "apply_patch",
-    "attach_image",
-    "bash",
-    "edit",
-    "extract_file_context",
-    "find",
-    "grep",
-    "image_generation",
-    "ls",
-    "python_exec",
-    "read",
-    "rg",
-    "subagent",
-    "web_fetch",
-    "web_research",
-    "web_search",
-    "write",
+BUILTIN_CAPABILITY_NAMES = (
+    "command_execution",
+    "file.context",
+    "file.edit",
+    "file.read",
+    "file.search",
+    "image.generation",
+    "image.input",
+    "web",
 )
+
+DEFAULT_ALLOWED_TOOL_NAMES = BUILTIN_CAPABILITY_NAMES
 
 TOOL_CAPABILITY_ALIASES = (
-    frozenset({"edit", "write", "apply_patch"}),
-    frozenset({"rg", "grep", "find", "ls"}),
+    frozenset({"file.edit", "edit", "write", "apply_patch"}),
+    frozenset({"file.search", "rg", "grep", "find", "ls"}),
+    frozenset({"image.generation", "image_generation"}),
+    frozenset({"image.input", "attach_image"}),
 )
 
-PROVIDER_GATED_BUILTIN_TOOL_NAMES = frozenset({"image_generation"})
+PROVIDER_GATED_BUILTIN_TOOL_NAMES = frozenset({"image.generation", "image_generation"})
 
 
 @dataclass(slots=True, frozen=True)
@@ -124,7 +135,7 @@ def load_config_file(path: Path) -> LoadedWorkspaceConfig:
         raise ValueError(
             f"Invalid yoke config file `{path}`. {summary} "
             "Expected shape: "
-            '{"tools": {"tool_name_or_glob": "allow|deny"}, '
+            '{"tools": {"capability_or_tool_name": "allow|deny"}, '
             '"default_model": "provider-name:model-name", '
             '"default_reasoning_effort": "none|low|medium|high|xhigh"}. '
             "All fields are optional."
@@ -144,11 +155,7 @@ def load_global_config(home: Path) -> LoadedWorkspaceConfig:
 
 def default_yoke_config() -> PiConfig:
     """default_yoke_config."""
-    tools = {"*": ToolPolicy.deny}
-    tools.update(
-        {tool_name: ToolPolicy.allow for tool_name in DEFAULT_ALLOWED_TOOL_NAMES}
-    )
-    return PiConfig(tools=tools)
+    return PiConfig()
 
 
 def merge_configs(*configs: PiConfig) -> PiConfig:
@@ -171,24 +178,55 @@ def merge_configs(*configs: PiConfig) -> PiConfig:
 
 def is_tool_allowed(name: str, config: PiConfig) -> bool:
     """is_tool_allowed."""
-    allowed = True
-    for pattern, policy in config.tools.items():
-        if fnmatch(name, pattern):
-            allowed = policy == ToolPolicy.allow
-    return allowed
+    return config.tools.get(name) != ToolPolicy.deny
+
+
+def policy_target_for_tool(tool: LoadedTool) -> str:
+    """Return the policy target for a loaded tool."""
+    return tool.capability_name or tool.tool.name
+
+
+def policy_targets_for_tool(tool: LoadedTool) -> tuple[str, ...]:
+    """Return accepted policy targets for a loaded tool."""
+    primary = policy_target_for_tool(tool)
+    if tool.capability_name is None:
+        return (primary,)
+    return (primary, tool.tool.name)
+
+
+def is_loaded_tool_allowed(tool: LoadedTool, config: PiConfig) -> bool:
+    """Return whether a loaded tool is allowed by exact policy target."""
+    primary = policy_target_for_tool(tool)
+    if primary in config.tools:
+        return is_tool_allowed(primary, config)
+    for aliases in TOOL_CAPABILITY_ALIASES:
+        if primary not in aliases:
+            continue
+        policies = [
+            config.tools[target] for target in aliases if target in config.tools
+        ]
+        if any(policy == ToolPolicy.deny for policy in policies):
+            return False
+        if any(policy == ToolPolicy.allow for policy in policies):
+            return True
+    return True
 
 
 def unmatched_tool_patterns(config: PiConfig, known_tool_names: set[str]) -> list[str]:
     """unmatched_tool_patterns."""
     unmatched: list[str] = []
-    for pattern in config.tools:
-        if not any(fnmatch(name, pattern) for name in known_tool_names):
-            if pattern in PROVIDER_GATED_BUILTIN_TOOL_NAMES:
+    for policy_target in config.tools:
+        if policy_target not in known_tool_names:
+            if policy_target in PROVIDER_GATED_BUILTIN_TOOL_NAMES:
                 continue
             if any(
-                pattern in aliases and known_tool_names.intersection(aliases)
+                policy_target in aliases and known_tool_names.intersection(aliases)
                 for aliases in TOOL_CAPABILITY_ALIASES
             ):
                 continue
-            unmatched.append(pattern)
+            unmatched.append(policy_target)
     return unmatched
+
+
+def _looks_like_glob(value: str) -> bool:
+    return any(char in value for char in "*?[]")

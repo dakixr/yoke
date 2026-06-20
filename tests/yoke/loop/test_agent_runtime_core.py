@@ -4,7 +4,6 @@ from __future__ import annotations
 # ruff: noqa: D100, D103, F403, F405, S101
 
 from .support import *  # noqa: F403, F405
-from yoke.agent.tools import SubagentTool
 
 
 def write_test_skill(root: Path, name: str, description: str) -> Path:
@@ -229,30 +228,6 @@ def test_agent_loop_runs_until_final_answer(tmp_path: Path) -> None:
         "tool",
         "assistant",
     ]
-
-
-def test_subagent_tool_runs_in_process(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "yoke.agent.tools.search_registration.shutil.which",
-        lambda name: "/usr/bin/rg" if name == "rg" else None,
-    )
-    (tmp_path / "notes.txt").write_text("hello from nested context", encoding="utf-8")
-    provider = SubagentProvider()
-    subagent = SubagentTool.bind(root=tmp_path, provider=provider)
-    agent = RuntimeAgent(
-        provider=provider, tools=[subagent], tool_execution="sequential"
-    )
-
-    result = agent.run("delegate")
-
-    assert result.output == "done"
-    assert provider.calls == 3
-    assert "rg" in provider.nested_tool_names
-    assert {"grep", "find", "ls"}.isdisjoint(provider.nested_tool_names)
-    assert "nested summary" in (result.messages[-2].text_content() or "")
 
 
 def test_agent_loop_emits_commentary_before_tool_calls(

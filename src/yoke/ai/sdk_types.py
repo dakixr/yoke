@@ -33,12 +33,14 @@ from yoke.agent.skills.discovery import load_skill
 from yoke.ai.sdk_helpers import image_part, remote_image_part, text_part
 
 if TYPE_CHECKING:
+    from yoke.agent.capabilities import CapabilityInput
     from yoke.agent.tools import LocalTool
     from yoke.agent.tools import RegisterTools
 
     type AgentTool = LocalTool | type[LocalTool]
 else:
     type AgentTool = object
+    type CapabilityInput = object
 
 
 class StructuredOutputError(ValueError):
@@ -179,6 +181,7 @@ class RunConfig:
 
     root: str | Path
     sys_prompt: str | None = None
+    capabilities: Sequence[CapabilityInput] | None = None
     tools: Sequence[AgentTool] = ()
     register_tools: RegisterTools | None = None
     skills: Sequence[Skill] = ()
