@@ -54,7 +54,7 @@ ENV_API_KEY = "OPENCODE_API_KEY"
 OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
 ANTHROPIC_BASE_URL = "https://opencode.ai/zen/go"
 
-ANTHROPIC_THINKING_LEVELS = ()
+ANTHROPIC_THINKING_LEVELS = ("high", "max")
 DEEPSEEK_THINKING_LEVELS = ("high", "max")
 GLM_THINKING_LEVELS = ()
 KIMI_THINKING_LEVELS = ()
@@ -330,6 +330,8 @@ class AnthropicContentBlock(BaseModel):
     id: str | None = None
     name: str | None = None
     input: dict[str, Any] = Field(default_factory=dict)
+    thinking: str | None = None
+    signature: str | None = None
 
 
 class AnthropicMessageResponse(BaseModel):
@@ -347,6 +349,19 @@ class AnthropicMessageResponse(BaseModel):
             for block in self.content
             if block.type == "text" and block.text
         )
+        thinking_text = "\n".join(
+            block.thinking or ""
+            for block in self.content
+            if block.type == "thinking" and block.thinking
+        )
+        signature = next(
+            (
+                block.signature
+                for block in self.content
+                if block.type == "thinking" and block.signature
+            ),
+            None,
+        )
         tool_calls = [
             ToolCall(
                 id=block.id or "",
@@ -362,6 +377,8 @@ class AnthropicMessageResponse(BaseModel):
             role="assistant",
             content=text or None,
             tool_calls=tool_calls,
+            reasoning_content=thinking_text or None,
+            reasoning_signature=signature,
             usage=parse_token_usage(
                 self.usage,
                 provider_name=provider_name,
@@ -402,6 +419,9 @@ class OpenCodeGoProvider(Provider):
         config: OpenCodeGoConfig,
         http_client: httpx.Client | None,
     ) -> OpenAICompatibleProvider:
+        openai_reasoning_effort = config.reasoning_effort
+        if openai_reasoning_effort == "thinking":
+            openai_reasoning_effort = None
         return OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key=config.api_key,
@@ -412,7 +432,7 @@ class OpenCodeGoProvider(Provider):
                 retry_backoff_seconds=config.retry_backoff_seconds,
                 max_retry_backoff_seconds=config.max_retry_backoff_seconds,
                 max_tokens=_max_output_tokens(config.model),
-                reasoning_effort=config.reasoning_effort,
+                reasoning_effort=openai_reasoning_effort,
                 provider_name=PROVIDER_NAME,
                 model_catalog=config.model_catalog,
             ),
@@ -519,6 +539,7 @@ class OpenCodeGoProvider(Provider):
                     headers={
                         "x-api-key": self.config.api_key,
                         "anthropic-version": "2023-06-01",
+                        "anthropic-beta": "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
                         "Content-Type": "application/json",
                     },
                 )
@@ -697,13 +718,16 @@ def _anthropic_thinking_config(
     level = reasoning_effort.strip().lower()
     if level == "none":
         return None
-    if level != "thinking":
-        return None
+    if level == "thinking" and model_id == "minimax-m3":
+        return {"type": "adaptive"}
     output_tokens = _max_output_tokens(model_id)
-    return {
-        "type": "enabled",
-        "budget_tokens": min(31_999, output_tokens - 1),
-    }
+    if level in {"high", "max", "thinking"}:
+        budget = 16_000 if level == "high" else 31_999
+        return {
+            "type": "enabled",
+            "budget_tokens": min(budget, output_tokens - 1),
+        }
+    return None
 
 
 def _system_prompt_for_anthropic(messages: list[Message]) -> str:
@@ -744,6 +768,18 @@ def _serialize_messages_for_anthropic(
 
 def _anthropic_content_blocks(message: Message) -> list[dict[str, object]]:
     blocks: list[dict[str, object]] = []
+    if (
+        message.role == "assistant"
+        and message.reasoning_content
+        and message.reasoning_signature
+    ):
+        blocks.append(
+            {
+                "type": "thinking",
+                "thinking": message.reasoning_content,
+                "signature": message.reasoning_signature,
+            }
+        )
     content = message.content
     if isinstance(content, list):
         for part in content:

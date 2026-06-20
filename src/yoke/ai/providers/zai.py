@@ -89,6 +89,7 @@ class ZAIResponseMessage(BaseModel):
     content: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     phase: MessagePhase | None = None
+    reasoning_content: str | None = None
 
     @field_validator("phase", mode="before")
     @classmethod
@@ -108,6 +109,7 @@ class ZAIResponseMessage(BaseModel):
             content=self.content,
             tool_calls=self.tool_calls,
             phase=self.phase,
+            reasoning_content=self.reasoning_content,
         )
 
 
@@ -607,14 +609,14 @@ class ZAIProvider(Provider):
         return response.reason_phrase or f"HTTP {response.status_code}"
 
 
-def _thinking_config(reasoning_effort: str | None) -> dict[str, str] | None:
+def _thinking_config(reasoning_effort: str | None) -> dict[str, object] | None:
     if reasoning_effort is None:
         return None
     normalized = reasoning_effort.strip().lower()
     if normalized == "none":
         return {"type": "disabled"}
     if normalized == "thinking":
-        return {"type": "enabled"}
+        return {"type": "enabled", "clear_thinking": False}
     return None
 
 

@@ -84,11 +84,12 @@ def test_opencode_go_catalog_matches_current_reasoning_efforts() -> None:
         "mimo-v2-pro": (),
         "mimo-v2.5-pro": (),
         "minimax-m3": ("none", "thinking"),
-        "minimax-m2.7": (),
+        "minimax-m2.7": ("high", "max"),
         "minimax-m2.5": (),
-        "qwen3.7-plus": (),
-        "qwen3.6-plus": (),
-        "qwen3.5-plus": (),
+        "qwen3.7-max": ("high", "max"),
+        "qwen3.7-plus": ("high", "max"),
+        "qwen3.6-plus": ("high", "max"),
+        "qwen3.5-plus": ("high", "max"),
     }
     models = {model.id: model for model in list_opencode_go_models(None)}
 

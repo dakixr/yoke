@@ -133,6 +133,7 @@ class Message(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     phase: MessagePhase | None = None
     reasoning_content: str | None = None
+    reasoning_signature: str | None = None
     usage: TokenUsage | None = None
 
     @classmethod

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import cast
 
 import httpx
 import pytest
@@ -66,7 +67,7 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
     assert captured["payload"] == {
         "model": "glm-5.1",
         "messages": [{"role": "user", "content": "hello"}],
-        "thinking": {"type": "enabled"},
+        "thinking": {"type": "enabled", "clear_thinking": False},
     }
 
 
@@ -149,3 +150,60 @@ def test_zai_set_model_rejects_unsupported_reasoning_effort() -> None:
             provider.set_model("glm-5.2", reasoning_effort="high")
     finally:
         provider.close()
+
+
+def test_zai_provider_parses_reasoning_content_from_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "done",
+                            "reasoning_content": "let me think about it",
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+
+    message = provider.complete([Message.user("hello")], [])
+
+    assert message.reasoning_content == "let me think about it"
+    provider.close()
+
+
+def test_zai_provider_round_trips_reasoning_content_on_next_request() -> None:
+    captured: dict[str, dict[str, object]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "done",
+                            "reasoning_content": "prior reasoning",
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+
+    first = provider.complete([Message.user("hello")], [])
+    provider.complete([Message.user("hello"), first], [])
+
+    messages = cast(list[dict[str, object]], captured["payload"]["messages"])
+    assert messages[1]["reasoning_content"] == "prior reasoning"
+    provider.close()

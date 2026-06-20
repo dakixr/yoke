@@ -92,14 +92,28 @@ yoke models set --repo
 providers such as `opencode-go`, this is model-specific rather than a single
 provider-wide guarantee. The Thinking column reports selectable controls only:
 for example, Z.ai GLM models expose `none` and `thinking`, which yoke maps to
-Z.ai's documented `thinking.type` disabled/enabled request field.
+Z.ai's documented `thinking.type` disabled/enabled request field. When thinking
+is enabled, yoke also sends `thinking.clear_thinking: false` so GLM preserves
+its reasoning context across turns.
 
 Z.ai and OpenCode Go chat-completions models use standard OpenAI-compatible
 tool-call history: assistant `tool_calls` are followed by `tool` messages with
-matching `tool_call_id` values. Some OpenCode Go models, such as
-`kimi-k2.7-code`, can return intermediate `reasoning_content`; yoke preserves
-that text and uses it as fallback output if the visible response content is
+matching `tool_call_id` values. Z.ai GLM models and some OpenCode Go models,
+such as `kimi-k2.7-code`, can return intermediate `reasoning_content`; yoke
+parses it from the response, preserves it on the assistant message, and sends
+it back on subsequent requests so the model sees its own prior thinking.
+That text is also used as fallback output if the visible response content is
 empty.
+
+OpenCode Go models that use the Anthropic Messages API (`minimax-m3`,
+`minimax-m2.7`, `qwen3.5-plus`, `qwen3.6-plus`, `qwen3.7-max`, `qwen3.7-plus`)
+return `thinking` content blocks with a cryptographic `signature`. yoke
+parses both, sends the `interleaved-thinking` beta header so reasoning can
+flow between tool calls, and round-trips each thinking block with its
+signature on subsequent turns so extended thinking survives across requests.
+These models advertise `high` and `max` thinking levels (except `minimax-m3`,
+which exposes `none` and `thinking` mapped to Anthropic's adaptive thinking
+mode).
 
 If you omit the model argument from `yoke models set`, yoke opens an interactive
 selector when running in a TTY and otherwise falls back to a numbered prompt.
