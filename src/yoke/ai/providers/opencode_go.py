@@ -69,6 +69,7 @@ MODEL_PROTOCOLS = {
     "mimo-v2.5-pro": "openai",
     "glm-5.2": "openai",
     "glm-5": "openai",
+    "qwen3.7-max": "anthropic",
     "mimo-v2.5": "openai",
     "qwen3.7-plus": "anthropic",
     "qwen3.6-plus": "anthropic",
@@ -87,7 +88,7 @@ MODEL_CATALOG = build_model_catalog(
     ProviderModelInfo(
         id="glm-5.2",
         display_name="GLM-5.2",
-        context_window_tokens=200_000,
+        context_window_tokens=1_000_000,
         thinking_levels=GLM_THINKING_LEVELS,
         default_thinking_level=None,
         supports_image_inputs=False,
@@ -201,6 +202,14 @@ MODEL_CATALOG = build_model_catalog(
         display_name="MiniMax M2.5",
         context_window_tokens=204_800,
         thinking_levels=MINIMAX_THINKING_LEVELS,
+        default_thinking_level=None,
+        supports_image_inputs=False,
+    ),
+    ProviderModelInfo(
+        id="qwen3.7-max",
+        display_name="Qwen3.7 Max",
+        context_window_tokens=1_000_000,
+        thinking_levels=ANTHROPIC_THINKING_LEVELS,
         default_thinking_level=None,
         supports_image_inputs=False,
     ),
@@ -384,7 +393,6 @@ class OpenCodeGoProvider(Provider):
             timeout=self.config.timeout_seconds,
             verify=False,  # noqa: S501
             headers={
-                "Authorization": f"Bearer {self.config.api_key}",
                 "Content-Type": "application/json",
             },
         )
@@ -509,7 +517,6 @@ class OpenCodeGoProvider(Provider):
                     f"{ANTHROPIC_BASE_URL}/v1/messages",
                     json=payload,
                     headers={
-                        "Authorization": f"Bearer {self.config.api_key}",
                         "x-api-key": self.config.api_key,
                         "anthropic-version": "2023-06-01",
                         "Content-Type": "application/json",
@@ -671,6 +678,7 @@ def _max_output_tokens(model_id: str) -> int:
     outputs = {
         "minimax-m3": 65_536,
         "minimax-m2.7": 131_072,
+        "qwen3.7-max": 65_536,
         "qwen3.7-plus": 65_536,
         "qwen3.6-plus": 65_536,
         "qwen3.5-plus": 65_536,
