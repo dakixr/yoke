@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from threading import Event
 from threading import Lock
@@ -118,6 +119,10 @@ def handle_prompt_turn_outcome(
             return None
         was_steered = turn_id in steered_turn_ids
         steered_turn_ids.discard(turn_id)
+        turn_start = state.turn_start_time
+        turn_tools = state.turn_tool_count
+        turn_in_tok = state.turn_input_tokens
+        turn_out_tok = state.turn_output_tokens
     if isinstance(outcome, TurnFailure):
         if outcome.messages is not None:
             with state_lock:
@@ -129,6 +134,14 @@ def handle_prompt_turn_outcome(
                 conversation_entries=outcome.conversation_entries,
             )
         renderer.print_error(str(outcome.error))
+        _emit_turn_summary(
+            renderer,
+            turn_id=turn_id,
+            turn_start=turn_start,
+            tool_count=turn_tools,
+            input_tokens=turn_in_tok,
+            output_tokens=turn_out_tok,
+        )
         return was_steered
     if isinstance(outcome, TurnStopped):
         stopped_messages = (
@@ -156,6 +169,14 @@ def handle_prompt_turn_outcome(
                 else ("Stopped current turn. Send a correction to continue from here."),
             )
         )
+        _emit_turn_summary(
+            renderer,
+            turn_id=turn_id,
+            turn_start=turn_start,
+            tool_count=turn_tools,
+            input_tokens=turn_in_tok,
+            output_tokens=turn_out_tok,
+        )
         return was_steered
     with state_lock:
         state.messages = outcome.result.messages
@@ -166,6 +187,14 @@ def handle_prompt_turn_outcome(
         conversation_entries=outcome.result.conversation_entries,
     )
     renderer.print_agent_output(outcome.result.output)
+    _emit_turn_summary(
+        renderer,
+        turn_id=turn_id,
+        turn_start=turn_start,
+        tool_count=turn_tools,
+        input_tokens=turn_in_tok,
+        output_tokens=turn_out_tok,
+    )
     print("\a", end="", flush=True)
     return was_steered
 
@@ -219,3 +248,31 @@ def get_active_turn_state(
             state.active_turn_id,
             state.active_user_message,
         )
+
+
+def _emit_turn_summary(
+    renderer: PromptToolkitLiveRenderer,
+    *,
+    turn_id: int,
+    turn_start: float | None,
+    tool_count: int,
+    input_tokens: int | None,
+    output_tokens: int | None,
+) -> None:
+    """Emit a dim 'Worked for ...' line only when the turn took over 60s."""
+    emit = getattr(renderer, "_emit_turn_summary", None)
+    if not callable(emit):
+        return
+    duration = None
+    if turn_start is not None:
+        duration = time.monotonic() - turn_start
+    if duration is None or duration < 60:
+        return
+    emit(
+        {
+            "duration_seconds": duration,
+            "tool_count": tool_count,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        }
+    )

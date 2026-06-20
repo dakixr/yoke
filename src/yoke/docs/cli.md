@@ -226,6 +226,40 @@ compacts older history, and retries the newest user turn once.
 
 ---
 
+## Status bar
+
+The prompt-toolkit bottom toolbar shows live session state with styled
+fragments and a shared color palette (cyan accent, amber for warnings, red
+for errors, dim gray for secondary info).
+
+**When idle** the toolbar shows: `model · context gauge · root · session title`.
+
+**When a turn is active** the toolbar shows:
+- Spinner + phase status (`Thinking`, `Streaming`, `Running tool`, `Compacting`, `Recovering`)
+- Elapsed time (`12s`)
+- Tool count (`3 tools`)
+- Context gauge: `% left` tinted by pressure (cyan < 70%, amber < 90%, red near auto-compact)
+- Queue summary (steering/queued prompt counts)
+- Model · root label · session title (right-aligned)
+
+**Per-turn summary**: when a turn takes over 60 seconds, yoke emits a dim
+summary line in scrollback on completion: `Worked for 1m23s · 2 tools`.
+
+**Configurable segments**: set environment variables to hide individual
+segments:
+
+| Variable | Default | Hides |
+|----------|---------|-------|
+| `YOKE_BAR_TIMER` | on | Turn elapsed timer |
+| `YOKE_BAR_TOKENS` | off | Token counts (set to `1` to show `↓in ↑out ⚡reasoning` and absolute gauge tokens) |
+| `YOKE_BAR_GAUGE` | on | Context gauge bar |
+| `YOKE_BAR_TOOLS` | on | Tool count |
+| `YOKE_BAR_TURN` | off | Turn number (set to `1` to show) |
+
+Set any to `0` or `false` to hide that segment.
+
+---
+
 ## Sessions
 
 Sessions save your conversation so you can pick up where you left off.
@@ -563,3 +597,8 @@ yoke --root /path/to/project "..."
 | `ZAI_API_KEY` | Z.ai API key |
 | `YOKE_SESSION_DIR` | Override session storage directory |
 | `YOKE_ZSH` | Override zsh used by the command tool |
+| `YOKE_BAR_TIMER` | Set to `0` to hide the turn elapsed timer in the toolbar |
+| `YOKE_BAR_TOKENS` | Set to `1` to show token counts in the toolbar (off by default) |
+| `YOKE_BAR_GAUGE` | Set to `0` to hide the context gauge bar in the toolbar |
+| `YOKE_BAR_TOOLS` | Set to `0` to hide the tool count in the toolbar |
+| `YOKE_BAR_TURN` | Set to `1` to show the turn number in the toolbar (off by default) |

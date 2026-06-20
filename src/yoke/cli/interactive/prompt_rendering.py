@@ -86,6 +86,15 @@ def build_prompt_toolbar(
             pending_images = list(state.pending_images)
             current_status = state.status_message
             current_context_usage = state.context_usage_text
+            current_usage_percent = state.context_usage_percent
+            current_input_tokens = state.context_input_tokens
+            current_max_tokens = state.context_max_tokens
+            turn_start = state.turn_start_time
+            turn_tools = state.turn_tool_count
+            turn_in_tok = state.turn_input_tokens
+            turn_out_tok = state.turn_output_tokens
+            turn_reason_tok = state.turn_reasoning_tokens
+            turn_num = state.active_turn_id
         frame = None
         if current_worker is not None and not stop_pending:
             frame = spinner_frames[state.spinner_index % len(spinner_frames)]
@@ -102,6 +111,11 @@ def build_prompt_toolbar(
             current_session_title_text = session_title_getter()
         else:
             current_session_title_text = session_title_text
+        elapsed = None
+        if turn_start is not None and current_worker is not None and not stop_pending:
+            import time
+
+            elapsed = time.monotonic() - turn_start
         return format_bottom_toolbar(
             worker_active=current_worker is not None,
             stop_pending=stop_pending,
@@ -109,11 +123,20 @@ def build_prompt_toolbar(
             pending_prompts=_copy_pending_prompts(queued_prompts),
             pending_images=format_attachment_lines(pending_images),
             context_usage=current_context_usage,
+            context_usage_percent=current_usage_percent,
+            context_input_tokens=current_input_tokens,
+            context_max_tokens=current_max_tokens,
             provider_model=current_provider_model_text,
             root_label=root_label,
             session_title=current_session_title_text,
             spinner_frame=frame,
             columns=_current_output_columns(),
+            turn_elapsed_seconds=elapsed,
+            turn_tool_count=turn_tools,
+            turn_input_tokens=turn_in_tok,
+            turn_output_tokens=turn_out_tok,
+            turn_reasoning_tokens=turn_reason_tok,
+            turn_number=turn_num,
         )
 
     return get_bottom_toolbar

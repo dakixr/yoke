@@ -293,7 +293,7 @@ def run_prompt_toolkit_event_loop(
                 "› ",
                 default=default_text,
                 bottom_toolbar=get_bottom_toolbar,
-                refresh_interval=0.1,
+                refresh_interval=0.2,
                 key_bindings=key_bindings,
                 completer=completer,
                 complete_while_typing=True,

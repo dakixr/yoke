@@ -181,6 +181,17 @@ class PromptCliState:
     status_message: str = ""
     submit_action: str = "steer"
     context_usage_text: str | None = None
+    context_usage_percent: int | None = None
+    context_input_tokens: int | None = None
+    context_max_tokens: int | None = None
+    turn_start_time: float | None = None
+    turn_tool_count: int = 0
+    turn_input_tokens: int | None = None
+    turn_output_tokens: int | None = None
+    turn_reasoning_tokens: int | None = None
+    session_input_tokens: int = 0
+    session_output_tokens: int = 0
+    session_tool_calls: int = 0
     spinner_index: int = 0
     thinking_effort: str | None = None
     next_editor_text: str | None = None
@@ -249,6 +260,22 @@ def format_context_usage_text(
         return None
     left_percent = min(100, max(0, 100 - usage_percent))
     return f"{left_percent}% left"
+
+
+def parse_context_usage_details(
+    usage: Mapping[str, object] | None,
+) -> dict[str, int | None]:
+    """Extract usage percent, input tokens, and max tokens from a usage payload."""
+    if usage is None:
+        return {"usage_percent": None, "input_tokens": None, "max_tokens": None}
+    usage_percent = usage.get("usage_percent")
+    input_tokens = usage.get("input_tokens")
+    max_tokens = usage.get("max_total_tokens")
+    return {
+        "usage_percent": usage_percent if isinstance(usage_percent, int) else None,
+        "input_tokens": input_tokens if isinstance(input_tokens, int) else None,
+        "max_tokens": max_tokens if isinstance(max_tokens, int) else None,
+    }
 
 
 def estimate_context_usage_text(

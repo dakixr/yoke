@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -90,6 +91,11 @@ def create_prompt_toolkit_control(
             turn_id = state.active_turn_id
             state.active_stop_request = stop_event
             state.active_user_message = active_user_message
+            state.turn_start_time = time.monotonic()
+            state.turn_tool_count = 0
+            state.turn_input_tokens = None
+            state.turn_output_tokens = None
+            state.turn_reasoning_tokens = None
         state.context_usage_text = estimate_toolbar_context_usage(prompt)
 
         def run_turn() -> None:

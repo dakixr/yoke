@@ -95,14 +95,14 @@ class StatusIndicator:
             self._update("Thinking")
             return
         if event == "model_end":
-            self._update("Planning next step")
+            self._update("Streaming")
             return
         if event == "assistant_message":
             if payload.get("phase") == "commentary":
                 content = payload.get("content")
                 if isinstance(content, str) and content.strip():
                     self._log_commentary(content.strip())
-                self._update("Working")
+                self._update("Streaming")
             return
         if event == "tool_execution_start":
             if not self._turn_has_tool_output:
@@ -114,7 +114,7 @@ class StatusIndicator:
                 style="dim",
             )
             self._turn_has_tool_output = True
-            self._update("Waiting on tool result")
+            self._update("Running tool")
             return
         if event == "tool_execution_end":
             ok = payload.get("ok", False)
@@ -123,7 +123,7 @@ class StatusIndicator:
                     _tool_error_text(payload) or "The tool returned an error.",
                     style="dim",
                 )
-            self._update("Thinking" if ok else "Handling tool failure")
+            self._update("Thinking" if ok else "Recovering")
 
     def clear(self) -> None:
         """Clear the active status line."""

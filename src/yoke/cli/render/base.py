@@ -128,7 +128,7 @@ def build_console(stream: OutputStream) -> Console:
     return Console(
         file=cast(TextIO, stream),
         force_terminal=is_tty,
-        color_system="standard" if is_tty else None,
+        color_system="truecolor" if is_tty else None,
         no_color=False,
         highlight=False,
     )
@@ -165,7 +165,7 @@ def _user_prompt_block(console: Console, prompt: str) -> Text:
     for line in wrapped_lines:
         block_lines.append(line.ljust(content_width))
     block_lines.append(" " * width)
-    return Text("\n".join(block_lines), style="bold bright_white on grey23")
+    return Text("\n".join(block_lines), style="bold bright_white on #41454c")
 
 
 def print_agent_output(console: Console, output: str) -> None:
