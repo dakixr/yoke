@@ -32,7 +32,7 @@ MODEL_CATALOG = (
     ProviderModelInfo(
         id="glm-5.2",
         display_name="GLM-5.2",
-        context_window_tokens=200_000,
+        context_window_tokens=1_000_000,
         thinking_levels=THINKING_LEVELS,
         default_thinking_level="thinking",
         supports_image_inputs=False,
@@ -232,7 +232,9 @@ class ZAIProvider(Provider):
         prepared_messages = self._prepare_messages(messages)
         payload: dict[str, Any] = {
             "model": self.config.model,
-            "messages": [message.to_api_dict() for message in prepared_messages],
+            "messages": [
+                self._message_to_api_dict(message) for message in prepared_messages
+            ],
         }
         thinking = _thinking_config(self.config.reasoning_effort)
         if thinking is not None:
@@ -339,7 +341,8 @@ class ZAIProvider(Provider):
                         )
                         prepared_messages = recovered_messages
                         payload["messages"] = [
-                            message.to_api_dict() for message in prepared_messages
+                            self._message_to_api_dict(message)
+                            for message in prepared_messages
                         ]
                         continue
                 raise ProviderError(
@@ -411,6 +414,14 @@ class ZAIProvider(Provider):
                 message.content = ""
         prepared = self._drop_empty_assistant_messages(prepared)
         return prepared
+
+    def _message_to_api_dict(self, message: Message) -> dict[str, object]:
+        payload = message.to_api_dict()
+        # Z.AI preserved-thinking mode requires complete, unmodified prior
+        # reasoning_content. Yoke cannot guarantee that across compaction and
+        # transcript transforms, so do not replay it by default.
+        payload.pop("reasoning_content", None)
+        return payload
 
     def _merge_leading_system_messages(self, messages: list[Message]) -> list[Message]:
         leading_system_messages: list[Message] = []
@@ -616,7 +627,7 @@ def _thinking_config(reasoning_effort: str | None) -> dict[str, object] | None:
     if normalized == "none":
         return {"type": "disabled"}
     if normalized == "thinking":
-        return {"type": "enabled", "clear_thinking": False}
+        return {"type": "enabled", "clear_thinking": True}
     return None
 
 

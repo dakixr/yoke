@@ -10,6 +10,7 @@ from yoke.agent.tools import ApplyPatchTool
 from yoke.agent.tools import EditTool
 from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools import WriteTool
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.cli.bootstrap.tools import create_builtin_tools
 
@@ -80,8 +81,10 @@ def test_builtin_tools_select_edit_for_non_gpt_models(tmp_path: Path) -> None:
     names = [tool.name for tool in tools]
 
     assert "edit" in names
+    assert "write" in names
     assert "apply_patch" not in names
     assert isinstance(tools[1], EditTool)
+    assert isinstance(tools[2], WriteTool)
 
 
 def test_builtin_tools_skip_attach_image_for_text_only_models(tmp_path: Path) -> None:

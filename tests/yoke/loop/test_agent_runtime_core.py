@@ -276,8 +276,8 @@ def test_agent_loop_emits_commentary_before_tool_calls(
                         ToolCall(
                             id="call-1",
                             function=ToolFunction(
-                                name="edit",
-                                arguments='{"path":"hello.txt","new_text":"hello"}',
+                                name="write",
+                                arguments='{"path":"hello.txt","content":"hello"}',
                             ),
                         )
                     ],
@@ -328,9 +328,9 @@ def test_agent_loop_attaches_partial_messages_to_provider_error(
                         ToolCall(
                             id="call-1",
                             function=ToolFunction(
-                                name="edit",
+                                name="write",
                                 arguments=(
-                                    '{"path":"side_effect.txt","new_text":"persisted"}'
+                                    '{"path":"side_effect.txt","content":"persisted"}'
                                 ),
                             ),
                         )

@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 
 from yoke.agent.tools import EditTool
+from yoke.agent.tools import WriteTool
 
 
 def execute_edit(tmp_path: Path, arguments: dict[str, object]) -> dict[str, object]:
@@ -15,9 +16,12 @@ def execute_edit(tmp_path: Path, arguments: dict[str, object]) -> dict[str, obje
     return cast(dict[str, Any], tool.parse_arguments(arguments).execute())
 
 
-def test_edit_reports_ambiguous_exact_match_with_previews(
-    tmp_path: Path,
-) -> None:
+def execute_write(tmp_path: Path, arguments: dict[str, object]) -> dict[str, object]:
+    tool = WriteTool.bind(root=tmp_path)
+    return cast(dict[str, Any], tool.parse_arguments(arguments).execute())
+
+
+def test_edit_reports_ambiguous_exact_match(tmp_path: Path) -> None:
     target = tmp_path / "sample.txt"
     target.write_text("alpha\nalpha\n", encoding="utf-8")
 
@@ -25,37 +29,14 @@ def test_edit_reports_ambiguous_exact_match_with_previews(
         tmp_path,
         {
             "path": "sample.txt",
-            "oldText": "alpha",
-            "newText": "beta",
+            "oldString": "alpha",
+            "newString": "beta",
         },
     )
 
     assert result["ok"] is False
     assert result["error"] == "Text to replace is ambiguous in sample.txt"
     assert result["match_count"] == 2
-    previews = cast(list[dict[str, Any]], result["previews"])
-    assert previews[0]["occurrence"] == 1
-    assert previews[1]["occurrence"] == 2
-
-
-def test_edit_occurrence_targets_specific_duplicate_match(
-    tmp_path: Path,
-) -> None:
-    target = tmp_path / "sample.txt"
-    target.write_text("alpha\nalpha\n", encoding="utf-8")
-
-    result = execute_edit(
-        tmp_path,
-        {
-            "path": "sample.txt",
-            "oldText": "alpha",
-            "newText": "beta",
-            "occurrence": 2,
-        },
-    )
-
-    assert result["ok"] is True
-    assert target.read_text(encoding="utf-8") == "alpha\nbeta\n"
 
 
 def test_edit_replace_all_updates_every_exact_match(tmp_path: Path) -> None:
@@ -66,132 +47,90 @@ def test_edit_replace_all_updates_every_exact_match(tmp_path: Path) -> None:
         tmp_path,
         {
             "path": "sample.txt",
-            "oldText": "alpha",
-            "newText": "beta",
+            "oldString": "alpha",
+            "newString": "beta",
             "replaceAll": True,
         },
     )
 
     assert result["ok"] is True
-    assert result["edits_applied"] == 2
+    assert result["replacements"] == 2
     assert target.read_text(encoding="utf-8") == "beta\nbeta\n"
 
 
-def test_edit_occurrence_and_replace_all_are_mutually_exclusive(
-    tmp_path: Path,
-) -> None:
+def test_edit_rejects_identical_replacement(tmp_path: Path) -> None:
     tool = EditTool.bind(root=tmp_path)
 
-    with pytest.raises(ValueError, match="occurrence and replaceAll"):
+    with pytest.raises(ValueError, match="oldString and newString must differ"):
         tool.parse_arguments(
             {
                 "path": "sample.txt",
-                "oldText": "alpha",
-                "newText": "beta",
-                "occurrence": 1,
-                "replaceAll": True,
+                "oldString": "alpha",
+                "newString": "alpha",
             }
         )
 
 
-def test_edit_rejects_top_level_disambiguation_with_edits(
-    tmp_path: Path,
-) -> None:
-    tool = EditTool.bind(root=tmp_path)
-
-    with pytest.raises(ValueError, match="Top-level occurrence and replaceAll require"):
-        tool.parse_arguments(
-            {
-                "path": "sample.txt",
-                "occurrence": 1,
-                "edits": [{"oldText": "alpha", "newText": "beta"}],
-            }
-        )
-
-
-def test_edit_multi_mode_supports_per_edit_disambiguation(
-    tmp_path: Path,
-) -> None:
+def test_edit_preserves_crlf_line_endings(tmp_path: Path) -> None:
     target = tmp_path / "sample.txt"
-    target.write_text("alpha\nalpha\ngamma\n", encoding="utf-8")
+    target.write_bytes(b"alpha\r\nbeta\r\n")
 
     result = execute_edit(
         tmp_path,
         {
             "path": "sample.txt",
-            "edits": [
-                {
-                    "oldText": "alpha",
-                    "newText": "beta",
-                    "occurrence": 2,
-                },
-                {"oldText": "gamma", "newText": "delta"},
-            ],
+            "oldString": "alpha\nbeta",
+            "newString": "one\ntwo",
         },
     )
 
     assert result["ok"] is True
-    assert target.read_text(encoding="utf-8") == "alpha\nbeta\ndelta\n"
+    assert target.read_bytes() == b"one\r\ntwo\r\n"
 
 
-def test_edit_requires_old_text_for_top_level_disambiguation(
-    tmp_path: Path,
-) -> None:
-    tool = EditTool.bind(root=tmp_path)
-
-    with pytest.raises(ValueError, match="occurrence and replaceAll require"):
-        tool.parse_arguments(
-            {
-                "path": "sample.txt",
-                "newText": "beta",
-                "occurrence": 1,
-            }
-        )
-
-
-def test_edit_multi_mode_applies_edits_incrementally(
-    tmp_path: Path,
-) -> None:
+def test_edit_preserves_utf8_bom(tmp_path: Path) -> None:
     target = tmp_path / "sample.txt"
-    target.write_text("alpha\nbeta\n", encoding="utf-8")
+    target.write_bytes(b"\xef\xbb\xbfalpha\n")
 
     result = execute_edit(
         tmp_path,
         {
             "path": "sample.txt",
-            "edits": [
-                {"oldText": "alpha", "newText": "gamma"},
-                {"oldText": "gamma", "newText": "delta"},
-            ],
+            "oldString": "alpha",
+            "newString": "beta",
         },
     )
 
     assert result["ok"] is True
-    assert result["edits_applied"] == 2
-    assert target.read_text(encoding="utf-8") == "delta\nbeta\n"
+    assert target.read_bytes() == b"\xef\xbb\xbfbeta\n"
 
 
-def test_edit_multi_mode_replace_all_feeds_later_edits(
-    tmp_path: Path,
-) -> None:
+def test_write_creates_file(tmp_path: Path) -> None:
+    result = execute_write(
+        tmp_path,
+        {
+            "path": "nested/sample.txt",
+            "content": "hello\n",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["created"] is True
+    assert (tmp_path / "nested" / "sample.txt").read_text(encoding="utf-8") == "hello\n"
+
+
+def test_write_preserves_existing_utf8_bom(tmp_path: Path) -> None:
     target = tmp_path / "sample.txt"
-    target.write_text("alpha\nalpha\n", encoding="utf-8")
+    target.write_bytes(b"\xef\xbb\xbfold\n")
 
-    result = execute_edit(
+    result = execute_write(
         tmp_path,
         {
             "path": "sample.txt",
-            "edits": [
-                {
-                    "oldText": "alpha",
-                    "newText": "beta",
-                    "replaceAll": True,
-                },
-                {"oldText": "beta\nbeta", "newText": "merged"},
-            ],
+            "content": "new\n",
         },
     )
 
     assert result["ok"] is True
-    assert result["edits_applied"] == 3
-    assert target.read_text(encoding="utf-8") == "merged\n"
+    assert result["created"] is False
+    assert target.read_bytes() == b"\xef\xbb\xbfnew\n"

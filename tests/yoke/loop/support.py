@@ -38,6 +38,7 @@ from yoke.agent.tools import (
     EditTool,
     LocalTool,
     ReadTool,
+    WriteTool,
 )
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
@@ -48,6 +49,7 @@ def tools(tmp_path: Path):
         ReadTool.bind(root=tmp_path),
         CommandTool.bind(root=tmp_path),
         EditTool.bind(root=tmp_path),
+        WriteTool.bind(root=tmp_path),
     ]
 
 
@@ -70,8 +72,8 @@ class FakeProvider(Provider):
                     ToolCall(
                         id="call-1",
                         function=ToolFunction(
-                            name="edit",
-                            arguments='{"path":"hello.txt","new_text":"hello"}',
+                            name="write",
+                            arguments='{"path":"hello.txt","content":"hello"}',
                         ),
                     )
                 ],

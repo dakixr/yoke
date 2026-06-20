@@ -93,17 +93,16 @@ providers such as `opencode-go`, this is model-specific rather than a single
 provider-wide guarantee. The Thinking column reports selectable controls only:
 for example, Z.ai GLM models expose `none` and `thinking`, which yoke maps to
 Z.ai's documented `thinking.type` disabled/enabled request field. When thinking
-is enabled, yoke also sends `thinking.clear_thinking: false` so GLM preserves
-its reasoning context across turns.
+is enabled, yoke sends `thinking.clear_thinking: true` and does not replay prior
+`reasoning_content`, avoiding stale hidden reasoning after compaction or
+transcript transforms.
 
 Z.ai and OpenCode Go chat-completions models use standard OpenAI-compatible
 tool-call history: assistant `tool_calls` are followed by `tool` messages with
 matching `tool_call_id` values. Z.ai GLM models and some OpenCode Go models,
 such as `kimi-k2.7-code`, can return intermediate `reasoning_content`; yoke
-parses it from the response, preserves it on the assistant message, and sends
-it back on subsequent requests so the model sees its own prior thinking.
-That text is also used as fallback output if the visible response content is
-empty.
+parses it from the response and preserves it on the assistant message. That
+text is also used as fallback output if the visible response content is empty.
 
 OpenCode Go models that use the Anthropic Messages API (`minimax-m3`,
 `minimax-m2.7`, `qwen3.5-plus`, `qwen3.6-plus`, `qwen3.7-max`, `qwen3.7-plus`)
@@ -533,8 +532,7 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke now reports th
 `web_fetch`, `web_research`, `extract_file_context`, `attach_image`, and
 `image_generation`.
 The writing capability is model-aware: model IDs containing `gpt` receive
-`apply_patch`; all other models receive `edit`. Only one writing tool is
-active at a time. `attach_image` is also model-aware and is only registered
+`apply_patch`; all other models receive `edit` and `write`. `attach_image` is also model-aware and is only registered
 when the active model advertises image input support. `image_generation` is only
 registered for Codex-backed providers and saves/attaches generated PNG files;
 it can also use `referenced_image_paths` or `num_last_images_to_include` for

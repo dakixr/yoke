@@ -37,6 +37,7 @@ def test_default_builtin_policy_allows_all_builtin_tools(
         "web_fetch",
         "web_research",
         "web_search",
+        "write",
     }
     assert not denied_names
     assert resolved.tool_report.unmatched_config_patterns == []

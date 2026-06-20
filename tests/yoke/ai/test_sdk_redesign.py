@@ -13,10 +13,10 @@ from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import MessageTextContentPart
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
-from yoke.agent.tools import EditTool
 from yoke.agent.tools import LocalTool
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
+from yoke.agent.tools import WriteTool
 from yoke.ai import Agent
 from yoke.ai import Image
 from yoke.ai import RunConfig
@@ -300,8 +300,8 @@ def test_public_agent_prompt_executes_local_tools(tmp_path: Path) -> None:
                 ToolCall(
                     id="call-1",
                     function=ToolFunction(
-                        name="edit",
-                        arguments='{"path":"hello.txt","new_text":"hello"}',
+                        name="write",
+                        arguments='{"path":"hello.txt","content":"hello"}',
                     ),
                 )
             ],
@@ -312,7 +312,7 @@ def test_public_agent_prompt_executes_local_tools(tmp_path: Path) -> None:
         provider=provider,
         config=RunConfig(
             root=tmp_path,
-            tools=[EditTool],
+            tools=[WriteTool],
             include_agents_file=False,
         ),
     )

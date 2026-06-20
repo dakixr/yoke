@@ -66,7 +66,7 @@ def load_tools(
                 tool_names=frozenset(
                     tool.name
                     for tool in builtin_tools
-                    if tool.name in {"apply_patch", "edit"}
+                    if tool.name in {"apply_patch", "edit", "write"}
                 ),
                 source_kind="default",
                 source_label="default:builtin",
@@ -141,9 +141,10 @@ def _register_builtin_tools(
         tool.bind_runtime_context(runtime_context)
     tools[2:2] = search_tools
     write_registration = normalize_tool_registration(register_write_tool(context))
-    write_tool = list(write_registration.tools)[0]
-    write_tool.bind_runtime_context(runtime_context)
-    tools.insert(1, write_tool)
+    write_tools = list(write_registration.tools)
+    for write_tool in write_tools:
+        write_tool.bind_runtime_context(runtime_context)
+    tools[1:1] = write_tools
     return ToolRegistrationResult(
         tools=tools,
         system_messages=write_registration.system_messages,

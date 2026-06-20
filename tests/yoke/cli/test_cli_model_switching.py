@@ -309,12 +309,12 @@ def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
 
     set_agent_model(agent, model_id="kimi-code")
 
-    assert set(agent.tools) == {"edit"}
+    assert set(agent.tools) == {"edit", "write"}
     combined = "\n".join(
         str(message.content or "") for message in agent.context_manager.instructions
     )
     assert "base instructions" in combined
-    assert "Use the `edit` tool" in combined
+    assert "Use `edit` for exact replacements" in combined
     assert "Use the `apply_patch` tool" not in combined
     assert agent._context is not None
     context_combined = "\n".join(
@@ -336,7 +336,7 @@ def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
         str(message.content or "") for message in agent.context_manager.instructions
     )
     assert "Use the `apply_patch` tool" in round_trip
-    assert "Use the `edit` tool" not in round_trip
+    assert "Use `edit` for exact replacements" not in round_trip
     assert len(agent.context_manager.instructions) == 2
 
 

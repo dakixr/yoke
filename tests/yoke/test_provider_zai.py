@@ -67,7 +67,7 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
     assert captured["payload"] == {
         "model": "glm-5.1",
         "messages": [{"role": "user", "content": "hello"}],
-        "thinking": {"type": "enabled", "clear_thinking": False},
+        "thinking": {"type": "enabled", "clear_thinking": True},
     }
 
 
@@ -178,7 +178,7 @@ def test_zai_provider_parses_reasoning_content_from_response() -> None:
     provider.close()
 
 
-def test_zai_provider_round_trips_reasoning_content_on_next_request() -> None:
+def test_zai_provider_does_not_replay_reasoning_content_on_next_request() -> None:
     captured: dict[str, dict[str, object]] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -205,5 +205,5 @@ def test_zai_provider_round_trips_reasoning_content_on_next_request() -> None:
     provider.complete([Message.user("hello"), first], [])
 
     messages = cast(list[dict[str, object]], captured["payload"]["messages"])
-    assert messages[1]["reasoning_content"] == "prior reasoning"
+    assert "reasoning_content" not in messages[1]
     provider.close()

@@ -33,8 +33,8 @@ def test_sdk_agent_prompt_executes_workspace_tool_classes(
                 ToolCall(
                     id="call-1",
                     function=ToolFunction(
-                        name="edit",
-                        arguments='{"path":"hello.txt","new_text":"hello"}',
+                        name="write",
+                        arguments='{"path":"hello.txt","content":"hello"}',
                     ),
                 )
             ],
@@ -56,7 +56,7 @@ def test_sdk_agent_prompt_executes_workspace_tool_classes(
         provider=TwoStepProvider(),
         config=RunConfig(
             root=tmp_path,
-            tools=[EditTool],
+            tools=[WriteTool],
             include_agents_file=False,
         ),
     )

@@ -113,13 +113,14 @@ Import built-in tools from `yoke.agent.tools` and pass the classes or
 bound instances to `RunConfig.tools`.
 
 ```python
-from yoke.agent.tools import ReadTool, EditTool, GrepTool
+from yoke.agent.tools import ReadTool, EditTool, WriteTool, GrepTool
 ```
 
 | Class | Runtime name | Purpose |
 | --- | --- | --- |
 | `ReadTool` | `read` | Read text files from the workspace, with pagination for large files. |
-| `EditTool` | `edit` | Replace exact text in files, including targeted occurrences or replace-all edits. |
+| `EditTool` | `edit` | Replace exact text in files, with optional replace-all behavior. |
+| `WriteTool` | `write` | Create or overwrite complete text files. |
 | `ApplyPatchTool` | `apply_patch` | Apply codex-style multi-file patches inside the workspace. |
 | `CommandTool` | `bash` on macOS/Linux, `powershell` on Windows | Run shell commands from the workspace root. |
 | `LsTool` | `ls` | List files and directories under a workspace path. |
@@ -154,9 +155,9 @@ interpreter and virtual environment as the running yoke process.
 Most workspace tools can be passed as classes and are bound to `RunConfig.root`
 automatically. Pass already-bound instances when you need custom context.
 
-`register_write_tool` exposes one model-appropriate writing interface: models
-whose ID contains `gpt` receive `apply_patch`; every other model receives
-`edit`.
+`register_write_tool` exposes model-appropriate writing tools: models whose ID
+contains `gpt` receive `apply_patch`; every other model receives `edit` and
+`write`.
 
 ```python
 from yoke.agent.tools import register_write_tool

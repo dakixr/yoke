@@ -52,9 +52,10 @@ def test_tools_expose_pydantic_definitions(tmp_path: Path) -> None:
 
     assert sorted(definitions) == ["edit", "read"]
     assert "offset" in definitions["read"]["parameters"]["properties"]
-    assert "oldText" in definitions["edit"]["parameters"]["properties"]
-    assert "old_text" not in definitions["edit"]["parameters"]["properties"]
-    assert "occurrence" in definitions["edit"]["parameters"]["properties"]
+    assert "oldString" in definitions["edit"]["parameters"]["properties"]
+    assert "old_string" not in definitions["edit"]["parameters"]["properties"]
+    assert "newString" in definitions["edit"]["parameters"]["properties"]
+    assert "occurrence" not in definitions["edit"]["parameters"]["properties"]
     assert "replaceAll" in definitions["edit"]["parameters"]["properties"]
 
 

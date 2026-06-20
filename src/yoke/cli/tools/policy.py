@@ -73,10 +73,11 @@ DEFAULT_ALLOWED_TOOL_NAMES = (
     "web_fetch",
     "web_research",
     "web_search",
+    "write",
 )
 
 TOOL_CAPABILITY_ALIASES = (
-    frozenset({"edit", "apply_patch"}),
+    frozenset({"edit", "write", "apply_patch"}),
     frozenset({"rg", "grep", "find", "ls"}),
 )
 

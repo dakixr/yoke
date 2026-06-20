@@ -30,6 +30,7 @@ from yoke.agent.tools.web import WebResearchTool
 from yoke.agent.tools.web import WebSearchTool
 from yoke.agent.tools.write import model_prefers_apply_patch
 from yoke.agent.tools.write import register_write_tool
+from yoke.agent.tools.write_file import WriteTool
 
 __all__ = [
     "ApplyPatchTool",
@@ -54,6 +55,7 @@ __all__ = [
     "WebResearchTool",
     "WebSearchTool",
     "WorkspaceTool",
+    "WriteTool",
     "SubagentTool",
     "ToolRegistrationContext",
     "ToolRegistration",

@@ -1,10 +1,8 @@
-## `edit`
+## `edit` and `write`
 
-Use the `edit` tool for file changes.
+Use `edit` for exact replacements and `write` for whole-file writes.
 
-- Use `oldText` and `newText` for one exact replacement.
-- Use `edits` for several exact replacements applied in order.
-- Use `occurrence` for one repeated match or `replaceAll` for every match.
-- Use `newText` without `oldText` to replace or create an entire file.
-- Use `deleteFile` to remove a file.
+- Use `edit` with `oldString` and `newString` for one exact replacement.
+- Set `replaceAll` on `edit` only when every exact match should be replaced.
+- Use `write` with `path` and `content` to create or overwrite an entire file.
 - Re-read the file and retry with exact current text if a replacement fails.
