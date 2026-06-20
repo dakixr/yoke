@@ -53,6 +53,11 @@ PROVIDER_NAME = "codex-websockets"
 RESPONSES_WEBSOCKETS_BETA = "responses_websockets=2026-02-06"
 DEFAULT_WS_BASE_URL = DEFAULT_BASE_URL
 STALE_WEBSOCKET_CLOSED_MESSAGE = "Codex WebSocket closed before response.completed."
+WEBSOCKET_TIMEOUT_MESSAGE = "Codex WebSocket timed out waiting for response."
+
+
+class CodexWebSocketTimeoutError(ProviderError):
+    """Raised when an open WebSocket stops delivering response events."""
 
 
 def register_provider(context: Any) -> CodexWebSockets:
@@ -276,6 +281,26 @@ class CodexWebSockets(CodexSubscriptionProvider):
                     **request_metrics,
                 )
                 raise
+            except CodexWebSocketTimeoutError as exc:
+                last_error = exc
+                self._close_websocket(clear_credentials=False)
+                if attempt >= self.config.max_retries:
+                    break
+                wait_seconds = self._backoff_seconds(attempt)
+                self._log_event(
+                    "request_retry",
+                    request_id=request_log_id,
+                    attempt=attempt,
+                    reason="websocket_timeout",
+                    wait_seconds=wait_seconds,
+                    auth_profile=auth_profile,
+                    **request_metrics,
+                )
+                sleep_with_cancel(
+                    wait_seconds,
+                    cancel_requested=cancel_requested,
+                    sleep=self._sleep,
+                )
             except ProviderError as exc:
                 last_error = exc
                 if str(exc) == STALE_WEBSOCKET_CLOSED_MESSAGE:
@@ -436,16 +461,14 @@ class CodexWebSockets(CodexSubscriptionProvider):
                 raise ProviderCancelledError()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ProviderError("Codex WebSocket timed out waiting for response.")
+                raise CodexWebSocketTimeoutError(WEBSOCKET_TIMEOUT_MESSAGE)
             timeout = min(0.1, remaining)
             try:
                 raw = websocket.recv(timeout=timeout)
             except TimeoutError as exc:
                 if time.monotonic() < deadline:
                     continue
-                raise ProviderError(
-                    "Codex WebSocket timed out waiting for response."
-                ) from exc
+                raise CodexWebSocketTimeoutError(WEBSOCKET_TIMEOUT_MESSAGE) from exc
             except ConnectionClosed as exc:
                 self._close_websocket(clear_credentials=False)
                 raise ProviderError(STALE_WEBSOCKET_CLOSED_MESSAGE) from exc
@@ -453,6 +476,9 @@ class CodexWebSockets(CodexSubscriptionProvider):
                 raw = raw.decode("utf-8")
             if not isinstance(raw, str):
                 continue
+            # Match HTTP client timeout semantics: the timeout limits network
+            # inactivity, not the total duration of an actively streaming response.
+            deadline = time.monotonic() + self.config.timeout_seconds
             try:
                 event = json.loads(raw)
             except json.JSONDecodeError:

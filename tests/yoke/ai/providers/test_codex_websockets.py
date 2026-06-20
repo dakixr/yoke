@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -16,6 +17,7 @@ from yoke.ai.providers.codex_websockets import CodexWebSockets
 from yoke.ai.providers.codex_websockets import CodexWebSocketsConfig
 from yoke.ai.providers.codex_websockets import CodexWebSocketConnection
 from yoke.ai.providers.codex_websockets import CodexWebSocketParseState
+from yoke.ai.providers.codex_websockets import CodexWebSocketTimeoutError
 from yoke.ai.providers.codex_websockets import RESPONSES_WEBSOCKETS_BETA
 from yoke.ai.providers.codex_websockets import build_message_from_websocket_state
 from yoke.ai.providers.codex_websockets import handle_websocket_event
@@ -181,6 +183,46 @@ def test_websocket_consume_uses_short_cancel_poll_timeout(tmp_path: Path) -> Non
         )
 
     assert seen_timeouts == [pytest.approx(0.1)]
+
+
+def test_websocket_response_timeout_resets_after_each_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events = iter(
+        [
+            '{"type":"response.output_text.delta","delta":"ok"}',
+            '{"type":"response.completed","response":{"usage":{}}}',
+        ]
+    )
+    monotonic_values = iter([0.0, 0.0, 9.0, 11.0, 11.0])
+
+    class FakeWebSocket:
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(events)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "yoke.ai.providers.codex_websockets.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            timeout_seconds=10.0,
+        )
+    )
+
+    message = provider._consume_websocket_response(
+        cast(CodexWebSocketConnection, FakeWebSocket())
+    )
+
+    assert message.text_content() == "ok"
 
 
 def test_websocket_function_call_output_item_builds_tool_call() -> None:
@@ -399,3 +441,68 @@ def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
         "Bearer access-token",
     ]
     assert len(sent_payloads) == 2
+
+
+def test_codex_websockets_retries_timed_out_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    factory_calls = 0
+
+    class FakeWebSocket:
+        def send(self, payload: str) -> None:
+            del payload
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return '{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{}}}'
+
+        def close(self) -> None:
+            return None
+
+    def fake_factory(url: str, **kwargs: object) -> FakeWebSocket:
+        nonlocal factory_calls
+        del url, kwargs
+        factory_calls += 1
+        return FakeWebSocket()
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+            max_retries=1,
+        ),
+        websocket_factory=fake_factory,
+        sleep=lambda seconds: None,
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+    original_consume = provider._consume_websocket_response
+    consume_calls = 0
+
+    def fake_consume(
+        websocket: CodexWebSocketConnection,
+        *,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> Message:
+        del cancel_requested
+        nonlocal consume_calls
+        consume_calls += 1
+        if consume_calls == 1:
+            raise CodexWebSocketTimeoutError(
+                "Codex WebSocket timed out waiting for response."
+            )
+        return original_consume(websocket)
+
+    monkeypatch.setattr(provider, "_consume_websocket_response", fake_consume)
+
+    message = provider.complete([Message.user("hello")], [])
+
+    assert message.text_content() == "ok"
+    assert factory_calls == 2
