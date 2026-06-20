@@ -62,6 +62,19 @@ if TYPE_CHECKING:
     from yoke.ai.providers.base import ProviderModelInfo
 
 
+def _format_duration(seconds: float) -> str:
+    """Format a duration for the 'Worked for ...' summary line."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes = int(seconds // 60)
+    remaining = int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m{remaining:02d}s"
+    hours = minutes // 60
+    remaining_minutes = minutes % 60
+    return f"{hours}h{remaining_minutes:02d}m"
+
+
 def run_prompt_toolkit_cli(  # noqa: C901
     args: CLIArgs,
     agent: AgentRunner,
@@ -95,7 +108,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
     def refresh_session_title_text() -> str | None:
         return session_ref["active_session"].title
 
-    spinner_frames = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+    spinner_frames = ("▰▱▱", "▱▰▱", "▱▱▰", "▱▰▱")
     state_lock = Lock()
     prompt_session: PromptSession[str] = PromptSession(
         input=pt_input,
@@ -146,6 +159,46 @@ def run_prompt_toolkit_cli(  # noqa: C901
             state.context_usage_text = usage_text
         invalidate_prompt()
 
+    def update_context_details(details: dict[str, int | None]) -> None:
+        with state_lock:
+            state.context_usage_percent = details.get("usage_percent")
+            state.context_input_tokens = details.get("input_tokens")
+            state.context_max_tokens = details.get("max_tokens")
+        invalidate_prompt()
+
+    def update_turn_tokens(tokens: dict[str, int | None]) -> None:
+        with state_lock:
+            state.turn_input_tokens = tokens.get("input_tokens")
+            state.turn_output_tokens = tokens.get("output_tokens")
+            state.turn_reasoning_tokens = tokens.get("reasoning_tokens")
+            if state.turn_input_tokens is not None:
+                state.session_input_tokens += state.turn_input_tokens
+            if state.turn_output_tokens is not None:
+                state.session_output_tokens += state.turn_output_tokens
+        invalidate_prompt()
+
+    def increment_tool_count() -> None:
+        with state_lock:
+            state.turn_tool_count += 1
+            state.session_tool_calls += 1
+        invalidate_prompt()
+
+    def emit_turn_summary(summary: dict[str, object]) -> None:
+        duration = summary.get("duration_seconds")
+        if not isinstance(duration, (int, float)):
+            return
+        text = f"Worked for {_format_duration(duration)}"
+        tools = summary.get("tool_count")
+        if isinstance(tools, int) and tools > 0:
+            text += f" \u00b7 {tools} tool{'s' if tools != 1 else ''}"
+
+        def _print() -> None:
+            from rich.text import Text
+
+            scrollback_console.print(Text(text, style="dim"))
+
+        run_in_scrollback(_print)
+
     def run_in_scrollback(render: Callable[[], None]) -> None:
         if defer_until_fullscreen_exits(lambda: run_in_scrollback(render)):
             return
@@ -189,6 +242,10 @@ def run_prompt_toolkit_cli(  # noqa: C901
         ),
         set_status=update_status,
         set_context_usage=update_context_usage,
+        set_context_details=update_context_details,
+        set_turn_tokens=update_turn_tokens,
+        increment_tool_count=increment_tool_count,
+        emit_turn_summary=emit_turn_summary,
         record_tool_event=tool_trace_store.record_event,
     )
     key_bindings = KeyBindings()

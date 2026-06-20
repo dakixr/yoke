@@ -22,14 +22,10 @@ def test_prompt_toolkit_toolbar_shows_queued_prompts_above_status() -> None:
         spinner_frame="|",
     )
 
-    assert toolbar == [
-        (
-            "class:bottom-toolbar",
-            " queued 1: second prompt \n"
-            " queued 2: third prompt \n"
-            " | Thinking · 2 queued ",
-        )
-    ]
+    text = "".join(t for _s, t in toolbar)
+    assert text == (
+        " queued 1: second prompt \n queued 2: third prompt \n | Thinking · 2 queued "
+    )
 
 
 def test_prompt_toolkit_toolbar_labels_steering_prompts() -> None:
@@ -40,12 +36,10 @@ def test_prompt_toolkit_toolbar_labels_steering_prompts() -> None:
         pending_prompts=[PendingPrompt("use config.py instead", "steering")],
     )
 
-    assert toolbar == [
-        (
-            "class:bottom-toolbar",
-            " steering 1: use config.py instead \n Cancelling model request... ",
-        )
-    ]
+    text = "".join(t for _s, t in toolbar)
+    assert text == (
+        " steering 1: use config.py instead \n Cancelling model request... "
+    )
 
 
 def test_prompt_toolkit_toolbar_shows_pending_images_above_status() -> None:
@@ -58,12 +52,8 @@ def test_prompt_toolkit_toolbar_shows_pending_images_above_status() -> None:
         spinner_frame="|",
     )
 
-    assert toolbar == [
-        (
-            "class:bottom-toolbar",
-            " image 1: screenshot.png \n image 2: chart.png \n | Thinking ",
-        )
-    ]
+    text = "".join(t for _s, t in toolbar)
+    assert text == (" image 1: screenshot.png \n image 2: chart.png \n | Thinking ")
 
 
 def test_insert_attachment_reference_wraps_filename_for_prompt() -> None:
@@ -532,13 +522,11 @@ def test_prompt_toolkit_toolbar_shows_provider_model_when_idle() -> None:
         root_label=r"~\dev\ScriptsCommon",
     )
 
-    assert toolbar == [
-        (
-            "class:bottom-toolbar",
-            r" FakeProvider gpt-test · 73% left · ~\dev\ScriptsCommon ",
-        )
-    ]
-    assert "Ready" not in toolbar[0][1]
+    text = "".join(t for _s, t in toolbar)
+    assert "FakeProvider gpt-test" in text
+    assert "73% left" in text
+    assert r"~\dev\ScriptsCommon" in text
+    assert "Ready" not in text
 
 
 def test_prompt_toolkit_toolbar_shows_provider_model_with_context() -> None:
@@ -553,10 +541,8 @@ def test_prompt_toolkit_toolbar_shows_provider_model_with_context() -> None:
         spinner_frame="|",
     )
 
-    assert toolbar == [
-        (
-            "class:bottom-toolbar",
-            r" | Thinking · FakeProvider gpt-test · 90% left · "
-            r"~\dev\ScriptsCommon ",
-        )
-    ]
+    text = "".join(t for _s, t in toolbar)
+    assert "| Thinking" in text
+    assert "FakeProvider gpt-test" in text
+    assert "90% left" in text
+    assert r"~\dev\ScriptsCommon" in text

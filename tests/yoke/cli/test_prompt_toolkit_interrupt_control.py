@@ -83,7 +83,7 @@ def test_prompt_toolkit_stop_persists_interrupted_runtime_state(tmp_path: Path) 
 
     worker = control.start_turn("please run tool", None)
     deadline = time.monotonic() + 2
-    while not any(status == "Waiting on tool result" for status in statuses):
+    while not any(status == "Running tool" for status in statuses):
         if time.monotonic() > deadline:
             raise AssertionError("turn did not reach tool execution")
         time.sleep(0.01)

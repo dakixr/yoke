@@ -391,5 +391,6 @@ def test_prompt_toolkit_hydrates_context_usage_from_conversation_entries(
     )
 
     assert exit_code == 0
-    assert expected_text in session_holder["toolbar"][0][1]
-    assert "0% left" not in session_holder["toolbar"][0][1]
+    toolbar_text = "".join(t for _s, t in session_holder["toolbar"])
+    assert expected_text in toolbar_text
+    assert "0% left" not in toolbar_text

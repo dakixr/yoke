@@ -63,3 +63,23 @@ from yoke.cli.render.status import (
     InteractiveRenderer as InteractiveRenderer,
 )
 from yoke.cli.render.status import StatusIndicator as StatusIndicator
+from yoke.cli.render.theme import (
+    PHASE_COMPACTING as PHASE_COMPACTING,
+)
+from yoke.cli.render.theme import (
+    PHASE_RECOVERING as PHASE_RECOVERING,
+)
+from yoke.cli.render.theme import (
+    PHASE_RUNNING_TOOL as PHASE_RUNNING_TOOL,
+)
+from yoke.cli.render.theme import (
+    PHASE_STREAMING as PHASE_STREAMING,
+)
+from yoke.cli.render.theme import (
+    PHASE_THINKING as PHASE_THINKING,
+)
+from yoke.cli.render.theme import (
+    TOOLBAR_STYLE_ENTRIES as TOOLBAR_STYLE_ENTRIES,
+)
+from yoke.cli.render.theme import gauge_level as gauge_level
+from yoke.cli.render.theme import format_token_count as format_token_count

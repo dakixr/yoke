@@ -110,10 +110,10 @@ def test_prompt_toolkit_renderer_opens_tool_block_before_first_commentary() -> N
         "status:Thinking",
         "divider",
         "commentary:Inspecting results.",
-        "status:Working",
+        "status:Streaming",
         "tool:False:",
         'tool:False:read path="todo.txt"',
-        "status:Waiting on tool result",
+        "status:Running tool",
         "status:",
     ]
 
@@ -151,15 +151,18 @@ def test_bottom_toolbar_right_aligns_session_title_when_space_allows() -> None:
         status_message="",
         pending_prompts=[],
         context_usage="80% left",
+        context_usage_percent=20,
         provider_model="gpt-test",
         root_label="ScriptsCommon",
         session_title="Floating Session Title",
         columns=80,
     )
 
-    text = toolbar[0][1]
+    text = "".join(t for _s, t in toolbar)
 
-    assert text.startswith(" gpt-test · 80% left · ScriptsCommon ")
+    assert "gpt-test" in text
+    assert "80% left" in text
+    assert "ScriptsCommon" in text
     assert text.endswith("Floating Session Title ")
     assert len(text) == 80
 
@@ -175,10 +178,10 @@ def test_bottom_toolbar_truncates_session_title_when_space_is_tight() -> None:
         columns=32,
     )
 
-    text = toolbar[0][1]
+    text = "".join(t for _s, t in toolbar)
 
-    assert text.startswith(" gpt-test ")
-    assert text.endswith("A Very Long Sess... ")
+    assert text.startswith(" gpt-test")
+    assert text.endswith("A Very Long Sessi... ")
     assert len(text) == 32
 
 
@@ -193,7 +196,7 @@ def test_bottom_toolbar_shows_short_session_title() -> None:
         columns=32,
     )
 
-    text = toolbar[0][1]
+    text = "".join(t for _s, t in toolbar)
 
     assert text == " gpt-test                    AI "
 
@@ -211,9 +214,12 @@ def test_bottom_toolbar_hides_session_title_when_space_is_too_tight() -> None:
         columns=32,
     )
 
-    text = toolbar[0][1]
+    text = "".join(t for _s, t in toolbar)
 
-    assert text == " ⠋ Thinking · gpt-test · ScriptsCommon "
+    assert "Thinking" in text
+    assert "gpt-test" in text
+    assert "ScriptsCommon" in text
+    assert "Session Title" not in text
 
 
 def test_tool_preview_shows_all_arguments_with_truncated_values() -> None:

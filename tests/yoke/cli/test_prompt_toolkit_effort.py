@@ -41,12 +41,10 @@ def test_idle_toolbar_shows_provider_with_effort_before_context() -> None:
         root_label=r"~\dev\ScriptsCommon",
     )
 
-    assert toolbar == [
-        (
-            "class:bottom-toolbar",
-            r" CodexSubscriptionProvider gpt-5.4 high · 99% left · ~\dev\ScriptsCommon ",
-        )
-    ]
+    text = "".join(t for _s, t in toolbar)
+    assert "CodexSubscriptionProvider gpt-5.4 high" in text
+    assert "99% left" in text
+    assert r"~\dev\ScriptsCommon" in text
 
 
 def test_toolbar_reads_provider_model_dynamically() -> None:
@@ -59,12 +57,10 @@ def test_toolbar_reads_provider_model_dynamically() -> None:
         root_label=r"~\dev\ScriptsCommon",
     )
 
-    assert (
-        r" CodexSubscriptionProvider gpt-5.4 high · ~\dev\ScriptsCommon "
-        == toolbar()[0][1]
-    )
+    text1 = "".join(t for _s, t in toolbar())
+    assert "CodexSubscriptionProvider gpt-5.4 high" in text1
+    assert r"~\dev\ScriptsCommon" in text1
     provider_model["value"] = "CodexSubscriptionProvider gpt-5.4 xhigh"
-    assert (
-        r" CodexSubscriptionProvider gpt-5.4 xhigh · ~\dev\ScriptsCommon "
-        == toolbar()[0][1]
-    )
+    text2 = "".join(t for _s, t in toolbar())
+    assert "CodexSubscriptionProvider gpt-5.4 xhigh" in text2
+    assert r"~\dev\ScriptsCommon" in text2

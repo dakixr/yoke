@@ -33,16 +33,20 @@ if TYPE_CHECKING:
     from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 
 
+from yoke.cli.render.theme import ACCENT
+from yoke.cli.render.theme import TOOLBAR_STYLE_ENTRIES
+
 COMPLETION_MENU_STYLE = Style.from_dict(
     {
         "yoke-completion-menu": "noinherit bg:",
         "yoke-completion-menu.completion": "noinherit fg:#ffffff bg:",
-        "yoke-completion-menu.completion.current": ("noinherit fg:#5cc8f2 bold bg:"),
+        "yoke-completion-menu.completion.current": f"noinherit fg:{ACCENT} bold bg:",
         "yoke-completion-menu.meta": "noinherit fg:#9a9a9a bg:",
-        "yoke-completion-menu.meta.current": "noinherit fg:#5cc8f2 bg:",
+        "yoke-completion-menu.meta.current": f"noinherit fg:{ACCENT} bg:",
         "yoke-completion-menu scrollbar.background": "noinherit bg:",
         "yoke-completion-menu scrollbar.button": "noinherit bg:#555555",
         "yoke-completion-menu scrollbar.button.end": ("noinherit bg:#555555 underline"),
+        **TOOLBAR_STYLE_ENTRIES,
     }
 )
 
