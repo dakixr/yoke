@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from collections.abc import Iterable
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -88,6 +89,7 @@ class ToolRuntimeContext:
     model: ModelIdentity
     cancel_requested: Callable[[], bool] = never_cancel
     tool_event: Callable[[str, dict[str, object]], None] | None = None
+    recent_messages: Sequence[Message] = ()
 
     @property
     def provider_name(self) -> str:

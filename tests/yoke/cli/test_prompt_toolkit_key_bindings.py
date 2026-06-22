@@ -165,9 +165,9 @@ def test_prompt_toolkit_ctrl_o_runs_inspector_in_executor(
 def test_tool_inspector_vim_navigation_key_bindings() -> None:
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.key_binding.key_processor import KeyPressEvent
-    from yoke.cli.interactive.tool_inspector import ToolInspectorState
-    from yoke.cli.interactive.tool_inspector import _register_tool_inspector_keys
-    from yoke.cli.interactive.tool_trace import ToolTraceEntry
+    from yoke.cli.interactive.tools.inspector import ToolInspectorState
+    from yoke.cli.interactive.tools.inspector import _register_tool_inspector_keys
+    from yoke.cli.interactive.tools.trace import ToolTraceEntry
 
     state = ToolInspectorState(
         entries=[

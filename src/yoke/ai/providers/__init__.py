@@ -11,14 +11,14 @@ if TYPE_CHECKING:
     from yoke.ai.providers.base import ProviderError as ProviderError
     from yoke.ai.providers.base import ProviderRateLimitError as ProviderRateLimitError
     from yoke.ai.providers.base import ProviderServerError as ProviderServerError
-    from yoke.ai.providers.codex_subscription import (
+    from yoke.ai.providers.codex.subscription import (
         CodexSubscriptionConfig as CodexSubscriptionConfig,
     )
-    from yoke.ai.providers.codex_subscription import (
+    from yoke.ai.providers.codex.subscription import (
         CodexSubscriptionProvider as CodexSubscriptionProvider,
     )
-    from yoke.ai.providers.codex_websockets import CodexWebSockets as CodexWebSockets
-    from yoke.ai.providers.codex_websockets import (
+    from yoke.ai.providers.codex.websockets import CodexWebSockets as CodexWebSockets
+    from yoke.ai.providers.codex.websockets import (
         CodexWebSocketsConfig as CodexWebSocketsConfig,
     )
     from yoke.ai.providers.opencode_go import OpenCodeGoConfig as OpenCodeGoConfig
@@ -43,16 +43,16 @@ _LAZY_EXPORTS = {
     "ProviderRateLimitError": ("yoke.ai.providers.base", "ProviderRateLimitError"),
     "ProviderServerError": ("yoke.ai.providers.base", "ProviderServerError"),
     "CodexSubscriptionConfig": (
-        "yoke.ai.providers.codex_subscription",
+        "yoke.ai.providers.codex.subscription",
         "CodexSubscriptionConfig",
     ),
     "CodexSubscriptionProvider": (
-        "yoke.ai.providers.codex_subscription",
+        "yoke.ai.providers.codex.subscription",
         "CodexSubscriptionProvider",
     ),
-    "CodexWebSockets": ("yoke.ai.providers.codex_websockets", "CodexWebSockets"),
+    "CodexWebSockets": ("yoke.ai.providers.codex.websockets", "CodexWebSockets"),
     "CodexWebSocketsConfig": (
-        "yoke.ai.providers.codex_websockets",
+        "yoke.ai.providers.codex.websockets",
         "CodexWebSocketsConfig",
     ),
     "OpenCodeGoConfig": ("yoke.ai.providers.opencode_go", "OpenCodeGoConfig"),

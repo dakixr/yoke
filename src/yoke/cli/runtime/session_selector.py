@@ -8,12 +8,12 @@ from datetime import datetime
 from pathlib import Path
 
 from yoke.cli.path_display import format_root_label
-from yoke.cli.runtime.selector_ui import can_use_keyboard_selector
-from yoke.cli.runtime.selector_format import fit_selector_cell
-from yoke.cli.runtime.selector_format import fit_selector_identifier
-from yoke.cli.runtime.selector_ui import SelectorTableColumns
-from yoke.cli.runtime.selector_ui import selector_terminal_size
-from yoke.cli.runtime.selector_ui import select_table_item_interactive
+from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
+from yoke.cli.runtime.selector.format import fit_selector_cell
+from yoke.cli.runtime.selector.format import fit_selector_identifier
+from yoke.cli.runtime.selector.ui import SelectorTableColumns
+from yoke.cli.runtime.selector.ui import selector_terminal_size
+from yoke.cli.runtime.selector.ui import select_table_item_interactive
 from yoke.cli.session import SessionRecord
 
 

@@ -13,10 +13,10 @@ from yoke.cli.interactive.completion_menu import YokeCompletionsMenu
 from yoke.cli.interactive.completion_menu import COMPLETION_MENU_STYLE
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.queue_persistence import clear_prompt_queue
-from yoke.cli.interactive.queue_persistence import persist_prompt_queue
+from yoke.cli.interactive.queue.persistence import clear_prompt_queue
+from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.cli.interactive.slash_commands import handle_slash_command
-from yoke.cli.interactive.prompt_turns import next_pending_prompt_index
+from yoke.cli.interactive.prompt.turns import next_pending_prompt_index
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import persist_session_state
@@ -255,7 +255,7 @@ def run_prompt_toolkit_event_loop(
     estimate_toolbar_context_usage: Callable[[str], str | None],
 ) -> int:
     """Run the prompt-toolkit prompt loop."""
-    from yoke.cli.interactive.prompt_rendering import (
+    from yoke.cli.interactive.prompt.rendering import (
         build_prompt_toolbar,
     )
 

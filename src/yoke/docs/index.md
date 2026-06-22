@@ -10,6 +10,16 @@
 
 ## Core concepts
 
+### Source layout
+yoke groups implementation files by subsystem and keeps prefix-related helpers in
+subpackages. The CLI prompt-toolkit implementation lives under
+`yoke.cli.interactive.prompt`, interactive queue helpers under
+`yoke.cli.interactive.queue`, tool inspection helpers under
+`yoke.cli.interactive.tools`, shared selector helpers under
+`yoke.cli.runtime.selector`, SDK internals under `yoke.ai.sdk`, Codex providers
+under `yoke.ai.providers.codex`, agent-loop tool execution under
+`yoke.agent.loop.tools`, and Python tool helpers under `yoke.agent.tools.python`.
+
 ### Capabilities and tools
 Capabilities are context-aware bundles of tools, selected from the active
 provider, model, operating system, and workspace environment. For example,
@@ -22,6 +32,12 @@ run a shell command, search the web. The CLI resolves yoke's built-in
 capabilities and auto-discovers additional tools from repo `.yoke/tools/` and
 global `~/.yoke/tools/` directories. The SDK can use capabilities, explicit
 tools, or legacy tool registration callbacks.
+For web research, yoke follows Codex-style context passing: the tool receives a
+sanitized recent text tail rather than the raw full conversation, keeping the
+previous user turn, bounded assistant context, and current user turn while
+excluding system/developer/environment/tool noise. Codex-backed research also
+forwards hosted web-search settings such as context size, indexed/live access,
+and allowed-domain filters.
 On Windows, isolated tool processes use `spawn`; yoke passes only the invoked
 tool to the child process and strips runtime-only context such as provider
 objects and cancellation callbacks that cannot be pickled.

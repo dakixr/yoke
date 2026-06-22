@@ -30,7 +30,7 @@ from yoke.agent.skills import (
     load_skill_registry,
 )
 from yoke.agent.skills.discovery import load_skill
-from yoke.ai.sdk_helpers import image_part, remote_image_part, text_part
+from yoke.ai.sdk.helpers import image_part, remote_image_part, text_part
 
 if TYPE_CHECKING:
     from yoke.agent.capabilities import CapabilityInput

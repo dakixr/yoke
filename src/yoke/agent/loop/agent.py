@@ -14,7 +14,7 @@ from yoke.agent.context import ContextManager
 from yoke.agent.loop.iteration import RuntimeAgentIterationMixin
 from yoke.agent.loop.state import context_for_run
 from yoke.agent.loop.state import persist_run_context
-from yoke.agent.loop.tool_core import index_tools
+from yoke.agent.loop.tools.core import index_tools
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import AgentResult
@@ -45,9 +45,9 @@ from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import provider_system_messages
 
 if TYPE_CHECKING:
-    from yoke.ai.sdk_types import AgentResult as SDKAgentResult
-    from yoke.ai.sdk_types import Image
-    from yoke.ai.sdk_types import RunConfig
+    from yoke.ai.sdk.types import AgentResult as SDKAgentResult
+    from yoke.ai.sdk.types import Image
+    from yoke.ai.sdk.types import RunConfig
     from yoke.cli.bootstrap.types import ToolLoadReport
 
 
@@ -68,8 +68,8 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         config: RunConfig,
     ) -> RuntimeAgent:
         """Build a runtime agent from the public SDK run configuration."""
-        from yoke.ai.sdk_runtime import build_agent_capabilities
-        from yoke.ai.sdk_runtime import build_system_messages
+        from yoke.ai.sdk.runtime import build_agent_capabilities
+        from yoke.ai.sdk.runtime import build_system_messages
 
         root = Path(config.root).resolve()
         active_skills = [skill.to_active_skill() for skill in config.skills]
@@ -419,13 +419,13 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         after_tool_call: AfterToolCallHook | None = None,
     ) -> SDKAgentResult[StructuredT]:
         """Run the SDK-style agent prompt flow and return the public result."""
-        from yoke.ai.sdk_types import AgentResult as SDKAgentResult
-        from yoke.ai.sdk_types import (
+        from yoke.ai.sdk.types import AgentResult as SDKAgentResult
+        from yoke.ai.sdk.types import (
             append_structured_output_instructions,
         )
-        from yoke.ai.sdk_types import build_user_message_from_images
-        from yoke.ai.sdk_types import normalize_image_inputs
-        from yoke.ai.sdk_types import parse_structured_output
+        from yoke.ai.sdk.types import build_user_message_from_images
+        from yoke.ai.sdk.types import normalize_image_inputs
+        from yoke.ai.sdk.types import parse_structured_output
 
         user_message = None
         normalized_images, normalized_urls = normalize_image_inputs(

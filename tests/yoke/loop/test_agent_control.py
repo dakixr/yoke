@@ -290,8 +290,8 @@ def test_agent_stop_terminates_non_cooperative_tool_process(tmp_path: Path) -> N
 
 
 def test_tool_process_cancelled_when_wait_is_interrupted(tmp_path: Path) -> None:
-    from yoke.agent.loop.tool_process import ToolProcessInvocation
-    from yoke.agent.loop.tool_process import wait_for_tool_process
+    from yoke.agent.loop.tools.process import ToolProcessInvocation
+    from yoke.agent.loop.tools.process import wait_for_tool_process
 
     class SleepForeverTool(LocalTool):
         name = "sleep_forever"
@@ -325,7 +325,7 @@ def test_tool_process_cancelled_when_wait_is_interrupted(tmp_path: Path) -> None
 
 
 def test_tool_process_spawn_strips_unpicklable_runtime_context(monkeypatch) -> None:
-    import yoke.agent.loop.tool_process as tool_process
+    import yoke.agent.loop.tools.process as tool_process
 
     spawn_context = multiprocessing.get_context("spawn")
     stop_event = threading.Event()
@@ -353,8 +353,8 @@ def test_tool_process_spawn_strips_unpicklable_runtime_context(monkeypatch) -> N
 
 
 def test_active_tool_process_cleanup_cancels_started_invocation(tmp_path: Path) -> None:
-    from yoke.agent.loop.tool_process import ToolProcessInvocation
-    from yoke.agent.loop.tool_process import cancel_active_tool_processes
+    from yoke.agent.loop.tools.process import ToolProcessInvocation
+    from yoke.agent.loop.tools.process import cancel_active_tool_processes
 
     class SleepForeverTool(LocalTool):
         name = "sleep_forever"

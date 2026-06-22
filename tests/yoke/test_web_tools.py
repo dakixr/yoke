@@ -15,7 +15,8 @@ from yoke.agent.tools.web import WebResearchTool
 from yoke.agent.tools.web import WebSearchTool
 from yoke.agent.tools.web import _search_terms
 from yoke.agent.tools.web import _web_search
-from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
+from yoke.agent.tools.web import recent_research_context
+from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
 
 
 class FakeResponse:
@@ -105,6 +106,7 @@ class FailingHostedSearchProvider(HostedSearchProvider):
 def bind_web_research(
     tool: WebResearchTool,
     provider: object | None = None,
+    recent_messages: list[Message] | None = None,
 ) -> WebResearchTool:
     resolved_provider = provider or UnavailableSynthesisProvider()
     tool.bind_runtime_context(
@@ -113,6 +115,7 @@ def bind_web_research(
             home=Path.home(),
             provider=cast(Any, resolved_provider),
             model=ModelIdentity(provider_name="test", model_id="test-model"),
+            recent_messages=tuple(recent_messages or ()),
         )
     )
     return tool
@@ -140,7 +143,70 @@ def test_web_research_uses_codex_hosted_web_search() -> None:
     ]
     notes = cast(list[str], result["notes"])
     assert "Used Codex hosted web_search." in notes
-    assert result["sources"] == []
+    assert "sources" not in result
+
+
+def test_web_research_passes_recent_context_to_codex_hosted_search() -> None:
+    provider = HostedSearchProvider()
+    recent_messages = [
+        Message.system("hidden system"),
+        Message.user("old user"),
+        Message.assistant("old assistant"),
+        Message.user("previous user"),
+        Message.tool("call-1", "tool result"),
+        Message.assistant("previous assistant"),
+        Message.user("<environment_context>\n<cwd>/tmp</cwd>\n</environment_context>"),
+        Message.user("current user"),
+    ]
+
+    result = bind_web_research(
+        WebResearchTool(
+            question="what changed?",
+            research_context="Prefer official sources.",
+            search_context_size="medium",
+            web_search_mode="indexed",
+            allowed_domains=["example.com"],
+        ),
+        provider,
+        recent_messages=recent_messages,
+    ).execute()
+
+    assert result["ok"] is True
+    messages, tools = provider.calls[0]
+    prompt = messages[1].text_content() or ""
+    assert "Prefer official sources." in prompt
+    assert "User: previous user" in prompt
+    assert "Assistant: previous assistant" in prompt
+    assert "User: current user" in prompt
+    assert "old user" not in prompt
+    assert "hidden system" not in prompt
+    assert "environment_context" not in prompt
+    assert tools == [
+        {
+            "type": "web_search",
+            "external_web_access": True,
+            "search_context_size": "medium",
+            "index_gated_web_access": True,
+            "filters": {"allowed_domains": ["example.com"]},
+        }
+    ]
+
+
+def test_recent_research_context_keeps_codex_style_text_tail() -> None:
+    context = recent_research_context(
+        [
+            Message.user("old user"),
+            Message.assistant("old assistant"),
+            Message.user("previous user"),
+            Message.assistant("previous assistant"),
+            Message.user("<environment_context>\nignored\n</environment_context>"),
+            Message.user("current user"),
+        ]
+    )
+
+    assert context == (
+        "User: previous user\nAssistant: previous assistant\nUser: current user"
+    )
 
 
 def test_web_research_executes_in_process_for_runtime_context() -> None:

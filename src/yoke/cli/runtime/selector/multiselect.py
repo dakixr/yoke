@@ -8,10 +8,10 @@ from contextlib import suppress
 from html import escape
 from typing import TypeVar
 
-from yoke.cli.runtime.selector_ui import build_table_selector_view
-from yoke.cli.runtime.selector_ui import selector_page_step
-from yoke.cli.runtime.selector_ui import SelectorTableColumns
-from yoke.cli.runtime.selector_ui import selector_terminal_size
+from yoke.cli.runtime.selector.ui import build_table_selector_view
+from yoke.cli.runtime.selector.ui import selector_page_step
+from yoke.cli.runtime.selector.ui import SelectorTableColumns
+from yoke.cli.runtime.selector.ui import selector_terminal_size
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )

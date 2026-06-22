@@ -99,8 +99,8 @@ def test_prompt_toolkit_queues_without_injecting_scrollback_until_processed(
 def test_prompt_queue_persistence_round_trips_pending_prompts(tmp_path: Path) -> None:
     from yoke.cli.image_input import ImageAttachment
     from yoke.cli.interactive.common import PendingPrompt
-    from yoke.cli.interactive.queue_persistence import load_prompt_queue
-    from yoke.cli.interactive.queue_persistence import persist_prompt_queue
+    from yoke.cli.interactive.queue.persistence import load_prompt_queue
+    from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 
     active_session = active_session_for(tmp_path)
     image_path = tmp_path / "image.png"
@@ -132,7 +132,7 @@ def test_finish_prompt_turn_skips_paused_queue_items() -> None:
 
     from yoke.cli.interactive.common import PendingPrompt
     from yoke.cli.interactive.common import PromptCliState
-    from yoke.cli.interactive.prompt_turns import finish_prompt_turn
+    from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 
     state = PromptCliState(
         messages=[],
@@ -158,7 +158,7 @@ def test_finish_prompt_turn_prioritizes_steering_items() -> None:
 
     from yoke.cli.interactive.common import PendingPrompt
     from yoke.cli.interactive.common import PromptCliState
-    from yoke.cli.interactive.prompt_turns import finish_prompt_turn
+    from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 
     state = PromptCliState(
         messages=[],
@@ -185,7 +185,7 @@ def test_finish_prompt_turn_prioritizes_steering_items() -> None:
 
 def test_first_non_steering_index_places_steering_before_queued() -> None:
     from yoke.cli.interactive.common import PendingPrompt
-    from yoke.cli.interactive.queue_manager import _first_non_steering_index
+    from yoke.cli.interactive.queue.manager import _first_non_steering_index
 
     prompts = [
         PendingPrompt("queued 1"),
@@ -199,7 +199,7 @@ def test_first_non_steering_index_places_steering_before_queued() -> None:
 
 
 def test_queue_manager_edit_exits_before_prompting(monkeypatch) -> None:
-    import yoke.cli.interactive.queue_manager as queue_manager
+    import yoke.cli.interactive.queue.manager as queue_manager
 
     from yoke.cli.interactive.common import PendingPrompt
 
@@ -236,7 +236,7 @@ def test_queue_manager_edit_exits_before_prompting(monkeypatch) -> None:
 def test_queue_edit_enter_saves_and_ctrl_j_inserts_newline() -> None:
     from prompt_toolkit.keys import Keys
 
-    from yoke.cli.interactive.queue_manager import queue_edit_key_bindings
+    from yoke.cli.interactive.queue.manager import queue_edit_key_bindings
 
     key_bindings = queue_edit_key_bindings()
     keys = {binding.keys for binding in key_bindings.bindings}

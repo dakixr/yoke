@@ -9,19 +9,19 @@ from html import escape
 import shutil
 from typing import TypeVar
 
-from yoke.cli.runtime.selector_format import (
+from yoke.cli.runtime.selector.format import (
     format_selector_table_header,
 )
-from yoke.cli.runtime.selector_format import (
+from yoke.cli.runtime.selector.format import (
     format_selector_table_separator,
 )
-from yoke.cli.runtime.selector_format import generic_selector_footer
-from yoke.cli.runtime.selector_format import GenericSelectorView
-from yoke.cli.runtime.selector_format import (
+from yoke.cli.runtime.selector.format import generic_selector_footer
+from yoke.cli.runtime.selector.format import GenericSelectorView
+from yoke.cli.runtime.selector.format import (
     normalize_selector_scroll_offset,
 )
-from yoke.cli.runtime.selector_format import SelectorTableColumns
-from yoke.cli.runtime.selector_format import truncate_selector_line
+from yoke.cli.runtime.selector.format import SelectorTableColumns
+from yoke.cli.runtime.selector.format import truncate_selector_line
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )

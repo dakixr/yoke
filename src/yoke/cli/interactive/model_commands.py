@@ -12,9 +12,9 @@ from yoke.cli.providers.state import switch_agent_provider_model
 from yoke.cli.render.base import Console
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime.selector_format import fit_selector_cell
-from yoke.cli.runtime.selector_ui import SelectorTableColumns
-from yoke.cli.runtime.selector_ui import select_table_item_interactive
+from yoke.cli.runtime.selector.format import fit_selector_cell
+from yoke.cli.runtime.selector.ui import SelectorTableColumns
+from yoke.cli.runtime.selector.ui import select_table_item_interactive
 
 
 @dataclass(slots=True, frozen=True)

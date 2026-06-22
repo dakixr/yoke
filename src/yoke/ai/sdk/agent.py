@@ -12,9 +12,9 @@ from yoke.agent.loop.types import StopRequested
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.ai.providers.base import Provider
-from yoke.ai.sdk_types import AgentResult
-from yoke.ai.sdk_types import Image
-from yoke.ai.sdk_types import RunConfig
+from yoke.ai.sdk.types import AgentResult
+from yoke.ai.sdk.types import Image
+from yoke.ai.sdk.types import RunConfig
 
 
 class Agent:

@@ -75,6 +75,7 @@ class LocalTool(BaseModel, ABC):
         self._context["home"] = context.home
         self._context["cancel_requested"] = context.cancel_requested
         self._context["tool_event"] = context.tool_event
+        self._context["recent_messages"] = context.recent_messages
 
     def _is_cancel_requested(self) -> bool:
         runtime_context = self._context.get("runtime_context")

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
-from yoke.agent.loop.tool_core import cancelled_tool_result
-from yoke.agent.loop.tool_core import finalize_tool_result
-from yoke.agent.loop.tool_core import is_stopped
-from yoke.agent.loop.tool_process import ToolProcessInvocation
-from yoke.agent.loop.tool_process import TOOL_POLL_SECONDS
-from yoke.agent.loop.tool_process import wait_for_tool_process
+from yoke.agent.loop.tools.core import cancelled_tool_result
+from yoke.agent.loop.tools.core import finalize_tool_result
+from yoke.agent.loop.tools.core import is_stopped
+from yoke.agent.loop.tools.process import ToolProcessInvocation
+from yoke.agent.loop.tools.process import TOOL_POLL_SECONDS
+from yoke.agent.loop.tools.process import wait_for_tool_process
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import ImmediateToolResult
 from yoke.agent.loop.types import PreparedToolCall
@@ -17,6 +18,7 @@ from yoke.agent.loop.types import StopRequested
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ToolCall
 from yoke.agent.tools import LocalTool
+from yoke.agent.tools import ToolRuntimeContext
 
 
 def _execute_tool_call(
@@ -31,9 +33,14 @@ def _execute_tool_call(
     tool = tools.get(prepared.tool_call.function.name)
     event_payload = _tool_event_payload(prepared.tool_call, iteration)
     if tool is not None and tool.execute_in_process:
-        from yoke.agent.loop.tool_core import execute_tool
+        from yoke.agent.loop.tools.core import execute_tool
 
         tool._context["messages"] = list(context.messages)
+        runtime_context = tool.runtime_context
+        if isinstance(runtime_context, ToolRuntimeContext):
+            tool.bind_runtime_context(
+                replace(runtime_context, recent_messages=tuple(context.messages))
+            )
         return execute_tool(
             tools,
             prepared.tool_call.function.name,

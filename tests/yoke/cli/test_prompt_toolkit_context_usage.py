@@ -14,7 +14,7 @@ def test_prompt_compaction_refreshes_context_usage_immediately(
 ) -> None:
     from threading import Lock
 
-    from yoke.cli.interactive.prompt_control import _persist_prompt_compaction
+    from yoke.cli.interactive.prompt.control import _persist_prompt_compaction
     from yoke.cli.runtime import force_compact_history
 
     class ManualCompactionProvider(Provider):
@@ -78,7 +78,7 @@ def test_slash_tree_refreshes_context_usage_after_navigation(
 ) -> None:
     from threading import Lock
 
-    import yoke.cli.interactive.prompt_loop as prompt_loop_module
+    import yoke.cli.interactive.prompt.loop as prompt_loop_module
 
     state = PromptCliState(
         messages=[Message.user("old branch")],

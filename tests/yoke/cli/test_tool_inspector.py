@@ -8,17 +8,17 @@ from typing import cast
 from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
-from yoke.cli.interactive.tool_inspector import ToolInspectorState
-from yoke.cli.interactive.tool_inspector import _handle_mouse_event
-from yoke.cli.interactive.tool_inspector import _refresh_entries
-from yoke.cli.interactive.tool_inspector_render import detail_text
-from yoke.cli.interactive.tool_inspector_render import render_view
-from yoke.cli.interactive.tool_inspector_render import render_view_html
-from yoke.cli.interactive.tool_inspector_render import sidebar_items
-from yoke.cli.interactive.tool_trace import ToolTraceStore
-from yoke.cli.interactive.tool_trace import ToolTraceEntry
-from yoke.cli.interactive.tool_trace import entries_from_messages
-from yoke.cli.interactive.tool_trace import merge_trace_entries
+from yoke.cli.interactive.tools.inspector import ToolInspectorState
+from yoke.cli.interactive.tools.inspector import _handle_mouse_event
+from yoke.cli.interactive.tools.inspector import _refresh_entries
+from yoke.cli.interactive.tools.inspector_render import detail_text
+from yoke.cli.interactive.tools.inspector_render import render_view
+from yoke.cli.interactive.tools.inspector_render import render_view_html
+from yoke.cli.interactive.tools.inspector_render import sidebar_items
+from yoke.cli.interactive.tools.trace import ToolTraceStore
+from yoke.cli.interactive.tools.trace import ToolTraceEntry
+from yoke.cli.interactive.tools.trace import entries_from_messages
+from yoke.cli.interactive.tools.trace import merge_trace_entries
 
 
 def test_entries_from_messages_pairs_tool_calls_with_full_results() -> None:
@@ -377,7 +377,7 @@ def test_tool_inspector_footer_shows_detail_scroll_position(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (80, 10),
     )
     state = ToolInspectorState(
@@ -406,7 +406,7 @@ def test_tool_inspector_footer_shows_detail_scroll_position(
 
 def test_tool_inspector_clamps_negative_detail_scroll(monkeypatch) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (80, 10),
     )
     state = ToolInspectorState(
@@ -421,7 +421,7 @@ def test_tool_inspector_clamps_negative_detail_scroll(monkeypatch) -> None:
 
 def test_tool_inspector_sidebar_colors_statuses(monkeypatch) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (80, 10),
     )
     state = ToolInspectorState(
@@ -447,7 +447,7 @@ def test_tool_inspector_sidebar_colors_statuses(monkeypatch) -> None:
 
 def test_tool_inspector_sidebar_shows_conversation_context(monkeypatch) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (100, 16),
     )
     entries = entries_from_messages(
@@ -478,7 +478,7 @@ def test_tool_inspector_sidebar_shows_conversation_context(monkeypatch) -> None:
 
 def test_tool_inspector_context_rows_are_selectable(monkeypatch) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (100, 16),
     )
     entries = entries_from_messages(
@@ -513,7 +513,7 @@ def test_tool_inspector_sidebar_shows_final_assistant_after_tools(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (100, 16),
     )
     entries = entries_from_messages(
@@ -548,7 +548,7 @@ def test_tool_inspector_highlights_active_pane_and_dims_inactive_sidebar(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (80, 10),
     )
     state = ToolInspectorState(
@@ -605,7 +605,7 @@ def test_tool_inspector_result_shows_errors_before_stdout() -> None:
 
 def test_tool_inspector_html_colors_detail_sections(monkeypatch) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (100, 24),
     )
     state = ToolInspectorState(
@@ -630,7 +630,7 @@ def test_tool_inspector_html_colors_detail_sections(monkeypatch) -> None:
 
 def test_tool_inspector_html_keeps_blank_line_numbers_gray(monkeypatch) -> None:
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (100, 16),
     )
     state = ToolInspectorState(
@@ -655,7 +655,7 @@ def test_tool_inspector_html_escapes_output_lines_starting_with_angle_bracket(
     from prompt_toolkit.formatted_text import HTML
 
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (100, 16),
     )
     state = ToolInspectorState(
@@ -680,7 +680,7 @@ def test_tool_inspector_scroll_wheel_uses_active_pane() -> None:
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.key_binding.key_processor import KeyPressEvent
     from prompt_toolkit.keys import Keys
-    from yoke.cli.interactive.tool_inspector import _register_tool_inspector_keys
+    from yoke.cli.interactive.tools.inspector import _register_tool_inspector_keys
 
     state = ToolInspectorState(
         entries=[
@@ -746,11 +746,11 @@ def test_tool_inspector_mouse_selects_sidebar_row(monkeypatch) -> None:
     from prompt_toolkit.mouse_events import MouseEventType
 
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector_render.terminal_size",
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
         lambda: (80, 10),
     )
     monkeypatch.setattr(
-        "yoke.cli.interactive.tool_inspector.terminal_size",
+        "yoke.cli.interactive.tools.inspector.terminal_size",
         lambda: (80, 10),
     )
     state = ToolInspectorState(

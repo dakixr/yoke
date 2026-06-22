@@ -11,13 +11,13 @@ import httpx
 from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
-from yoke.ai.providers.codex_subscription import CodexSubscriptionConfig
-from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
-from yoke.ai.providers.codex_subscription import CodexProfileStore
-from yoke.ai.providers.codex_subscription import OAUTH_PROVIDER_ID
-from yoke.ai.providers.codex_subscription import OAuthCredentials
-from yoke.ai.providers.codex_subscription import convert_messages
-from yoke.ai.providers.codex_subscription import is_invalid_oauth_token_error
+from yoke.ai.providers.codex.subscription import CodexSubscriptionConfig
+from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
+from yoke.ai.providers.codex.subscription import CodexProfileStore
+from yoke.ai.providers.codex.subscription import OAUTH_PROVIDER_ID
+from yoke.ai.providers.codex.subscription import OAuthCredentials
+from yoke.ai.providers.codex.subscription import convert_messages
+from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
 
 
 def _write_fallback_auth(path: Path, credentials: OAuthCredentials) -> None:
@@ -157,7 +157,7 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
         return fresh_credentials
 
     monkeypatch.setattr(
-        "yoke.ai.providers.codex_subscription.login_openai_codex",
+        "yoke.ai.providers.codex.subscription.login_openai_codex",
         fake_login,
     )
 
@@ -222,7 +222,7 @@ def test_codex_profile_store_keeps_local_profile_when_quota_probe_fails(
     )
 
     monkeypatch.setattr(
-        "yoke.ai.providers.codex_subscription.query_codex_quota",
+        "yoke.ai.providers.codex.subscription.query_codex_quota",
         lambda payload: (_ for _ in ()).throw(RuntimeError("usage unavailable")),
     )
 

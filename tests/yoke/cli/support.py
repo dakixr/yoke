@@ -44,7 +44,7 @@ from yoke.cli.interactive import _format_bottom_toolbar
 from yoke.cli.interactive import _format_context_usage_text
 from yoke.cli.interactive import COMPACTION_IN_PROGRESS_NOTICE
 from yoke.cli.interactive import PendingPrompt
-from yoke.cli.interactive.prompt_paste import (
+from yoke.cli.interactive.prompt.paste import (
     _windows_paste_compat_keys,
     patch_prompt_toolkit_input_for_multiline_paste,
 )
@@ -53,8 +53,8 @@ from yoke.cli.interactive.completion import current_slash_token
 from yoke.cli.interactive.completion import current_skill_name_token
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import SHORTCUTS_NOTICE
-from yoke.cli.interactive.prompt_keys import insert_attachment_reference
-from yoke.cli.interactive.prompt_keys import (
+from yoke.cli.interactive.prompt.keys import insert_attachment_reference
+from yoke.cli.interactive.prompt.keys import (
     register_prompt_toolkit_key_bindings,
 )
 from yoke.cli.main import (

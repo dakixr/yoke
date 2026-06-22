@@ -20,10 +20,10 @@ from yoke.cli.providers.catalog import list_all_provider_model_choices
 from yoke.cli.providers.catalog import parse_provider_model_identifier
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
-from yoke.cli.runtime.selector_format import fit_selector_cell
-from yoke.cli.runtime.selector_ui import can_use_keyboard_selector
-from yoke.cli.runtime.selector_ui import SelectorTableColumns
-from yoke.cli.runtime.selector_ui import select_table_item_interactive
+from yoke.cli.runtime.selector.format import fit_selector_cell
+from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
+from yoke.cli.runtime.selector.ui import SelectorTableColumns
+from yoke.cli.runtime.selector.ui import select_table_item_interactive
 from yoke.cli.tools.policy import PiConfig
 
 DEFAULT_ROOT = Path.cwd().absolute()

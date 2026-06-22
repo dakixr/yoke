@@ -17,7 +17,7 @@ def test_process_prompt_toolkit_prompt_preserves_image_reference_text(
     from yoke.agent.models import MessageTextContentPart
     from yoke.cli.image_input import ImageAttachment
     from yoke.cli.interactive.common import PromptCliState
-    from yoke.cli.interactive.prompt_loop import (
+    from yoke.cli.interactive.prompt.loop import (
         process_prompt_toolkit_prompt,
     )
 
@@ -83,7 +83,7 @@ def test_process_prompt_toolkit_prompt_attaches_dropped_image_path_line(
     from yoke.agent.models import MessageLocalImageContentPart
     from yoke.agent.models import MessageTextContentPart
     from yoke.cli.interactive.common import PromptCliState
-    from yoke.cli.interactive.prompt_loop import (
+    from yoke.cli.interactive.prompt.loop import (
         process_prompt_toolkit_prompt,
     )
 
@@ -149,7 +149,7 @@ def test_process_prompt_toolkit_prompt_starts_compaction_without_blocking(
     from threading import Thread
 
     from yoke.cli.interactive.common import PromptCliState
-    from yoke.cli.interactive.prompt_loop import (
+    from yoke.cli.interactive.prompt.loop import (
         process_prompt_toolkit_prompt,
     )
 

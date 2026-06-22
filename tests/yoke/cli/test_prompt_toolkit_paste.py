@@ -58,7 +58,7 @@ def test_windows_paste_compat_keys_keeps_single_line_submit_sequence() -> None:
 def test_patch_prompt_toolkit_input_for_multiline_paste_wraps_read_keys_once(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("yoke.cli.interactive.prompt_paste.sys.platform", "win32")
+    monkeypatch.setattr("yoke.cli.interactive.prompt.paste.sys.platform", "win32")
 
     read_calls: list[str] = []
     key_batches = [
@@ -101,7 +101,7 @@ def test_patch_prompt_toolkit_input_for_multiline_paste_wraps_read_keys_once(
 def test_patch_prompt_toolkit_input_for_multiline_paste_combines_split_line(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("yoke.cli.interactive.prompt_paste.sys.platform", "win32")
+    monkeypatch.setattr("yoke.cli.interactive.prompt.paste.sys.platform", "win32")
 
     read_calls: list[str] = []
     key_batches = [
@@ -155,7 +155,7 @@ def test_patch_prompt_toolkit_input_for_multiline_paste_combines_split_line(
 def test_patch_prompt_toolkit_input_for_multiline_paste_keeps_tail_as_paste(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("yoke.cli.interactive.prompt_paste.sys.platform", "win32")
+    monkeypatch.setattr("yoke.cli.interactive.prompt.paste.sys.platform", "win32")
 
     key_batches = [
         [
@@ -211,7 +211,7 @@ def test_run_prompt_toolkit_cli_patches_multiline_paste_input(
 ) -> None:
     import prompt_toolkit
 
-    monkeypatch.setattr("yoke.cli.interactive.prompt_paste.sys.platform", "win32")
+    monkeypatch.setattr("yoke.cli.interactive.prompt.paste.sys.platform", "win32")
 
     session_holder: dict[str, object] = {}
 

@@ -435,7 +435,7 @@ def test_yoke_completion_menu_formats_command_and_description() -> None:
 
 def test_prompt_toolkit_replaces_default_completion_menu() -> None:
     from yoke.cli.interactive.completion_menu import YokeCompletionsMenu
-    from yoke.cli.interactive.prompt_loop import (
+    from yoke.cli.interactive.prompt.loop import (
         configure_prompt_session_completion_menu,
     )
     from prompt_toolkit import PromptSession

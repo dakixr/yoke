@@ -14,8 +14,8 @@ from yoke.cli.interactive.model_commands import handle_switch_model
 from yoke.cli.interactive.common import COMPACTION_IN_PROGRESS_NOTICE
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import SHORTCUTS_NOTICE
-from yoke.cli.interactive.queue_manager import edit_queue_prompt
-from yoke.cli.interactive.queue_manager import open_queue_manager
+from yoke.cli.interactive.queue.manager import edit_queue_prompt
+from yoke.cli.interactive.queue.manager import open_queue_manager
 from yoke.cli.interactive.tree_selector import prompt_tree_label
 from yoke.cli.interactive.tree_selector import (
     select_tree_entry_interactive,
@@ -29,7 +29,7 @@ from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import force_compact_history
 from yoke.cli.runtime import persist_session_state
 from yoke.cli.session import fallback_session_title
-from yoke.cli.runtime.selector_ui import select_list_item_interactive
+from yoke.cli.runtime.selector.ui import select_list_item_interactive
 from yoke.cli.runtime.tree import get_session_tree
 from yoke.cli.runtime.tree import navigate_session_tree
 from yoke.cli.runtime.tree import set_entry_label

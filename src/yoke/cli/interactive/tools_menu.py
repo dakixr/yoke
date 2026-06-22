@@ -7,15 +7,15 @@ import json
 from pathlib import Path
 
 from yoke.agent.loop import RuntimeAgent
-from yoke.agent.loop.tool_core import index_tools
+from yoke.agent.loop.tools.core import index_tools
 from yoke.cli.bootstrap.types import LoadedTool
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.render.base import Console
-from yoke.cli.runtime.selector_ui import select_list_item_interactive
-from yoke.cli.runtime.selector_multiselect import (
+from yoke.cli.runtime.selector.ui import select_list_item_interactive
+from yoke.cli.runtime.selector.multiselect import (
     select_table_items_interactive,
 )
-from yoke.cli.runtime.selector_ui import SelectorTableColumns
+from yoke.cli.runtime.selector.ui import SelectorTableColumns
 from yoke.cli.tools.policy import PiConfig
 from yoke.cli.tools.policy import ToolPolicy
 from yoke.cli.tools.policy import load_config_file

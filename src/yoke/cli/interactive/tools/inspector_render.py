@@ -10,14 +10,14 @@ from html import escape
 from typing import Literal
 from typing import Protocol
 
-from yoke.cli.interactive.tool_inspector_format import (
+from yoke.cli.interactive.tools.inspector_format import (
     format_arguments,
 )
-from yoke.cli.interactive.tool_inspector_format import format_result
-from yoke.cli.interactive.tool_inspector_format import pretty_json
-from yoke.cli.interactive.tool_inspector_format import section_header
-from yoke.cli.interactive.tool_trace import ToolTraceEntry
-from yoke.cli.interactive.tool_trace import ToolTraceContext
+from yoke.cli.interactive.tools.inspector_format import format_result
+from yoke.cli.interactive.tools.inspector_format import pretty_json
+from yoke.cli.interactive.tools.inspector_format import section_header
+from yoke.cli.interactive.tools.trace import ToolTraceEntry
+from yoke.cli.interactive.tools.trace import ToolTraceContext
 from yoke.cli.render.base import format_tool_preview
 
 DETAIL_DIM_OPEN = '<style fg="#777777">'

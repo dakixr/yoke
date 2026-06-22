@@ -10,7 +10,7 @@ from prompt_toolkit.buffer import Buffer
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import attach_standalone_prompt_image_paths
 from yoke.cli.image_input import build_user_message
-from yoke.cli.interactive.prompt_keys import insert_attachment_reference
+from yoke.cli.interactive.prompt.keys import insert_attachment_reference
 
 
 def test_build_user_message_keeps_attachment_reference_text() -> None:

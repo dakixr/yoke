@@ -18,7 +18,7 @@ from yoke.agent.tools.document_extract import ExtractFileContextTool
 from yoke.agent.tools.edit import EditTool
 from yoke.agent.tools.image_generation import ImageGenerationTool
 from yoke.agent.tools.image_generation import provider_supports_image_generation
-from yoke.agent.tools.python_exec import PythonExecTool
+from yoke.agent.tools.python.execute import PythonExecTool
 from yoke.agent.tools.read import ReadTool
 from yoke.agent.tools.rg import RipgrepTool
 from yoke.agent.tools.search import FindTool

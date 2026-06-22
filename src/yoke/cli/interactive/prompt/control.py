@@ -31,10 +31,10 @@ from yoke.cli.render import print_scrollback_user
 from yoke.cli.runtime import ActiveSession, AgentRunner
 from yoke.cli.runtime import force_compact_history
 from yoke.cli.runtime import persist_session_state
-from yoke.cli.interactive.prompt_turns import finish_prompt_turn
-from yoke.cli.interactive.prompt_turns import handle_prompt_turn_outcome
-from yoke.cli.interactive.prompt_turns import run_prompt_turn
-from yoke.cli.interactive.queue_persistence import persist_prompt_queue
+from yoke.cli.interactive.prompt.turns import finish_prompt_turn
+from yoke.cli.interactive.prompt.turns import handle_prompt_turn_outcome
+from yoke.cli.interactive.prompt.turns import run_prompt_turn
+from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 
 
 @dataclass(slots=True)

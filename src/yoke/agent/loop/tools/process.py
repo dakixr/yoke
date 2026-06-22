@@ -15,8 +15,8 @@ from multiprocessing.context import Process
 from multiprocessing.queues import Queue
 from typing import Any
 
-from yoke.agent.loop.tool_core import cancelled_tool_result
-from yoke.agent.loop.tool_core import execute_tool
+from yoke.agent.loop.tools.core import cancelled_tool_result
+from yoke.agent.loop.tools.core import execute_tool
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.tools import LocalTool
 

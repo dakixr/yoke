@@ -6,8 +6,8 @@ import time
 
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.command import _ProcessOutputReader
-from yoke.agent.tools.python_env import current_python_executable
-from yoke.agent.tools.python_env import prepare_python_env
+from yoke.agent.tools.python.env import current_python_executable
+from yoke.agent.tools.python.env import prepare_python_env
 from yoke.agent.truncate import truncate_tail
 from pydantic import Field
 

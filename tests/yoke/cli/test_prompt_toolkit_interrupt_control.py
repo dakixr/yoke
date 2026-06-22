@@ -11,7 +11,7 @@ from .support import *  # noqa: F403, F405
 def test_prompt_toolkit_stop_persists_interrupted_runtime_state(tmp_path: Path) -> None:
     from yoke.agent.tools import LocalTool
     from yoke.cli.interactive.common import PromptCliState
-    from yoke.cli.interactive.prompt_control import create_prompt_toolkit_control
+    from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control
 
     class BlockingProvider(Provider):
         supports_image_inputs = True

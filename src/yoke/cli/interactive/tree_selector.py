@@ -10,8 +10,8 @@ from prompt_toolkit.formatted_text.base import StyleAndTextTuples
 
 from yoke.agent.models import ConversationEntry
 from yoke.cli.render import truncate_cli_text
-from yoke.cli.runtime.selector_ui import selector_page_step
-from yoke.cli.runtime.selector_ui import selector_terminal_size
+from yoke.cli.runtime.selector.ui import selector_page_step
+from yoke.cli.runtime.selector.ui import selector_terminal_size
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )

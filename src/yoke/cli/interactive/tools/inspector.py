@@ -7,17 +7,17 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
-from yoke.cli.interactive.tool_trace import ToolTraceEntry
-from yoke.cli.interactive.tool_trace import ToolTraceContext
-from yoke.cli.interactive.tool_trace import ToolTraceStore
-from yoke.cli.interactive.tool_inspector_render import detail_text
-from yoke.cli.interactive.tool_inspector_render import entry_text
-from yoke.cli.interactive.tool_inspector_render import move_selection
-from yoke.cli.interactive.tool_inspector_render import page_step
-from yoke.cli.interactive.tool_inspector_render import render_view_html
-from yoke.cli.interactive.tool_inspector_render import selected_entry
-from yoke.cli.interactive.tool_inspector_render import sidebar_items
-from yoke.cli.interactive.tool_inspector_render import terminal_size
+from yoke.cli.interactive.tools.trace import ToolTraceEntry
+from yoke.cli.interactive.tools.trace import ToolTraceContext
+from yoke.cli.interactive.tools.trace import ToolTraceStore
+from yoke.cli.interactive.tools.inspector_render import detail_text
+from yoke.cli.interactive.tools.inspector_render import entry_text
+from yoke.cli.interactive.tools.inspector_render import move_selection
+from yoke.cli.interactive.tools.inspector_render import page_step
+from yoke.cli.interactive.tools.inspector_render import render_view_html
+from yoke.cli.interactive.tools.inspector_render import selected_entry
+from yoke.cli.interactive.tools.inspector_render import sidebar_items
+from yoke.cli.interactive.tools.inspector_render import terminal_size
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )

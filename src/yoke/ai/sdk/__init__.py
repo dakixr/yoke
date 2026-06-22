@@ -11,21 +11,21 @@ from yoke.agent.loop.types import ConversationHistory as ConversationHistory
 from yoke.agent.loop.types import MessageHistory as MessageHistory
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import insert_provider_system_messages
-from yoke.ai.sdk_agent import Agent as Agent
-from yoke.ai.sdk_types import AgentResult as AgentResult
-from yoke.ai.sdk_types import CompletionResult
-from yoke.ai.sdk_types import Context
-from yoke.ai.sdk_types import Image
-from yoke.ai.sdk_types import RunConfig as RunConfig
-from yoke.ai.sdk_types import Skill as Skill
-from yoke.ai.sdk_types import (
+from yoke.ai.sdk.agent import Agent as Agent
+from yoke.ai.sdk.types import AgentResult as AgentResult
+from yoke.ai.sdk.types import CompletionResult
+from yoke.ai.sdk.types import Context
+from yoke.ai.sdk.types import Image
+from yoke.ai.sdk.types import RunConfig as RunConfig
+from yoke.ai.sdk.types import Skill as Skill
+from yoke.ai.sdk.types import (
     StructuredOutputError as StructuredOutputError,
 )
-from yoke.ai.sdk_types import append_structured_output_instructions
-from yoke.ai.sdk_types import build_user_message_from_images
-from yoke.ai.sdk_types import normalize_image_inputs
-from yoke.ai.sdk_types import parse_structured_output
-from yoke.ai.sdk_types import structured_output_instructions
+from yoke.ai.sdk.types import append_structured_output_instructions
+from yoke.ai.sdk.types import build_user_message_from_images
+from yoke.ai.sdk.types import normalize_image_inputs
+from yoke.ai.sdk.types import parse_structured_output
+from yoke.ai.sdk.types import structured_output_instructions
 
 
 def complete[StructuredT](

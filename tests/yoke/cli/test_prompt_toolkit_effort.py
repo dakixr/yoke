@@ -3,9 +3,9 @@ from __future__ import annotations
 from threading import Lock
 
 from yoke.cli.interactive import _format_bottom_toolbar
-from yoke.cli.interactive.prompt_rendering import build_prompt_toolbar
+from yoke.cli.interactive.prompt.rendering import build_prompt_toolbar
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.prompt_keys import (
+from yoke.cli.interactive.prompt.keys import (
     cycle_prompt_thinking_effort,
 )
 

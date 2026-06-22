@@ -12,17 +12,17 @@ from websockets.exceptions import ConnectionClosedError
 from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
-from yoke.ai.providers.codex_subscription import OAuthCredentials
-from yoke.ai.providers.codex_websockets import CodexWebSockets
-from yoke.ai.providers.codex_websockets import CodexWebSocketsConfig
-from yoke.ai.providers.codex_websockets import CodexWebSocketConnection
-from yoke.ai.providers.codex_websockets import CodexWebSocketParseState
-from yoke.ai.providers.codex_websockets import CodexWebSocketTimeoutError
-from yoke.ai.providers.codex_websockets import RESPONSES_WEBSOCKETS_BETA
-from yoke.ai.providers.codex_websockets import build_message_from_websocket_state
-from yoke.ai.providers.codex_websockets import handle_websocket_event
-from yoke.ai.providers.codex_websockets import optional_float_env
-from yoke.ai.providers.codex_websockets import websocket_url_for_base
+from yoke.ai.providers.codex.subscription import OAuthCredentials
+from yoke.ai.providers.codex.websockets import CodexWebSockets
+from yoke.ai.providers.codex.websockets import CodexWebSocketsConfig
+from yoke.ai.providers.codex.websockets import CodexWebSocketConnection
+from yoke.ai.providers.codex.websockets import CodexWebSocketParseState
+from yoke.ai.providers.codex.websockets import CodexWebSocketTimeoutError
+from yoke.ai.providers.codex.websockets import RESPONSES_WEBSOCKETS_BETA
+from yoke.ai.providers.codex.websockets import build_message_from_websocket_state
+from yoke.ai.providers.codex.websockets import handle_websocket_event
+from yoke.ai.providers.codex.websockets import optional_float_env
+from yoke.ai.providers.codex.websockets import websocket_url_for_base
 
 
 def test_websocket_url_for_chatgpt_codex_base() -> None:
@@ -205,7 +205,7 @@ def test_websocket_response_timeout_resets_after_each_event(
             return None
 
     monkeypatch.setattr(
-        "yoke.ai.providers.codex_websockets.time.monotonic",
+        "yoke.ai.providers.codex.websockets.time.monotonic",
         lambda: next(monotonic_values),
     )
     provider = CodexWebSockets(

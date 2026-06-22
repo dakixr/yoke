@@ -10,45 +10,32 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import ValidationError
-from pydantic import field_validator
-from pydantic import model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from yoke.agent.models import Message
-from yoke.agent.models import MessagePhase
-from yoke.agent.models import Role
-from yoke.agent.models import ToolCall
-from yoke.ai.providers.base import Provider
-from yoke.ai.providers.base import ProviderCancelledError
-from yoke.ai.providers.base import ProviderError
-from yoke.ai.providers.base import ProviderModelInfo
-from yoke.ai.providers.base import ProviderRateLimitError
-from yoke.ai.providers.base import ProviderServerError
-from yoke.ai.providers.base import sleep_with_cancel
-from yoke.ai.providers.model_selection import cloned_model_catalog
+from yoke.agent.models import Message, MessagePhase, Role, ToolCall
+from yoke.ai.providers.base import (
+    Provider,
+    ProviderCancelledError,
+    ProviderError,
+    ProviderModelInfo,
+    ProviderRateLimitError,
+    ProviderServerError,
+    sleep_with_cancel,
+)
 from yoke.ai.providers.model_selection import (
+    cloned_model_catalog,
     current_model_id_from_config,
-)
-from yoke.ai.providers.model_selection import (
     current_model_info_from_catalog,
-)
-from yoke.ai.providers.model_selection import (
     set_config_model_from_catalog,
 )
 from yoke.ai.providers.openai_compat.content import (
     normalize_openai_request_messages,
-)
-from yoke.ai.providers.openai_compat.content import (
     serialize_message_for_openai,
 )
-from yoke.ai.providers.openai_compat.helpers import error_detail
-from yoke.ai.providers.openai_compat.helpers import retry_after_seconds
 from yoke.ai.providers.openai_compat.helpers import (
+    error_detail,
+    retry_after_seconds,
     should_retry_request_error,
-)
-from yoke.ai.providers.openai_compat.helpers import (
     thinking_levels_for_reasoning_effort,
 )
 from yoke.ai.providers.usage import parse_token_usage

@@ -19,30 +19,30 @@ from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import estimate_context_usage_text
 from yoke.cli.interactive.common import format_context_usage_text
 from yoke.cli.path_display import format_root_label
-from yoke.cli.interactive.prompt_keys import (
+from yoke.cli.interactive.prompt.keys import (
     cycle_prompt_thinking_effort,
     register_prompt_toolkit_key_bindings,
 )
-from yoke.cli.interactive.prompt_control import (
+from yoke.cli.interactive.prompt.control import (
     create_prompt_toolkit_control,
 )
-from yoke.cli.interactive.prompt_loop import (
+from yoke.cli.interactive.prompt.loop import (
     run_prompt_toolkit_event_loop,
 )
-from yoke.cli.interactive.prompt_paste import (
+from yoke.cli.interactive.prompt.paste import (
     patch_prompt_toolkit_input_for_multiline_paste,
 )
-from yoke.cli.interactive.prompt_rendering import (
+from yoke.cli.interactive.prompt.rendering import (
     initialize_prompt_toolkit_session,
 )
-from yoke.cli.interactive.prompt_rendering import run_scrollback_render
-from yoke.cli.interactive.queue_persistence import load_prompt_queue
-from yoke.cli.interactive.queue_persistence import persist_prompt_queue
+from yoke.cli.interactive.prompt.rendering import run_scrollback_render
+from yoke.cli.interactive.queue.persistence import load_prompt_queue
+from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
-from yoke.cli.interactive.tool_inspector import open_live_tool_inspector
-from yoke.cli.interactive.tool_trace import ToolTraceStore
-from yoke.cli.interactive.tool_trace import entries_from_messages
-from yoke.cli.interactive.tool_trace import merge_trace_entries
+from yoke.cli.interactive.tools.inspector import open_live_tool_inspector
+from yoke.cli.interactive.tools.trace import ToolTraceStore
+from yoke.cli.interactive.tools.trace import entries_from_messages
+from yoke.cli.interactive.tools.trace import merge_trace_entries
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
 from yoke.cli.render import print_scrollback_agent

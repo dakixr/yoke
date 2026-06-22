@@ -20,14 +20,14 @@ if TYPE_CHECKING:
     from yoke.ai.providers.base import CancellableProvider as CancellableProvider
     from yoke.ai.providers.base import ProviderCancelledError as ProviderCancelledError
     from yoke.ai.providers.base import ProviderModelInfo as ProviderModelInfo
-    from yoke.ai.providers.codex_subscription import (
+    from yoke.ai.providers.codex.subscription import (
         CodexSubscriptionConfig as CodexSubscriptionConfig,
     )
-    from yoke.ai.providers.codex_subscription import (
+    from yoke.ai.providers.codex.subscription import (
         CodexSubscriptionProvider as CodexSubscriptionProvider,
     )
-    from yoke.ai.providers.codex_websockets import CodexWebSockets as CodexWebSockets
-    from yoke.ai.providers.codex_websockets import (
+    from yoke.ai.providers.codex.websockets import CodexWebSockets as CodexWebSockets
+    from yoke.ai.providers.codex.websockets import (
         CodexWebSocketsConfig as CodexWebSocketsConfig,
     )
     from yoke.ai.providers.opencode_go import OpenCodeGoConfig as OpenCodeGoConfig
@@ -52,10 +52,10 @@ if TYPE_CHECKING:
     from yoke.ai.sdk import Skill as Skill
     from yoke.ai.sdk import StructuredOutputError as StructuredOutputError
     from yoke.ai.sdk import complete as complete
-    from yoke.ai.sdk_helpers import build_user_message as build_user_message
-    from yoke.ai.sdk_helpers import image_part as image_part
-    from yoke.ai.sdk_helpers import remote_image_part as remote_image_part
-    from yoke.ai.sdk_helpers import text_part as text_part
+    from yoke.ai.sdk.helpers import build_user_message as build_user_message
+    from yoke.ai.sdk.helpers import image_part as image_part
+    from yoke.ai.sdk.helpers import remote_image_part as remote_image_part
+    from yoke.ai.sdk.helpers import text_part as text_part
 
 _LAZY_EXPORTS = {
     "CompactionPolicy": ("yoke.agent.compaction", "CompactionPolicy"),
@@ -71,16 +71,16 @@ _LAZY_EXPORTS = {
     ),
     "MessageTextContentPart": ("yoke.agent.models", "MessageTextContentPart"),
     "CodexSubscriptionConfig": (
-        "yoke.ai.providers.codex_subscription",
+        "yoke.ai.providers.codex.subscription",
         "CodexSubscriptionConfig",
     ),
     "CodexSubscriptionProvider": (
-        "yoke.ai.providers.codex_subscription",
+        "yoke.ai.providers.codex.subscription",
         "CodexSubscriptionProvider",
     ),
-    "CodexWebSockets": ("yoke.ai.providers.codex_websockets", "CodexWebSockets"),
+    "CodexWebSockets": ("yoke.ai.providers.codex.websockets", "CodexWebSockets"),
     "CodexWebSocketsConfig": (
-        "yoke.ai.providers.codex_websockets",
+        "yoke.ai.providers.codex.websockets",
         "CodexWebSocketsConfig",
     ),
     "CancellableProvider": ("yoke.ai.providers.base", "CancellableProvider"),
@@ -113,10 +113,10 @@ _LAZY_EXPORTS = {
     "Skill": ("yoke.ai.sdk", "Skill"),
     "StructuredOutputError": ("yoke.ai.sdk", "StructuredOutputError"),
     "complete": ("yoke.ai.sdk", "complete"),
-    "build_user_message": ("yoke.ai.sdk_helpers", "build_user_message"),
-    "image_part": ("yoke.ai.sdk_helpers", "image_part"),
-    "remote_image_part": ("yoke.ai.sdk_helpers", "remote_image_part"),
-    "text_part": ("yoke.ai.sdk_helpers", "text_part"),
+    "build_user_message": ("yoke.ai.sdk.helpers", "build_user_message"),
+    "image_part": ("yoke.ai.sdk.helpers", "image_part"),
+    "remote_image_part": ("yoke.ai.sdk.helpers", "remote_image_part"),
+    "text_part": ("yoke.ai.sdk.helpers", "text_part"),
 }
 
 __all__ = [

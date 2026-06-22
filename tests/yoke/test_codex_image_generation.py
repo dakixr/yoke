@@ -9,9 +9,9 @@ from typing import Any, cast
 
 import httpx
 
-from yoke.ai.providers.codex_subscription import CodexSubscriptionConfig
-from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
-from yoke.ai.providers.codex_subscription import OAuthCredentials
+from yoke.ai.providers.codex.subscription import CodexSubscriptionConfig
+from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
+from yoke.ai.providers.codex.subscription import OAuthCredentials
 
 
 TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0mQAAAAASUVORK5CYII="

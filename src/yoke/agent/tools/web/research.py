@@ -9,6 +9,7 @@ from typing import cast
 
 from pydantic import BaseModel
 from pydantic import Field
+from typing_extensions import Literal
 
 from yoke.agent.models import Message
 from yoke.agent.tools.base import LocalTool
@@ -19,7 +20,12 @@ from yoke.agent.tools.web.common import summarize_text
 from yoke.agent.tools.web.fetch import WebFetchTool
 from yoke.agent.tools.web.fetch import WebSearchTool
 from yoke.agent.tools.web.fetch import web_search
-from yoke.ai.providers.codex_subscription import CodexSubscriptionProvider
+from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
+
+WebSearchContextSize = Literal["low", "medium", "high"]
+WebSearchMode = Literal["cached", "indexed", "live"]
+
+ASSISTANT_CONTEXT_CHAR_LIMIT = 4_000
 
 
 class ResearchSource(BaseModel):
@@ -82,6 +88,22 @@ class WebResearchTool(LocalTool):
     search_result_target: ClassVar[int] = 30
 
     question: str = Field(min_length=1)
+    research_context: str | None = Field(
+        default=None,
+        description="Relevant task context to disambiguate the research question.",
+    )
+    search_context_size: WebSearchContextSize = Field(
+        default="high",
+        description="How much context hosted web search should retrieve.",
+    )
+    web_search_mode: WebSearchMode = Field(
+        default="live",
+        description="Use cached, indexed, or live external web access when supported.",
+    )
+    allowed_domains: list[str] = Field(
+        default_factory=list,
+        description="Optional domains to restrict hosted web search to.",
+    )
 
     def execute(self) -> dict[str, object]:
         """Execute a compact search+fetch research workflow."""
@@ -197,7 +219,8 @@ class WebResearchTool(LocalTool):
                 "Research the question using the hosted web_search tool. "
                 "Search live/current web sources as needed, then answer concisely. "
                 "Include URLs for the best supporting sources and do not invent facts.\n\n"
-                f"Question: {self.question.strip()}"
+                f"Question:\n{self.question.strip()}\n\n"
+                f"Relevant context:\n{self._research_context_text()}"
             )
             message = self._complete_codex_hosted_search(provider, prompt)
             content = message.text_content() or ""
@@ -205,7 +228,6 @@ class WebResearchTool(LocalTool):
                 "ok": True,
                 "answer": content.strip(),
                 "notes": ["Used Codex hosted web_search."],
-                "sources": [],
             }
         except Exception as exc:
             return {
@@ -215,7 +237,6 @@ class WebResearchTool(LocalTool):
                     "Skipped local web_research fallback because a Codex provider "
                     "should use hosted web_search."
                 ],
-                "sources": [],
             }
 
     def _codex_provider(self) -> CodexSubscriptionProvider | None:
@@ -239,13 +260,21 @@ class WebResearchTool(LocalTool):
                 Message.user(prompt),
             ],
             [
-                {
-                    "type": "web_search",
-                    "external_web_access": True,
-                    "search_context_size": "high",
-                }
+                self._hosted_web_search_tool(),
             ],
         )
+
+    def _hosted_web_search_tool(self) -> dict[str, object]:
+        tool: dict[str, object] = {
+            "type": "web_search",
+            "external_web_access": self.web_search_mode != "cached",
+            "search_context_size": self.search_context_size,
+        }
+        if self.web_search_mode == "indexed":
+            tool["index_gated_web_access"] = True
+        if self.allowed_domains:
+            tool["filters"] = {"allowed_domains": self.allowed_domains}
+        return tool
 
     def _synthesize_with_provider(
         self,
@@ -310,6 +339,7 @@ class WebResearchTool(LocalTool):
         )
         return (
             f"Question: {self.question}\n"
+            f"Relevant context:\n{self._research_context_text()}\n\n"
             f"Search query used: {query}\n\n"
             "Use the fetched source payload below to answer the question. "
             "For non-trivial questions, review many sources rather than "
@@ -323,6 +353,26 @@ class WebResearchTool(LocalTool):
             "caveats in notes. Include only the best quote per source.\n\n"
             f"Fetched source payload:\n{source_payload}"
         )
+
+    def _research_context_text(self) -> str:
+        parts: list[str] = []
+        if self.research_context and self.research_context.strip():
+            parts.append(self.research_context.strip())
+        recent_context = recent_research_context(self._recent_messages())
+        if recent_context:
+            parts.append(recent_context)
+        return "\n\n".join(parts) or "No additional context."
+
+    def _recent_messages(self) -> Sequence[Message]:
+        runtime_context = self.runtime_context
+        if runtime_context is not None and runtime_context.recent_messages:
+            return runtime_context.recent_messages
+        messages = self._context.get("messages")
+        if isinstance(messages, list) and all(
+            isinstance(message, Message) for message in messages
+        ):
+            return cast(Sequence[Message], messages)
+        return ()
 
     def _fallback_sources(
         self, sources: list[dict[str, object]]
@@ -356,3 +406,45 @@ class WebResearchTool(LocalTool):
             summary = str(source.get("summary") or source.get("searchSnippet") or "")
             lines.append(f"{index}. {title}: {summarize_text(summary, max_chars=350)}")
         return "\n".join(lines)
+
+
+def recent_research_context(messages: Sequence[Message]) -> str:
+    """Return a Codex-style recent text tail for web research."""
+    visible = _visible_research_messages(messages)
+    user_indices = [
+        index for index, message in enumerate(visible) if message.role == "user"
+    ]
+    if not user_indices:
+        return ""
+    start = user_indices[-2] if len(user_indices) >= 2 else user_indices[-1]
+    retained = visible[start:]
+    lines: list[str] = []
+    assistant_chars = 0
+    for message in retained:
+        text = (message.text_content() or "").strip()
+        if not text:
+            continue
+        if message.role == "assistant":
+            remaining = ASSISTANT_CONTEXT_CHAR_LIMIT - assistant_chars
+            if remaining <= 0:
+                continue
+            text = text[:remaining]
+            assistant_chars += len(text)
+        label = "User" if message.role == "user" else "Assistant"
+        lines.append(f"{label}: {text}")
+    return "\n".join(lines)
+
+
+def _visible_research_messages(messages: Sequence[Message]) -> list[Message]:
+    visible: list[Message] = []
+    for message in messages:
+        if message.role == "user":
+            text = (message.text_content() or "").strip()
+            if not text or text.startswith("<environment_context>"):
+                continue
+            visible.append(message)
+        elif message.role == "assistant" and not message.tool_calls:
+            text = (message.text_content() or "").strip()
+            if text:
+                visible.append(message)
+    return visible
