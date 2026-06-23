@@ -186,6 +186,39 @@ def test_mcp_tools_inspect_and_call_stdio_server(tmp_path: Path) -> None:
     assert hidden["error"] == "MCP tool is disabled: fake/hidden"
 
 
+def test_mcp_inspect_query_matching_server_keeps_tools(tmp_path: Path) -> None:
+    server_path = tmp_path / "server.py"
+    write_fake_mcp_server(server_path)
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir()
+    (config_dir / "mcp.json").write_text(
+        json.dumps(
+            {
+                "mcp_servers": {
+                    "chrome-devtools": {
+                        "command": sys.executable,
+                        "args": [str(server_path)],
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manager = McpManager.from_paths(root=tmp_path, home=tmp_path / "home")
+
+    try:
+        inspected = manager.inspect(query="chrome", include_schemas=True)
+    finally:
+        manager.close()
+
+    servers = cast(list[dict[str, object]], inspected["servers"])
+    tools = cast(list[dict[str, object]], servers[0]["tools"])
+    assert servers[0]["name"] == "chrome-devtools"
+    assert [tool["name"] for tool in tools] == ["echo", "hidden"]
+
+
 def test_mcp_session_policy_can_disable_server(tmp_path: Path) -> None:
     server_path = tmp_path / "server.py"
     write_fake_mcp_server(server_path)

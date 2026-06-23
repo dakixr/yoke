@@ -111,6 +111,7 @@ class McpManager:
         needle = query.lower().strip() if query else None
         servers: list[dict[str, object]] = []
         for config in selected:
+            server_matches_query = _matches_server(config, needle)
             entry: dict[str, object] = {
                 "name": config.name,
                 "transport": config.transport,
@@ -132,7 +133,7 @@ class McpManager:
                     tool
                     for tool in self._client(config).list_tools()
                     if server_supports_tool(config, tool.name)
-                    and _matches_tool(tool, needle)
+                    and (server_matches_query or _matches_tool(tool, needle))
                 ]
                 entry.update(
                     {
@@ -217,6 +218,12 @@ class McpManager:
             return self.servers
         found = self._server(server)
         return () if found is None else (found,)
+
+
+def _matches_server(server: McpServerConfig, needle: str | None) -> bool:
+    if needle is None:
+        return True
+    return needle in server.name.lower()
 
 
 def _matches_tool(tool: McpToolInfo, needle: str | None) -> bool:
