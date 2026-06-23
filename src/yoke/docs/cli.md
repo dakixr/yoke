@@ -106,6 +106,15 @@ such as `kimi-k2.7-code`, can return intermediate `reasoning_content`; yoke
 parses it from the response and preserves it on the assistant message. That
 text is also used as fallback output if the visible response content is empty.
 
+The Z.ai (`zai`) provider streams every chat-completion request via
+Server-Sent Events so it can detect unresponsive servers quickly: an
+idle-read-timeout (default `60s`) fires once the server stops sending
+chunks for too long, which triggers an immediate retry with exponential
+backoff. This is far faster than the previous non-streaming path, which
+had no timeout at all and could hang indefinitely on a stalled server.
+Each request also opens a fresh HTTP connection to avoid stale
+keep-alive sockets.
+
 OpenCode Go currently exposes maintained OpenAI-compatible models in yoke's
 built-in catalog. Deprecated OpenCode Go model entries such as GLM 5/5.1,
 Kimi K2.5/2.6, MiMo, MiniMax, and Qwen have been removed from the selectable

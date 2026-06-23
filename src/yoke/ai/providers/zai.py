@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from yoke.agent.models import Message, MessagePhase, Role, ToolCall
+from yoke.agent.models import Message, MessagePhase, Role, ToolCall, ToolFunction
 from yoke.ai.providers.base import (
     Provider,
     ProviderCancelledError,
@@ -74,6 +74,9 @@ class ZAIConfig(BaseModel):
     max_retries: int = 5
     retry_backoff_seconds: float = 1.0
     max_retry_backoff_seconds: float = 32.0
+    connect_timeout_seconds: float = 10.0
+    read_idle_timeout_seconds: float = 60.0
+    total_timeout_seconds: float = 180.0
 
 
 class ZAIResponseMessage(BaseModel):
@@ -139,11 +142,15 @@ class ZAIProvider(Provider):
     def _new_client(self) -> httpx.Client:
         return httpx.Client(
             base_url=self.config.base_url.rstrip("/"),
-            timeout=self.config.timeout_seconds,
+            timeout=httpx.Timeout(
+                self.config.total_timeout_seconds,
+                connect=self.config.connect_timeout_seconds,
+            ),
             verify=False,
             headers={
                 "Authorization": f"Bearer {self.config.ayoke_key}",
                 "Content-Type": "application/json",
+                "Connection": "close",
             },
         )
 
@@ -227,6 +234,7 @@ class ZAIProvider(Provider):
             "messages": [
                 self._message_to_api_dict(message) for message in prepared_messages
             ],
+            "stream": True,
         }
         thinking = _thinking_config(self.config.reasoning_effort)
         if thinking is not None:
@@ -235,6 +243,12 @@ class ZAIProvider(Provider):
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
+        stream_timeout = httpx.Timeout(
+            self.config.read_idle_timeout_seconds,
+            connect=self.config.connect_timeout_seconds,
+        )
+        endpoint = f"{self.config.base_url.rstrip('/')}/chat/completions"
+
         last_error: ProviderError | None = None
         attempted_message_recovery = False
 
@@ -242,16 +256,108 @@ class ZAIProvider(Provider):
             if cancel_requested():
                 raise ProviderCancelledError()
             try:
-                response = self._client.post(
-                    f"{self.config.base_url.rstrip('/')}/chat/completions",
+                with self._client.stream(
+                    "POST",
+                    endpoint,
                     json=payload,
-                )
+                    timeout=stream_timeout,
+                ) as response:
+                    if response.status_code == 429:
+                        response.read()
+                        detail = self._error_detail(response)
+                        retry_after = self._retry_after_seconds(response)
+                        last_error = ProviderRateLimitError(
+                            (
+                                f"ZAI request failed after {attempt + 1} attempts: {detail}"
+                                if attempt == self.config.max_retries
+                                else f"ZAI request was rate limited: {detail}"
+                            ),
+                            retry_after_seconds=retry_after,
+                        )
+                        if attempt < self.config.max_retries:
+                            sleep_with_cancel(
+                                retry_after or self._backoff_seconds(attempt),
+                                cancel_requested=cancel_requested,
+                                sleep=self._sleep,
+                            )
+                            continue
+                        raise last_error
+
+                    if 500 <= response.status_code < 600:
+                        response.read()
+                        detail = self._error_detail(response)
+                        last_error = ProviderServerError(
+                            (
+                                f"ZAI request failed after {attempt + 1} attempts: {detail}"
+                                if attempt == self.config.max_retries
+                                else f"ZAI server error: {detail}"
+                            ),
+                            status_code=response.status_code,
+                        )
+                        if attempt < self.config.max_retries:
+                            sleep_with_cancel(
+                                self._backoff_seconds(attempt),
+                                cancel_requested=cancel_requested,
+                                sleep=self._sleep,
+                            )
+                            continue
+                        raise last_error
+
+                    if response.is_error:
+                        response.read()
+                        detail = self._error_detail(response)
+                        if (
+                            not attempted_message_recovery
+                            and self._looks_like_illegal_messages_error(detail)
+                        ):
+                            self._log_debug_event(
+                                "illegal_messages_error",
+                                detail=detail,
+                                messages=[
+                                    message.to_api_dict()
+                                    for message in prepared_messages
+                                ],
+                            )
+                            recovered_messages = self._recover_illegal_messages(
+                                prepared_messages
+                            )
+                            attempted_message_recovery = True
+                            if recovered_messages != prepared_messages:
+                                self._log_debug_event(
+                                    "illegal_messages_recovery",
+                                    detail=detail,
+                                    messages=[
+                                        message.to_api_dict()
+                                        for message in recovered_messages
+                                    ],
+                                )
+                                prepared_messages = recovered_messages
+                                payload["messages"] = [
+                                    self._message_to_api_dict(message)
+                                    for message in prepared_messages
+                                ]
+                                continue
+                        raise ProviderError(
+                            f"ZAI request failed: {detail}",
+                            status_code=response.status_code,
+                        )
+
+                    message = self._parse_sse_response(
+                        response,
+                        cancel_requested=cancel_requested,
+                    )
+                    message.usage = parse_token_usage(
+                        message.usage,
+                        provider_name=PROVIDER_NAME,
+                        model_id=self.config.model,
+                    )
+                    return message
             except httpx.TimeoutException as exc:
                 last_error = ProviderError(
                     (
                         f"ZAI request timed out after {attempt + 1} attempts."
                         if attempt == self.config.max_retries
-                        else "ZAI request timed out."
+                        else "ZAI request timed out (server went silent)."
                     )
                 )
                 if attempt < self.config.max_retries:
@@ -267,101 +373,111 @@ class ZAIProvider(Provider):
                     raise ProviderCancelledError() from exc
                 raise ProviderError(f"ZAI request failed: {exc}") from exc
 
-            if response.status_code == 429:
-                detail = self._error_detail(response)
-                retry_after = self._retry_after_seconds(response)
-                last_error = ProviderRateLimitError(
-                    (
-                        f"ZAI request failed after {attempt + 1} attempts: {detail}"
-                        if attempt == self.config.max_retries
-                        else f"ZAI request was rate limited: {detail}"
-                    ),
-                    retry_after_seconds=retry_after,
-                )
-                if attempt < self.config.max_retries:
-                    sleep_with_cancel(
-                        retry_after or self._backoff_seconds(attempt),
-                        cancel_requested=cancel_requested,
-                        sleep=self._sleep,
-                    )
-                    continue
-                raise last_error
-
-            if 500 <= response.status_code < 600:
-                detail = self._error_detail(response)
-                last_error = ProviderServerError(
-                    (
-                        f"ZAI request failed after {attempt + 1} attempts: {detail}"
-                        if attempt == self.config.max_retries
-                        else f"ZAI server error: {detail}"
-                    ),
-                    status_code=response.status_code,
-                )
-                if attempt < self.config.max_retries:
-                    sleep_with_cancel(
-                        self._backoff_seconds(attempt),
-                        cancel_requested=cancel_requested,
-                        sleep=self._sleep,
-                    )
-                    continue
-                raise last_error
-
-            if response.is_error:
-                detail = self._error_detail(response)
-                if (
-                    not attempted_message_recovery
-                    and self._looks_like_illegal_messages_error(detail)
-                ):
-                    self._log_debug_event(
-                        "illegal_messages_error",
-                        detail=detail,
-                        messages=[
-                            message.to_api_dict() for message in prepared_messages
-                        ],
-                    )
-                    recovered_messages = self._recover_illegal_messages(
-                        prepared_messages
-                    )
-                    attempted_message_recovery = True
-                    if recovered_messages != prepared_messages:
-                        self._log_debug_event(
-                            "illegal_messages_recovery",
-                            detail=detail,
-                            messages=[
-                                message.to_api_dict() for message in recovered_messages
-                            ],
-                        )
-                        prepared_messages = recovered_messages
-                        payload["messages"] = [
-                            self._message_to_api_dict(message)
-                            for message in prepared_messages
-                        ]
-                        continue
-                raise ProviderError(
-                    f"ZAI request failed: {detail}",
-                    status_code=response.status_code,
-                )
-
-            try:
-                completion = ZAIChatCompletionResponse.model_validate(response.json())
-            except (ValueError, ValidationError) as exc:
-                raise ProviderError(
-                    "ZAI returned an invalid response payload."
-                ) from exc
-
-            if not completion.choices:
-                raise ProviderError("ZAI returned no completion choices.")
-            message = completion.choices[0].message.to_message()
-            message.usage = parse_token_usage(
-                completion.usage,
-                provider_name=PROVIDER_NAME,
-                model_id=self.config.model,
-            )
-            return message
-
         if last_error is not None:
             raise last_error
         raise ProviderError("ZAI request failed unexpectedly.")
+
+    def _parse_sse_response(
+        self,
+        response: httpx.Response,
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        """Read an SSE chat-completion stream and assemble a final Message."""
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}
+        usage: dict[str, object] | None = None
+        for line in response.iter_lines():
+            if cancel_requested():
+                raise ProviderCancelledError()
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str.strip() == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except ValueError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            choices = chunk.get("choices") or []
+            if choices:
+                choice = choices[0]
+                delta = choice.get("delta") or {}
+                if isinstance(delta, dict):
+                    delta_content = delta.get("content")
+                    if isinstance(delta_content, str) and delta_content:
+                        content_parts.append(delta_content)
+                    delta_reasoning = delta.get("reasoning_content")
+                    if isinstance(delta_reasoning, str) and delta_reasoning:
+                        reasoning_parts.append(delta_reasoning)
+                    delta_tool_calls = delta.get("tool_calls")
+                    if isinstance(delta_tool_calls, list):
+                        self._merge_streaming_tool_calls(tool_calls, delta_tool_calls)
+            chunk_usage = chunk.get("usage")
+            if isinstance(chunk_usage, dict):
+                usage = chunk_usage
+        assembled_tool_calls = [
+            ToolCall(
+                id=tc["id"],
+                type=tc.get("type", "function"),
+                function=ToolFunction(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"],
+                ),
+            )
+            for idx in sorted(tool_calls)
+            for tc in [tool_calls[idx]]
+            if tc["id"] and tc["function"]["name"]
+        ]
+        content = "".join(content_parts) or None
+        reasoning = "".join(reasoning_parts) or None
+        message = Message(
+            role="assistant",
+            content=content,
+            reasoning_content=reasoning,
+            tool_calls=assembled_tool_calls or [],
+        )
+        if usage is not None:
+            message.usage = parse_token_usage(
+                usage, provider_name=PROVIDER_NAME, model_id=self.config.model
+            )
+        if not content and not assembled_tool_calls and not reasoning:
+            raise ProviderError("ZAI returned an empty streaming completion.")
+        return message
+
+    @staticmethod
+    def _merge_streaming_tool_calls(
+        tool_calls: dict[int, dict[str, Any]],
+        delta_tool_calls: list[Any],
+    ) -> None:
+        for delta in delta_tool_calls:
+            if not isinstance(delta, dict):
+                continue
+            idx = delta.get("index", 0)
+            if idx not in tool_calls:
+                tool_calls[idx] = {
+                    "id": "",
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
+            existing = tool_calls[idx]
+            delta_id = delta.get("id")
+            if isinstance(delta_id, str) and delta_id:
+                existing["id"] = delta_id
+            delta_type = delta.get("type")
+            if isinstance(delta_type, str) and delta_type:
+                existing["type"] = delta_type
+            fn = delta.get("function") or {}
+            if isinstance(fn, dict):
+                fn_name = fn.get("name")
+                if isinstance(fn_name, str) and fn_name:
+                    existing["function"]["name"] += fn_name
+                fn_args = fn.get("arguments")
+                if isinstance(fn_args, str) and fn_args:
+                    existing["function"]["arguments"] += fn_args
 
     def _with_request_cancellation(
         self,

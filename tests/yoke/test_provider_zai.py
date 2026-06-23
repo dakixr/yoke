@@ -17,6 +17,35 @@ from yoke.ai.providers.zai import ZAIProvider
 from yoke.ai.providers.zai import register_provider
 
 
+def _sse_response(
+    *,
+    content: str | None = None,
+    reasoning_content: str | None = None,
+    tool_call: dict[str, object] | None = None,
+    finish_reason: str = "stop",
+) -> httpx.Response:
+    """Build a minimal SSE chat-completion stream response for tests."""
+    chunks = []
+    if reasoning_content is not None:
+        chunks.append(
+            {"choices": [{"delta": {"reasoning_content": reasoning_content}}]}
+        )
+    if tool_call is not None:
+        chunks.append({"choices": [{"delta": {"tool_calls": [tool_call]}}]})
+    if content is not None:
+        chunks.append({"choices": [{"delta": {"content": content}}]})
+    chunks.append({"choices": [{"delta": {}, "finish_reason": finish_reason}]})
+    body = (
+        "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+        + "data: [DONE]\n\n"
+    )
+    return httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        content=body,
+    )
+
+
 def test_zai_catalog_exposes_documented_thinking_toggle() -> None:
     provider = ZAIProvider(ZAIConfig(ayoke_key="test"))
 
@@ -50,10 +79,7 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["payload"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"role": "assistant", "content": "done"}}]},
-        )
+        return _sse_response(content="done")
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = ZAIProvider(
@@ -66,6 +92,7 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
     assert captured["payload"] == {
         "model": "glm-5.2",
         "messages": [{"role": "user", "content": "hello"}],
+        "stream": True,
         "thinking": {"type": "enabled", "clear_thinking": True},
     }
 
@@ -75,10 +102,7 @@ def test_zai_provider_preserves_structured_tool_history() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["payload"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"role": "assistant", "content": "done"}}]},
-        )
+        return _sse_response(content="done")
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
@@ -121,10 +145,7 @@ def test_zai_provider_can_disable_thinking() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["payload"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"role": "assistant", "content": "done"}}]},
-        )
+        return _sse_response(content="done")
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = ZAIProvider(
@@ -153,19 +174,9 @@ def test_zai_set_model_rejects_unsupported_reasoning_effort() -> None:
 
 def test_zai_provider_parses_reasoning_content_from_response() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": "done",
-                            "reasoning_content": "let me think about it",
-                        }
-                    }
-                ]
-            },
+        return _sse_response(
+            content="done",
+            reasoning_content="let me think about it",
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -182,19 +193,9 @@ def test_zai_provider_does_not_replay_reasoning_content_on_next_request() -> Non
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["payload"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": "done",
-                            "reasoning_content": "prior reasoning",
-                        }
-                    }
-                ]
-            },
+        return _sse_response(
+            content="done",
+            reasoning_content="prior reasoning",
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -205,4 +206,76 @@ def test_zai_provider_does_not_replay_reasoning_content_on_next_request() -> Non
 
     messages = cast(list[dict[str, object]], captured["payload"]["messages"])
     assert "reasoning_content" not in messages[1]
+    provider.close()
+
+
+def test_zai_provider_assembles_streaming_tool_calls() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response(
+            tool_call={
+                "id": "call_1",
+                "index": 0,
+                "type": "function",
+                "function": {"name": "read", "arguments": '{"path":"README.md"}'},
+            },
+            finish_reason="tool_calls",
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+
+    message = provider.complete([Message.user("read the file")], [])
+    provider.close()
+
+    assert message.content is None
+    assert len(message.tool_calls) == 1
+    tool_call = message.tool_calls[0]
+    assert tool_call.id == "call_1"
+    assert tool_call.function.name == "read"
+    assert tool_call.function.arguments == '{"path":"README.md"}'
+
+
+def test_zai_provider_retries_on_streaming_idle_timeout() -> None:
+    attempts = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise httpx.ReadTimeout("stream idle timeout simulated")
+        return _sse_response(content="done")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = ZAIProvider(
+        ZAIConfig(
+            ayoke_key="test",
+            read_idle_timeout_seconds=0.2,
+            max_retries=3,
+            retry_backoff_seconds=0.01,
+        ),
+        http_client=client,
+        sleep=lambda _seconds: None,
+    )
+
+    try:
+        message = provider.complete([Message.user("hello")], [])
+    finally:
+        provider.close()
+
+    assert attempts["count"] >= 2
+    assert message.content == "done"
+
+
+def test_zai_provider_raises_on_empty_streaming_completion() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b"data: [DONE]\n\n",
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+
+    with pytest.raises(Exception):  # noqa: PT011
+        provider.complete([Message.user("hello")], [])
     provider.close()
