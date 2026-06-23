@@ -58,30 +58,12 @@ ANTHROPIC_THINKING_LEVELS = ("high", "max")
 DEEPSEEK_THINKING_LEVELS = ("high", "max")
 GLM_THINKING_LEVELS = ()
 KIMI_THINKING_LEVELS = ()
-MIMO_THINKING_LEVELS = ()
-MINIMAX_THINKING_LEVELS = ()
-MINIMAX_TOGGLE_THINKING_LEVELS = ("none", "thinking")
 
 MODEL_PROTOCOLS = {
-    "minimax-m3": "anthropic",
-    "minimax-m2.7": "anthropic",
-    "kimi-k2.5": "openai",
-    "mimo-v2.5-pro": "openai",
     "glm-5.2": "openai",
-    "glm-5": "openai",
-    "qwen3.7-max": "anthropic",
-    "mimo-v2.5": "openai",
-    "qwen3.7-plus": "anthropic",
-    "qwen3.6-plus": "anthropic",
-    "glm-5.1": "openai",
     "deepseek-v4-flash": "openai",
     "kimi-k2.7-code": "openai",
-    "kimi-k2.6": "openai",
     "deepseek-v4-pro": "openai",
-    "minimax-m2.5": "openai",
-    "qwen3.5-plus": "anthropic",
-    "mimo-v2-omni": "openai",
-    "mimo-v2-pro": "openai",
 }
 
 MODEL_CATALOG = build_model_catalog(
@@ -94,40 +76,8 @@ MODEL_CATALOG = build_model_catalog(
         supports_image_inputs=False,
     ),
     ProviderModelInfo(
-        id="glm-5.1",
-        display_name="GLM-5.1",
-        context_window_tokens=202_752,
-        thinking_levels=GLM_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
-        id="glm-5",
-        display_name="GLM-5",
-        context_window_tokens=202_752,
-        thinking_levels=GLM_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
         id="kimi-k2.7-code",
         display_name="Kimi K2.7 Code",
-        context_window_tokens=262_144,
-        thinking_levels=KIMI_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="kimi-k2.6",
-        display_name="Kimi K2.6",
-        context_window_tokens=262_144,
-        thinking_levels=KIMI_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="kimi-k2.5",
-        display_name="Kimi K2.5",
         context_window_tokens=262_144,
         thinking_levels=KIMI_THINKING_LEVELS,
         default_thinking_level=None,
@@ -149,94 +99,6 @@ MODEL_CATALOG = build_model_catalog(
         default_thinking_level="high",
         supports_image_inputs=False,
     ),
-    ProviderModelInfo(
-        id="mimo-v2.5",
-        display_name="MiMo V2.5",
-        context_window_tokens=1_000_000,
-        thinking_levels=MIMO_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="mimo-v2-omni",
-        display_name="MiMo V2 Omni",
-        context_window_tokens=262_144,
-        thinking_levels=MIMO_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="mimo-v2-pro",
-        display_name="MiMo V2 Pro",
-        context_window_tokens=1_048_576,
-        thinking_levels=MIMO_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
-        id="mimo-v2.5-pro",
-        display_name="MiMo V2.5 Pro",
-        context_window_tokens=1_048_576,
-        thinking_levels=MIMO_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
-        id="minimax-m3",
-        display_name="MiniMax M3",
-        context_window_tokens=512_000,
-        thinking_levels=MINIMAX_TOGGLE_THINKING_LEVELS,
-        default_thinking_level="thinking",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="minimax-m2.7",
-        display_name="MiniMax M2.7",
-        context_window_tokens=204_800,
-        thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
-        id="minimax-m2.5",
-        display_name="MiniMax M2.5",
-        context_window_tokens=204_800,
-        thinking_levels=MINIMAX_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
-        id="qwen3.7-max",
-        display_name="Qwen3.7 Max",
-        context_window_tokens=1_000_000,
-        thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
-        id="qwen3.7-plus",
-        display_name="Qwen3.7 Plus",
-        context_window_tokens=1_000_000,
-        thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="qwen3.6-plus",
-        display_name="Qwen3.6 Plus",
-        context_window_tokens=1_000_000,
-        thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="qwen3.5-plus",
-        display_name="Qwen3.5 Plus",
-        context_window_tokens=262_144,
-        thinking_levels=ANTHROPIC_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
 )
 
 ALL_THINKING_LEVELS = tuple(
@@ -247,9 +109,6 @@ ALL_THINKING_LEVELS = tuple(
             DEEPSEEK_THINKING_LEVELS,
             GLM_THINKING_LEVELS,
             KIMI_THINKING_LEVELS,
-            MIMO_THINKING_LEVELS,
-            MINIMAX_THINKING_LEVELS,
-            MINIMAX_TOGGLE_THINKING_LEVELS,
         )
         for level in levels
     )
@@ -281,7 +140,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
     return OpenCodeGoProvider(
         OpenCodeGoConfig(
             api_key=api_key,
-            model=_normalize_model_id(context.model or "kimi-k2.6"),
+            model=_normalize_model_id(context.model or "kimi-k2.7-code"),
             timeout_seconds=float(
                 os.getenv("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "600"
             ),
@@ -297,7 +156,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
 
 class OpenCodeGoConfig(BaseModel):
     api_key: str
-    model: str = "kimi-k2.6"
+    model: str = "kimi-k2.7-code"
     timeout_seconds: float = 600.0
     max_retries: int = 5
     retry_backoff_seconds: float = 1.0
@@ -696,15 +555,8 @@ def _normalize_model_id(model_id: str) -> str:
 
 
 def _max_output_tokens(model_id: str) -> int:
-    outputs = {
-        "minimax-m3": 65_536,
-        "minimax-m2.7": 131_072,
-        "qwen3.7-max": 65_536,
-        "qwen3.7-plus": 65_536,
-        "qwen3.6-plus": 65_536,
-        "qwen3.5-plus": 65_536,
-    }
-    return outputs.get(model_id, 65_536)
+    del model_id
+    return 65_536
 
 
 def _anthropic_thinking_config(
@@ -718,8 +570,6 @@ def _anthropic_thinking_config(
     level = reasoning_effort.strip().lower()
     if level == "none":
         return None
-    if level == "thinking" and model_id == "minimax-m3":
-        return {"type": "adaptive"}
     output_tokens = _max_output_tokens(model_id)
     if level in {"high", "max", "thinking"}:
         budget = 16_000 if level == "high" else 31_999

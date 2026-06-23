@@ -72,24 +72,9 @@ def test_opencode_go_catalog_includes_kimi_k2_7_code() -> None:
 def test_opencode_go_catalog_matches_current_reasoning_efforts() -> None:
     expected = {
         "glm-5.2": (),
-        "glm-5.1": (),
-        "glm-5": (),
         "kimi-k2.7-code": (),
-        "kimi-k2.6": (),
-        "kimi-k2.5": (),
         "deepseek-v4-pro": ("high", "max"),
         "deepseek-v4-flash": ("high", "max"),
-        "mimo-v2.5": (),
-        "mimo-v2-omni": (),
-        "mimo-v2-pro": (),
-        "mimo-v2.5-pro": (),
-        "minimax-m3": ("none", "thinking"),
-        "minimax-m2.7": ("high", "max"),
-        "minimax-m2.5": (),
-        "qwen3.7-max": ("high", "max"),
-        "qwen3.7-plus": ("high", "max"),
-        "qwen3.6-plus": ("high", "max"),
-        "qwen3.5-plus": ("high", "max"),
     }
     models = {model.id: model for model in list_opencode_go_models(None)}
 
@@ -231,16 +216,16 @@ def test_models_set_supports_global_config_scope(tmp_path: Path, monkeypatch) ->
         [
             "models",
             "set",
-            "zai:glm-5.1",
+            "zai:glm-5.2",
             "--global",
         ],
     )
 
     config_path = home / ".yoke" / "config.json"
     assert result.exit_code == 0
-    assert "Set default_model=zai:glm-5.1 in ~\\.yoke\\config.json" in result.stdout
+    assert "Set default_model=zai:glm-5.2 in ~\\.yoke\\config.json" in result.stdout
     updated = PiConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
-    assert updated.default_model == "zai:glm-5.1"
+    assert updated.default_model == "zai:glm-5.2"
 
 
 def test_models_set_interactive_selector_shows_model_metadata_columns(

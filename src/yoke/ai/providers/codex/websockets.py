@@ -63,7 +63,7 @@ class CodexWebSocketTimeoutError(ProviderError):
 def register_provider(context: Any) -> CodexWebSockets:
     env = context.env or {}
     cxauth_vault = context.home / DEFAULT_CXAUTH_VAULT_NAME
-    model = context.model or env.get("YOKE_CODEX_WEBSOCKETS_MODEL") or "gpt-5.4"
+    model = context.model or env.get("YOKE_CODEX_WEBSOCKETS_MODEL") or "gpt-5.5"
     return CodexWebSockets(
         CodexWebSocketsConfig(
             auth_path=context.home / ".codex" / "auth.json",

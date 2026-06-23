@@ -25,8 +25,7 @@ def test_zai_catalog_exposes_documented_thinking_toggle() -> None:
     finally:
         provider.close()
 
-    assert models["glm-5.1"].thinking_levels == ("none", "thinking")
-    assert models["glm-5.1"].default_thinking_level == "thinking"
+    assert "glm-5.1" not in models
     assert models["glm-5.2"].thinking_levels == ("none", "thinking")
     assert models["glm-5.2"].default_thinking_level == "thinking"
 
@@ -35,7 +34,7 @@ def test_zai_register_provider_honors_context_reasoning_effort() -> None:
     provider = register_provider(
         SimpleNamespace(
             env={"ZAI_API_KEY": "test"},
-            model="glm-5.1",
+            model="glm-5.2",
             reasoning_effort="none",
         )
     )
@@ -65,7 +64,7 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
     provider.complete([Message.user("hello")], [])
 
     assert captured["payload"] == {
-        "model": "glm-5.1",
+        "model": "glm-5.2",
         "messages": [{"role": "user", "content": "hello"}],
         "thinking": {"type": "enabled", "clear_thinking": True},
     }

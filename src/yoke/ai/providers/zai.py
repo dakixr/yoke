@@ -37,14 +37,6 @@ MODEL_CATALOG = (
         default_thinking_level="thinking",
         supports_image_inputs=False,
     ),
-    ProviderModelInfo(
-        id="glm-5.1",
-        display_name="GLM-5.1",
-        context_window_tokens=200_000,
-        thinking_levels=THINKING_LEVELS,
-        default_thinking_level="thinking",
-        supports_image_inputs=False,
-    ),
 )
 
 
@@ -61,7 +53,7 @@ def register_provider(context):
     return ZAIProvider(
         ZAIConfig(
             ayoke_key=api_key,
-            model=context.model or "glm-5.1",
+            model=context.model or "glm-5.2",
             reasoning_effort=context.reasoning_effort,
             debug_log_path=env.get("ZAI_DEBUG_LOG_PATH") or None,
         )
@@ -72,7 +64,7 @@ class ZAIConfig(BaseModel):
     """Configuration for the native Z.AI coding provider."""
 
     ayoke_key: str
-    model: str = "glm-5.1"
+    model: str = "glm-5.2"
     # This key is for the Z.AI Coding Plan; the regular paas endpoint can
     # reject it even when the token is valid for coding-plan traffic.
     base_url: str = "https://api.z.ai/api/coding/paas/v4"

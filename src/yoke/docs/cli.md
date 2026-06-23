@@ -31,7 +31,7 @@ yoke --headless --image chart.png --image legend.png "summarize these charts"
 yoke --model codex:gpt-5.4-mini "..."
 yoke --model opencode-go:glm-5.2 "..."
 yoke --model opencode-go:kimi-k2.7-code "..."
-yoke --model opencode-go:minimax-m3 "Review this repository and suggest refactors"
+yoke --model opencode-go:deepseek-v4-pro "Review this repository and suggest refactors"
 ```
 
 **Built-in providers**
@@ -60,7 +60,7 @@ there works, it falls back to `~/.codex/auth.json`. If that fallback token is
 missing, expired, or later rejected by the API, yoke refreshes or re-prompts
 login against `~/.codex/auth.json`.
 
-Use `--model codex-websockets:gpt-5.4` to opt into Codex's persistent Responses
+Use `--model codex-websockets:gpt-5.5` to opt into Codex's persistent Responses
 WebSocket transport. It uses the same auth and account selection as `codex` and
 accepts `YOKE_CODEX_WEBSOCKETS_*` overrides for model, base URL, timeout,
 retries, reasoning effort, text verbosity, and logs.
@@ -85,7 +85,6 @@ yoke models list
 yoke models set codex:gpt-5.4-mini
 yoke models set opencode-go:glm-5.2
 yoke models set zai:glm-5.2
-yoke models set zai:glm-5.1
 yoke models set codex:gpt-5.4-mini --reasoning-effort high
 yoke models set
 yoke models set --repo
@@ -107,15 +106,10 @@ such as `kimi-k2.7-code`, can return intermediate `reasoning_content`; yoke
 parses it from the response and preserves it on the assistant message. That
 text is also used as fallback output if the visible response content is empty.
 
-OpenCode Go models that use the Anthropic Messages API (`minimax-m3`,
-`minimax-m2.7`, `qwen3.5-plus`, `qwen3.6-plus`, `qwen3.7-max`, `qwen3.7-plus`)
-return `thinking` content blocks with a cryptographic `signature`. yoke
-parses both, sends the `interleaved-thinking` beta header so reasoning can
-flow between tool calls, and round-trips each thinking block with its
-signature on subsequent turns so extended thinking survives across requests.
-These models advertise `high` and `max` thinking levels (except `minimax-m3`,
-which exposes `none` and `thinking` mapped to Anthropic's adaptive thinking
-mode).
+OpenCode Go currently exposes maintained OpenAI-compatible models in yoke's
+built-in catalog. Deprecated OpenCode Go model entries such as GLM 5/5.1,
+Kimi K2.5/2.6, MiMo, MiniMax, and Qwen have been removed from the selectable
+inventory.
 
 If you omit the model argument from `yoke models set`, yoke opens an interactive
 selector when running in a TTY and otherwise falls back to a numbered prompt.

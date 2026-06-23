@@ -68,14 +68,6 @@ MODEL_CATALOG = (
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
-        id="gpt-5.4",
-        display_name="GPT-5.4",
-        context_window_tokens=300_000,
-        thinking_levels=("low", "medium", "high", "xhigh"),
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
         id="gpt-5.4-mini",
         display_name="GPT-5.4 Mini",
         context_window_tokens=300_000,
@@ -122,7 +114,7 @@ def register_provider(context: Any) -> CodexSubscriptionProvider:
             selection_ttl_seconds=int(
                 env.get("YOKE_CODEX_SELECTION_TTL_SECONDS") or "1800"
             ),
-            model=(context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.4"),
+            model=(context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.5"),
             base_url=(env.get("YOKE_CODEX_BASE_URL") or DEFAULT_BASE_URL),
             originator=env.get("YOKE_CODEX_ORIGINATOR") or "yoke",
             timeout_seconds=float(env.get("YOKE_CODEX_TIMEOUT_SECONDS") or "600"),
@@ -131,7 +123,7 @@ def register_provider(context: Any) -> CodexSubscriptionProvider:
                 context.reasoning_effort
                 or env.get("YOKE_CODEX_REASONING_EFFORT")
                 or default_reasoning_effort_for_model_id(
-                    context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.4"
+                    context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.5"
                 )
             ),
             text_verbosity=(env.get("YOKE_CODEX_TEXT_VERBOSITY") or "medium"),
@@ -150,7 +142,7 @@ class CodexSubscriptionConfig(BaseModel):
     auths_path: Path
     selection_path: Path
     selection_ttl_seconds: int = 1800
-    model: str = "gpt-5.4"
+    model: str = "gpt-5.5"
     base_url: str = DEFAULT_BASE_URL
     originator: str = "yoke"
     timeout_seconds: float = 600.0
