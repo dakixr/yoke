@@ -303,6 +303,29 @@ def continue_command(
     )
 
 
+@app.command("mcp")
+def mcp_command(
+    server: Annotated[
+        str | None,
+        typer.Argument(help="Optional MCP server name to inspect."),
+    ] = None,
+    root: Annotated[
+        Path,
+        typer.Option(
+            "--root",
+            help="Workspace root used for .yoke/mcp.json and MCP roots/list.",
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ] = CWD,
+) -> None:
+    """Show configured MCP servers and compact tool lists."""
+    from yoke.cli.mcp_app import format_mcp_status
+
+    click.echo(format_mcp_status(root=root, home=Path.home(), server=server))
+
+
 _SUBCOMMANDS = frozenset(
     {
         "version",
@@ -313,6 +336,7 @@ _SUBCOMMANDS = frozenset(
         "models",
         "providers",
         "skills",
+        "mcp",
     }
 )
 _OPTIONS_WITH_VALUES = frozenset(

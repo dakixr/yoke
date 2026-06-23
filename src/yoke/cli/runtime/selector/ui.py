@@ -139,11 +139,12 @@ def select_list_item_interactive(
     app = Application(
         layout=Layout(Window(content=control, always_hide_cursor=True)),
         key_bindings=key_bindings,
-        full_screen=False,
+        full_screen=True,
         mouse_support=False,
     )
     with suppress(EOFError, KeyboardInterrupt):
-        return app.run()
+        with suppress_terminal_output_for_fullscreen():
+            return app.run()
     return None
 
 

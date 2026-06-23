@@ -32,6 +32,12 @@ run a shell command, search the web. The CLI resolves yoke's built-in
 capabilities and auto-discovers additional tools from repo `.yoke/tools/` and
 global `~/.yoke/tools/` directories. The SDK can use capabilities, explicit
 tools, or legacy tool registration callbacks.
+MCP servers are exposed through a compact facade instead of raw tool catalogs:
+when `~/.yoke/mcp.json` or `<repo>/.yoke/mcp.json` configures enabled servers,
+yoke adds only `mcp_inspect` and `mcp_call` to the model context. The agent uses
+`mcp_inspect` to discover bounded server/tool metadata, then `mcp_call` to invoke
+one selected upstream MCP tool. Full upstream tool catalogs, resources, prompts,
+and server instructions are not injected into the hot path.
 For web research, yoke follows Codex-style context passing: the tool receives a
 sanitized recent text tail rather than the raw full conversation, keeping the
 previous user turn, bounded assistant context, and current user turn while
@@ -50,6 +56,32 @@ The CLI persists conversation history so you can resume where you left off. Each
 
 ### Providers
 yoke connects to an LLM provider (Codex, Codex WebSockets, OpenCode Go, Z.ai, or any OpenAI-compatible endpoint) to power the agent.
+
+### MCP
+yoke supports MCP stdio servers through global and workspace JSON config files:
+
+```json
+{
+  "mcp_servers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+      "enabled_tools": ["resolve-library-id", "get-library-docs"],
+      "tool_timeout_sec": 60
+    }
+  }
+}
+```
+
+Workspace config at `.yoke/mcp.json` overrides same-named global servers from
+`~/.yoke/mcp.json`. Use `yoke mcp` to inspect configured servers from a normal
+shell. In the interactive CLI, `/mcp` opens a menu similar to `/tools`: select a
+server to enable or disable it for the current session, the repo, or globally,
+or drill into that server to toggle individual MCP tools at the same scopes.
+Session toggles are temporary; repo/global toggles write `.yoke/mcp.json` or
+`~/.yoke/mcp.json`. The current implementation supports stdio; Streamable HTTP
+entries are recognized but reported as unsupported until the HTTP transport is
+implemented.
 
 ## Quick start
 

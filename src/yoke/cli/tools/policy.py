@@ -80,6 +80,7 @@ BUILTIN_CAPABILITY_NAMES = (
     "file.search",
     "image.generation",
     "image.input",
+    "mcp",
     "web",
 )
 

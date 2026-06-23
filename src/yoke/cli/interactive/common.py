@@ -139,6 +139,11 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         "/tools",
         "Toggle tools for this session, this root, or globally.",
     ),
+    SlashCommand(
+        "/mcp",
+        "Manage MCP servers and tools for this session, repo, or globally.",
+        "server",
+    ),
     SlashCommand("/queue", "Open the interactive prompt queue manager."),
     SlashCommand("/image", "Attach an image file to the next prompt.", "path"),
     SlashCommand(

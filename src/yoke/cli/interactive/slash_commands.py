@@ -14,6 +14,7 @@ from yoke.cli.interactive.model_commands import handle_switch_model
 from yoke.cli.interactive.common import COMPACTION_IN_PROGRESS_NOTICE
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import SHORTCUTS_NOTICE
+from yoke.cli.interactive.mcp_menu import handle_mcp_menu
 from yoke.cli.interactive.queue.manager import edit_queue_prompt
 from yoke.cli.interactive.queue.manager import open_queue_manager
 from yoke.cli.interactive.tree_selector import prompt_tree_label
@@ -121,6 +122,15 @@ def handle_slash_command(  # noqa: C901
             agent=agent,
             console=console,
             root=active_session.root,
+        )
+        return True, messages, active_session
+    if normalized == "/mcp" or normalized.startswith("/mcp "):
+        raw_server = command.strip()[len("/mcp") :].strip() or None
+        handle_mcp_menu(
+            agent=agent,
+            console=console,
+            root=active_session.root,
+            initial_server=raw_server,
         )
         return True, messages, active_session
     if normalized == "/title" or normalized.startswith("/title "):

@@ -15,6 +15,9 @@ from yoke.agent.tools.document_extract import ExtractFileContextTool
 from yoke.agent.tools.edit import EditTool
 from yoke.agent.tools.image_generation import ImageGenerationTool
 from yoke.agent.tools.image_generation import provider_supports_image_generation
+from yoke.agent.tools.mcp import McpCallTool
+from yoke.agent.tools.mcp import McpInspectTool
+from yoke.agent.tools.mcp import register_mcp_tools
 from yoke.agent.tools.python.execute import PythonExecTool
 from yoke.agent.tools.read import ReadTool
 from yoke.agent.tools.rg import RipgrepTool
@@ -45,6 +48,8 @@ __all__ = [
     "LsTool",
     "LocalTool",
     "ModelIdentity",
+    "McpCallTool",
+    "McpInspectTool",
     "PythonExecTool",
     "ReadTool",
     "RegisterTools",
@@ -64,4 +69,5 @@ __all__ = [
     "provider_supports_image_generation",
     "register_write_tool",
     "register_search_tools",
+    "register_mcp_tools",
 ]

@@ -18,6 +18,7 @@ from yoke.agent.tools.document_extract import ExtractFileContextTool
 from yoke.agent.tools.edit import EditTool
 from yoke.agent.tools.image_generation import ImageGenerationTool
 from yoke.agent.tools.image_generation import provider_supports_image_generation
+from yoke.agent.tools.mcp import register_mcp_tools
 from yoke.agent.tools.python.execute import PythonExecTool
 from yoke.agent.tools.read import ReadTool
 from yoke.agent.tools.rg import RipgrepTool
@@ -161,6 +162,29 @@ class WebCapability(BaseCapability):
         )
 
 
+class McpCapability(BaseCapability):
+    """Expose configured MCP servers through a compact tool facade."""
+
+    name = "mcp"
+    description = "Inspect and call configured MCP servers through compact tools."
+
+    def is_available(self, context: CapabilityContext) -> bool:
+        manager = self._manager(context)
+        return manager.has_servers()
+
+    def register(self, context: CapabilityContext) -> CapabilityRegistration:
+        return CapabilityRegistration(tools=register_mcp_tools(self._manager(context)))
+
+    def _manager(self, context: CapabilityContext):
+        from yoke.mcp import McpManager
+
+        return McpManager.from_paths(
+            root=context.root,
+            home=context.home,
+            session_policy=getattr(context.provider, "_yoke_mcp_session_policy", None),
+        )
+
+
 class ImageInputCapability(BaseCapability):
     """Attach local images when the active model can consume image inputs."""
 
@@ -205,6 +229,7 @@ DEFAULT_CAPABILITIES: tuple[BaseCapability, ...] = (
     ImageInputCapability(),
     ImageGenerationCapability(),
     WebCapability(),
+    McpCapability(),
 )
 
 

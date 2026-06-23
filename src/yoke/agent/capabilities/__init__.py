@@ -8,6 +8,7 @@ from yoke.agent.capabilities.builtin import FileReadCapability
 from yoke.agent.capabilities.builtin import FileSearchCapability
 from yoke.agent.capabilities.builtin import ImageGenerationCapability
 from yoke.agent.capabilities.builtin import ImageInputCapability
+from yoke.agent.capabilities.builtin import McpCapability
 from yoke.agent.capabilities.builtin import WebCapability
 from yoke.agent.capabilities.builtin import default_capabilities
 from yoke.agent.capabilities.builtin import model_prefers_apply_patch
@@ -40,6 +41,7 @@ __all__ = [
     "FileSearchCapability",
     "ImageGenerationCapability",
     "ImageInputCapability",
+    "McpCapability",
     "RegisterToolsCapability",
     "WebCapability",
     "default_capabilities",
