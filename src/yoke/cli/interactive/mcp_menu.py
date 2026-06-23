@@ -259,7 +259,7 @@ def _load_mcp_tool_rows(
     root: Path,
     server: McpServerConfig,
 ) -> list[McpToolRow] | str:
-    if server.transport != "stdio":
+    if server.transport not in {"stdio", "streamable-http", "http"}:
         return f"MCP transport `{server.transport}` is not supported yet."
     try:
         return [

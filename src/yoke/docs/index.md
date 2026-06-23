@@ -58,7 +58,8 @@ The CLI persists conversation history so you can resume where you left off. Each
 yoke connects to an LLM provider (Codex, Codex WebSockets, OpenCode Go, Z.ai, or any OpenAI-compatible endpoint) to power the agent.
 
 ### MCP
-yoke supports MCP stdio servers through global and workspace JSON config files:
+yoke supports MCP stdio and Streamable HTTP servers through global and workspace
+JSON config files:
 
 ```json
 {
@@ -68,6 +69,11 @@ yoke supports MCP stdio servers through global and workspace JSON config files:
       "args": ["-y", "@upstash/context7-mcp"],
       "enabled_tools": ["resolve-library-id", "get-library-docs"],
       "tool_timeout_sec": 60
+    },
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer token" }
     }
   }
 }
@@ -79,9 +85,9 @@ shell. In the interactive CLI, `/mcp` opens a menu similar to `/tools`: select a
 server to enable or disable it for the current session, the repo, or globally,
 or drill into that server to toggle individual MCP tools at the same scopes.
 Session toggles are temporary; repo/global toggles write `.yoke/mcp.json` or
-`~/.yoke/mcp.json`. The current implementation supports stdio; Streamable HTTP
-entries are recognized but reported as unsupported until the HTTP transport is
-implemented.
+`~/.yoke/mcp.json`. The implementation supports both stdio and Streamable HTTP
+transports. HTTP servers are configured with `"transport": "streamable-http"` and
+a `"url"` field; optional `"headers"` can carry authentication tokens.
 
 ## Quick start
 

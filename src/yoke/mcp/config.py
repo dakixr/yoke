@@ -12,7 +12,7 @@ from typing import cast
 
 MCP_CONFIG_RELATIVE_PATH = Path(".yoke") / "mcp.json"
 GLOBAL_MCP_CONFIG_RELATIVE_PATH = Path(".yoke") / "mcp.json"
-SUPPORTED_TRANSPORTS = {"stdio"}
+SUPPORTED_TRANSPORTS = {"stdio", "streamable-http"}
 
 
 @dataclass(slots=True, frozen=True)
@@ -33,6 +33,7 @@ class McpServerConfig:
     tool_timeout_sec: float = 60.0
     enabled_tools: tuple[str, ...] | None = None
     disabled_tools: tuple[str, ...] = ()
+    headers: dict[str, str] | None = None
     source_path: Path | None = None
 
 
@@ -198,9 +199,10 @@ def _parse_server(
             ),
             enabled_tools=_optional_string_tuple(value.get("enabled_tools")),
             disabled_tools=_string_tuple(value.get("disabled_tools")),
+            headers=_string_dict(value.get("headers")),
             source_path=source_path,
         )
-    if command is None:
+    if transport == "stdio" and command is None:
         raise ValueError(
             f"Invalid MCP config `{source_path}`: stdio server `{server_name}` needs command"
         )
@@ -221,6 +223,7 @@ def _parse_server(
         tool_timeout_sec=_positive_float(value.get("tool_timeout_sec"), default=60.0),
         enabled_tools=_optional_string_tuple(value.get("enabled_tools")),
         disabled_tools=_string_tuple(value.get("disabled_tools")),
+        headers=_string_dict(value.get("headers")),
         source_path=source_path,
     )
 

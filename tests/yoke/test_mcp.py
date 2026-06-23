@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import textwrap
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -283,3 +284,145 @@ def test_mcp_tool_toggle_preserves_enabled_tools_semantics(tmp_path: Path) -> No
 
     assert payload["mcp_servers"]["fake"]["enabled_tools"] == ["echo", "hidden"]
     assert effective.servers[0].enabled_tools == ("echo", "hidden")
+
+
+def _start_mock_streamable_http_server() -> tuple[Any, int]:
+    """Start a minimal MCP Streamable HTTP server in a background thread."""
+    import http.server
+    import socketserver
+
+    class MockHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format, *args):  # noqa: A002, ARG002
+            pass
+
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            message = json.loads(body)
+            method = message.get("method")
+            message_id = message.get("id")
+            session_id = self.headers.get("Mcp-Session-Id")
+            if method == "initialize":
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": message_id,
+                    "result": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "mock-http", "version": "1"},
+                    },
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Mcp-Session-Id", "test-session-123")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+                return
+            if not session_id:
+                self.send_error(400, "Missing session")
+                return
+            if method == "tools/list":
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": message_id,
+                    "result": {
+                        "tools": [
+                            {
+                                "name": "echo",
+                                "description": "Echo back.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {"message": {"type": "string"}},
+                                    "required": ["message"],
+                                },
+                            }
+                        ]
+                    },
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+                return
+            if method == "tools/call":
+                params = message.get("params", {})
+                args = params.get("arguments", {})
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": message_id,
+                    "result": {
+                        "content": [{"type": "text", "text": args.get("message", "")}]
+                    },
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(f"data: {json.dumps(response)}\n\n".encode())
+                self.wfile.flush()
+                return
+            if message_id is not None:
+                response = {"jsonrpc": "2.0", "id": message_id, "result": {}}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+                return
+            self.send_response(202)
+            self.end_headers()
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), MockHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, server.server_address[1]
+
+
+def test_streamable_http_client_initialize_list_and_call() -> None:
+    from yoke.mcp.client import StreamableHttpClient
+    from yoke.mcp.config import McpServerConfig
+
+    server, port = _start_mock_streamable_http_server()
+    try:
+        config = McpServerConfig(
+            name="mock",
+            transport="streamable-http",
+            url=f"http://127.0.0.1:{port}/mcp",
+            startup_timeout_sec=5.0,
+            tool_timeout_sec=5.0,
+        )
+        client = StreamableHttpClient(config, root=Path("/tmp"))
+        try:
+            client.start()
+            assert client._session_id == "test-session-123"
+            tools = client.list_tools()
+            assert [tool.name for tool in tools] == ["echo"]
+            result = client.call_tool("echo", {"message": "hello"})
+            content = result["content"]
+            assert content[0]["text"] == "hello"
+        finally:
+            client.close()
+    finally:
+        server.shutdown()
+
+
+def test_create_mcp_client_selects_by_transport() -> None:
+    from yoke.mcp.client import StreamableHttpClient
+    from yoke.mcp.client import StdioMcpClient
+    from yoke.mcp.client import create_mcp_client
+    from yoke.mcp.config import McpServerConfig
+
+    stdio_config = McpServerConfig(
+        name="s",
+        transport="stdio",
+        command="python3",
+    )
+    http_config = McpServerConfig(
+        name="h",
+        transport="streamable-http",
+        url="http://localhost:1/mcp",
+    )
+    assert isinstance(
+        create_mcp_client(stdio_config, root=Path("/tmp")), StdioMcpClient
+    )
+    assert isinstance(
+        create_mcp_client(http_config, root=Path("/tmp")), StreamableHttpClient
+    )

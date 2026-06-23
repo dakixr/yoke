@@ -13,8 +13,9 @@ from yoke.agent.truncate import DEFAULT_MAX_LINES
 from yoke.agent.truncate import format_size
 from yoke.agent.truncate import truncate_head
 from yoke.mcp.client import JSON
+from yoke.mcp.client import create_mcp_client
+from yoke.mcp.client import McpClient
 from yoke.mcp.client import McpToolInfo
-from yoke.mcp.client import StdioMcpClient
 from yoke.mcp.config import McpConfig
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp.config import compact_tool_schema
@@ -29,7 +30,7 @@ class McpManager:
     def __init__(self, config: McpConfig, *, root: Path) -> None:
         self.config = config
         self.root = root.resolve()
-        self._clients: dict[str, StdioMcpClient] = {}
+        self._clients: dict[str, McpClient] = {}
 
     @classmethod
     def from_paths(
@@ -116,7 +117,7 @@ class McpManager:
                 "enabled": config.enabled,
                 "status": "configured",
             }
-            if config.transport != "stdio":
+            if config.transport not in {"stdio", "streamable-http", "http"}:
                 entry.update(
                     {
                         "status": "unsupported",
@@ -163,10 +164,10 @@ class McpManager:
         config = self._server(server)
         if config is None:
             return {"ok": False, "error": f"Unknown or disabled MCP server: {server}"}
-        if config.transport != "stdio":
+        if config.transport not in {"stdio", "streamable-http", "http"}:
             return {
                 "ok": False,
-                "error": f"MCP transport `{config.transport}` is not supported yet; use stdio",
+                "error": f"MCP transport `{config.transport}` is not supported yet",
             }
         if not server_supports_tool(config, tool):
             return {"ok": False, "error": f"MCP tool is disabled: {server}/{tool}"}
@@ -194,14 +195,14 @@ class McpManager:
 
     def list_configured_tools(self, server: McpServerConfig) -> tuple[McpToolInfo, ...]:
         """Return all tools advertised by a configured server."""
-        if server.transport != "stdio":
+        if server.transport not in {"stdio", "streamable-http", "http"}:
             return ()
         return tuple(self._client(server).list_tools())
 
-    def _client(self, server: McpServerConfig) -> StdioMcpClient:
+    def _client(self, server: McpServerConfig) -> McpClient:
         client = self._clients.get(server.name)
         if client is None:
-            client = StdioMcpClient(server, root=self.root)
+            client = create_mcp_client(server, root=self.root)
             self._clients[server.name] = client
         return client
 

@@ -86,12 +86,13 @@ def cli(
     ctx: typer.Context,
     prompt: Annotated[
         str | None,
-        typer.Option("--prompt", help="Prompt to seed the session with."),
+        typer.Option("--prompt", "-p", help="Prompt to seed the session with."),
     ] = None,
     headless: Annotated[
         bool,
         typer.Option(
             "--headless",
+            "-h",
             help=(
                 "Run one non-interactive prompt and exit. Requires --prompt "
                 "or piped stdin."
@@ -102,6 +103,7 @@ def cli(
         str | None,
         typer.Option(
             "--session",
+            "-s",
             help=(
                 "Persist conversation under [bold].yoke/sessions/<name>.jsonl[/bold]."
             ),
@@ -111,6 +113,7 @@ def cli(
         str | None,
         typer.Option(
             "--model",
+            "-m",
             help=(
                 "Model to send to the provider. Use `provider-name:model-name` "
                 "to select a specific provider, or just `model-name` to "
