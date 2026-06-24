@@ -29,8 +29,9 @@ from yoke.cli.interactive.common import prompt_turn_tracking
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.render import print_scrollback_notice
 from yoke.cli.runtime import ActiveSession, AgentRunner, EventRenderer
-from yoke.cli.runtime import ensure_session_title, execute_turn
+from yoke.cli.runtime import execute_turn
 from yoke.cli.runtime import persist_session_state
+from yoke.cli.runtime import start_session_title_generation
 
 
 def run_prompt_turn(
@@ -59,7 +60,6 @@ def run_prompt_turn(
         )
 
     try:
-        ensure_session_title(active_session, agent, prompt)
         result = execute_turn(
             agent,
             prompt,
@@ -110,6 +110,7 @@ def handle_prompt_turn_outcome(
     renderer: PromptToolkitLiveRenderer,
     scrollback_console,
     run_in_scrollback: Callable[[Callable[[], None]], None],
+    invalidate_prompt: Callable[[], None],
 ) -> bool | None:
     """Apply a completed turn outcome to prompt-toolkit session state."""
     with state_lock:
@@ -185,6 +186,12 @@ def handle_prompt_turn_outcome(
         agent,
         outcome.result.messages,
         conversation_entries=outcome.result.conversation_entries,
+    )
+    start_session_title_generation(
+        active_session,
+        agent,
+        outcome.result.messages,
+        on_done=invalidate_prompt,
     )
     renderer.print_agent_output(outcome.result.output)
     _emit_turn_summary(

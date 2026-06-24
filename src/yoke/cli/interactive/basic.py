@@ -37,9 +37,9 @@ from yoke.cli.render import print_session_scrollback
 from yoke.cli.render import print_user_prompt
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
-from yoke.cli.runtime import ensure_session_title
 from yoke.cli.runtime import execute_turn
 from yoke.cli.runtime import persist_session_state
+from yoke.cli.runtime import start_session_title_generation
 from yoke.cli.runtime import sync_agent_skill_state_to_session
 
 
@@ -160,7 +160,6 @@ def _start_basic_turn(
 
     def run_turn() -> None:
         try:
-            ensure_session_title(active_session, agent, prompt, stderr=stderr)
             result = execute_turn(
                 agent,
                 prompt,
@@ -309,6 +308,7 @@ def _handle_basic_outcome(
             state.messages,
             conversation_entries=outcome.result.conversation_entries,
         )
+        start_session_title_generation(active_session, agent, state.messages)
         print_agent_output(console, outcome.result.output)
         print("\a", end="", flush=True)
     if not state.pending_prompts:

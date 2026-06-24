@@ -31,12 +31,12 @@ from yoke.cli.runtime.base import ToolReportAgent
 from yoke.cli.runtime.base import execute_turn
 from yoke.cli.runtime.session import create_active_session
 from yoke.cli.runtime.session import apply_session_defaults_to_args
-from yoke.cli.runtime.session import ensure_session_title
 from yoke.cli.runtime.session import persist_session_state
 from yoke.cli.runtime.session import save_active_session
 from yoke.cli.runtime.session import save_agent_session_state
 from yoke.cli.runtime.session import select_latest_session_id
 from yoke.cli.runtime.session import select_session_id
+from yoke.cli.runtime.session import start_session_title_generation
 from yoke.cli.session import SessionStore
 
 
@@ -160,9 +160,6 @@ def run_cli(
             build_user_message(mode.prompt, image_paths=resolved_images)
         )
         save_active_session(active_session, session_messages)
-        ensure_session_title(
-            active_session, active_agent, mode.prompt, stderr=error_stream
-        )
     print_tool_discovery_message(output_stream, tool_report)
     from yoke.cli.interactive import run_interactive_cli
 
@@ -325,12 +322,6 @@ def _run_headless_mode(
     previous_yoke_headless = os.environ.get("YOKE_HEADLESS")
     os.environ["YOKE_HEADLESS"] = "1"
     try:
-        ensure_session_title(
-            active_session,
-            active_agent,
-            prompt,
-            stderr=error_stream,
-        )
 
         def checkpoint_tool_result(
             messages: list[Message],
@@ -389,6 +380,13 @@ def _run_headless_mode(
         result.messages,
         conversation_entries=result.conversation_entries,
     )
+    title_thread = start_session_title_generation(
+        active_session,
+        active_agent,
+        result.messages,
+    )
+    if title_thread is not None:
+        title_thread.join()
     print_agent_output(output_console, result.output)
     return 0
 

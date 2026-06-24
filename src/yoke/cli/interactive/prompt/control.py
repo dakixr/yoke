@@ -132,6 +132,7 @@ def create_prompt_toolkit_control(
                 renderer=renderer,
                 scrollback_console=scrollback_console,
                 run_in_scrollback=run_in_scrollback,
+                invalidate_prompt=invalidate_prompt,
             )
             is None
         ):

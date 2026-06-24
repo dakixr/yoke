@@ -238,7 +238,9 @@ def test_cli_auto_persists_unnamed_session_globally(tmp_path: Path, capsys) -> N
     ]
 
 
-def test_cli_uses_provider_to_title_first_prompt(tmp_path: Path, capsys) -> None:
+def test_cli_uses_provider_to_title_completed_first_turn(
+    tmp_path: Path, capsys
+) -> None:
     provider = TitleProvider("Fix config loading")
     agent = FakeAgent()
     agent.provider = provider
@@ -256,7 +258,7 @@ def test_cli_uses_provider_to_title_first_prompt(tmp_path: Path, capsys) -> None
     capsys.readouterr()
     records = SessionStore().list(root=tmp_path)
     assert records[0].title == "Fix config loading"
-    assert provider.prompts == ["please fix the config loader bug"]
+    assert provider.prompts == ["synthetic response"]
 
 
 def test_typer_entrypoint_invokes_cli() -> None:

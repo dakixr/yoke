@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from threading import Thread
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -63,7 +64,7 @@ def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
 def ensure_session_title(
     active_session: ActiveSession,
     agent: AgentRunner,
-    prompt: str,
+    messages: list[Message] | str,
     *,
     stderr: OutputStream | None = None,
 ) -> None:
@@ -71,7 +72,10 @@ def ensure_session_title(
     del stderr
     if active_session.title:
         return
-    active_session.title = generate_session_title(agent, prompt)
+    if isinstance(messages, str):
+        active_session.title = generate_session_title(agent, messages)
+    else:
+        active_session.title = generate_session_title_from_messages(agent, messages)
     save_active_session(
         active_session,
         active_session.record.messages,
@@ -82,24 +86,77 @@ def ensure_session_title(
 
 def generate_session_title(agent: AgentRunner, prompt: str) -> str:
     """Generate a short session title."""
+    return generate_session_title_from_messages(agent, [Message.user(prompt)])
+
+
+def generate_session_title_from_messages(
+    agent: AgentRunner,
+    messages: list[Message],
+) -> str:
+    """Generate a short session title from the current conversation context."""
     provider = getattr(agent, "provider", None)
-    if provider is None:
-        return fallback_session_title(prompt)
+    fallback_prompt = _fallback_title_prompt(messages)
+    if provider is None or any(message.has_image_inputs() for message in messages):
+        return fallback_session_title(fallback_prompt)
     try:
         response = provider.complete(
             [
                 Message.system(
-                    "Create a concise title, 6 words or fewer, for this user "
-                    "request. Return only the title."
+                    "Create a concise title, 6 words or fewer, for this "
+                    "conversation. Return only the title."
                 ),
-                Message.user(prompt),
+                *[message.model_copy(deep=True) for message in messages],
             ],
             [],
         )
     except Exception:
-        return fallback_session_title(prompt)
+        return fallback_session_title(fallback_prompt)
     title = (response.plain_text_content or "").strip().strip("\"'")
-    return fallback_session_title(title or prompt)
+    return fallback_session_title(title or fallback_prompt)
+
+
+def start_session_title_generation(
+    active_session: ActiveSession,
+    agent: AgentRunner,
+    messages: list[Message],
+    *,
+    on_done: Callable[[], None] | None = None,
+) -> Thread | None:
+    """Generate the first session title in a background thread."""
+    if active_session.title:
+        return None
+    message_snapshot = [message.model_copy(deep=True) for message in messages]
+
+    def generate_and_save() -> None:
+        if active_session.title:
+            return
+        title = generate_session_title_from_messages(agent, message_snapshot)
+        if active_session.title:
+            return
+        active_session.title = title
+        save_active_session(
+            active_session,
+            active_session.record.messages,
+            conversation_entries=active_session.record.conversation_entries,
+            leaf_id=active_session.record.leaf_id,
+            agent=agent,
+        )
+        if on_done is not None:
+            on_done()
+
+    thread = Thread(target=generate_and_save, daemon=True)
+    thread.start()
+    return thread
+
+
+def _fallback_title_prompt(messages: list[Message]) -> str:
+    for message in messages:
+        if message.role == "user":
+            text = message.text_content()
+            if text:
+                return text
+    text_parts = [message.text_content() or "" for message in messages]
+    return " ".join(part for part in text_parts if part)
 
 
 def sync_agent_skill_state_to_session(
