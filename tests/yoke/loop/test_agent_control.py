@@ -352,6 +352,16 @@ def test_tool_process_spawn_strips_unpicklable_runtime_context(monkeypatch) -> N
     assert "provider" not in keys
 
 
+def test_tool_process_exit_error_names_signals() -> None:
+    from yoke.agent.loop.tools.process import _tool_process_exit_error
+
+    error = _tool_process_exit_error(-11)
+
+    assert "-11" in error
+    assert "SIGSEGV" in error
+    assert "signal 11" in error
+
+
 def test_active_tool_process_cleanup_cancels_started_invocation(tmp_path: Path) -> None:
     from yoke.agent.loop.tools.process import ToolProcessInvocation
     from yoke.agent.loop.tools.process import cancel_active_tool_processes

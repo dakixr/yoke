@@ -318,8 +318,27 @@ def test_web_fetch_find_filters_content(monkeypatch: Any) -> None:
     ).execute()
 
     assert result["ok"] is True
+    assert result["matched"] is True
     assert "deploy" in str(result["content"]).lower()
     assert "Alpha" not in str(result["content"])
+
+
+def test_web_fetch_find_reports_no_match(monkeypatch: Any) -> None:
+    def fake_get(*args: object, **kwargs: object) -> FakeResponse:
+        return FakeResponse("<html><body><p>Alpha setup notes.</p></body></html>")
+
+    monkeypatch.setattr("httpx.get", fake_get)
+
+    result = WebFetchTool(
+        url="https://example.test/page",
+        find="deploy",
+        max_chars=2000,
+    ).execute()
+
+    assert result["ok"] is True
+    assert result["matched"] is False
+    assert "No content matched" in str(result["note"])
+    assert result["content"] == ""
 
 
 def test_web_fetch_find_keeps_nearby_heading_context(monkeypatch: Any) -> None:
@@ -388,7 +407,35 @@ def test_internal_web_search_returns_empty_results_list(
 
     result = _web_search("query with no matches", max_results=1)
 
-    assert result == {"ok": True, "results": []}
+    assert result["ok"] is True
+    assert result["results"] == []
+    assert result["exhausted"] is True
+    assert result["requestedResults"] == 1
+    assert result["returnedResults"] == 0
+
+
+def test_internal_web_search_reports_partial_results(monkeypatch: Any) -> None:
+    html = """
+    <a class="result__a" href="https://docs.example.test/guide">Guide</a>
+    <a class="result__snippet">Official guide text.</a>
+    """
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def get(self, *args: object, **kwargs: object) -> FakeResponse:
+            return FakeResponse(html)
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = _web_search("example guide", max_results=3)
+
+    assert result["ok"] is True
+    assert len(cast(list[object], result["results"])) == 1
+    assert result["exhausted"] is True
+    assert result["requestedResults"] == 3
+    assert result["returnedResults"] == 1
 
 
 def test_web_search_tool_wraps_duckduckgo_search(monkeypatch: Any) -> None:

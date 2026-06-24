@@ -85,16 +85,29 @@ def web_search(
             if len(results) >= max_results:
                 break
 
-        return {"ok": True, "results": results}
+        result: dict[str, object] = {"ok": True, "results": results}
+        if max_results > len(results):
+            result["exhausted"] = True
+            result["requestedResults"] = max_results
+            result["returnedResults"] = len(results)
+            result["note"] = (
+                "DuckDuckGo HTML returned fewer parseable results than requested; "
+                "use web_research for broader multi-query research."
+            )
+        return result
     except Exception as exc:
         return {"ok": False, "error": str(exc), "query": query}
 
 
 class WebSearchTool(LocalTool):
-    """Search the web using DuckDuckGo HTML results."""
+    """Run a simple search and return raw result links/snippets."""
 
     name = "web_search"
-    description = "Search the web using DuckDuckGo HTML results."
+    description = (
+        "Run a quick DuckDuckGo HTML search and return raw result links/snippets. "
+        "Use web_research instead when you need synthesized answers, source "
+        "fetching, broader coverage, or current web research."
+    )
 
     query: str = Field(min_length=1)
     max_results: int = Field(default=10, ge=1, le=50)
@@ -112,10 +125,14 @@ class WebSearchTool(LocalTool):
 
 
 class WebFetchTool(LocalTool):
-    """Fetch a URL and convert the page into readable text/markdown."""
+    """Fetch one URL and convert it into readable text/markdown."""
 
     name = "web_fetch"
-    description = "Fetch a URL and return readable markdown/text content."
+    description = (
+        "Fetch one known URL and return readable markdown/text, chunks, links, "
+        "or metadata. Use web_search to discover URLs and web_research for "
+        "multi-source researched answers."
+    )
 
     url: str = Field(min_length=1)
     mode: str = "main_content"
@@ -153,9 +170,7 @@ class WebFetchTool(LocalTool):
                             message=r".*Couldn't find ffmpeg or avconv.*",
                             category=RuntimeWarning,
                         )
-                        from markitdown import (  # ty: ignore[unresolved-import]
-                            MarkItDown,  # type: ignore[import-not-found]
-                        )
+                        from markitdown import MarkItDown
 
                     converter = MarkItDown()
                 except ImportError:
@@ -204,6 +219,8 @@ class WebFetchTool(LocalTool):
                     text = filtered_text
             else:
                 text = filtered_text
+
+            find_miss = bool(self.find and not text.strip())
 
             chunks = chunk_text(text)
             summary = summarize_text(text)
@@ -257,6 +274,11 @@ class WebFetchTool(LocalTool):
             }
             if truncated:
                 result["truncated"] = True
+            if find_miss:
+                result["matched"] = False
+                result["note"] = f"No content matched find={self.find!r}."
+            elif self.find:
+                result["matched"] = True
             return result
         except Exception as exc:
             return {"ok": False, "error": str(exc), "url": self.url}

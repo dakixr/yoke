@@ -96,7 +96,7 @@ class ToolProcessInvocation:
             else:
                 self._result = {
                     "ok": False,
-                    "error": f"Tool process exited with status {self._process.exitcode}",
+                    "error": _tool_process_exit_error(self._process.exitcode),
                 }
         return True
 
@@ -320,6 +320,22 @@ def _kill_process_group(process: Process) -> None:
         except OSError:
             pass
     process.kill()
+
+
+def _tool_process_exit_error(exitcode: int | None) -> str:
+    if exitcode is None:
+        return "Tool process exited with unknown status"
+    if exitcode < 0:
+        signal_number = -exitcode
+        try:
+            signal_name = signal.Signals(signal_number).name
+        except ValueError:
+            signal_name = f"signal {signal_number}"
+        return (
+            f"Tool process exited with status {exitcode} "
+            f"({signal_name}; terminated by signal {signal_number})"
+        )
+    return f"Tool process exited with status {exitcode}"
 
 
 def _pickle_safe_result(result: dict[str, object]) -> dict[str, object]:

@@ -75,12 +75,14 @@ def rank_results_by_source_type(results: Sequence[object]) -> list[object]:
 
 
 class WebResearchTool(LocalTool):
-    """Search and fetch top sources into an agent-ready research brief."""
+    """Research a question across sources and synthesize an answer."""
 
     name = "web_research"
     description = (
-        "Research a question by searching the web, fetching top sources, "
-        "and returning concise evidence with links."
+        "Autonomously research a question by searching the web, fetching top "
+        "sources, and returning a concise answer with evidence and links. Prefer "
+        "this over web_search/web_fetch for open-ended questions, current facts, "
+        "or tasks needing multiple sources."
     )
     execute_in_process = True
 
