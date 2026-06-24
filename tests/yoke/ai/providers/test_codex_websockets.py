@@ -653,6 +653,122 @@ def test_codex_websockets_reuses_stable_prompt_cache_key(tmp_path: Path) -> None
     assert payloads[0]["prompt_cache_key"] == payloads[1]["prompt_cache_key"]
 
 
+def test_codex_websockets_sends_incremental_input_with_previous_response_id(
+    tmp_path: Path,
+) -> None:
+    sent_payloads: list[str] = []
+    image_url = "data:image/png;base64," + ("a" * 64)
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    '{"type":"response.created","response":{"id":"resp-1"}}',
+                    '{"type":"response.completed","response":{"id":"resp-1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"saw it"}]}],"usage":{}}}',
+                    '{"type":"response.created","response":{"id":"resp-2"}}',
+                    '{"type":"response.completed","response":{"id":"resp-2","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"next"}]}],"usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+        ),
+        websocket_factory=lambda url, **kwargs: FakeWebSocket(),
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+    image_message = Message.user(
+        [
+            {"type": "text", "text": "inspect this image"},
+            {"type": "image_url", "image_url": {"url": image_url}},
+        ]
+    )
+    first_response = Message.assistant("saw it")
+
+    provider.complete([image_message], [])
+    provider.complete([image_message, first_response, Message.user("continue")], [])
+
+    first_payload = json_loads(sent_payloads[0])
+    second_payload = json_loads(sent_payloads[1])
+    assert first_payload.get("previous_response_id") is None
+    assert image_url in sent_payloads[0]
+    assert second_payload["previous_response_id"] == "resp-1"
+    assert image_url not in sent_payloads[1]
+    assert second_payload["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "continue"}]}
+    ]
+
+
+def test_codex_websockets_falls_back_to_full_input_without_prefix_match(
+    tmp_path: Path,
+) -> None:
+    sent_payloads: list[str] = []
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    '{"type":"response.completed","response":{"id":"resp-1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"one"}]}],"usage":{}}}',
+                    '{"type":"response.completed","response":{"id":"resp-2","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]}],"usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+        ),
+        websocket_factory=lambda url, **kwargs: FakeWebSocket(),
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+
+    provider.complete([Message.user("one")], [])
+    provider.complete([Message.user("replacement")], [])
+
+    second_payload = json_loads(sent_payloads[1])
+    assert second_payload.get("previous_response_id") is None
+    assert second_payload["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "replacement"}]}
+    ]
+
+
 def test_codex_websockets_captures_and_replays_turn_state(tmp_path: Path) -> None:
     sent_payloads: list[str] = []
     factory_headers: list[dict[str, str]] = []
