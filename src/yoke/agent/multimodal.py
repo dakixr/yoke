@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 import re
 import shlex
@@ -9,6 +11,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import unquote
 from urllib.parse import urlparse
+
+from PIL import Image
 
 from yoke.agent.models import Message
 from yoke.agent.models import MessageImageURLContentPart
@@ -27,6 +31,13 @@ IMAGE_EXTENSIONS = {
     ".tif",
 }
 _IMAGE_LABEL_PATTERN = re.compile(r"^\[Image #(\d+)\]$")
+
+MAX_IMAGE_DIMENSION = 2048
+_MIME_TYPES = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "WEBP": "image/webp",
+}
 
 
 def format_image_label(index: int) -> str:
@@ -56,6 +67,46 @@ def next_image_label_index(messages: Sequence[Message]) -> int:
     return highest + 1
 
 
+def encode_local_image_data_url(path_value: str | Path) -> str:
+    """Read a local image and encode it as a prompt-safe data URL."""
+    path = Path(path_value).expanduser().resolve()
+    original_bytes = path.read_bytes()
+    with Image.open(io.BytesIO(original_bytes)) as image:
+        image.load()
+        image_format = (image.format or "PNG").upper()
+        preserve_original = image_format in _MIME_TYPES
+        should_resize = (
+            image.width > MAX_IMAGE_DIMENSION or image.height > MAX_IMAGE_DIMENSION
+        )
+        if not should_resize and preserve_original:
+            encoded_bytes = original_bytes
+            mime_type = _MIME_TYPES[image_format]
+        else:
+            encoded_bytes, mime_type = _encode_processed_image(
+                image, image_format=image_format
+            )
+    encoded = base64.b64encode(encoded_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _encode_processed_image(
+    image: Image.Image, *, image_format: str
+) -> tuple[bytes, str]:
+    output = io.BytesIO()
+    resized = image.copy()
+    resized.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
+    if image_format == "JPEG":
+        if resized.mode not in {"RGB", "L"}:
+            resized = resized.convert("RGB")
+        resized.save(output, format="JPEG", quality=85)
+        return output.getvalue(), "image/jpeg"
+    if image_format == "WEBP":
+        resized.save(output, format="WEBP")
+        return output.getvalue(), "image/webp"
+    resized.save(output, format="PNG")
+    return output.getvalue(), "image/png"
+
+
 def build_image_user_message(
     prompt: str,
     *,
@@ -69,10 +120,15 @@ def build_image_user_message(
     if prompt:
         content.append(MessageTextContentPart(text=prompt))
     for index, path in enumerate(image_paths, start=start_index):
+        try:
+            data_url = encode_local_image_data_url(path)
+        except OSError:
+            data_url = None
         content.append(
             MessageLocalImageContentPart(
                 path=str(path.resolve()),
                 label=format_image_label(index),
+                data_url=data_url,
             )
         )
     return Message.user(content)

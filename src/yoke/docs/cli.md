@@ -146,6 +146,10 @@ Image input support depends on the selected provider and model. If you
 attach an image while using a provider that does not support image inputs, yoke
 will stop the turn with an error instead of sending an invalid request.
 
+Attached images are encoded as base64 data URLs and embedded directly in the
+session data at attachment time. This means conversations stay intact even if
+the original file on disk is later renamed, moved, or deleted.
+
 ---
 
 ## Images In Interactive Mode

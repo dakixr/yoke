@@ -41,7 +41,7 @@ from yoke.ai.providers.openai_compat import (
     build_model_catalog,
     normalize_openai_request_messages,
 )
-from yoke.ai.providers.openai_compat.content import _local_image_to_data_url
+from yoke.agent.multimodal import encode_local_image_data_url
 from yoke.ai.providers.usage import parse_token_usage
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageLocalImageContentPart
@@ -648,7 +648,8 @@ def _anthropic_content_blocks(message: Message) -> list[dict[str, object]]:
             if isinstance(part, MessageLocalImageContentPart):
                 blocks.extend(
                     _anthropic_image_blocks(
-                        image_url=_local_image_to_data_url(part.path),
+                        image_url=part.data_url
+                        or encode_local_image_data_url(part.path),
                         label=part.display_label,
                     )
                 )

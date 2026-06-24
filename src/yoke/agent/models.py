@@ -105,6 +105,7 @@ class MessageLocalImageContentPart(BaseModel):
     path: str
     detail: str | None = None
     label: str | None = None
+    data_url: str | None = None
 
     @property
     def filename(self) -> str:

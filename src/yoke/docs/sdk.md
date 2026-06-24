@@ -299,6 +299,10 @@ to `Agent`.
 
 Use the same `Image` helper with `complete()` and `Agent.prompt()`.
 
+Local images are read and encoded as base64 data URLs at attachment time, so
+the full image content is embedded in the session data. This means conversations
+remain intact even if the original file on disk is renamed, moved, or deleted.
+
 ```python
 from yoke.ai import Image
 

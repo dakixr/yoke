@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import base64
-import io
-from pathlib import Path
 from typing import Any
-
-from PIL import Image
 
 from yoke.agent.message_sanitizer import normalize_tool_call_sequence
 from yoke.agent.models import Message
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import MessageTextContentPart
+from yoke.agent.multimodal import encode_local_image_data_url
 
 
 def normalize_openai_request_messages(
@@ -26,13 +22,7 @@ def normalize_openai_request_messages(
     )
 
 
-MAX_IMAGE_DIMENSION = 2048
 DEFAULT_IMAGE_DETAIL = "high"
-_MIME_TYPES = {
-    "PNG": "image/png",
-    "JPEG": "image/jpeg",
-    "WEBP": "image/webp",
-}
 
 
 def serialize_message_for_openai(message: Message) -> dict[str, object]:
@@ -75,7 +65,7 @@ def _serialize_content(message: Message) -> object:
         if isinstance(part, MessageLocalImageContentPart):
             serialized.extend(
                 _wrap_image_content(
-                    image_url=_local_image_to_data_url(part.path),
+                    image_url=part.data_url or encode_local_image_data_url(part.path),
                     label=part.display_label,
                     detail=part.detail,
                 )
@@ -105,40 +95,9 @@ def _wrap_image_content(
 
 
 def _local_image_to_data_url(path_value: str) -> str:
-    """Read a local image and encode it as a prompt-safe data URL."""
-    path = Path(path_value).expanduser().resolve()
-    original_bytes = path.read_bytes()
-    with Image.open(io.BytesIO(original_bytes)) as image:
-        image.load()
-        image_format = (image.format or "PNG").upper()
-        preserve_original = image_format in _MIME_TYPES
-        should_resize = (
-            image.width > MAX_IMAGE_DIMENSION or image.height > MAX_IMAGE_DIMENSION
-        )
-        if not should_resize and preserve_original:
-            encoded_bytes = original_bytes
-            mime_type = _MIME_TYPES[image_format]
-        else:
-            encoded_bytes, mime_type = _encode_processed_image(
-                image, image_format=image_format
-            )
-    encoded = base64.b64encode(encoded_bytes).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
+    """Read a local image and encode it as a prompt-safe data URL.
 
-
-def _encode_processed_image(
-    image: Image.Image, *, image_format: str
-) -> tuple[bytes, str]:
-    output = io.BytesIO()
-    resized = image.copy()
-    resized.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
-    if image_format == "JPEG":
-        if resized.mode not in {"RGB", "L"}:
-            resized = resized.convert("RGB")
-        resized.save(output, format="JPEG", quality=85)
-        return output.getvalue(), "image/jpeg"
-    if image_format == "WEBP":
-        resized.save(output, format="WEBP")
-        return output.getvalue(), "image/webp"
-    resized.save(output, format="PNG")
-    return output.getvalue(), "image/png"
+    Deprecated: delegates to ``yoke.agent.multimodal.encode_local_image_data_url``.
+    Kept for backward compatibility with external callers and tests.
+    """
+    return encode_local_image_data_url(path_value)

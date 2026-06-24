@@ -235,7 +235,7 @@ class Compactor:
         return max(1, (len(text) + TOKEN_WIDTH_GUESS - 1) // TOKEN_WIDTH_GUESS)
 
     def _estimate_local_image_tokens(self, part: MessageLocalImageContentPart) -> int:
-        dimensions = _read_local_image_dimensions(part.path)
+        dimensions = _read_image_dimensions(part)
         detail = _normalize_image_detail(part.detail)
         if dimensions is None:
             return self._estimate_text_tokens(part.path)
@@ -339,6 +339,14 @@ def _normalize_image_detail(detail: str | None) -> str:
     if normalized == "auto":
         return DEFAULT_IMAGE_DETAIL
     return normalized
+
+
+def _read_image_dimensions(
+    part: MessageLocalImageContentPart,
+) -> tuple[int, int] | None:
+    if part.data_url:
+        return _read_data_url_image_dimensions(part.data_url)
+    return _read_local_image_dimensions(part.path)
 
 
 def _read_local_image_dimensions(path: str) -> tuple[int, int] | None:

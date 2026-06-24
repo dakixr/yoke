@@ -66,13 +66,13 @@ def test_process_prompt_toolkit_prompt_preserves_image_reference_text(
     assert state.pending_images == []
     content = message.content
     assert isinstance(content, list)
-    assert content == [
-        MessageTextContentPart(text="before [yoke-clipboard-wmtfeura.png] and after"),
-        MessageLocalImageContentPart(
-            path=str(image_path.resolve()),
-            label="[Image #1]",
-        ),
-    ]
+    assert content[0] == MessageTextContentPart(
+        text="before [yoke-clipboard-wmtfeura.png] and after"
+    )
+    assert isinstance(content[1], MessageLocalImageContentPart)
+    assert content[1].path == str(image_path.resolve())
+    assert content[1].label == "[Image #1]"
+    assert content[1].data_url is not None
 
 
 def test_process_prompt_toolkit_prompt_attaches_dropped_image_path_line(
@@ -133,13 +133,11 @@ def test_process_prompt_toolkit_prompt_attaches_dropped_image_path_line(
     assert isinstance(content, list)
     submitted_prompt = submitted["prompt"]
     assert isinstance(submitted_prompt, str)
-    assert content == [
-        MessageTextContentPart(text=submitted_prompt),
-        MessageLocalImageContentPart(
-            path=str(image_path.resolve()),
-            label="[Image #1]",
-        ),
-    ]
+    assert content[0] == MessageTextContentPart(text=submitted_prompt)
+    assert isinstance(content[1], MessageLocalImageContentPart)
+    assert content[1].path == str(image_path.resolve())
+    assert content[1].label == "[Image #1]"
+    assert content[1].data_url is not None
 
 
 def test_process_prompt_toolkit_prompt_starts_compaction_without_blocking(

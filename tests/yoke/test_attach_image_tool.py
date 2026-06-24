@@ -74,10 +74,12 @@ def test_attach_image_tool_emits_deferred_multimodal_context_message(
     appended = pending[0]
     assert isinstance(appended.content, list)
     assert appended.content[0] == MessageTextContentPart(text="Compare [Image #1].")
-    assert appended.content[1] == MessageLocalImageContentPart(
-        path=str(image_path.resolve()),
-        label="[Image #1]",
-    )
+    image_part = appended.content[1]
+    assert isinstance(image_part, MessageLocalImageContentPart)
+    assert image_part.path == str(image_path.resolve())
+    assert image_part.label == "[Image #1]"
+    assert image_part.data_url is not None
+    assert image_part.data_url.startswith("data:image/png;base64,")
 
 
 def test_attach_image_tool_continues_label_sequence() -> None:
@@ -162,10 +164,12 @@ def test_image_generation_tool_writes_and_attaches_generated_image(
     assert appended.content[0] == MessageTextContentPart(
         text="Generated image for: draw a tiny red fox"
     )
-    assert appended.content[1] == MessageLocalImageContentPart(
-        path=str(output_path.resolve()),
-        label="[Image #1]",
-    )
+    image_part = appended.content[1]
+    assert isinstance(image_part, MessageLocalImageContentPart)
+    assert image_part.path == str(output_path.resolve())
+    assert image_part.label == "[Image #1]"
+    assert image_part.data_url is not None
+    assert image_part.data_url.startswith("data:image/png;base64,")
 
 
 def test_image_generation_tool_sends_referenced_image_paths(
@@ -457,3 +461,104 @@ def test_agent_tool_call_attaches_image_for_following_provider_turn(
     }
     assert attached_content[2]["type"] == "image_url"
     assert attached_content[3] == {"type": "text", "text": "</image>"}
+
+
+def test_embedded_data_url_survives_file_deletion_for_serialization(
+    tmp_path: Path,
+) -> None:
+    """Attached images must serialize from embedded data_url after file deletion."""
+    image_path = tmp_path / "survivor.png"
+    image_path.write_bytes(base64.b64decode(TINY_PNG))
+
+    from yoke.agent.multimodal import build_image_user_message
+
+    message = build_image_user_message(
+        "Describe [Image #1].",
+        image_paths=[image_path],
+    )
+
+    content = message.content
+    assert isinstance(content, list)
+    image_part = content[1]
+    assert isinstance(image_part, MessageLocalImageContentPart)
+    assert image_part.data_url is not None
+    assert image_part.data_url.startswith("data:image/png;base64,")
+
+    image_path.unlink()
+    assert not image_path.exists()
+
+    payload = serialize_message_for_openai(message)
+    payload_content = cast(list[dict[str, object]], payload["content"])
+    assert_serialized_image_envelope(
+        payload_content,
+        text="Describe [Image #1].",
+        image_name="[Image #1]",
+    )
+    image_url = cast(dict[str, object], payload_content[2]["image_url"])
+    assert cast(str, image_url["url"]).startswith("data:image/png;base64,")
+
+
+def test_embedded_data_url_survives_file_deletion_for_compaction(
+    tmp_path: Path,
+) -> None:
+    """Compaction token estimation must work from embedded data_url after deletion."""
+    image_path = tmp_path / "compact.png"
+    image_path.write_bytes(base64.b64decode(TINY_PNG))
+
+    from yoke.agent.compaction.core import Compactor
+    from yoke.agent.multimodal import build_image_user_message
+
+    message = build_image_user_message(
+        "Describe [Image #1].",
+        image_paths=[image_path],
+    )
+    content = message.content
+    assert isinstance(content, list)
+    image_part = content[1]
+    assert isinstance(image_part, MessageLocalImageContentPart)
+    assert image_part.data_url is not None
+
+    image_path.unlink()
+    assert not image_path.exists()
+
+    estimator = Compactor(model="gpt-5")
+    estimate = estimator.estimate_tokens([message], reserve_tokens=0)
+    assert estimate.input_tokens > 0
+
+
+def test_session_roundtrip_preserves_embedded_data_url(
+    tmp_path: Path,
+) -> None:
+    """Session serialization/deserialization must preserve the embedded data_url."""
+    image_path = tmp_path / "persist.png"
+    image_path.write_bytes(base64.b64decode(TINY_PNG))
+
+    from yoke.agent.multimodal import build_image_user_message
+    from yoke.cli.session import SessionStore
+
+    message = build_image_user_message(
+        "Inspect [Image #1].",
+        image_paths=[image_path],
+    )
+    store = SessionStore(directory=tmp_path / "sessions")
+    store.save("test-session", [message], root=tmp_path)
+
+    image_path.unlink()
+
+    loaded = store.load("test-session")
+    loaded_messages = loaded.messages
+    assert len(loaded_messages) == 1
+    loaded_content = loaded_messages[0].content
+    assert isinstance(loaded_content, list)
+    loaded_image = loaded_content[1]
+    assert isinstance(loaded_image, MessageLocalImageContentPart)
+    assert loaded_image.data_url is not None
+    assert loaded_image.data_url.startswith("data:image/png;base64,")
+
+    payload = serialize_message_for_openai(loaded_messages[0])
+    content = cast(list[dict[str, object]], payload["content"])
+    assert_serialized_image_envelope(
+        content,
+        text="Inspect [Image #1].",
+        image_name="[Image #1]",
+    )

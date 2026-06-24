@@ -23,14 +23,16 @@ def test_openai_serializer_wraps_multiple_images_with_stable_labels() -> None:
         ]
     )
 
-    original = serialize_message_for_openai.__globals__["_local_image_to_data_url"]
-    serialize_message_for_openai.__globals__["_local_image_to_data_url"] = lambda path: (
-        f"data:image/png;base64,{Path(path).stem}"
+    original = serialize_message_for_openai.__globals__["encode_local_image_data_url"]
+    serialize_message_for_openai.__globals__["encode_local_image_data_url"] = (
+        lambda path: f"data:image/png;base64,{Path(path).stem}"
     )
     try:
         payload = serialize_message_for_openai(message)
     finally:
-        serialize_message_for_openai.__globals__["_local_image_to_data_url"] = original
+        serialize_message_for_openai.__globals__["encode_local_image_data_url"] = (
+            original
+        )
 
     assert payload["role"] == "user"
     assert payload["content"] == [

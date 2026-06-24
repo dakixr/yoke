@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import base64
-import io
 from pathlib import Path
 from typing import cast
 
-from PIL import Image
 from pydantic import Field
 
 from yoke.agent.models import Message
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.multimodal import build_image_user_message
+from yoke.agent.multimodal import encode_local_image_data_url
 from yoke.agent.multimodal import format_image_label
 from yoke.agent.multimodal import next_image_label_index
 from yoke.agent.multimodal import resolve_image_path
@@ -150,7 +149,7 @@ class ImageGenerationTool(LocalTool):
             )
         if explicit_paths:
             return [
-                _local_image_to_data_url(
+                encode_local_image_data_url(
                     resolve_image_path(path, root=self.context.root)
                 )
                 for path in explicit_paths
@@ -195,26 +194,9 @@ def _recent_image_urls(messages: list[Message], count: int) -> list[str]:
             continue
         for part in reversed(content):
             if isinstance(part, MessageLocalImageContentPart):
-                images.append(_local_image_to_data_url(Path(part.path)))
+                images.append(part.data_url or encode_local_image_data_url(part.path))
             elif isinstance(part, MessageImageURLContentPart):
                 images.append(part.image_url.url)
             if len(images) == count:
                 return list(reversed(images))
     return list(reversed(images))
-
-
-def _local_image_to_data_url(path: Path) -> str:
-    original_bytes = path.expanduser().resolve().read_bytes()
-    with Image.open(io.BytesIO(original_bytes)) as image:
-        image.load()
-        image_format = (image.format or "PNG").upper()
-    mime_type = {
-        "PNG": "image/png",
-        "JPEG": "image/jpeg",
-        "WEBP": "image/webp",
-        "GIF": "image/gif",
-        "BMP": "image/bmp",
-        "TIFF": "image/tiff",
-    }.get(image_format, "image/png")
-    encoded = base64.b64encode(original_bytes).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
