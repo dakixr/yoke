@@ -102,6 +102,16 @@ def run_cli(
     stderr: OutputStream | None = None,
 ) -> int:
     """Run the yoke CLI for a fresh session."""
+    if args.fork_session_id is not None:
+        return run_resume_cli(
+            args,
+            args.fork_session_id,
+            fork=True,
+            agent=agent,
+            input_func=input_func,
+            stdout=stdout,
+            stderr=stderr,
+        )
     error_stream = stderr or sys.stderr
     output_stream = stdout or sys.stdout
     error_console = build_console(error_stream)
@@ -179,6 +189,7 @@ def run_resume_cli(
     session_id: str | None,
     *,
     all_sessions: bool = False,
+    fork: bool = False,
     agent: AgentRunner | None = None,
     input_func=input,
     stdout: OutputStream | None = None,
@@ -213,6 +224,15 @@ def run_resume_cli(
     if record.created_at is None and not record.messages:
         print_error(error_console, f"Session not found: {session_id}")
         return 1
+    if fork:
+        try:
+            record = store.fork(session_id)
+        except ValueError as exc:
+            print_error(error_console, str(exc))
+            return 1
+        source_session_id = session_id
+        session_id = record.id
+        output_console.print(f"Forked session {source_session_id} -> {session_id}")
     session_root = Path(record.root).resolve() if record.root else root
     args.root = str(session_root)
     apply_session_defaults_to_args(args, record)
@@ -260,6 +280,7 @@ def run_continue_cli(
     args: CLIArgs,
     *,
     all_sessions: bool = False,
+    fork_session_id: str | None = None,
     agent: AgentRunner | None = None,
     input_func=input,
     stdout: OutputStream | None = None,
@@ -271,20 +292,24 @@ def run_continue_cli(
     error_console = build_console(error_stream)
     store = SessionStore()
     root = Path(args.root).resolve()
-    try:
-        session_id = select_latest_session_id(
-            store,
-            root=root,
-            all_sessions=all_sessions,
-        )
-    except ValueError as exc:
-        print_error(error_console, str(exc))
-        return 1
-    build_console(output_stream).print(f"Continuing session {session_id}")
+    if fork_session_id is None:
+        try:
+            session_id = select_latest_session_id(
+                store,
+                root=root,
+                all_sessions=all_sessions,
+            )
+        except ValueError as exc:
+            print_error(error_console, str(exc))
+            return 1
+        build_console(output_stream).print(f"Continuing session {session_id}")
+    else:
+        session_id = fork_session_id
     return run_resume_cli(
         args,
         session_id,
         all_sessions=all_sessions,
+        fork=fork_session_id is not None,
         agent=agent,
         input_func=input_func,
         stdout=output_stream,

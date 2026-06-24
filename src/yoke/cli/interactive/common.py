@@ -128,7 +128,9 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand("/shortcuts", "Show interactive keyboard shortcuts."),
     SlashCommand("?", "Alias for /shortcuts."),
+    SlashCommand("/info", "Show details about the current session."),
     SlashCommand("/new", "Start a fresh session in the current workspace."),
+    SlashCommand("/fork", "Fork the current session and switch to it."),
     SlashCommand("/title", "Rename the active session.", "new-title"),
     SlashCommand("/tree", "Navigate the current session tree."),
     SlashCommand(

@@ -204,6 +204,10 @@ turn.
   escaped path. If that path is on its own prompt line, yoke attaches it
   automatically when you submit; non-image text lines are left unchanged.
 - Use `/image path/to/file.png` to attach a local image file explicitly.
+- Use `/info` to print the current session id, title, root, session file path,
+  provider/model, and saved conversation counts.
+- Use `/fork` to copy the current saved session into a new persisted session and
+  continue future turns in that fork.
 - Use `/tree` to navigate the current session tree, fork from an older point,
   label entries, search/filter history, and optionally summarize the branch you
   are leaving.
@@ -290,6 +294,12 @@ yoke continue
 
 # Continue the most recent session across all directories
 yoke continue --global
+
+# Fork an existing session id and continue in the new session
+yoke continue --fork 20240421-143022-abc1
+
+# Start directly from a forked session
+yoke --fork 20240421-143022-abc1
 ```
 
 Sessions are stored under `~/.yoke/sessions/` as append-oriented `.jsonl` event
@@ -323,6 +333,10 @@ view adds a root-path column before the session id. Use `yoke continue` to skip
 selection and immediately resume the most recent session for the current root,
 or `yoke continue --global` / `yoke continue -g` to ignore root and continue the
 most recent saved session overall.
+Use `--fork <session-id>` to copy an existing session into a new session id and
+continue there without appending to the original; `--fork` cannot be combined
+with `--session` because one selects a source session and the other names the
+active destination.
 
 ---
 
@@ -583,7 +597,7 @@ endpoints. Search is environment-aware:
 when ripgrep is installed, only `rg` is active; otherwise `grep`, `find`, and
 `ls` are active as the fallback set.
 
-The `command`/`bash` tool result mirrors `python_exec` metadata for the agent: `python_executable`, `returncode`, `timeout`, `timed_out`, `elapsed_seconds`, combined `output`, and `outputTruncationDetails`.
+The `command`/`bash` tool result mirrors `python_exec` metadata for the agent: `python_executable`, `returncode`, `timeout`, `timed_out`, `elapsed_seconds`, combined `output`, and `outputTruncationDetails`. Process-isolated tool failures report negative exit statuses as terminating signals, for example status `-11` is `SIGSEGV`.
 
 `skill` is added when yoke discovers one or more skill directories.
 

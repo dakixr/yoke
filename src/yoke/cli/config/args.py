@@ -13,6 +13,7 @@ class CLIArgs:
     prompt: str | None = None
     headless: bool = False
     session: str | None = None
+    fork_session_id: str | None = None
     model: str | None = None
     provider_name: str | None = None
     provider_from_default: bool = False

@@ -184,6 +184,52 @@ def test_continue_global_resumes_latest_session_across_roots(
     assert "current-old" not in output
 
 
+def test_continue_fork_creates_new_session_from_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
+    root = tmp_path / "current"
+    root.mkdir()
+    store = SessionStore()
+    store.save(
+        "source-session",
+        [Message.user("hello"), Message.assistant("hi")],
+        root=root,
+        title="Source title",
+        provider_name="test-provider",
+        model_id="test-model",
+    )
+    prompts = iter(["quit"])
+
+    def fake_input(_: object = "") -> str:
+        return next(prompts)
+
+    stdout = CaptureStream()
+    stderr = CaptureStream()
+    exit_code = run_continue_cli(
+        CLIArgs(root=str(root)),
+        fork_session_id="source-session",
+        agent=FakeAgent(),
+        input_func=fake_input,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    output = stdout.getvalue()
+    assert "Forked session source-session ->" in output
+    fork_id = output.split("Forked session source-session -> ", 1)[1].split()[0]
+    source = store.load("source-session")
+    forked = store.load(fork_id)
+    assert fork_id != "source-session"
+    assert forked.messages == source.messages
+    assert forked.title == "Source title (fork)"
+    assert forked.provider_name == "test-provider"
+    assert forked.model_id == "test-model"
+    assert forked.root == str(root.resolve())
+
+
 def test_continue_reports_missing_current_root_sessions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

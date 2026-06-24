@@ -35,6 +35,9 @@ from yoke.cli.runtime.session import (
     ensure_session_title as ensure_session_title,
 )
 from yoke.cli.runtime.session import (
+    fork_active_session as fork_active_session,
+)
+from yoke.cli.runtime.session import (
     generate_session_title as generate_session_title,
 )
 from yoke.cli.runtime.session import (

@@ -196,6 +196,65 @@ def test_title_slash_command_requires_title(tmp_path: Path) -> None:
     assert "Usage: /title <new-title>" in stdout.getvalue()
 
 
+def test_info_slash_command_prints_session_details(tmp_path: Path) -> None:
+    from yoke.cli.interactive.slash_commands import handle_slash_command
+
+    active_session = active_session_for(tmp_path)
+    active_session.title = "Info title"
+    active_session.record.title = "Info title"
+    agent = FakeAgent(provider=FakeProvider())
+    stdout = CaptureStream()
+
+    handled, messages, updated_session = handle_slash_command(
+        "/info",
+        agent=agent,
+        active_session=active_session,
+        messages=[Message.user("hello")],
+        console=build_console(stdout),
+    )
+
+    output = stdout.getvalue()
+    assert handled is True
+    assert messages == [Message.user("hello")]
+    assert updated_session is active_session
+    assert f"Session id: {active_session.id}" in output
+    assert "Title: Info title" in output
+    assert f"Root: {tmp_path.resolve()}" in output
+    assert "Model: gpt-test" in output
+    assert "Messages: 1" in output
+
+
+def test_fork_slash_command_switches_to_persisted_copy(tmp_path: Path) -> None:
+    from yoke.cli.interactive.slash_commands import handle_slash_command
+
+    active_session = active_session_for(tmp_path)
+    active_session.title = "Fork title"
+    agent = FakeAgent()
+    messages = [Message.user("hello"), Message.assistant("hi")]
+    stdout = CaptureStream()
+
+    handled, forked_messages, forked_session = handle_slash_command(
+        "/fork",
+        agent=agent,
+        active_session=active_session,
+        messages=messages,
+        console=build_console(stdout),
+    )
+
+    source = SessionStore().load(active_session.id)
+    forked = SessionStore().load(forked_session.id)
+    assert handled is True
+    assert forked_session.id != active_session.id
+    assert forked_messages == messages
+    assert source.messages == messages
+    assert forked.messages == messages
+    assert forked.title == "Fork title (fork)"
+    assert (
+        f"Forked session {active_session.id} -> {forked_session.id}"
+        in stdout.getvalue()
+    )
+
+
 def test_tools_menu_applies_session_only_runtime_tool_overrides(
     tmp_path: Path,
     monkeypatch,

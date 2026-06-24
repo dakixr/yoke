@@ -188,6 +188,42 @@ class SessionStore:
         self._update_index(record)
         return path
 
+    def fork(
+        self,
+        source_session_id: str,
+        *,
+        new_session_id: str | None = None,
+        root: Path | str | None = None,
+        title: str | None = None,
+    ) -> SessionRecord:
+        """Create a persisted copy of an existing session under a new id."""
+        source = self.load(source_session_id)
+        if source.created_at is None and not source.conversation_entries:
+            raise ValueError(f"Session not found: {source_session_id}")
+        fork_id = new_session_id or new_session_id_unique(self)
+        now = _timestamp()
+        forked = source.model_copy(
+            deep=True,
+            update={
+                "id": fork_id,
+                "created_at": now,
+                "updated_at": now,
+                "root": _normalize_root(root) or source.root,
+                "title": _normalize_title(title) or _fork_title(source.title),
+            },
+        )
+        self._write_session_record(forked)
+        self._update_index(forked)
+        return forked
+
+    def exists(self, session_id: str) -> bool:
+        """Return whether a persisted session exists."""
+        return self._existing_session_path(session_id) is not None
+
+    def path_for(self, session_id: str) -> Path:
+        """Return the canonical JSONL path for a session id."""
+        return self._session_path(session_id)
+
     def list(self, *, root: Path | str | None = None) -> builtins.list[SessionRecord]:
         """List session records."""
         self._ensure_session_index()
@@ -544,6 +580,14 @@ def new_session_id() -> str:
     return f"{stamp}-{secrets.token_hex(3)}"
 
 
+def new_session_id_unique(store: SessionStore) -> str:
+    """Return a session id that does not currently exist in a store."""
+    while True:
+        session_id = new_session_id()
+        if not store.exists(session_id):
+            return session_id
+
+
 def fallback_session_title(prompt: str) -> str:
     """Build a compact fallback title from the user's prompt."""
     title = " ".join(prompt.split()).strip()
@@ -576,3 +620,10 @@ def _normalize_title(title: str | None) -> str | None:
         return None
     normalized = " ".join(title.split()).strip()
     return normalized or None
+
+
+def _fork_title(title: str | None) -> str | None:
+    normalized = _normalize_title(title)
+    if normalized is None:
+        return None
+    return fallback_session_title(f"{normalized} (fork)")

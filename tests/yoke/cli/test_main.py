@@ -74,10 +74,15 @@ def test_continue_command_passes_global_flag(
 ) -> None:
     """Parses continue global aliases and forwards the resolved root."""
     fake_runtime = ModuleType("yoke.cli.runtime")
-    calls: list[tuple[Any, bool]] = []
+    calls: list[tuple[Any, bool, str | None]] = []
 
-    def fake_run_continue_cli(args: Any, *, all_sessions: bool = False) -> int:
-        calls.append((args, all_sessions))
+    def fake_run_continue_cli(
+        args: Any,
+        *,
+        all_sessions: bool = False,
+        fork_session_id: str | None = None,
+    ) -> int:
+        calls.append((args, all_sessions, fork_session_id))
         return 7
 
     setattr(fake_runtime, "run_continue_cli", fake_run_continue_cli)
@@ -85,6 +90,40 @@ def test_continue_command_passes_global_flag(
 
     assert main(["continue", global_flag, "--root", str(tmp_path)]) == 7
     assert len(calls) == 1
-    args, all_sessions = calls[0]
+    args, all_sessions, fork_session_id = calls[0]
     assert all_sessions is True
+    assert fork_session_id is None
     assert args.root == str(tmp_path.resolve())
+
+
+def test_continue_command_passes_fork_session_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parses continue --fork and forwards the source session id."""
+    fake_runtime = ModuleType("yoke.cli.runtime")
+    calls: list[tuple[Any, bool, str | None]] = []
+
+    def fake_run_continue_cli(
+        args: Any,
+        *,
+        all_sessions: bool = False,
+        fork_session_id: str | None = None,
+    ) -> int:
+        calls.append((args, all_sessions, fork_session_id))
+        return 7
+
+    setattr(fake_runtime, "run_continue_cli", fake_run_continue_cli)
+    monkeypatch.setitem(sys.modules, "yoke.cli.runtime", fake_runtime)
+
+    assert main(["continue", "--fork", "abc123", "--root", str(tmp_path)]) == 7
+    assert len(calls) == 1
+    args, all_sessions, fork_session_id = calls[0]
+    assert all_sessions is False
+    assert fork_session_id == "abc123"
+    assert args.root == str(tmp_path.resolve())
+
+
+def test_fork_root_option_cannot_be_combined_with_session() -> None:
+    """Rejects ambiguous root --fork plus --session usage."""
+    assert main(["--fork", "abc123", "--session", "other"]) == 1

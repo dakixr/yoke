@@ -27,6 +27,7 @@ from yoke.cli.render import format_compaction_note
 from yoke.cli.render import print_session_scrollback
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
+from yoke.cli.runtime import fork_active_session
 from yoke.cli.runtime import force_compact_history
 from yoke.cli.runtime import persist_session_state
 from yoke.cli.session import fallback_session_title
@@ -198,6 +199,19 @@ def handle_slash_command(  # noqa: C901
     if normalized in {"/shortcuts", "?"}:
         print_scrollback_notice(console, SHORTCUTS_NOTICE)
         return True, messages, active_session
+    if normalized == "/info":
+        print_scrollback_notice(
+            console,
+            _format_session_info(active_session, agent, messages),
+        )
+        return True, messages, active_session
+    if normalized == "/fork":
+        forked_session = fork_active_session(active_session, agent, messages)
+        print_scrollback_notice(
+            console,
+            f"Forked session {active_session.id} -> {forked_session.id}",
+        )
+        return True, forked_session.record.messages, forked_session
     if normalized == "/new":
         new_session = create_active_session(
             CLIArgs(root=str(active_session.root)),
@@ -220,6 +234,60 @@ def handle_slash_command(  # noqa: C901
             on_context_usage({"usage_percent": 0})
         return True, [], new_session
     return False, messages, active_session
+
+
+def _format_session_info(
+    active_session: ActiveSession,
+    agent: object,
+    messages: list[Message],
+) -> str:
+    record = active_session.record
+    provider = record.provider_name or _agent_provider_name(agent) or "unknown"
+    model = record.model_id or _agent_model_id(agent) or "unknown"
+    lines = [
+        "Session info:",
+        f"Session id: {active_session.id}",
+        f"Title: {active_session.title or record.title or 'Untitled session'}",
+        f"Root: {active_session.root}",
+        f"Path: {active_session.store.path_for(active_session.id)}",
+        f"Provider: {provider}",
+        f"Model: {model}",
+        f"Messages: {len(messages)}",
+        f"Conversation entries: {len(record.conversation_entries)}",
+    ]
+    if record.leaf_id:
+        lines.append(f"Leaf id: {record.leaf_id}")
+    if record.created_at:
+        lines.append(f"Created: {record.created_at}")
+    if record.updated_at:
+        lines.append(f"Updated: {record.updated_at}")
+    if record.reasoning_effort:
+        lines.append(f"Reasoning effort: {record.reasoning_effort}")
+    if record.context_window_tokens:
+        lines.append(f"Context window: {record.context_window_tokens} tokens")
+    return "\n".join(lines)
+
+
+def _agent_provider_name(agent: object) -> str | None:
+    provider = getattr(agent, "provider", None)
+    name = getattr(provider, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    if provider is not None:
+        return provider.__class__.__name__
+    return None
+
+
+def _agent_model_id(agent: object) -> str | None:
+    provider = getattr(agent, "provider", None)
+    config = getattr(provider, "config", None)
+    model = getattr(config, "model", None)
+    if isinstance(model, str) and model:
+        return model
+    model_id = getattr(provider, "model_id", None)
+    if isinstance(model_id, str) and model_id:
+        return model_id
+    return None
 
 
 def _handle_tree_command(

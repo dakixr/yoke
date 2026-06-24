@@ -63,6 +63,7 @@ def build_cli_args(
     prompt: str | None = None,
     headless: bool = False,
     session: str | None = None,
+    fork_session_id: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
     root: Path,
@@ -73,6 +74,7 @@ def build_cli_args(
         prompt=prompt,
         headless=headless,
         session=session,
+        fork_session_id=fork_session_id,
         model=model,
         reasoning_effort=reasoning_effort,
         root=str(root),
@@ -107,6 +109,13 @@ def cli(
             help=(
                 "Persist conversation under [bold].yoke/sessions/<name>.jsonl[/bold]."
             ),
+        ),
+    ] = None,
+    fork_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--fork",
+            help="Start by forking an existing session id into a new persisted session.",
         ),
     ] = None,
     model: Annotated[
@@ -160,6 +169,9 @@ def cli(
     image = [] if image is None else image
     if ctx.invoked_subcommand is not None:
         return
+    if session is not None and fork_session_id is not None:
+        click.echo("Error: --fork cannot be used with --session.", err=True)
+        raise typer.Exit(1)
     from yoke.cli.runtime import run_cli
 
     raise typer.Exit(
@@ -168,6 +180,7 @@ def cli(
                 prompt=prompt,
                 headless=headless,
                 session=session,
+                fork_session_id=fork_session_id,
                 model=model,
                 reasoning_effort=reasoning_effort,
                 root=root,
@@ -260,6 +273,13 @@ def continue_command(
             help="Resume the most recent session across all workspace roots.",
         ),
     ] = False,
+    fork_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--fork",
+            help="Fork the given session id and continue in the new session.",
+        ),
+    ] = None,
     model: Annotated[
         str | None,
         typer.Option(
@@ -302,6 +322,7 @@ def continue_command(
                 root=root,
             ),
             all_sessions=global_sessions,
+            fork_session_id=fork_session_id,
         )
     )
 
@@ -346,6 +367,7 @@ _OPTIONS_WITH_VALUES = frozenset(
     {
         "--prompt",
         "--session",
+        "--fork",
         "--model",
         "--reasoning-effort",
         "--root",

@@ -474,7 +474,10 @@ def test_slash_command_completer_suggests_matching_commands() -> None:
     assert hasattr(completer, "get_completions_async")
     assert [completion.text for completion in completions] == ["/compact"]
     assert [completion.text for completion in skill_completions] == ["/skill"]
-    assert [completion.text for completion in image_completions] == ["/image"]
+    assert [completion.text for completion in image_completions] == [
+        "/info",
+        "/image",
+    ]
     assert [completion.text for completion in shortcut_completions] == ["/shortcuts"]
     assert str(completions[0].display_meta_text).startswith("Summarize")
     assert current_slash_token("please /co") is None

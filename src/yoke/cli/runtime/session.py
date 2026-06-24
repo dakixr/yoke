@@ -61,6 +61,31 @@ def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
     )
 
 
+def fork_active_session(
+    active_session: ActiveSession,
+    agent: object,
+    messages: list[Message],
+    *,
+    title: str | None = None,
+) -> ActiveSession:
+    """Persist and switch to a fork of the current active session."""
+    persist_session_state(active_session, agent, messages)
+    forked_record = active_session.store.fork(
+        active_session.id,
+        root=active_session.root,
+        title=title,
+    )
+    return ActiveSession(
+        id=forked_record.id,
+        root=Path(forked_record.root).resolve()
+        if forked_record.root
+        else active_session.root,
+        store=active_session.store,
+        record=forked_record,
+        title=forked_record.title,
+    )
+
+
 def ensure_session_title(
     active_session: ActiveSession,
     agent: AgentRunner,
