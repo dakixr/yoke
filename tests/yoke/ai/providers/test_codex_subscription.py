@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -16,6 +17,7 @@ from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex.subscription import CodexProfileStore
 from yoke.ai.providers.codex.subscription import OAUTH_PROVIDER_ID
 from yoke.ai.providers.codex.subscription import OAuthCredentials
+from yoke.ai.providers.codex.subscription import X_CODEX_TURN_STATE_HEADER
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
 
@@ -201,6 +203,103 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
     assert login_calls == ["yoke"]
     stored = json.loads(auth_path.read_text(encoding="utf-8"))
     assert stored[OAUTH_PROVIDER_ID]["accountId"] == "acct_fresh"
+
+
+def test_codex_provider_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:
+    auth_path = tmp_path / ".codex" / "auth.json"
+    credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+    _write_fallback_auth(auth_path, credentials)
+    request_bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            text='event: response.completed\ndata: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{}}}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    provider = CodexSubscriptionProvider(
+        config=CodexSubscriptionConfig(
+            auth_path=auth_path,
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            model="gpt-5.4",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    try:
+        provider.complete([Message.user("one")], [])
+        provider.complete([Message.user("two")], [])
+    finally:
+        provider.close()
+
+    assert (
+        request_bodies[0]["prompt_cache_key"] == request_bodies[1]["prompt_cache_key"]
+    )
+
+
+def test_codex_provider_captures_and_replays_turn_state(tmp_path: Path) -> None:
+    auth_path = tmp_path / ".codex" / "auth.json"
+    credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+    _write_fallback_auth(auth_path, credentials)
+    request_headers: list[httpx.Headers] = []
+    request_bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_headers.append(request.headers)
+        request_bodies.append(json.loads(request.content))
+        body = (
+            "event: response.metadata\n"
+            'data: {"type":"response.metadata","headers":{"x-codex-turn-state":"turn-123"}}\n\n'
+            "event: response.completed\n"
+            'data: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{}}}\n\n'
+            if len(request_bodies) == 1
+            else "event: response.completed\n"
+            'data: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{}}}\n\n'
+        )
+        return httpx.Response(
+            200,
+            text=body,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    provider = CodexSubscriptionProvider(
+        config=CodexSubscriptionConfig(
+            auth_path=auth_path,
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            model="gpt-5.4",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    try:
+        provider.complete([Message.user("one")], [])
+        provider.complete([Message.user("two")], [])
+    finally:
+        provider.close()
+
+    assert X_CODEX_TURN_STATE_HEADER not in request_headers[0]
+    assert request_headers[1][X_CODEX_TURN_STATE_HEADER] == "turn-123"
+    assert "client_metadata" not in request_bodies[0]
+    metadata = request_bodies[1]["client_metadata"]
+    assert isinstance(metadata, dict)
+    typed_metadata = cast(dict[str, object], metadata)
+    assert typed_metadata[X_CODEX_TURN_STATE_HEADER] == "turn-123"
 
 
 def test_codex_profile_store_keeps_local_profile_when_quota_probe_fails(

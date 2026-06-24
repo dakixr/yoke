@@ -57,6 +57,8 @@ The CLI persists conversation history so you can resume where you left off. Each
 ### Providers
 yoke connects to an LLM provider (Codex, Codex WebSockets, OpenCode Go, Z.ai, or any OpenAI-compatible endpoint) to power the agent.
 
+The Codex providers mirror Codex CLI's session-affinity behavior: they keep a stable prompt cache key for the yoke process, capture `x-codex-turn-state` metadata from the server, and replay that sticky-routing token on follow-up requests. The WebSockets variant also probes cached sockets before reuse so long-running tool gaps do not keep sending on a stale connection.
+
 ### MCP
 yoke supports MCP stdio and Streamable HTTP servers through global and workspace
 JSON config files:

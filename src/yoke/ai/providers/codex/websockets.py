@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import secrets
@@ -54,6 +55,8 @@ RESPONSES_WEBSOCKETS_BETA = "responses_websockets=2026-02-06"
 DEFAULT_WS_BASE_URL = DEFAULT_BASE_URL
 STALE_WEBSOCKET_CLOSED_MESSAGE = "Codex WebSocket closed before response.completed."
 WEBSOCKET_TIMEOUT_MESSAGE = "Codex WebSocket timed out waiting for response."
+X_CODEX_TURN_STATE_HEADER = "x-codex-turn-state"
+WEBSOCKET_REQUEST_TYPE = "response.create"
 
 
 class CodexWebSocketTimeoutError(ProviderError):
@@ -176,6 +179,8 @@ class CodexWebSockets(CodexSubscriptionProvider):
         self._websocket: CodexWebSocketConnection | None = None
         self._websocket_credentials: OAuthCredentials | None = None
         self._websocket_auth_profile: str | None = None
+        self._prompt_cache_key = self._new_prompt_cache_key()
+        self._turn_state: str | None = None
 
     @property
     def config(self) -> CodexWebSocketsConfig:
@@ -205,14 +210,19 @@ class CodexWebSockets(CodexSubscriptionProvider):
         request_log_id = secrets.token_hex(8)
         request_metrics = self._request_log_metrics(messages, tools)
         payload = self._request_payload(messages, tools)
-        payload["type"] = "response.create"
+        payload["type"] = WEBSOCKET_REQUEST_TYPE
         last_error: ProviderError | None = None
 
         for attempt in range(self.config.max_retries + 1):
             auth_profile = self._active_auth_profile
             try:
                 websocket = self._fresh_websocket()
-                websocket.send(json.dumps(payload, separators=(",", ":")))
+                auth_profile = self._websocket_auth_profile or self._active_auth_profile
+                try:
+                    websocket.send(json.dumps(payload, separators=(",", ":")))
+                except ConnectionClosed as exc:
+                    self._close_websocket(clear_credentials=False)
+                    raise ProviderError(STALE_WEBSOCKET_CLOSED_MESSAGE) from exc
                 message = self._consume_websocket_response(
                     websocket,
                     cancel_requested=cancel_requested,
@@ -370,10 +380,25 @@ class CodexWebSockets(CodexSubscriptionProvider):
         self._close_websocket()
         super().close()
 
+    def _new_prompt_cache_key(self) -> str:
+        seed = "\0".join(
+            [
+                str(self.config.auth_path.expanduser()),
+                str(self.config.accounts_dir.expanduser()),
+                self.config.base_url,
+                self.config.model,
+                secrets.token_hex(16),
+            ]
+        )
+        return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
     def _request_payload(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> dict[str, object]:
         instructions, input_items = convert_messages(messages)
+        client_metadata: dict[str, object] = {}
+        if self._turn_state:
+            client_metadata[X_CODEX_TURN_STATE_HEADER] = self._turn_state
         payload: dict[str, object] = {
             "model": self.config.model,
             "store": False,
@@ -381,7 +406,11 @@ class CodexWebSockets(CodexSubscriptionProvider):
             "input": input_items,
             "text": {"verbosity": self.config.text_verbosity},
             "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": secrets.token_hex(16),
+            # Match Codex CLI's cache strategy: keep a stable key for the CLI
+            # session so server-side prompt caching survives reconnects. Socket
+            # affinity alone is not the cache key, and randomizing this per
+            # request defeats reuse after any reconnect.
+            "prompt_cache_key": self._prompt_cache_key,
             "tool_choice": "auto",
             "parallel_tool_calls": True,
             "reasoning": {
@@ -395,6 +424,8 @@ class CodexWebSockets(CodexSubscriptionProvider):
             payload["instructions"] = instructions
         if tools:
             payload["tools"] = convert_tools(tools)
+        if client_metadata:
+            payload["client_metadata"] = client_metadata
         return payload
 
     def _request_headers(self, credentials: OAuthCredentials) -> dict[str, str]:
@@ -410,6 +441,11 @@ class CodexWebSockets(CodexSubscriptionProvider):
             "Content-Type": "application/json",
             "session_id": request_id,
             "x-client-request-id": request_id,
+            **(
+                {X_CODEX_TURN_STATE_HEADER: self._turn_state}
+                if self._turn_state
+                else {}
+            ),
         }
 
     def _responses_url(self) -> str:
@@ -423,9 +459,16 @@ class CodexWebSockets(CodexSubscriptionProvider):
         return metrics
 
     def _fresh_websocket(self) -> CodexWebSocketConnection:
-        if self._websocket is not None:
+        if self._websocket is not None and not self._websocket_closed(self._websocket):
             return self._websocket
-        credentials = self._websocket_credentials or self._fresh_credentials()
+
+        # Codex CLI probes cached sockets before reuse and reconnects when the
+        # transport is already closed. Keep the sticky turn-state across that
+        # reconnect, but do not keep using an expired bearer after a long tool
+        # run made the previous socket stale.
+        if self._websocket is not None:
+            self._close_websocket(clear_credentials=False)
+        credentials = self._valid_websocket_credentials() or self._fresh_credentials()
         self._websocket_credentials = credentials
         self._websocket_auth_profile = self._active_auth_profile
         try:
@@ -447,6 +490,20 @@ class CodexWebSockets(CodexSubscriptionProvider):
             raise map_websocket_status_error(exc) from exc
         except Exception as exc:
             raise ProviderError(f"Codex WebSocket connection failed: {exc}") from exc
+
+    def _websocket_closed(self, websocket: CodexWebSocketConnection) -> bool:
+        try:
+            return bool(getattr(websocket, "closed", False))
+        except Exception:
+            return False
+
+    def _valid_websocket_credentials(self) -> OAuthCredentials | None:
+        credentials = self._websocket_credentials
+        if credentials is None:
+            return None
+        if credentials.expires - int(time.time() * 1000) <= 60_000:
+            return None
+        return credentials
 
     def _consume_websocket_response(
         self,
@@ -483,6 +540,7 @@ class CodexWebSockets(CodexSubscriptionProvider):
                 event = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            self._capture_turn_state(event)
             handle_websocket_event(event, state)
             if event.get("type") in {"response.completed", "response.done"}:
                 return build_message_from_websocket_state(
@@ -491,12 +549,30 @@ class CodexWebSockets(CodexSubscriptionProvider):
                     model_id=self.config.model,
                 )
 
+    def _capture_turn_state(self, event: dict[str, Any]) -> None:
+        # Codex CLI treats x-codex-turn-state as a server-provided sticky
+        # routing token. It is replayed on later requests so reconnects still
+        # reach the same warm backend, but it is intentionally separate from the
+        # WebSocket object because a socket can be replaced after a stale close.
+        if event.get("type") != "response.metadata":
+            return
+        headers = event.get("headers")
+        if not isinstance(headers, dict):
+            return
+        for name, value in headers.items():
+            if name.lower() != X_CODEX_TURN_STATE_HEADER:
+                continue
+            if isinstance(value, str) and value.strip():
+                self._turn_state = value.strip()
+            return
+
     def _close_websocket(self, *, clear_credentials: bool = True) -> None:
         websocket = self._websocket
         self._websocket = None
         if clear_credentials:
             self._websocket_credentials = None
             self._websocket_auth_profile = None
+            self._turn_state = None
         if websocket is None:
             return
         try:
@@ -696,6 +772,7 @@ __all__ = [
     "CodexWebSockets",
     "CodexWebSocketsConfig",
     "PROVIDER_NAME",
+    "X_CODEX_TURN_STATE_HEADER",
     "list_provider_models",
     "register_provider",
     "websocket_url_for_base",

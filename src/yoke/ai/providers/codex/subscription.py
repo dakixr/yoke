@@ -58,6 +58,7 @@ DEFAULT_BASE_URL = "https://chatgpt.com/backend-api"
 DEFAULT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DEFAULT_CXAUTH_VAULT_NAME = ".codex-auth"
 DEFAULT_LOGS_DIR = Path.home() / ".yoke" / "providers" / "logs"
+X_CODEX_TURN_STATE_HEADER = "x-codex-turn-state"
 MODEL_CATALOG = (
     ProviderModelInfo(
         id="gpt-5.5",
@@ -209,6 +210,8 @@ class CodexSubscriptionProvider(Provider):
         self._sleep = sleep or time.sleep
         self._active_auth_profile: str | None = None
         self._last_logged_auth_profile: str | None = None
+        self._prompt_cache_key = self._new_prompt_cache_key()
+        self._turn_state: str | None = None
         self._owns_client = http_client is None
         self._client = http_client or httpx.Client(
             timeout=config.timeout_seconds,
@@ -383,6 +386,7 @@ class CodexSubscriptionProvider(Provider):
                         provider_name=self.provider_name,
                         model_id=self.config.model,
                         cancel_requested=cancel_requested,
+                        turn_state_updated=self._set_turn_state,
                     )
                     usage = message.usage
                     self._log_event(
@@ -529,6 +533,21 @@ class CodexSubscriptionProvider(Provider):
         if self._owns_client:
             self._client.close()
 
+    def _set_turn_state(self, value: str) -> None:
+        self._turn_state = value
+
+    def _new_prompt_cache_key(self) -> str:
+        seed = "\0".join(
+            [
+                str(self.config.auth_path.expanduser()),
+                str(self.config.accounts_dir.expanduser()),
+                self.config.base_url,
+                self.config.model,
+                secrets.token_hex(16),
+            ]
+        )
+        return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
     def generate_image(self, *, prompt: str) -> str:
         """Generate an image through Codex's hosted Responses image tool."""
         return self._generate_hosted_image(
@@ -599,7 +618,7 @@ class CodexSubscriptionProvider(Provider):
             },
             "text": {"verbosity": self.config.text_verbosity},
             "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": secrets.token_hex(16),
+            "prompt_cache_key": self._prompt_cache_key,
         }
 
     def _b64_json_from_image_response(self, payload: object) -> str:
@@ -701,6 +720,9 @@ class CodexSubscriptionProvider(Provider):
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> dict[str, object]:
         instructions, input_items = convert_messages(messages)
+        client_metadata: dict[str, object] = {}
+        if self._turn_state:
+            client_metadata[X_CODEX_TURN_STATE_HEADER] = self._turn_state
         payload: dict[str, object] = {
             "model": self.config.model,
             "store": False,
@@ -708,7 +730,11 @@ class CodexSubscriptionProvider(Provider):
             "input": input_items,
             "text": {"verbosity": self.config.text_verbosity},
             "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": secrets.token_hex(16),
+            # Codex CLI uses a stable thread/session cache key rather than a
+            # random value per request. Keep the HTTP/SSE path aligned with the
+            # WebSocket provider so prompt cache remains warm across retries and
+            # follow-up turns.
+            "prompt_cache_key": self._prompt_cache_key,
             "tool_choice": "auto",
             "parallel_tool_calls": True,
             "reasoning": {
@@ -722,6 +748,8 @@ class CodexSubscriptionProvider(Provider):
             payload["instructions"] = instructions
         if tools:
             payload["tools"] = convert_tools(tools)
+        if client_metadata:
+            payload["client_metadata"] = client_metadata
         return payload
 
     def _request_headers(self, credentials: OAuthCredentials) -> dict[str, str]:
@@ -738,6 +766,11 @@ class CodexSubscriptionProvider(Provider):
             "Content-Type": "application/json",
             "session_id": request_id,
             "x-client-request-id": request_id,
+            **(
+                {X_CODEX_TURN_STATE_HEADER: self._turn_state}
+                if self._turn_state
+                else {}
+            ),
         }
 
     def _image_request_headers(self, credentials: OAuthCredentials) -> dict[str, str]:
@@ -777,6 +810,7 @@ class CodexSubscriptionProvider(Provider):
 
     def _clear_selection_cache(self, *, reason: str = "rate_limit") -> None:
         """Clear the cached profile selection to force account rotation on the next credential fetch."""
+        self._turn_state = None
         selection_path = self.config.selection_path.expanduser()
         with contextlib.suppress(FileNotFoundError):
             selection_path.unlink()
@@ -1835,6 +1869,7 @@ def consume_sse_response(
     provider_name: str | None = None,
     model_id: str | None = None,
     cancel_requested: Callable[[], bool] | None = None,
+    turn_state_updated: Callable[[str], None] | None = None,
 ) -> Message:
     text_parts: list[str] = []
     function_calls: dict[str, dict[str, str]] = {}
@@ -1866,6 +1901,7 @@ def consume_sse_response(
                     function_calls,
                     completed_payload,
                     usage_payload,
+                    turn_state_updated=turn_state_updated,
                 )
                 event_lines = []
                 continue
@@ -1885,6 +1921,7 @@ def consume_sse_response(
             function_calls,
             completed_payload,
             usage_payload,
+            turn_state_updated=turn_state_updated,
         )
     if completed_payload is not None:
         merge_completed_response(completed_payload, text_parts, function_calls)
@@ -1976,6 +2013,8 @@ def handle_sse_event(
     function_calls: dict[str, dict[str, str]],
     completed_payload: dict[str, Any] | None,
     usage_payload: object | None,
+    *,
+    turn_state_updated: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, Any] | None, object | None]:
     data_lines = [line[5:].strip() for line in lines if line.startswith("data:")]
     if not data_lines:
@@ -1988,6 +2027,7 @@ def handle_sse_event(
     except json.JSONDecodeError:
         return completed_payload, usage_payload
     event_type = event.get("type")
+    capture_turn_state(event, turn_state_updated)
     if isinstance(event.get("usage"), dict):
         usage_payload = event.get("usage")
     if event_type in {"error", "response.failed"}:
@@ -2048,6 +2088,25 @@ def handle_sse_event(
             usage_payload = response_payload.get("usage") or usage_payload
             return response_payload, usage_payload
     return completed_payload, usage_payload
+
+
+def capture_turn_state(
+    event: dict[str, Any], callback: Callable[[str], None] | None
+) -> None:
+    # Codex HTTP/SSE and WebSockets both surface x-codex-turn-state through a
+    # response.metadata event. Replaying it keeps retries/reconnects sticky to
+    # the warm backend without tying affinity to one physical connection.
+    if callback is None or event.get("type") != "response.metadata":
+        return
+    headers = event.get("headers")
+    if not isinstance(headers, dict):
+        return
+    for name, value in headers.items():
+        if name.lower() != X_CODEX_TURN_STATE_HEADER:
+            continue
+        if isinstance(value, str) and value.strip():
+            callback(value.strip())
+        return
 
 
 def merge_completed_response(

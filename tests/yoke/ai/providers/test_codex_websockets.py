@@ -19,6 +19,7 @@ from yoke.ai.providers.codex.websockets import CodexWebSocketConnection
 from yoke.ai.providers.codex.websockets import CodexWebSocketParseState
 from yoke.ai.providers.codex.websockets import CodexWebSocketTimeoutError
 from yoke.ai.providers.codex.websockets import RESPONSES_WEBSOCKETS_BETA
+from yoke.ai.providers.codex.websockets import X_CODEX_TURN_STATE_HEADER
 from yoke.ai.providers.codex.websockets import build_message_from_websocket_state
 from yoke.ai.providers.codex.websockets import handle_websocket_event
 from yoke.ai.providers.codex.websockets import optional_float_env
@@ -443,6 +444,280 @@ def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
     assert len(sent_payloads) == 2
 
 
+def test_codex_websockets_retries_send_time_closed_socket(tmp_path: Path) -> None:
+    sent_payloads: list[str] = []
+    factory_calls = 0
+
+    class StaleWebSocket:
+        def send(self, payload: str) -> None:
+            del payload
+            raise ConnectionClosedError(None, None)
+
+        def recv(self, timeout: float | None = None) -> str:
+            raise AssertionError("recv should not be called after send failure")
+
+        def close(self) -> None:
+            return None
+
+    class FreshWebSocket:
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    '{"type":"response.output_text.delta","delta":"ok"}',
+                    '{"type":"response.completed","response":{"usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    def fake_factory(url: str, **kwargs: object) -> CodexWebSocketConnection:
+        nonlocal factory_calls
+        del url, kwargs
+        factory_calls += 1
+        if factory_calls == 1:
+            return StaleWebSocket()
+        return FreshWebSocket()
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+            max_retries=1,
+        ),
+        websocket_factory=fake_factory,
+        sleep=lambda seconds: None,
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+
+    message = provider.complete([Message.user("hello")], [])
+
+    assert message.text_content() == "ok"
+    assert factory_calls == 2
+    assert len(sent_payloads) == 1
+
+
+def test_codex_websockets_reconnects_closed_cached_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    factory_calls = 0
+
+    class ClosedWebSocket:
+        closed = True
+
+        def send(self, payload: str) -> None:
+            raise AssertionError("closed cached socket should not be reused")
+
+        def recv(self, timeout: float | None = None) -> str:
+            raise AssertionError("closed cached socket should not be reused")
+
+        def close(self) -> None:
+            return None
+
+    class FreshWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    '{"type":"response.output_text.delta","delta":"ok"}',
+                    '{"type":"response.completed","response":{"usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            return None
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    def fake_factory(url: str, **kwargs: object) -> FreshWebSocket:
+        nonlocal factory_calls
+        del url, kwargs
+        factory_calls += 1
+        return FreshWebSocket()
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+        ),
+        websocket_factory=fake_factory,
+    )
+    provider._websocket = cast(CodexWebSocketConnection, ClosedWebSocket())
+    provider._websocket_credentials = OAuthCredentials(
+        access="expired-access-token",
+        refresh="refresh-token",
+        expires=0,
+        account_id="acct_old",
+    )
+    monkeypatch.setattr(
+        provider,
+        "_fresh_credentials",
+        lambda: OAuthCredentials(
+            access="fresh-access-token",
+            refresh="refresh-token",
+            expires=4_102_444_800_000,
+            account_id="acct_new",
+        ),
+    )
+
+    message = provider.complete([Message.user("hello")], [])
+
+    assert message.text_content() == "ok"
+    assert factory_calls == 1
+    assert provider._websocket_credentials is not None
+    assert provider._websocket_credentials.access == "fresh-access-token"
+
+
+def test_codex_websockets_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:
+    sent_payloads: list[str] = []
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    '{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"one"}]}],"usage":{}}}',
+                    '{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]}],"usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+        ),
+        websocket_factory=lambda url, **kwargs: FakeWebSocket(),
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+
+    provider.complete([Message.user("one")], [])
+    provider.complete([Message.user("two")], [])
+
+    payloads = [json_loads(payload) for payload in sent_payloads]
+    assert payloads[0]["prompt_cache_key"] == payloads[1]["prompt_cache_key"]
+
+
+def test_codex_websockets_captures_and_replays_turn_state(tmp_path: Path) -> None:
+    sent_payloads: list[str] = []
+    factory_headers: list[dict[str, str]] = []
+
+    class FirstWebSocket:
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    '{"type":"response.metadata","headers":{"x-codex-turn-state":"turn-123"}}',
+                    '{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"one"}]}],"usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    class SecondWebSocket:
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    '{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]}],"usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    sockets: list[CodexWebSocketConnection] = [FirstWebSocket(), SecondWebSocket()]
+
+    def fake_factory(url: str, **kwargs: object) -> CodexWebSocketConnection:
+        del url
+        factory_headers.append(cast(dict[str, str], kwargs["additional_headers"]))
+        return sockets.pop(0)
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+        ),
+        websocket_factory=fake_factory,
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+
+    provider.complete([Message.user("one")], [])
+    provider._close_websocket(clear_credentials=False)
+    provider.complete([Message.user("two")], [])
+
+    first_payload = json_loads(sent_payloads[0])
+    second_payload = json_loads(sent_payloads[1])
+    second_metadata = second_payload["client_metadata"]
+    assert isinstance(second_metadata, dict)
+    typed_second_metadata = cast(dict[str, object], second_metadata)
+    assert X_CODEX_TURN_STATE_HEADER not in first_payload
+    assert typed_second_metadata[X_CODEX_TURN_STATE_HEADER] == "turn-123"
+    assert X_CODEX_TURN_STATE_HEADER not in factory_headers[0]
+    assert factory_headers[1][X_CODEX_TURN_STATE_HEADER] == "turn-123"
+
+
 def test_codex_websockets_retries_timed_out_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -506,3 +781,11 @@ def test_codex_websockets_retries_timed_out_socket(
 
     assert message.text_content() == "ok"
     assert factory_calls == 2
+
+
+def json_loads(payload: str) -> dict[str, object]:
+    import json
+
+    decoded = json.loads(payload)
+    assert isinstance(decoded, dict)
+    return decoded
