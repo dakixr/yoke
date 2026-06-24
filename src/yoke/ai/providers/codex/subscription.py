@@ -58,6 +58,7 @@ DEFAULT_BASE_URL = "https://chatgpt.com/backend-api"
 DEFAULT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DEFAULT_CXAUTH_VAULT_NAME = ".codex-auth"
 DEFAULT_LOGS_DIR = Path.home() / ".yoke" / "providers" / "logs"
+DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 X_CODEX_TURN_STATE_HEADER = "x-codex-turn-state"
 MODEL_CATALOG = (
     ProviderModelInfo(
@@ -118,7 +119,10 @@ def register_provider(context: Any) -> CodexSubscriptionProvider:
             model=(context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.5"),
             base_url=(env.get("YOKE_CODEX_BASE_URL") or DEFAULT_BASE_URL),
             originator=env.get("YOKE_CODEX_ORIGINATOR") or "yoke",
-            timeout_seconds=float(env.get("YOKE_CODEX_TIMEOUT_SECONDS") or "600"),
+            timeout_seconds=float(
+                env.get("YOKE_CODEX_TIMEOUT_SECONDS")
+                or str(DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS)
+            ),
             max_retries=int(env.get("YOKE_CODEX_MAX_RETRIES") or "5"),
             reasoning_effort=(
                 context.reasoning_effort
@@ -146,7 +150,7 @@ class CodexSubscriptionConfig(BaseModel):
     model: str = "gpt-5.5"
     base_url: str = DEFAULT_BASE_URL
     originator: str = "yoke"
-    timeout_seconds: float = 600.0
+    timeout_seconds: float = DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS
     max_retries: int = 5
     retry_backoff_seconds: float = 1.0
     max_retry_backoff_seconds: float = 15.0

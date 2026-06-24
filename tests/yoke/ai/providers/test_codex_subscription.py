@@ -20,6 +20,7 @@ from yoke.ai.providers.codex.subscription import OAuthCredentials
 from yoke.ai.providers.codex.subscription import X_CODEX_TURN_STATE_HEADER
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
+from yoke.ai.providers.codex.subscription import register_provider
 
 
 def _write_fallback_auth(path: Path, credentials: OAuthCredentials) -> None:
@@ -50,6 +51,20 @@ def test_invalid_oauth_token_error_detection() -> None:
     )
     assert is_invalid_oauth_token_error("OAuth token was revoked")
     assert not is_invalid_oauth_token_error("rate limited")
+
+
+def test_codex_provider_default_timeout_matches_codex_idle_timeout(
+    tmp_path: Path,
+) -> None:
+    class Context:
+        home = tmp_path
+        env: dict[str, str] = {}
+        model = None
+        reasoning_effort = None
+
+    provider = register_provider(Context())
+
+    assert provider.config.timeout_seconds == 300.0
 
 
 def test_convert_messages_drops_orphan_tool_outputs() -> None:

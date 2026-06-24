@@ -35,6 +35,7 @@ from yoke.ai.providers.base import sleep_with_cancel
 from yoke.ai.providers.codex.subscription import DEFAULT_BASE_URL
 from yoke.ai.providers.codex.subscription import DEFAULT_CXAUTH_VAULT_NAME
 from yoke.ai.providers.codex.subscription import DEFAULT_LOGS_DIR
+from yoke.ai.providers.codex.subscription import DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS
 from yoke.ai.providers.codex.subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex.subscription import OAuthCredentials
@@ -98,7 +99,7 @@ def register_provider(context: Any) -> CodexWebSockets:
             timeout_seconds=float(
                 env.get("YOKE_CODEX_WEBSOCKETS_TIMEOUT_SECONDS")
                 or env.get("YOKE_CODEX_TIMEOUT_SECONDS")
-                or "600"
+                or str(DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS)
             ),
             max_retries=int(
                 env.get("YOKE_CODEX_WEBSOCKETS_MAX_RETRIES")

@@ -75,8 +75,9 @@ which avoids background ping timeouts while yoke is waiting for your next prompt
 Set `YOKE_CODEX_WEBSOCKETS_PING_INTERVAL_SECONDS` and optionally
 `YOKE_CODEX_WEBSOCKETS_PING_TIMEOUT_SECONDS` to enable explicit keepalive pings.
 `YOKE_CODEX_WEBSOCKETS_TIMEOUT_SECONDS` limits how long a response may produce no
-events; active response streams reset this inactivity timeout. A timed-out socket
-is closed and retried according to `YOKE_CODEX_WEBSOCKETS_MAX_RETRIES`.
+events; active response streams reset this inactivity timeout. The default is
+300 seconds, matching Codex CLI's stream idle timeout. A timed-out socket is
+closed and retried according to `YOKE_CODEX_WEBSOCKETS_MAX_RETRIES`.
 
 Outside a session you can inspect and configure models directly:
 
