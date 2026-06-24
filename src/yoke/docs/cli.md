@@ -293,7 +293,9 @@ yoke continue --global
 ```
 
 Sessions are stored under `~/.yoke/sessions/` as append-oriented `.jsonl` event
-streams and auto-expire after 30 days. The CLI owns session files, indexes,
+streams and auto-expire after 30 days. If the final event is truncated by an
+interrupted write, resume ignores that partial event and recovers the earlier
+complete events. The CLI owns session files, indexes,
 ids, and resume selection; the stored agent state uses structured conversation
 entries so memory snapshots, typed compaction handoffs, and branched session
 trees can be restored without flattening to transcript text. Older `.json`

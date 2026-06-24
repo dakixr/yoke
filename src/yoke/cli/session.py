@@ -486,11 +486,14 @@ class SessionStore:
     def _decode_session_event_stream(self, raw_text: str) -> SessionRecord:
         metadata: dict[str, object] = {}
         entries: list[ConversationEntry] = []
-        for line in raw_text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            payload = json.loads(stripped)
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        for index, stripped in enumerate(lines):
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError:
+                if index == len(lines) - 1:
+                    break
+                raise
             if not isinstance(payload, dict):
                 continue
             line_type = payload.get("type")

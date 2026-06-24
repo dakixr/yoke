@@ -203,6 +203,20 @@ def test_session_store_appends_new_entries_to_jsonl_stream(tmp_path: Path) -> No
     assert loaded.title == "Append demo updated"
 
 
+def test_session_store_ignores_truncated_final_jsonl_event(tmp_path: Path) -> None:
+    store = SessionStore(directory=tmp_path)
+    store.save("truncated-demo", [Message.user("hello")], title="Truncated demo")
+    path = tmp_path / "truncated-demo.jsonl"
+    with path.open("a", encoding="utf-8") as file:
+        file.write('{"type":"conversation_entry","entry":{"message":"unterminated')
+
+    loaded = store.load("truncated-demo")
+
+    assert loaded.id == "truncated-demo"
+    assert loaded.title == "Truncated demo"
+    assert [message.text_content() for message in loaded.messages] == ["hello"]
+
+
 def test_session_store_loads_legacy_append_only_entry_stream(tmp_path: Path) -> None:
     entry = SessionRecord(
         id="legacy-stream",
