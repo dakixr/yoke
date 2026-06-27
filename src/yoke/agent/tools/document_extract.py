@@ -122,7 +122,7 @@ def _extract_xlsx(path: Path) -> str:
 
 def _extract_pdf(path: Path) -> str:
     try:
-        import pdfplumber  # ty: ignore[unresolved-import]
+        import pdfplumber
     except ImportError:
         return (
             "[Missing dependency: pdfplumber. Install with `pip install pdfplumber`.]"

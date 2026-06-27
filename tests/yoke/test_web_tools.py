@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: ANN401, D100, D101, D102, D103, S101
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -24,12 +25,13 @@ class FakeResponse:
         self,
         text: str,
         *,
+        content: bytes | None = None,
         url: str = "https://example.test/page",
         content_type: str = "text/html; charset=utf-8",
         status_code: int = 200,
     ) -> None:
         self.text = text
-        self.content = text.encode("utf-8")
+        self.content = content if content is not None else text.encode("utf-8")
         self.headers = {"content-type": content_type}
         self.status_code = status_code
         self.url = url
@@ -302,6 +304,138 @@ def test_web_fetch_returns_agent_metadata(monkeypatch: Any) -> None:
     assert details["title"] == "Example Docs"
 
 
+def test_web_fetch_schema_hides_internal_markitdown_flag() -> None:
+    definition = WebFetchTool.bind().to_definition()
+
+    function = cast(dict[str, object], definition["function"])
+    parameters = cast(dict[str, object], function["parameters"])
+    properties = cast(dict[str, object], parameters["properties"])
+
+    assert "use_markitdown" not in properties
+
+
+def test_web_fetch_extracts_pdf_with_markitdown(monkeypatch: Any) -> None:
+    class FakeMarkItDown:
+        def convert_stream(self, *args: object, **kwargs: object) -> object:
+            del args
+            assert kwargs["file_extension"] == ".pdf"
+            return SimpleNamespace(text_content="PDF extracted text.")
+
+    def fake_get(*args: object, **kwargs: object) -> FakeResponse:
+        del args, kwargs
+        return FakeResponse(
+            "%PDF-1.7 fake",
+            content=b"%PDF-1.7 fake binary",
+            content_type="application/pdf",
+            url="https://example.test/file.pdf",
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "markitdown",
+        SimpleNamespace(MarkItDown=FakeMarkItDown),
+    )
+    monkeypatch.setattr("httpx.get", fake_get)
+
+    result = WebFetchTool(
+        url="https://example.test/file.pdf",
+        max_chars=2000,
+    ).execute()
+
+    assert result["ok"] is True
+    assert result["content"] == "PDF extracted text."
+    details = cast(dict[str, object], result["details"])
+    assert details["extractor"] == "markitdown"
+    assert details["fileExtension"] == ".pdf"
+    assert details["markitdownUsed"] is True
+
+
+def test_web_fetch_follows_html_meta_redirect_to_pdf(monkeypatch: Any) -> None:
+    calls: list[str] = []
+
+    class FakeMarkItDown:
+        def convert_stream(self, *args: object, **kwargs: object) -> object:
+            del args
+            assert kwargs["url"] == "https://files.example.test/report.pdf"
+            return SimpleNamespace(text_content="Redirected PDF text.")
+
+    def fake_get(url: str, *args: object, **kwargs: object) -> FakeResponse:
+        del args, kwargs
+        calls.append(url)
+        if url == "https://short.example.test/link":
+            return FakeResponse(
+                '<head><noscript><META http-equiv="refresh" '
+                'content="0;URL=https://files.example.test/report.pdf">'
+                "</noscript></head>",
+                content_type="text/html; charset=utf-8",
+                url=url,
+            )
+        return FakeResponse(
+            "%PDF-1.7 fake",
+            content=b"%PDF-1.7 fake binary",
+            content_type="application/pdf",
+            url=url,
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "markitdown",
+        SimpleNamespace(MarkItDown=FakeMarkItDown),
+    )
+    monkeypatch.setattr("httpx.get", fake_get)
+
+    result = WebFetchTool(
+        url="https://short.example.test/link",
+        max_chars=2000,
+    ).execute()
+
+    assert result["ok"] is True
+    assert result["content"] == "Redirected PDF text."
+    assert calls == [
+        "https://short.example.test/link",
+        "https://files.example.test/report.pdf",
+    ]
+    details = cast(dict[str, object], result["details"])
+    assert details["finalUrl"] == "https://files.example.test/report.pdf"
+    assert details["htmlRedirectUrl"] == "https://files.example.test/report.pdf"
+
+
+def test_web_fetch_binary_conversion_failure_returns_best_effort(
+    monkeypatch: Any,
+) -> None:
+    class FailingMarkItDown:
+        def convert_stream(self, *args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("cannot parse pdf")
+
+    def fake_get(*args: object, **kwargs: object) -> FakeResponse:
+        del args, kwargs
+        return FakeResponse(
+            "%PDF-1.7 fake",
+            content=b"%PDF-1.7\x00fake binary",
+            content_type="application/pdf",
+            url="https://example.test/file.pdf",
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "markitdown",
+        SimpleNamespace(MarkItDown=FailingMarkItDown),
+    )
+    monkeypatch.setattr("httpx.get", fake_get)
+
+    result = WebFetchTool(
+        url="https://example.test/file.pdf",
+        max_chars=2000,
+    ).execute()
+
+    assert result["ok"] is True
+    assert "No readable text extracted" in str(result["content"])
+    details = cast(dict[str, object], result["details"])
+    assert details["extractor"] == "binary"
+    assert details["conversionError"] == "cannot parse pdf"
+
+
 def test_web_fetch_find_filters_content(monkeypatch: Any) -> None:
     def fake_get(*args: object, **kwargs: object) -> FakeResponse:
         return FakeResponse(
@@ -522,7 +656,7 @@ def test_web_research_uses_fast_fetch_without_markitdown(
     seen_use_markitdown: list[bool] = []
 
     def fake_fetch(self: WebFetchTool) -> dict[str, object]:
-        seen_use_markitdown.append(self.use_markitdown)
+        seen_use_markitdown.append(self._use_markitdown())
         return {
             "ok": True,
             "content": "Example docs fetched content.",

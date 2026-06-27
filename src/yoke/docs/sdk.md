@@ -165,7 +165,9 @@ pages; the local synthesis agent can call both `web_fetch` and `web_search`.
 Use `web_search` when you only need result URLs/snippets, `web_fetch` when you
 already know the URL to inspect, and `web_research` when the task is an
 open-ended question, needs current facts, or benefits from multiple sources and
-source-grounded synthesis.
+source-grounded synthesis. `web_fetch` uses best-effort document conversion for
+HTML, PDFs, Office files, and other known document responses, and falls back to
+readable text or binary metadata when extraction fails.
 
 `ImageGenerationTool` is registered only for Codex-backed providers. It sends
 the `prompt` to Codex's subscription image endpoint, writes the PNG

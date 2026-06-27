@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import io
+import html
 import json
+import re
+from pathlib import PurePosixPath
+from typing import Any
+from typing import BinaryIO
+from typing import Protocol
 import warnings
 from urllib.parse import parse_qs
 from urllib.parse import unquote
@@ -26,6 +32,54 @@ from yoke.agent.tools.web.common import select_fetch_content
 from yoke.agent.tools.web.common import source_type_for
 from yoke.agent.tools.web.common import summarize_text
 from yoke.agent.truncate import truncate_head
+
+DOCUMENT_EXTENSIONS = {
+    ".csv",
+    ".doc",
+    ".docx",
+    ".htm",
+    ".html",
+    ".json",
+    ".md",
+    ".pdf",
+    ".ppt",
+    ".pptx",
+    ".rst",
+    ".txt",
+    ".xls",
+    ".xlsx",
+    ".xml",
+}
+
+TEXT_CONTENT_TYPES = (
+    "application/javascript",
+    "application/json",
+    "application/rss+xml",
+    "application/xml",
+    "text/",
+)
+
+CONTENT_TYPE_EXTENSIONS = {
+    "application/pdf": ".pdf",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.ms-word": ".doc",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/xhtml+xml": ".html",
+    "application/xml": ".xml",
+    "text/html": ".html",
+    "text/markdown": ".md",
+    "text/plain": ".txt",
+}
+
+
+class MarkItDownConverter(Protocol):
+    """Minimal converter interface used by web_fetch."""
+
+    def convert_stream(self, stream: BinaryIO, **kwargs: Any) -> object:
+        """Convert a binary stream to readable document content."""
 
 
 def web_search(
@@ -139,7 +193,6 @@ class WebFetchTool(LocalTool):
     find: str | None = Field(default=None, min_length=1)
     timeout_s: int = Field(default=30, ge=1, le=180)
     max_chars: int = Field(default=20_000, ge=500, le=200_000)
-    use_markitdown: bool = True
 
     def execute(self) -> dict[str, object]:
         """Fetch the URL and return its content as text or markdown."""
@@ -150,6 +203,7 @@ class WebFetchTool(LocalTool):
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise ValueError("url must use http/https and include a host")
 
+            request_url = self.url.strip()
             response = httpx.get(
                 self.url.strip(),
                 follow_redirects=True,
@@ -160,58 +214,96 @@ class WebFetchTool(LocalTool):
             response.raise_for_status()
 
             content_type = response.headers.get("content-type", "").lower()
-            text: str
-            converter = None
-            if self.use_markitdown:
+            raw_text = _response_text(response)
+            html_redirect_url = _html_redirect_url(
+                raw_text,
+                base_url=str(response.url),
+                content_type=content_type,
+            )
+            html_redirect_error = ""
+            if html_redirect_url and html_redirect_url != str(response.url):
                 try:
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings(
-                            "ignore",
-                            message=r".*Couldn't find ffmpeg or avconv.*",
-                            category=RuntimeWarning,
-                        )
-                        from markitdown import MarkItDown
+                    response = httpx.get(
+                        html_redirect_url,
+                        follow_redirects=True,
+                        timeout=self.timeout_s,
+                        headers={"User-Agent": http_user_agent()},
+                        verify=False,  # noqa: S501
+                    )
+                    response.raise_for_status()
+                    request_url = html_redirect_url
+                    content_type = response.headers.get("content-type", "").lower()
+                    raw_text = _response_text(response)
+                except Exception as exc:
+                    html_redirect_error = str(exc)
+            file_extension = _response_file_extension(
+                str(response.url),
+                content_type=content_type,
+            )
+            converter = _markitdown_converter() if self._use_markitdown() else None
 
-                    converter = MarkItDown()
-                except ImportError:
-                    converter = None
-
-            looks_like_markup = response.text.lstrip().startswith("<")
+            looks_like_markup = raw_text.lstrip().startswith("<")
             is_markup = (
                 "html" in content_type or "xml" in content_type or looks_like_markup
             )
+            is_json = "json" in content_type or file_extension == ".json"
+            is_binary = _is_probably_binary(response.content, content_type)
 
-            if converter is not None and is_markup:
+            text: str | None = None
+            extractor = "text"
+            conversion_error = ""
+            if (
+                converter is not None
+                and not is_json
+                and _should_use_markitdown(
+                    content_type=content_type,
+                    file_extension=file_extension,
+                    is_markup=is_markup,
+                    is_binary=is_binary,
+                )
+            ):
                 with warnings.catch_warnings():
                     warnings.filterwarnings(
                         "ignore",
                         message=r".*Couldn't find ffmpeg or avconv.*",
                         category=RuntimeWarning,
                     )
-                    converted = converter.convert_stream(
-                        io.BytesIO(response.content),
-                        file_extension=".html",
-                        url=self.url.strip(),
+                    try:
+                        converted = converter.convert_stream(
+                            io.BytesIO(response.content),
+                            file_extension=file_extension or None,
+                            url=request_url,
+                        )
+                        text = _converted_text(converted)
+                        extractor = "markitdown"
+                    except Exception as exc:
+                        conversion_error = str(exc)
+
+            if text is None or not text.strip():
+                if is_json:
+                    text = _json_text(response, raw_text)
+                    extractor = "json"
+                elif is_markup:
+                    text = html_to_text_blocks(raw_text)
+                    extractor = "html"
+                elif is_binary:
+                    text = _binary_fallback_text(
+                        content_type=content_type,
+                        size_bytes=len(response.content),
+                        conversion_error=conversion_error,
                     )
-                text = (
-                    getattr(converted, "text_content", None)
-                    or getattr(converted, "markdown", None)
-                    or str(converted)
-                )
-            elif "json" in content_type:
-                text = json.dumps(response.json(), indent=2, ensure_ascii=False)
-            elif is_markup:
-                text = html_to_text_blocks(response.text)
-            else:
-                text = response.text
+                    extractor = "binary"
+                else:
+                    text = raw_text
+                    extractor = "text"
 
             html_info = ReadableHTMLParser(str(response.url))
             if is_markup:
-                html_info.feed(response.text)
+                html_info.feed(raw_text)
 
             filtered_text = filter_text_blocks(text, self.find)
             find_terms = search_terms(self.find or "")
-            raw_windows = extract_raw_term_windows(response.text, self.find)
+            raw_windows = extract_raw_term_windows(raw_text, self.find)
             if self.find and len(find_terms) > 1 and raw_windows:
                 if not filtered_text:
                     text = raw_windows
@@ -233,7 +325,7 @@ class WebFetchTool(LocalTool):
             selected = select_fetch_content(
                 mode=self.mode,
                 text=text,
-                raw_text=response.text,
+                raw_text=raw_text,
                 summary=summary,
                 chunks=chunks,
                 links=links,
@@ -267,11 +359,22 @@ class WebFetchTool(LocalTool):
                     "finalUrl": str(response.url),
                     "mode": self.mode,
                     "statusCode": response.status_code,
-                    "markitdownUsed": converter is not None,
+                    "extractor": extractor,
+                    "fileExtension": file_extension,
+                    "htmlRedirectUrl": html_redirect_url,
+                    "markitdownUsed": extractor == "markitdown",
                     "title": html_info.title,
                     "sourceType": source_type_for(str(response.url)),
                 },
             }
+            if conversion_error:
+                cast_details = result["details"]
+                if isinstance(cast_details, dict):
+                    cast_details["conversionError"] = conversion_error
+            if html_redirect_error:
+                cast_details = result["details"]
+                if isinstance(cast_details, dict):
+                    cast_details["htmlRedirectError"] = html_redirect_error
             if truncated:
                 result["truncated"] = True
             if find_miss:
@@ -282,3 +385,137 @@ class WebFetchTool(LocalTool):
             return result
         except Exception as exc:
             return {"ok": False, "error": str(exc), "url": self.url}
+
+    def _use_markitdown(self) -> bool:
+        configured = self._context.get("use_markitdown")
+        return configured if isinstance(configured, bool) else True
+
+
+def _markitdown_converter() -> MarkItDownConverter | None:
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*Couldn't find ffmpeg or avconv.*",
+                category=RuntimeWarning,
+            )
+            from markitdown import MarkItDown
+
+        return MarkItDown()
+    except ImportError:
+        return None
+
+
+def _response_text(response: object) -> str:
+    text = getattr(response, "text", "")
+    if isinstance(text, str):
+        return text
+    content = getattr(response, "content", b"")
+    if isinstance(content, bytes):
+        return content.decode("utf-8", errors="replace")
+    return str(text)
+
+
+def _json_text(response: Any, fallback: str) -> str:
+    try:
+        json_value = response.json()
+    except Exception:
+        return fallback
+    return json.dumps(json_value, indent=2, ensure_ascii=False)
+
+
+def _html_redirect_url(
+    raw_html: str,
+    *,
+    base_url: str,
+    content_type: str,
+) -> str:
+    if "html" not in content_type and not raw_html.lstrip().startswith("<"):
+        return ""
+    patterns = (
+        r"""(?is)<meta\b[^>]*http-equiv=["']?refresh["']?[^>]*content=["'][^"']*?\burl=([^"'>\s]+)""",
+        r"""(?is)<script\b[^>]*>.*?\blocation\.replace\((["'])(.*?)\1\)""",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw_html)
+        if match is None:
+            continue
+        raw_url = match.group(2) if len(match.groups()) > 1 else match.group(1)
+        candidate = html.unescape(raw_url).replace("\\/", "/").strip()
+        redirected = urljoin(base_url, candidate)
+        parsed = urlparse(redirected)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return redirected
+    return ""
+
+
+def _response_file_extension(url: str, *, content_type: str) -> str:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type in CONTENT_TYPE_EXTENSIONS:
+        return CONTENT_TYPE_EXTENSIONS[media_type]
+    suffix = PurePosixPath(urlparse(url).path).suffix.lower()
+    return suffix if suffix in DOCUMENT_EXTENSIONS else ""
+
+
+def _should_use_markitdown(
+    *,
+    content_type: str,
+    file_extension: str,
+    is_markup: bool,
+    is_binary: bool,
+) -> bool:
+    if is_markup:
+        return True
+    if file_extension in DOCUMENT_EXTENSIONS:
+        return True
+    if is_binary and bool(content_type):
+        return True
+    return False
+
+
+def _converted_text(converted: object) -> str:
+    for attr in ("text_content", "markdown"):
+        value = getattr(converted, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    text = str(converted)
+    return text if text.strip() else ""
+
+
+def _is_probably_binary(content: bytes, content_type: str) -> bool:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type.startswith(TEXT_CONTENT_TYPES):
+        return False
+    if media_type in CONTENT_TYPE_EXTENSIONS and media_type not in {
+        "application/pdf",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.ms-word",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }:
+        return False
+    sample = content[:4096]
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return True
+    textish = sum(byte in b"\t\n\r\f\b" or 32 <= byte <= 126 for byte in sample)
+    return (textish / len(sample)) < 0.75
+
+
+def _binary_fallback_text(
+    *,
+    content_type: str,
+    size_bytes: int,
+    conversion_error: str,
+) -> str:
+    parts = [
+        "[No readable text extracted from binary response.]",
+        f"Content-Type: {content_type or 'unknown'}",
+        f"Size: {size_bytes} bytes",
+    ]
+    if conversion_error:
+        parts.append(f"Conversion error: {conversion_error}")
+    return "\n".join(parts)

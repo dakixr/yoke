@@ -144,13 +144,14 @@ class WebResearchTool(LocalTool):
                 and len(sources) >= self.fetched_source_target // 2
             ):
                 continue
-            fetched = WebFetchTool(
+            fetch_tool = WebFetchTool(
                 url=url,
                 mode="chunks",
                 timeout_s=30,
                 max_chars=5000,
-                use_markitdown=False,
-            ).execute()
+            )
+            fetch_tool._bind_context(use_markitdown=False)
+            fetched = fetch_tool.execute()
             source: dict[str, object] = {
                 "title": search_result.get("title", ""),
                 "url": url,
