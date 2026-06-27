@@ -26,6 +26,17 @@ def test_overflow_retry_classifier_retries_overflow_400() -> None:
     )
 
 
+def test_overflow_retry_classifier_retries_codex_context_length_error() -> None:
+    assert should_retry_after_overflow(
+        ProviderError(
+            "Codex stream failed: {'type': 'error', 'error': "
+            "{'code': 'context_length_exceeded', 'message': "
+            "'Your input exceeds the context window of this model.'}}",
+            status_code=400,
+        )
+    )
+
+
 def test_overflow_retry_classifier_retries_413() -> None:
     assert should_retry_after_overflow(
         ProviderError("payload too large", status_code=413)

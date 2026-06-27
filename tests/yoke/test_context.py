@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 
 from PIL import Image
 
@@ -60,6 +61,73 @@ def test_context_manager_prepare_compaction_rebuilds_checkpoint() -> None:
         "user",
     ]
     assert preparation.kept_messages[-1].content == "follow-up"
+
+
+def test_tool_result_internal_context_messages_are_not_model_visible() -> None:
+    manager = ContextManager()
+    context = manager.initialize("")
+    result: dict[str, object] = {
+        "ok": True,
+        "path": "/tmp/screenshot.png",
+        "context_messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Attached [Image #1]."},
+                    {
+                        "type": "local_image",
+                        "path": "/tmp/screenshot.png",
+                        "label": "[Image #1]",
+                        "data_url": "data:image/png;base64," + ("A" * 100_000),
+                    },
+                ],
+            }
+        ],
+    }
+
+    tool_message = manager.append_tool_result(
+        context,
+        tool_call_id="call-image",
+        result=result,
+    )
+
+    assert isinstance(tool_message.content, str)
+    stored_payload = json.loads(tool_message.content)
+    assert stored_payload == {"ok": True, "path": "/tmp/screenshot.png"}
+    provider_messages = manager.messages_for_provider(context)
+    assert isinstance(provider_messages[-1].content, str)
+    assert "context_messages" not in provider_messages[-1].content
+    assert "data:image" not in provider_messages[-1].content
+
+
+def test_legacy_tool_result_context_messages_are_sanitized_for_provider() -> None:
+    manager = ContextManager()
+    legacy_tool_message = Message.tool(
+        "call-image",
+        json.dumps(
+            {
+                "ok": True,
+                "context_messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "local_image",
+                                "path": "/tmp/screenshot.png",
+                                "data_url": "data:image/png;base64," + ("A" * 100_000),
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+    )
+    context = manager.initialize("", [legacy_tool_message])
+
+    provider_messages = manager.messages_for_provider(context)
+
+    assert isinstance(provider_messages[0].content, str)
+    assert provider_messages[0].content == '{"ok": true}'
 
 
 def test_image_only_message_counts_more_than_filename_text(tmp_path) -> None:

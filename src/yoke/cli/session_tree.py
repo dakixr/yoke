@@ -7,6 +7,7 @@ import json
 from typing import TYPE_CHECKING
 
 from yoke.agent.message_sanitizer import normalize_tool_call_sequence
+from yoke.agent.message_sanitizer import sanitize_tool_result_message
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
@@ -167,6 +168,7 @@ def _normalize_conversation_entry(
     normalized_message = message.model_copy(deep=True)
     if normalized_message.role == "assistant" and normalized_message.content is None:
         normalized_message.content = ""
+    normalized_message = sanitize_tool_result_message(normalized_message)
     return entry.model_copy(update={"message": normalized_message}, deep=True)
 
 

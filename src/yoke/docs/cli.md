@@ -149,7 +149,11 @@ will stop the turn with an error instead of sending an invalid request.
 
 Attached images are encoded as base64 data URLs and embedded directly in the
 session data at attachment time. This means conversations stay intact even if
-the original file on disk is later renamed, moved, or deleted.
+the original file on disk is later renamed, moved, or deleted. When an image is
+attached through the `attach_image` or `image_generation` tools, yoke keeps the
+embedded image in the appended multimodal message but strips the internal
+handoff payload from the model-visible tool-result JSON so follow-up turns do
+not also replay the same image as raw base64 text.
 
 ---
 

@@ -19,6 +19,8 @@ from yoke.agent.context.helpers import next_compaction_generation
 from yoke.agent.context.helpers import normalize_instructions
 from yoke.agent.context.helpers import recent_log_messages
 from yoke.agent.message_sanitizer import normalize_tool_call_sequence
+from yoke.agent.message_sanitizer import sanitize_tool_result_message
+from yoke.agent.message_sanitizer import sanitize_tool_result_payload
 from yoke.agent.models import AgentContext
 from yoke.agent.models import CompactionHandoff
 from yoke.agent.models import ConversationEntry
@@ -164,7 +166,10 @@ class ContextManager:
         """Append a tool result message to the context and return it."""
         message = Message.tool(
             tool_call_id=tool_call_id,
-            content=json.dumps(result, ensure_ascii=False),
+            content=json.dumps(
+                sanitize_tool_result_payload(result),
+                ensure_ascii=False,
+            ),
         )
         self.append_message(context, message)
         return message
@@ -314,6 +319,7 @@ class ContextManager:
             messages = self.transform_messages(messages)
         if self.convert_messages is not None:
             messages = self.convert_messages(messages)
+        messages = [sanitize_tool_result_message(message) for message in messages]
         normalized = normalize_tool_call_sequence(
             messages,
             drop_incomplete_assistant=True,

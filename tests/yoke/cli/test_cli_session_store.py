@@ -79,6 +79,62 @@ def test_session_store_load_normalizes_legacy_assistant_null_content(
     assert reloaded.conversation_entries[1].message.content == ""
 
 
+def test_session_store_load_strips_internal_context_messages_from_tool_results(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(directory=tmp_path)
+    tool_content = json.dumps(
+        {
+            "ok": True,
+            "path": "/tmp/screenshot.png",
+            "context_messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "local_image",
+                            "path": "/tmp/screenshot.png",
+                            "data_url": "data:image/png;base64," + ("A" * 100_000),
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    payload = {
+        "version": 4,
+        "id": "legacy-image-tool-result",
+        "conversation_entries": [
+            {
+                "kind": "tool_result",
+                "message": {
+                    "role": "tool",
+                    "tool_call_id": "call-image",
+                    "content": tool_content,
+                },
+                "metadata": {},
+            }
+        ],
+        "root": str(tmp_path.resolve()),
+        "title": "Legacy image tool result",
+    }
+    (tmp_path / "legacy-image-tool-result.json").write_text(
+        json.dumps(payload, indent=2),
+        encoding="utf-8",
+    )
+
+    record = store.load("legacy-image-tool-result")
+
+    loaded_message = record.conversation_entries[0].message
+    assert loaded_message is not None
+    assert loaded_message.content == '{"ok": true, "path": "/tmp/screenshot.png"}'
+    saved_text = (tmp_path / "legacy-image-tool-result.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert "context_messages" not in saved_text
+    assert "data:image" not in saved_text
+
+
 def test_session_store_round_trips_message_usage(tmp_path: Path) -> None:
     store = SessionStore(directory=tmp_path)
     message = Message.assistant("done")
