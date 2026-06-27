@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from pathlib import PureWindowsPath
 import re
 import shutil
+from pathlib import Path
+from pathlib import PureWindowsPath
 
-COMMAND_TOOL_NAME = "powershell" if os.name == "nt" else "bash"
+COMMAND_TOOL_NAME = "exec_command"
 
 
 def default_shell_executable(env: dict[str, str]) -> str:
@@ -30,18 +30,26 @@ def default_shell_executable(env: dict[str, str]) -> str:
     return "/bin/zsh"
 
 
-def build_shell_command(command: str, env: dict[str, str]) -> list[str]:
+def build_shell_command(
+    command: str,
+    env: dict[str, str],
+    *,
+    shell: str | None = None,
+    login: bool = True,
+) -> list[str]:
     """Build a platform-appropriate shell command list for subprocess."""
-    shell_exe = default_shell_executable(env)
+    shell_exe = shell or default_shell_executable(env)
     if os.name == "nt":
         shell_name = _shell_name(shell_exe)
         if shell_name in {"powershell.exe", "powershell", "pwsh.exe", "pwsh"}:
             return build_powershell_command(command, env, shell_exe, shell_name)
         if shell_name in {"cmd.exe", "cmd"}:
             return [shell_exe, "/d", "/s", "/c", command]
-        return [shell_exe, "-lc", command]
+        return [shell_exe, "-lc" if login else "-c", command]
 
-    return [shell_exe, "-l", "-c", _zsh_login_command(command)]
+    env["YOKE_COMMAND_TOOL_COMMAND"] = command
+    flags = ["-l", "-c"] if login else ["-c"]
+    return [shell_exe, *flags, _zsh_command(load_profile=login)]
 
 
 def build_powershell_command(
@@ -110,11 +118,19 @@ def _shell_name(shell_exe: str) -> str:
     return Path(shell_exe).name.lower()
 
 
-def _zsh_login_command(command: str, env_var: str = "YOKE_PYTHON_BIN_DIR") -> str:
-    return (
+def _zsh_command(
+    env_var: str = "YOKE_PYTHON_BIN_DIR",
+    *,
+    load_profile: bool,
+) -> str:
+    profile = (
         "[[ -f ~/.zshenv ]] && source ~/.zshenv >/dev/null 2>&1 || true; "
         '[[ -f "${ZDOTDIR:-$HOME}/.zshrc" ]] '
         '&& source "${ZDOTDIR:-$HOME}/.zshrc" >/dev/null 2>&1 || true; '
+        if load_profile
+        else ""
+    )
+    return profile + (
         f'[[ -n "${{{env_var}:-}}" ]] && export PATH="${{{env_var}}}:$PATH"; '
-        "source /dev/stdin"
+        'eval "$YOKE_COMMAND_TOOL_COMMAND"'
     )

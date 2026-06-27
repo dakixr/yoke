@@ -27,8 +27,8 @@ def test_default_builtin_policy_allows_all_builtin_tools(
 
     assert active_names == {
         "attach_image",
-        "bash",
         "edit",
+        "exec_command",
         "extract_file_context",
         "python_exec",
         "read",
@@ -37,6 +37,7 @@ def test_default_builtin_policy_allows_all_builtin_tools(
         "web_research",
         "web_search",
         "write",
+        "write_stdin",
     }
     assert not denied_names
     assert resolved.tool_report.unmatched_config_patterns == []

@@ -144,7 +144,7 @@ def run_cli(
     session_messages = active_session.record.messages
     if mode.kind == "headless":
         try:
-            return _run_headless_mode(
+            result = _run_headless_mode(
                 args=args,
                 active_agent=active_agent,
                 active_session=active_session,
@@ -158,6 +158,11 @@ def run_cli(
         except ValueError as exc:
             print_error(error_console, str(exc))
             return 1
+        finally:
+            close_agent = getattr(active_agent, "close", None)
+            if callable(close_agent):
+                close_agent()
+        return result
     if mode.prompt is not None:
         try:
             resolved_images = _resolve_image_paths(

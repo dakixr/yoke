@@ -4,6 +4,10 @@ from yoke.agent.tools.base import DEFAULT_GLOB
 from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.command import CommandTool
+from yoke.agent.tools.command import ExecCommandTool
+from yoke.agent.tools.command import WriteStdinTool
+from yoke.agent.tools.command_process import BackgroundProcessInfo
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent.tools.context import ModelIdentity
 from yoke.agent.tools.context import never_cancel
 from yoke.agent.tools.context import RegisterTools
@@ -39,8 +43,10 @@ __all__ = [
     "AttachImageTool",
     "COMMAND_TOOL_NAME",
     "CommandTool",
+    "CommandProcessManager",
     "DEFAULT_GLOB",
     "EditTool",
+    "ExecCommandTool",
     "ExtractFileContextTool",
     "FindTool",
     "GrepTool",
@@ -58,6 +64,8 @@ __all__ = [
     "WebFetchTool",
     "WebResearchTool",
     "WebSearchTool",
+    "WriteStdinTool",
+    "BackgroundProcessInfo",
     "WorkspaceTool",
     "WriteTool",
     "ToolRegistrationContext",

@@ -205,6 +205,15 @@ def handle_slash_command(  # noqa: C901
             _format_session_info(active_session, agent, messages),
         )
         return True, messages, active_session
+    if normalized == "/ps":
+        print_scrollback_notice(console, _format_background_processes(agent))
+        return True, messages, active_session
+    if normalized == "/stop" or normalized.startswith("/stop "):
+        print_scrollback_notice(
+            console,
+            _stop_background_processes(command, agent),
+        )
+        return True, messages, active_session
     if normalized == "/fork":
         forked_session = fork_active_session(active_session, agent, messages)
         print_scrollback_notice(
@@ -288,6 +297,45 @@ def _agent_model_id(agent: object) -> str | None:
     if isinstance(model_id, str) and model_id:
         return model_id
     return None
+
+
+def _format_background_processes(agent: object) -> str:
+    list_processes = getattr(agent, "list_background_processes", None)
+    if not callable(list_processes):
+        return "Background commands are not available for this agent."
+    processes = list_processes()
+    if not isinstance(processes, (list, tuple)):
+        return "Background command state is unavailable."
+    if not processes:
+        return "No background commands running."
+    lines = ["Background commands:"]
+    for process in processes:
+        session_id = getattr(process, "session_id", "?")
+        command = getattr(process, "command", "")
+        cwd = getattr(process, "cwd", "")
+        tty = " tty" if getattr(process, "tty", False) else ""
+        lines.append(f"{session_id}{tty}  {command}  [{cwd}]")
+    return "\n".join(lines)
+
+
+def _stop_background_processes(command: str, agent: object) -> str:
+    raw_session_id = command.strip()[len("/stop") :].strip()
+    if raw_session_id:
+        try:
+            session_id = int(raw_session_id)
+        except ValueError:
+            return "Usage: /stop [session-id]"
+        terminate = getattr(agent, "terminate_background_process", None)
+        if not callable(terminate):
+            return "Background commands are not available for this agent."
+        if terminate(session_id):
+            return f"Stopped background command {session_id}."
+        return f"No background command with session ID {session_id}."
+    terminate_all = getattr(agent, "terminate_all_background_processes", None)
+    if not callable(terminate_all):
+        return "Background commands are not available for this agent."
+    count = terminate_all()
+    return f"Stopped {count} background command{'s' if count != 1 else ''}."
 
 
 def _handle_tree_command(

@@ -14,6 +14,7 @@ from yoke.agent.tools.apply_patch import ApplyPatchTool
 from yoke.agent.tools.attach_image import AttachImageTool
 from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.command import CommandTool
+from yoke.agent.tools.command import WriteStdinTool
 from yoke.agent.tools.document_extract import ExtractFileContextTool
 from yoke.agent.tools.edit import EditTool
 from yoke.agent.tools.image_generation import ImageGenerationTool
@@ -141,6 +142,7 @@ class CommandExecutionCapability(BaseCapability):
         return CapabilityRegistration(
             tools=(
                 bind_workspace_tool(CommandTool, context),
+                bind_workspace_tool(WriteStdinTool, context),
                 bind_workspace_tool(PythonExecTool, context),
             )
         )

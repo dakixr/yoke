@@ -281,6 +281,9 @@ def run_prompt_toolkit_event_loop(
                     active_session=active_session,
                     agent=agent,
                 )
+                close_agent = getattr(agent, "close", None)
+                if callable(close_agent):
+                    close_agent()
                 return 0
         if state.shutdown_requested:
             time.sleep(0.05)
@@ -312,6 +315,8 @@ def run_prompt_toolkit_event_loop(
             "/shortcuts",
             "?",
             "/new",
+            "/ps",
+            "/stop",
             "/tree",
             "/queue",
         }:

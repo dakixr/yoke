@@ -35,6 +35,8 @@ from yoke.agent.skills.registry import SkillRegistry
 from yoke.agent.tools import LocalTool
 from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import RegisterTools
+from yoke.agent.tools import BackgroundProcessInfo
+from yoke.agent.tools import CommandProcessManager
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRuntimeContext
 from yoke.agent.tools import never_cancel
@@ -137,6 +139,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             tool_root or _bound_tool_path(tools, "root") or Path.cwd()
         ).resolve()
         self._tool_home = tool_home.resolve()
+        self.command_process_manager = CommandProcessManager()
         self._tool_provider: Provider | None = None
         self._tool_model: ModelIdentity | None = None
         self.max_iterations = max_iterations
@@ -174,7 +177,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         """Create an independent runtime copy of this agent."""
         forked = RuntimeAgent(
             provider=self.provider,
-            tools=[tool.model_copy(deep=True) for tool in self.tools.values()],
+            tools=[_copy_tool_for_fork(tool) for tool in self.tools.values()],
             tool_factory=self._tool_factory,
             capabilities=(
                 self._capability_resolver.capabilities
@@ -220,8 +223,25 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         ]
 
     def reset(self) -> None:
-        """Clear the owned conversation state and keep runtime config."""
+        """Clear conversation state and terminate its background commands."""
+        self.command_process_manager.terminate_all()
         self._context = None
+
+    def close(self) -> None:
+        """Terminate background commands owned by this runtime."""
+        self.command_process_manager.terminate_all()
+
+    def list_background_processes(self) -> list[BackgroundProcessInfo]:
+        """Return running background commands for this runtime."""
+        return self.command_process_manager.list_processes()
+
+    def terminate_background_process(self, session_id: int) -> bool:
+        """Terminate one background command by session identifier."""
+        return self.command_process_manager.terminate_process(session_id)
+
+    def terminate_all_background_processes(self) -> int:
+        """Terminate all background commands and return the count."""
+        return self.command_process_manager.terminate_all()
 
     def refresh_tools(self, *, force: bool = False) -> bool:
         """Refresh tool registration and runtime context for the active model."""
@@ -308,6 +328,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         )
         for tool in tools:
             tool.bind_runtime_context(runtime_context)
+            tool._context["command_process_manager"] = self.command_process_manager
         self.tools = index_tools(tools)
         self._tool_provider = self.provider
         self._tool_model = resolved_model
@@ -480,3 +501,13 @@ def _bound_tool_path(tools: Sequence[LocalTool], key: str) -> Path | None:
         if isinstance(value, str):
             return Path(value)
     return None
+
+
+def _copy_tool_for_fork(tool: LocalTool) -> LocalTool:
+    copied = tool.model_copy(deep=False)
+    copied._context = {
+        key: value
+        for key, value in tool._context.items()
+        if key not in {"command_process_manager", "runtime_context"}
+    }
+    return copied

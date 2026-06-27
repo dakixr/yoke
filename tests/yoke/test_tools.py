@@ -10,12 +10,15 @@ from typing import Any, cast
 
 from yoke.agent.tools import (
     CommandTool,
+    CommandProcessManager,
     EditTool,
+    ExecCommandTool,
     ExtractFileContextTool,
     GrepTool,
     LocalTool,
     PythonExecTool,
     ReadTool,
+    WriteStdinTool,
     COMMAND_TOOL_NAME,
 )
 from yoke.agent.tools.shell import build_shell_command
@@ -26,9 +29,19 @@ def as_dict(value: object) -> dict[str, Any]:
 
 
 def tool_set(tmp_path: Path, *, cancel_requested=None) -> list[LocalTool]:
+    manager = CommandProcessManager()
     return [
         ReadTool.bind(root=tmp_path, cancel_requested=cancel_requested),
-        CommandTool.bind(root=tmp_path, cancel_requested=cancel_requested),
+        CommandTool.bind(
+            root=tmp_path,
+            cancel_requested=cancel_requested,
+            command_process_manager=manager,
+        ),
+        WriteStdinTool.bind(
+            root=tmp_path,
+            cancel_requested=cancel_requested,
+            command_process_manager=manager,
+        ),
         PythonExecTool.bind(root=tmp_path, cancel_requested=cancel_requested),
         EditTool.bind(root=tmp_path, cancel_requested=cancel_requested),
     ]
@@ -87,7 +100,9 @@ def test_read_defaults_to_first_150_lines_and_reports_next_offset(
     assert "details" not in result
 
 
-def test_command_tool_can_be_cancelled(tmp_path: Path) -> None:
+def test_command_tool_turn_cancel_leaves_background_process_running(
+    tmp_path: Path,
+) -> None:
     stop_event = threading.Event()
     tools = tool_set(tmp_path, cancel_requested=stop_event.is_set)
     command = f'{shlex.quote(sys.executable)} -c "import time; time.sleep(2)"'
@@ -101,27 +116,35 @@ def test_command_tool_can_be_cancelled(tmp_path: Path) -> None:
     result = as_dict(execute_tool(tools, COMMAND_TOOL_NAME, {"command": command}))
     stopper.join(timeout=1)
 
-    assert result["ok"] is False
-    assert result["cancelled"] is True
-    assert result["error"] == "Command cancelled"
+    assert result["ok"] is True
+    assert result["running"] is True
+    assert isinstance(result["session_id"], int)
+    command_tool = next(tool for tool in tools if tool.name == COMMAND_TOOL_NAME)
+    manager = cast(
+        CommandProcessManager,
+        command_tool._context["command_process_manager"],
+    )
+    assert manager.terminate_process(cast(int, result["session_id"])) is True
 
 
-def test_command_tool_is_named_bash_and_runs_zsh() -> None:
-    assert COMMAND_TOOL_NAME == "bash"
-    command = build_shell_command("echo ok", {"YOKE_ZSH": "zsh"})
+def test_command_tool_is_universally_named_exec_command_and_runs_zsh() -> None:
+    assert COMMAND_TOOL_NAME == "exec_command"
+    env = {"YOKE_ZSH": "zsh"}
+    command = build_shell_command("echo ok", env)
 
     assert command[0] == "zsh"
     assert command[1:3] == ["-l", "-c"]
+    assert env["YOKE_COMMAND_TOOL_COMMAND"] == "echo ok"
 
 
-def test_command_tool_uses_powershell_name_on_windows(monkeypatch) -> None:
+def test_command_tool_keeps_universal_name_on_windows(monkeypatch) -> None:
     import importlib
     import yoke.agent.tools.shell as shell
 
     real_os_name = shell.os.name
     monkeypatch.setattr(shell.os, "name", "nt")
     try:
-        assert importlib.reload(shell).COMMAND_TOOL_NAME == "powershell"
+        assert importlib.reload(shell).COMMAND_TOOL_NAME == "exec_command"
     finally:
         monkeypatch.setattr(shell.os, "name", real_os_name)
         importlib.reload(shell)
@@ -177,11 +200,10 @@ def test_command_tool_exposes_current_python_as_python_commands(tmp_path: Path) 
     )
 
     assert result["ok"] is True
-    assert result["returncode"] == 0
-    assert result["timed_out"] is False
-    assert isinstance(result["elapsed_seconds"], float)
-    assert result["elapsed_seconds"] >= 0
-    assert result["timeout"] is None
+    assert result["exit_code"] == 0
+    assert result["running"] is False
+    assert isinstance(result["wall_time_seconds"], float)
+    assert result["wall_time_seconds"] >= 0
     assert "content" not in cast(dict[str, object], result["outputTruncationDetails"])
     assert "stdout" not in result
     assert "stderr" not in result
@@ -209,35 +231,99 @@ def test_command_tool_streams_output_chunks(tmp_path: Path) -> None:
     )
 
     assert result["ok"] is True
-    assert (
-        "tool_execution_output_delta",
-        {"stream": "stdout", "text": "out\n"},
-    ) in events
-    assert (
-        "tool_execution_output_delta",
-        {"stream": "stderr", "text": "err\n"},
-    ) in events
+    streamed = {
+        (cast(str, payload["stream"]), cast(str, payload["text"]))
+        for event, payload in events
+        if event == "tool_execution_output_delta"
+    }
+    assert ("stdout", "out\n") in streamed
+    assert ("stderr", "err\n") in streamed
 
 
-def test_command_tool_reports_timeout_metadata(tmp_path: Path) -> None:
+def test_command_tool_yields_and_write_stdin_polls_to_completion(
+    tmp_path: Path,
+) -> None:
     tools = tool_set(tmp_path)
-    result = as_dict(
+    started = as_dict(
         execute_tool(
             tools,
             COMMAND_TOOL_NAME,
             {
-                "command": f'{shlex.quote(sys.executable)} -c "import time; time.sleep(2)"',
-                "timeout": 1,
+                "cmd": (
+                    f"{shlex.quote(sys.executable)} -u -c "
+                    '\'import time; print("started"); time.sleep(0.6); print("done")\''
+                ),
+                "yield_time_ms": 50,
             },
         )
     )
 
-    assert result["ok"] is False
-    assert result["returncode"] == -1
-    assert result["timed_out"] is True
-    assert result["timeout"] == 1
-    assert isinstance(result["elapsed_seconds"], float)
-    assert result["error"] == "Command timed out after 1 seconds"
+    assert started["ok"] is True
+    assert started["running"] is True
+    assert isinstance(started["session_id"], int)
+
+    completed = as_dict(
+        execute_tool(
+            tools,
+            "write_stdin",
+            {
+                "session_id": started["session_id"],
+                "yield_time_ms": 5000,
+            },
+        )
+    )
+
+    assert completed["ok"] is True
+    assert completed["running"] is False
+    assert completed["session_id"] is None
+    assert completed["exit_code"] == 0
+    combined_output = (
+        cast(str, started["output"]) + "\n" + cast(str, completed["output"])
+    )
+    assert "started" in combined_output
+    assert "done" in combined_output
+
+
+def test_write_stdin_interacts_with_tty_session(tmp_path: Path) -> None:
+    tools = tool_set(tmp_path)
+    started = as_dict(
+        execute_tool(
+            tools,
+            COMMAND_TOOL_NAME,
+            {
+                "cmd": "read value; echo received:$value",
+                "tty": True,
+                "yield_time_ms": 50,
+            },
+        )
+    )
+
+    completed = as_dict(
+        execute_tool(
+            tools,
+            "write_stdin",
+            {
+                "session_id": started["session_id"],
+                "chars": "hello\n",
+                "yield_time_ms": 5000,
+            },
+        )
+    )
+
+    assert completed["exit_code"] == 0
+    assert "received:hello" in cast(str, completed["output"])
+
+
+def test_exec_command_schema_uses_new_public_api(tmp_path: Path) -> None:
+    definition = ExecCommandTool.bind(root=tmp_path).to_definition()
+    function = cast(dict[str, object], definition["function"])
+    parameters = cast(dict[str, object], function["parameters"])
+    properties = cast(dict[str, object], parameters["properties"])
+
+    assert function["name"] == "exec_command"
+    assert "cmd" in properties
+    assert "command" not in properties
+    assert "timeout" not in properties
 
 
 def test_python_exec_exposes_current_python_to_subprocesses(tmp_path: Path) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import json
+from types import SimpleNamespace
 from typing import Any
 
 from yoke import __version__
@@ -222,6 +223,66 @@ def test_info_slash_command_prints_session_details(tmp_path: Path) -> None:
     assert f"Root: {tmp_path.resolve()}" in output
     assert "Model: gpt-test" in output
     assert "Messages: 1" in output
+
+
+def test_background_process_slash_commands_list_and_stop(tmp_path: Path) -> None:
+    from yoke.cli.interactive.slash_commands import handle_slash_command
+
+    class BackgroundAgent(FakeAgent):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stopped: list[int] = []
+
+        def list_background_processes(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    session_id=1234,
+                    command="uv run server",
+                    cwd=tmp_path,
+                    tty=False,
+                )
+            ]
+
+        def terminate_background_process(self, session_id: int) -> bool:
+            self.stopped.append(session_id)
+            return session_id == 1234
+
+        def terminate_all_background_processes(self) -> int:
+            return 2
+
+    active_session = active_session_for(tmp_path)
+    agent = BackgroundAgent()
+    stdout = CaptureStream()
+    console = build_console(stdout)
+
+    handled, _, _ = handle_slash_command(
+        "/ps",
+        agent=agent,
+        active_session=active_session,
+        messages=[],
+        console=console,
+    )
+    handle_slash_command(
+        "/stop 1234",
+        agent=agent,
+        active_session=active_session,
+        messages=[],
+        console=console,
+    )
+    handle_slash_command(
+        "/stop",
+        agent=agent,
+        active_session=active_session,
+        messages=[],
+        console=console,
+    )
+
+    output = stdout.getvalue()
+    assert handled is True
+    assert "1234  uv run server" in output
+    assert "Stopped background command 1234." in output
+    assert "Stopped 2 background commands." in output
+    assert agent.stopped == [1234]
 
 
 def test_fork_slash_command_switches_to_persisted_copy(tmp_path: Path) -> None:

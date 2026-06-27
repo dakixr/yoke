@@ -144,7 +144,8 @@ from yoke.agent.tools import ReadTool, EditTool, WriteTool, GrepTool
 | `EditTool` | `edit` | Replace exact text in files, with optional replace-all behavior. |
 | `WriteTool` | `write` | Create or overwrite complete text files. |
 | `ApplyPatchTool` | `apply_patch` | Apply codex-style multi-file patches inside the workspace. |
-| `CommandTool` | `bash` on macOS/Linux, `powershell` on Windows | Run shell commands from the workspace root. |
+| `ExecCommandTool` (`CommandTool` alias) | `exec_command` | Run a shell command until it exits or yields a background session. |
+| `WriteStdinTool` | `write_stdin` | Poll a background command or send it terminal input. |
 | `LsTool` | `ls` | List files and directories under a workspace path. |
 | `FindTool` | `find` | Find files or directories by glob pattern. |
 | `GrepTool` | `grep` | Search text files with a regular expression. |
@@ -176,9 +177,15 @@ multimodal context. Optional `referenced_image_paths` and
 `num_last_images_to_include` inputs switch it to Codex's image-edit endpoint
 with up to five reference images.
 
-`CommandTool` and `PythonExecTool` put shims for `python` and `python3` at the
-front of `PATH`, so shell commands and Python subprocesses use the same
-interpreter and virtual environment as the running yoke process.
+`exec_command` and `write_stdin` are available to every model and replace the
+former platform-specific `bash`/`powershell` interface. `exec_command` waits up
+to `yield_time_ms` and returns a numeric `session_id` when the process remains
+active; pass that ID to `write_stdin` with empty `chars` to poll or non-empty
+`chars` to interact. Background commands survive turn interruption and later
+turns in the same live runtime, but they are not restored after the yoke process
+exits. `ExecCommandTool` and `PythonExecTool` put shims for `python` and
+`python3` at the front of `PATH`, so commands and Python subprocesses use the
+same interpreter and virtual environment as the running yoke process.
 
 Most workspace tools can be passed as classes and are bound to `RunConfig.root`
 automatically. Pass already-bound instances when you need custom context.

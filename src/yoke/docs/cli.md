@@ -163,7 +163,7 @@ turn.
 - Press `Ctrl+O` to open the fullscreen tool inspector. It shows complete
   tool call arguments, executed arguments, results, status, and duration.
 - The tool inspector updates while it is open, supports mouse click/scroll, and
-  shows streamed output from `bash` and `python_exec` while commands run.
+  shows streamed output from `exec_command` and `python_exec` while commands run.
 - While a fullscreen menu is open, live turn output is deferred and replayed
   after the menu closes so background tool updates do not overwrite the view.
 - Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can
@@ -214,6 +214,8 @@ turn.
 - Use `/title new-title` to rename the active session shown in resume/session
   lists and on the right side of the prompt-toolkit bottom toolbar.
 - Use `/shortcuts` or `?` to print the interactive keyboard shortcuts in scrollback.
+- Use `/ps` to list background command sessions and `/stop [session-id]` to
+  stop one session. `/stop` without an ID stops all background commands.
 
 Pending image attachments are shown in the bottom toolbar and are sent with the
 next submitted prompt.
@@ -547,7 +549,7 @@ tool-name entries to disable tools:
 ```json
 {
   "tools": {
-    "bash": "deny",
+    "command_execution": "deny",
     "web_fetch": "deny"
   }
 }
@@ -597,7 +599,12 @@ endpoints. Search is environment-aware:
 when ripgrep is installed, only `rg` is active; otherwise `grep`, `find`, and
 `ls` are active as the fallback set.
 
-The `command`/`bash` tool result mirrors `python_exec` metadata for the agent: `python_executable`, `returncode`, `timeout`, `timed_out`, `elapsed_seconds`, combined `output`, and `outputTruncationDetails`. Process-isolated tool failures report negative exit statuses as terminating signals, for example status `-11` is `SIGSEGV`.
+Every model receives `exec_command` and `write_stdin`; command registration is
+not provider-specific. Command results include `session_id`, `exit_code`,
+`chunk_id`, `wall_time_seconds`, `original_token_count`, combined `output`, and
+`outputTruncationDetails`. A non-null `session_id` means the command is still
+running. Process-isolated tool failures report negative exit statuses as
+terminating signals, for example status `-11` is `SIGSEGV`.
 
 `skill` is added when yoke discovers one or more skill directories.
 

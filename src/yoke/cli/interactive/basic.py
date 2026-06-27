@@ -110,6 +110,9 @@ def run_basic_interactive_cli(
         ):
             if state.input_closed:
                 stdout_console.print()
+            close_agent = getattr(agent, "close", None)
+            if callable(close_agent):
+                close_agent()
             return 0
         time.sleep(0.05)
 
