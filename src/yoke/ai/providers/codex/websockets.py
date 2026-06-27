@@ -187,6 +187,8 @@ class CodexWebSockets(CodexSubscriptionProvider):
         self._last_request_payload: dict[str, object] | None = None
         self._last_response_id: str | None = None
         self._last_response_items: list[dict[str, Any]] = []
+        self._last_response_account_id: str | None = None
+        self._last_response_auth_profile: str | None = None
         self._pending_response_id: str | None = None
 
     @property
@@ -445,6 +447,13 @@ class CodexWebSockets(CodexSubscriptionProvider):
         previous_response_id = self._last_response_id
         if previous_request is None or not previous_response_id:
             return websocket_payload
+        credentials = self._websocket_credentials
+        current_account_id = credentials.account_id if credentials is not None else None
+        if (
+            self._last_response_account_id != current_account_id
+            or self._last_response_auth_profile != self._websocket_auth_profile
+        ):
+            return websocket_payload
         if not response_request_properties_match(previous_request, payload):
             return websocket_payload
         previous_input = previous_request.get("input")
@@ -476,11 +485,18 @@ class CodexWebSockets(CodexSubscriptionProvider):
         _, response_items = convert_messages([message])
         self._last_response_id = response_id
         self._last_response_items = response_items
+        credentials = self._websocket_credentials
+        self._last_response_account_id = (
+            credentials.account_id if credentials is not None else None
+        )
+        self._last_response_auth_profile = self._websocket_auth_profile
 
     def _reset_response_link(self) -> None:
         self._last_request_payload = None
         self._last_response_id = None
         self._last_response_items = []
+        self._last_response_account_id = None
+        self._last_response_auth_profile = None
         self._pending_response_id = None
 
     def _request_headers(self, credentials: OAuthCredentials) -> dict[str, str]:

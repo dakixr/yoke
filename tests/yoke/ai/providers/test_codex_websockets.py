@@ -13,6 +13,7 @@ from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import OAuthCredentials
+from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.websockets import CodexWebSockets
 from yoke.ai.providers.codex.websockets import CodexWebSocketsConfig
 from yoke.ai.providers.codex.websockets import CodexWebSocketConnection
@@ -716,6 +717,53 @@ def test_codex_websockets_sends_incremental_input_with_previous_response_id(
     assert second_payload["input"] == [
         {"role": "user", "content": [{"type": "input_text", "text": "continue"}]}
     ]
+
+
+def test_codex_websockets_sends_full_input_after_account_switch(
+    tmp_path: Path,
+) -> None:
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+        ),
+    )
+    image_message = Message.user(
+        [
+            {"type": "text", "text": "inspect this image"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aaa"}},
+        ]
+    )
+    first_payload = provider._request_payload([image_message], [])
+    provider._last_request_payload = first_payload
+    provider._last_response_id = "resp-1"
+    _, provider._last_response_items = convert_messages([Message.assistant("saw it")])
+    provider._last_response_account_id = "acct_123"
+    provider._last_response_auth_profile = "account-a"
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token-2",
+        refresh="refresh-token-2",
+        expires=4_102_444_800_000,
+        account_id="acct_456",
+    )
+    provider._websocket_auth_profile = "account-b"
+
+    websocket_payload = provider._prepare_websocket_payload(
+        provider._request_payload(
+            [image_message, Message.assistant("saw it"), Message.user("continue")], []
+        )
+    )
+
+    assert websocket_payload.get("previous_response_id") is None
+    assert (
+        websocket_payload["input"]
+        == provider._request_payload(
+            [image_message, Message.assistant("saw it"), Message.user("continue")], []
+        )["input"]
+    )
 
 
 def test_codex_websockets_falls_back_to_full_input_without_prefix_match(
