@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -766,6 +767,54 @@ def test_codex_websockets_sends_full_input_after_account_switch(
     )
 
 
+def test_codex_websockets_sends_full_input_after_selection_changes(
+    tmp_path: Path,
+) -> None:
+    selection_path = tmp_path / "selection.json"
+    selection_path.write_text(
+        json.dumps({"selected_profile": "account-b", "selected_at": 4_102_444_800}),
+        encoding="utf-8",
+    )
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=selection_path,
+            base_url="ws://127.0.0.1:8765/v1",
+        ),
+    )
+    (tmp_path / "accounts").mkdir()
+    first_payload = provider._request_payload([Message.user("one")], [])
+    provider._last_request_payload = first_payload
+    provider._last_response_id = "resp-1"
+    _, provider._last_response_items = convert_messages([Message.assistant("one")])
+    provider._last_response_account_id = "acct_123"
+    provider._last_response_auth_profile = "account-a"
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+    provider._websocket_auth_profile = "account-a"
+
+    websocket_payload = provider._prepare_websocket_payload(
+        provider._request_payload(
+            [Message.user("one"), Message.assistant("one"), Message.user("two")],
+            [],
+        )
+    )
+
+    assert websocket_payload.get("previous_response_id") is None
+    assert (
+        websocket_payload["input"]
+        == provider._request_payload(
+            [Message.user("one"), Message.assistant("one"), Message.user("two")], []
+        )["input"]
+    )
+
+
 def test_codex_websockets_falls_back_to_full_input_without_prefix_match(
     tmp_path: Path,
 ) -> None:
@@ -815,6 +864,93 @@ def test_codex_websockets_falls_back_to_full_input_without_prefix_match(
     assert second_payload["input"] == [
         {"role": "user", "content": [{"type": "input_text", "text": "replacement"}]}
     ]
+
+
+def test_codex_websockets_retries_full_input_when_previous_response_missing(
+    tmp_path: Path,
+) -> None:
+    sent_payloads: list[str] = []
+    sockets: list[object] = []
+
+    class ErrorWebSocket:
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "previous_response_not_found",
+                        "message": "Previous response was not found.",
+                        "param": "previous_response_id",
+                    },
+                    "status": 400,
+                }
+            )
+
+        def close(self) -> None:
+            return None
+
+    class SuccessWebSocket:
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return '{"type":"response.completed","response":{"id":"resp-2","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{}}}'
+
+        def close(self) -> None:
+            return None
+
+    def fake_factory(url: str, **kwargs: object):
+        del url, kwargs
+        socket = ErrorWebSocket() if not sockets else SuccessWebSocket()
+        sockets.append(socket)
+        return socket
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+            max_retries=1,
+        ),
+        websocket_factory=fake_factory,
+        sleep=lambda _seconds: None,
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+    first_payload = provider._request_payload([Message.user("one")], [])
+    first_payload["type"] = "response.create"
+    provider._last_request_payload = first_payload
+    provider._last_response_id = "resp-1"
+    _, provider._last_response_items = convert_messages([Message.assistant("one")])
+    provider._last_response_account_id = "acct_123"
+
+    message = provider.complete(
+        [Message.user("one"), Message.assistant("one"), Message.user("two")], []
+    )
+
+    assert message.text_content() == "ok"
+    first_sent = json_loads(sent_payloads[0])
+    second_sent = json_loads(sent_payloads[1])
+    assert first_sent["previous_response_id"] == "resp-1"
+    assert second_sent.get("previous_response_id") is None
+    assert (
+        second_sent["input"]
+        == provider._request_payload(
+            [Message.user("one"), Message.assistant("one"), Message.user("two")], []
+        )["input"]
+    )
 
 
 def test_codex_websockets_captures_and_replays_turn_state(tmp_path: Path) -> None:

@@ -96,7 +96,11 @@ def create_prompt_toolkit_control(
             state.turn_input_tokens = None
             state.turn_output_tokens = None
             state.turn_reasoning_tokens = None
-        state.context_usage_text = estimate_toolbar_context_usage(prompt)
+            state.status_message = ""
+        context_usage_text = estimate_toolbar_context_usage(prompt)
+        with state_lock:
+            if state.active_turn_id == turn_id:
+                state.context_usage_text = context_usage_text
 
         def run_turn() -> None:
             run_prompt_turn(
@@ -143,6 +147,11 @@ def create_prompt_toolkit_control(
             estimate_toolbar_context_usage=estimate_toolbar_context_usage,
         )
         if next_prompt is not None:
+            persist_prompt_queue(
+                active_session_ref["active_session"],
+                state.pending_prompts,
+                state.pending_images,
+            )
             start_turn(next_prompt, next_user_message)
             return
         if should_finish:
@@ -165,7 +174,7 @@ def create_prompt_toolkit_control(
         with state_lock:
             stop_event = state.active_stop_request
             current_worker = state.worker
-            if current_worker is None or stop_event is None or stop_event.is_set():
+            if current_worker is None or stop_event is None:
                 return False
             _, steered_turn_ids = prompt_turn_tracking(state)
             stop_event.set()

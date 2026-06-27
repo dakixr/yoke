@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+from threading import Event
 from pathlib import Path
 from typing import cast
 
 import httpx
+import pytest
 
 from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
@@ -21,6 +23,7 @@ from yoke.ai.providers.codex.subscription import X_CODEX_TURN_STATE_HEADER
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
 from yoke.ai.providers.codex.subscription import register_provider
+from yoke.ai.providers.base import ProviderCancelledError
 
 
 def _write_fallback_auth(path: Path, credentials: OAuthCredentials) -> None:
@@ -218,6 +221,62 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
     assert login_calls == ["yoke"]
     stored = json.loads(auth_path.read_text(encoding="utf-8"))
     assert stored[OAUTH_PROVIDER_ID]["accountId"] == "acct_fresh"
+
+
+def test_codex_subscription_cancellation_closes_client_before_stream_enters(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stream_entered = Event()
+    client_closed = Event()
+    credentials = OAuthCredentials(
+        access="a.b.c",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct",
+    )
+
+    class BlockingStream:
+        def __enter__(self):
+            stream_entered.set()
+            assert client_closed.wait(timeout=2)
+            raise httpx.RequestError("client closed")
+
+        def __exit__(self, _exc_type, _exc, _tb) -> None:
+            return None
+
+    class BlockingClient:
+        def stream(self, *_args, **_kwargs) -> BlockingStream:
+            return BlockingStream()
+
+        def close(self) -> None:
+            client_closed.set()
+
+    provider = CodexSubscriptionProvider(
+        config=CodexSubscriptionConfig(
+            auth_path=tmp_path / ".codex" / "auth.json",
+            accounts_dir=tmp_path / ".codex-auth" / "accounts",
+            auths_path=tmp_path / ".yoke" / "providers" / "codex-auth" / "auths.json",
+            selection_path=tmp_path
+            / ".yoke"
+            / "providers"
+            / "codex-auth"
+            / "selection.json",
+            model="gpt-5.4",
+        )
+    )
+    monkeypatch.setattr(provider, "_client", cast(httpx.Client, BlockingClient()))
+    monkeypatch.setattr(provider, "_fresh_credentials", lambda: credentials)
+
+    with pytest.raises(ProviderCancelledError):
+        provider.complete_with_cancel(
+            [Message.user("hello")],
+            [],
+            cancel_requested=stream_entered.is_set,
+        )
+
+    assert client_closed.is_set()
+    provider.close()
 
 
 def test_codex_provider_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:

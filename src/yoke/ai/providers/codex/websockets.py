@@ -65,6 +65,10 @@ class CodexWebSocketTimeoutError(ProviderError):
     """Raised when an open WebSocket stops delivering response events."""
 
 
+class CodexPreviousResponseNotFoundError(ProviderError):
+    """Raised when the active account cannot access a prior response id."""
+
+
 def register_provider(context: Any) -> CodexWebSockets:
     env = context.env or {}
     cxauth_vault = context.home / DEFAULT_CXAUTH_VAULT_NAME
@@ -324,6 +328,21 @@ class CodexWebSockets(CodexSubscriptionProvider):
                 )
             except ProviderError as exc:
                 last_error = exc
+                if isinstance(exc, CodexPreviousResponseNotFoundError):
+                    self._close_websocket(clear_credentials=False)
+                    self._reset_response_link()
+                    if attempt >= self.config.max_retries:
+                        break
+                    self._log_event(
+                        "request_retry",
+                        request_id=request_log_id,
+                        attempt=attempt,
+                        reason="previous_response_not_found",
+                        wait_seconds=0.0,
+                        auth_profile=auth_profile,
+                        **request_metrics,
+                    )
+                    continue
                 if str(exc) == STALE_WEBSOCKET_CLOSED_MESSAGE:
                     self._close_websocket(clear_credentials=False)
                     if attempt >= self.config.max_retries:
@@ -449,9 +468,14 @@ class CodexWebSockets(CodexSubscriptionProvider):
             return websocket_payload
         credentials = self._websocket_credentials
         current_account_id = credentials.account_id if credentials is not None else None
+        selected_auth_profile = self._selected_auth_profile()
         if (
             self._last_response_account_id != current_account_id
             or self._last_response_auth_profile != self._websocket_auth_profile
+            or (
+                selected_auth_profile is not None
+                and self._last_response_auth_profile != selected_auth_profile
+            )
         ):
             return websocket_payload
         if not response_request_properties_match(previous_request, payload):
@@ -572,9 +596,34 @@ class CodexWebSockets(CodexSubscriptionProvider):
         credentials = self._websocket_credentials
         if credentials is None:
             return None
+        selected_auth_profile = self._selected_auth_profile()
+        if self.config.accounts_dir.expanduser().exists() and (
+            selected_auth_profile is None
+            or self._websocket_auth_profile != selected_auth_profile
+        ):
+            return None
         if credentials.expires - int(time.time() * 1000) <= 60_000:
             return None
         return credentials
+
+    def _selected_auth_profile(self) -> str | None:
+        if not self.config.accounts_dir.expanduser().exists():
+            return None
+        try:
+            payload = json.loads(
+                self.config.selection_path.expanduser().read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        selected = payload.get("selected_profile")
+        selected_at = payload.get("selected_at")
+        if not isinstance(selected, str) or not isinstance(selected_at, int | float):
+            return None
+        if time.time() - float(selected_at) > self.config.selection_ttl_seconds:
+            return None
+        return selected
 
     def _consume_websocket_response(
         self,
@@ -833,6 +882,11 @@ def map_websocket_error_event(event: dict[str, Any]) -> ProviderError:
         return ProviderServerError(
             f"Codex WebSocket connection limit reached: {event}",
             status_code=503,
+        )
+    if "previous_response_not_found" in haystack:
+        return CodexPreviousResponseNotFoundError(
+            f"Codex WebSocket previous response was not found: {event}",
+            status_code=status_code if isinstance(status_code, int) else None,
         )
     if "rate_limit" in haystack or status_code == 429:
         return ProviderRateLimitError(f"Codex WebSocket rate limited: {event}")

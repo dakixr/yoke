@@ -174,12 +174,19 @@ turn.
 - While a model request is in flight, steering or `Esc Esc` asks providers with
   cancellation support to abort the request immediately. Providers without the
   optional cancellation hook still stop at the next safe boundary.
+- Steering submitted while a cancellation is already pending stays marked as
+  steering and runs before normal queued prompts when the interrupted turn
+  finishes.
+- Codex WebSocket follow-up requests only reuse `previous_response_id` while the
+  same Codex account profile remains selected; if account rotation changes the
+  profile, yoke resends full context for that turn.
 - Local tool calls run in isolated child processes. When a turn is stopped,
   steered, or the CLI is interrupted or exited, yoke cancels the running tool
   process instead of waiting for cooperative tool code to return.
 - Press `Tab` to queue the prompt behind the current turn. Queued prompts and
   pending image attachments are persisted in a per-session sidecar and restored
-  on resume/restart.
+  on resume/restart. Once a queued or steering prompt starts, yoke removes it
+  from that sidecar so it does not reappear after a crash or restart.
 - While slash-command completions are open, use `Up`/`Down` to move between
   options; `Left`/`Right` keep moving the cursor in the prompt text.
 - Press `Esc Esc` to stop the current turn; yoke cancels supported in-flight

@@ -217,8 +217,11 @@ class CodexSubscriptionProvider(Provider):
         self._prompt_cache_key = self._new_prompt_cache_key()
         self._turn_state: str | None = None
         self._owns_client = http_client is None
-        self._client = http_client or httpx.Client(
-            timeout=config.timeout_seconds,
+        self._client = http_client or self._new_client()
+
+    def _new_client(self) -> httpx.Client:
+        return httpx.Client(
+            timeout=self.config.timeout_seconds,
             verify=False,  # noqa: S501
         )
 
@@ -275,6 +278,22 @@ class CodexSubscriptionProvider(Provider):
         )
 
     def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        return self._with_request_cancellation(
+            lambda: self._complete_with_cancel_impl(
+                messages,
+                tools,
+                cancel_requested=cancel_requested,
+            ),
+            cancel_requested=cancel_requested,
+        )
+
+    def _complete_with_cancel_impl(
         self,
         messages: list[Message],
         tools: list[dict[str, object]],
@@ -511,6 +530,8 @@ class CodexSubscriptionProvider(Provider):
                 )
                 raise
             except httpx.RequestError as exc:
+                if cancel_requested():
+                    raise ProviderCancelledError() from exc
                 last_error = ProviderError(f"Codex request failed: {exc}")
                 self._log_request_failure(
                     request_log_id,
@@ -532,6 +553,35 @@ class CodexSubscriptionProvider(Provider):
             )
             raise last_error
         raise ProviderError("Codex request failed unexpectedly.")
+
+    def _with_request_cancellation(
+        self,
+        action: Callable[[], Message],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        if not self._owns_client:
+            return action()
+        finished = threading.Event()
+        client_closed = threading.Event()
+
+        def close_on_cancel() -> None:
+            while not finished.wait(0.05):
+                if cancel_requested():
+                    client_closed.set()
+                    self._client.close()
+                    return
+
+        threading.Thread(target=close_on_cancel, daemon=True).start()
+        try:
+            message = action()
+            if cancel_requested():
+                raise ProviderCancelledError()
+            return message
+        finally:
+            finished.set()
+            if client_closed.is_set():
+                self._client = self._new_client()
 
     def close(self) -> None:
         if self._owns_client:

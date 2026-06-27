@@ -183,6 +183,147 @@ def test_finish_prompt_turn_prioritizes_steering_items() -> None:
     ]
 
 
+def test_steer_active_turn_accepts_prompt_while_stop_pending(tmp_path: Path) -> None:
+    from threading import Event
+    from threading import Lock
+    from threading import Thread
+
+    from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control
+    from yoke.cli.interactive.queue.persistence import load_prompt_queue
+
+    state = PromptCliState(
+        messages=[],
+        pending_prompts=[],
+        abandoned_turn_ids=set(),
+        steered_turn_ids=set(),
+    )
+    stop_event = Event()
+    stop_event.set()
+    state.worker = Thread(target=lambda: None)
+    state.active_stop_request = stop_event
+    state.active_turn_id = 7
+    state.status_message = "Cancelling model request"
+    active_session = active_session_for(tmp_path)
+    lock = Lock()
+    renderer = PromptToolkitLiveRenderer(
+        begin_tool_block=lambda: None,
+        emit_tool=lambda _text, _failed: None,
+        emit_agent=lambda _text: None,
+        emit_commentary=lambda _text: None,
+        emit_error=lambda _text: None,
+        emit_notice=lambda _text: None,
+        set_status=lambda _status: None,
+    )
+    control = create_prompt_toolkit_control(
+        state=state,
+        agent=FakeAgent(),
+        active_session_ref={"active_session": active_session},
+        renderer=renderer,
+        scrollback_console=build_console(io.StringIO()),
+        state_lock=lock,
+        estimate_toolbar_context_usage=lambda _prompt: None,
+        invalidate_prompt=lambda: None,
+        update_status=lambda _status: None,
+        run_in_scrollback=lambda callback: callback(),
+    )
+
+    assert control.steer_active_turn("use config.py instead", None) is True
+
+    assert state.status_message == "Cancelling model request for steering"
+    assert state.steered_turn_ids == {7}
+    assert [(prompt.prompt, prompt.kind) for prompt in state.pending_prompts] == [
+        ("use config.py instead", "steering")
+    ]
+    restored_prompts, _restored_images = load_prompt_queue(active_session)
+    assert [(prompt.prompt, prompt.kind) for prompt in restored_prompts] == [
+        ("use config.py instead", "steering")
+    ]
+
+
+def test_prompt_turn_persists_queue_after_dequeue(tmp_path: Path) -> None:
+    from threading import Event
+    from threading import Lock
+
+    from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control
+    from yoke.cli.interactive.queue.persistence import load_prompt_queue
+    from yoke.cli.interactive.queue.persistence import persist_prompt_queue
+
+    second_started = Event()
+    finish_second = Event()
+
+    @dataclass
+    class BlockingSecondAgent:
+        supports_message_history = True
+        supports_user_message = False
+        prompts: list[str] = field(default_factory=list)
+
+        def run(
+            self,
+            prompt: str,
+            messages: Sequence[Message] | None = None,
+            *,
+            on_event: Any = None,
+            stop_requested: Any = None,
+        ) -> AgentResult:
+            del on_event, stop_requested
+            self.prompts.append(prompt)
+            conversation = list(messages or [])
+            conversation.append(Message.user(prompt))
+            if prompt == "second":
+                second_started.set()
+                assert finish_second.wait(timeout=2)
+            conversation.append(Message.assistant(f"done {prompt}"))
+            return AgentResult(
+                output=f"done {prompt}", messages=conversation, iterations=1
+            )
+
+    active_session = active_session_for(tmp_path)
+    state = PromptCliState(
+        messages=[],
+        pending_prompts=[PendingPrompt("second")],
+        abandoned_turn_ids=set(),
+        steered_turn_ids=set(),
+    )
+    persist_prompt_queue(active_session, state.pending_prompts, state.pending_images)
+    agent = BlockingSecondAgent()
+    lock = Lock()
+    renderer = PromptToolkitLiveRenderer(
+        begin_tool_block=lambda: None,
+        emit_tool=lambda _text, _failed: None,
+        emit_agent=lambda _text: None,
+        emit_commentary=lambda _text: None,
+        emit_error=lambda _text: None,
+        emit_notice=lambda _text: None,
+        set_status=lambda _status: None,
+    )
+    control = create_prompt_toolkit_control(
+        state=state,
+        agent=agent,
+        active_session_ref={"active_session": active_session},
+        renderer=renderer,
+        scrollback_console=build_console(io.StringIO()),
+        state_lock=lock,
+        estimate_toolbar_context_usage=lambda _prompt: None,
+        invalidate_prompt=lambda: None,
+        update_status=lambda _status: None,
+        run_in_scrollback=lambda callback: callback(),
+    )
+
+    first_worker = control.start_turn("first", None)
+    assert second_started.wait(timeout=2)
+
+    restored_prompts, restored_images = load_prompt_queue(active_session)
+    assert restored_prompts == []
+    assert restored_images == []
+    finish_second.set()
+    first_worker.join(timeout=2)
+    with lock:
+        current_worker = state.worker
+    if current_worker is not None:
+        current_worker.join(timeout=2)
+    assert agent.prompts == ["first", "second"]
+
+
 def test_first_non_steering_index_places_steering_before_queued() -> None:
     from yoke.cli.interactive.common import PendingPrompt
     from yoke.cli.interactive.queue.manager import _first_non_steering_index
