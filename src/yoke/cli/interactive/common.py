@@ -31,7 +31,7 @@ SHORTCUT_LINES = (
     "Press `Esc` twice to stop the current turn.",
     "Press `Ctrl+J` or `Shift+Enter` to insert a newline.",
     "Press `Esc` then `Enter` to insert a newline.",
-    "Press `Ctrl+V` or `Shift+Insert` to paste text or attach an image.",
+    "Press `Ctrl+V` to paste text or attach an image.",
     "Press `Ctrl+U` to remove the last pending image.",
     "Press `Ctrl+O` to open the tool inspector.",
     "Press `Ctrl+Q` to open the queue manager.",

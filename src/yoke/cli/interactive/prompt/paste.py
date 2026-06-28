@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 WINDOWS_PASTE_FRAGMENT_POLL_SECONDS = 0.002
 WINDOWS_PASTE_FRAGMENT_SETTLE_SECONDS = 0.03
 WINDOWS_PASTE_CONTINUATION_SECONDS = 0.12
-WINDOWS_VIRTUAL_KEY_V = 0x56
 
 
 class PromptInputPatchable(Protocol):
@@ -215,7 +214,6 @@ def patch_prompt_toolkit_input_for_multiline_paste(
         prompt_input._yoke_multiline_paste_patch = False
     if prompt_input.console_input_reader is None:
         return
-    _patch_windows_ctrl_v_by_virtual_key(prompt_input.console_input_reader)
     if prompt_input._yoke_multiline_paste_patch:
         return
     read_keys = prompt_input.read_keys
@@ -238,44 +236,3 @@ def patch_prompt_toolkit_input_for_multiline_paste(
     cast(Any, prompt_input).read_keys = patched_read_keys
     cast(Any, prompt_input)._yoke_multiline_paste_patch = True
     session.app.input = prompt_input
-
-
-def _patch_windows_ctrl_v_by_virtual_key(console_input_reader: object) -> None:
-    """Normalize Windows Ctrl+V from the virtual key before layout translation."""
-    if getattr(console_input_reader, "_yoke_ctrl_v_key_patch", False):
-        return
-    event_to_key_presses = getattr(
-        console_input_reader,
-        "_event_to_key_presses",
-        None,
-    )
-    if event_to_key_presses is None:
-        return
-
-    def patched_event_to_key_presses(ev) -> list[KeyPress]:
-        if _windows_event_is_ctrl_v(ev, console_input_reader):
-            from prompt_toolkit.key_binding.key_processor import KeyPress
-            from prompt_toolkit.keys import Keys
-
-            return [KeyPress(Keys.ControlV, "\x16")]
-        return event_to_key_presses(ev)
-
-    cast(Any, console_input_reader)._event_to_key_presses = patched_event_to_key_presses
-    cast(Any, console_input_reader)._yoke_ctrl_v_key_patch = True
-
-
-def _windows_event_is_ctrl_v(ev: object, console_input_reader: object) -> bool:
-    """Return whether a Win32 key event is Ctrl+V by virtual key code."""
-    control_key_state = int(getattr(ev, "ControlKeyState", 0))
-    ctrl_mask = int(getattr(console_input_reader, "LEFT_CTRL_PRESSED", 0)) | int(
-        getattr(console_input_reader, "RIGHT_CTRL_PRESSED", 0)
-    )
-    alt_mask = int(getattr(console_input_reader, "LEFT_ALT_PRESSED", 0)) | int(
-        getattr(console_input_reader, "RIGHT_ALT_PRESSED", 0)
-    )
-    return (
-        bool(getattr(ev, "KeyDown", False))
-        and int(getattr(ev, "VirtualKeyCode", -1)) == WINDOWS_VIRTUAL_KEY_V
-        and bool(control_key_state & ctrl_mask)
-        and not bool(control_key_state & alt_mask)
-    )

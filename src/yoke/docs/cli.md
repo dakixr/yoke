@@ -162,8 +162,7 @@ not also replay the same image as raw base64 text.
 In prompt-toolkit mode, yoke can keep pending image attachments for the next user
 turn.
 
-- Press `Ctrl+V` to attach an image from the clipboard when one is available;
-  `Shift+Insert` is also accepted as a Windows-friendly fallback.
+- Press `Ctrl+V` to attach an image from the clipboard when one is available.
 - Press `Ctrl+U` to remove the last pending image attachment.
 - Press `Ctrl+O` to open the fullscreen tool inspector. It shows complete
   tool call arguments, executed arguments, results, status, and duration.
