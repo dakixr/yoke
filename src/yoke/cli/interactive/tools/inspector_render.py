@@ -91,8 +91,8 @@ def _render_view(
         left = list_lines[index] if index < len(list_lines) else ""
         right = detail_window[index] if index < len(detail_window) else ""
         lines.append(
-            f"{_fit_cell(left, list_width, html=html)} │ "
-            f"{_fit_cell(right, detail_width, html=html)}"
+            f"{_fit_cell(left, list_width, html=html, trusted_markup=True)} │ "
+            f"{_fit_cell(right, detail_width, html=html, trusted_markup=False)}"
         )
     lines.append("─" * columns)
     lines.append(_escape_line(fit(footer, columns), html))
@@ -384,22 +384,19 @@ def _sidebar_style(status: str, active_pane: str) -> str:
     return "ansiyellow"
 
 
-def _fit_cell(text: str, width: int, *, html: bool) -> str:
-    if html and _is_rendered_markup(text):
+def _fit_cell(
+    text: str,
+    width: int,
+    *,
+    html: bool,
+    trusted_markup: bool = False,
+) -> str:
+    if html and trusted_markup:
         return text
     fitted = fit(text, width)
     if html:
         return _style_detail_line(fitted)
     return fitted
-
-
-def _is_rendered_markup(text: str) -> bool:
-    return text.startswith(
-        (
-            "<ansi",
-            "<reverse>",
-        )
-    )
 
 
 def _style_detail_line(text: str) -> str:

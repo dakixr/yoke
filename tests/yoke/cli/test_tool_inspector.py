@@ -676,6 +676,32 @@ def test_tool_inspector_html_escapes_output_lines_starting_with_angle_bracket(
     assert "&lt;/broken&gt;" in html
 
 
+def test_tool_inspector_html_escapes_output_lines_starting_like_markup(
+    monkeypatch,
+) -> None:
+    from prompt_toolkit.formatted_text import HTML
+
+    monkeypatch.setattr(
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
+        lambda: (100, 16),
+    )
+    state = ToolInspectorState(
+        entries=[
+            ToolTraceEntry(
+                tool_call_id="call-1",
+                tool_name="bash",
+                result={"ok": True, "stdout": "<ansired invalid> & raw"},
+                status="ok",
+            )
+        ]
+    )
+
+    html = render_view_html(state, state.entries)
+
+    HTML(html)
+    assert "&lt;ansired invalid&gt; &amp; raw" in html
+
+
 def test_tool_inspector_scroll_wheel_uses_active_pane() -> None:
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.key_binding.key_processor import KeyPressEvent

@@ -168,6 +168,8 @@ turn.
   tool call arguments, executed arguments, results, status, and duration.
 - The tool inspector updates while it is open, supports mouse click/scroll, and
   shows streamed output from `exec_command` and `python_exec` while commands run.
+- The tool inspector escapes dynamic tool output before applying prompt-toolkit
+  styling so literal angle-bracket text cannot break fullscreen rendering.
 - While a fullscreen menu is open, live turn output is deferred and replayed
   after the menu closes so background tool updates do not overwrite the view.
 - Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager. It can
