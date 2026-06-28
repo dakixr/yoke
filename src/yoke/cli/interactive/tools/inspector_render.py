@@ -391,12 +391,22 @@ def _fit_cell(
     html: bool,
     trusted_markup: bool = False,
 ) -> str:
-    if html and trusted_markup:
+    if html and trusted_markup and _is_rendered_markup(text):
         return text
     fitted = fit(text, width)
     if html:
         return _style_detail_line(fitted)
     return fitted
+
+
+def _is_rendered_markup(text: str) -> bool:
+    return text.startswith(
+        (
+            "<ansi",
+            "<reverse>",
+            '<style fg="',
+        )
+    )
 
 
 def _style_detail_line(text: str) -> str:
@@ -428,7 +438,7 @@ def _style_numbered_line(body: str, padding: str) -> str:
     number, _, value = body.partition("│")
     value = value[1:] if value.startswith(" ") else value
     return (
-        f"{DETAIL_DIM_OPEN}{escape(number)} │{DETAIL_DIM_CLOSE} "
+        f"{DETAIL_DIM_OPEN}{escape(number)}│{DETAIL_DIM_CLOSE} "
         f"{_style_status_symbols(value, '')}{padding}"
     )
 

@@ -645,7 +645,7 @@ def test_tool_inspector_html_keeps_blank_line_numbers_gray(monkeypatch) -> None:
 
     html = render_view_html(state, state.entries)
 
-    assert '<style fg="#777777">2  │</style>' in html
+    assert '<style fg="#777777">2 │</style>' in html
     assert "<ansicyan>2</ansicyan>" not in html
 
 
@@ -700,6 +700,37 @@ def test_tool_inspector_html_escapes_output_lines_starting_like_markup(
 
     HTML(html)
     assert "&lt;ansired invalid&gt; &amp; raw" in html
+
+
+def test_tool_inspector_html_pads_empty_sidebar_rows(monkeypatch) -> None:
+    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.formatted_text import to_formatted_text
+
+    monkeypatch.setattr(
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
+        lambda: (100, 16),
+    )
+    state = ToolInspectorState(
+        entries=[
+            ToolTraceEntry(
+                tool_call_id="call-1",
+                tool_name="bash",
+                result={
+                    "ok": True,
+                    "stdout": "one\ntwo\nthree\nfour\nfive\nsix",
+                },
+                status="ok",
+            )
+        ]
+    )
+
+    html = HTML(render_view_html(state, state.entries))
+    rendered = "".join(fragment[1] for fragment in to_formatted_text(html))
+    body_lines = rendered.splitlines()[3:-2]
+
+    assert len(body_lines) > 1
+    assert all(line.index("│") == 34 for line in body_lines)
+    assert all(len(line) == 100 for line in body_lines)
 
 
 def test_tool_inspector_scroll_wheel_uses_active_pane() -> None:
