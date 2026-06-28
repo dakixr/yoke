@@ -15,6 +15,103 @@ class PatchedInput(Protocol):
     _yoke_multiline_paste_patch: bool
 
 
+def test_windows_ctrl_v_patch_uses_virtual_key_before_layout_translation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("yoke.cli.interactive.prompt.paste.sys.platform", "win32")
+
+    class FakeConsoleInputReader:
+        LEFT_ALT_PRESSED = 0x0002
+        RIGHT_ALT_PRESSED = 0x0001
+        LEFT_CTRL_PRESSED = 0x0008
+        RIGHT_CTRL_PRESSED = 0x0004
+
+        def __init__(self) -> None:
+            self.original_calls = 0
+
+        def _event_to_key_presses(self, ev) -> list[KeyPress]:
+            del ev
+            self.original_calls += 1
+            return [KeyPress("x", "x")]
+
+    class FakeInput:
+        def __init__(self) -> None:
+            self.console_input_reader = FakeConsoleInputReader()
+
+        def read_keys(self) -> list[KeyPress]:
+            return []
+
+    class FakeApp:
+        def __init__(self, prompt_input: FakeInput) -> None:
+            self.input = prompt_input
+
+    class FakePromptSession:
+        def __init__(self) -> None:
+            self._input = FakeInput()
+            self.app = FakeApp(self._input)
+
+    session = FakePromptSession()
+    patch_prompt_toolkit_input_for_multiline_paste(cast(Any, session))
+    reader = session._input.console_input_reader
+    ctrl_v_event = SimpleNamespace(
+        KeyDown=True,
+        VirtualKeyCode=0x56,
+        ControlKeyState=reader.LEFT_CTRL_PRESSED,
+    )
+    plain_event = SimpleNamespace(
+        KeyDown=True,
+        VirtualKeyCode=0x57,
+        ControlKeyState=reader.LEFT_CTRL_PRESSED,
+    )
+
+    assert reader._event_to_key_presses(ctrl_v_event) == [
+        KeyPress(Keys.ControlV, "\x16")
+    ]
+    assert reader._event_to_key_presses(plain_event) == [KeyPress("x", "x")]
+    assert reader.original_calls == 1
+
+
+def test_windows_ctrl_v_patch_ignores_altgr_style_events(monkeypatch) -> None:
+    monkeypatch.setattr("yoke.cli.interactive.prompt.paste.sys.platform", "win32")
+
+    class FakeConsoleInputReader:
+        LEFT_ALT_PRESSED = 0x0002
+        RIGHT_ALT_PRESSED = 0x0001
+        LEFT_CTRL_PRESSED = 0x0008
+        RIGHT_CTRL_PRESSED = 0x0004
+
+        def _event_to_key_presses(self, ev) -> list[KeyPress]:
+            del ev
+            return [KeyPress("v", "v")]
+
+    class FakeInput:
+        def __init__(self) -> None:
+            self.console_input_reader = FakeConsoleInputReader()
+
+        def read_keys(self) -> list[KeyPress]:
+            return []
+
+    class FakeApp:
+        def __init__(self, prompt_input: FakeInput) -> None:
+            self.input = prompt_input
+
+    class FakePromptSession:
+        def __init__(self) -> None:
+            self._input = FakeInput()
+            self.app = FakeApp(self._input)
+
+    session = FakePromptSession()
+    patch_prompt_toolkit_input_for_multiline_paste(cast(Any, session))
+    reader = session._input.console_input_reader
+    altgr_event = SimpleNamespace(
+        KeyDown=True,
+        VirtualKeyCode=0x56,
+        ControlKeyState=reader.RIGHT_CTRL_PRESSED | reader.RIGHT_ALT_PRESSED,
+    )
+
+    assert reader._event_to_key_presses(altgr_event) == [KeyPress("v", "v")]
+
+
 def test_windows_paste_compat_keys_converts_multiline_burst_to_bracketed_paste() -> (
     None
 ):

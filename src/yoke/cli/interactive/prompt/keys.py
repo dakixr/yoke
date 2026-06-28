@@ -82,7 +82,6 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     def _insert_newline(event) -> None:
         event.current_buffer.insert_text("\n")
 
-    @key_bindings.add("c-v")
     def _paste_image_or_text(event) -> None:
         attachment = paste_image_from_clipboard()
         if attachment is not None:
@@ -104,6 +103,9 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
             )
         except ValueError:
             event.current_buffer.insert_text(text)
+
+    key_bindings.add("c-v")(_paste_image_or_text)
+    key_bindings.add("s-insert")(_paste_image_or_text)
 
     @key_bindings.add("c-u")
     def _remove_last_image(event) -> None:

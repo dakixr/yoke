@@ -81,6 +81,8 @@ def test_prompt_toolkit_double_escape_stops_active_turn(
     assert (Keys.ControlI,) in bindings
     assert (Keys.ControlM,) in bindings
     assert (Keys.ControlJ,) in bindings
+    assert (Keys.ControlV,) in bindings
+    assert (Keys.ShiftInsert,) in bindings
     assert (Keys.ControlO,) in bindings
     assert (Keys.Up,) in bindings
     assert (Keys.Down,) in bindings
