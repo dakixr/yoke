@@ -9,7 +9,7 @@ the web, use MCP servers, and call custom tools from your repo or home config.
 ## Install
 
 ```sh
-uv tool install yoke
+uv tool install git+https://github.com/dakixr/yoke.git
 ```
 
 For local development:
