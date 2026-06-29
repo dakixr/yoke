@@ -237,6 +237,7 @@ def save_active_session(
         skill_dirs=active_session.record.skill_dirs,
         root=active_session.root,
         title=active_session.title,
+        pinned=active_session.record.pinned,
         provider_name=provider_state.provider_name,
         model_id=provider_state.model_id,
         reasoning_effort=provider_state.reasoning_effort,
@@ -311,7 +312,7 @@ def select_session_id(
     stdout: OutputStream | None = None,
 ) -> str:
     """Prompt the user to select a saved session."""
-    records = store.list(root=None if all_sessions else root)
+    records = store.list(root=None if all_sessions else root, pinned_first=True)
     if not records:
         if all_sessions:
             raise ValueError("No saved sessions found.")
@@ -322,6 +323,7 @@ def select_session_id(
             records,
             root=root,
             all_sessions=all_sessions,
+            on_pin=lambda record: _toggle_session_pin(store, record),
         )
         if selected is None:
             raise ValueError("Session selection cancelled.")
@@ -357,7 +359,7 @@ def print_session_list(
     stdout: OutputStream | None = None,
 ) -> None:
     """Print saved sessions without entering the resume selector."""
-    records = store.list(root=None if all_sessions else root)
+    records = store.list(root=None if all_sessions else root, pinned_first=True)
     if not records:
         if all_sessions:
             raise ValueError("No saved sessions found.")
@@ -368,7 +370,7 @@ def print_session_list(
         heading = f"{heading} (all roots)"
     console.print(heading)
     for index, record in enumerate(records, start=1):
-        title = record.title or "Untitled session"
+        title = _format_session_title(record)
         updated = _format_session_activity(record)
         root_text = ""
         if all_sessions:
@@ -396,7 +398,7 @@ def _select_session_id_by_number(
         heading = f"{heading} (all roots)"
     console.print(heading)
     for index, record in enumerate(records, start=1):
-        title = record.title or "Untitled session"
+        title = _format_session_title(record)
         updated = _format_session_activity(record)
         console.print(f"{index}. {title} ({record.id}) {updated}")
     raw = input_func("Session number: ").strip()
@@ -410,9 +412,19 @@ def _select_session_id_by_number(
 
 
 def _format_session_choice(record: SessionRecord) -> str:
-    title = record.title or "Untitled session"
+    title = _format_session_title(record)
     updated = _format_session_activity(record)
     return f"{title}  {updated}  {record.id}"
+
+
+def _format_session_title(record: SessionRecord) -> str:
+    title = record.title or "Untitled session"
+    return f"★ {title}" if record.pinned else title
+
+
+def _toggle_session_pin(store: SessionStore, record: SessionRecord) -> None:
+    updated = store.set_pinned(record.id, not record.pinned)
+    record.pinned = updated.pinned
 
 
 def _format_session_root_for_list(record: SessionRecord) -> str:

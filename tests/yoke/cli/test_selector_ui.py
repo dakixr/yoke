@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from typing import Any
 
 
 def test_list_selector_uses_fullscreen_alternate_buffer(monkeypatch) -> None:
     from yoke.cli.runtime.selector import ui
 
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
     class FakeApplication:
         def __init__(self, *, full_screen: bool, **kwargs: object) -> None:
@@ -45,3 +46,42 @@ def test_list_selector_uses_fullscreen_alternate_buffer(monkeypatch) -> None:
     assert captured["full_screen"] is True
     assert captured["suppressed"] is True
     assert captured["ran"] is True
+
+
+def test_table_selector_registers_pin_key(monkeypatch) -> None:
+    from yoke.cli.runtime.selector import ui
+    from yoke.cli.runtime.selector.format import SelectorTableColumns
+
+    captured: dict[str, Any] = {}
+
+    class FakeApplication:
+        def __init__(self, *, key_bindings: object, **kwargs: object) -> None:
+            del kwargs
+            captured["key_bindings"] = key_bindings
+
+        def run(self) -> str:
+            return "alpha"
+
+    @contextmanager
+    def fake_suppress_terminal_output_for_fullscreen():
+        yield
+
+    monkeypatch.setattr("prompt_toolkit.application.Application", FakeApplication)
+    monkeypatch.setattr(
+        ui,
+        "suppress_terminal_output_for_fullscreen",
+        fake_suppress_terminal_output_for_fullscreen,
+    )
+
+    result = ui.select_table_item_interactive(
+        ["alpha"],
+        title="Choose",
+        columns=SelectorTableColumns(headers=("Name",), widths=(10,)),
+        render_row=lambda item, _index, _selected, _columns: item,
+        footer="enter select",
+        on_pin=lambda _item: None,
+    )
+
+    keys = {binding.keys for binding in captured["key_bindings"].bindings}
+    assert result == "alpha"
+    assert ("p",) in keys

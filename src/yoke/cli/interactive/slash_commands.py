@@ -147,6 +147,16 @@ def handle_slash_command(  # noqa: C901
             f"Updated session title: {active_session.title}",
         )
         return True, messages, active_session
+    if normalized == "/pin-session":
+        active_session.record.pinned = True
+        persist_session_state(active_session, agent, messages)
+        print_scrollback_notice(console, "Pinned session.")
+        return True, messages, active_session
+    if normalized == "/unpin-session":
+        active_session.record.pinned = False
+        persist_session_state(active_session, agent, messages)
+        print_scrollback_notice(console, "Unpinned session.")
+        return True, messages, active_session
     if normalized == "/tree":
         if on_editor_text is None:
             print_scrollback_notice(
@@ -257,6 +267,7 @@ def _format_session_info(
         "Session info:",
         f"Session id: {active_session.id}",
         f"Title: {active_session.title or record.title or 'Untitled session'}",
+        f"Pinned: {'yes' if record.pinned else 'no'}",
         f"Root: {active_session.root}",
         f"Path: {active_session.store.path_for(active_session.id)}",
         f"Provider: {provider}",

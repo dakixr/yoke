@@ -45,6 +45,7 @@ class SessionRecord(BaseModel):
     updated_at: str | None = None
     root: str | None = None
     title: str | None = None
+    pinned: bool = False
     provider_name: str | None = None
     model_id: str | None = None
     reasoning_effort: str | None = None
@@ -65,6 +66,7 @@ class SessionIndexEntry(BaseModel):
     id: str
     root: str | None = None
     title: str | None = None
+    pinned: bool = False
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -74,6 +76,7 @@ class SessionIndexEntry(BaseModel):
             id=self.id,
             root=self.root,
             title=self.title,
+            pinned=self.pinned,
             created_at=self.created_at,
             updated_at=self.updated_at,
         )
@@ -139,6 +142,7 @@ class SessionStore:
         skill_dirs: builtins.list[str] | None = None,
         root: Path | str | None = None,
         title: str | None = None,
+        pinned: bool | None = None,
         provider_name: str | None = None,
         model_id: str | None = None,
         reasoning_effort: str | None = None,
@@ -170,6 +174,7 @@ class SessionStore:
             updated_at=now,
             root=_normalize_root(root) or existing.root,
             title=_normalize_title(title) or existing.title,
+            pinned=pinned if pinned is not None else existing.pinned,
             provider_name=provider_name or existing.provider_name,
             model_id=model_id or existing.model_id,
             reasoning_effort=reasoning_effort or existing.reasoning_effort,
@@ -210,6 +215,7 @@ class SessionStore:
                 "updated_at": now,
                 "root": _normalize_root(root) or source.root,
                 "title": _normalize_title(title) or _fork_title(source.title),
+                "pinned": False,
             },
         )
         self._write_session_record(forked)
@@ -224,7 +230,22 @@ class SessionStore:
         """Return the canonical JSONL path for a session id."""
         return self._session_path(session_id)
 
-    def list(self, *, root: Path | str | None = None) -> builtins.list[SessionRecord]:
+    def set_pinned(self, session_id: str, pinned: bool) -> SessionRecord:
+        """Persist a session's pinned state and return the updated record."""
+        record = self.load(session_id)
+        if record.created_at is None and not record.conversation_entries:
+            raise ValueError(f"Session not found: {session_id}")
+        updated = record.model_copy(update={"pinned": pinned})
+        self._write_session_record(updated)
+        self._update_index(updated)
+        return updated
+
+    def list(
+        self,
+        *,
+        root: Path | str | None = None,
+        pinned_first: bool = False,
+    ) -> builtins.list[SessionRecord]:
         """List session records."""
         self._ensure_session_index()
         self._prune_index_and_sessions()
@@ -235,6 +256,15 @@ class SessionStore:
             for entry in entries
             if root_value is None or entry.root == root_value
         ]
+        if pinned_first:
+            return sorted(
+                records,
+                key=lambda record: (
+                    record.pinned,
+                    record.updated_at or record.created_at or "",
+                ),
+                reverse=True,
+            )
         return sorted(
             records,
             key=lambda record: record.updated_at or record.created_at or "",
@@ -296,6 +326,7 @@ class SessionStore:
                 id=session_id,
                 root=record.root,
                 title=record.title,
+                pinned=record.pinned,
                 created_at=record.created_at,
                 updated_at=record.updated_at,
             )
@@ -316,6 +347,7 @@ class SessionStore:
                 id=session_id,
                 root=record.root,
                 title=record.title,
+                pinned=record.pinned,
                 created_at=record.created_at,
                 updated_at=record.updated_at,
             )
@@ -332,6 +364,7 @@ class SessionStore:
             id=record.id,
             root=record.root,
             title=record.title,
+            pinned=record.pinned,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

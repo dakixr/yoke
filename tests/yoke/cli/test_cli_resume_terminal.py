@@ -50,7 +50,14 @@ def test_resume_without_id_uses_keyboard_selector_for_terminal(
 
     selected: dict[str, object] = {}
 
-    def fake_selector(records: list[Any], *, root: Path, all_sessions: bool) -> str:
+    def fake_selector(
+        records: list[Any],
+        *,
+        root: Path,
+        all_sessions: bool,
+        on_pin: Any = None,
+    ) -> str:
+        del on_pin
         selected["ids"] = [record.id for record in records]
         selected["root"] = root
         selected["all_sessions"] = all_sessions
@@ -98,7 +105,7 @@ def test_resume_without_id_reports_cancelled_keyboard_selector(
     store.save("saved", [], root=tmp_path, title="Saved session")
     monkeypatch.setattr(
         "yoke.cli.runtime.session._select_session_id_interactive",
-        lambda records, *, root, all_sessions: None,
+        lambda records, *, root, all_sessions, on_pin=None: None,
     )
 
     stdout = TerminalCaptureStream()
@@ -138,6 +145,74 @@ def test_resume_list_prints_sessions_without_resuming(tmp_path: Path) -> None:
     assert "Same root (same-root)" in output
     assert "other-root" not in output
     assert stderr.getvalue() == ""
+
+
+def test_resume_list_shows_pinned_sessions_first_with_star(tmp_path: Path) -> None:
+    store = SessionStore()
+    store.save("newer", [], root=tmp_path, title="Newer")
+    store.save("pinned", [], root=tmp_path, title="Pinned")
+    store.save("newest", [], root=tmp_path, title="Newest")
+    store.set_pinned("pinned", True)
+
+    stdout = CaptureStream()
+    exit_code = run_resume_cli(
+        CLIArgs(root=str(tmp_path)),
+        "list",
+        agent=FakeAgent(),
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    lines = stdout.getvalue().splitlines()
+    assert lines[1].startswith("1. ★ Pinned (pinned)")
+    assert "2. Newest (newest)" in lines[2]
+
+
+def test_resume_keyboard_selector_can_toggle_pin(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    class TerminalCaptureStream(CaptureStream):
+        def isatty(self) -> bool:
+            return True
+
+    store = SessionStore()
+    store.save("first", [], root=tmp_path, title="First")
+    store.save("second", [], root=tmp_path, title="Second")
+
+    def fake_selector(
+        records: list[Any],
+        *,
+        root: Path,
+        all_sessions: bool,
+        on_pin: Any = None,
+    ) -> str:
+        del root, all_sessions
+        assert on_pin is not None
+        target = next(record for record in records if record.id == "first")
+        on_pin(target)
+        return "second"
+
+    monkeypatch.setattr(
+        "yoke.cli.runtime.session._select_session_id_interactive",
+        fake_selector,
+    )
+
+    prompts = iter(["quit"])
+
+    def fake_input(_: object = "") -> str:
+        return next(prompts)
+
+    exit_code = run_resume_cli(
+        CLIArgs(root=str(tmp_path)),
+        None,
+        agent=FakeAgent(),
+        input_func=fake_input,
+        stdout=TerminalCaptureStream(),
+    )
+
+    assert exit_code == 0
+    assert store.load("first").pinned is True
 
 
 def test_resume_list_all_prints_sessions_from_all_roots(tmp_path: Path) -> None:

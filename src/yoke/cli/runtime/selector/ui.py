@@ -156,6 +156,7 @@ def select_table_item_interactive(
     columns: SelectorTableColumns,
     render_row: Callable[[ItemT, int, bool, SelectorTableColumns], str],
     footer: str,
+    on_pin: Callable[[ItemT], None] | None = None,
 ) -> ItemT | None:
     """Render a keyboard-driven selector for rows arranged as a table."""
     from prompt_toolkit.application import Application
@@ -243,6 +244,13 @@ def select_table_item_interactive(
     @key_bindings.add("enter")
     def _accept(event) -> None:
         event.app.exit(result=items[selected_index])
+
+    if on_pin is not None:
+
+        @key_bindings.add("p")
+        def _pin(event) -> None:
+            on_pin(items[selected_index])
+            event.app.invalidate()
 
     @key_bindings.add("c-c")
     @key_bindings.add("escape")

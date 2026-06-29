@@ -133,6 +133,8 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/stop", "Stop one or all background command sessions.", "session-id"),
     SlashCommand("/new", "Start a fresh session in the current workspace."),
     SlashCommand("/fork", "Fork the current session and switch to it."),
+    SlashCommand("/pin-session", "Pin the active session to the top of resume lists."),
+    SlashCommand("/unpin-session", "Remove the active session pin."),
     SlashCommand("/title", "Rename the active session.", "new-title"),
     SlashCommand("/tree", "Navigate the current session tree."),
     SlashCommand(

@@ -313,6 +313,9 @@ yoke resume 20240421-143022-abc1
 # Resume a session id that matches a reserved resume action
 yoke resume --session-id list
 
+# Pin the active session from inside the TUI
+/pin-session
+
 # Continue the most recent session for this directory
 yoke continue
 
@@ -350,17 +353,21 @@ custom summary guidance is appended to the standard summary prompt when chosen.
 
 In a terminal, `yoke resume` opens a keyboard-driven selector with aligned
 columns for the session title, last activity, and session id. Use `Up`/`Down`
-or `j`/`k` to move, `PgUp`/`PgDn` to scroll faster, `Home`/`End` to jump, and
-`Enter` to resume. Press `q` or `Esc` to cancel. Pass `--all` to list saved
-sessions across every workspace root instead of only the current root; that
-view adds a root-path column before the session id. Use `yoke continue` to skip
-selection and immediately resume the most recent session for the current root,
-or `yoke continue --global` / `yoke continue -g` to ignore root and continue the
-most recent saved session overall.
+or `j`/`k` to move, `PgUp`/`PgDn` to scroll faster, `Home`/`End` to jump,
+`p` to pin or unpin the selected session, and `Enter` to resume. Press `q` or
+`Esc` to cancel. Pinned sessions sort first in `yoke resume` and
+`yoke resume list` and display with a `★` before the title. Pass `--all` to list
+saved sessions across every workspace root instead of only the current root;
+that view adds a root-path column before the session id. Use `yoke continue` to
+skip selection and immediately resume the most recent session for the current
+root, or `yoke continue --global` / `yoke continue -g` to ignore root and
+continue the most recent saved session overall.
 Use `yoke resume list` to print matching sessions without opening the selector
 or resuming one; add `--all` to include every root. If a session id collides
 with a reserved resume action such as `list`, resume it with
 `yoke resume --session-id list`.
+Inside a session, `/pin-session` pins the active session and `/unpin-session`
+removes the pin.
 Use `--fork <session-id>` to copy an existing session into a new session id and
 continue there without appending to the original; `--fork` cannot be combined
 with `--session` because one selects a source session and the other names the

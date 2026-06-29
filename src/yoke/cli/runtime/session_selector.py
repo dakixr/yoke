@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable
 
 from yoke.cli.path_display import format_root_label
 from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
@@ -39,6 +40,7 @@ def _select_session_id_interactive(
     *,
     root: Path,
     all_sessions: bool = False,
+    on_pin: Callable[[SessionRecord], None] | None = None,
 ) -> str | None:
     terminal_columns = selector_terminal_size()[0]
     widths = _session_selector_column_widths(
@@ -62,8 +64,10 @@ def _select_session_id_interactive(
             )
         ),
         footer=(
-            "Use Up/Down or j/k, PgUp/PgDn, Home/End, Enter to resume, q to cancel."
+            "Use Up/Down or j/k, PgUp/PgDn, Home/End, p to pin/unpin, "
+            "Enter to resume, q to cancel."
         ),
+        on_pin=on_pin,
     )
     if selected is None:
         return None
@@ -110,7 +114,7 @@ def _format_session_selector_row(
             table_columns.widths[0],
         ),
         fit_selector_cell(
-            record.title or "Untitled session",
+            _format_session_title(record),
             table_columns.widths[1],
         ),
         fit_selector_cell(
@@ -188,6 +192,11 @@ def _format_session_root(record: SessionRecord) -> str:
     if not record.root:
         return "-"
     return format_root_label(Path(record.root))
+
+
+def _format_session_title(record: SessionRecord) -> str:
+    title = record.title or "Untitled session"
+    return f"★ {title}" if record.pinned else title
 
 
 def _format_session_activity(record: SessionRecord) -> str:

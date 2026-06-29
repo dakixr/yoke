@@ -164,6 +164,35 @@ def test_session_store_round_trips_message_usage(tmp_path: Path) -> None:
     }
 
 
+def test_session_store_pins_sessions_for_pinned_lists(tmp_path: Path) -> None:
+    store = SessionStore(directory=tmp_path)
+    store.save("old", [], title="Old")
+    store.save("pinned", [], title="Pinned")
+    store.save("new", [], title="New")
+
+    updated = store.set_pinned("pinned", True)
+
+    assert updated.pinned is True
+    assert store.load("pinned").pinned is True
+    assert [record.id for record in store.list()] == ["new", "pinned", "old"]
+    assert [record.id for record in store.list(pinned_first=True)] == [
+        "pinned",
+        "new",
+        "old",
+    ]
+
+
+def test_session_store_does_not_copy_pin_to_fork(tmp_path: Path) -> None:
+    store = SessionStore(directory=tmp_path)
+    store.save("source", [Message.user("hello")], title="Source")
+    store.set_pinned("source", True)
+
+    forked = store.fork("source", new_session_id="forked")
+
+    assert forked.pinned is False
+    assert store.load("source").pinned is True
+
+
 def test_session_store_migrates_legacy_json_file_on_load(tmp_path: Path) -> None:
     payload = {
         "version": 4,

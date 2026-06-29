@@ -197,6 +197,40 @@ def test_title_slash_command_requires_title(tmp_path: Path) -> None:
     assert "Usage: /title <new-title>" in stdout.getvalue()
 
 
+def test_pin_session_slash_commands_update_active_session(tmp_path: Path) -> None:
+    from yoke.cli.interactive.slash_commands import handle_slash_command
+
+    active_session = active_session_for(tmp_path)
+    stdout = CaptureStream()
+
+    handled, messages, updated_session = handle_slash_command(
+        "/pin-session",
+        agent=FakeAgent(),
+        active_session=active_session,
+        messages=[],
+        console=build_console(stdout),
+    )
+
+    assert handled is True
+    assert messages == []
+    assert updated_session.record.pinned is True
+    assert SessionStore().load(active_session.id).pinned is True
+    assert "Pinned session." in stdout.getvalue()
+
+    handled, _messages, updated_session = handle_slash_command(
+        "/unpin-session",
+        agent=FakeAgent(),
+        active_session=updated_session,
+        messages=[],
+        console=build_console(stdout),
+    )
+
+    assert handled is True
+    assert updated_session.record.pinned is False
+    assert SessionStore().load(active_session.id).pinned is False
+    assert "Unpinned session." in stdout.getvalue()
+
+
 def test_info_slash_command_prints_session_details(tmp_path: Path) -> None:
     from yoke.cli.interactive.slash_commands import handle_slash_command
 
@@ -221,6 +255,7 @@ def test_info_slash_command_prints_session_details(tmp_path: Path) -> None:
     assert f"Session id: {active_session.id}" in output
     assert "Title: Info title" in output
     assert f"Root: {tmp_path.resolve()}" in output
+    assert "Pinned: no" in output
     assert "Model: gpt-test" in output
     assert "Messages: 1" in output
 
