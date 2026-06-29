@@ -298,11 +298,20 @@ yoke --session my-project "let's keep working on the auth module"
 # Resume interactively (pick from a list)
 yoke resume
 
+# Print saved sessions without resuming
+yoke resume list
+
+# Print saved sessions across all roots
+yoke resume list --all
+
 # Resume interactively across all roots
 yoke resume --all
 
 # Resume a specific session by id
 yoke resume 20240421-143022-abc1
+
+# Resume a session id that matches a reserved resume action
+yoke resume --session-id list
 
 # Continue the most recent session for this directory
 yoke continue
@@ -348,6 +357,10 @@ view adds a root-path column before the session id. Use `yoke continue` to skip
 selection and immediately resume the most recent session for the current root,
 or `yoke continue --global` / `yoke continue -g` to ignore root and continue the
 most recent saved session overall.
+Use `yoke resume list` to print matching sessions without opening the selector
+or resuming one; add `--all` to include every root. If a session id collides
+with a reserved resume action such as `list`, resume it with
+`yoke resume --session-id list`.
 Use `--fork <session-id>` to copy an existing session into a new session id and
 continue there without appending to the original; `--fork` cannot be combined
 with `--session` because one selects a source session and the other names the

@@ -39,6 +39,7 @@ from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import execute_turn
 from yoke.cli.runtime import persist_session_state
+from yoke.cli.runtime import resume_command_for_session_id
 from yoke.cli.runtime import start_session_title_generation
 from yoke.cli.runtime import sync_agent_skill_state_to_session
 
@@ -130,7 +131,7 @@ def _request_basic_exit(
     state.exit_notice_emitted = True
     print_scrollback_notice(
         console,
-        f"To resume this session run:\nyoke resume {active_session.id}",
+        f"To resume this session run:\n{resume_command_for_session_id(active_session.id)}",
     )
 
 

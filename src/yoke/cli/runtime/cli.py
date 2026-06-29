@@ -32,6 +32,8 @@ from yoke.cli.runtime.base import execute_turn
 from yoke.cli.runtime.session import create_active_session
 from yoke.cli.runtime.session import apply_session_defaults_to_args
 from yoke.cli.runtime.session import persist_session_state
+from yoke.cli.runtime.session import print_session_list
+from yoke.cli.runtime.session import RESERVED_RESUME_ACTIONS
 from yoke.cli.runtime.session import save_active_session
 from yoke.cli.runtime.session import save_agent_session_state
 from yoke.cli.runtime.session import select_latest_session_id
@@ -195,6 +197,7 @@ def run_resume_cli(
     *,
     all_sessions: bool = False,
     fork: bool = False,
+    allow_reserved_actions: bool = True,
     agent: AgentRunner | None = None,
     input_func=input,
     stdout: OutputStream | None = None,
@@ -208,6 +211,18 @@ def run_resume_cli(
     tool_report: ToolLoadReport | None = None
     store = SessionStore()
     root = Path(args.root).resolve()
+    if allow_reserved_actions and not fork and session_id in RESERVED_RESUME_ACTIONS:
+        try:
+            print_session_list(
+                store,
+                root=root,
+                all_sessions=all_sessions,
+                stdout=output_stream,
+            )
+        except ValueError as exc:
+            print_error(error_console, str(exc))
+            return 1
+        return 0
     if session_id is None:
         try:
             session_id = select_session_id(

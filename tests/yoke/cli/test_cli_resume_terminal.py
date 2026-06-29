@@ -115,6 +115,78 @@ def test_resume_without_id_reports_cancelled_keyboard_selector(
     assert "Session selection cancelled." in stderr.getvalue()
 
 
+def test_resume_list_prints_sessions_without_resuming(tmp_path: Path) -> None:
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    store = SessionStore()
+    store.save("same-root", [], root=tmp_path, title="Same root")
+    store.save("other-root", [], root=other_root, title="Other root")
+
+    stdout = CaptureStream()
+    stderr = CaptureStream()
+    exit_code = run_resume_cli(
+        CLIArgs(root=str(tmp_path)),
+        "list",
+        agent=FakeAgent(),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    output = stdout.getvalue()
+    assert "Saved sessions:" in output
+    assert "Same root (same-root)" in output
+    assert "other-root" not in output
+    assert stderr.getvalue() == ""
+
+
+def test_resume_list_all_prints_sessions_from_all_roots(tmp_path: Path) -> None:
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    store = SessionStore()
+    store.save("same-root", [], root=tmp_path, title="Same root")
+    store.save("other-root", [], root=other_root, title="Other root")
+
+    stdout = CaptureStream()
+    exit_code = run_resume_cli(
+        CLIArgs(root=str(tmp_path)),
+        "list",
+        all_sessions=True,
+        agent=FakeAgent(),
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    output = stdout.getvalue()
+    assert "Saved sessions: (all roots)" in output
+    assert "Same root (same-root)" in output
+    assert "Other root (other-root)" in output
+
+
+def test_reserved_resume_action_can_be_resumed_explicitly(tmp_path: Path) -> None:
+    store = SessionStore()
+    store.save("list", [], root=tmp_path, title="Literal list")
+    prompts = iter(["quit"])
+
+    def fake_input(_: object = "") -> str:
+        return next(prompts)
+
+    stdout = CaptureStream()
+    exit_code = run_resume_cli(
+        CLIArgs(root=str(tmp_path)),
+        "list",
+        allow_reserved_actions=False,
+        agent=FakeAgent(),
+        input_func=fake_input,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    output = stdout.getvalue()
+    assert "Saved sessions:" not in output
+    assert "To resume this session run:\nyoke resume --session-id list" in output
+
+
 def test_continue_resumes_latest_session_for_current_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

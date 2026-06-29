@@ -52,7 +52,7 @@ objects and cancellation callbacks that cannot be pickled.
 Skills are reusable instruction sets — Markdown files that tell the agent *how* to approach a class of task (code review, writing tests, debugging, etc.). You create them once and activate them by name.
 
 ### Sessions
-The CLI persists conversation history so you can resume where you left off. Each session is stored under `~/.yoke/sessions/` as an append-oriented `.jsonl` event stream. New session titles are generated after the first completed assistant turn so the title model can use the initial request and response context. Use `yoke continue` to resume the latest session for the current directory, or `yoke continue --global` to resume the latest session anywhere.
+The CLI persists conversation history so you can resume where you left off. Each session is stored under `~/.yoke/sessions/` as an append-oriented `.jsonl` event stream. New session titles are generated after the first completed assistant turn so the title model can use the initial request and response context. Use `yoke resume list` to print saved sessions for the current directory, `yoke continue` to resume the latest session for the current directory, or `yoke continue --global` to resume the latest session anywhere.
 
 ### Providers
 yoke connects to an LLM provider (Codex, Codex WebSockets, OpenCode Go, Z.ai, or any OpenAI-compatible endpoint) to power the agent.

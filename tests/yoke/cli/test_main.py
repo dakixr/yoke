@@ -124,6 +124,36 @@ def test_continue_command_passes_fork_session_id(
     assert args.root == str(tmp_path.resolve())
 
 
+def test_resume_command_passes_explicit_session_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Supports resuming ids that collide with reserved resume actions."""
+    fake_runtime = ModuleType("yoke.cli.runtime")
+    calls: list[tuple[Any, str | None, bool]] = []
+
+    def fake_run_resume_cli(
+        args: Any,
+        session_id: str | None,
+        *,
+        all_sessions: bool = False,
+        allow_reserved_actions: bool = True,
+    ) -> int:
+        del allow_reserved_actions
+        calls.append((args, session_id, all_sessions))
+        return 7
+
+    setattr(fake_runtime, "run_resume_cli", fake_run_resume_cli)
+    monkeypatch.setitem(sys.modules, "yoke.cli.runtime", fake_runtime)
+
+    assert main(["resume", "--session-id", "list", "--root", str(tmp_path)]) == 7
+    assert len(calls) == 1
+    args, session_id, all_sessions = calls[0]
+    assert session_id == "list"
+    assert all_sessions is False
+    assert args.root == str(tmp_path.resolve())
+
+
 def test_fork_root_option_cannot_be_combined_with_session() -> None:
     """Rejects ambiguous root --fork plus --session usage."""
     assert main(["--fork", "abc123", "--session", "other"]) == 1

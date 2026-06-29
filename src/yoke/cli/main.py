@@ -210,6 +210,16 @@ def resume(
         str | None,
         typer.Argument(help="Session id to resume. Omit to choose from this root."),
     ] = None,
+    explicit_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--session-id",
+            help=(
+                "Session id to resume. Use this to resume a session whose id "
+                "matches a reserved resume action such as 'list'."
+            ),
+        ),
+    ] = None,
     all_sessions: Annotated[
         bool,
         typer.Option(
@@ -250,6 +260,10 @@ def resume(
 ) -> None:
     from yoke.cli.runtime import run_resume_cli
 
+    if session_id is not None and explicit_session_id is not None:
+        click.echo("Error: pass either SESSION_ID or --session-id, not both.", err=True)
+        raise typer.Exit(1)
+
     raise typer.Exit(
         run_resume_cli(
             build_cli_args(
@@ -257,8 +271,9 @@ def resume(
                 reasoning_effort=reasoning_effort,
                 root=root,
             ),
-            session_id,
+            explicit_session_id or session_id,
             all_sessions=all_sessions,
+            allow_reserved_actions=explicit_session_id is None,
         )
     )
 

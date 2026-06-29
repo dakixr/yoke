@@ -31,6 +31,7 @@ from yoke.cli.render import print_scrollback_user
 from yoke.cli.runtime import ActiveSession, AgentRunner
 from yoke.cli.runtime import force_compact_history
 from yoke.cli.runtime import persist_session_state
+from yoke.cli.runtime import resume_command_for_session_id
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 from yoke.cli.interactive.prompt.turns import handle_prompt_turn_outcome
 from yoke.cli.interactive.prompt.turns import run_prompt_turn
@@ -346,7 +347,7 @@ def emit_prompt_exit_notice(
     run_in_scrollback(
         lambda: print_scrollback_notice(
             scrollback_console,
-            f"To resume this session run:\nyoke resume {active_session.id}",
+            f"To resume this session run:\n{resume_command_for_session_id(active_session.id)}",
         )
     )
 

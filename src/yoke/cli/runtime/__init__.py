@@ -47,6 +47,9 @@ from yoke.cli.runtime.session import (
     persist_session_state as persist_session_state,
 )
 from yoke.cli.runtime.session import (
+    resume_command_for_session_id as resume_command_for_session_id,
+)
+from yoke.cli.runtime.session import (
     save_active_session as save_active_session,
 )
 from yoke.cli.runtime.session import (

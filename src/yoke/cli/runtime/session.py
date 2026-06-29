@@ -13,6 +13,7 @@ from yoke.agent.state import AgentState
 from yoke.agent.state import capture_agent_state
 from yoke.agent.state import merge_conversation_branch
 from yoke.cli.config.args import CLIArgs
+from yoke.cli.path_display import format_root_label
 from yoke.cli.providers.state import apply_session_provider_defaults
 from yoke.cli.providers.state import capture_provider_session_state
 from yoke.cli.providers.state import provider_session_state_from_values
@@ -32,6 +33,8 @@ from yoke.cli.session import SessionStore
 from yoke.cli.session import fallback_session_title
 from yoke.cli.session import new_session_id
 from yoke.cli.session_tree import entries_preserve_active_prefix
+
+RESERVED_RESUME_ACTIONS = frozenset({"list"})
 
 
 def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
@@ -346,6 +349,40 @@ def select_latest_session_id(
     return records[0].id
 
 
+def print_session_list(
+    store: SessionStore,
+    *,
+    root: Path,
+    all_sessions: bool = False,
+    stdout: OutputStream | None = None,
+) -> None:
+    """Print saved sessions without entering the resume selector."""
+    records = store.list(root=None if all_sessions else root)
+    if not records:
+        if all_sessions:
+            raise ValueError("No saved sessions found.")
+        raise ValueError(f"No sessions found for root: {root.resolve()}")
+    console = build_console(stdout or sys.stdout)
+    heading = "Saved sessions:"
+    if all_sessions:
+        heading = f"{heading} (all roots)"
+    console.print(heading)
+    for index, record in enumerate(records, start=1):
+        title = record.title or "Untitled session"
+        updated = _format_session_activity(record)
+        root_text = ""
+        if all_sessions:
+            root_text = f"  {_format_session_root_for_list(record)}"
+        console.print(f"{index}. {title} ({record.id}) {updated}{root_text}")
+
+
+def resume_command_for_session_id(session_id: str) -> str:
+    """Return the CLI command that resumes a session id unambiguously."""
+    if session_id in RESERVED_RESUME_ACTIONS:
+        return f"yoke resume --session-id {session_id}"
+    return f"yoke resume {session_id}"
+
+
 def _select_session_id_by_number(
     records: list[SessionRecord],
     *,
@@ -376,3 +413,9 @@ def _format_session_choice(record: SessionRecord) -> str:
     title = record.title or "Untitled session"
     updated = _format_session_activity(record)
     return f"{title}  {updated}  {record.id}"
+
+
+def _format_session_root_for_list(record: SessionRecord) -> str:
+    if not record.root:
+        return "-"
+    return format_root_label(Path(record.root))
