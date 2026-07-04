@@ -96,7 +96,11 @@ def handle_slash_command(  # noqa: C901
         )
         return True, messages, active_session
     if normalized == "/skill" or normalized.startswith("/skill "):
-        _handle_skill_load(command, agent, active_session, messages, console)
+        skill_loaded, extra_prompt = _handle_skill_load(
+            command, agent, active_session, messages, console
+        )
+        if skill_loaded and extra_prompt and pending_prompts is not None:
+            pending_prompts.append(PendingPrompt(extra_prompt, kind="queued"))
         return True, messages, active_session
     if normalized == "/model" or normalized.startswith("/model "):
         handle_switch_model(
@@ -460,18 +464,21 @@ def _handle_skill_load(
     active_session: ActiveSession,
     messages: list[Message],
     console: Console,
-) -> None:
+) -> tuple[bool, str | None]:
     """Activate a discovered skill from a slash command."""
     from yoke.agent.loop import RuntimeAgent
     from yoke.cli.render import print_scrollback_notice
 
-    skill_name = command.strip()[len("/skill") :].strip()
+    skill_request = command.strip()[len("/skill") :].strip()
+    skill_name, separator, extra_prompt = skill_request.partition(";")
+    skill_name = skill_name.strip()
+    extra_prompt = extra_prompt.strip() if separator else ""
     if not skill_name:
         print_scrollback_notice(console, "Usage: /skill <name>")
-        return
+        return False, None
     if not isinstance(agent, RuntimeAgent):
         print_scrollback_notice(console, "No skills are available in this session.")
-        return
+        return False, None
     from yoke.agent.skills.activation import activate_skills
 
     activation = activate_skills(
@@ -481,12 +488,13 @@ def _handle_skill_load(
     )
     if activation.missing:
         print_scrollback_notice(console, f"Unknown skill: {skill_name}")
-        return
+        return False, None
     agent.active_skills = activation.active_skills
     persist_session_state(active_session, agent, messages)
     if activation.reloaded:
         print_scrollback_notice(
             console, f"Skill already active; reloading next use: {skill_name}"
         )
-        return
+        return True, extra_prompt or None
     print_scrollback_notice(console, f"Activated skill: {skill_name}")
+    return True, extra_prompt or None

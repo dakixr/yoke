@@ -101,10 +101,11 @@ def test_slash_tree_refreshes_context_usage_after_navigation(
         messages,
         console,
         pending_images=None,
+        pending_prompts=None,
         on_context_usage=None,
         on_editor_text=None,
     ):
-        del agent, console, pending_images, on_context_usage
+        del agent, console, pending_images, pending_prompts, on_context_usage
         assert command == "/tree"
         assert active_session is initial_session
         assert messages == [Message.user("old branch")]

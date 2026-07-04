@@ -442,6 +442,13 @@ not duplicated, reloading marks the skill to send its canonical instructions on
 the next model call, and active skills are preserved when additional skills are
 loaded.
 
+You can also activate a skill and send the next prompt in one line by separating
+the prompt with a semicolon:
+
+```text
+/skill create-skill ; create a repo-local skill called docs-review
+```
+
 Yoke ships with a built-in `create-skill` skill in the codebase under
 `yoke/agent/skills/built_in/create-skill/SKILL.md`. It instructs the
 agent to ask where the skill should be created first (repo-local, global, or

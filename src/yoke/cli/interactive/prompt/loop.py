@@ -156,6 +156,7 @@ def process_prompt_toolkit_prompt(
         messages=state.messages,
         console=scrollback_console,
         pending_images=state.pending_images,
+        pending_prompts=state.pending_prompts,
         on_context_usage=lambda payload: update_status_context_usage(
             payload,
             state=state,
@@ -167,6 +168,7 @@ def process_prompt_toolkit_prompt(
     )
     if handled:
         editor_text_for_usage = ""
+        next_prompt_to_start: PendingPrompt | None = None
         with state_lock:
             state.messages = updated_messages
             active_session_ref["active_session"] = updated_session
@@ -177,11 +179,23 @@ def process_prompt_toolkit_prompt(
                     state.pending_prompts,
                     state.pending_images,
                 )
+            elif state.pending_prompts:
+                if state.worker is None:
+                    next_index = next_pending_prompt_index(state.pending_prompts)
+                    if next_index is not None:
+                        next_prompt_to_start = state.pending_prompts.pop(next_index)
+                persist_prompt_queue(
+                    updated_session,
+                    state.pending_prompts,
+                    state.pending_images,
+                )
         if estimate_toolbar_context_usage is not None:
             context_usage_text = estimate_toolbar_context_usage(editor_text_for_usage)
             with state_lock:
                 state.context_usage_text = context_usage_text
         invalidate_prompt()
+        if next_prompt_to_start is not None:
+            start_turn(next_prompt_to_start.prompt, next_prompt_to_start.user_message)
         return updated_session
     prompt, dropped_images = attach_standalone_prompt_image_paths(
         prompt,

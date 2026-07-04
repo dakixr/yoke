@@ -229,8 +229,22 @@ def _drain_basic_input_queue(
             messages=state.messages,
             console=console,
             pending_images=state.pending_images,
+            pending_prompts=state.pending_prompts,
         )
         if handled:
+            if state.worker is None and state.pending_prompts:
+                pending = state.pending_prompts.pop(0)
+                print_user_prompt(console, pending.prompt)
+                state.worker = _start_basic_turn(
+                    pending.prompt,
+                    state=state,
+                    active_session=active_session,
+                    agent=agent,
+                    stderr=stderr,
+                    renderer=renderer,
+                    result_queue=result_queue,
+                    user_message=pending.user_message,
+                )
             continue
         prompt, dropped_images = attach_standalone_prompt_image_paths(
             prompt,
