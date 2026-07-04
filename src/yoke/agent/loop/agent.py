@@ -377,7 +377,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         active_skills: Sequence[ActiveSkill] | None = None,
     ) -> AgentResult:
         """Run the agent loop for the given prompt and return the result."""
-        self.refresh_tools()
+        self.refresh_tools(force=True)
         context = context_for_run(
             self,
             prompt,

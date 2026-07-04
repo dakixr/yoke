@@ -33,6 +33,16 @@ class McpToolInfo:
     description: str
     input_schema: JSON
 
+    def without_schema(self) -> McpToolInfo:
+        """Return this tool metadata without input schema details."""
+        if not self.input_schema:
+            return self
+        return McpToolInfo(
+            name=self.name,
+            description=self.description,
+            input_schema={},
+        )
+
 
 class StdioMcpClient:
     """JSON-RPC MCP client for stdio servers."""
@@ -47,6 +57,7 @@ class StdioMcpClient:
         self._reader: threading.Thread | None = None
         self._closed = False
         self._tool_cache: tuple[McpToolInfo, ...] | None = None
+        self._tool_summary_cache: tuple[McpToolInfo, ...] | None = None
         self._tools_changed = False
         self.server_instructions: str | None = None
 
@@ -95,9 +106,34 @@ class StdioMcpClient:
 
     def list_tools(self, *, force: bool = False) -> tuple[McpToolInfo, ...]:
         """List all tools exposed by this MCP server."""
-        self.start()
         if self._tool_cache is not None and not force and not self._tools_changed:
             return self._tool_cache
+        self._tool_cache = self._list_tools(include_schemas=True)
+        self._tool_summary_cache = tuple(
+            tool.without_schema() for tool in self._tool_cache
+        )
+        self._tools_changed = False
+        return self._tool_cache
+
+    def list_tool_summaries(self, *, force: bool = False) -> tuple[McpToolInfo, ...]:
+        """List tool names/descriptions without retaining input schemas."""
+        if (
+            self._tool_summary_cache is not None
+            and not force
+            and not self._tools_changed
+        ):
+            return self._tool_summary_cache
+        if self._tool_cache is not None and not force and not self._tools_changed:
+            self._tool_summary_cache = tuple(
+                tool.without_schema() for tool in self._tool_cache
+            )
+            return self._tool_summary_cache
+        self._tool_summary_cache = self._list_tools(include_schemas=False)
+        self._tools_changed = False
+        return self._tool_summary_cache
+
+    def _list_tools(self, *, include_schemas: bool) -> tuple[McpToolInfo, ...]:
+        self.start()
         tools: list[McpToolInfo] = []
         cursor: str | None = None
         for _page in range(100):
@@ -117,7 +153,11 @@ class StdioMcpClient:
                 if not isinstance(name, str) or not name.strip():
                     continue
                 description = item.get("description")
-                schema = item.get("inputSchema") or item.get("input_schema") or {}
+                schema = (
+                    (item.get("inputSchema") or item.get("input_schema") or {})
+                    if include_schemas
+                    else {}
+                )
                 tools.append(
                     McpToolInfo(
                         name=name,
@@ -131,9 +171,7 @@ class StdioMcpClient:
             cursor = next_cursor
         else:
             raise McpClientError("MCP tools/list exceeded 100 pages")
-        self._tool_cache = tuple(tools)
-        self._tools_changed = False
-        return self._tool_cache
+        return tuple(tools)
 
     def call_tool(self, name: str, arguments: JSON) -> JSON:
         """Call an MCP tool."""
@@ -286,6 +324,8 @@ class McpClient(Protocol):
 
     def list_tools(self, *, force: bool = ...) -> tuple[McpToolInfo, ...]: ...
 
+    def list_tool_summaries(self, *, force: bool = ...) -> tuple[McpToolInfo, ...]: ...
+
     def call_tool(self, name: str, arguments: JSON) -> JSON: ...
 
     def close(self) -> None: ...
@@ -316,6 +356,7 @@ class StreamableHttpClient:
         self._initialized = False
         self._next_id = 0
         self._tool_cache: tuple[McpToolInfo, ...] | None = None
+        self._tool_summary_cache: tuple[McpToolInfo, ...] | None = None
         self.server_instructions: str | None = None
 
     def start(self) -> None:
@@ -339,9 +380,28 @@ class StreamableHttpClient:
 
     def list_tools(self, *, force: bool = False) -> tuple[McpToolInfo, ...]:
         """List all tools exposed by this MCP server."""
-        self.start()
         if self._tool_cache is not None and not force:
             return self._tool_cache
+        self._tool_cache = self._list_tools(include_schemas=True)
+        self._tool_summary_cache = tuple(
+            tool.without_schema() for tool in self._tool_cache
+        )
+        return self._tool_cache
+
+    def list_tool_summaries(self, *, force: bool = False) -> tuple[McpToolInfo, ...]:
+        """List tool names/descriptions without retaining input schemas."""
+        if self._tool_summary_cache is not None and not force:
+            return self._tool_summary_cache
+        if self._tool_cache is not None and not force:
+            self._tool_summary_cache = tuple(
+                tool.without_schema() for tool in self._tool_cache
+            )
+            return self._tool_summary_cache
+        self._tool_summary_cache = self._list_tools(include_schemas=False)
+        return self._tool_summary_cache
+
+    def _list_tools(self, *, include_schemas: bool) -> tuple[McpToolInfo, ...]:
+        self.start()
         tools: list[McpToolInfo] = []
         cursor: str | None = None
         for _page in range(100):
@@ -361,7 +421,11 @@ class StreamableHttpClient:
                 if not isinstance(name, str) or not name.strip():
                     continue
                 description = item.get("description")
-                schema = item.get("inputSchema") or item.get("input_schema") or {}
+                schema = (
+                    (item.get("inputSchema") or item.get("input_schema") or {})
+                    if include_schemas
+                    else {}
+                )
                 tools.append(
                     McpToolInfo(
                         name=name,
@@ -375,8 +439,7 @@ class StreamableHttpClient:
             cursor = next_cursor
         else:
             raise McpClientError("MCP tools/list exceeded 100 pages")
-        self._tool_cache = tuple(tools)
-        return self._tool_cache
+        return tuple(tools)
 
     def call_tool(self, name: str, arguments: JSON) -> JSON:
         """Call an MCP tool."""

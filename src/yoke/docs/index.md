@@ -34,10 +34,13 @@ global `~/.yoke/tools/` directories. The SDK can use capabilities, explicit
 tools, or legacy tool registration callbacks.
 MCP servers are exposed through a compact facade instead of raw tool catalogs:
 when `~/.yoke/mcp.json` or `<repo>/.yoke/mcp.json` configures enabled servers,
-yoke adds only `mcp_inspect` and `mcp_call` to the model context. The agent uses
-`mcp_inspect` to discover bounded server/tool metadata, then `mcp_call` to invoke
-one selected upstream MCP tool. Full upstream tool catalogs, resources, prompts,
-and server instructions are not injected into the hot path.
+yoke adds only `mcp_inspect` and `mcp_call` to the model context. The
+`mcp_inspect` definition advertises the current configured MCP server names and
+descriptions, requires one exact server name, and returns that server's tool
+metadata with full schemas by default. yoke refreshes capability registration at
+the start of every turn, including resumed sessions, so MCP config changes are
+picked up without stale tool definitions. Full upstream tool catalogs,
+resources, prompts, and server instructions are not injected into the hot path.
 For web research, yoke follows Codex-style context passing: the tool receives a
 sanitized recent text tail rather than the raw full conversation, keeping the
 previous user turn, bounded assistant context, and current user turn while
@@ -67,6 +70,7 @@ JSON config files:
 {
   "mcp_servers": {
     "context7": {
+      "description": "Library documentation lookup",
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp"],
       "enabled_tools": ["resolve-library-id", "get-library-docs"],

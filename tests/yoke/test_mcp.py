@@ -14,6 +14,9 @@ from yoke.agent.tools import McpCallTool
 from yoke.agent.tools import McpInspectTool
 from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.loop import RuntimeAgent
+from yoke.agent.models import Message
+from yoke.agent.capabilities.builtin import McpCapability
 from yoke.cli.bootstrap.tools import create_builtin_tools
 from yoke.cli.interactive.mcp_menu import McpMenuScope
 from yoke.cli.interactive.mcp_menu import _set_mcp_server_enabled
@@ -21,6 +24,7 @@ from yoke.cli.interactive.mcp_menu import _toggle_mcp_tool
 from yoke.mcp import McpManager
 from yoke.mcp import McpSessionPolicy
 from yoke.mcp import load_mcp_config
+from yoke.ai.providers.base import Provider
 
 
 def as_dict(value: object) -> dict[str, Any]:
@@ -65,6 +69,7 @@ def write_fake_mcp_server(path: Path) -> None:
                                         "type": "object",
                                         "properties": {"message": {"type": "string"}},
                                         "required": ["message"],
+                                        "$defs": {"shared": {"type": "string"}},
                                     },
                                 },
                                 {
@@ -103,6 +108,7 @@ def write_mcp_config(root: Path, server_path: Path) -> None:
             {
                 "mcp_servers": {
                     "fake": {
+                        "description": "Fake MCP server.",
                         "command": sys.executable,
                         "args": [str(server_path)],
                         "enabled_tools": ["echo"],
@@ -124,6 +130,7 @@ def test_mcp_config_loads_repo_server(tmp_path: Path) -> None:
     config = load_mcp_config(root=tmp_path, home=tmp_path / "home")
 
     assert [server.name for server in config.servers] == ["fake"]
+    assert config.servers[0].description == "Fake MCP server."
     assert config.servers[0].command == sys.executable
     assert config.servers[0].enabled_tools == ("echo",)
 
@@ -148,6 +155,14 @@ def test_builtin_tools_include_compact_mcp_facade_when_configured(
     assert "mcp_inspect" in names
     assert "mcp_call" in names
     assert sum(name.startswith("mcp_") for name in names) == 2
+    inspect = next(tool for tool in tools if tool.name == "mcp_inspect")
+    definition = as_dict(inspect.to_definition()["function"])
+    parameters = as_dict(definition["parameters"])
+    properties = as_dict(parameters["properties"])
+    server_property = as_dict(properties["server"])
+    assert "fake (Fake MCP server.)" in definition["description"]
+    assert server_property["enum"] == ["fake"]
+    assert parameters["required"] == ["server"]
 
 
 def test_mcp_tools_inspect_and_call_stdio_server(tmp_path: Path) -> None:
@@ -159,7 +174,7 @@ def test_mcp_tools_inspect_and_call_stdio_server(tmp_path: Path) -> None:
     call_tool = McpCallTool.bind(mcp_manager=manager)
 
     try:
-        inspected = as_dict(inspect_tool.parse_arguments({}).execute())
+        inspected = as_dict(inspect_tool.parse_arguments({"server": "fake"}).execute())
         called = as_dict(
             call_tool.parse_arguments(
                 {
@@ -180,10 +195,74 @@ def test_mcp_tools_inspect_and_call_stdio_server(tmp_path: Path) -> None:
     servers = cast(list[dict[str, object]], inspected["servers"])
     tools = cast(list[dict[str, object]], servers[0]["tools"])
     assert [tool["name"] for tool in tools] == ["echo"]
+    assert tools[0]["input_schema"] == {
+        "type": "object",
+        "properties": {"message": {"type": "string"}},
+        "required": ["message"],
+        "$defs": {"shared": {"type": "string"}},
+    }
     assert called["ok"] is True
     assert called["content"] == 'hello\n\nStructured content:\n{\n  "tool": "echo"\n}'
     assert hidden["ok"] is False
     assert hidden["error"] == "MCP tool is disabled: fake/hidden"
+
+
+def test_mcp_inspect_rejects_unknown_server(tmp_path: Path) -> None:
+    server_path = tmp_path / "server.py"
+    write_fake_mcp_server(server_path)
+    write_mcp_config(tmp_path, server_path)
+    manager = McpManager.from_paths(root=tmp_path, home=tmp_path / "home")
+    inspect_tool = McpInspectTool.bind(mcp_manager=manager)
+
+    try:
+        try:
+            inspect_tool.parse_arguments({"server": "missing"})
+        except ValueError as exc:
+            assert "Expected one of: fake" in str(exc)
+        else:
+            raise AssertionError("expected invalid MCP server to be rejected")
+    finally:
+        manager.close()
+
+
+def test_runtime_refreshes_mcp_tools_from_current_config(tmp_path: Path) -> None:
+    class CaptureToolsProvider(Provider):
+        def __init__(self) -> None:
+            self.tools: list[dict[str, object]] = []
+
+        def complete(
+            self,
+            messages: list[Message],
+            tools: list[dict[str, object]],
+        ) -> Message:
+            del messages
+            self.tools = tools
+            return Message.assistant("done")
+
+    provider = CaptureToolsProvider()
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        capabilities=(McpCapability(),),
+        tool_root=tmp_path,
+        tool_home=tmp_path / "home",
+    )
+    assert "mcp_inspect" not in agent.tools
+
+    server_path = tmp_path / "server.py"
+    write_fake_mcp_server(server_path)
+    write_mcp_config(tmp_path, server_path)
+    agent.run("hello")
+
+    inspect_definition = next(
+        tool
+        for tool in provider.tools
+        if as_dict(tool["function"])["name"] == "mcp_inspect"
+    )
+    function = as_dict(inspect_definition["function"])
+    parameters = as_dict(function["parameters"])
+    properties = as_dict(parameters["properties"])
+    assert as_dict(properties["server"])["enum"] == ["fake"]
 
 
 def test_mcp_inspect_query_matching_server_keeps_tools(tmp_path: Path) -> None:
@@ -217,6 +296,12 @@ def test_mcp_inspect_query_matching_server_keeps_tools(tmp_path: Path) -> None:
     tools = cast(list[dict[str, object]], servers[0]["tools"])
     assert servers[0]["name"] == "chrome-devtools"
     assert [tool["name"] for tool in tools] == ["echo", "hidden"]
+    assert tools[0]["input_schema"] == {
+        "type": "object",
+        "properties": {"message": {"type": "string"}},
+        "required": ["message"],
+        "$defs": {"shared": {"type": "string"}},
+    }
 
 
 def test_mcp_session_policy_can_disable_server(tmp_path: Path) -> None:
@@ -428,6 +513,7 @@ def test_streamable_http_client_initialize_list_and_call() -> None:
             assert client._session_id == "test-session-123"
             tools = client.list_tools()
             assert [tool.name for tool in tools] == ["echo"]
+            assert tools[0].input_schema["required"] == ["message"]
             result = client.call_tool("echo", {"message": "hello"})
             content = result["content"]
             assert content[0]["text"] == "hello"

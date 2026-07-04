@@ -18,10 +18,10 @@ from yoke.mcp.client import McpClient
 from yoke.mcp.client import McpToolInfo
 from yoke.mcp.config import McpConfig
 from yoke.mcp.config import McpServerConfig
-from yoke.mcp.config import compact_tool_schema
 from yoke.mcp.config import load_mcp_config
 from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import server_supports_tool
+from yoke.mcp.config import tool_schema_for_inspection
 
 
 class McpManager:
@@ -129,9 +129,14 @@ class McpManager:
                 servers.append(entry)
                 continue
             try:
+                listed_tools = (
+                    self._client(config).list_tools()
+                    if include_schemas
+                    else self._client(config).list_tool_summaries()
+                )
                 tools = [
                     tool
-                    for tool in self._client(config).list_tools()
+                    for tool in listed_tools
                     if server_supports_tool(config, tool.name)
                     and (server_matches_query or _matches_tool(tool, needle))
                 ]
@@ -173,7 +178,9 @@ class McpManager:
         if not server_supports_tool(config, tool):
             return {"ok": False, "error": f"MCP tool is disabled: {server}/{tool}"}
         try:
-            known_tools = {item.name for item in self._client(config).list_tools()}
+            known_tools = {
+                item.name for item in self._client(config).list_tool_summaries()
+            }
             if tool not in known_tools:
                 return {"ok": False, "error": f"Unknown MCP tool: {server}/{tool}"}
             result = self._client(config).call_tool(tool, arguments)
@@ -195,10 +202,10 @@ class McpManager:
         }
 
     def list_configured_tools(self, server: McpServerConfig) -> tuple[McpToolInfo, ...]:
-        """Return all tools advertised by a configured server."""
+        """Return tool names/descriptions advertised by a configured server."""
         if server.transport not in {"stdio", "streamable-http", "http"}:
             return ()
-        return tuple(self._client(server).list_tools())
+        return tuple(self._client(server).list_tool_summaries())
 
     def _client(self, server: McpServerConfig) -> McpClient:
         client = self._clients.get(server.name)
@@ -237,7 +244,10 @@ def _tool_summary(tool: McpToolInfo, *, include_schema: bool) -> dict[str, objec
     if len(description) > 240:
         description = description[:239].rstrip() + "…"
     summary: dict[str, object] = {"name": tool.name, "description": description}
-    schema = compact_tool_schema(tool.input_schema, include_schema=include_schema)
+    schema = tool_schema_for_inspection(
+        tool.input_schema,
+        include_schema=include_schema,
+    )
     if schema is not None:
         summary["input_schema"] = schema
     return summary
