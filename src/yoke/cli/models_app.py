@@ -72,6 +72,7 @@ def _write_default_model_config(
                     if default_reasoning_effort is not None
                     else config.default_reasoning_effort
                 ),
+                title_model=config.title_model,
             ).model_dump(mode="json", exclude_none=True),
             indent=2,
         )

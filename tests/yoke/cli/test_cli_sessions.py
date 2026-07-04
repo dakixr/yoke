@@ -218,6 +218,12 @@ def test_session_store_list_prunes_expired_sessions(tmp_path: Path) -> None:
 
 
 def test_cli_auto_persists_unnamed_session_globally(tmp_path: Path, capsys) -> None:
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        '{"title_model": "missing:gpt-title:low"}\n',
+        encoding="utf-8",
+    )
     agent = FakeAgent()
 
     exit_code = run_cli(
@@ -238,12 +244,30 @@ def test_cli_auto_persists_unnamed_session_globally(tmp_path: Path, capsys) -> N
     ]
 
 
-def test_cli_uses_provider_to_title_completed_first_turn(
-    tmp_path: Path, capsys
+def test_cli_uses_configured_title_model_for_completed_first_turn(
+    tmp_path: Path, capsys, monkeypatch
 ) -> None:
     provider = TitleProvider("Fix config loading")
+
+    class TitleModelProvider:
+        def __init__(self, config: object) -> None:
+            self.config = config
+
+        def complete(
+            self,
+            messages: list[Message],
+            tools: list[dict[str, object]],
+        ) -> Message:
+            return provider.complete(messages, tools)
+
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        '{"title_model": "codex:gpt-title:low"}\n',
+        encoding="utf-8",
+    )
+    install_builtin_provider(monkeypatch, TitleModelProvider)
     agent = FakeAgent()
-    agent.provider = provider
 
     exit_code = run_cli(
         CLIArgs(

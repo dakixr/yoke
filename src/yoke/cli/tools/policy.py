@@ -30,6 +30,7 @@ class PiConfig(BaseModel):
     tools: dict[str, ToolPolicy] = Field(default_factory=dict)
     default_model: str | None = None
     default_reasoning_effort: str | None = None
+    title_model: str | None = None
 
     @field_validator("tools")
     @classmethod
@@ -48,7 +49,7 @@ class PiConfig(BaseModel):
 
     @field_validator("default_model")
     @classmethod
-    def _validate_default_model(cls, value: str | None) -> str | None:
+    def _validate_provider_model(cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = value.strip()
@@ -61,15 +62,32 @@ class PiConfig(BaseModel):
             )
         return f"{provider_name.strip().lower()}:{model_name.strip()}"
 
-    @field_validator("default_reasoning_effort")
+    @field_validator("title_model")
     @classmethod
-    def _validate_default_reasoning_effort(cls, value: str | None) -> str | None:
+    def _validate_title_model(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        normalized = value.strip().lower()
-        if normalized not in {"none", "low", "medium", "high", "xhigh"}:
-            raise ValueError("Expected one of none, low, medium, high, or xhigh.")
-        return normalized
+        normalized = value.strip()
+        if normalized.count(":") < 2:
+            raise ValueError("Expected `provider-name:model-name:reasoning-effort`.")
+        provider_name, rest = normalized.split(":", maxsplit=1)
+        model_name, reasoning_effort = rest.rsplit(":", maxsplit=1)
+        provider_name = provider_name.strip().lower()
+        model_name = model_name.strip()
+        reasoning_effort = _normalize_reasoning_effort(reasoning_effort)
+        if not provider_name or not model_name:
+            raise ValueError(
+                "Expected `provider-name:model-name:reasoning-effort` "
+                "with all parts non-empty."
+            )
+        return f"{provider_name}:{model_name}:{reasoning_effort}"
+
+    @field_validator("default_reasoning_effort")
+    @classmethod
+    def _validate_reasoning_effort(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_reasoning_effort(value)
 
 
 BUILTIN_CAPABILITY_NAMES = (
@@ -138,7 +156,8 @@ def load_config_file(path: Path) -> LoadedWorkspaceConfig:
             "Expected shape: "
             '{"tools": {"capability_or_tool_name": "allow|deny"}, '
             '"default_model": "provider-name:model-name", '
-            '"default_reasoning_effort": "none|low|medium|high|xhigh"}. '
+            '"default_reasoning_effort": "none|low|medium|high|xhigh", '
+            '"title_model": "provider-name:model-name:reasoning-effort"}. '
             "All fields are optional."
         ) from exc
     return LoadedWorkspaceConfig(path=path, config=config)
@@ -156,7 +175,9 @@ def load_global_config(home: Path) -> LoadedWorkspaceConfig:
 
 def default_yoke_config() -> PiConfig:
     """default_yoke_config."""
-    return PiConfig()
+    return PiConfig(
+        title_model="codex:gpt-5.4-mini:medium",
+    )
 
 
 def merge_configs(*configs: PiConfig) -> PiConfig:
@@ -164,16 +185,20 @@ def merge_configs(*configs: PiConfig) -> PiConfig:
     merged: dict[str, ToolPolicy] = {}
     default_model: str | None = None
     default_reasoning_effort: str | None = None
+    title_model: str | None = None
     for config in configs:
         merged.update(config.tools)
         if config.default_model is not None:
             default_model = config.default_model
         if config.default_reasoning_effort is not None:
             default_reasoning_effort = config.default_reasoning_effort
+        if config.title_model is not None:
+            title_model = config.title_model
     return PiConfig(
         tools=merged,
         default_model=default_model,
         default_reasoning_effort=default_reasoning_effort,
+        title_model=title_model,
     )
 
 
@@ -231,3 +256,10 @@ def unmatched_tool_patterns(config: PiConfig, known_tool_names: set[str]) -> lis
 
 def _looks_like_glob(value: str) -> bool:
     return any(char in value for char in "*?[]")
+
+
+def _normalize_reasoning_effort(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"none", "low", "medium", "high", "xhigh"}:
+        raise ValueError("Expected one of none, low, medium, high, or xhigh.")
+    return normalized

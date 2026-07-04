@@ -12,7 +12,12 @@ from yoke.agent.models import Message
 from yoke.agent.state import AgentState
 from yoke.agent.state import capture_agent_state
 from yoke.agent.state import merge_conversation_branch
+from yoke.ai.providers.base import Provider
 from yoke.cli.config.args import CLIArgs
+from yoke.cli.config.default_model import load_effective_yoke_config
+from yoke.cli.config.default_model import parse_config_title_model
+from yoke.cli.config.providers import build_provider_from_args
+from yoke.cli.config.providers import prepare_provider_args
 from yoke.cli.path_display import format_root_label
 from yoke.cli.providers.state import apply_session_provider_defaults
 from yoke.cli.providers.state import capture_provider_session_state
@@ -101,9 +106,17 @@ def ensure_session_title(
     if active_session.title:
         return
     if isinstance(messages, str):
-        active_session.title = generate_session_title(agent, messages)
+        active_session.title = generate_session_title(
+            agent,
+            messages,
+            root=active_session.root,
+        )
     else:
-        active_session.title = generate_session_title_from_messages(agent, messages)
+        active_session.title = generate_session_title_from_messages(
+            agent,
+            messages,
+            root=active_session.root,
+        )
     save_active_session(
         active_session,
         active_session.record.messages,
@@ -112,19 +125,33 @@ def ensure_session_title(
     )
 
 
-def generate_session_title(agent: AgentRunner, prompt: str) -> str:
+def generate_session_title(
+    agent: AgentRunner,
+    prompt: str,
+    *,
+    root: Path | None = None,
+) -> str:
     """Generate a short session title."""
-    return generate_session_title_from_messages(agent, [Message.user(prompt)])
+    return generate_session_title_from_messages(
+        agent,
+        [Message.user(prompt)],
+        root=root,
+    )
 
 
 def generate_session_title_from_messages(
     agent: AgentRunner,
     messages: list[Message],
+    *,
+    root: Path | None = None,
 ) -> str:
     """Generate a short session title from the current conversation context."""
-    provider = getattr(agent, "provider", None)
+    del agent
     fallback_prompt = _fallback_title_prompt(messages)
-    if provider is None or any(message.has_image_inputs() for message in messages):
+    if any(message.has_image_inputs() for message in messages):
+        return fallback_session_title(fallback_prompt)
+    provider = _title_generation_provider(root=root)
+    if provider is None:
         return fallback_session_title(fallback_prompt)
     try:
         response = provider.complete(
@@ -143,6 +170,26 @@ def generate_session_title_from_messages(
     return fallback_session_title(title or fallback_prompt)
 
 
+def _title_generation_provider(*, root: Path | None) -> Provider | None:
+    config = load_effective_yoke_config(
+        root=(root or Path.cwd()).resolve(),
+        home=Path.home(),
+    )
+    title_model = parse_config_title_model(config.title_model)
+    if title_model is None:
+        return None
+    args = CLIArgs(
+        model=f"{title_model.provider_name}:{title_model.model_name}",
+        reasoning_effort=title_model.reasoning_effort,
+        root=str((root or Path.cwd()).resolve()),
+    )
+    try:
+        prepare_provider_args(args)
+        return build_provider_from_args(args)
+    except Exception:
+        return None
+
+
 def start_session_title_generation(
     active_session: ActiveSession,
     agent: AgentRunner,
@@ -158,7 +205,11 @@ def start_session_title_generation(
     def generate_and_save() -> None:
         if active_session.title:
             return
-        title = generate_session_title_from_messages(agent, message_snapshot)
+        title = generate_session_title_from_messages(
+            agent,
+            message_snapshot,
+            root=active_session.root,
+        )
         if active_session.title:
             return
         active_session.title = title

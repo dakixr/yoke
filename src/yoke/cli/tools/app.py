@@ -168,6 +168,8 @@ def _write_tool_policy(path: Path, tool_name: str, policy: ToolPolicy) -> None:
             PiConfig(
                 tools=tools,
                 default_model=config.default_model,
+                default_reasoning_effort=config.default_reasoning_effort,
+                title_model=config.title_model,
             ).model_dump(mode="json", exclude_none=True),
             indent=2,
         )

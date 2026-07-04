@@ -136,13 +136,18 @@ You can also set a config default in `~/.yoke/config.json` or `.yoke/config.json
 ```json
 {
   "default_model": "codex:gpt-5.4-mini",
-  "default_reasoning_effort": "high"
+  "default_reasoning_effort": "high",
+  "title_model": "codex:gpt-5.4-mini:medium"
 }
 ```
 
 `default_model` is only used when you do not pass `--model`.
 `default_reasoning_effort` is only used when you do not pass
 `--reasoning-effort`.
+`title_model` controls the low-cost model used to generate new session titles.
+It uses `provider:model:reasoning-effort`, defaults to
+`codex:gpt-5.4-mini:medium`, and does not change the provider/model used for
+conversation turns.
 An explicit CLI flag wins, and `yoke resume` still prefers the last provider/model
 saved in that session.
 

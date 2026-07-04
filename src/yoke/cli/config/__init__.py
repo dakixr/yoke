@@ -9,11 +9,15 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from yoke.cli.config.args import CLIArgs as CLIArgs
     from yoke.cli.config.default_model import ConfigDefaultModel as ConfigDefaultModel
+    from yoke.cli.config.default_model import ConfigTitleModel as ConfigTitleModel
     from yoke.cli.config.default_model import (
         load_effective_yoke_config as load_effective_yoke_config,
     )
     from yoke.cli.config.default_model import (
         parse_config_default_model as parse_config_default_model,
+    )
+    from yoke.cli.config.default_model import (
+        parse_config_title_model as parse_config_title_model,
     )
     from yoke.cli.config.providers import (
         BUILTIN_PROVIDER_NAMES as BUILTIN_PROVIDER_NAMES,
@@ -39,6 +43,7 @@ _LAZY_EXPORTS = {
     "BuiltCLIAgent": ("yoke.cli.config.runtime", "BuiltCLIAgent"),
     "CLIArgs": ("yoke.cli.config.args", "CLIArgs"),
     "ConfigDefaultModel": ("yoke.cli.config.default_model", "ConfigDefaultModel"),
+    "ConfigTitleModel": ("yoke.cli.config.default_model", "ConfigTitleModel"),
     "DEFAULT_SYSTEM_PROMPT": ("yoke.cli.config.runtime", "DEFAULT_SYSTEM_PROMPT"),
     "RUN_ERRORS": ("yoke.cli.config.runtime", "RUN_ERRORS"),
     "build_agent_from_args": ("yoke.cli.config.runtime", "build_agent_from_args"),
@@ -64,6 +69,10 @@ _LAZY_EXPORTS = {
         "yoke.cli.config.default_model",
         "parse_config_default_model",
     ),
+    "parse_config_title_model": (
+        "yoke.cli.config.default_model",
+        "parse_config_title_model",
+    ),
 }
 
 __all__ = [
@@ -71,6 +80,7 @@ __all__ = [
     "BuiltCLIAgent",
     "CLIArgs",
     "ConfigDefaultModel",
+    "ConfigTitleModel",
     "DEFAULT_SYSTEM_PROMPT",
     "RUN_ERRORS",
     "build_agent_from_args",
@@ -81,6 +91,7 @@ __all__ = [
     "format_tool_discovery_message",
     "load_effective_yoke_config",
     "parse_config_default_model",
+    "parse_config_title_model",
 ]
 
 

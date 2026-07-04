@@ -20,6 +20,15 @@ class ConfigDefaultModel:
     model_name: str
 
 
+@dataclass(slots=True, frozen=True)
+class ConfigTitleModel:
+    """Parsed provider/model/reasoning tuple from title config."""
+
+    provider_name: str
+    model_name: str
+    reasoning_effort: str
+
+
 def parse_config_default_model(value: str | None) -> ConfigDefaultModel | None:
     """Parse a validated `provider:model` config value."""
     if value is None:
@@ -28,6 +37,19 @@ def parse_config_default_model(value: str | None) -> ConfigDefaultModel | None:
     return ConfigDefaultModel(
         provider_name=provider_name.strip().lower(),
         model_name=model_name.strip(),
+    )
+
+
+def parse_config_title_model(value: str | None) -> ConfigTitleModel | None:
+    """Parse a validated `provider:model:reasoning` title config value."""
+    if value is None:
+        return None
+    provider_name, rest = value.split(":", maxsplit=1)
+    model_name, reasoning_effort = rest.rsplit(":", maxsplit=1)
+    return ConfigTitleModel(
+        provider_name=provider_name.strip().lower(),
+        model_name=model_name.strip(),
+        reasoning_effort=reasoning_effort.strip().lower(),
     )
 
 
