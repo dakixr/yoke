@@ -702,6 +702,30 @@ def test_tool_inspector_html_escapes_output_lines_starting_like_markup(
     assert "&lt;ansired invalid&gt; &amp; raw" in html
 
 
+def test_tool_inspector_html_sanitizes_control_characters(monkeypatch) -> None:
+    from prompt_toolkit.formatted_text import HTML
+
+    monkeypatch.setattr(
+        "yoke.cli.interactive.tools.inspector_render.terminal_size",
+        lambda: (100, 16),
+    )
+    state = ToolInspectorState(
+        entries=[
+            ToolTraceEntry(
+                tool_call_id="call-1",
+                tool_name="bash",
+                result={"ok": True, "stdout": "before \x1b[A after \x00"},
+                status="ok",
+            )
+        ]
+    )
+
+    html = render_view_html(state, state.entries)
+
+    HTML(html)
+    assert "before ␛[A after ␀" in html
+
+
 def test_tool_inspector_html_pads_empty_sidebar_rows(monkeypatch) -> None:
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.formatted_text import to_formatted_text

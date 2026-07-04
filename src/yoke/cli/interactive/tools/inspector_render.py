@@ -6,7 +6,7 @@ import shutil
 import textwrap
 from collections.abc import Sequence
 from contextlib import suppress
-from html import escape
+from html import escape as html_escape
 from typing import Literal
 from typing import Protocol
 
@@ -25,6 +25,28 @@ DETAIL_DIM_CLOSE = "</style>"
 
 
 type ToolInspectorItem = ToolTraceEntry | ToolTraceContext
+
+
+def escape(text: str) -> str:
+    """Escape dynamic text for prompt-toolkit HTML/XML parsing."""
+    return html_escape(_sanitize_xml_text(text))
+
+
+def _sanitize_xml_text(text: str) -> str:
+    return "".join(_xml_safe_char(char) for char in text)
+
+
+def _xml_safe_char(char: str) -> str:
+    codepoint = ord(char)
+    if char in "\t\n\r" or 0x20 <= codepoint <= 0xD7FF:
+        return char
+    if 0xE000 <= codepoint <= 0xFFFD or 0x10000 <= codepoint <= 0x10FFFF:
+        return char
+    if codepoint <= 0x1F:
+        return chr(0x2400 + codepoint)
+    if codepoint == 0x7F:
+        return "␡"
+    return "�"
 
 
 class ToolInspectorRenderState(Protocol):
