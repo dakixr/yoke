@@ -38,13 +38,18 @@ yoke --model opencode-go:deepseek-v4-pro "Review this repository and suggest ref
 
 | Provider | Auth |
 |----------|------|
-| `codex` | `~/.codex/auth.json` with account-vault selection from `~/.codex-auth/accounts` |
-| `codex-websockets` | Same Codex auth as `codex`, using the Responses WebSocket transport |
+| `codex` | WebSocket Codex Responses transport using `~/.codex/auth.json`, account-vault selection from `~/.codex-auth/accounts`, or `YOKE_CODEX_API_KEY` for proxy/API-key auth |
 | `opencode-go` | `OPENCODE_API_KEY` env var |
 | `zai` | `ZAI_API_KEY` env var |
 
 If you omit the provider prefix and pass only `--model model-name`, yoke detects
 the provider from available credentials.
+
+Codex uses the persistent Responses WebSocket transport. By default it connects
+to ChatGPT's Codex backend. Set `YOKE_CODEX_DOMAIN` to a proxy origin, such as
+`https://codexlb.dakixr.dev`, to append `/backend-api` automatically and route
+Codex through that proxy. Set `YOKE_CODEX_API_KEY` when the proxy uses bearer
+API-key auth instead of local Codex OAuth.
 
 Provider model catalogs can attach model-specific system messages. Yoke sends
 those messages only for the active `provider:model` and refreshes them when a
@@ -60,10 +65,8 @@ there works, it falls back to `~/.codex/auth.json`. If that fallback token is
 missing, expired, or later rejected by the API, yoke refreshes or re-prompts
 login against `~/.codex/auth.json`.
 
-Use `--model codex-websockets:gpt-5.5` to opt into Codex's persistent Responses
-WebSocket transport. It uses the same auth and account selection as `codex` and
-accepts `YOKE_CODEX_WEBSOCKETS_*` overrides for model, base URL, timeout,
-retries, reasoning effort, text verbosity, and logs.
+The Codex provider accepts `YOKE_CODEX_*` overrides for model, domain/base URL,
+timeout, retries, reasoning effort, text verbosity, logs, and optional API key.
 
 When resuming sessions, Codex request history is normalized to omit orphaned or
 partially saved tool outputs before sending the next request. This prevents
@@ -657,6 +660,8 @@ yoke --root /path/to/project "..."
 
 | Variable | Description |
 |----------|-------------|
+| `YOKE_CODEX_API_KEY` | Optional bearer token for a Codex-compatible proxy such as CodexLB |
+| `YOKE_CODEX_DOMAIN` | Optional Codex-compatible proxy origin; yoke appends `/backend-api` |
 | `OPENCODE_API_KEY` | OpenCode Go API key |
 | `ZAI_API_KEY` | Z.ai API key |
 | `YOKE_SESSION_DIR` | Override session storage directory |

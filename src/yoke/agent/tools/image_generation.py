@@ -179,7 +179,7 @@ class ImageGenerationTool(LocalTool):
 def provider_supports_image_generation(provider: object) -> bool:
     """Return whether a provider exposes Codex image generation support."""
     provider_name = getattr(provider, "provider_name", None)
-    if provider_name not in {"codex", "codex-websockets"}:
+    if provider_name != "codex":
         return False
     return bool(getattr(provider, "supports_image_generation", False)) and callable(
         getattr(provider, "generate_image", None)

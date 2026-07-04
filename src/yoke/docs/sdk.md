@@ -158,7 +158,7 @@ from yoke.agent.tools import ReadTool, EditTool, WriteTool, GrepTool
 | `WebResearchTool` | `web_research` | Autonomously search, fetch, and synthesize a multi-source research answer with evidence. |
 | `SkillTool` | `skill` | Let the agent load configured skills at runtime. |
 
-When the active provider is `codex` or `codex-websockets`, `WebResearchTool`
+When the active provider is `codex`, `WebResearchTool`
 uses Codex's hosted Responses `web_search` tool in-process through
 `ToolRuntimeContext`. Other providers and standalone tool instances use YOKE's
 local search-and-fetch pipeline with fast HTML parsing for fetched research

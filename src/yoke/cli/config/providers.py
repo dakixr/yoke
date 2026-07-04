@@ -28,19 +28,16 @@ else:
 
 BUILTIN_PROVIDER_NAMES = (
     "codex",
-    "codex-websockets",
     "opencode-go",
     "zai",
 )
 _BUILTIN_PROVIDER_TARGETS = {
-    "codex": ("yoke.ai.providers.codex.subscription", "register_provider"),
-    "codex-websockets": ("yoke.ai.providers.codex.websockets", "register_provider"),
+    "codex": ("yoke.ai.providers.codex.websockets", "register_provider"),
     "opencode-go": ("yoke.ai.providers.opencode_go", "register_provider"),
     "zai": ("yoke.ai.providers.zai", "register_provider"),
 }
 _BUILTIN_MODEL_LISTER_TARGETS = {
-    "codex": ("yoke.ai.providers.codex.subscription", "list_provider_models"),
-    "codex-websockets": ("yoke.ai.providers.codex.websockets", "list_provider_models"),
+    "codex": ("yoke.ai.providers.codex.websockets", "list_provider_models"),
     "opencode-go": ("yoke.ai.providers.opencode_go", "list_provider_models"),
     "zai": ("yoke.ai.providers.zai", "list_provider_models"),
 }

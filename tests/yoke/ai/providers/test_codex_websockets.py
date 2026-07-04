@@ -22,6 +22,7 @@ from yoke.ai.providers.codex.websockets import CodexWebSocketParseState
 from yoke.ai.providers.codex.websockets import CodexWebSocketTimeoutError
 from yoke.ai.providers.codex.websockets import RESPONSES_WEBSOCKETS_BETA
 from yoke.ai.providers.codex.websockets import X_CODEX_TURN_STATE_HEADER
+from yoke.ai.providers.codex.websockets import base_url_for_domain
 from yoke.ai.providers.codex.websockets import build_message_from_websocket_state
 from yoke.ai.providers.codex.websockets import handle_websocket_event
 from yoke.ai.providers.codex.websockets import optional_float_env
@@ -43,6 +44,13 @@ def test_websocket_url_for_chatgpt_codex_base() -> None:
 def test_websocket_url_for_openai_compatible_v1_base() -> None:
     assert websocket_url_for_base("ws://127.0.0.1:8765/v1") == (
         "ws://127.0.0.1:8765/v1/responses"
+    )
+
+
+def test_base_url_for_domain_appends_backend_api() -> None:
+    assert (
+        base_url_for_domain("https://codexlb.dakixr.dev")
+        == "https://codexlb.dakixr.dev/backend-api"
     )
 
 
@@ -97,13 +105,13 @@ def test_websocket_response_done_builds_message_from_output_item() -> None:
 
     message = build_message_from_websocket_state(
         state,
-        provider_name="codex-websockets",
+        provider_name="codex",
         model_id="gpt-5.4",
     )
 
     assert message.text_content() == "done"
     assert message.usage is not None
-    assert message.usage.provider_name == "codex-websockets"
+    assert message.usage.provider_name == "codex"
     assert message.usage.total_tokens == 3
 
 
@@ -131,7 +139,7 @@ def test_websocket_response_prefers_deltas_over_output_item_snapshot() -> None:
 
     message = build_message_from_websocket_state(
         state,
-        provider_name="codex-websockets",
+        provider_name="codex",
         model_id="gpt-5.4",
     )
 
@@ -163,7 +171,7 @@ def test_websocket_response_prefers_deltas_over_completed_snapshot() -> None:
 
     message = build_message_from_websocket_state(
         state,
-        provider_name="codex-websockets",
+        provider_name="codex",
         model_id="gpt-5.4",
     )
 
@@ -264,7 +272,7 @@ def test_websocket_function_call_output_item_builds_tool_call() -> None:
 
     message = build_message_from_websocket_state(
         state,
-        provider_name="codex-websockets",
+        provider_name="codex",
         model_id="gpt-5.4",
     )
 

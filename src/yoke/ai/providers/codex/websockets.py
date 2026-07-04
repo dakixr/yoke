@@ -52,7 +52,7 @@ from yoke.ai.providers.codex.subscription import message_phase_from_completed_re
 from yoke.ai.providers.codex.subscription import normalize_message_phase
 from yoke.ai.providers.usage import parse_token_usage
 
-PROVIDER_NAME = "codex-websockets"
+PROVIDER_NAME = "codex"
 RESPONSES_WEBSOCKETS_BETA = "responses_websockets=2026-02-06"
 DEFAULT_WS_BASE_URL = DEFAULT_BASE_URL
 STALE_WEBSOCKET_CLOSED_MESSAGE = "Codex WebSocket closed before response.completed."
@@ -69,12 +69,17 @@ class CodexPreviousResponseNotFoundError(ProviderError):
     """Raised when the active account cannot access a prior response id."""
 
 
-def register_provider(context: Any) -> CodexWebSockets:
+def register_provider(context: Any) -> CodexProvider:
     env = context.env or {}
     cxauth_vault = context.home / DEFAULT_CXAUTH_VAULT_NAME
-    model = context.model or env.get("YOKE_CODEX_WEBSOCKETS_MODEL") or "gpt-5.5"
-    return CodexWebSockets(
-        CodexWebSocketsConfig(
+    model = (
+        context.model
+        or env.get("YOKE_CODEX_MODEL")
+        or env.get("YOKE_CODEX_WEBSOCKETS_MODEL")
+        or "gpt-5.5"
+    )
+    return CodexProvider(
+        CodexConfig(
             auth_path=context.home / ".codex" / "auth.json",
             accounts_dir=cxauth_vault / "accounts",
             auths_path=(
@@ -95,36 +100,33 @@ def register_provider(context: Any) -> CodexWebSockets:
                 env.get("YOKE_CODEX_SELECTION_TTL_SECONDS") or "1800"
             ),
             model=model,
-            base_url=(
-                env.get("YOKE_CODEX_WEBSOCKETS_BASE_URL")
-                or env.get("YOKE_CODEX_BASE_URL")
-                or DEFAULT_WS_BASE_URL
-            ),
+            base_url=_base_url_from_env(env),
+            api_key=env.get("YOKE_CODEX_API_KEY") or None,
             originator=env.get("YOKE_CODEX_ORIGINATOR") or "yoke",
             timeout_seconds=float(
-                env.get("YOKE_CODEX_WEBSOCKETS_TIMEOUT_SECONDS")
-                or env.get("YOKE_CODEX_TIMEOUT_SECONDS")
+                env.get("YOKE_CODEX_TIMEOUT_SECONDS")
+                or env.get("YOKE_CODEX_WEBSOCKETS_TIMEOUT_SECONDS")
                 or str(DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS)
             ),
             max_retries=int(
-                env.get("YOKE_CODEX_WEBSOCKETS_MAX_RETRIES")
-                or env.get("YOKE_CODEX_MAX_RETRIES")
+                env.get("YOKE_CODEX_MAX_RETRIES")
+                or env.get("YOKE_CODEX_WEBSOCKETS_MAX_RETRIES")
                 or "5"
             ),
             reasoning_effort=(
                 context.reasoning_effort
-                or env.get("YOKE_CODEX_WEBSOCKETS_REASONING_EFFORT")
                 or env.get("YOKE_CODEX_REASONING_EFFORT")
+                or env.get("YOKE_CODEX_WEBSOCKETS_REASONING_EFFORT")
                 or default_reasoning_effort_for_model_id(model)
             ),
             text_verbosity=(
-                env.get("YOKE_CODEX_WEBSOCKETS_TEXT_VERBOSITY")
-                or env.get("YOKE_CODEX_TEXT_VERBOSITY")
+                env.get("YOKE_CODEX_TEXT_VERBOSITY")
+                or env.get("YOKE_CODEX_WEBSOCKETS_TEXT_VERBOSITY")
                 or "medium"
             ),
             logs_dir=Path(
-                env.get("YOKE_CODEX_WEBSOCKETS_LOGS_DIR")
-                or env.get("YOKE_CODEX_LOGS_DIR")
+                env.get("YOKE_CODEX_LOGS_DIR")
+                or env.get("YOKE_CODEX_WEBSOCKETS_LOGS_DIR")
                 or env.get("YOKE_PROVIDER_LOGS_DIR")
                 or str(DEFAULT_LOGS_DIR)
             ),
@@ -140,9 +142,13 @@ def register_provider(context: Any) -> CodexWebSockets:
     )
 
 
-class CodexWebSocketsConfig(CodexSubscriptionConfig):
+class CodexConfig(CodexSubscriptionConfig):
+    api_key: str | None = None
     websocket_ping_interval_seconds: float | None = None
     websocket_ping_timeout_seconds: float | None = 20.0
+
+
+CodexWebSocketsConfig = CodexConfig
 
 
 def optional_float_env(value: str | None, *, default: float | None) -> float | None:
@@ -171,12 +177,12 @@ class CodexWebSocketConnection(Protocol):
     def close(self) -> None: ...
 
 
-class CodexWebSockets(CodexSubscriptionProvider):
+class CodexProvider(CodexSubscriptionProvider):
     provider_name = PROVIDER_NAME
 
     def __init__(
         self,
-        config: CodexWebSocketsConfig,
+        config: CodexConfig,
         *,
         websocket_factory: Callable[..., CodexWebSocketConnection] | None = None,
         sleep: Callable[[float], None] | None = None,
@@ -196,11 +202,11 @@ class CodexWebSockets(CodexSubscriptionProvider):
         self._pending_response_id: str | None = None
 
     @property
-    def config(self) -> CodexWebSocketsConfig:
+    def config(self) -> CodexConfig:
         return self.__dict__["config"]
 
     @config.setter
-    def config(self, value: CodexWebSocketsConfig) -> None:
+    def config(self, value: CodexConfig) -> None:
         self.__dict__["config"] = value
 
     def complete(
@@ -525,9 +531,8 @@ class CodexWebSockets(CodexSubscriptionProvider):
 
     def _request_headers(self, credentials: OAuthCredentials) -> dict[str, str]:
         request_id = secrets.token_hex(16)
-        return {
+        headers = {
             "Authorization": f"Bearer {credentials.access}",
-            "chatgpt-account-id": credentials.account_id,
             "originator": self.config.originator,
             "User-Agent": (
                 f"yoke ({platform.system().lower()}; {platform.machine().lower()})"
@@ -542,6 +547,48 @@ class CodexWebSockets(CodexSubscriptionProvider):
                 else {}
             ),
         }
+        if not self.config.api_key:
+            headers["chatgpt-account-id"] = credentials.account_id
+        return headers
+
+    def _fresh_credentials(self) -> OAuthCredentials:
+        if self.config.api_key:
+            self._active_auth_profile = "api-key"
+            self._log_auth_profile_change("env", "api-key")
+            return OAuthCredentials(
+                access=self.config.api_key,
+                refresh="api-key",
+                expires=int((time.time() + 365 * 24 * 60 * 60) * 1000),
+                account_id="api-key",
+            )
+        return super()._fresh_credentials()
+
+    def _recover_invalid_oauth_credentials(
+        self,
+        *,
+        auth_profile: str | None,
+        request_id: str,
+        attempt: int,
+        detail: str,
+        request_metrics: dict[str, object],
+    ) -> OAuthCredentials | None:
+        if self.config.api_key:
+            self._log_event(
+                "auth_invalidated",
+                request_id=request_id,
+                attempt=attempt,
+                auth_profile=auth_profile,
+                detail=detail,
+                **request_metrics,
+            )
+            raise ProviderError("Codex API key was rejected. Check YOKE_CODEX_API_KEY.")
+        return super()._recover_invalid_oauth_credentials(
+            auth_profile=auth_profile,
+            request_id=request_id,
+            attempt=attempt,
+            detail=detail,
+            request_metrics=request_metrics,
+        )
 
     def _responses_url(self) -> str:
         return websocket_url_for_base(self.config.base_url)
@@ -729,6 +776,32 @@ def websocket_url_for_base(base_url: str) -> str:
     )
 
 
+def base_url_for_domain(domain: str) -> str:
+    normalized = domain.strip().rstrip("/")
+    if not normalized:
+        raise ValueError("Codex domain must be a non-empty URL.")
+    if not normalized.startswith(("http://", "https://", "ws://", "wss://")):
+        raise ValueError(
+            "Codex domain must include http://, https://, ws://, or wss://."
+        )
+    if normalized.endswith(("/backend-api", "/backend-api/codex", "/v1")):
+        return normalized
+    if normalized.endswith(("/backend-api/codex/responses", "/v1/responses")):
+        return normalized
+    return f"{normalized}/backend-api"
+
+
+def _base_url_from_env(env: dict[str, str]) -> str:
+    domain = env.get("YOKE_CODEX_DOMAIN")
+    if domain:
+        return base_url_for_domain(domain)
+    return (
+        env.get("YOKE_CODEX_BASE_URL")
+        or env.get("YOKE_CODEX_WEBSOCKETS_BASE_URL")
+        or DEFAULT_WS_BASE_URL
+    )
+
+
 def ssl_context_for_websocket_url(url: str) -> ssl.SSLContext | None:
     if not url.startswith("wss://"):
         return None
@@ -883,7 +956,13 @@ def map_websocket_error_event(event: dict[str, Any]) -> ProviderError:
             f"Codex WebSocket connection limit reached: {event}",
             status_code=503,
         )
-    if "previous_response_not_found" in haystack:
+    previous_response_problem = (
+        "previous_response_not_found" in haystack
+        or "previous_response_id" in haystack
+        or ("previous" in haystack and "not found" in haystack)
+        or ("prev" in haystack and "msg" in haystack)
+    )
+    if previous_response_problem:
         return CodexPreviousResponseNotFoundError(
             f"Codex WebSocket previous response was not found: {event}",
             status_code=status_code if isinstance(status_code, int) else None,
@@ -928,11 +1007,17 @@ def map_websocket_status_error(exc: InvalidStatus) -> ProviderError:
 
 
 __all__ = [
+    "CodexProvider",
+    "CodexConfig",
     "CodexWebSockets",
     "CodexWebSocketsConfig",
     "PROVIDER_NAME",
     "X_CODEX_TURN_STATE_HEADER",
     "list_provider_models",
     "register_provider",
+    "base_url_for_domain",
     "websocket_url_for_base",
 ]
+
+
+CodexWebSockets = CodexProvider
