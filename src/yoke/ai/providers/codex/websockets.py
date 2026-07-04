@@ -942,6 +942,11 @@ def build_message_from_websocket_state(
 
 def map_websocket_error_event(event: dict[str, Any]) -> ProviderError:
     error_payload = event.get("error") if isinstance(event, dict) else None
+    response_payload = event.get("response") if isinstance(event, dict) else None
+    if not isinstance(error_payload, dict) and isinstance(response_payload, dict):
+        nested_error_payload = response_payload.get("error")
+        if isinstance(nested_error_payload, dict):
+            error_payload = nested_error_payload
     error_type = ""
     error_code = ""
     error_message = ""
@@ -950,6 +955,10 @@ def map_websocket_error_event(event: dict[str, Any]) -> ProviderError:
         error_code = str(error_payload.get("code") or "").lower()
         error_message = str(error_payload.get("message") or "").lower()
     status_code = event.get("status") or event.get("status_code")
+    if not status_code and isinstance(response_payload, dict):
+        status_code = response_payload.get("status") or response_payload.get(
+            "status_code"
+        )
     haystack = f"{error_type} {error_code} {error_message}"
     if "websocket_connection_limit_reached" in haystack:
         return ProviderServerError(
@@ -958,7 +967,10 @@ def map_websocket_error_event(event: dict[str, Any]) -> ProviderError:
         )
     previous_response_problem = (
         "previous_response_not_found" in haystack
+        or "codex_previous_response_stale" in haystack
+        or "previous_response_stale" in haystack
         or "previous_response_id" in haystack
+        or "previous response anchor expired" in haystack
         or ("previous" in haystack and "not found" in haystack)
         or ("prev" in haystack and "msg" in haystack)
     )

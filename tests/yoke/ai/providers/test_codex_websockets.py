@@ -20,11 +20,13 @@ from yoke.ai.providers.codex.websockets import CodexWebSocketsConfig
 from yoke.ai.providers.codex.websockets import CodexWebSocketConnection
 from yoke.ai.providers.codex.websockets import CodexWebSocketParseState
 from yoke.ai.providers.codex.websockets import CodexWebSocketTimeoutError
+from yoke.ai.providers.codex.websockets import CodexPreviousResponseNotFoundError
 from yoke.ai.providers.codex.websockets import RESPONSES_WEBSOCKETS_BETA
 from yoke.ai.providers.codex.websockets import X_CODEX_TURN_STATE_HEADER
 from yoke.ai.providers.codex.websockets import base_url_for_domain
 from yoke.ai.providers.codex.websockets import build_message_from_websocket_state
 from yoke.ai.providers.codex.websockets import handle_websocket_event
+from yoke.ai.providers.codex.websockets import map_websocket_error_event
 from yoke.ai.providers.codex.websockets import optional_float_env
 from yoke.ai.providers.codex.websockets import register_provider
 from yoke.ai.providers.codex.websockets import websocket_url_for_base
@@ -176,6 +178,24 @@ def test_websocket_response_prefers_deltas_over_completed_snapshot() -> None:
     )
 
     assert message.text_content() == "streamed"
+
+
+def test_response_failed_stale_previous_response_anchor_is_recoverable() -> None:
+    error = map_websocket_error_event(
+        {
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": {
+                    "message": "Upstream previous response anchor expired; retry without previous_response_id.",
+                    "type": "server_error",
+                    "code": "codex_previous_response_stale",
+                },
+            },
+        }
+    )
+
+    assert isinstance(error, CodexPreviousResponseNotFoundError)
 
 
 def test_websocket_consume_uses_short_cancel_poll_timeout(tmp_path: Path) -> None:
@@ -888,14 +908,15 @@ def test_codex_websockets_retries_full_input_when_previous_response_missing(
             del timeout
             return json.dumps(
                 {
-                    "type": "error",
-                    "error": {
-                        "type": "invalid_request_error",
-                        "code": "previous_response_not_found",
-                        "message": "Previous response was not found.",
-                        "param": "previous_response_id",
+                    "type": "response.failed",
+                    "response": {
+                        "status": "failed",
+                        "error": {
+                            "type": "server_error",
+                            "code": "codex_previous_response_stale",
+                            "message": "Upstream previous response anchor expired; retry without previous_response_id.",
+                        },
                     },
-                    "status": 400,
                 }
             )
 

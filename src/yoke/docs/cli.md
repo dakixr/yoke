@@ -188,7 +188,9 @@ turn.
   finishes.
 - Codex WebSocket follow-up requests only reuse `previous_response_id` while the
   same Codex account profile remains selected; if account rotation changes the
-  profile, yoke resends full context for that turn.
+  profile, yoke resends full context for that turn. If Codex reports that the
+  previous response anchor is stale or missing, yoke automatically retries the
+  same turn without `previous_response_id`, sending full context.
 - Local tool calls run in isolated child processes. When a turn is stopped,
   steered, or the CLI is interrupted or exited, yoke cancels the running tool
   process instead of waiting for cooperative tool code to return.
