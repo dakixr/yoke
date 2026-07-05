@@ -447,10 +447,11 @@ not duplicated, reloading marks the skill to send its canonical instructions on
 the next model call, and active skills are preserved when additional skills are
 loaded.
 
-You can also activate a skill and send the next prompt in one line by separating
-the prompt with a semicolon:
+You can also activate a skill and send the next prompt in one line by placing
+the prompt after the skill name. A semicolon separator is also supported:
 
 ```text
+/skill create-skill create a repo-local skill called docs-review
 /skill create-skill ; create a repo-local skill called docs-review
 ```
 

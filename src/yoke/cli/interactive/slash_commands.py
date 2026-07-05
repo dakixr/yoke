@@ -470,11 +470,9 @@ def _handle_skill_load(
     from yoke.cli.render import print_scrollback_notice
 
     skill_request = command.strip()[len("/skill") :].strip()
-    skill_name, separator, extra_prompt = skill_request.partition(";")
-    skill_name = skill_name.strip()
-    extra_prompt = extra_prompt.strip() if separator else ""
+    skill_name, extra_prompt = _parse_skill_request(skill_request)
     if not skill_name:
-        print_scrollback_notice(console, "Usage: /skill <name>")
+        print_scrollback_notice(console, "Usage: /skill <name> [prompt]")
         return False, None
     if not isinstance(agent, RuntimeAgent):
         print_scrollback_notice(console, "No skills are available in this session.")
@@ -498,3 +496,12 @@ def _handle_skill_load(
         return True, extra_prompt or None
     print_scrollback_notice(console, f"Activated skill: {skill_name}")
     return True, extra_prompt or None
+
+
+def _parse_skill_request(skill_request: str) -> tuple[str, str]:
+    """Return the requested skill name and optional prompt text."""
+    before_separator, separator, after_separator = skill_request.partition(";")
+    if separator:
+        return before_separator.strip(), after_separator.strip()
+    skill_name, _, extra_prompt = skill_request.strip().partition(" ")
+    return skill_name.strip(), extra_prompt.strip()
