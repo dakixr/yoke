@@ -132,7 +132,8 @@ def list_provider_models(context: Any) -> list[ProviderModelInfo]:
 
 
 def register_provider(context: Any) -> OpenCodeGoProvider:
-    api_key = os.getenv(ENV_API_KEY, "").strip()
+    env = os.environ if context.env is None else context.env
+    api_key = env.get(ENV_API_KEY, "").strip()
     if not api_key:
         raise ValueError(
             f"OpenCode Go API key not found. Please provide it via {ENV_API_KEY} environment variable."
@@ -141,13 +142,11 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
         OpenCodeGoConfig(
             api_key=api_key,
             model=_normalize_model_id(context.model or "kimi-k2.7-code"),
-            timeout_seconds=float(
-                os.getenv("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "600"
-            ),
-            max_retries=int(os.getenv("YOKE_OPENCODE_GO_MAX_RETRIES") or "5"),
+            timeout_seconds=float(env.get("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "600"),
+            max_retries=int(env.get("YOKE_OPENCODE_GO_MAX_RETRIES") or "5"),
             reasoning_effort=(
                 context.reasoning_effort
-                or os.getenv("YOKE_OPENCODE_GO_REASONING_EFFORT")
+                or env.get("YOKE_OPENCODE_GO_REASONING_EFFORT")
                 or None
             ),
         )

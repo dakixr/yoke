@@ -11,6 +11,7 @@ from typing import cast
 
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.resolution import parse_provider_ref
 from yoke.cli.config.default_model import load_effective_yoke_config
 from yoke.cli.config.default_model import parse_config_default_model
 from yoke.cli.providers import available_custom_provider_names
@@ -206,9 +207,13 @@ def _normalize_provider_model_args(args: CLIArgs) -> None:
     if ":" not in normalized:
         args.model = normalized
         return
-    provider_name, model_name = _parse_cli_provider_model_identifier(normalized)
-    args.model = model_name
-    args.provider_name = provider_name
+    provider_ref = parse_provider_ref(normalized)
+    if provider_ref.model is None:
+        raise ValueError("Expected `provider-name:model-name` with model name.")
+    args.model = provider_ref.model
+    args.provider_name = provider_ref.provider_name
+    if args.reasoning_effort is None:
+        args.reasoning_effort = provider_ref.reasoning_effort
 
 
 def _parse_cli_provider_model_identifier(value: str) -> tuple[str, str]:

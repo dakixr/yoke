@@ -93,7 +93,7 @@ def default_reasoning_effort_for_model_id(model_id: str) -> str:
 
 
 def register_provider(context: Any) -> CodexSubscriptionProvider:
-    env = context.env or os.environ
+    env = os.environ if context.env is None else context.env
     cxauth_vault = context.home / DEFAULT_CXAUTH_VAULT_NAME
     return CodexSubscriptionProvider(
         CodexSubscriptionConfig(

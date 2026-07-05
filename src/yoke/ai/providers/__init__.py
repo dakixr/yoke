@@ -29,6 +29,25 @@ if TYPE_CHECKING:
     from yoke.ai.providers.openai_compat import (
         OpenAICompatibleProvider as OpenAICompatibleProvider,
     )
+    from yoke.ai.providers.resolution import ProviderReadiness as ProviderReadiness
+    from yoke.ai.providers.resolution import ProviderRef as ProviderRef
+    from yoke.ai.providers.resolution import (
+        available_provider_names as available_provider_names,
+    )
+    from yoke.ai.providers.resolution import build_provider as build_provider
+    from yoke.ai.providers.resolution import (
+        is_provider_ready as is_provider_ready,
+    )
+    from yoke.ai.providers.resolution import (
+        list_provider_readiness as list_provider_readiness,
+    )
+    from yoke.ai.providers.resolution import (
+        parse_provider_ref as parse_provider_ref,
+    )
+    from yoke.ai.providers.resolution import (
+        provider_readiness as provider_readiness,
+    )
+    from yoke.ai.providers.resolution import provider_status as provider_status
     from yoke.ai.providers.zai import ZAIConfig as ZAIConfig
     from yoke.ai.providers.zai import ZAIProvider as ZAIProvider
 
@@ -65,6 +84,24 @@ _LAZY_EXPORTS = {
         "yoke.ai.providers.openai_compat",
         "OpenAICompatibleProvider",
     ),
+    "ProviderReadiness": ("yoke.ai.providers.resolution", "ProviderReadiness"),
+    "ProviderRef": ("yoke.ai.providers.resolution", "ProviderRef"),
+    "available_provider_names": (
+        "yoke.ai.providers.resolution",
+        "available_provider_names",
+    ),
+    "build_provider": ("yoke.ai.providers.resolution", "build_provider"),
+    "is_provider_ready": ("yoke.ai.providers.resolution", "is_provider_ready"),
+    "list_provider_readiness": (
+        "yoke.ai.providers.resolution",
+        "list_provider_readiness",
+    ),
+    "parse_provider_ref": ("yoke.ai.providers.resolution", "parse_provider_ref"),
+    "provider_readiness": (
+        "yoke.ai.providers.resolution",
+        "provider_readiness",
+    ),
+    "provider_status": ("yoke.ai.providers.resolution", "provider_status"),
     "ZAIConfig": ("yoke.ai.providers.zai", "ZAIConfig"),
     "ZAIProvider": ("yoke.ai.providers.zai", "ZAIProvider"),
 }
@@ -82,10 +119,19 @@ __all__ = [
     "Provider",
     "ProviderCancelledError",
     "ProviderError",
+    "ProviderReadiness",
+    "ProviderRef",
     "ProviderRateLimitError",
     "ProviderServerError",
     "ZAIConfig",
     "ZAIProvider",
+    "available_provider_names",
+    "build_provider",
+    "is_provider_ready",
+    "list_provider_readiness",
+    "parse_provider_ref",
+    "provider_readiness",
+    "provider_status",
 ]
 
 

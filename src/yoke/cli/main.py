@@ -40,6 +40,7 @@ models_app = typer.Typer(
     help="Inspect available models and configure the default model."
 )
 providers_app = typer.Typer(help="Manage dynamically loaded providers.")
+observe_app = typer.Typer(help="Inspect observed SDK workflow runs.")
 skills_app = typer.Typer(
     help=(
         "Manage skills. The CLI discovers built-in skills from the yoke "
@@ -49,6 +50,7 @@ skills_app = typer.Typer(
 app.add_typer(tools_app, name="tools")
 app.add_typer(models_app, name="models")
 app.add_typer(providers_app, name="providers")
+app.add_typer(observe_app, name="observe")
 app.add_typer(skills_app, name="skills")
 
 
@@ -374,6 +376,7 @@ _SUBCOMMANDS = frozenset(
         "tools",
         "models",
         "providers",
+        "observe",
         "skills",
         "mcp",
     }
@@ -592,6 +595,54 @@ def _providers_init(ctx: typer.Context) -> None:
     from yoke.cli.providers.app import providers_app as loaded_app
 
     raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "init", ctx.args))
+
+
+@observe_app.callback(invoke_without_command=True)
+def _observe_callback(ctx: typer.Context) -> None:
+    """Load the observe app only when an observe command is invoked."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
+
+@observe_app.command("list", context_settings=_LAZY_COMMAND_CONTEXT)
+def _observe_list(ctx: typer.Context) -> None:
+    """List observed workflow runs."""
+    from yoke.cli.observe_app import observe_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+
+
+@observe_app.command("state", context_settings=_LAZY_COMMAND_CONTEXT)
+def _observe_state(ctx: typer.Context) -> None:
+    """Print the current projected state for a run."""
+    from yoke.cli.observe_app import observe_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "state", ctx.args))
+
+
+@observe_app.command("events", context_settings=_LAZY_COMMAND_CONTEXT)
+def _observe_events(ctx: typer.Context) -> None:
+    """Print observe events as JSON lines."""
+    from yoke.cli.observe_app import observe_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "events", ctx.args))
+
+
+@observe_app.command("watch", context_settings=_LAZY_COMMAND_CONTEXT)
+def _observe_watch(ctx: typer.Context) -> None:
+    """Watch new observe events as JSON lines."""
+    from yoke.cli.observe_app import observe_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "watch", ctx.args))
+
+
+@observe_app.command("serve", context_settings=_LAZY_COMMAND_CONTEXT)
+def _observe_serve(ctx: typer.Context) -> None:
+    """Serve observe runs over HTTP."""
+    from yoke.cli.observe_app import observe_app as loaded_app
+
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "serve", ctx.args))
 
 
 @skills_app.callback(invoke_without_command=True)

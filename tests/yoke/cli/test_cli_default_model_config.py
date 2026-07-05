@@ -162,6 +162,20 @@ def test_build_agent_uses_model_specific_default_reasoning_effort_when_unset(
     assert cast(Any, full_agent.provider).config.reasoning_effort == "medium"
 
 
+def test_cli_model_accepts_qualified_reasoning_effort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_builtin_provider(monkeypatch)
+
+    agent = build_agent_from_args(
+        CLIArgs(model="codex:gpt-5.4-mini:high", root=str(tmp_path))
+    )
+
+    assert cast(Any, agent.provider).config.model == "gpt-5.4-mini"
+    assert cast(Any, agent.provider).config.reasoning_effort == "high"
+
+
 def test_cli_override_beats_config_default_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

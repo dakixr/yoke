@@ -15,3 +15,4 @@ codex-cli/
 
 # Local temp files
 tmp/
+.yoke/

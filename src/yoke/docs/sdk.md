@@ -41,6 +41,27 @@ Built-in provider classes include `CodexSubscriptionProvider`,
 `ZAIProvider`. For standard OpenAI-compatible endpoints, use
 `OpenAICompatibleProvider` with `OpenAICompatibleConfig.from_env()`.
 
+For workflow scripts and automations, construct providers from a qualified
+reference string:
+
+```python
+from yoke.ai import build_provider, provider_readiness
+
+readiness = provider_readiness()
+ready_names = [item.provider_name for item in readiness if item.ready]
+if "zai" not in ready_names:
+    raise RuntimeError("zai is not ready in this environment")
+
+provider = build_provider("zai:glm-5.2:none")
+```
+
+The accepted forms are `provider`, `provider:model`, and
+`provider:model:thinking-effort`. Pass `env=` and `home=` to check or build
+against a specific environment rather than the current process. Agents should
+call `provider_readiness(env=..., home=...)` first to decide which providers
+are available before writing or running a workflow. Use `provider_status(...)`
+when you need to inspect one specific qualified provider reference.
+
 Providers can contribute model-specific system messages through their model
 catalog. Those messages are inserted only for the active provider/model and are
 refreshed when the selected model changes:
@@ -361,6 +382,131 @@ When `output_type` is provided, the SDK asks the model for JSON matching that
 schema and validates the final output. If validation fails, it raises
 `StructuredOutputError` with the raw output attached. Omit `output_type` for
 free-form text.
+
+## Observe
+
+Yoke Observe records live workflow execution data for SDK workflows. Use it
+when a Python workflow creates typed agent outputs, fans work out across
+multiple steps, merges results, or needs to be inspected while it is running.
+
+```python
+from pydantic import BaseModel
+
+from yoke.ai import Agent, RunConfig
+from yoke.observe import step, workflow
+
+
+class ReviewPlan(BaseModel):
+    files: list[str]
+
+
+class FileReview(BaseModel):
+    path: str
+    risks: list[str]
+
+
+class MergeDecision(BaseModel):
+    should_merge: bool
+
+
+@step
+def review_file(path: str) -> FileReview:
+    result = reviewer.prompt(
+        f"Review {path}.",
+        output_type=FileReview,
+    )
+    assert result.structured is not None
+    return result.structured
+
+
+with workflow("review-pr", root=".") as run:
+    plan = planner.prompt("Plan the review.", output_type=ReviewPlan)
+    assert plan.structured is not None
+
+    reviews = [review_file(path) for path in plan.structured.files]
+    decision = merger.prompt(
+        f"Merge these reviews: {reviews}",
+        output_type=MergeDecision,
+    )
+
+print(run.run_id)
+```
+
+Inside an active `workflow(...)`, each SDK `Agent` instance becomes one stable
+observed agent node for the duration of the run. Reuse the same `Agent` object
+when repeated prompts should share conversation context and appear as one
+conversation node, such as a coder/reviewer loop. Runtime events from the
+existing agent loop are attached under that node, including prompt starts,
+model starts and ends, tool execution events, context usage events, and
+compaction events. When `output_type` is a Pydantic model, Observe records the
+model name, JSON Schema, and a small JSON preview of the latest structured
+output produced by that node.
+
+Decorate normal Python functions with `@step` to expose application-level
+workflow structure. Step functions can be sync or async. When an observed step
+receives a Pydantic value that was produced by an earlier observed node, Yoke
+records a dependency edge. This lets dynamic fan-out grow the graph at runtime;
+the graph does not need to be known before the workflow runs.
+
+Structured outputs are also a good way to control loops. For example, a
+reviewer model can return `ok: bool` and `next_request: str`; the workflow can
+continue prompting the same `Agent` until `ok` is true, with an explicit
+max-iteration guard. Observe records those repeated prompts on the same agent
+node when the same `Agent` instance is reused.
+
+Observe stores events locally under the workflow root:
+
+```text
+.yoke/observe/runs/<run_id>/manifest.json
+.yoke/observe/runs/<run_id>/events.jsonl
+.yoke/observe/runs/<run_id>/artifacts/
+```
+
+The JSONL event log is the durable source of truth. The current workflow state
+is a projection rebuilt from those events, so viewers can load a state snapshot
+and then consume events after the last sequence number.
+
+CLI inspection:
+
+```bash
+yoke observe list --root .
+yoke observe state latest --root .
+yoke observe state latest --root . --json
+yoke observe events latest --root .
+yoke observe watch latest --root .
+```
+
+For a live browser viewer and JSON API, run the local server:
+
+```bash
+yoke observe serve --root . --host 127.0.0.1 --port 8787
+```
+
+Open the printed URL to see the built-in workflow viewer. The root page is a
+run selector; `/runs/{run_id}` shows the workflow graph and node inspector. The
+viewer renders the current graph projection, shows node status and typed output
+previews, and keeps the sidebar focused on compact node summary data. Use the
+node detail button to open a drill-down view with structured input, structured
+output, final agent messages, and per-turn prompt/commentary history. It
+refreshes from the event stream while the workflow runs.
+
+The built-in graph keeps root-level agents visible, but collapses agent nodes
+that run inside an observed `@step` into the parent step. This keeps
+implementation details out of the main workflow diagram while preserving the
+agent prompt and output events in the run state.
+
+Endpoints:
+
+```text
+GET /
+GET /runs/{run_id}
+GET /runs
+GET /runs/{run_id}/state
+GET /runs/{run_id}/events?after=123
+```
+
+Custom viewers can fetch `/state`, render the projected graph, then poll
+`/events?after=<last_sequence>` and apply new events incrementally.
 
 ## Skills
 

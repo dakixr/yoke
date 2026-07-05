@@ -100,9 +100,11 @@ def create_custom_provider(
     model: str | None = None,
     reasoning_effort: str | None = None,
     home: Path,
+    env: Mapping[str, str] | None = None,
 ) -> Provider | None:
     """create_custom_provider."""
     normalized = name.strip().lower()
+    resolved_env = os.environ if env is None else env
     for plugin in load_global_provider_plugins(home=home):
         if plugin.name != normalized:
             continue
@@ -111,7 +113,7 @@ def create_custom_provider(
             home=home.resolve(),
             model=model,
             reasoning_effort=reasoning_effort,
-            env=os.environ,
+            env=resolved_env,
         )
         try:
             provider = plugin.factory(context)
@@ -142,9 +144,11 @@ def list_custom_provider_models(
     model: str | None = None,
     reasoning_effort: str | None = None,
     home: Path,
+    env: Mapping[str, str] | None = None,
 ) -> list[ProviderModelInfo] | None:
     """Return a custom provider plugin model catalog when available."""
     normalized = name.strip().lower()
+    resolved_env = os.environ if env is None else env
     for plugin in load_global_provider_plugins(home=home):
         if plugin.name != normalized:
             continue
@@ -153,7 +157,7 @@ def list_custom_provider_models(
             home=home.resolve(),
             model=model,
             reasoning_effort=reasoning_effort,
-            env=os.environ,
+            env=resolved_env,
         )
         if plugin.list_models is not None:
             try:

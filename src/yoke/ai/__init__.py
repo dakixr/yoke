@@ -38,6 +38,25 @@ if TYPE_CHECKING:
     from yoke.ai.providers.openai_compat import (
         OpenAICompatibleProvider as OpenAICompatibleProvider,
     )
+    from yoke.ai.providers.resolution import ProviderReadiness as ProviderReadiness
+    from yoke.ai.providers.resolution import ProviderRef as ProviderRef
+    from yoke.ai.providers.resolution import (
+        available_provider_names as available_provider_names,
+    )
+    from yoke.ai.providers.resolution import build_provider as build_provider
+    from yoke.ai.providers.resolution import (
+        is_provider_ready as is_provider_ready,
+    )
+    from yoke.ai.providers.resolution import (
+        list_provider_readiness as list_provider_readiness,
+    )
+    from yoke.ai.providers.resolution import (
+        parse_provider_ref as parse_provider_ref,
+    )
+    from yoke.ai.providers.resolution import (
+        provider_readiness as provider_readiness,
+    )
+    from yoke.ai.providers.resolution import provider_status as provider_status
     from yoke.ai.providers.zai import ZAIConfig as ZAIConfig
     from yoke.ai.providers.zai import ZAIProvider as ZAIProvider
     from yoke.ai.sdk import Agent as Agent
@@ -56,6 +75,8 @@ if TYPE_CHECKING:
     from yoke.ai.sdk.helpers import image_part as image_part
     from yoke.ai.sdk.helpers import remote_image_part as remote_image_part
     from yoke.ai.sdk.helpers import text_part as text_part
+    from yoke.observe import step as step
+    from yoke.observe import workflow as workflow
 
 _LAZY_EXPORTS = {
     "CompactionPolicy": ("yoke.agent.compaction", "CompactionPolicy"),
@@ -99,6 +120,24 @@ _LAZY_EXPORTS = {
         "yoke.ai.providers.openai_compat",
         "OpenAICompatibleProvider",
     ),
+    "ProviderReadiness": ("yoke.ai.providers.resolution", "ProviderReadiness"),
+    "ProviderRef": ("yoke.ai.providers.resolution", "ProviderRef"),
+    "available_provider_names": (
+        "yoke.ai.providers.resolution",
+        "available_provider_names",
+    ),
+    "build_provider": ("yoke.ai.providers.resolution", "build_provider"),
+    "is_provider_ready": ("yoke.ai.providers.resolution", "is_provider_ready"),
+    "list_provider_readiness": (
+        "yoke.ai.providers.resolution",
+        "list_provider_readiness",
+    ),
+    "parse_provider_ref": ("yoke.ai.providers.resolution", "parse_provider_ref"),
+    "provider_readiness": (
+        "yoke.ai.providers.resolution",
+        "provider_readiness",
+    ),
+    "provider_status": ("yoke.ai.providers.resolution", "provider_status"),
     "ZAIConfig": ("yoke.ai.providers.zai", "ZAIConfig"),
     "ZAIProvider": ("yoke.ai.providers.zai", "ZAIProvider"),
     "Agent": ("yoke.ai.sdk", "Agent"),
@@ -117,6 +156,8 @@ _LAZY_EXPORTS = {
     "image_part": ("yoke.ai.sdk.helpers", "image_part"),
     "remote_image_part": ("yoke.ai.sdk.helpers", "remote_image_part"),
     "text_part": ("yoke.ai.sdk.helpers", "text_part"),
+    "step": ("yoke.observe", "step"),
+    "workflow": ("yoke.observe", "workflow"),
 }
 
 __all__ = [
@@ -145,16 +186,27 @@ __all__ = [
     "OpenAICompatibleProvider",
     "ProviderModelInfo",
     "ProviderCancelledError",
+    "ProviderReadiness",
+    "ProviderRef",
     "RunConfig",
     "Skill",
     "StructuredOutputError",
     "ZAIConfig",
     "ZAIProvider",
     "build_user_message",
+    "available_provider_names",
+    "build_provider",
     "complete",
     "image_part",
+    "is_provider_ready",
+    "list_provider_readiness",
+    "parse_provider_ref",
+    "provider_readiness",
+    "provider_status",
     "remote_image_part",
+    "step",
     "text_part",
+    "workflow",
 ]
 
 

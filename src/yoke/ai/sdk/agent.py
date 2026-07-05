@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -80,13 +81,124 @@ class Agent:
         after_tool_call: AfterToolCallHook | None = None,
     ) -> AgentResult[StructuredT]:
         """Prompt the agent through the runtime SDK flow."""
-        return self._runtime.prompt(
-            prompt,
-            images=images,
-            image_urls=image_urls,
-            output_type=output_type,
-            on_event=on_event,
-            stop_requested=stop_requested,
-            before_tool_call=before_tool_call,
-            after_tool_call=after_tool_call,
-        )
+        from pydantic import BaseModel
+
+        from yoke.observe import current_workflow
+
+        run = current_workflow()
+        node_id: str | None = None
+        if run is not None:
+            node_id = run.agent_node_for(
+                agent=self,
+                label=self.__class__.__name__,
+                metadata={
+                    "agent": _agent_metadata(
+                        provider=self.provider,
+                        prompt=prompt,
+                        output_type=output_type,
+                    ),
+                    "source": _agent_callsite(),
+                },
+            )
+            run.emit(
+                "agent_event",
+                node_id=node_id,
+                payload={
+                    "event": "prompt_started",
+                    "prompt": prompt[:4000],
+                    "prompt_truncated": len(prompt) > 4000,
+                    "output_type": output_type.__name__
+                    if output_type is not None
+                    else None,
+                },
+            )
+
+        def observed_event(event: str, payload: dict[str, object]) -> None:
+            if run is not None and node_id is not None:
+                run.emit(
+                    "agent_event",
+                    node_id=node_id,
+                    payload={"event": event, **payload},
+                )
+            if on_event is not None:
+                on_event(event, payload)
+
+        try:
+            result = self._runtime.prompt(
+                prompt,
+                images=images,
+                image_urls=image_urls,
+                output_type=output_type,
+                on_event=observed_event if run is not None else on_event,
+                stop_requested=stop_requested,
+                before_tool_call=before_tool_call,
+                after_tool_call=after_tool_call,
+            )
+        except BaseException as exc:
+            if run is not None and node_id is not None:
+                run.emit(
+                    "agent_event",
+                    node_id=node_id,
+                    payload={
+                        "event": "prompt_failed",
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            raise
+
+        if run is not None and node_id is not None:
+            if isinstance(result.structured, BaseModel):
+                run.remember_output(node_id, result.structured)
+            run.emit(
+                "agent_event",
+                node_id=node_id,
+                payload={
+                    "event": "prompt_completed",
+                    "output_type": output_type.__name__
+                    if output_type is not None
+                    else None,
+                },
+            )
+        return result
+
+
+def _agent_metadata(
+    *,
+    provider: Provider,
+    prompt: str,
+    output_type: type[object] | None,
+) -> dict[str, object]:
+    config = getattr(provider, "config", None)
+    model = getattr(config, "model", None)
+    reasoning_effort = getattr(config, "reasoning_effort", None)
+    provider_name = getattr(provider, "provider_name", provider.__class__.__name__)
+    metadata: dict[str, object] = {
+        "provider": str(provider_name),
+        "prompt": prompt[:4000],
+        "prompt_truncated": len(prompt) > 4000,
+        "output_type": output_type.__name__ if output_type is not None else None,
+    }
+    if isinstance(model, str):
+        metadata["model"] = model
+    if isinstance(reasoning_effort, str):
+        metadata["reasoning_effort"] = reasoning_effort
+    return metadata
+
+
+def _agent_callsite() -> dict[str, object]:
+    current_file = Path(__file__).resolve()
+    for frame in inspect.stack()[2:]:
+        try:
+            frame_path = Path(frame.filename).resolve()
+        except OSError:
+            frame_path = Path(frame.filename)
+        if frame_path == current_file:
+            continue
+        return {
+            "path": frame.filename,
+            "line": frame.lineno,
+            "function": frame.function,
+            "code": (frame.code_context or [""])[0].strip(),
+        }
+    return {}
