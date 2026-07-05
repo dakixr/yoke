@@ -531,6 +531,11 @@ agent = Agent(
 )
 ```
 
+When a directory-backed skill is active, yoke includes the absolute path of
+every file in that skill directory in the skill system message. Use this for
+skills that have supporting reference files, templates, or examples next to
+`SKILL.md`.
+
 ## Local Tools
 
 Subclass `LocalTool` for custom executable tools.

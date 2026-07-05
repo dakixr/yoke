@@ -397,7 +397,8 @@ Create a directory with a `SKILL.md` file. The directory name must match the ski
 ```
 my-skills/
 └── code-review/
-    └── SKILL.md
+    ├── SKILL.md
+    └── reference.md
 ```
 
 ```markdown
@@ -415,6 +416,9 @@ Format findings as a prioritized list.
 ```
 
 Skill name rules: lowercase kebab-case, directory name must match the `name` field.
+When a skill is loaded, yoke tells the agent the absolute path of every file in
+that skill directory, so skills may include reference files, examples, or
+templates alongside `SKILL.md`.
 
 Yoke also ships with a built-in `create-skill` skill that helps the agent create
 new skills correctly. It tells the agent to ask where the skill should be

@@ -194,6 +194,9 @@ def render_active_skill_message(skill: ActiveSkill) -> Message:
         f"description: {skill.description}",
         f"source: {skill.source_path}",
     ]
+    if skill.file_paths:
+        lines.extend(["files:"])
+        lines.extend(f"- {path}" for path in skill.file_paths)
     if skill.reload_on_next_use:
         lines.extend(["", skill.load_content().strip()])
     else:

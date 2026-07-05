@@ -91,9 +91,14 @@ def load_skill(root: Path) -> SkillSpec:
     return SkillSpec(
         name=name,
         description=description,
-        root=root,
-        skill_md_path=skill_md_path,
+        root=root.resolve(),
+        skill_md_path=skill_md_path.resolve(),
+        file_paths=_skill_file_paths(root),
     )
+
+
+def _skill_file_paths(root: Path) -> list[str]:
+    return sorted(str(path.resolve()) for path in root.rglob("*") if path.is_file())
 
 
 def _parse_frontmatter(content: str, path: Path) -> dict[str, str]:

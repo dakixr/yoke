@@ -103,6 +103,7 @@ class Skill:
     description: str
     content: str | None = None
     source_path: str = "<inline>"
+    file_paths: tuple[str, ...] = ()
 
     @classmethod
     def inline(
@@ -128,6 +129,7 @@ class Skill:
             name=spec.name,
             description=spec.description,
             source_path=str(spec.skill_md_path),
+            file_paths=tuple(spec.file_paths),
         )
 
     @classmethod
@@ -151,6 +153,7 @@ class Skill:
             description=skill.description,
             content=skill.content,
             source_path=skill.source_path,
+            file_paths=tuple(skill.file_paths),
         )
 
     def to_active_skill(self) -> ActiveSkill:
@@ -160,6 +163,7 @@ class Skill:
             description=self.description,
             source_path=self.source_path,
             content=self.content,
+            file_paths=list(self.file_paths),
             reload_on_next_use=True,
         )
 
@@ -172,6 +176,7 @@ class Skill:
             description=self.description,
             root=root,
             skill_md_path=source_path,
+            file_paths=list(self.file_paths),
         )
 
 

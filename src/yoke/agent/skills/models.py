@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
+from pydantic import Field
 
 
 class SkillSpec(BaseModel):
@@ -16,6 +17,7 @@ class SkillSpec(BaseModel):
     description: str
     root: Path
     skill_md_path: Path
+    file_paths: list[str] = Field(default_factory=list)
 
     def load_content(self) -> str:
         """Read and return the full content of the SKILL.md file."""
@@ -37,6 +39,7 @@ class ActiveSkill(BaseModel):
     source_path: str
     content: str | None = None
     reload_on_next_use: bool = True
+    file_paths: list[str] = Field(default_factory=list)
 
     @property
     def is_inline(self) -> bool:

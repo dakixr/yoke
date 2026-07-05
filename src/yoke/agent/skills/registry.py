@@ -46,6 +46,7 @@ class SkillRegistry:
             name=skill.name,
             description=skill.description,
             source_path=str(skill.skill_md_path),
+            file_paths=skill.file_paths,
             reload_on_next_use=True,
         )
 
