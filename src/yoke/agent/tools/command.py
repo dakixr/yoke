@@ -87,8 +87,8 @@ class ExecCommandTool(_ManagedCommandTool):
     yield_time_ms: int = Field(
         default=DEFAULT_EXEC_YIELD_TIME_MS,
         ge=1,
-        le=300_000,
-        description="Wait before yielding output. Effective range is 250-30000 ms.",
+        le=7_200_000,
+        description="Wait before yielding output. Effective range is 250-7200000 ms.",
     )
     max_output_tokens: int | None = Field(
         default=None,
@@ -151,10 +151,10 @@ class WriteStdinTool(_ManagedCommandTool):
     yield_time_ms: int | None = Field(
         default=None,
         ge=1,
-        le=300_000,
+        le=7_200_000,
         description=(
-            "Wait before yielding output. Empty polls default to 5000 ms; "
-            "writes default to 250 ms."
+            "Wait before yielding output. Empty polls and writes default to "
+            "30000 ms. Effective maximum is 7200000 ms."
         ),
     )
     max_output_tokens: int | None = Field(

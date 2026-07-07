@@ -7,7 +7,6 @@ import threading
 import time
 from typing import Any, cast
 
-
 from yoke.agent.tools import (
     CommandTool,
     CommandProcessManager,
@@ -324,6 +323,25 @@ def test_exec_command_schema_uses_new_public_api(tmp_path: Path) -> None:
     assert "cmd" in properties
     assert "command" not in properties
     assert "timeout" not in properties
+
+
+def test_command_yield_defaults_and_bounds(tmp_path: Path) -> None:
+    exec_definition = ExecCommandTool.bind(root=tmp_path).to_definition()
+    exec_function = cast(dict[str, object], exec_definition["function"])
+    exec_parameters = cast(dict[str, object], exec_function["parameters"])
+    exec_properties = cast(dict[str, object], exec_parameters["properties"])
+    exec_yield = cast(dict[str, object], exec_properties["yield_time_ms"])
+
+    stdin_definition = WriteStdinTool.bind(root=tmp_path).to_definition()
+    stdin_function = cast(dict[str, object], stdin_definition["function"])
+    stdin_parameters = cast(dict[str, object], stdin_function["parameters"])
+    stdin_properties = cast(dict[str, object], stdin_parameters["properties"])
+    stdin_yield = cast(dict[str, object], stdin_properties["yield_time_ms"])
+
+    assert exec_yield["default"] == 30_000
+    assert exec_yield["maximum"] == 7_200_000
+    stdin_yield_types = cast(list[dict[str, object]], stdin_yield["anyOf"])
+    assert stdin_yield_types[0]["maximum"] == 7_200_000
 
 
 def test_python_exec_exposes_current_python_to_subprocesses(tmp_path: Path) -> None:

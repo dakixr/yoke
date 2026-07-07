@@ -20,10 +20,10 @@ from yoke.agent.tools.python.env import prepare_python_env
 from yoke.agent.tools.shell import build_shell_command
 
 MIN_YIELD_TIME_MS = 250
-MAX_YIELD_TIME_MS = 30_000
-DEFAULT_EXEC_YIELD_TIME_MS = 10_000
-DEFAULT_POLL_YIELD_TIME_MS = 5_000
-MAX_POLL_YIELD_TIME_MS = 300_000
+MAX_YIELD_TIME_MS = 7_200_000
+DEFAULT_EXEC_YIELD_TIME_MS = 30_000
+DEFAULT_WRITE_YIELD_TIME_MS = 30_000
+DEFAULT_POLL_YIELD_TIME_MS = 30_000
 DEFAULT_MAX_OUTPUT_TOKENS = 10_000
 MAX_PROCESS_COUNT = 64
 MAX_RETAINED_OUTPUT_BYTES = 1024 * 1024
@@ -516,10 +516,9 @@ def clamp_write_yield_time(
 ) -> int:
     """Resolve polling and interactive write wait bounds."""
     if yield_time_ms is None:
-        return MIN_YIELD_TIME_MS if has_input else DEFAULT_POLL_YIELD_TIME_MS
+        return DEFAULT_WRITE_YIELD_TIME_MS if has_input else DEFAULT_POLL_YIELD_TIME_MS
     minimum = MIN_YIELD_TIME_MS if has_input else DEFAULT_POLL_YIELD_TIME_MS
-    maximum = MAX_YIELD_TIME_MS if has_input else MAX_POLL_YIELD_TIME_MS
-    return max(minimum, min(yield_time_ms, maximum))
+    return max(minimum, min(yield_time_ms, MAX_YIELD_TIME_MS))
 
 
 _ACTIVE_MANAGERS: weakref.WeakSet[CommandProcessManager] = weakref.WeakSet()

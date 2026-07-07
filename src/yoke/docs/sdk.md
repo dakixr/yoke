@@ -201,8 +201,9 @@ with up to five reference images.
 `exec_command` and `write_stdin` are available to every model and replace the
 former platform-specific `bash`/`powershell` interface. `exec_command` waits up
 to `yield_time_ms` and returns a numeric `session_id` when the process remains
-active; pass that ID to `write_stdin` with empty `chars` to poll or non-empty
-`chars` to interact. Background commands survive turn interruption and later
+active. Command waits default to 30 seconds and accept up to 2 hours. Pass that
+ID to `write_stdin` with empty `chars` to poll or non-empty `chars` to interact.
+Background commands survive turn interruption and later
 turns in the same live runtime, but they are not restored after the yoke process
 exits. `ExecCommandTool` and `PythonExecTool` put shims for `python` and
 `python3` at the front of `PATH`, so commands and Python subprocesses use the
