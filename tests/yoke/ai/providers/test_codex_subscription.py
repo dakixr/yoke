@@ -20,8 +20,10 @@ from yoke.ai.providers.codex.subscription import CodexProfileStore
 from yoke.ai.providers.codex.subscription import OAUTH_PROVIDER_ID
 from yoke.ai.providers.codex.subscription import OAuthCredentials
 from yoke.ai.providers.codex.subscription import X_CODEX_TURN_STATE_HEADER
+from yoke.ai.providers.codex.subscription import clamp_reasoning_effort
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
+from yoke.ai.providers.codex.subscription import list_provider_models
 from yoke.ai.providers.codex.subscription import register_provider
 from yoke.ai.providers.base import ProviderCancelledError
 
@@ -68,6 +70,54 @@ def test_codex_provider_default_timeout_matches_codex_idle_timeout(
     provider = register_provider(Context())
 
     assert provider.config.timeout_seconds == 300.0
+
+
+def test_codex_catalog_includes_gpt_5_6_models() -> None:
+    models = {model.id: model for model in list_provider_models(None)}
+
+    assert {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} <= set(models)
+    assert "gpt-5.6" not in models
+    assert models["gpt-5.6-sol"].context_window_tokens == 1_050_000
+    assert models["gpt-5.6-terra"].thinking_levels == (
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
+    assert models["gpt-5.6-luna"].supports_image_inputs is True
+
+
+def test_codex_gpt_5_6_accepts_max_reasoning_effort(tmp_path: Path) -> None:
+    provider = CodexSubscriptionProvider(
+        CodexSubscriptionConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            model="gpt-5.6-terra",
+            reasoning_effort="medium",
+        )
+    )
+
+    try:
+        provider.set_model("gpt-5.6-luna", reasoning_effort="max")
+
+        assert provider.config.model == "gpt-5.6-luna"
+        assert provider.config.reasoning_effort == "max"
+        assert provider._request_payload([Message.user("hello")], [])["reasoning"] == {
+            "effort": "max",
+            "summary": "auto",
+        }
+    finally:
+        provider.close()
+
+
+def test_codex_reasoning_clamp_preserves_gpt_5_6_controls() -> None:
+    assert clamp_reasoning_effort("gpt-5.6-sol", "none") == "none"
+    assert clamp_reasoning_effort("gpt-5.6-terra", "max") == "max"
+    assert clamp_reasoning_effort("gpt-5.5", "max") == "xhigh"
 
 
 def test_convert_messages_drops_orphan_tool_outputs() -> None:

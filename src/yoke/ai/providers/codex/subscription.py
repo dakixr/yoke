@@ -62,6 +62,30 @@ DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 X_CODEX_TURN_STATE_HEADER = "x-codex-turn-state"
 MODEL_CATALOG = (
     ProviderModelInfo(
+        id="gpt-5.6-sol",
+        display_name="GPT-5.6 Sol",
+        context_window_tokens=1_050_000,
+        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
+    ProviderModelInfo(
+        id="gpt-5.6-terra",
+        display_name="GPT-5.6 Terra",
+        context_window_tokens=1_050_000,
+        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
+    ProviderModelInfo(
+        id="gpt-5.6-luna",
+        display_name="GPT-5.6 Luna",
+        context_window_tokens=1_050_000,
+        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
+    ProviderModelInfo(
         id="gpt-5.5",
         display_name="GPT-5.5",
         context_window_tokens=300_000,
@@ -2232,9 +2256,11 @@ def normalize_message_phase(value: object) -> MessagePhase | None:
 
 def clamp_reasoning_effort(model: str, effort: str) -> str:
     normalized = effort.strip().lower()
-    allowed = ("minimal", "low", "medium", "high", "xhigh")
+    allowed = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
     if normalized not in allowed:
         normalized = "medium"
+    if normalized == "max" and not model.startswith("gpt-5.6"):
+        return "xhigh" if "gpt-5" in model else "high"
     if normalized == "xhigh" and "gpt-5" not in model:
         return "high"
     return normalized

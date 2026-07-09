@@ -28,6 +28,9 @@ yoke --headless --image chart.png --image legend.png "summarize these charts"
 ## Providers and models
 
 ```bash
+yoke --model codex:gpt-5.6-sol "..."
+yoke --model codex:gpt-5.6-terra "..."
+yoke --model codex:gpt-5.6-luna "..."
 yoke --model codex:gpt-5.4-mini "..."
 yoke --model opencode-go:glm-5.2 "..."
 yoke --model opencode-go:kimi-k2.7-code "..."
@@ -67,6 +70,10 @@ login against `~/.codex/auth.json`.
 
 The Codex provider accepts `YOKE_CODEX_*` overrides for model, domain/base URL,
 timeout, retries, reasoning effort, text verbosity, logs, and optional API key.
+Its GPT-5.6 catalog includes the official tier slugs `gpt-5.6-sol`,
+`gpt-5.6-terra`, and `gpt-5.6-luna`. Visibility for each tier can depend on
+plan, rollout, and workspace settings. The broader API `gpt-5.6` Sol alias is
+not advertised here because the Codex ChatGPT transport rejects that alias.
 
 When resuming sessions, Codex request history is normalized to omit orphaned or
 partially saved tool outputs before sending the next request. This prevents
@@ -86,6 +93,7 @@ Outside a session you can inspect and configure models directly:
 
 ```bash
 yoke models list
+yoke models set codex:gpt-5.6-terra --reasoning-effort max
 yoke models set codex:gpt-5.4-mini
 yoke models set opencode-go:glm-5.2
 yoke models set zai:glm-5.2
@@ -135,8 +143,8 @@ You can also set a config default in `~/.yoke/config.json` or `.yoke/config.json
 
 ```json
 {
-  "default_model": "codex:gpt-5.4-mini",
-  "default_reasoning_effort": "high",
+  "default_model": "codex:gpt-5.6-terra",
+  "default_reasoning_effort": "max",
   "title_model": "codex:gpt-5.4-mini:medium"
 }
 ```
