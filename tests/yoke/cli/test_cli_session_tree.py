@@ -214,3 +214,44 @@ def test_save_agent_session_state_preserves_off_branch_entries(
         new.id,
     ]
     assert active_session.record.leaf_id == new.id
+
+
+def test_save_agent_session_state_uses_state_leaf_id(tmp_path: Path) -> None:
+    root = ConversationEntry(kind="user", message=Message.user("question"))
+    selected = ConversationEntry(
+        kind="assistant",
+        message=Message.assistant("selected branch"),
+        parent_id=root.id,
+    )
+    later_sibling = ConversationEntry(
+        kind="assistant",
+        message=Message.assistant("later sibling"),
+        parent_id=root.id,
+    )
+    store = SessionStore(directory=tmp_path)
+    store.save(
+        "tree-state-leaf",
+        [],
+        conversation_entries=[root, selected, later_sibling],
+        leaf_id=later_sibling.id,
+    )
+    active_session = ActiveSession(
+        id="tree-state-leaf",
+        root=tmp_path,
+        store=store,
+        record=store.load("tree-state-leaf"),
+    )
+
+    save_agent_session_state(
+        active_session,
+        AgentState(
+            conversation_entries=[root, selected, later_sibling],
+            leaf_id=selected.id,
+        ),
+    )
+
+    assert active_session.record.leaf_id == selected.id
+    assert [message.text_content() for message in active_session.record.messages] == [
+        "question",
+        "selected branch",
+    ]

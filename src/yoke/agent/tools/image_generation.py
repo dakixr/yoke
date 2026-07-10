@@ -100,13 +100,16 @@ class ImageGenerationTool(LocalTool):
         }
 
     def apply_result(self, context, result: dict[str, object]) -> None:
-        """Prepare the generated image as deferred multimodal context."""
-        del context
+        """Leave attachment construction to ordered context-message handling."""
+        del context, result
+
+    def pending_context_messages(self, result: dict[str, object]) -> list[Message]:
+        """Build the generated-image message from the latest ordered context."""
         if not result.get("ok"):
-            return
+            return []
         raw_path = result.get("path")
         if not isinstance(raw_path, str) or not raw_path:
-            return
+            return []
         next_index = next_image_label_index(self._context_messages())
         raw_prompt = result.get("prompt")
         prompt = raw_prompt if isinstance(raw_prompt, str) else ""
@@ -115,19 +118,9 @@ class ImageGenerationTool(LocalTool):
             image_paths=[Path(raw_path)],
             start_index=next_index,
         )
+        result["label"] = format_image_label(next_index)
         result["context_messages"] = [message.model_dump(mode="json")]
-
-    def pending_context_messages(self, result: dict[str, object]) -> list[Message]:
-        """Decode any generated-image context messages requested by the tool."""
-        raw_messages = result.get("context_messages")
-        if not isinstance(raw_messages, list):
-            return []
-        decoded: list[Message] = []
-        for raw_message in raw_messages:
-            if not isinstance(raw_message, dict):
-                continue
-            decoded.append(Message.model_validate(cast(dict[str, object], raw_message)))
-        return decoded
+        return [message]
 
     def _resolve_output_path(self, raw_path_value: str) -> Path:
         if not raw_path_value.strip():

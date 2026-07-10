@@ -35,7 +35,9 @@ class ExplicitToolsCapability(BaseCapability):
         bound_tools: list[LocalTool] = []
         for tool in self._tools:
             if isinstance(tool, LocalTool):
-                bound_tools.append(tool)
+                copied = tool.model_copy(deep=False)
+                copied._context = dict(tool._context)
+                bound_tools.append(copied)
                 continue
             if isinstance(tool, type) and issubclass(tool, LocalTool):
                 bind_context = (

@@ -185,6 +185,7 @@ def test_cli_prefers_opencode_go_when_only_credentials_exist(
 ) -> None:
     monkeypatch.setattr("yoke.cli.config.providers.Path.home", lambda: tmp_path)
     monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
+    monkeypatch.delenv("YOKE_CODEX_API_KEY", raising=False)
     install_builtin_provider(
         monkeypatch,
         ConfigOnlyProvider,
@@ -194,6 +195,35 @@ def test_cli_prefers_opencode_go_when_only_credentials_exist(
     agent = build_agent_from_args(CLIArgs(root=str(tmp_path)))
 
     assert agent.provider.__class__.__name__ == "ConfigOnlyProvider"
+
+
+def test_cli_prefers_codex_when_only_api_key_credentials_exist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("yoke.cli.config.providers.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("YOKE_CODEX_API_KEY", "test-key")
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    install_builtin_provider(monkeypatch, ConfigOnlyProvider)
+
+    agent = build_agent_from_args(CLIArgs(root=str(tmp_path)))
+
+    assert agent.provider.__class__.__name__ == "ConfigOnlyProvider"
+
+
+def test_cli_does_not_fallback_to_codex_without_credentials(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("yoke.cli.config.providers.Path.home", lambda: tmp_path)
+    monkeypatch.delenv("YOKE_CODEX_API_KEY", raising=False)
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    install_builtin_provider(monkeypatch, ConfigOnlyProvider)
+
+    with pytest.raises(ValueError, match="No provider credentials found"):
+        build_agent_from_args(CLIArgs(root=str(tmp_path)))
 
 
 def test_build_agent_includes_reasoning_effort_in_status(

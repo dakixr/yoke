@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 
 from yoke.agent.compaction import CompactionPolicy
 from yoke.agent.compaction import Compactor
@@ -37,12 +38,14 @@ def build_provider_context_manager(
     *,
     provider: object,
     instructions,
+    policy_override: CompactionPolicy | None = None,
 ) -> ContextManager:
     """Create a context manager budgeted from the provider's active model."""
     budget = resolve_provider_compaction_budget(provider)
+    policy = policy_override or budget.policy
     return ContextManager(
         instructions=instructions,
-        compaction_policy=budget.policy,
+        compaction_policy=policy,
         compactor=budget.compactor,
     )
 
@@ -66,14 +69,16 @@ def rebind_context_manager_budget(
     context_manager: ContextManager,
     *,
     provider: object,
+    policy_override: CompactionPolicy | None = None,
 ) -> ProviderCompactionBudget:
     """Reapply provider-derived compaction settings to one context manager."""
     budget = resolve_provider_compaction_budget(provider)
-    context_manager.compaction_policy = budget.policy
+    policy = policy_override or budget.policy
+    context_manager.compaction_policy = policy
     context_manager.compactor = budget.compactor
-    context_manager.max_total_tokens = budget.policy.max_total_tokens
-    context_manager.keep_recent_tokens = budget.policy.keep_recent_tokens
-    return budget
+    context_manager.max_total_tokens = policy.max_total_tokens
+    context_manager.keep_recent_tokens = policy.keep_recent_tokens
+    return replace(budget, policy=policy)
 
 
 def current_context_fits_provider_budget(

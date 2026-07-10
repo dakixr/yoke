@@ -137,6 +137,8 @@ def format_tool_discovery_message(report: ToolLoadReport) -> str:
     config_denied_count = len(report.denied_tools)
     if config_denied_count:
         message += f", {config_denied_count} denied by config"
+    if report.failures:
+        message += f", {len(report.failures)} plugin load failure(s)"
     return message
 
 

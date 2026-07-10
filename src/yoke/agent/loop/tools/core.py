@@ -191,20 +191,25 @@ def finalize_tool_result(
     try:
         invocation = prepare_tool(tools, tool_call.function.name, arguments)
         invocation.apply_result(context, finalized)
-    except Exception:  # noqa: S110
-        pass
+    except Exception as exc:
+        finalized["ok"] = False
+        finalized["error"] = f"Tool result application failed: {exc}"
     if after_tool_call is not None:
-        hook_result = after_tool_call(
-            AfterToolCallContext(
-                iteration=iteration,
-                tool_call=tool_call,
-                arguments=arguments,
-                result=dict(finalized),
-                context=context,
+        try:
+            hook_result = after_tool_call(
+                AfterToolCallContext(
+                    iteration=iteration,
+                    tool_call=tool_call,
+                    arguments=arguments,
+                    result=dict(finalized),
+                    context=context,
+                )
             )
-        )
-        if hook_result is not None and hook_result.result is not None:
-            finalized = hook_result.result
+            if hook_result is not None and hook_result.result is not None:
+                finalized = hook_result.result
+        except Exception as exc:
+            finalized["ok"] = False
+            finalized["error"] = f"after_tool_call hook failed: {exc}"
     emit(
         "tool_execution_end",
         {

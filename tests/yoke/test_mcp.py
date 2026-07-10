@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import textwrap
 import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+
+import pytest
 
 from yoke.agent.tools import McpCallTool
 from yoke.agent.tools import McpInspectTool
@@ -25,6 +28,74 @@ from yoke.mcp import McpManager
 from yoke.mcp import McpSessionPolicy
 from yoke.mcp import load_mcp_config
 from yoke.ai.providers.base import Provider
+
+
+def test_mcp_oversized_output_uses_private_randomized_safe_files() -> None:
+    from yoke.agent.truncate import DEFAULT_MAX_BYTES
+    from yoke.mcp.manager import _private_output_dir
+    from yoke.mcp.manager import _truncate_result_text
+
+    text = "x" * (DEFAULT_MAX_BYTES + 1)
+    first = _truncate_result_text(
+        text,
+        server="../server\\name:" + "s" * 200,
+        tool="../../tool\\name?",
+    )
+    second = _truncate_result_text(
+        text,
+        server="../server\\name:" + "s" * 200,
+        tool="../../tool\\name?",
+    )
+
+    first_path = Path(cast(str, first["file"]))
+    second_path = Path(cast(str, second["file"]))
+    output_dir = _private_output_dir()
+    assert first_path.parent == output_dir
+    assert second_path.parent == output_dir
+    assert first_path != second_path
+    assert len(first_path.name) < 100
+    assert first_path.read_text(encoding="utf-8") == text
+    assert os.stat(output_dir).st_mode & 0o777 == 0o700
+    assert os.stat(first_path).st_mode & 0o777 == 0o600
+
+
+def test_mcp_structured_content_is_bounded_and_json_safe() -> None:
+    from yoke.agent.truncate import DEFAULT_MAX_BYTES
+    from yoke.mcp.manager import _bounded_structured_content
+
+    value = {"ok": [1, 2, 3]}
+    assert _bounded_structured_content(value) == (value, False)
+    assert _bounded_structured_content({"too_large": "x" * DEFAULT_MAX_BYTES}) == (
+        None,
+        True,
+    )
+    assert _bounded_structured_content({"not_json": object()}) == (None, True)
+
+
+def test_mcp_manager_closes_all_clients_when_one_close_fails() -> None:
+    closed: list[str] = []
+
+    class Client:
+        def __init__(self, name: str, *, fail: bool = False) -> None:
+            self.name = name
+            self.fail = fail
+
+        def close(self) -> None:
+            closed.append(self.name)
+            if self.fail:
+                raise RuntimeError("close failed")
+
+    manager = cast(McpManager, object.__new__(McpManager))
+    manager._clients = {
+        "bad": cast(Any, Client("bad", fail=True)),
+        "good": cast(Any, Client("good")),
+    }
+
+    with pytest.raises(ExceptionGroup, match="Failed to close MCP clients"):
+        manager.close()
+
+    assert closed == ["bad", "good"]
+    assert manager._clients == {}
 
 
 def as_dict(value: object) -> dict[str, Any]:
@@ -438,6 +509,9 @@ def _start_mock_streamable_http_server() -> tuple[Any, int]:
                 return
             if not session_id:
                 self.send_error(400, "Missing session")
+                return
+            if self.headers.get("MCP-Protocol-Version") != "2025-03-26":
+                self.send_error(400, "Missing protocol version")
                 return
             if method == "tools/list":
                 response = {

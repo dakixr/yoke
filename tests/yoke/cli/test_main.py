@@ -12,6 +12,7 @@ import pytest
 
 from yoke.cli.main import _inject_prompt_flag
 from yoke.cli.main import _load_source_dotenv
+from yoke.cli.main import _preflight_startup_error
 from yoke.cli.main import main
 
 
@@ -64,6 +65,20 @@ def test_continue_is_not_treated_as_prompt() -> None:
     """Leaves the continue command as a subcommand during prompt injection."""
     assert _inject_prompt_flag(["continue"]) == ["continue"]
     assert _inject_prompt_flag(["continue", "--global"]) == ["continue", "--global"]
+
+
+def test_headless_preflight_accepts_attached_short_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recognizes Click's supported `-pVALUE` short-option form."""
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda: pytest.fail(
+            "preflight should not read stdin when -p supplies a prompt"
+        ),
+    )
+
+    assert _preflight_startup_error(["--headless", "-phello"]) is None
 
 
 @pytest.mark.parametrize("global_flag", ["--global", "-g"])

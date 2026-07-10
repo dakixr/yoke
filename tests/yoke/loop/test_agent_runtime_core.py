@@ -79,6 +79,79 @@ def test_agent_fork_duplicates_runtime_configuration(tmp_path: Path) -> None:
     assert [skill.name for skill in agent.active_skills] == ["demo"]
 
 
+def test_agent_fork_shares_owned_resource_until_both_runtimes_close() -> None:
+    class Resource:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    class ResourceTool(LocalTool):
+        name = "resource"
+        description = "resource"
+
+        def execute(self) -> dict[str, object]:
+            return {"ok": True}
+
+        def owned_resources(self) -> tuple[object, ...]:
+            return (self._context["resource"],)
+
+    resource = Resource()
+    agent = RuntimeAgent(
+        provider=FakeProvider(),
+        tools=[ResourceTool.bind(resource=resource)],
+    )
+    forked = agent.fork()
+
+    agent.close()
+    assert resource.close_calls == 0
+
+    forked.close()
+    forked.close()
+    assert resource.close_calls == 1
+
+
+def test_agent_close_releases_all_resources_when_one_close_fails() -> None:
+    closed: list[str] = []
+
+    class FailingResource:
+        def close(self) -> None:
+            closed.append("failing")
+            raise RuntimeError("cannot close")
+
+    class HealthyResource:
+        def close(self) -> None:
+            closed.append("healthy")
+
+    class FirstResourceTool(LocalTool):
+        name = "first_resource"
+        description = "first"
+
+        def execute(self) -> dict[str, object]:
+            return {"ok": True}
+
+        def owned_resources(self) -> tuple[object, ...]:
+            return (self._context["resource"],)
+
+    class SecondResourceTool(FirstResourceTool):
+        name = "second_resource"
+
+    agent = RuntimeAgent(
+        provider=FakeProvider(),
+        tools=[
+            FirstResourceTool.bind(resource=FailingResource()),
+            SecondResourceTool.bind(resource=HealthyResource()),
+        ],
+    )
+
+    with pytest.raises(ExceptionGroup, match="Failed to close tool resources"):
+        agent.close()
+
+    assert closed == ["failing", "healthy"]
+    agent.close()
+
+
 def test_skill_tool_uses_current_context_active_skills(tmp_path: Path) -> None:
     from yoke.agent.skills.registry import load_skill_registry
     from yoke.agent.tools import SkillTool

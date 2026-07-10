@@ -2,46 +2,37 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from importlib import import_module
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
-from typing import cast
 
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.credentials import provider_environment
+from yoke.ai.providers.plugins import ProviderPluginContext
+from yoke.ai.providers.plugins import available_custom_provider_names
+from yoke.ai.providers.plugins import create_custom_provider
+from yoke.ai.providers.resolution import BUILTIN_PROVIDER_NAMES
+from yoke.ai.providers.resolution import build_builtin_provider
+from yoke.ai.providers.resolution import list_provider_models
 from yoke.ai.providers.resolution import parse_provider_ref
 from yoke.cli.config.default_model import load_effective_yoke_config
 from yoke.cli.config.default_model import parse_config_default_model
-from yoke.cli.providers import available_custom_provider_names
-from yoke.cli.providers import create_custom_provider
-from yoke.cli.providers.registry import ProviderPluginContext
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from yoke.cli.config.runtime import CLIArgs
 
     BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
     BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
 else:
+    from collections.abc import Callable
+
     BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
     BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
 
-BUILTIN_PROVIDER_NAMES = (
-    "codex",
-    "opencode-go",
-    "zai",
-)
-_BUILTIN_PROVIDER_TARGETS = {
-    "codex": ("yoke.ai.providers.codex.websockets", "register_provider"),
-    "opencode-go": ("yoke.ai.providers.opencode_go", "register_provider"),
-    "zai": ("yoke.ai.providers.zai", "register_provider"),
-}
-_BUILTIN_MODEL_LISTER_TARGETS = {
-    "codex": ("yoke.ai.providers.codex.websockets", "list_provider_models"),
-    "opencode-go": ("yoke.ai.providers.opencode_go", "list_provider_models"),
-    "zai": ("yoke.ai.providers.zai", "list_provider_models"),
-}
+# These override maps remain as explicit injection seams for embedders and tests.
 _BUILTIN_PROVIDER_FACTORIES: dict[str, BuiltinProviderFactory] = {}
 _BUILTIN_MODEL_LISTERS: dict[str, BuiltinModelLister] = {}
 
@@ -71,6 +62,7 @@ def build_provider_from_args(args: CLIArgs) -> Provider:
         model=args.model,
         reasoning_effort=args.reasoning_effort,
         home=Path.home(),
+        env=_provider_env(),
     )
     if custom_provider is not None:
         return custom_provider
@@ -89,30 +81,41 @@ def list_builtin_provider_models(
 ) -> list[ProviderModelInfo] | None:
     """Return a built-in provider model catalog."""
     normalized = provider_name.strip().lower()
-    lister = _builtin_model_lister(normalized)
-    if lister is None:
-        return None
-    context = _provider_context(
+    lister = _BUILTIN_MODEL_LISTERS.get(normalized)
+    if lister is not None:
+        context = _provider_context(
+            normalized,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            home=home,
+        )
+        return [model_info.model_copy(deep=True) for model_info in lister(context)]
+    return list_provider_models(
         normalized,
         model=model,
         reasoning_effort=reasoning_effort,
         home=home,
     )
-    return [model_info.model_copy(deep=True) for model_info in lister(context)]
 
 
 def _build_builtin_provider(provider_name: str, args: CLIArgs) -> Provider:
-    factory = _builtin_provider_factory(provider_name)
-    if factory is None:
-        raise ValueError(f"Unsupported built-in provider `{provider_name}`.")
-    context = _provider_context(
-        provider_name,
-        model=args.model,
-        reasoning_effort=args.reasoning_effort,
-        home=Path.home(),
-    )
     try:
-        return factory(context)
+        factory = _BUILTIN_PROVIDER_FACTORIES.get(provider_name)
+        if factory is not None:
+            return factory(
+                _provider_context(
+                    provider_name,
+                    model=args.model,
+                    reasoning_effort=args.reasoning_effort,
+                    home=Path.home(),
+                )
+            )
+        return build_builtin_provider(
+            provider_name,
+            model=args.model,
+            reasoning_effort=args.reasoning_effort,
+            home=Path.home(),
+        )
     except Exception as exc:
         raise ValueError(
             f"Could not initialize provider `{provider_name}`: {exc}"
@@ -131,50 +134,7 @@ def _provider_context(
         home=home.resolve(),
         model=model,
         reasoning_effort=reasoning_effort,
-        env=os.environ,
-    )
-
-
-def _resolve_target(
-    targets: dict[str, tuple[str, str]],
-    cache: dict[str, Callable[..., object]],
-    provider_name: str,
-) -> Callable[..., object] | None:
-    cached = cache.get(provider_name)
-    if cached is not None:
-        return cached
-    target = targets.get(provider_name)
-    if target is None:
-        return None
-    module_name, attribute = target
-    resolved = getattr(import_module(module_name), attribute)
-    if not callable(resolved):
-        raise ValueError(
-            f"Built-in provider target is not callable: {module_name}:{attribute}"
-        )
-    cache[provider_name] = resolved
-    return resolved
-
-
-def _builtin_provider_factory(provider_name: str) -> BuiltinProviderFactory | None:
-    return cast(
-        BuiltinProviderFactory | None,
-        _resolve_target(
-            _BUILTIN_PROVIDER_TARGETS,
-            cast(dict[str, Callable[..., object]], _BUILTIN_PROVIDER_FACTORIES),
-            provider_name,
-        ),
-    )
-
-
-def _builtin_model_lister(provider_name: str) -> BuiltinModelLister | None:
-    return cast(
-        BuiltinModelLister | None,
-        _resolve_target(
-            _BUILTIN_MODEL_LISTER_TARGETS,
-            cast(dict[str, Callable[..., object]], _BUILTIN_MODEL_LISTERS),
-            provider_name,
-        ),
+        env=_provider_env(home=home),
     )
 
 
@@ -236,11 +196,12 @@ def _resolve_provider_name(args: CLIArgs) -> str:
         provider = configured_provider.strip().lower()
         if provider:
             return provider
+    env = _provider_env()
     if _has_codex_auth():
         return "codex"
-    if os.getenv("OPENCODE_API_KEY"):
+    if env.get("OPENCODE_API_KEY"):
         return "opencode-go"
-    if os.getenv("ZAI_API_KEY"):
+    if env.get("ZAI_API_KEY"):
         return "zai"
     raise ValueError(
         "No provider credentials found. Configure a Codex auth file, "
@@ -249,7 +210,20 @@ def _resolve_provider_name(args: CLIArgs) -> str:
 
 
 def _has_codex_auth() -> bool:
-    return (Path.home() / ".codex" / "auth.json").is_file()
+    home = Path.home()
+    env = _provider_env(home=home)
+    if env.get("YOKE_CODEX_API_KEY"):
+        return True
+    if (home / ".codex" / "auth.json").is_file():
+        return True
+    if any((home / ".codex-auth" / "accounts").glob("*/auth.json")):
+        return True
+    auths_path = (
+        Path(env["YOKE_CODEX_AUTHS_PATH"])
+        if env.get("YOKE_CODEX_AUTHS_PATH")
+        else home / ".yoke" / "providers" / "codex-auth" / "auths.json"
+    )
+    return auths_path.is_file()
 
 
 def _available_provider_names() -> list[str]:
@@ -262,11 +236,6 @@ def _available_provider_names() -> list[str]:
 
 
 def _build_first_available_provider(args: CLIArgs) -> Provider | None:
-    for provider_name in BUILTIN_PROVIDER_NAMES:
-        try:
-            return _build_builtin_provider(provider_name, args)
-        except ValueError:
-            continue
     return _build_first_available_custom_provider(args)
 
 
@@ -285,9 +254,15 @@ def _build_first_available_custom_provider(
                 model=None,
                 reasoning_effort=args.reasoning_effort,
                 home=Path.home(),
+                env=_provider_env(),
             )
         except ValueError:
             continue
         if provider is not None:
             return provider
     return None
+
+
+def _provider_env(*, home: Path | None = None) -> dict[str, str]:
+    resolved_home = Path.home() if home is None else home
+    return provider_environment(home=resolved_home, env=os.environ)

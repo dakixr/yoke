@@ -346,11 +346,6 @@ class ZAIProvider(Provider):
                         response,
                         cancel_requested=cancel_requested,
                     )
-                    message.usage = parse_token_usage(
-                        message.usage,
-                        provider_name=PROVIDER_NAME,
-                        model_id=self.config.model,
-                    )
                     return message
             except httpx.TimeoutException as exc:
                 last_error = ProviderError(

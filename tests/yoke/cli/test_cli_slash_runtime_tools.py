@@ -14,6 +14,25 @@ from yoke.cli.runtime import execute_turn
 from .support import *  # noqa: F403, F405
 
 
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("/title New title", True),
+        ("/pin-session", True),
+        (" /UNPIN-SESSION ", True),
+        ("/titles", False),
+        ("/info", False),
+    ],
+)
+def test_session_metadata_commands_require_idle(
+    command: str,
+    expected: bool,
+) -> None:
+    from yoke.cli.interactive.slash_commands import slash_command_requires_idle
+
+    assert slash_command_requires_idle(command) is expected
+
+
 def test_interactive_cli_intro_prints_version(tmp_path: Path) -> None:
     prompts = iter(["quit"])
 

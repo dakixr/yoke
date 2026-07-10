@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import cast
@@ -11,16 +10,25 @@ from typing import cast
 import typer
 from rich.table import Table
 
+from yoke.ai.providers.credentials import provider_credentials_path
+from yoke.ai.providers.credentials import provider_environment
+from yoke.ai.providers.credentials import save_provider_credential
+from yoke.ai.providers.plugins import LoadedProviderPlugin
+from yoke.ai.providers.plugins import discover_global_provider_plugins
+from yoke.ai.providers.plugins import load_global_provider_plugins
 from yoke.cli.config.providers import BUILTIN_PROVIDER_NAMES
 from yoke.cli.path_display import format_root_label
-from yoke.cli.providers.registry import load_global_provider_plugins
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
 
 providers_app = typer.Typer(help="Manage dynamically loaded providers.")
 
 
-def print_provider_inventory(stream: OutputStream) -> None:
+def print_provider_inventory(
+    stream: OutputStream,
+    *,
+    plugins: list[LoadedProviderPlugin] | None = None,
+) -> None:
     """print_provider_inventory."""
     console = build_console(stream)
     table = Table(
@@ -33,7 +41,10 @@ def print_provider_inventory(stream: OutputStream) -> None:
     table.add_column("Location")
     for name in BUILTIN_PROVIDER_NAMES:
         table.add_row(name, "builtin", "builtin")
-    for plugin in load_global_provider_plugins(home=Path.home()):
+    loaded_plugins = (
+        load_global_provider_plugins(home=Path.home()) if plugins is None else plugins
+    )
+    for plugin in loaded_plugins:
         table.add_row(
             plugin.name,
             "global",
@@ -42,20 +53,10 @@ def print_provider_inventory(stream: OutputStream) -> None:
     console.print(table)
 
 
-def _set_user_env_var(name: str, value: str) -> None:
-    """Persist a user-level environment variable on Windows via setx."""
-    result = subprocess.run(  # noqa: S603
-        ["setx", name, value],  # noqa: S607
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    if result.returncode != 0:
-        typer.echo(f"Failed to set {name}: {result.stderr.strip()}", err=True)
-        raise typer.Exit(1)
-
-
-LOGIN_PROVIDERS: dict[str, list[tuple[str, str]]] = {}
+LOGIN_PROVIDERS: dict[str, list[tuple[str, str]]] = {
+    "opencode-go": [("OPENCODE_API_KEY", "API key")],
+    "zai": [("ZAI_API_KEY", "API key")],
+}
 
 
 @providers_app.command("login")
@@ -64,19 +65,30 @@ def providers_login(
 ) -> None:
     """Interactively store credentials for a provider."""
     name = name.strip().lower()
+    if name == "codex":
+        _login_codex()
+        return
     fields = LOGIN_PROVIDERS.get(name)
     if fields is None:
-        known = ", ".join(sorted(LOGIN_PROVIDERS)) or "(none)"
+        known = ", ".join(["codex", *sorted(LOGIN_PROVIDERS)])
         typer.echo(f"Unknown provider '{name}'. Known providers: {known}", err=True)
         raise typer.Exit(1)
 
     console = build_console(cast(OutputStream, sys.stdout))
     console.print(f"\n[bold]Login to {name}[/bold]")
 
+    home = Path.home()
+    try:
+        current_env = provider_environment(home=home, env=os.environ)
+    except ValueError as exc:
+        typer.echo(f"Could not read existing provider credentials: {exc}", err=True)
+        raise typer.Exit(1) from exc
     values: dict[str, str] = {}
     for env_key, label in fields:
-        is_secret = "password" in label.lower()
-        existing = os.getenv(env_key, "")
+        is_secret = any(
+            marker in env_key.lower() for marker in ("key", "password", "token")
+        )
+        existing = current_env.get(env_key, "")
         if existing and not is_secret:
             console.print(f"Current {label.lower()} is already configured.")
         prompt_text = f"{label}"
@@ -95,14 +107,38 @@ def providers_login(
             raise typer.Exit(2)
         values[env_key] = value
 
-    for env_key, value in values.items():
-        _set_user_env_var(env_key, value)
-        os.environ[env_key] = value
+    credential_path = provider_credentials_path(home)
+    try:
+        for env_key, value in values.items():
+            credential_path = save_provider_credential(
+                home=home,
+                name=env_key,
+                value=value,
+            )
+            os.environ[env_key] = value
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Could not save {name} credentials: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
     console.print(
-        "\n[green]Credentials saved.[/green] "
-        "Restart your terminal for changes to take full effect.\n"
+        f"\n[green]Credentials saved to {format_root_label(credential_path)}.[/green]\n"
     )
+
+
+def _login_codex() -> None:
+    """Run Codex OAuth and persist the resulting fallback credentials."""
+    from yoke.ai.providers.codex.subscription import AuthStorage
+    from yoke.ai.providers.codex.subscription import OAUTH_PROVIDER_ID
+    from yoke.ai.providers.codex.subscription import login_openai_codex
+
+    auth_path = Path.home() / ".codex" / "auth.json"
+    try:
+        credentials = login_openai_codex("yoke")
+        AuthStorage(auth_path).set_oauth(OAUTH_PROVIDER_ID, credentials)
+    except Exception as exc:
+        typer.echo(f"Codex login failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Codex credentials saved to {format_root_label(auth_path)}")
 
 
 @providers_app.command("list")
@@ -115,13 +151,25 @@ def providers_list() -> None:
 def providers_doctor() -> None:
     """providers_doctor."""
     console = build_console(cast(OutputStream, sys.stdout))
-    try:
-        load_global_provider_plugins(home=Path.home())
-    except ValueError as exc:
-        typer.echo(f"Provider loading failed: {exc}")
-        raise typer.Exit(1) from exc
-    console.print("Provider loading OK.")
-    print_provider_inventory(cast(OutputStream, sys.stdout))
+    discovery = discover_global_provider_plugins(home=Path.home())
+    if discovery.failures:
+        console.print(
+            f"[red]Provider loading completed with "
+            f"{len(discovery.failures)} failure(s).[/red]"
+        )
+        for failure in discovery.failures:
+            console.print(f"[red]- {format_root_label(failure.source_path)}[/red]")
+            console.print(f"[red]  {failure.error}[/red]")
+        print_provider_inventory(
+            cast(OutputStream, sys.stdout),
+            plugins=list(discovery.plugins),
+        )
+        raise typer.Exit(1)
+    console.print("[green]Provider loading OK.[/green]")
+    print_provider_inventory(
+        cast(OutputStream, sys.stdout),
+        plugins=list(discovery.plugins),
+    )
 
 
 @providers_app.command("init")

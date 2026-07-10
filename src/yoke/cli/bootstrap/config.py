@@ -84,6 +84,7 @@ def resolve_agent_config(
                 for target in policy_targets_for_tool(entry)
             },
         ),
+        failures=list(discovery.failures),
     )
     active_source_tools = {
         (entry.source_label, entry.tool.name) for entry in active_tools

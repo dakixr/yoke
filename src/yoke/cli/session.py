@@ -306,7 +306,19 @@ class SessionStore:
         try:
             return SessionIndex.model_validate_json(path.read_text(encoding="utf-8"))
         except (OSError, ValidationError):
-            return SessionIndex()
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                return SessionIndex()
+            self._ensure_session_index()
+            if not path.exists():
+                return SessionIndex()
+            try:
+                return SessionIndex.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError):
+                return SessionIndex()
 
     def _ensure_session_index(self) -> None:
         if self._index_path().exists() or not self.directory.exists():
@@ -354,9 +366,7 @@ class SessionStore:
             changed = True
         if changed:
             self.directory.mkdir(parents=True, exist_ok=True)
-            self._index_path().write_text(
-                index.model_dump_json(indent=2), encoding="utf-8"
-            )
+            self._write_index(index)
 
     def _update_index(self, record: SessionRecord) -> None:
         index = self._load_index()
@@ -368,7 +378,7 @@ class SessionStore:
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
-        self._index_path().write_text(index.model_dump_json(indent=2), encoding="utf-8")
+        self._write_index(index)
 
     def _prune_index_and_sessions(
         self, *, exclude_session_id: str | None = None
@@ -408,9 +418,17 @@ class SessionStore:
 
         if changed:
             self.directory.mkdir(parents=True, exist_ok=True)
-            self._index_path().write_text(
-                index.model_dump_json(indent=2), encoding="utf-8"
-            )
+            self._write_index(index)
+
+    def _write_index(self, index: SessionIndex) -> None:
+        path = self._index_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
+        try:
+            temporary.write_text(index.model_dump_json(indent=2), encoding="utf-8")
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _migrate_legacy_sessions(self) -> None:
         if not self.directory.exists():

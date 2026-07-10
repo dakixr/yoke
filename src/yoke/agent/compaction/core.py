@@ -202,22 +202,20 @@ class Compactor:
         return max(1, total)
 
     def _estimate_message_tokens(self, message: Message) -> int:
-        role_tokens = self._estimate_text_tokens(message.role)
+        total = self._estimate_text_tokens(message.role)
         content = message.content
-        if content is None:
-            return role_tokens
         if isinstance(content, str):
-            return role_tokens + self._estimate_text_tokens(content)
-        total = role_tokens
-        for part in content:
-            if isinstance(part, MessageTextContentPart):
-                total += self._estimate_text_tokens(part.text)
-                continue
-            if isinstance(part, MessageLocalImageContentPart):
-                total += self._estimate_local_image_tokens(part)
-                continue
-            if isinstance(part, MessageImageURLContentPart):
-                total += self._estimate_remote_image_tokens(part)
+            total += self._estimate_text_tokens(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, MessageTextContentPart):
+                    total += self._estimate_text_tokens(part.text)
+                    continue
+                if isinstance(part, MessageLocalImageContentPart):
+                    total += self._estimate_local_image_tokens(part)
+                    continue
+                if isinstance(part, MessageImageURLContentPart):
+                    total += self._estimate_remote_image_tokens(part)
         if message.tool_calls:
             total += self._estimate_text_tokens(
                 json.dumps(
@@ -227,6 +225,8 @@ class Compactor:
             )
         if message.tool_call_id:
             total += self._estimate_text_tokens(message.tool_call_id)
+        if message.reasoning_content:
+            total += self._estimate_text_tokens(message.reasoning_content)
         return total
 
     def _estimate_text_tokens(self, text: str) -> int:

@@ -137,9 +137,13 @@ class LocalTool(BaseModel, ABC):
         del result
         return []
 
+    def owned_resources(self) -> tuple[object, ...]:
+        """Return closeable resources whose lifetime is owned by this tool."""
+        return ()
+
 
 class WorkspaceTool(LocalTool):
-    """A tool that operates within a bounded workspace directory."""
+    """A tool that resolves relative paths from a workspace directory."""
 
     _root: Path = PrivateAttr()
 

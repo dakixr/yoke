@@ -48,12 +48,22 @@ class LoadedToolContribution:
     source_label: str
 
 
+@dataclass(slots=True, frozen=True)
+class ToolLoadFailure:
+    """One tool plugin that could not be imported or registered."""
+
+    source_kind: ToolSourceKind
+    source_path: Path
+    error: str
+
+
 @dataclass(slots=True)
 class ToolDiscoveryResult:
     """Discovered tools and their registration-time prompt contributions."""
 
     tools: list[LoadedTool]
     contributions: list[LoadedToolContribution]
+    failures: list[ToolLoadFailure] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -65,6 +75,7 @@ class ToolLoadReport:
     denied_tools: list[LoadedTool]
     config_path: Path | None = None
     unmatched_config_patterns: list[str] = field(default_factory=list)
+    failures: list[ToolLoadFailure] = field(default_factory=list)
 
     def count(self, source_kind: ToolSourceKind) -> int:
         """Count active tools by source kind."""

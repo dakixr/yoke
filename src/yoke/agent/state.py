@@ -23,6 +23,7 @@ class AgentState(BaseModel):
     """Portable structured state captured from an agent."""
 
     conversation_entries: list[ConversationEntry] = Field(default_factory=list)
+    leaf_id: str | None = None
     active_skills: list[ActiveSkill] = Field(default_factory=list)
     skill_dirs: list[str] = Field(default_factory=list)
 
@@ -40,7 +41,10 @@ class AgentState(BaseModel):
     @property
     def messages(self) -> list[Message]:
         """Transcript projection derived from structured conversation state."""
-        return transcript_messages_from_entries(self.conversation_entries)
+        return transcript_messages_from_entries(
+            self.conversation_entries,
+            leaf_id=self.leaf_id,
+        )
 
 
 def capture_agent_state(
@@ -48,6 +52,7 @@ def capture_agent_state(
     *,
     messages: Sequence[Message] | None = None,
     conversation_entries: Sequence[ConversationEntry] | None = None,
+    leaf_id: str | None = None,
 ) -> AgentState:
     """Capture structured state from an agent-like object.
 
@@ -65,6 +70,11 @@ def capture_agent_state(
         )
     return AgentState(
         conversation_entries=resolved_entries,
+        leaf_id=(
+            leaf_id
+            if leaf_id is not None
+            else (resolved_entries[-1].id if resolved_entries else None)
+        ),
         active_skills=_agent_active_skills(agent) or [],
         skill_dirs=_agent_skill_dirs(agent) or [],
     )
@@ -80,8 +90,12 @@ def hydrate_agent_state(
     load_conversation = getattr(agent, "load_conversation", None)
     if not callable(load_conversation):
         raise TypeError("Agent does not support structured state hydration.")
+    active_entries = active_branch_entries(
+        state.conversation_entries,
+        leaf_id=state.leaf_id,
+    )
     load_conversation(
-        ConversationEntryHistory(state.conversation_entries),
+        ConversationEntryHistory(active_entries or []),
         available_skills=available_skills,
         active_skills=state.active_skills,
     )

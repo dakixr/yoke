@@ -155,10 +155,16 @@ def _load_config(path: Path) -> PiConfig:
         ) from exc
 
 
-def _write_tool_policy(path: Path, tool_name: str, policy: ToolPolicy) -> None:
+def _write_tool_policy(
+    path: Path,
+    tool_name: str,
+    policy: ToolPolicy,
+    *,
+    preserve_allow: bool,
+) -> None:
     config = _load_config(path)
     tools = dict(config.tools)
-    if policy == ToolPolicy.allow:
+    if policy == ToolPolicy.allow and not preserve_allow:
         tools.pop(tool_name, None)
     else:
         tools[tool_name] = policy
@@ -188,7 +194,12 @@ def _set_tool_policy(
 ) -> None:
     path = _config_path(root=root, global_scope=global_scope, repo_scope=repo_scope)
     try:
-        _write_tool_policy(path, tool_name, policy)
+        _write_tool_policy(
+            path,
+            tool_name,
+            policy,
+            preserve_allow=not global_scope,
+        )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -285,7 +296,18 @@ def tools_list(
     except ValueError as exc:
         console.print(Text(f"Tool loading failed: {exc}", style="red"))
         raise typer.Exit(1) from exc
-    console.print(Text("Tool loading OK.", style="green"))
+    if report.failures:
+        console.print(
+            Text(
+                f"Tool loading completed with {len(report.failures)} failure(s).",
+                style="yellow",
+            )
+        )
+        for failure in report.failures:
+            console.print(Text(f"- {failure.source_path}", style="yellow"))
+            console.print(Text(f"  {failure.error}", style="yellow"))
+    else:
+        console.print(Text("Tool loading OK.", style="green"))
     console.print(format_tool_discovery_message(report))
     print_tool_inventory_table(cast(OutputStream, sys.stdout), report)
     if report.config_path is not None:
@@ -297,3 +319,5 @@ def tools_list(
                 style="yellow",
             )
         )
+    if report.failures:
+        raise typer.Exit(1)

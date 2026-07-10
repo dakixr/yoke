@@ -27,6 +27,7 @@ from yoke.cli.interactive.common import (
 )
 from yoke.cli.interactive.common import partial_messages_from_error
 from yoke.cli.interactive.slash_commands import handle_slash_command
+from yoke.cli.interactive.slash_commands import slash_command_requires_idle
 from yoke.cli.render import InteractiveRenderer
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
@@ -221,6 +222,12 @@ def _drain_basic_input_queue(
             continue
         if prompt.lower() in {"exit", "quit"}:
             _request_basic_exit(state, console, active_session)
+            continue
+        if state.worker is not None and slash_command_requires_idle(prompt):
+            print_scrollback_notice(
+                console,
+                "Wait for the active turn to finish or stop it before changing session state.",
+            )
             continue
         handled, state.messages, active_session = handle_slash_command(
             prompt,

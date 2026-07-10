@@ -93,7 +93,10 @@ remain compatible; yoke checks cancellation before and after their synchronous
 `complete()` call.
 
 `Agent` is stateful. Reuse the same object to keep conversation context across
-prompts.
+prompts. Call `agent.close()` when finished to release MCP clients and other
+closeable resources owned by registered tools. Forked agents share a lease on
+any explicitly shared resource, so it is closed only after the last runtime
+using it closes.
 
 Initialize an agent with exactly one explicit history representation. Use
 `MessageHistory` for a provider transcript or `ConversationEntryHistory` for
@@ -121,6 +124,12 @@ from yoke.agent import capture_agent_state
 state = capture_agent_state(agent)
 # Store `state.model_dump(mode="json")` in your application's storage layer.
 ```
+
+`AgentState.leaf_id` identifies the selected leaf when `conversation_entries`
+contains multiple branches. Its `messages` projection and state hydration use
+only that root-to-leaf path, while persistence can retain the complete tree.
+Pass an explicit `leaf_id` when capturing a full tree whose selected branch is
+not the last stored entry.
 
 Custom runner objects used with CLI runtime helpers should implement
 `run(prompt, *, on_event=None, stop_requested=None)`. Set
@@ -507,7 +516,9 @@ GET /runs/{run_id}/events?after=123
 ```
 
 Custom viewers can fetch `/state`, render the projected graph, then poll
-`/events?after=<last_sequence>` and apply new events incrementally.
+`/events?after=<last_sequence>` and apply new events incrementally. The local
+store keeps a per-run byte cursor, so sequential polling reads only the newly
+appended event-log tail instead of rescanning prior events.
 
 ## Skills
 
@@ -558,3 +569,6 @@ class EchoTool(LocalTool):
 ```
 
 Workspace-aware tools should subclass `WorkspaceTool`.
+Its root anchors relative paths but is not a security boundary; `_resolve_path`
+also accepts absolute paths and `..` traversal. Applications that accept
+untrusted tool arguments should enforce their own path allow-list or sandbox.

@@ -7,7 +7,9 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 
+import pytest
 from pydantic import BaseModel
+from pydantic import ValidationError
 
 from yoke.ai import Agent
 from yoke.ai import RunConfig
@@ -16,6 +18,7 @@ from yoke.ai.providers.base import Provider
 from yoke.cli.main import main
 from yoke.cli.observe_app import _handler_for_store
 from yoke.observe import JsonlObserveStore
+from yoke.observe import ObserveEvent
 from yoke.observe import step
 from yoke.observe import workflow
 
@@ -41,6 +44,98 @@ class StaticProvider(Provider):
     ) -> Message:
         del messages, tools
         return Message.assistant('{"verdict":"pass","risks":[]}')
+
+
+@pytest.mark.parametrize("run_id", ["", ".", "..", "../outside", "dir\\run"])
+def test_observe_store_rejects_path_unsafe_run_ids(
+    tmp_path: Path,
+    run_id: str,
+) -> None:
+    store = JsonlObserveStore(tmp_path)
+
+    with pytest.raises(ValueError, match="path-safe"):
+        store.manifest(run_id)
+
+
+def test_observe_sequential_event_poll_reads_only_appended_tail(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with workflow("polling", root=tmp_path) as run:
+        pass
+
+    store = JsonlObserveStore(tmp_path)
+    existing = list(store.events(run.run_id))
+    last_sequence = existing[-1].sequence
+    appended = ObserveEvent(
+        run_id=run.run_id,
+        sequence=last_sequence + 1,
+        type="agent_event",
+        event_id="appended",
+        payload={"event": "test"},
+    )
+    with store.events_path(run.run_id).open("a", encoding="utf-8") as handle:
+        handle.write(appended.model_dump_json())
+        handle.write("\n")
+
+    parsed_lines: list[str | bytes | bytearray] = []
+    original_validate = ObserveEvent.model_validate_json
+
+    def tracked_validate(data: str | bytes | bytearray) -> ObserveEvent:
+        parsed_lines.append(data)
+        return original_validate(data)
+
+    monkeypatch.setattr(
+        ObserveEvent,
+        "model_validate_json",
+        staticmethod(tracked_validate),
+    )
+
+    polled = list(store.events(run.run_id, after=last_sequence))
+
+    assert polled == [appended]
+    assert len(parsed_lines) == 1
+
+
+def test_observe_event_cursor_retries_an_incomplete_tail(tmp_path: Path) -> None:
+    with workflow("partial-poll", root=tmp_path) as run:
+        pass
+
+    store = JsonlObserveStore(tmp_path)
+    existing = list(store.events(run.run_id))
+    last_sequence = existing[-1].sequence
+    appended = ObserveEvent(
+        run_id=run.run_id,
+        sequence=last_sequence + 1,
+        type="agent_event",
+        event_id="completed-later",
+    )
+    payload = appended.model_dump_json()
+    midpoint = len(payload) // 2
+    with store.events_path(run.run_id).open("a", encoding="utf-8") as handle:
+        handle.write(payload[:midpoint])
+
+    assert list(store.events(run.run_id, after=last_sequence)) == []
+
+    with store.events_path(run.run_id).open("a", encoding="utf-8") as handle:
+        handle.write(payload[midpoint:])
+        handle.write("\n")
+
+    assert list(store.events(run.run_id, after=last_sequence)) == [appended]
+
+
+def test_observe_event_cursor_rejects_complete_invalid_final_record(
+    tmp_path: Path,
+) -> None:
+    with workflow("invalid-record", root=tmp_path) as run:
+        pass
+
+    store = JsonlObserveStore(tmp_path)
+    with store.events_path(run.run_id).open("a", encoding="utf-8") as handle:
+        handle.write("{invalid}\n")
+
+    with pytest.raises(ValidationError):
+        list(store.events(run.run_id))
 
 
 def test_observe_records_sdk_typed_output(tmp_path: Path) -> None:

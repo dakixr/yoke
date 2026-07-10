@@ -45,6 +45,12 @@ yoke --model opencode-go:deepseek-v4-pro "Review this repository and suggest ref
 | `opencode-go` | `OPENCODE_API_KEY` env var |
 | `zai` | `ZAI_API_KEY` env var |
 
+Run `yoke login codex` (or `yoke providers login codex`) to complete Codex
+OAuth explicitly. For `opencode-go` and `zai`, the same command prompts for an
+API key and saves it in the private user credential store at
+`~/.yoke/providers/credentials.json`. Process environment variables take
+precedence over values in that file.
+
 If you omit the provider prefix and pass only `--model model-name`, yoke detects
 the provider from available credentials.
 
@@ -74,6 +80,9 @@ Its GPT-5.6 catalog includes the official tier slugs `gpt-5.6-sol`,
 `gpt-5.6-terra`, and `gpt-5.6-luna`. Visibility for each tier can depend on
 plan, rollout, and workspace settings. The broader API `gpt-5.6` Sol alias is
 not advertised here because the Codex ChatGPT transport rejects that alias.
+Yoke intentionally budgets each GPT-5.6 tier at 400,000 context tokens, even
+when the backend advertises a larger window, so compaction begins without using
+the full one-million-token family window.
 
 When resuming sessions, Codex request history is normalized to omit orphaned or
 partially saved tool outputs before sending the next request. This prevents
@@ -249,6 +258,11 @@ turn.
 - Use `/ps` to list background command sessions and `/stop [session-id]` to
   stop one session. `/stop` without an ID stops all background commands.
 
+Commands that replace, branch, or persist mutable session state are rejected
+while a turn is active. This includes `/new`, `/fork`, `/tree`, `/model`,
+`/tools`, `/mcp`, `/compact`, `/skill`, `/title`, `/pin-session`, and
+`/unpin-session`; stop the turn or let it finish before running them.
+
 Pending image attachments are shown in the bottom toolbar and are sent with the
 next submitted prompt.
 
@@ -369,6 +383,8 @@ local folding, color-coded entry types, and entry labels stored as metadata.
 Before moving branches, yoke asks whether to create a branch summary; `No
 summary` is the default, while
 custom summary guidance is appended to the standard summary prompt when chosen.
+If the summary provider request fails, navigation still completes without a
+summary and reports the provider error in scrollback.
 
 In a terminal, `yoke resume` opens a keyboard-driven selector with aligned
 columns for the session title, last activity, and session id. Use `Up`/`Down`
@@ -477,6 +493,11 @@ custom location), then scaffold it with `yoke skills init`.
 ## Adding extra tools
 
 Place Python files in `.yoke/tools/` (workspace) or `~/.yoke/tools/` (global) and yoke will load your tools automatically alongside the built-ins.
+
+Tool and provider plugins are trusted Python code: importing them can execute
+arbitrary code with your user account's permissions. Use repo-local plugins only
+in repositories you trust, and review unfamiliar `.yoke/tools/` files before
+starting yoke there.
 
 There are three ways to define tools in these files.
 
@@ -669,6 +690,16 @@ not provider-specific. Command results include `session_id`, `exit_code`,
 `outputTruncationDetails`. A non-null `session_id` means the command is still
 running. Process-isolated tool failures report negative exit statuses as
 terminating signals, for example status `-11` is `SIGSEGV`.
+On POSIX systems the command tool prefers `YOKE_SHELL`, then a usable `$SHELL`,
+then `zsh`, `bash`, or `sh`. `YOKE_ZSH` remains a compatibility alias. Zsh gets
+the zsh profile wrapper, POSIX-family shells get a portable wrapper, and other
+explicit shells receive the command directly instead of zsh syntax.
+
+MCP text results use the same line/byte bounds as other tool output. When a
+result exceeds those bounds, the response includes a truncated preview and a
+`full_output_path` in a private, randomized temporary directory; files are
+removed when the process exits. Oversized or non-JSON `structuredContent` is
+omitted and marked with `structuredContentTruncated`.
 
 `skill` is added when yoke discovers one or more skill directories.
 
@@ -676,7 +707,11 @@ terminating signals, for example status `-11` is `SIGSEGV`.
 
 ## Workspace root
 
-By default yoke uses the current directory as the workspace root — all file tools operate relative to it.
+By default yoke uses the current directory as the workspace root, and relative
+file-tool paths resolve from it. The root is a working-directory anchor, not a
+sandbox: explicit absolute paths and relative paths containing `..` may access
+locations outside the root. Use tool policy or an OS-level sandbox when paths
+must be confined.
 
 ```bash
 yoke --root /path/to/project "..."
@@ -693,7 +728,8 @@ yoke --root /path/to/project "..."
 | `OPENCODE_API_KEY` | OpenCode Go API key |
 | `ZAI_API_KEY` | Z.ai API key |
 | `YOKE_SESSION_DIR` | Override session storage directory |
-| `YOKE_ZSH` | Override zsh used by the command tool |
+| `YOKE_SHELL` | Override the shell used by the command tool |
+| `YOKE_ZSH` | Legacy alias for `YOKE_SHELL` |
 | `YOKE_BAR_TIMER` | Set to `0` to hide the turn elapsed timer in the toolbar |
 | `YOKE_BAR_TOKENS` | Set to `1` to show token counts in the toolbar (off by default) |
 | `YOKE_BAR_GAUGE` | Set to `0` to hide the context gauge bar in the toolbar |

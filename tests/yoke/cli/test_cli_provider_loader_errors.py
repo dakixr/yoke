@@ -28,6 +28,8 @@ def test_providers_doctor_reports_human_readable_plugin_import_error(
 
     result = CliRunner().invoke(app, ["providers", "doctor"])
 
-    assert result.exit_code == 0
-    assert "Provider loading failed:" not in result.stdout
-    assert "Provider loading OK." in result.stdout
+    assert result.exit_code == 1
+    assert "Provider loading completed with 1 failure(s)." in result.stdout
+    assert "broken.py" in result.stdout
+    assert "boom during import" in result.stdout
+    assert "Provider loading OK." not in result.stdout

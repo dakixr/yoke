@@ -51,7 +51,10 @@ def build_user_message(
 
 def paste_image_from_clipboard() -> ImageAttachment | None:
     """Read an image from the clipboard and store it as a temp PNG."""
-    grabbed = ImageGrab.grabclipboard()
+    try:
+        grabbed = ImageGrab.grabclipboard()
+    except (NotImplementedError, OSError):
+        return None
     if grabbed is None:
         return None
     if isinstance(grabbed, list):

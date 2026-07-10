@@ -35,10 +35,8 @@ def parse_token_usage(
     usage = TokenUsage(
         provider_name=provider_name,
         model_id=model_id,
-        input_tokens=_int_value(raw_dict, "input_tokens")
-        or _int_value(raw_dict, "prompt_tokens"),
-        output_tokens=_int_value(raw_dict, "output_tokens")
-        or _int_value(raw_dict, "completion_tokens"),
+        input_tokens=_first_int_value(raw_dict, "input_tokens", "prompt_tokens"),
+        output_tokens=_first_int_value(raw_dict, "output_tokens", "completion_tokens"),
         reasoning_tokens=reasoning_tokens,
         total_tokens=_int_value(raw_dict, "total_tokens"),
         cached_input_tokens=cached_input_tokens,
@@ -85,3 +83,12 @@ def _int_value(raw: dict[object, object], key: str) -> int | None:
     if value < 0:
         return None
     return value
+
+
+def _first_int_value(
+    raw: dict[object, object],
+    primary_key: str,
+    fallback_key: str,
+) -> int | None:
+    primary = _int_value(raw, primary_key)
+    return primary if primary is not None else _int_value(raw, fallback_key)

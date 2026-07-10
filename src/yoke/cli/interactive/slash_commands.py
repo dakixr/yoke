@@ -37,6 +37,30 @@ from yoke.cli.runtime.tree import navigate_session_tree
 from yoke.cli.runtime.tree import set_entry_label
 
 
+_IDLE_ONLY_COMMANDS = (
+    "/compact",
+    "/fork",
+    "/mcp",
+    "/model",
+    "/new",
+    "/pin-session",
+    "/skill",
+    "/title",
+    "/tools",
+    "/tree",
+    "/unpin-session",
+)
+
+
+def slash_command_requires_idle(command: str) -> bool:
+    """Return whether a slash command mutates active agent/session state."""
+    normalized = command.strip().lower()
+    return any(
+        normalized == prefix or normalized.startswith(f"{prefix} ")
+        for prefix in _IDLE_ONLY_COMMANDS
+    )
+
+
 def handle_slash_command(  # noqa: C901
     command: str,
     *,
@@ -420,6 +444,11 @@ def _handle_tree_command(
     if result.editor_text is not None:
         on_editor_text(result.editor_text)
     print_session_scrollback(console, result.messages)
+    if result.summary_error is not None:
+        print_scrollback_notice(
+            console,
+            f"Branch summary failed; navigated without it: {result.summary_error}",
+        )
     suffix = " with branch summary" if result.summary_created else ""
     print_scrollback_notice(console, f"Navigated to selected point{suffix}.")
     return result.messages, result.active_session

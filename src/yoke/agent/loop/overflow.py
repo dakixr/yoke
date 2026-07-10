@@ -5,10 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from yoke.agent.loop.types import AgentEventHandler
+from yoke.agent.loop.types import StopRequested
 from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
 from yoke.agent.usage import compact_usage_payload
+from yoke.ai.providers.base import complete_with_cancel
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 
 
@@ -89,6 +92,7 @@ def retry_with_compacted_history(
     *,
     iteration: int,
     on_event: AgentEventHandler | None,
+    stop_requested: StopRequested | None,
     compact_context,
     emit_event: Callable[[str, dict[str, object]], None],
 ) -> Message | None:
@@ -112,6 +116,7 @@ def retry_with_compacted_history(
         iteration=iteration,
         on_event=on_event,
         reason="overflow_retry",
+        stop_requested=stop_requested,
     )
     if compaction.failed:
         return None
@@ -123,10 +128,14 @@ def retry_with_compacted_history(
         agent.provider,
     )
     try:
-        assistant_message = agent.provider.complete(
+        assistant_message = complete_with_cancel(
+            agent.provider,
             provider_messages,
             agent._tool_definitions(),
+            cancel_requested=stop_requested,
         )
+    except ProviderCancelledError:
+        raise
     except ProviderError:
         return None
     context.conversation_log = compacted_context.conversation_log.model_copy(deep=True)

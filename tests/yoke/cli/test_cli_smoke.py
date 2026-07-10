@@ -68,3 +68,25 @@ def test_cli_command_smoke(
     result = runner.invoke(app, command, catch_exceptions=False)
 
     assert result.exit_code == 0, f"yoke {' '.join(command)} failed:\n{result.output}"
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_usage"),
+    [
+        (["tools", "init", "--help"], "Usage: yoke tools init"),
+        (["models", "set", "--help"], "Usage: yoke models set"),
+        (["providers", "doctor", "--help"], "Usage: yoke providers doctor"),
+        (["observe", "watch", "--help"], "Usage: yoke observe watch"),
+        (["skills", "show", "--help"], "Usage: yoke skills show"),
+    ],
+)
+def test_lazy_subcommand_help_uses_full_command_path(
+    command: list[str],
+    expected_usage: str,
+) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, command, catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert expected_usage in result.output

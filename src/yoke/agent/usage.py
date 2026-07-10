@@ -47,10 +47,12 @@ def effective_usage_accounting(
             estimated_input_tokens=estimate.input_tokens,
             estimated_total_with_reserve=estimate.total_with_reserve,
         )
+    reported_input_tokens = latest_usage.input_tokens
+    effective_input_tokens = max(estimate.input_tokens, reported_input_tokens)
     reserve_tokens = max(0, estimate.total_with_reserve - estimate.input_tokens)
     return UsageAccounting(
-        input_tokens=latest_usage.input_tokens,
-        total_with_reserve=latest_usage.input_tokens + reserve_tokens,
+        input_tokens=effective_input_tokens,
+        total_with_reserve=effective_input_tokens + reserve_tokens,
         estimated_input_tokens=estimate.input_tokens,
         estimated_total_with_reserve=estimate.total_with_reserve,
         provider_reported_input_tokens=latest_usage.input_tokens,
@@ -58,7 +60,9 @@ def effective_usage_accounting(
         reasoning_tokens=latest_usage.reasoning_tokens,
         total_tokens=latest_usage.total_tokens,
         cached_input_tokens=latest_usage.cached_input_tokens,
-        source="provider",
+        source=(
+            "provider" if reported_input_tokens >= estimate.input_tokens else "estimate"
+        ),
     )
 
 

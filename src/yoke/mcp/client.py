@@ -7,6 +7,7 @@ import os
 import queue
 import subprocess
 import threading
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -55,7 +56,10 @@ class StdioMcpClient:
         self._pending: dict[int, queue.Queue[JSON]] = {}
         self._write_lock = threading.Lock()
         self._reader: threading.Thread | None = None
+        self._stderr_reader: threading.Thread | None = None
+        self._stderr_lines: deque[str] = deque(maxlen=100)
         self._closed = False
+        self._initialized = False
         self._tool_cache: tuple[McpToolInfo, ...] | None = None
         self._tool_summary_cache: tuple[McpToolInfo, ...] | None = None
         self._tools_changed = False
@@ -63,8 +67,11 @@ class StdioMcpClient:
 
     def start(self) -> None:
         """Start and initialize the MCP server."""
-        if self._process is not None:
+        if self._initialized:
             return
+        if self._process is not None:
+            self.close()
+        self._closed = False
         if self.server.transport != "stdio":
             raise McpClientError(
                 f"MCP transport `{self.server.transport}` is not supported yet; use stdio"
@@ -90,19 +97,29 @@ class StdioMcpClient:
         )
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
-        result = self.request(
-            "initialize",
-            {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {"roots": {"listChanged": False}},
-                "clientInfo": {"name": "yoke", "version": "0"},
-            },
-            timeout=self.server.startup_timeout_sec,
+        self._stderr_reader = threading.Thread(
+            target=self._read_stderr_loop,
+            daemon=True,
         )
-        instructions = result.get("instructions")
-        if isinstance(instructions, str) and instructions.strip():
-            self.server_instructions = instructions.strip()
-        self.notify("notifications/initialized")
+        self._stderr_reader.start()
+        try:
+            result = self.request(
+                "initialize",
+                {
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "capabilities": {"roots": {"listChanged": False}},
+                    "clientInfo": {"name": "yoke", "version": "0"},
+                },
+                timeout=self.server.startup_timeout_sec,
+            )
+            instructions = result.get("instructions")
+            if isinstance(instructions, str) and instructions.strip():
+                self.server_instructions = instructions.strip()
+            self.notify("notifications/initialized")
+            self._initialized = True
+        except BaseException:
+            self.close()
+            raise
 
     def list_tools(self, *, force: bool = False) -> tuple[McpToolInfo, ...]:
         """List all tools exposed by this MCP server."""
@@ -224,6 +241,7 @@ class StdioMcpClient:
     def close(self) -> None:
         """Terminate the underlying server process."""
         self._closed = True
+        self._initialized = False
         process = self._process
         self._process = None
         if process is None:
@@ -234,9 +252,7 @@ class StdioMcpClient:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.kill()
-        for pending in list(self._pending.values()):
-            pending.put({"error": {"message": "MCP client closed"}})
-        self._pending.clear()
+        self._fail_pending("MCP client closed")
 
     def _allocate_id(self) -> int:
         self._next_id += 1
@@ -266,6 +282,26 @@ class StdioMcpClient:
             if not isinstance(message, dict):
                 continue
             self._handle_message(message)
+        if not self._closed:
+            self._fail_pending("MCP server closed its output stream")
+
+    def _read_stderr_loop(self) -> None:
+        process = self._process
+        if process is None or process.stderr is None:
+            return
+        while not self._closed:
+            line = process.stderr.readline()
+            if not line:
+                return
+            self._stderr_lines.append(line.rstrip())
+
+    def _fail_pending(self, message: str) -> None:
+        for pending in list(self._pending.values()):
+            try:
+                pending.put_nowait({"error": {"message": message}})
+            except queue.Full:
+                pass
+        self._pending.clear()
 
     def _handle_message(self, message: JSON) -> None:
         message_id = message.get("id")
@@ -353,6 +389,7 @@ class StreamableHttpClient:
         self._client = http_client or httpx.Client(timeout=server.tool_timeout_sec)
         self._owns_client = http_client is None
         self._session_id: str | None = None
+        self._protocol_version: str | None = None
         self._initialized = False
         self._next_id = 0
         self._tool_cache: tuple[McpToolInfo, ...] | None = None
@@ -375,6 +412,12 @@ class StreamableHttpClient:
         instructions = result.get("instructions")
         if isinstance(instructions, str) and instructions.strip():
             self.server_instructions = instructions.strip()
+        protocol_version = result.get("protocolVersion")
+        self._protocol_version = (
+            protocol_version
+            if isinstance(protocol_version, str) and protocol_version.strip()
+            else MCP_PROTOCOL_VERSION
+        )
         self.notify("notifications/initialized")
         self._initialized = True
 
@@ -492,33 +535,39 @@ class StreamableHttpClient:
         if self._owns_client:
             self._client.close()
         self._session_id = None
+        self._protocol_version = None
         self._initialized = False
 
     def _post_request(self, payload: JSON, *, timeout: float) -> JSON:
-        response = self._client.post(
+        with self._client.stream(
+            "POST",
             self.url,
             json=payload,
             headers=self._headers(),
             timeout=timeout,
-        )
-        if response.status_code >= 400:
-            raise McpClientError(
-                f"MCP HTTP request failed: {response.status_code} {response.reason_phrase}"
+        ) as response:
+            if response.status_code >= 400:
+                raise McpClientError(
+                    "MCP HTTP request failed: "
+                    f"{response.status_code} {response.reason_phrase}"
+                )
+            self._capture_session_id(response)
+            content_type = (
+                (response.headers.get("content-type") or "").split(";")[0].strip()
             )
-        self._capture_session_id(response)
-        content_type = (
-            (response.headers.get("content-type") or "").split(";")[0].strip()
-        )
-        if content_type == "text/event-stream":
-            return _wait_for_response_in_sse(response.iter_lines(), payload.get("id"))
-        if content_type == "application/json":
-            message = response.json()
-            if not isinstance(message, dict):
-                raise McpClientError("MCP HTTP response is not a JSON object")
-            return message
-        raise McpClientError(
-            f"MCP HTTP unexpected content-type: {content_type or 'missing'}"
-        )
+            if content_type == "text/event-stream":
+                return _wait_for_response_in_sse(
+                    response.iter_lines(), payload.get("id")
+                )
+            if content_type == "application/json":
+                response.read()
+                message = response.json()
+                if not isinstance(message, dict):
+                    raise McpClientError("MCP HTTP response is not a JSON object")
+                return message
+            raise McpClientError(
+                f"MCP HTTP unexpected content-type: {content_type or 'missing'}"
+            )
 
     def _post_notification(self, payload: JSON, *, timeout: float) -> None:
         response = self._client.post(
@@ -542,6 +591,8 @@ class StreamableHttpClient:
             headers.update(self.server.headers)
         if self._session_id is not None:
             headers["Mcp-Session-Id"] = self._session_id
+        if self._protocol_version is not None:
+            headers["MCP-Protocol-Version"] = self._protocol_version
         return headers
 
     def _capture_session_id(self, response: httpx.Response) -> None:

@@ -41,6 +41,10 @@ metadata with full schemas by default. yoke refreshes capability registration at
 the start of every turn, including resumed sessions, so MCP config changes are
 picked up without stale tool definitions. Full upstream tool catalogs,
 resources, prompts, and server instructions are not injected into the hot path.
+Large MCP results are previewed within normal tool-output limits and saved to
+private randomized temporary files for explicit follow-up reads. Structured MCP
+payloads are included only when they are JSON-serializable and within the same
+byte bound.
 For web research, yoke follows Codex-style context passing: the tool receives a
 sanitized recent text tail rather than the raw full conversation, keeping the
 previous user turn, bounded assistant context, and current user turn while

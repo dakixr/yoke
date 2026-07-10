@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Annotated
 from typing import Any
 from typing import TYPE_CHECKING
-from typing import cast
 
 import click
 import typer
@@ -384,9 +383,12 @@ _SUBCOMMANDS = frozenset(
 _OPTIONS_WITH_VALUES = frozenset(
     {
         "--prompt",
+        "-p",
         "--session",
+        "-s",
         "--fork",
         "--model",
+        "-m",
         "--reasoning-effort",
         "--root",
         "--skill",
@@ -456,27 +458,35 @@ def main(argv: list[str] | None = None) -> int:
     except typer.Exit as exc:
         return int(exc.exit_code)
     except Exception as exc:
-        if exc.__class__.__name__ == "UsageError" and hasattr(exc, "show"):
-            cast(Any, exc).show()
-            return int(getattr(exc, "exit_code", 2))
+        if (usage_exit_code := _show_usage_error(exc)) is not None:
+            return usage_exit_code
         raise
     if isinstance(result, int):
         return result
     return 0
 
 
-def _option_present(argv: list[str], option: str) -> bool:
-    return option in argv or any(arg.startswith(f"{option}=") for arg in argv)
+def _option_present(argv: list[str], *options: str) -> bool:
+    for option in options:
+        if option in argv or any(arg.startswith(f"{option}=") for arg in argv):
+            return True
+        if (
+            len(option) == 2
+            and option.startswith("-")
+            and any(arg.startswith(option) and len(arg) > len(option) for arg in argv)
+        ):
+            return True
+    return False
 
 
 def _preflight_startup_error(argv: list[str]) -> str | None:
     if not argv or argv[0] in _SUBCOMMANDS or "--help" in argv or "-h" in argv:
         return None
-    if _option_present(argv, "--image") and not _option_present(argv, "--prompt"):
+    if _option_present(argv, "--image") and not _option_present(argv, "--prompt", "-p"):
         return "Interactive startup images require --prompt as well."
     if "--headless" not in argv:
         return None
-    if _option_present(argv, "--prompt"):
+    if _option_present(argv, "--prompt", "-p"):
         return None
     if sys.stdin.isatty():
         return "Headless mode requires --prompt or prompt text from stdin."
@@ -498,7 +508,11 @@ def _tools_callback(ctx: typer.Context) -> None:
         raise typer.Exit()
 
 
-_LAZY_COMMAND_CONTEXT = {"allow_extra_args": True, "ignore_unknown_options": True}
+_LAZY_COMMAND_CONTEXT = {
+    "allow_extra_args": True,
+    "ignore_unknown_options": True,
+    "help_option_names": [],
+}
 
 
 @tools_app.command("init", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -506,7 +520,7 @@ def _tools_init(ctx: typer.Context) -> None:
     """tools_init."""
     from yoke.cli.tools.app import tools_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "init", ctx.args))
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "tools", "init", ctx.args))
 
 
 @tools_app.command("activate", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -514,7 +528,9 @@ def _tools_activate(ctx: typer.Context) -> None:
     """tools_activate."""
     from yoke.cli.tools.app import tools_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "activate", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "tools", "activate", ctx.args)
+    )
 
 
 @tools_app.command("deactivate", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -522,7 +538,9 @@ def _tools_deactivate(ctx: typer.Context) -> None:
     """tools_deactivate."""
     from yoke.cli.tools.app import tools_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "deactivate", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "tools", "deactivate", ctx.args)
+    )
 
 
 @tools_app.command("list", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -530,7 +548,7 @@ def _tools_list(ctx: typer.Context) -> None:
     """tools_list."""
     from yoke.cli.tools.app import tools_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "tools", "list", ctx.args))
 
 
 @models_app.callback(invoke_without_command=True)
@@ -546,7 +564,7 @@ def _models_list(ctx: typer.Context) -> None:
     """List all provider-qualified models exposed by yoke providers."""
     from yoke.cli.models_app import models_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "models", "list", ctx.args))
 
 
 @models_app.command("set", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -554,7 +572,7 @@ def _models_set(ctx: typer.Context) -> None:
     """Set the configured default model in yoke config."""
     from yoke.cli.models_app import models_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "set", ctx.args))
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "models", "set", ctx.args))
 
 
 @providers_app.callback(invoke_without_command=True)
@@ -570,7 +588,9 @@ def _providers_login(ctx: typer.Context) -> None:
     """Interactively store credentials for a provider."""
     from yoke.cli.providers.app import providers_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "login", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "providers", "login", ctx.args)
+    )
 
 
 @providers_app.command("list", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -578,7 +598,9 @@ def _providers_list(ctx: typer.Context) -> None:
     """providers_list."""
     from yoke.cli.providers.app import providers_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "providers", "list", ctx.args)
+    )
 
 
 @providers_app.command("doctor", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -586,7 +608,9 @@ def _providers_doctor(ctx: typer.Context) -> None:
     """providers_doctor."""
     from yoke.cli.providers.app import providers_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "doctor", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "providers", "doctor", ctx.args)
+    )
 
 
 @providers_app.command("init", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -594,7 +618,9 @@ def _providers_init(ctx: typer.Context) -> None:
     """providers_init."""
     from yoke.cli.providers.app import providers_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "init", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "providers", "init", ctx.args)
+    )
 
 
 @observe_app.callback(invoke_without_command=True)
@@ -610,7 +636,7 @@ def _observe_list(ctx: typer.Context) -> None:
     """List observed workflow runs."""
     from yoke.cli.observe_app import observe_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "observe", "list", ctx.args))
 
 
 @observe_app.command("state", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -618,7 +644,9 @@ def _observe_state(ctx: typer.Context) -> None:
     """Print the current projected state for a run."""
     from yoke.cli.observe_app import observe_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "state", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "observe", "state", ctx.args)
+    )
 
 
 @observe_app.command("events", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -626,7 +654,9 @@ def _observe_events(ctx: typer.Context) -> None:
     """Print observe events as JSON lines."""
     from yoke.cli.observe_app import observe_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "events", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "observe", "events", ctx.args)
+    )
 
 
 @observe_app.command("watch", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -634,7 +664,9 @@ def _observe_watch(ctx: typer.Context) -> None:
     """Watch new observe events as JSON lines."""
     from yoke.cli.observe_app import observe_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "watch", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "observe", "watch", ctx.args)
+    )
 
 
 @observe_app.command("serve", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -642,7 +674,9 @@ def _observe_serve(ctx: typer.Context) -> None:
     """Serve observe runs over HTTP."""
     from yoke.cli.observe_app import observe_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "serve", ctx.args))
+    raise typer.Exit(
+        _invoke_loaded_subcommand(loaded_app, "observe", "serve", ctx.args)
+    )
 
 
 @skills_app.callback(invoke_without_command=True)
@@ -658,7 +692,7 @@ def _skills_list(ctx: typer.Context) -> None:
     """List discovered skills from built-in and default CLI skill directories."""
     from yoke.cli.skills_app import skills_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "list", ctx.args))
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "skills", "list", ctx.args))
 
 
 @skills_app.command("show", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -666,7 +700,7 @@ def _skills_show(ctx: typer.Context) -> None:
     """Show the full contents of a discovered skill."""
     from yoke.cli.skills_app import skills_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "show", ctx.args))
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "skills", "show", ctx.args))
 
 
 @skills_app.command("init", context_settings=_LAZY_COMMAND_CONTEXT)
@@ -674,18 +708,19 @@ def _skills_init(ctx: typer.Context) -> None:
     """Create a new skill scaffold under .yoke/skills/<name>/SKILL.md."""
     from yoke.cli.skills_app import skills_app as loaded_app
 
-    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "init", ctx.args))
+    raise typer.Exit(_invoke_loaded_subcommand(loaded_app, "skills", "init", ctx.args))
 
 
 def _invoke_loaded_subcommand(
     loaded_app: typer.Typer,
+    parent_name: str,
     command_name: str,
     args: list[str],
 ) -> int:
     try:
         result = loaded_app(
             args=[command_name, *args],
-            prog_name=f"yoke {command_name}",
+            prog_name=f"yoke {parent_name}",
             standalone_mode=False,
         )
     except click.ClickException as exc:
@@ -693,9 +728,24 @@ def _invoke_loaded_subcommand(
         return int(exc.exit_code)
     except typer.Exit as exc:
         return int(exc.exit_code)
+    except Exception as exc:
+        if (usage_exit_code := _show_usage_error(exc)) is not None:
+            return usage_exit_code
+        raise
     if isinstance(result, int):
         return result
     return 0
+
+
+def _show_usage_error(exc: Exception) -> int | None:
+    if not any(base.__name__ == "UsageError" for base in type(exc).__mro__):
+        return None
+    show = getattr(exc, "show", None)
+    exit_code = getattr(exc, "exit_code", None)
+    if not callable(show) or not isinstance(exit_code, int):
+        return None
+    show()
+    return exit_code
 
 
 __all__ = [

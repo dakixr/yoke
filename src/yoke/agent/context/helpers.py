@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Sequence
 
 from yoke.agent.models import AgentContext
@@ -114,16 +115,24 @@ def build_conversation_log(
 ) -> ConversationLog:
     """Build a conversation log from persisted transcript messages."""
     entries: list[ConversationEntry] = []
+    parent_id: str | None = None
+
+    def append_entry(entry: ConversationEntry) -> None:
+        nonlocal parent_id
+        entry.parent_id = parent_id
+        entries.append(entry)
+        parent_id = entry.id
+
     stripped_messages = strip_persisted_memory_messages(messages)
     for message in resolve_instructions(stripped_messages, instructions):
-        entries.append(ConversationEntry(kind="instruction", message=message))
+        append_entry(ConversationEntry(kind="instruction", message=message))
     memory_snapshot_added = False
     for message in messages:
         plain_text = message.plain_text_content
         if message.role in {"system", "user"} and plain_text:
             if parse_memory_message(plain_text) is not None:
                 if memory_snapshot is not None:
-                    entries.append(
+                    append_entry(
                         ConversationEntry(
                             kind="memory_snapshot",
                             metadata=memory_snapshot.model_dump(),
@@ -133,20 +142,20 @@ def build_conversation_log(
                 continue
         if message.role == "system":
             continue
-        entries.append(
+        append_entry(
             ConversationEntry(
                 kind=entry_kind_for_message(message),
                 message=message.model_copy(deep=True),
             )
         )
     if memory_snapshot is not None and not memory_snapshot_added:
-        entries.insert(
-            len(resolve_instructions(stripped_messages, instructions)),
-            ConversationEntry(
-                kind="memory_snapshot",
-                metadata=memory_snapshot.model_dump(),
-            ),
+        insertion_index = len(resolve_instructions(stripped_messages, instructions))
+        snapshot = ConversationEntry(
+            kind="memory_snapshot",
+            metadata=memory_snapshot.model_dump(),
         )
+        entries.insert(insertion_index, snapshot)
+        _relink_linear_entries(entries)
     return ConversationLog(entries=entries)
 
 
@@ -156,16 +165,32 @@ def build_conversation_log_from_entries(
     memory_snapshot: MemorySnapshot | None,
 ) -> ConversationLog:
     """Rebuild a conversation log from stored ConversationEntry values."""
-    rebuilt_entries = [
-        ConversationEntry(
-            kind="instruction",
-            message=message.model_copy(deep=True),
-        )
-        for message in instructions
+    old_instruction_entries = [
+        entry for entry in entries if entry.kind == "instruction"
     ]
+    rebuilt_entries: list[ConversationEntry] = []
+    for index, message in enumerate(instructions):
+        old_entry = (
+            old_instruction_entries[index]
+            if index < len(old_instruction_entries)
+            else None
+        )
+        rebuilt_entries.append(
+            ConversationEntry(
+                id=old_entry.id if old_entry is not None else secrets.token_hex(8),
+                kind="instruction",
+                message=message.model_copy(deep=True),
+                parent_id=(rebuilt_entries[-1].id if rebuilt_entries else None),
+            )
+        )
+    replacement_parent = rebuilt_entries[-1].id if rebuilt_entries else None
+    old_instruction_ids = {entry.id for entry in old_instruction_entries}
     for entry in entries:
         if entry.kind != "instruction":
-            rebuilt_entries.append(entry.model_copy(deep=True))
+            copied = entry.model_copy(deep=True)
+            if copied.parent_id in old_instruction_ids:
+                copied.parent_id = replacement_parent
+            rebuilt_entries.append(copied)
     if memory_snapshot is not None and not any(
         entry.kind == "memory_snapshot" for entry in rebuilt_entries
     ):
@@ -177,6 +202,13 @@ def build_conversation_log_from_entries(
             ),
         )
     return ConversationLog(entries=rebuilt_entries)
+
+
+def _relink_linear_entries(entries: list[ConversationEntry]) -> None:
+    parent_id: str | None = None
+    for entry in entries:
+        entry.parent_id = parent_id
+        parent_id = entry.id
 
 
 def entry_kind_for_message(message: Message) -> ConversationEntryKind:

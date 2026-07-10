@@ -16,10 +16,12 @@ from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.queue.persistence import clear_prompt_queue
 from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.cli.interactive.slash_commands import handle_slash_command
+from yoke.cli.interactive.slash_commands import slash_command_requires_idle
 from yoke.cli.interactive.prompt.turns import next_pending_prompt_index
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import persist_session_state
+from yoke.cli.render import print_scrollback_notice
 
 
 def update_status_context_usage(
@@ -93,6 +95,14 @@ def process_prompt_toolkit_prompt(
         return active_session
     if prompt.lower() in {"exit", "quit"}:
         request_exit()
+        return active_session
+    with state_lock:
+        busy = state.worker is not None
+    if busy and slash_command_requires_idle(prompt):
+        print_scrollback_notice(
+            scrollback_console,
+            "Wait for the active turn to finish or stop it before changing session state.",
+        )
         return active_session
     if prompt.strip().lower() == "/queue":
         handled, updated_messages, updated_session = handle_slash_command(

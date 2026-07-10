@@ -22,12 +22,15 @@ def default_shell_executable(env: dict[str, str]) -> str:
             return powershell
         return env.get("ComSpec") or "cmd.exe"
 
-    for candidate in (env.get("YOKE_ZSH"), env.get("SHELL")):
-        if candidate and Path(candidate).name.lower() == "zsh":
-            return candidate
-    if zsh := shutil.which("zsh"):
-        return zsh
-    return "/bin/zsh"
+    if shell_override := env.get("YOKE_SHELL") or env.get("YOKE_ZSH"):
+        return shell_override
+    configured_shell = env.get("SHELL")
+    if configured_shell and _is_executable(configured_shell):
+        return configured_shell
+    for name in ("zsh", "bash", "sh"):
+        if executable := shutil.which(name):
+            return executable
+    return "/bin/sh"
 
 
 def build_shell_command(
@@ -49,7 +52,14 @@ def build_shell_command(
 
     env["YOKE_COMMAND_TOOL_COMMAND"] = command
     flags = ["-l", "-c"] if login else ["-c"]
-    return [shell_exe, *flags, _zsh_command(load_profile=login)]
+    shell_name = _shell_name(shell_exe)
+    if shell_name == "zsh":
+        command_wrapper = _zsh_command(load_profile=login)
+    elif shell_name in {"bash", "dash", "ksh", "sh"}:
+        command_wrapper = _posix_command()
+    else:
+        command_wrapper = command
+    return [shell_exe, *flags, command_wrapper]
 
 
 def build_powershell_command(
@@ -134,3 +144,17 @@ def _zsh_command(
         f'[[ -n "${{{env_var}:-}}" ]] && export PATH="${{{env_var}}}:$PATH"; '
         'eval "$YOKE_COMMAND_TOOL_COMMAND"'
     )
+
+
+def _posix_command(env_var: str = "YOKE_PYTHON_BIN_DIR") -> str:
+    return (
+        f'[ -n "${{{env_var}:-}}" ] && export PATH="${{{env_var}}}:$PATH"; '
+        'eval "$YOKE_COMMAND_TOOL_COMMAND"'
+    )
+
+
+def _is_executable(candidate: str) -> bool:
+    path = Path(candidate)
+    if path.parent != Path("."):
+        return path.is_file() and os.access(path, os.X_OK)
+    return shutil.which(candidate) is not None

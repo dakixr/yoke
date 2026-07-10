@@ -43,6 +43,7 @@ from yoke.ai.providers.model_selection import (
 )
 from yoke.ai.providers.openai_compat import serialize_message_for_openai
 from yoke.ai.providers.usage import parse_token_usage
+from yoke.ai.providers.storage import write_private_json
 from pydantic import BaseModel
 
 PROVIDER_NAME = "codex"
@@ -64,7 +65,7 @@ MODEL_CATALOG = (
     ProviderModelInfo(
         id="gpt-5.6-sol",
         display_name="GPT-5.6 Sol",
-        context_window_tokens=1_050_000,
+        context_window_tokens=400_000,
         thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
         default_thinking_level="medium",
         supports_image_inputs=True,
@@ -72,7 +73,7 @@ MODEL_CATALOG = (
     ProviderModelInfo(
         id="gpt-5.6-terra",
         display_name="GPT-5.6 Terra",
-        context_window_tokens=1_050_000,
+        context_window_tokens=400_000,
         thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
         default_thinking_level="medium",
         supports_image_inputs=True,
@@ -80,7 +81,7 @@ MODEL_CATALOG = (
     ProviderModelInfo(
         id="gpt-5.6-luna",
         display_name="GPT-5.6 Luna",
-        context_window_tokens=1_050_000,
+        context_window_tokens=400_000,
         thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
         default_thinking_level="medium",
         supports_image_inputs=True,
@@ -1170,17 +1171,7 @@ class CodexProfileStore:
         )
 
     def _atomic_write(self, path: Path, payload: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with contextlib.suppress(OSError):
-            os.chmod(path.parent, 0o700)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        with contextlib.suppress(OSError):
-            os.chmod(temporary, 0o600)
-        temporary.replace(path)
+        write_private_json(path, payload)
 
     @contextlib.contextmanager
     def _lock(self) -> Any:
@@ -1263,17 +1254,7 @@ class AuthStorage:
         return payload
 
     def _write(self, payload: dict[str, object]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with contextlib.suppress(OSError):
-            os.chmod(self.path.parent, 0o700)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        with contextlib.suppress(OSError):
-            os.chmod(temporary, 0o600)
-        temporary.replace(self.path)
+        write_private_json(self.path, payload)
 
     @contextlib.contextmanager
     def _lock(self) -> Any:

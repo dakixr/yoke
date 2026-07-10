@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import atexit
+import functools
 import json
+import re
+import shutil
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
 
@@ -61,9 +64,16 @@ class McpManager:
 
     def close(self) -> None:
         """Close all active clients."""
-        for client in list(self._clients.values()):
-            client.close()
+        clients = list(self._clients.values())
         self._clients.clear()
+        errors: list[Exception] = []
+        for client in clients:
+            try:
+                client.close()
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("Failed to close MCP clients", errors)
 
     def status_text(self, server_name: str | None = None) -> str:
         """Return human-readable MCP status."""
@@ -188,18 +198,25 @@ class McpManager:
             return {"ok": False, "error": str(exc)}
         text = _mcp_result_text(result)
         truncated = _truncate_result_text(text, server=server, tool=tool)
-        return {
+        payload: dict[str, object] = {
             "ok": not bool(result.get("isError")),
             "server": server,
             "tool": tool,
             "content": truncated["text"],
             "isError": bool(result.get("isError")),
-            "structuredContent": result.get("structuredContent"),
             "truncation": truncated["truncation"],
             **(
                 {"full_output_path": truncated["file"]} if truncated.get("file") else {}
             ),
         }
+        structured_content, structured_truncated = _bounded_structured_content(
+            result.get("structuredContent")
+        )
+        if structured_content is not None:
+            payload["structuredContent"] = structured_content
+        if structured_truncated:
+            payload["structuredContentTruncated"] = True
+        return payload
 
     def list_configured_tools(self, server: McpServerConfig) -> tuple[McpToolInfo, ...]:
         """Return tool names/descriptions advertised by a configured server."""
@@ -301,12 +318,17 @@ def _truncate_result_text(text: str, *, server: str, tool: str) -> dict[str, obj
     file_path: str | None = None
     content = truncation.content
     if truncation.truncated:
-        directory = Path(tempfile.gettempdir()) / "yoke-mcp"
-        directory.mkdir(parents=True, exist_ok=True)
-        safe = f"{int(time.time())}-{server}-{tool}".replace("/", "_")
-        path = directory / f"{safe}.txt"
-        path.write_text(text, encoding="utf-8")
-        file_path = str(path)
+        safe = _safe_output_prefix(server=server, tool=tool)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=safe,
+            suffix=".txt",
+            dir=_private_output_dir(),
+            delete=False,
+        ) as handle:
+            handle.write(text)
+            file_path = handle.name
         content = (
             content
             + "\n\n"
@@ -320,3 +342,36 @@ def _truncate_result_text(text: str, *, server: str, tool: str) -> dict[str, obj
         "file": file_path,
         "truncation": truncation.to_dict(),
     }
+
+
+def _bounded_structured_content(value: object) -> tuple[object | None, bool]:
+    if value is None:
+        return None, False
+    try:
+        encoded = json.dumps(value, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return None, True
+    if len(encoded) > DEFAULT_MAX_BYTES:
+        return None, True
+    return value, False
+
+
+def _safe_output_prefix(*, server: str, tool: str) -> str:
+    prefix = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{server}-{tool}")
+    prefix = prefix.strip("._-")[:80] or "result"
+    return f"{prefix}-"
+
+
+@functools.lru_cache(maxsize=1)
+def _private_output_dir() -> Path:
+    directory = Path(tempfile.mkdtemp(prefix="yoke-mcp-"))
+    directory.chmod(0o700)
+    return directory
+
+
+def _cleanup_private_output_dir() -> None:
+    if _private_output_dir.cache_info().currsize:
+        shutil.rmtree(_private_output_dir(), ignore_errors=True)
+
+
+atexit.register(_cleanup_private_output_dir)

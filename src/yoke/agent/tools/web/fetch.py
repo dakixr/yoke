@@ -97,11 +97,14 @@ def web_search(
             timeout=timeout_s,
             verify=False,  # noqa: S501
         )
-        response = client.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query.strip()},
-        )
-        response.raise_for_status()
+        try:
+            response = client.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query.strip()},
+            )
+            response.raise_for_status()
+        finally:
+            getattr(client, "close", lambda: None)()
 
         parser = DuckDuckGoHTMLParser()
         parser.feed(response.text)

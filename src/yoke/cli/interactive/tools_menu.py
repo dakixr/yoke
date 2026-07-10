@@ -338,6 +338,7 @@ def _tool_report_with_active_names(
         ],
         config_path=report.config_path,
         unmatched_config_patterns=report.unmatched_config_patterns,
+        failures=list(report.failures),
     )
 
 
@@ -359,6 +360,7 @@ def _tool_report_with_active_targets(
         ],
         config_path=report.config_path,
         unmatched_config_patterns=report.unmatched_config_patterns,
+        failures=list(report.failures),
     )
 
 

@@ -10,8 +10,11 @@ from typing import TYPE_CHECKING
 from yoke.agent.capabilities import BaseCapability
 from yoke.agent.capabilities import CapabilityContext
 from yoke.agent.capabilities import CapabilityResolver
+from yoke.agent.budget import build_provider_context_manager
 from yoke.agent.context import ContextManager
 from yoke.agent.loop.iteration import RuntimeAgentIterationMixin
+from yoke.agent.loop.resources import acquire_tool_resources
+from yoke.agent.loop.resources import release_tool_resources
 from yoke.agent.loop.state import context_for_run
 from yoke.agent.loop.state import persist_run_context
 from yoke.agent.loop.tools.core import index_tools
@@ -91,13 +94,14 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             tool_root=root,
             tool_home=Path.home().resolve(),
             max_iterations=config.max_iterations,
-            context_manager=ContextManager(
+            context_manager=build_provider_context_manager(
+                provider=provider,
                 instructions=build_system_messages(
                     root=root,
                     sys_prompt=config.sys_prompt,
                     include_agents_file=config.include_agents_file,
                 ),
-                compaction_policy=config.compaction,
+                policy_override=config.compaction,
             ),
             tool_execution=config.tool_execution,
             before_tool_call=config.before_tool_call,
@@ -228,8 +232,13 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         self._context = None
 
     def close(self) -> None:
-        """Terminate background commands owned by this runtime."""
-        self.command_process_manager.terminate_all()
+        """Release tools and background commands owned by this runtime."""
+        tools = self.tools
+        self.tools = {}
+        try:
+            release_tool_resources(tools.values())
+        finally:
+            self.command_process_manager.terminate_all()
 
     def list_background_processes(self) -> list[BackgroundProcessInfo]:
         """Return running background commands for this runtime."""
@@ -329,7 +338,11 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         for tool in tools:
             tool.bind_runtime_context(runtime_context)
             tool._context["command_process_manager"] = self.command_process_manager
-        self.tools = index_tools(tools)
+        indexed = index_tools(tools)
+        previous_tools = self.tools
+        acquire_tool_resources(indexed.values())
+        self.tools = indexed
+        release_tool_resources(previous_tools.values())
         self._tool_provider = self.provider
         self._tool_model = resolved_model
 

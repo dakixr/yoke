@@ -10,6 +10,7 @@ from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import BeforeToolCallHook
 from yoke.agent.loop.types import StopRequested
+from yoke.agent.budget import rebind_context_manager_budget
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.ai.providers.base import Provider
@@ -41,6 +42,11 @@ class Agent:
     def provider(self, provider: Provider) -> None:
         """Replace the provider and refresh provider-aware tools."""
         self._runtime.provider = provider
+        rebind_context_manager_budget(
+            self._runtime.context_manager,
+            provider=provider,
+            policy_override=self.config.compaction,
+        )
         self._runtime.refresh_tools(force=True)
 
     @property
@@ -64,9 +70,15 @@ class Agent:
 
     def fork(self) -> Agent:
         """Fork, creating a new instance with the same configuration."""
-        new = Agent(provider=self.provider, config=self.config)
+        new = object.__new__(Agent)
+        new.config = self.config
+        new.root = self.root
         new._runtime = self._runtime.fork()
         return new
+
+    def close(self) -> None:
+        """Release resources owned by the underlying runtime."""
+        self._runtime.close()
 
     def prompt[StructuredT](
         self,

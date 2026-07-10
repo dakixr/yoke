@@ -77,7 +77,9 @@ def test_codex_catalog_includes_gpt_5_6_models() -> None:
 
     assert {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} <= set(models)
     assert "gpt-5.6" not in models
-    assert models["gpt-5.6-sol"].context_window_tokens == 1_050_000
+    assert models["gpt-5.6-sol"].context_window_tokens == 400_000
+    assert models["gpt-5.6-terra"].context_window_tokens == 400_000
+    assert models["gpt-5.6-luna"].context_window_tokens == 400_000
     assert models["gpt-5.6-terra"].thinking_levels == (
         "none",
         "low",

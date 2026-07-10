@@ -29,6 +29,8 @@ def handle_pre_model_compaction(
     context: AgentContext,
     iteration: int,
     on_event: AgentEventHandler | None,
+    *,
+    stop_requested: StopRequested | None,
 ) -> bool:
     """Compact before the provider call when needed."""
     compaction = compact_context_for_iteration(
@@ -36,6 +38,7 @@ def handle_pre_model_compaction(
         context,
         iteration=iteration,
         on_event=on_event,
+        stop_requested=stop_requested,
     )
     if compaction.failed:
         return True
@@ -83,15 +86,22 @@ def complete_iteration_model(
         raise AgentStoppedError() from exc
     except ProviderError as exc:
         if should_retry_after_overflow(exc):
-            recovered = retry_with_compacted_history(
-                agent,
-                context,
-                iteration=iteration,
-                on_event=on_event,
-                compact_context=compact_context_for_iteration,
-                emit_event=lambda event, payload: emit(on_event, event, payload),
-            )
+            try:
+                recovered = retry_with_compacted_history(
+                    agent,
+                    context,
+                    iteration=iteration,
+                    on_event=on_event,
+                    stop_requested=stop_requested,
+                    compact_context=compact_context_for_iteration,
+                    emit_event=lambda event, payload: emit(on_event, event, payload),
+                )
+            except ProviderCancelledError as cancelled:
+                raise AgentStoppedError() from cancelled
             if recovered is not None:
+                for skill in context.active_skills:
+                    if not skill.is_inline:
+                        skill.reload_on_next_use = False
                 return recovered
         exc.partial_messages = context.messages
         raise
@@ -133,6 +143,8 @@ def handle_post_tool_results(
     context: AgentContext,
     iteration: int,
     on_event: AgentEventHandler | None,
+    *,
+    stop_requested: StopRequested | None,
 ) -> None:
     """Refresh state and compact after tool results when needed."""
     agent.active_skills = [
@@ -151,6 +163,7 @@ def handle_post_tool_results(
         iteration=iteration,
         on_event=on_event,
         after_tool_results=True,
+        stop_requested=stop_requested,
     )
     if compaction.failed:
         raise AgentStoppedError()
@@ -203,6 +216,7 @@ def compact_context_for_iteration(
     on_event: AgentEventHandler | None,
     after_tool_results: bool = False,
     reason: CompactionReason = "threshold",
+    stop_requested: StopRequested | None = None,
 ) -> CompactionAttempt:
     """Attempt context compaction for one iteration."""
     preparation = (
@@ -217,6 +231,7 @@ def compact_context_for_iteration(
         preparation,
         context=context,
         on_event=on_event,
+        stop_requested=stop_requested,
         emit=emit,
     )
     if summary_text is None:

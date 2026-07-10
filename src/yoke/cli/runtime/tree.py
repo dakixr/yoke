@@ -35,6 +35,7 @@ class TreeNavigationResult:
     active_session: ActiveSession
     editor_text: str | None = None
     summary_created: bool = False
+    summary_error: str | None = None
 
 
 def navigate_session_tree(
@@ -70,6 +71,7 @@ def navigate_session_tree(
         editor_text = target.message.display_text_content() or ""
 
     summary_created = False
+    summary_error = None
     if summarize:
         abandoned = collect_abandoned_branch_entries(
             entries,
@@ -77,11 +79,15 @@ def navigate_session_tree(
             target_id=target_id,
         )
         if abandoned:
-            summary = summarize_branch_entries(
-                agent,
-                abandoned,
-                custom_instructions=custom_instructions,
-            )
+            try:
+                summary = summarize_branch_entries(
+                    agent,
+                    abandoned,
+                    custom_instructions=custom_instructions,
+                )
+            except Exception as exc:  # noqa: BLE001
+                summary = None
+                summary_error = str(exc).strip() or type(exc).__name__
             if summary:
                 summary_entry = ConversationEntry(
                     kind="branch_summary",
@@ -113,6 +119,7 @@ def navigate_session_tree(
         active_session=active_session,
         editor_text=editor_text,
         summary_created=summary_created,
+        summary_error=summary_error,
     )
 
 

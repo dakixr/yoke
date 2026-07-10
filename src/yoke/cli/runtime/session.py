@@ -313,7 +313,7 @@ def save_agent_session_state(
         active_session,
         state.messages,
         conversation_entries=state.conversation_entries,
-        leaf_id=leaf_id,
+        leaf_id=leaf_id if leaf_id is not None else state.leaf_id,
         agent=agent,
     )
 

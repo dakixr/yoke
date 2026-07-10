@@ -48,13 +48,16 @@ class AttachImageTool(LocalTool):
         }
 
     def apply_result(self, context, result: dict[str, object]) -> None:
-        """Prepare an attached user message for the runtime to append later."""
-        del context
+        """Leave attachment construction to ordered context-message handling."""
+        del context, result
+
+    def pending_context_messages(self, result: dict[str, object]) -> list[Message]:
+        """Build the attached message using the latest ordered context."""
         if not result.get("ok"):
-            return
+            return []
         raw_path = result.get("path")
         if not isinstance(raw_path, str) or not raw_path:
-            return
+            return []
         next_index = next_image_label_index(self._context_messages())
         caption = result.get("caption")
         prompt = caption if isinstance(caption, str) else ""
@@ -63,19 +66,9 @@ class AttachImageTool(LocalTool):
             image_paths=[Path(raw_path)],
             start_index=next_index,
         )
+        result["label"] = format_image_label(next_index)
         result["context_messages"] = [message.model_dump(mode="json")]
-
-    def pending_context_messages(self, result: dict[str, object]) -> list[Message]:
-        """Decode any context messages requested by the tool result."""
-        raw_messages = result.get("context_messages")
-        if not isinstance(raw_messages, list):
-            return []
-        decoded: list[Message] = []
-        for raw_message in raw_messages:
-            if not isinstance(raw_message, dict):
-                continue
-            decoded.append(Message.model_validate(cast(dict[str, object], raw_message)))
-        return decoded
+        return [message]
 
     def _context_messages(self) -> list[Message]:
         raw_messages = self._context.get("messages", [])

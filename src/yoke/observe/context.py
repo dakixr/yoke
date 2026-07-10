@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import inspect
 import secrets
+import threading
 from collections.abc import Callable
 from collections.abc import Iterator
 from contextvars import ContextVar
@@ -21,6 +22,7 @@ from yoke.observe.models import ObserveEvent
 from yoke.observe.models import ObserveEventType
 from yoke.observe.models import RunManifest
 from yoke.observe.store import JsonlObserveStore
+from yoke.observe.store import validate_run_id
 
 
 P = ParamSpec("P")
@@ -32,6 +34,10 @@ MAX_PREVIEW_ITEMS = 20
 _ACTIVE_WORKFLOW: ContextVar[WorkflowRun | None] = ContextVar(
     "yoke_observe_workflow",
     default=None,
+)
+_ACTIVE_NODE_STACK: ContextVar[tuple[str, ...]] = ContextVar(
+    "yoke_observe_node_stack",
+    default=(),
 )
 
 
@@ -46,21 +52,30 @@ class WorkflowRun:
         store: JsonlObserveStore | None = None,
         run_id: str | None = None,
     ) -> None:
-        self.run_id = run_id or f"run_{secrets.token_hex(8)}"
+        self.run_id = validate_run_id(run_id or f"run_{secrets.token_hex(8)}")
         self.name = name
         self.store = store or JsonlObserveStore(root)
         self._sequence = 0
-        self._node_stack: list[str] = []
         self._object_nodes: dict[int, str] = {}
         self._agent_nodes: dict[int, str] = {}
         self._open_agent_nodes: set[str] = set()
         self._token = None
+        self._node_stack_token = None
+        self._lock = threading.RLock()
 
     def __enter__(self) -> Self:
         """Start this workflow run."""
         self.store.create_run(RunManifest(run_id=self.run_id, name=self.name))
         self._token = _ACTIVE_WORKFLOW.set(self)
-        self.emit("workflow_started", payload={"name": self.name})
+        self._node_stack_token = _ACTIVE_NODE_STACK.set(())
+        try:
+            self.emit("workflow_started", payload={"name": self.name})
+        except BaseException:
+            _ACTIVE_NODE_STACK.reset(self._node_stack_token)
+            _ACTIVE_WORKFLOW.reset(self._token)
+            self._node_stack_token = None
+            self._token = None
+            raise
         return self
 
     def __exit__(
@@ -71,17 +86,23 @@ class WorkflowRun:
     ) -> None:
         """Finish this workflow run."""
         del traceback
-        if exc_type is None:
-            self._complete_open_agent_nodes()
-            self.emit("workflow_completed")
-        else:
-            self._fail_open_agent_nodes(exc or RuntimeError("workflow failed"))
-            self.emit(
-                "workflow_failed",
-                payload={"error": str(exc), "error_type": exc_type.__name__},
-            )
-        if self._token is not None:
-            _ACTIVE_WORKFLOW.reset(self._token)
+        try:
+            if exc_type is None:
+                self._complete_open_agent_nodes()
+                self.emit("workflow_completed")
+            else:
+                self._fail_open_agent_nodes(exc or RuntimeError("workflow failed"))
+                self.emit(
+                    "workflow_failed",
+                    payload={"error": str(exc), "error_type": exc_type.__name__},
+                )
+        finally:
+            if self._node_stack_token is not None:
+                _ACTIVE_NODE_STACK.reset(self._node_stack_token)
+                self._node_stack_token = None
+            if self._token is not None:
+                _ACTIVE_WORKFLOW.reset(self._token)
+                self._token = None
 
     def emit(
         self,
@@ -92,17 +113,18 @@ class WorkflowRun:
         payload: dict[str, object] | None = None,
     ) -> ObserveEvent:
         """Append one event to this workflow."""
-        self._sequence += 1
-        event = ObserveEvent(
-            run_id=self.run_id,
-            sequence=self._sequence,
-            event_id=f"evt_{secrets.token_hex(8)}",
-            type=event_type,
-            node_id=node_id,
-            parent_node_id=parent_node_id,
-            payload=payload or {},
-        )
-        self.store.append(event)
+        with self._lock:
+            self._sequence += 1
+            event = ObserveEvent(
+                run_id=self.run_id,
+                sequence=self._sequence,
+                event_id=f"evt_{secrets.token_hex(8)}",
+                type=event_type,
+                node_id=node_id,
+                parent_node_id=parent_node_id,
+                payload=payload or {},
+            )
+            self.store.append(event)
         return event
 
     def start_node(
@@ -134,7 +156,7 @@ class WorkflowRun:
                 },
             )
         if push:
-            self._node_stack.append(node_id)
+            _ACTIVE_NODE_STACK.set((*_ACTIVE_NODE_STACK.get(), node_id))
         return node_id
 
     def complete_node(self, node_id: str, output: object = None) -> None:
@@ -155,8 +177,9 @@ class WorkflowRun:
 
     def remember_output(self, node_id: str, output: object) -> None:
         """Associate structured output values with a producing node."""
-        for value in _walk_values(output):
-            self._object_nodes[id(value)] = node_id
+        with self._lock:
+            for value in _walk_values(output):
+                self._object_nodes[id(value)] = node_id
         if isinstance(output, BaseModel):
             self.emit_typed_output(node_id, output)
 
@@ -213,16 +236,19 @@ class WorkflowRun:
     @property
     def current_node_id(self) -> str | None:
         """Return the currently active node id."""
-        return self._node_stack[-1] if self._node_stack else None
+        stack = _ACTIVE_NODE_STACK.get()
+        return stack[-1] if stack else None
 
     def _pop_node(self, node_id: str) -> None:
-        if self._node_stack and self._node_stack[-1] == node_id:
-            self._node_stack.pop()
+        stack = list(_ACTIVE_NODE_STACK.get())
+        if stack and stack[-1] == node_id:
+            _ACTIVE_NODE_STACK.set(tuple(stack[:-1]))
             return
         try:
-            self._node_stack.remove(node_id)
+            stack.remove(node_id)
         except ValueError:
             pass
+        _ACTIVE_NODE_STACK.set(tuple(stack))
 
     def _complete_open_agent_nodes(self) -> None:
         for node_id in list(self._open_agent_nodes):
@@ -404,6 +430,22 @@ def _input_preview(args: tuple[object, ...], kwargs: object) -> dict[str, object
 
 
 def _safe_object_preview(value: object) -> object:
+    return _safe_object_preview_seen(value, set(), depth=0)
+
+
+def _safe_object_preview_seen(
+    value: object,
+    seen: set[int],
+    *,
+    depth: int,
+) -> object:
+    if depth >= 12:
+        return {"truncated": True, "reason": "maximum preview depth"}
+    value_id = id(value)
+    if isinstance(value, (BaseModel, dict, list, tuple)):
+        if value_id in seen:
+            return {"cycle": True}
+        seen = {*seen, value_id}
     if isinstance(value, BaseModel):
         return {
             "type": type(value).__name__,
@@ -413,11 +455,14 @@ def _safe_object_preview(value: object) -> object:
         return str(value)
     if isinstance(value, dict):
         return {
-            str(key): _safe_object_preview(item)
+            str(key): _safe_object_preview_seen(item, seen, depth=depth + 1)
             for key, item in list(value.items())[:MAX_PREVIEW_ITEMS]
         }
     if isinstance(value, (list, tuple)):
-        items = [_safe_object_preview(item) for item in value[:MAX_PREVIEW_ITEMS]]
+        items = [
+            _safe_object_preview_seen(item, seen, depth=depth + 1)
+            for item in value[:MAX_PREVIEW_ITEMS]
+        ]
         if len(value) > MAX_PREVIEW_ITEMS:
             items.append({"truncated": True, "items": len(value)})
         return items

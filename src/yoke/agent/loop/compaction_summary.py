@@ -7,8 +7,10 @@ import time
 from yoke.agent.compaction import CompactionPreparation
 from yoke.agent.compaction import build_summary_handoff_messages
 from yoke.agent.loop.types import AgentEventHandler
+from yoke.agent.loop.types import StopRequested
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
+from yoke.ai.providers.base import complete_with_cancel
 
 
 def summarize_compaction(
@@ -17,6 +19,7 @@ def summarize_compaction(
     *,
     context: AgentContext | None = None,
     on_event: AgentEventHandler | None = None,
+    stop_requested: StopRequested | None = None,
     emit,
 ) -> str | None:
     """Ask the provider to summarize the compaction window."""
@@ -29,7 +32,12 @@ def summarize_compaction(
     )
     start_time = time.perf_counter()
     try:
-        response = agent.provider.complete(summarizer_messages, [])
+        response = complete_with_cancel(
+            agent.provider,
+            summarizer_messages,
+            [],
+            cancel_requested=stop_requested,
+        )
     except Exception as exc:
         metadata: dict[str, object] = {
             "ok": False,

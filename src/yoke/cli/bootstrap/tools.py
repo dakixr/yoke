@@ -21,6 +21,7 @@ from yoke.cli.bootstrap.types import LoadedTool
 from yoke.cli.bootstrap.types import LoadedToolContribution
 from yoke.cli.bootstrap.types import RegisterToolsFunc
 from yoke.cli.bootstrap.types import ToolDiscoveryResult
+from yoke.cli.bootstrap.types import ToolLoadFailure
 from yoke.cli.bootstrap.types import ToolSourceKind
 
 
@@ -37,23 +38,24 @@ def load_tools(
     context: ToolRegistrationContext,
 ) -> ToolDiscoveryResult:
     """Load built-in and plugin tools."""
-    builtin_registration = _register_builtin_tools(context)
-    builtin_tools = list(builtin_registration.tools)
-    builtin_capabilities = _register_builtin_capabilities(context)
+    resolution = CapabilityResolver(default_capabilities()).resolve(
+        CapabilityContext.from_tool_registration(context)
+    )
+    builtin_tools = list(resolution.tools)
     loaded_tools: list[LoadedTool] = [
         LoadedTool(
             tool=tool,
             source_kind="default",
-            source_label=f"default:{capability_name}",
-            capability_name=capability_name,
+            source_label=f"default:{capability.name}",
+            capability_name=capability.name,
         )
-        for capability_name, tools in builtin_capabilities.items()
-        for tool in tools
+        for capability, registration in resolution.registrations
+        for tool in registration.tools
     ]
     builtin_messages = tuple(
-        message.model_copy(deep=True)
-        for message in builtin_registration.system_messages
+        message.model_copy(deep=True) for message in resolution.system_messages
     )
+    failures: list[ToolLoadFailure] = []
     contributions = (
         [
             LoadedToolContribution(
@@ -78,6 +80,7 @@ def load_tools(
         )
         loaded_tools.extend(discovered.tools)
         contributions.extend(discovered.contributions)
+        failures.extend(discovered.failures)
     if include_repo_tools:
         discovered = _load_tools_from_directory(
             root / ".yoke" / "tools",
@@ -86,9 +89,11 @@ def load_tools(
         )
         loaded_tools.extend(discovered.tools)
         contributions.extend(discovered.contributions)
+        failures.extend(discovered.failures)
     return ToolDiscoveryResult(
         tools=loaded_tools,
         contributions=contributions,
+        failures=failures,
     )
 
 
@@ -137,6 +142,7 @@ def _load_tools_from_directory(
         return ToolDiscoveryResult(tools=[], contributions=[])
     loaded: list[LoadedTool] = []
     contributions: list[LoadedToolContribution] = []
+    failures: list[ToolLoadFailure] = []
     for path in _iter_tool_module_paths(directory):
         try:
             module = _load_tool_module(path, source_kind=source_kind)
@@ -157,7 +163,15 @@ def _load_tools_from_directory(
                     source_kind=source_kind,
                 )
                 registration = ToolRegistrationResult(tools=tools)
-        except Exception:  # noqa: S112
+        except Exception as exc:
+            sys.modules.pop(_tool_module_name(path), None)
+            failures.append(
+                ToolLoadFailure(
+                    source_kind=source_kind,
+                    source_path=path,
+                    error=str(exc),
+                )
+            )
             continue
         for tool in tools:
             loaded.append(
@@ -175,7 +189,11 @@ def _load_tools_from_directory(
                 source_label=f"{source_kind}:{path}",
             )
         )
-    return ToolDiscoveryResult(tools=loaded, contributions=contributions)
+    return ToolDiscoveryResult(
+        tools=loaded,
+        contributions=contributions,
+        failures=failures,
+    )
 
 
 def _iter_tool_module_paths(directory: Path) -> Iterable[Path]:
@@ -186,8 +204,7 @@ def _iter_tool_module_paths(directory: Path) -> Iterable[Path]:
 
 
 def _load_tool_module(path: Path, *, source_kind: ToolSourceKind) -> ModuleType:
-    package_name = _ensure_tool_package(path.parent)
-    module_name = f"{package_name}.{path.stem}"
+    module_name = _tool_module_name(path)
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ValueError(f"Unable to load tool module: {path}")
@@ -196,12 +213,17 @@ def _load_tool_module(path: Path, *, source_kind: ToolSourceKind) -> ModuleType:
     try:
         spec.loader.exec_module(module)
     except Exception as exc:
+        sys.modules.pop(module_name, None)
         raise ValueError(
             f"Could not load {_tool_scope_label(source_kind)} "
             f"tool plugin `{path}`. "
             f"The Python module failed to import: {exc}"
         ) from exc
     return module
+
+
+def _tool_module_name(path: Path) -> str:
+    return f"{_ensure_tool_package(path.parent)}.{path.stem}"
 
 
 def _ensure_tool_package(directory: Path) -> str:

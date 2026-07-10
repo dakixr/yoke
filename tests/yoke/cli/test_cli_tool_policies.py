@@ -6,6 +6,8 @@ from __future__ import annotations
 import re
 import sys
 
+import typer
+
 from .support import *  # noqa: F403, F405
 
 
@@ -261,13 +263,16 @@ def test_tools_list_colors_success_warning_and_failure_messages(
     try:
         sys.stdout = stdout
         sys.stderr = stderr
-        tools_list(root=tmp_path)
+        with pytest.raises(typer.Exit) as exc_info:
+            tools_list(root=tmp_path)
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
 
     failure_output = stdout.getvalue()
-    assert re.search(r"\x1b\[[0-9;]*32mTool loading OK\.\x1b\[0m", failure_output)
+    assert exc_info.value.exit_code == 1
+    assert "Tool loading completed with 1 failure(s)." in failure_output
+    assert "boom" in failure_output
 
 
 def test_tools_activate_writes_repo_policy(tmp_path: Path) -> None:
@@ -281,7 +286,9 @@ def test_tools_activate_writes_repo_policy(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     config_path = tmp_path / ".yoke" / "config.json"
-    assert json.loads(config_path.read_text(encoding="utf-8")) == {"tools": {}}
+    assert json.loads(config_path.read_text(encoding="utf-8")) == {
+        "tools": {"extract_file_context": "allow"}
+    }
 
     report = build_tool_report(root=tmp_path)
     names = {entry.tool.name for entry in report.active_tools}
@@ -361,7 +368,9 @@ def test_tools_activate_removes_exact_deny_rule(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0
-    assert json.loads((config_dir / "config.json").read_text()) == {"tools": {}}
+    assert json.loads((config_dir / "config.json").read_text()) == {
+        "tools": {"web": "allow"}
+    }
 
 
 def test_tools_list_rejects_glob_policy_keys(tmp_path: Path) -> None:

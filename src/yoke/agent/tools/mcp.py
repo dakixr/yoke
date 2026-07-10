@@ -81,6 +81,10 @@ class McpInspectTool(LocalTool):
             raise RuntimeError("MCP manager is not configured")
         return manager
 
+    def owned_resources(self) -> tuple[object, ...]:
+        """Return the shared MCP manager owned by this tool registration."""
+        return (self._manager(),)
+
 
 class McpCallTool(LocalTool):
     """Call one configured MCP server tool."""
@@ -112,6 +116,10 @@ class McpCallTool(LocalTool):
         if not isinstance(manager, McpManager):
             raise RuntimeError("MCP manager is not configured")
         return manager
+
+    def owned_resources(self) -> tuple[object, ...]:
+        """Return the shared MCP manager owned by this tool registration."""
+        return (self._manager(),)
 
 
 def register_mcp_tools(manager: McpManager) -> tuple[LocalTool, ...]:

@@ -360,7 +360,10 @@ class OpenCodeGoProvider(Provider):
     def _sync_openai_config(self) -> None:
         self._openai_provider.config.model = self.config.model
         self._openai_provider.config.max_tokens = _max_output_tokens(self.config.model)
-        self._openai_provider.config.reasoning_effort = self.config.reasoning_effort
+        reasoning_effort = self.config.reasoning_effort
+        if reasoning_effort == "thinking":
+            reasoning_effort = None
+        self._openai_provider.config.reasoning_effort = reasoning_effort
 
     def _complete_anthropic(
         self,

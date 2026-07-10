@@ -5,10 +5,43 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from yoke.agent.models import Message
 from yoke.agent.models import TokenUsage
 from yoke.cli.session import SessionRecord
 from yoke.cli.session import SessionStore
+
+
+def test_session_store_rebuilds_a_corrupt_index_from_session_logs(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(directory=tmp_path)
+    store.save("recoverable", [Message.user("hello")], title="Recovered")
+    (tmp_path / "index.json").write_text("{broken", encoding="utf-8")
+
+    records = store.list()
+
+    assert [record.id for record in records] == ["recoverable"]
+    rebuilt = json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))
+    assert rebuilt["sessions"]["recoverable"]["title"] == "Recovered"
+
+
+def test_session_store_removes_temporary_index_after_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SessionStore(directory=tmp_path)
+
+    def fail_replace(_source: Path, _destination: Path) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr("yoke.cli.session.os.replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        store.save("replace-failure", [Message.user("hello")])
+
+    assert not list(tmp_path.glob(".index.json.*.tmp"))
 
 
 def test_session_store_load_normalizes_legacy_assistant_null_content(

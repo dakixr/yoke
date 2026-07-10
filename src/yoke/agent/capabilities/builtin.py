@@ -170,10 +170,6 @@ class McpCapability(BaseCapability):
     name = "mcp"
     description = "Inspect and call configured MCP servers through compact tools."
 
-    def is_available(self, context: CapabilityContext) -> bool:
-        manager = self._manager(context)
-        return manager.has_servers()
-
     def register(self, context: CapabilityContext) -> CapabilityRegistration:
         return CapabilityRegistration(tools=register_mcp_tools(self._manager(context)))
 
