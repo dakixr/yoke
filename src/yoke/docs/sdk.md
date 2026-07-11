@@ -393,17 +393,19 @@ schema and validates the final output. If validation fails, it raises
 `StructuredOutputError` with the raw output attached. Omit `output_type` for
 free-form text.
 
-## Observe
+## Agent orchestration
 
-Yoke Observe records live workflow execution data for SDK workflows. Use it
-when a Python workflow creates typed agent outputs, fans work out across
-multiple steps, merges results, or needs to be inspected while it is running.
+Compose multiple `Agent` instances with normal Python. Give each agent a clear
+role, exchange Pydantic models at boundaries, and keep control flow explicit.
+Separate `Agent` objects have separate conversation histories; reuse one object
+when later prompts should continue the same conversation.
 
 ```python
+from pathlib import Path
+
 from pydantic import BaseModel
 
-from yoke.ai import Agent, RunConfig
-from yoke.observe import step, workflow
+from yoke.ai import Agent, RunConfig, build_provider
 
 
 class ReviewPlan(BaseModel):
@@ -412,113 +414,136 @@ class ReviewPlan(BaseModel):
 
 class FileReview(BaseModel):
     path: str
-    risks: list[str]
+    findings: list[str]
 
 
-class MergeDecision(BaseModel):
+class FinalReview(BaseModel):
+    summary: str
     should_merge: bool
 
 
-@step
-def review_file(path: str) -> FileReview:
-    result = reviewer.prompt(
-        f"Review {path}.",
+root = Path.cwd()
+provider_ref = "zai:glm-5.2:none"
+
+planner = Agent(
+    provider=build_provider(provider_ref),
+    config=RunConfig(root=root),
+)
+reviewer = Agent(
+    provider=build_provider(provider_ref),
+    config=RunConfig(root=root),
+)
+merger = Agent(
+    provider=build_provider(provider_ref),
+    config=RunConfig(root=root),
+)
+
+plan = planner.prompt(
+    "Choose the files that need review.",
+    output_type=ReviewPlan,
+).structured
+assert plan is not None
+
+reviews: list[FileReview] = []
+for path in plan.files:
+    review = reviewer.prompt(
+        f"Review {path}. Return its path and concrete findings.",
         output_type=FileReview,
-    )
-    assert result.structured is not None
-    return result.structured
+    ).structured
+    assert review is not None
+    reviews.append(review)
 
-
-with workflow("review-pr", root=".") as run:
-    plan = planner.prompt("Plan the review.", output_type=ReviewPlan)
-    assert plan.structured is not None
-
-    reviews = [review_file(path) for path in plan.structured.files]
-    decision = merger.prompt(
-        f"Merge these reviews: {reviews}",
-        output_type=MergeDecision,
-    )
-
-print(run.run_id)
+final = merger.prompt(
+    "Synthesize these reviews:\n"
+    + "\n".join(review.model_dump_json() for review in reviews),
+    output_type=FinalReview,
+).structured
+assert final is not None
+print(final.model_dump_json(indent=2))
 ```
 
-Inside an active `workflow(...)`, each SDK `Agent` instance becomes one stable
-observed agent node for the duration of the run. Reuse the same `Agent` object
-when repeated prompts should share conversation context and appear as one
-conversation node, such as a coder/reviewer loop. Runtime events from the
-existing agent loop are attached under that node, including prompt starts,
-model starts and ends, tool execution events, context usage events, and
-compaction events. When `output_type` is a Pydantic model, Observe records the
-model name, JSON Schema, and a small JSON preview of the latest structured
-output produced by that node.
+Use separate reviewer instances when workers need isolated context. For large
+independent batches, run isolated agents concurrently with your application's
+thread or task executor, subject to provider rate limits. Do not call one
+stateful `Agent` concurrently from multiple workers.
 
-Decorate normal Python functions with `@step` to expose application-level
-workflow structure. Step functions can be sync or async. When an observed step
-receives a Pydantic value that was produced by an earlier observed node, Yoke
-records a dependency edge. This lets dynamic fan-out grow the graph at runtime;
-the graph does not need to be known before the workflow runs.
+### Dependency-driven pipelines
 
-Structured outputs are also a good way to control loops. For example, a
-reviewer model can return `ok: bool` and `next_request: str`; the workflow can
-continue prompting the same `Agent` until `ok` is true, with an explicit
-max-iteration guard. Observe records those repeated prompts on the same agent
-node when the same `Agent` instance is reused.
-
-Observe stores events locally under the workflow root:
+A planner/worker/merger batch has a barrier: merging starts after every worker
+finishes. For larger dependency graphs, schedule each task when its own
+dependencies are satisfied. This lets one branch progress through investigation,
+implementation, and review while unrelated investigations are still running:
 
 ```text
-.yoke/observe/runs/<run_id>/manifest.json
-.yoke/observe/runs/<run_id>/events.jsonl
-.yoke/observe/runs/<run_id>/artifacts/
+A investigate -> A implement -> A review -----------\
+B investigate -----------> B implement -> B review --+-> integrate
+C investigate -> split -> C1 and C2 reviews --------/
 ```
 
-The JSONL event log is the durable source of truth. The current workflow state
-is a projection rebuilt from those events, so viewers can load a state snapshot
-and then consume events after the last sequence number.
+This resembles independent depth-first traversal, but multiple branches may run
+concurrently. More precisely, it is ready-node scheduling with a soft
+depth-first preference. Avoid `asyncio.gather()` when it creates a barrier around
+the current ready set. Instead, process completions incrementally:
 
-CLI inspection:
+```python
+while pending or running:
+    for task in ready_tasks(pending, completed):
+        future = asyncio.create_task(run_task(task))
+        running[future] = task
 
-```bash
-yoke observe list --root .
-yoke observe state latest --root .
-yoke observe state latest --root . --json
-yoke observe events latest --root .
-yoke observe watch latest --root .
+    done, _ = await asyncio.wait(
+        running,
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for future in done:
+        task = running.pop(future)
+        result = future.result()
+        completed[task.id] = result
+        pending.update(result.discovered_tasks)
 ```
 
-For a live browser viewer and JSON API, run the local server:
+`run_task` can call synchronous `Agent.prompt()` through a bounded thread
+executor. Give each independent branch its own agent; reuse a task-owned agent
+for branch continuations that need conversation context. Keep reviewers
+isolated from implementers.
 
-```bash
-yoke observe serve --root . --host 127.0.0.1 --port 8787
+Task and result models should include stable IDs and explicit dependencies.
+Results may return typed `discovered_tasks`, allowing the graph to grow during
+execution. Limit concurrency and graph expansion, use aging to prevent a deep
+branch from starving older ready work, and block only descendants of a failed
+task so unrelated branches can continue.
+
+See [`examples/agent_pipeline.py`](examples/agent_pipeline.py) for a complete
+executable scheduler with typed dynamic tasks, bounded concurrency, incremental
+completion handling, and descendant-only failure propagation.
+
+For iterative coder/reviewer coordination, use structured decisions and an
+explicit limit:
+
+```python
+class ReviewDecision(BaseModel):
+    approved: bool
+    feedback: str
+
+
+request = "Implement the requested change."
+for _ in range(5):
+    draft = coder.prompt(request).text
+    decision = reviewer.prompt(
+        f"Review this result:\n{draft}",
+        output_type=ReviewDecision,
+    ).structured
+    assert decision is not None
+    if decision.approved:
+        break
+    request = f"Address this review feedback: {decision.feedback}"
+else:
+    raise RuntimeError("Review did not converge within five iterations")
 ```
 
-Open the printed URL to see the built-in workflow viewer. The root page is a
-run selector; `/runs/{run_id}` shows the workflow graph and node inspector. The
-viewer renders the current graph projection, shows node status and typed output
-previews, and keeps the sidebar focused on compact node summary data. Use the
-node detail button to open a drill-down view with structured input, structured
-output, final agent messages, and per-turn prompt/commentary history. It
-refreshes from the event stream while the workflow runs.
-
-The built-in graph keeps root-level agents visible, but collapses agent nodes
-that run inside an observed `@step` into the parent step. This keeps
-implementation details out of the main workflow diagram while preserving the
-agent prompt and output events in the run state.
-
-Endpoints:
-
-```text
-GET /
-GET /runs/{run_id}
-GET /runs
-GET /runs/{run_id}/state
-GET /runs/{run_id}/events?after=123
-```
-
-Custom viewers can fetch `/state`, render the projected graph, then poll
-`/events?after=<last_sequence>` and apply new events incrementally. The local
-store keeps a per-run byte cursor, so sequential polling reads only the newly
-appended event-log tail instead of rescanning prior events.
+Close agents when orchestration is finished, especially in long-lived
+processes. Keep temporary orchestration scripts outside committed source unless
+they are intended to become maintained automation.
 
 ## Skills
 

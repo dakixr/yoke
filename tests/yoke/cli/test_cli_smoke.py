@@ -76,7 +76,6 @@ def test_cli_command_smoke(
         (["tools", "init", "--help"], "Usage: yoke tools init"),
         (["models", "set", "--help"], "Usage: yoke models set"),
         (["providers", "doctor", "--help"], "Usage: yoke providers doctor"),
-        (["observe", "watch", "--help"], "Usage: yoke observe watch"),
         (["skills", "show", "--help"], "Usage: yoke skills show"),
     ],
 )

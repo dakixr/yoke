@@ -75,8 +75,6 @@ if TYPE_CHECKING:
     from yoke.ai.sdk.helpers import image_part as image_part
     from yoke.ai.sdk.helpers import remote_image_part as remote_image_part
     from yoke.ai.sdk.helpers import text_part as text_part
-    from yoke.observe import step as step
-    from yoke.observe import workflow as workflow
 
 _LAZY_EXPORTS = {
     "CompactionPolicy": ("yoke.agent.compaction", "CompactionPolicy"),
@@ -156,8 +154,6 @@ _LAZY_EXPORTS = {
     "image_part": ("yoke.ai.sdk.helpers", "image_part"),
     "remote_image_part": ("yoke.ai.sdk.helpers", "remote_image_part"),
     "text_part": ("yoke.ai.sdk.helpers", "text_part"),
-    "step": ("yoke.observe", "step"),
-    "workflow": ("yoke.observe", "workflow"),
 }
 
 __all__ = [
@@ -204,9 +200,7 @@ __all__ = [
     "provider_readiness",
     "provider_status",
     "remote_image_part",
-    "step",
     "text_part",
-    "workflow",
 ]
 
 
