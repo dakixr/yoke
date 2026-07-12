@@ -213,15 +213,49 @@ def test_session_resume_defaults_override_config_default_model(
     args = CLIArgs(root=str(tmp_path))
     record = SessionRecord(
         id="session-1",
-        provider_name="demo",
-        model_id="provider.model-name",
+        provider_name="codex",
+        model_id="gpt-5.4",
         reasoning_effort="high",
     )
 
     apply_session_defaults_to_args(args, record)
 
-    assert args.model == "demo:provider.model-name"
+    assert args.model == "codex:gpt-5.4"
     assert args.reasoning_effort == "high"
+
+
+def test_unsupported_session_provider_falls_back_to_config_default_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeCodexProvider:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def complete(self, messages, tools) -> Message:
+            del messages, tools
+            return Message.assistant("ok")
+
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        '{"default_model": "codex:gpt-5.4-mini", "default_reasoning_effort": "low"}\n',
+        encoding="utf-8",
+    )
+    install_builtin_provider(monkeypatch, FakeCodexProvider)
+    args = CLIArgs(root=str(tmp_path))
+    record = SessionRecord(
+        id="session-1",
+        provider_name="codex-websockets",
+        model_id="gpt-5.4",
+        reasoning_effort="high",
+    )
+
+    apply_session_defaults_to_args(args, record)
+    agent = build_agent_from_args(args)
+
+    assert cast(Any, agent.provider).config.model == "gpt-5.4-mini"
+    assert cast(Any, agent.provider).config.reasoning_effort == "low"
 
 
 def test_session_title_uses_configured_title_model(

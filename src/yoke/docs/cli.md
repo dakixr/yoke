@@ -172,7 +172,9 @@ It uses `provider:model:reasoning-effort`, defaults to
 `codex:gpt-5.4-mini:medium`, and does not change the provider/model used for
 conversation turns.
 An explicit CLI flag wins, and `yoke resume` still prefers the last provider/model
-saved in that session.
+saved in that session. If the saved provider is no longer available, resume falls
+back to the configured default model (or normal automatic provider selection when
+no default model is configured).
 
 Image input support depends on the selected provider and model. If you
 attach an image while using a provider that does not support image inputs, yoke

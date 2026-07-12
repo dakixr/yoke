@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from yoke.agent.context import ContextManager
 from yoke.agent.loop import RuntimeAgent
 from yoke.ai.providers.base import ModelCatalogProvider
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.resolution import available_provider_names
 from yoke.agent.budget import current_context_fits_provider_budget
 from yoke.agent.budget import rebind_context_manager_budget
 from yoke.cli.config.args import CLIArgs
@@ -112,6 +114,13 @@ def apply_session_provider_defaults(
     session_state: ProviderSessionState,
 ) -> None:
     """Fill unset CLI args from persisted session provider state."""
+    if (
+        args.model is None
+        and session_state.provider_name is not None
+        and session_state.provider_name
+        not in available_provider_names(home=Path.home())
+    ):
+        return
     if getattr(args, "model", None) is None and session_state.model_id:
         if session_state.provider_name:
             args.model = f"{session_state.provider_name}:{session_state.model_id}"
