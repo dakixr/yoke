@@ -61,6 +61,7 @@ def build_provider_from_args(args: CLIArgs) -> Provider:
         provider_name,
         model=args.model,
         reasoning_effort=args.reasoning_effort,
+        session_id=args.session,
         home=Path.home(),
         env=_provider_env(),
     )
@@ -107,6 +108,7 @@ def _build_builtin_provider(provider_name: str, args: CLIArgs) -> Provider:
                     provider_name,
                     model=args.model,
                     reasoning_effort=args.reasoning_effort,
+                    session_id=args.session,
                     home=Path.home(),
                 )
             )
@@ -114,6 +116,7 @@ def _build_builtin_provider(provider_name: str, args: CLIArgs) -> Provider:
             provider_name,
             model=args.model,
             reasoning_effort=args.reasoning_effort,
+            session_id=args.session,
             home=Path.home(),
         )
     except Exception as exc:
@@ -127,6 +130,7 @@ def _provider_context(
     *,
     model: str | None,
     reasoning_effort: str | None,
+    session_id: str | None = None,
     home: Path,
 ) -> ProviderPluginContext:
     return ProviderPluginContext(
@@ -134,6 +138,7 @@ def _provider_context(
         home=home.resolve(),
         model=model,
         reasoning_effort=reasoning_effort,
+        session_id=session_id,
         env=_provider_env(home=home),
     )
 
@@ -253,6 +258,7 @@ def _build_first_available_custom_provider(
                 provider_name,
                 model=None,
                 reasoning_effort=args.reasoning_effort,
+                session_id=args.session,
                 home=Path.home(),
                 env=_provider_env(),
             )

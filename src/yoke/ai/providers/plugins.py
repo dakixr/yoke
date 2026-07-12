@@ -28,6 +28,7 @@ class ProviderPluginContext:
     env: Mapping[str, str]
     model: str | None = None
     reasoning_effort: str | None = None
+    session_id: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -134,6 +135,7 @@ def create_custom_provider(
     *,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    session_id: str | None = None,
     home: Path,
     env: Mapping[str, str] | None = None,
 ) -> Provider | None:
@@ -148,6 +150,7 @@ def create_custom_provider(
             home=home.resolve(),
             model=model,
             reasoning_effort=reasoning_effort,
+            session_id=session_id,
             env=resolved_env,
         )
         try:

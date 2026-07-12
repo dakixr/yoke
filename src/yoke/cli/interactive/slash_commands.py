@@ -25,6 +25,7 @@ from yoke.cli.interactive.tools_menu import handle_tools_menu
 from yoke.cli.render.base import Console
 from yoke.cli.render import format_compaction_note
 from yoke.cli.render import print_session_scrollback
+from yoke.cli.providers.state import bind_provider_session
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import fork_active_session
@@ -142,6 +143,7 @@ def handle_slash_command(  # noqa: C901
                     else active_session.record.model_id
                 ),
                 reasoning_effort=active_session.record.reasoning_effort,
+                session=active_session.id,
                 root=str(active_session.root),
             ),
         )
@@ -254,9 +256,9 @@ def handle_slash_command(  # noqa: C901
         return True, messages, active_session
     if normalized == "/fork":
         forked_session = fork_active_session(active_session, agent, messages)
+        bind_provider_session(agent, forked_session.id)
         print_scrollback_notice(
-            console,
-            f"Forked session {active_session.id} -> {forked_session.id}",
+            console, f"Forked session {active_session.id} -> {forked_session.id}"
         )
         return True, forked_session.record.messages, forked_session
     if normalized == "/new":
@@ -267,16 +269,14 @@ def handle_slash_command(  # noqa: C901
         reset_agent = getattr(agent, "reset", None)
         if callable(reset_agent):
             reset_agent()
+        bind_provider_session(agent, new_session.id)
         persist_session_state(
             new_session,
             agent,
             [],
             conversation_entries=[],
         )
-        print_scrollback_notice(
-            console,
-            f"Started new session {new_session.id}",
-        )
+        print_scrollback_notice(console, f"Started new session {new_session.id}")
         if on_context_usage is not None:
             on_context_usage({"usage_percent": 0})
         return True, [], new_session

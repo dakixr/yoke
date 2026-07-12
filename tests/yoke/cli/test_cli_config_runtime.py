@@ -21,6 +21,22 @@ def test_build_agent_binds_provider_into_tool_context(
     assert web_research.context.model_key == "codex:gpt-5.4"
 
 
+def test_build_agent_passes_cli_session_id_to_provider(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_builtin_provider(monkeypatch, ConfigOnlyProvider)
+
+    agent = build_agent_from_args(
+        CLIArgs(
+            model="codex:gpt-5.4",
+            root=str(tmp_path),
+            session="session-123",
+        )
+    )
+
+    assert getattr(agent.provider, "config").session_id == "session-123"
+
+
 def test_builtin_tools_are_runtime_bound_during_registration(
     tmp_path: Path, monkeypatch
 ) -> None:

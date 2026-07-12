@@ -120,11 +120,11 @@ def run_cli(
     tool_report: ToolLoadReport | None = None
     try:
         mode = resolve_cli_mode(args, input_func=input_func)
+        active_session = create_active_session(args, root=Path(args.root))
         active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
     except ValueError as exc:
         print_error(error_console, str(exc))
         return 1
-    active_session = create_active_session(args, root=Path(args.root))
     if isinstance(active_agent, RuntimeAgent):
         active_agent.load_conversation(
             ConversationEntryHistory(

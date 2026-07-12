@@ -60,6 +60,12 @@ to ChatGPT's Codex backend. Set `YOKE_CODEX_DOMAIN` to a proxy origin, such as
 Codex through that proxy. Set `YOKE_CODEX_API_KEY` when the proxy uses bearer
 API-key auth instead of local Codex OAuth.
 
+Codex prompt-cache affinity follows the yoke session id. Reconstructing the
+provider or resuming the same saved session therefore reuses its cache key,
+while `/new`, `/fork`, and newly created sessions use a distinct key. Direct SDK
+provider instances without a session id retain one generated key for that
+provider instance.
+
 Provider model catalogs can attach model-specific system messages. Yoke sends
 those messages only for the active `provider:model` and refreshes them when a
 session switches models. Custom provider plugins can do this by returning

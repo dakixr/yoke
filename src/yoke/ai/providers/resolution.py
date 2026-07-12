@@ -78,6 +78,7 @@ def build_provider(
     *,
     env: Mapping[str, str] | None = None,
     home: Path | str | None = None,
+    session_id: str | None = None,
 ) -> Provider:
     """Build a provider from `provider:model:thinking-effort`."""
     provider_ref = parse_provider_ref(qualified_name)
@@ -95,6 +96,7 @@ def build_provider(
             provider_ref.provider_name,
             model=provider_ref.model,
             reasoning_effort=provider_ref.reasoning_effort,
+            session_id=session_id,
             env=resolved_env,
             home=resolved_home,
         )
@@ -102,6 +104,7 @@ def build_provider(
         provider_ref.provider_name,
         model=provider_ref.model,
         reasoning_effort=provider_ref.reasoning_effort,
+        session_id=session_id,
         home=resolved_home,
         env=resolved_env,
     )
@@ -118,6 +121,7 @@ def build_builtin_provider(
     *,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    session_id: str | None = None,
     env: Mapping[str, str] | None = None,
     home: Path | str | None = None,
 ) -> Provider:
@@ -134,6 +138,7 @@ def build_builtin_provider(
             if reasoning_effort is not None
             else None
         ),
+        session_id=session_id,
         env=_resolved_env(env, home=resolved_home),
         home=resolved_home,
     )

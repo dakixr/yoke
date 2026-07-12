@@ -46,6 +46,7 @@ def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
     """Create or load the active session for a CLI invocation."""
     store = SessionStore()
     session_id = args.session or new_session_id()
+    args.session = session_id
     record = store.load(session_id)
     resolved_root = root.resolve()
     if record.created_at is None:
@@ -133,9 +134,7 @@ def generate_session_title(
 ) -> str:
     """Generate a short session title."""
     return generate_session_title_from_messages(
-        agent,
-        [Message.user(prompt)],
-        root=root,
+        agent, [Message.user(prompt)], root=root
     )
 
 
@@ -343,6 +342,7 @@ def apply_session_defaults_to_args(
     record: SessionRecord,
 ) -> None:
     """Apply persisted provider/model defaults from a session record."""
+    args.session = record.id
     apply_session_provider_defaults(
         args,
         provider_session_state_from_values(

@@ -51,6 +51,14 @@ class TargetModelProvider:
             raise ValueError(f"Unknown model {model_id!r}.")
 
 
+def bind_provider_session(agent: object, session_id: str) -> None:
+    """Bind a session-aware provider to the active CLI session."""
+    provider = getattr(agent, "provider", None)
+    set_session_id = getattr(provider, "set_session_id", None)
+    if callable(set_session_id):
+        set_session_id(session_id)
+
+
 def provider_session_state_from_values(
     *,
     provider_name: str | None = None,

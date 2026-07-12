@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import platform
 import secrets
@@ -100,6 +99,7 @@ def register_provider(context: Any) -> CodexProvider:
                 env.get("YOKE_CODEX_SELECTION_TTL_SECONDS") or "1800"
             ),
             model=model,
+            prompt_cache_key=getattr(context, "session_id", None),
             base_url=_base_url_from_env(env),
             api_key=env.get("YOKE_CODEX_API_KEY") or None,
             originator=env.get("YOKE_CODEX_ORIGINATOR") or "yoke",
@@ -192,7 +192,6 @@ class CodexProvider(CodexSubscriptionProvider):
         self._websocket: CodexWebSocketConnection | None = None
         self._websocket_credentials: OAuthCredentials | None = None
         self._websocket_auth_profile: str | None = None
-        self._prompt_cache_key = self._new_prompt_cache_key()
         self._turn_state: str | None = None
         self._last_request_payload: dict[str, object] | None = None
         self._last_response_id: str | None = None
@@ -259,6 +258,10 @@ class CodexProvider(CodexSubscriptionProvider):
                     input_tokens=getattr(usage, "input_tokens", None),
                     output_tokens=getattr(usage, "output_tokens", None),
                     total_tokens=getattr(usage, "total_tokens", None),
+                    cached_input_tokens=getattr(usage, "cached_input_tokens", None),
+                    prompt_cache_key_prefix=self._prompt_cache_key[:12],
+                    used_previous_response_id="previous_response_id"
+                    in websocket_payload,
                     **request_metrics,
                 )
                 return message
@@ -416,17 +419,14 @@ class CodexProvider(CodexSubscriptionProvider):
         self._close_websocket()
         super().close()
 
-    def _new_prompt_cache_key(self) -> str:
-        seed = "\0".join(
-            [
-                str(self.config.auth_path.expanduser()),
-                str(self.config.accounts_dir.expanduser()),
-                self.config.base_url,
-                self.config.model,
-                secrets.token_hex(16),
-            ]
-        )
-        return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    def set_session_id(self, session_id: str) -> None:
+        """Switch cache affinity and response chaining to a new session."""
+        previous_key = self._prompt_cache_key
+        super().set_session_id(session_id)
+        if self._prompt_cache_key == previous_key:
+            return
+        self._close_websocket()
+        self._reset_response_link()
 
     def _request_payload(
         self, messages: list[Message], tools: list[dict[str, object]]

@@ -33,6 +33,7 @@ def build_registered_provider(
     *,
     model: str | None,
     reasoning_effort: str | None,
+    session_id: str | None,
     env: Mapping[str, str],
     home: Path,
 ) -> Provider:
@@ -48,6 +49,7 @@ def build_registered_provider(
             provider_name,
             model=model,
             reasoning_effort=reasoning_effort,
+            session_id=session_id,
             env=env,
             home=home,
         )
@@ -88,6 +90,7 @@ def _provider_context(
     *,
     model: str | None,
     reasoning_effort: str | None,
+    session_id: str | None = None,
     env: Mapping[str, str],
     home: Path,
 ) -> ProviderPluginContext:
@@ -96,6 +99,7 @@ def _provider_context(
         home=home.resolve(),
         model=model,
         reasoning_effort=reasoning_effort,
+        session_id=session_id,
         env=env,
     )
 

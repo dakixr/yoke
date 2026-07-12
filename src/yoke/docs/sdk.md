@@ -55,6 +55,10 @@ if "zai" not in ready_names:
 provider = build_provider("zai:glm-5.2:none")
 ```
 
+For a Codex provider that may be reconstructed while continuing the same
+logical conversation, pass a durable `session_id` to `build_provider(...)` so
+the prompt-cache key remains stable across instances.
+
 The accepted forms are `provider`, `provider:model`, and
 `provider:model:thinking-effort`. Pass `env=` and `home=` to check or build
 against a specific environment rather than the current process. Agents should

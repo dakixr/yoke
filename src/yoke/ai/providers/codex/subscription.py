@@ -38,6 +38,7 @@ from yoke.ai.providers.base import (
     ProviderServerError,
     sleep_with_cancel,
 )
+from yoke.ai.providers.codex.cache import build_prompt_cache_key
 from yoke.ai.providers.model_selection import (
     default_reasoning_effort_for_model,
 )
@@ -142,6 +143,7 @@ def register_provider(context: Any) -> CodexSubscriptionProvider:
                 env.get("YOKE_CODEX_SELECTION_TTL_SECONDS") or "1800"
             ),
             model=(context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.5"),
+            prompt_cache_key=getattr(context, "session_id", None),
             base_url=(env.get("YOKE_CODEX_BASE_URL") or DEFAULT_BASE_URL),
             originator=env.get("YOKE_CODEX_ORIGINATOR") or "yoke",
             timeout_seconds=float(
@@ -173,6 +175,7 @@ class CodexSubscriptionConfig(BaseModel):
     selection_path: Path
     selection_ttl_seconds: int = 1800
     model: str = "gpt-5.5"
+    prompt_cache_key: str | None = None
     base_url: str = DEFAULT_BASE_URL
     originator: str = "yoke"
     timeout_seconds: float = DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS
@@ -615,17 +618,17 @@ class CodexSubscriptionProvider(Provider):
     def _set_turn_state(self, value: str) -> None:
         self._turn_state = value
 
+    def start_turn(self) -> None:
+        """Clear Codex routing metadata at a logical user-turn boundary."""
+        self._turn_state = None
+
     def _new_prompt_cache_key(self) -> str:
-        seed = "\0".join(
-            [
-                str(self.config.auth_path.expanduser()),
-                str(self.config.accounts_dir.expanduser()),
-                self.config.base_url,
-                self.config.model,
-                secrets.token_hex(16),
-            ]
-        )
-        return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        return build_prompt_cache_key(self.config)
+
+    def set_session_id(self, session_id: str) -> None:
+        self.config.prompt_cache_key = session_id
+        self._prompt_cache_key = self._new_prompt_cache_key()
+        self._turn_state = None
 
     def generate_image(self, *, prompt: str) -> str:
         """Generate an image through Codex's hosted Responses image tool."""
@@ -809,10 +812,6 @@ class CodexSubscriptionProvider(Provider):
             "input": input_items,
             "text": {"verbosity": self.config.text_verbosity},
             "include": ["reasoning.encrypted_content"],
-            # Codex CLI uses a stable thread/session cache key rather than a
-            # random value per request. Keep the HTTP/SSE path aligned with the
-            # WebSocket provider so prompt cache remains warm across retries and
-            # follow-up turns.
             "prompt_cache_key": self._prompt_cache_key,
             "tool_choice": "auto",
             "parallel_tool_calls": True,

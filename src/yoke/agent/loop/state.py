@@ -8,6 +8,7 @@ from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
+from yoke.ai.providers.base import start_provider_turn
 
 
 def context_for_run(
@@ -19,6 +20,7 @@ def context_for_run(
     active_skills: Sequence[ActiveSkill] | None,
 ) -> AgentContext:
     """Build the working context for one agent run."""
+    start_provider_turn(agent.provider)
     resolved_available_skills = list(
         available_skills if available_skills is not None else agent.available_skills
     )

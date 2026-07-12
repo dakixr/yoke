@@ -196,6 +196,13 @@ def complete_with_cancel(
     return response
 
 
+def start_provider_turn(provider: Provider) -> None:
+    """Notify a provider that a new logical user turn is starting."""
+    start_turn = getattr(provider, "start_turn", None)
+    if callable(start_turn):
+        start_turn()
+
+
 def never_cancel() -> bool:
     """Return false for APIs that require a cancellation callback."""
     return False

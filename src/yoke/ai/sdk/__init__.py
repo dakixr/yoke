@@ -11,6 +11,7 @@ from yoke.agent.loop.types import ConversationHistory as ConversationHistory
 from yoke.agent.loop.types import MessageHistory as MessageHistory
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import insert_provider_system_messages
+from yoke.ai.providers.base import start_provider_turn
 from yoke.ai.sdk.agent import Agent as Agent
 from yoke.ai.sdk.types import AgentResult as AgentResult
 from yoke.ai.sdk.types import CompletionResult
@@ -61,6 +62,7 @@ def complete[StructuredT](
             resolved_messages,
             output_type=output_type,
         )
+    start_provider_turn(provider)
     response = provider.complete(resolved_messages, [])
     output = response.final_text_content() or ""
     return CompletionResult(

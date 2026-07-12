@@ -311,6 +311,7 @@ def install_builtin_provider(
                 home=context.home,
                 name=context.name,
                 env=context.env,
+                session_id=context.session_id,
             )
         )
 
