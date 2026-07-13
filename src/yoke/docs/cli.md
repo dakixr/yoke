@@ -483,6 +483,15 @@ not duplicated, reloading marks the skill to send its canonical instructions on
 the next model call, and active skills are preserved when additional skills are
 loaded.
 
+Activated skills store an instruction snapshot in the session. Resuming a
+session therefore does not depend on the original skill directory still being
+present: yoke refreshes a saved skill from the current registry when possible,
+falls back to its snapshot after a move or deletion, and safely removes legacy
+skill state that has neither a current source nor a snapshot. Invalid or
+half-deleted skill directories are isolated during normal runtime startup and
+reported in the tool discovery summary instead of preventing resume. Use
+`yoke skills list` for strict validation and the full repairable error.
+
 You can also activate a skill and send the next prompt in one line by placing
 the prompt after the skill name. A semicolon separator is also supported:
 
@@ -665,7 +674,11 @@ by default after discovery. Use `"deny"` to disable a built-in capability,
 repo tool, or global tool. Use `"allow"` only to override a deny from a
 lower-priority config.
 
-If a `config.json`, tool plugin, or skill file is malformed, yoke now reports the file path and a short plain-English reason such as invalid JSON syntax, missing `SKILL.md` frontmatter, or a plugin import failure.
+If a `config.json`, tool plugin, or skill file is malformed, the relevant
+inspection command reports the file path and a short plain-English reason such
+as invalid JSON syntax, missing `SKILL.md` frontmatter, or a plugin import
+failure. Runtime skill discovery isolates malformed entries so they cannot
+block session startup or resume.
 
 **Example: read-only agent**
 

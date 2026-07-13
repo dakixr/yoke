@@ -52,6 +52,8 @@ class ActiveSkill(BaseModel):
             if isinstance(self.content, str) and self.content.strip():
                 return self.content
             raise ValueError(f"Inline skill `{self.name}` is missing embedded content.")
+        if isinstance(self.content, str) and self.content.strip():
+            return self.content
         if not self.source_path.strip():
             raise ValueError(f"Active skill `{self.name}` is missing a source path.")
         try:

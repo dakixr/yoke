@@ -139,12 +139,14 @@ def format_tool_discovery_message(report: ToolLoadReport) -> str:
         message += f", {config_denied_count} denied by config"
     if report.failures:
         message += f", {len(report.failures)} plugin load failure(s)"
+    if report.skill_failures:
+        message += f", {len(report.skill_failures)} skill load failure(s)"
     return message
 
 
 def _load_cli_skill_registry(root: Path) -> SkillRegistry:
     skill_dirs = default_cli_skill_dirs(root)
-    return load_skill_registry(skill_dirs)
+    return load_skill_registry(skill_dirs, strict=False)
 
 
 def _activate_cli_skills(
@@ -171,6 +173,10 @@ def _resolve_cli_agent_config(
     )
     from yoke.agent.tools import SkillTool
     from yoke.cli.bootstrap.types import ResolvedAgentConfig
+
+    resolved.tool_report.skill_failures = [
+        failure.error for failure in skill_registry.failures
+    ]
 
     skill_tool = SkillTool.bind(
         skill_registry=skill_registry,

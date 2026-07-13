@@ -358,6 +358,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         conversation_entries = (
             history.entries if isinstance(history, ConversationEntryHistory) else None
         )
+        skill_registry = self.skill_registry.with_skills(available_skills or ())
         self._context = self.context_manager.initialize(
             "",
             list(messages) if messages is not None else None,
@@ -368,9 +369,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
                 if available_skills is not None
                 else self.available_skills
             ),
-            active_skills=list(
-                active_skills if active_skills is not None else self.active_skills
-            ),
+            active_skills=skill_registry.reconcile(active_skills, self.active_skills),
         )
         self.active_skills = [
             skill.model_copy(deep=True) for skill in self._context.active_skills

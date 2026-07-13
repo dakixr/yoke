@@ -26,7 +26,7 @@ class SkillActivationResult:
     def active_payload(self) -> list[dict[str, object]]:
         """Return active skill state suitable for tool result JSON."""
         return [
-            skill.model_dump(mode="json")
+            skill.model_dump(mode="json", exclude={"content"})
             for skill in sorted(self.active_skills, key=lambda item: item.name)
         ]
 
@@ -50,15 +50,38 @@ def activate_skills(
         if not name or name in seen_requests:
             continue
         seen_requests.add(name)
+        existing = active_by_name.get(name)
         if registry.get(name) is None:
+            if (
+                existing is not None
+                and isinstance(existing.content, str)
+                and existing.content.strip()
+            ):
+                existing.reload_on_next_use = True
+                reloaded.append(name)
+                continue
             missing.append(name)
             continue
-        existing = active_by_name.get(name)
+        try:
+            activated = registry.activate(name)
+        except ValueError:
+            if (
+                existing is not None
+                and isinstance(existing.content, str)
+                and existing.content.strip()
+            ):
+                existing.reload_on_next_use = True
+                reloaded.append(name)
+                continue
+            missing.append(name)
+            continue
         if existing is not None:
-            existing.reload_on_next_use = True
+            activated.reload_on_next_use = True
+            next_active[next_active.index(existing)] = activated
+            active_by_name[name] = activated
             reloaded.append(name)
             continue
-        active_skill = registry.activate(name)
+        active_skill = activated
         active_skill.reload_on_next_use = True
         if active_skill.is_inline:
             active_skill.content = active_skill.load_content()

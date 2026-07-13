@@ -10,14 +10,14 @@ import pytest
 from typer.testing import CliRunner
 
 from yoke.cli.config import CLIArgs
-from yoke.cli.config import build_agent_from_args
+from yoke.cli.config import build_cli_agent_from_args
 from yoke.cli.main import app
 
 
-def test_build_agent_reports_human_readable_skill_error(
+def test_build_agent_isolates_malformed_skill_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Malformed skills bubble up as short, readable build errors."""
+    """Malformed skills cannot prevent the runtime agent from starting."""
     home = tmp_path / "home"
     monkeypatch.setattr("yoke.cli.config.runtime.Path.home", lambda: home)
     monkeypatch.setattr("yoke.cli.bootstrap.config.Path.home", lambda: home)
@@ -31,10 +31,10 @@ def test_build_agent_reports_human_readable_skill_error(
     codex_dir.mkdir(parents=True)
     (codex_dir / "auth.json").write_text("{}\n", encoding="utf-8")
 
-    with pytest.raises(ValueError) as exc_info:
-        build_agent_from_args(CLIArgs(root=str(tmp_path)))
+    built = build_cli_agent_from_args(CLIArgs(root=str(tmp_path)))
 
-    message = str(exc_info.value)
+    assert len(built.tool_report.skill_failures) == 1
+    message = built.tool_report.skill_failures[0]
     assert (
         f"Skill file `{broken_skill_dir / 'SKILL.md'}` "
         "is missing YAML frontmatter." in message

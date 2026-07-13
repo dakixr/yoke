@@ -125,3 +125,14 @@ def test_session_store_persists_skill_state(tmp_path: Path) -> None:
 
     assert record.active_skills[0].name == "demo-skill"
     assert record.skill_dirs == [str(tmp_path / ".yoke" / "skills")]
+
+    store.save(
+        "session-1",
+        [Message.user("hello")],
+        active_skills=[],
+        skill_dirs=[],
+    )
+    cleared = store.load("session-1")
+
+    assert cleared.active_skills == []
+    assert cleared.skill_dirs == []

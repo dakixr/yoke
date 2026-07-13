@@ -39,6 +39,7 @@ from yoke.cli.runtime.session import save_agent_session_state
 from yoke.cli.runtime.session import select_latest_session_id
 from yoke.cli.runtime.session import select_session_id
 from yoke.cli.runtime.session import start_session_title_generation
+from yoke.cli.runtime.skills import restore_active_session_skills
 from yoke.cli.session import SessionStore
 
 
@@ -268,19 +269,7 @@ def run_resume_cli(
         record=record,
         title=record.title,
     )
-    if record.active_skills and isinstance(active_agent, RuntimeAgent):
-        active_agent.active_skills = list(record.active_skills)
-    if isinstance(active_agent, RuntimeAgent):
-        active_agent.load_conversation(
-            ConversationEntryHistory(
-                active_branch_entries(
-                    record.conversation_entries,
-                    leaf_id=record.leaf_id,
-                )
-                or []
-            ),
-            active_skills=record.active_skills,
-        )
+    restore_active_session_skills(active_session, active_agent)
     print_tool_discovery_message(output_stream, tool_report)
     from yoke.cli.interactive import run_interactive_cli
 

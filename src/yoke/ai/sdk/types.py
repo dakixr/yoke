@@ -128,6 +128,7 @@ class Skill:
         return cls(
             name=spec.name,
             description=spec.description,
+            content=spec.load_content(),
             source_path=str(spec.skill_md_path),
             file_paths=tuple(spec.file_paths),
         )

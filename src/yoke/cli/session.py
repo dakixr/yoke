@@ -7,9 +7,7 @@ import json
 import os
 import re
 import secrets
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -168,8 +166,10 @@ class SessionStore:
             id=session_id,
             conversation_entries=resolved_entries,
             leaf_id=resolved_leaf_id,
-            active_skills=list(active_skills or existing.active_skills),
-            skill_dirs=list(skill_dirs or existing.skill_dirs),
+            active_skills=list(
+                existing.active_skills if active_skills is None else active_skills
+            ),
+            skill_dirs=list(existing.skill_dirs if skill_dirs is None else skill_dirs),
             created_at=existing.created_at or now,
             updated_at=now,
             root=_normalize_root(root) or existing.root,

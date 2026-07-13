@@ -76,6 +76,7 @@ class ToolLoadReport:
     config_path: Path | None = None
     unmatched_config_patterns: list[str] = field(default_factory=list)
     failures: list[ToolLoadFailure] = field(default_factory=list)
+    skill_failures: list[str] = field(default_factory=list)
 
     def count(self, source_kind: ToolSourceKind) -> int:
         """Count active tools by source kind."""
