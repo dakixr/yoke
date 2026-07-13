@@ -89,6 +89,13 @@ not advertised here because the Codex ChatGPT transport rejects that alias.
 Yoke intentionally budgets each GPT-5.6 tier at 400,000 context tokens, even
 when the backend advertises a larger window, so compaction begins without using
 the full one-million-token family window.
+`gpt-5.6-luna` uses the backend's Responses Lite contract. Yoke marks each Luna
+WebSocket request with the required per-request routing metadata and applies the
+matching reasoning-context and tool-parallelism settings; the streaming HTTP
+transport sends the equivalent Responses Lite header. Unless
+`YOKE_CODEX_ORIGINATOR` explicitly selects a custom originator, Luna requests
+also use the backend-recognized `codex_cli_rs` originator instead of Yoke's
+normal `yoke` originator.
 
 When resuming sessions, Codex request history is normalized to omit orphaned or
 partially saved tool outputs before sending the next request. This prevents

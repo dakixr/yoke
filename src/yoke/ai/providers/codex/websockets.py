@@ -36,12 +36,11 @@ from yoke.ai.providers.codex.subscription import DEFAULT_BASE_URL
 from yoke.ai.providers.codex.subscription import DEFAULT_CXAUTH_VAULT_NAME
 from yoke.ai.providers.codex.subscription import DEFAULT_LOGS_DIR
 from yoke.ai.providers.codex.subscription import DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS
+from yoke.ai.providers.codex.subscription import DEFAULT_YOKE_ORIGINATOR
 from yoke.ai.providers.codex.subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex.subscription import OAuthCredentials
-from yoke.ai.providers.codex.subscription import clamp_reasoning_effort
 from yoke.ai.providers.codex.subscription import convert_messages
-from yoke.ai.providers.codex.subscription import convert_tools
 from yoke.ai.providers.codex.subscription import default_reasoning_effort_for_model_id
 from yoke.ai.providers.codex.subscription import exception_summary
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
@@ -49,6 +48,8 @@ from yoke.ai.providers.codex.subscription import list_provider_models
 from yoke.ai.providers.codex.subscription import merge_completed_response
 from yoke.ai.providers.codex.subscription import message_phase_from_completed_response
 from yoke.ai.providers.codex.subscription import normalize_message_phase
+from yoke.ai.providers.codex.subscription import originator_for_model
+from yoke.ai.providers.codex.subscription import uses_responses_lite
 from yoke.ai.providers.usage import parse_token_usage
 
 PROVIDER_NAME = "codex"
@@ -58,6 +59,9 @@ STALE_WEBSOCKET_CLOSED_MESSAGE = "Codex WebSocket closed before response.complet
 WEBSOCKET_TIMEOUT_MESSAGE = "Codex WebSocket timed out waiting for response."
 X_CODEX_TURN_STATE_HEADER = "x-codex-turn-state"
 WEBSOCKET_REQUEST_TYPE = "response.create"
+RESPONSES_LITE_CLIENT_METADATA_KEY = (
+    "ws_request_header_x_openai_internal_codex_responses_lite"
+)
 
 
 class CodexWebSocketTimeoutError(ProviderError):
@@ -102,7 +106,7 @@ def register_provider(context: Any) -> CodexProvider:
             prompt_cache_key=getattr(context, "session_id", None),
             base_url=_base_url_from_env(env),
             api_key=env.get("YOKE_CODEX_API_KEY") or None,
-            originator=env.get("YOKE_CODEX_ORIGINATOR") or "yoke",
+            originator=(env.get("YOKE_CODEX_ORIGINATOR") or DEFAULT_YOKE_ORIGINATOR),
             timeout_seconds=float(
                 env.get("YOKE_CODEX_TIMEOUT_SECONDS")
                 or env.get("YOKE_CODEX_WEBSOCKETS_TIMEOUT_SECONDS")
@@ -431,37 +435,15 @@ class CodexProvider(CodexSubscriptionProvider):
     def _request_payload(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> dict[str, object]:
-        instructions, input_items = convert_messages(messages)
-        client_metadata: dict[str, object] = {}
-        if self._turn_state:
-            client_metadata[X_CODEX_TURN_STATE_HEADER] = self._turn_state
-        payload: dict[str, object] = {
-            "model": self.config.model,
-            "store": False,
-            "stream": True,
-            "input": input_items,
-            "text": {"verbosity": self.config.text_verbosity},
-            "include": ["reasoning.encrypted_content"],
-            # Match Codex CLI's cache strategy: keep a stable key for the CLI
-            # session so server-side prompt caching survives reconnects. Socket
-            # affinity alone is not the cache key, and randomizing this per
-            # request defeats reuse after any reconnect.
-            "prompt_cache_key": self._prompt_cache_key,
-            "tool_choice": "auto",
-            "parallel_tool_calls": True,
-            "reasoning": {
-                "effort": clamp_reasoning_effort(
-                    self.config.model, self.config.reasoning_effort
-                ),
-                "summary": "auto",
-            },
-        }
-        if instructions:
-            payload["instructions"] = instructions
-        if tools:
-            payload["tools"] = convert_tools(tools)
-        if client_metadata:
-            payload["client_metadata"] = client_metadata
+        payload = super()._request_payload(messages, tools)
+        if not uses_responses_lite(self.config.model):
+            return payload
+        metadata = payload.get("client_metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            payload["client_metadata"] = metadata
+        typed_metadata = cast(dict[str, object], metadata)
+        typed_metadata[RESPONSES_LITE_CLIENT_METADATA_KEY] = "true"
         return payload
 
     def _prepare_websocket_payload(
@@ -533,7 +515,9 @@ class CodexProvider(CodexSubscriptionProvider):
         request_id = secrets.token_hex(16)
         headers = {
             "Authorization": f"Bearer {credentials.access}",
-            "originator": self.config.originator,
+            "originator": originator_for_model(
+                self.config.model, self.config.originator
+            ),
             "User-Agent": (
                 f"yoke ({platform.system().lower()}; {platform.machine().lower()})"
             ),

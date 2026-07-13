@@ -62,6 +62,10 @@ DEFAULT_CXAUTH_VAULT_NAME = ".codex-auth"
 DEFAULT_LOGS_DIR = Path.home() / ".yoke" / "providers" / "logs"
 DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 X_CODEX_TURN_STATE_HEADER = "x-codex-turn-state"
+X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite"
+RESPONSES_LITE_MODEL_IDS = frozenset({"gpt-5.6-luna"})
+DEFAULT_YOKE_ORIGINATOR = "yoke"
+CODEX_CLI_ORIGINATOR = "codex_cli_rs"
 MODEL_CATALOG = (
     ProviderModelInfo(
         id="gpt-5.6-sol",
@@ -118,6 +122,21 @@ def default_reasoning_effort_for_model_id(model_id: str) -> str:
     return "medium"
 
 
+def uses_responses_lite(model_id: str) -> bool:
+    """Return whether a Codex model requires the Responses Lite request contract."""
+    return model_id.strip() in RESPONSES_LITE_MODEL_IDS
+
+
+def originator_for_model(model_id: str, configured_originator: str) -> str:
+    """Use the backend-recognized Codex originator for Responses Lite models."""
+    if (
+        uses_responses_lite(model_id)
+        and configured_originator == DEFAULT_YOKE_ORIGINATOR
+    ):
+        return CODEX_CLI_ORIGINATOR
+    return configured_originator
+
+
 def register_provider(context: Any) -> CodexSubscriptionProvider:
     env = os.environ if context.env is None else context.env
     cxauth_vault = context.home / DEFAULT_CXAUTH_VAULT_NAME
@@ -145,7 +164,7 @@ def register_provider(context: Any) -> CodexSubscriptionProvider:
             model=(context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.5"),
             prompt_cache_key=getattr(context, "session_id", None),
             base_url=(env.get("YOKE_CODEX_BASE_URL") or DEFAULT_BASE_URL),
-            originator=env.get("YOKE_CODEX_ORIGINATOR") or "yoke",
+            originator=env.get("YOKE_CODEX_ORIGINATOR") or DEFAULT_YOKE_ORIGINATOR,
             timeout_seconds=float(
                 env.get("YOKE_CODEX_TIMEOUT_SECONDS")
                 or str(DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS)
@@ -802,6 +821,7 @@ class CodexSubscriptionProvider(Provider):
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> dict[str, object]:
         instructions, input_items = convert_messages(messages)
+        responses_lite = uses_responses_lite(self.config.model)
         client_metadata: dict[str, object] = {}
         if self._turn_state:
             client_metadata[X_CODEX_TURN_STATE_HEADER] = self._turn_state
@@ -814,12 +834,13 @@ class CodexSubscriptionProvider(Provider):
             "include": ["reasoning.encrypted_content"],
             "prompt_cache_key": self._prompt_cache_key,
             "tool_choice": "auto",
-            "parallel_tool_calls": True,
+            "parallel_tool_calls": not responses_lite,
             "reasoning": {
                 "effort": clamp_reasoning_effort(
                     self.config.model, self.config.reasoning_effort
                 ),
                 "summary": "auto",
+                **({"context": "all_turns"} if responses_lite else {}),
             },
         }
         if instructions:
@@ -835,7 +856,9 @@ class CodexSubscriptionProvider(Provider):
         return {
             "Authorization": f"Bearer {credentials.access}",
             "chatgpt-account-id": credentials.account_id,
-            "originator": self.config.originator,
+            "originator": originator_for_model(
+                self.config.model, self.config.originator
+            ),
             "User-Agent": (
                 f"yoke ({platform.system().lower()}; {platform.machine().lower()})"
             ),
@@ -847,6 +870,11 @@ class CodexSubscriptionProvider(Provider):
             **(
                 {X_CODEX_TURN_STATE_HEADER: self._turn_state}
                 if self._turn_state
+                else {}
+            ),
+            **(
+                {X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER: "true"}
+                if uses_responses_lite(self.config.model)
                 else {}
             ),
         }

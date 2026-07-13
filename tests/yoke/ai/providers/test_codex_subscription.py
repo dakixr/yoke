@@ -17,9 +17,13 @@ from yoke.agent.models import ToolFunction
 from yoke.ai.providers.codex.subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex.subscription import CodexProfileStore
+from yoke.ai.providers.codex.subscription import CODEX_CLI_ORIGINATOR
 from yoke.ai.providers.codex.subscription import OAUTH_PROVIDER_ID
 from yoke.ai.providers.codex.subscription import OAuthCredentials
 from yoke.ai.providers.codex.subscription import X_CODEX_TURN_STATE_HEADER
+from yoke.ai.providers.codex.subscription import (
+    X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER,
+)
 from yoke.ai.providers.codex.subscription import clamp_reasoning_effort
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
@@ -111,7 +115,24 @@ def test_codex_gpt_5_6_accepts_max_reasoning_effort(tmp_path: Path) -> None:
         assert provider._request_payload([Message.user("hello")], [])["reasoning"] == {
             "effort": "max",
             "summary": "auto",
+            "context": "all_turns",
         }
+        assert (
+            provider._request_payload([Message.user("hello")], [])[
+                "parallel_tool_calls"
+            ]
+            is False
+        )
+        headers = provider._request_headers(
+            OAuthCredentials(
+                access="access-token",
+                refresh="refresh-token",
+                expires=4_102_444_800_000,
+                account_id="acct_123",
+            )
+        )
+        assert headers[X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER] == "true"
+        assert headers["originator"] == CODEX_CLI_ORIGINATOR
     finally:
         provider.close()
 

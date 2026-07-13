@@ -14,6 +14,7 @@ from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import OAuthCredentials
+from yoke.ai.providers.codex.subscription import CODEX_CLI_ORIGINATOR
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.websockets import CodexWebSockets
 from yoke.ai.providers.codex.websockets import CodexWebSocketsConfig
@@ -22,6 +23,7 @@ from yoke.ai.providers.codex.websockets import CodexWebSocketParseState
 from yoke.ai.providers.codex.websockets import CodexWebSocketTimeoutError
 from yoke.ai.providers.codex.websockets import CodexPreviousResponseNotFoundError
 from yoke.ai.providers.codex.websockets import RESPONSES_WEBSOCKETS_BETA
+from yoke.ai.providers.codex.websockets import RESPONSES_LITE_CLIENT_METADATA_KEY
 from yoke.ai.providers.codex.websockets import X_CODEX_TURN_STATE_HEADER
 from yoke.ai.providers.codex.websockets import base_url_for_domain
 from yoke.ai.providers.codex.websockets import build_message_from_websocket_state
@@ -366,6 +368,43 @@ def test_codex_websockets_complete_sends_request_frame_and_headers(
     assert factory_calls[0]["ping_timeout"] == 20.0
     assert '"type":"response.create"' in sent_payloads[0]
     assert '"model":"gpt-5.4"' in sent_payloads[0]
+
+
+def test_codex_websockets_marks_luna_requests_as_responses_lite(
+    tmp_path: Path,
+) -> None:
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            model="gpt-5.6-luna",
+            reasoning_effort="max",
+        )
+    )
+
+    try:
+        payload = provider._request_payload([Message.user("hello")], [])
+        headers = provider._request_headers(
+            OAuthCredentials(
+                access="access-token",
+                refresh="refresh-token",
+                expires=4_102_444_800_000,
+                account_id="acct_123",
+            )
+        )
+    finally:
+        provider.close()
+
+    assert payload["client_metadata"] == {RESPONSES_LITE_CLIENT_METADATA_KEY: "true"}
+    assert payload["parallel_tool_calls"] is False
+    assert payload["reasoning"] == {
+        "effort": "max",
+        "summary": "auto",
+        "context": "all_turns",
+    }
+    assert headers["originator"] == CODEX_CLI_ORIGINATOR
 
 
 def test_codex_websockets_complete_preserves_non_oauth_provider_error(
