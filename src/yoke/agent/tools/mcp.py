@@ -109,6 +109,7 @@ class McpCallTool(LocalTool):
             server=self.server,
             tool=self.tool,
             arguments=self.arguments,
+            cancel_requested=self._is_cancel_requested,
         )
 
     def _manager(self) -> McpManager:

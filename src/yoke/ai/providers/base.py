@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import time
 from collections.abc import Callable
 from collections.abc import Iterable
 from typing import Protocol
+from typing import cast
 from typing import runtime_checkable
 
 from pydantic import BaseModel
@@ -157,6 +159,30 @@ class Provider(Protocol):
     ) -> Message:
         """Send messages to the provider and return the assistant response."""
         ...
+
+
+def fork_provider(provider: Provider) -> Provider:
+    """Create a request-isolated provider when its constructor supports cloning."""
+    custom_fork = getattr(provider, "fork_for_turn", None)
+    if callable(custom_fork):
+        return cast(Provider, custom_fork())
+    config = getattr(provider, "config", None)
+    if config is None:
+        return provider
+    copy_config = getattr(config, "model_copy", None)
+    cloned_config = (
+        copy_config(deep=True) if callable(copy_config) else deepcopy(config)
+    )
+    provider_type = type(provider)
+    constructor = cast(Callable[..., Provider], provider_type)
+    sleep = getattr(provider, "_sleep", None)
+    try:
+        return constructor(cloned_config, **({"sleep": sleep} if sleep else {}))
+    except (AttributeError, TypeError, ValueError):
+        try:
+            return constructor(cloned_config)
+        except (AttributeError, TypeError, ValueError):
+            return provider
 
 
 @runtime_checkable

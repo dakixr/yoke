@@ -7,42 +7,22 @@ import os
 import queue
 import subprocess
 import threading
+import time
+from collections.abc import Callable
 from collections import deque
-from dataclasses import dataclass
+from contextlib import suppress
 from pathlib import Path
-from typing import Any
 from typing import Protocol
 
 import httpx
 
 from yoke.mcp.config import McpServerConfig
+from yoke.mcp.errors import McpClientError
+from yoke.mcp.sse import wait_for_response_in_sse
+from yoke.mcp.types import JSON
+from yoke.mcp.types import McpToolInfo
 
-
-JSON = dict[str, Any]
 MCP_PROTOCOL_VERSION = "2025-03-26"
-
-
-class McpClientError(RuntimeError):
-    """Raised when an MCP client operation fails."""
-
-
-@dataclass(slots=True, frozen=True)
-class McpToolInfo:
-    """Compact MCP tool metadata."""
-
-    name: str
-    description: str
-    input_schema: JSON
-
-    def without_schema(self) -> McpToolInfo:
-        """Return this tool metadata without input schema details."""
-        if not self.input_schema:
-            return self
-        return McpToolInfo(
-            name=self.name,
-            description=self.description,
-            input_schema={},
-        )
 
 
 class StdioMcpClient:
@@ -190,13 +170,20 @@ class StdioMcpClient:
             raise McpClientError("MCP tools/list exceeded 100 pages")
         return tuple(tools)
 
-    def call_tool(self, name: str, arguments: JSON) -> JSON:
+    def call_tool(
+        self,
+        name: str,
+        arguments: JSON,
+        *,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> JSON:
         """Call an MCP tool."""
         self.start()
         return self.request(
             "tools/call",
             {"name": name, "arguments": arguments},
             timeout=self.server.tool_timeout_sec,
+            cancel_requested=cancel_requested,
         )
 
     def request(
@@ -205,6 +192,7 @@ class StdioMcpClient:
         params: JSON | None = None,
         *,
         timeout: float,
+        cancel_requested: Callable[[], bool] | None = None,
     ) -> JSON:
         """Send one JSON-RPC request and wait for a response."""
         request_id = self._allocate_id()
@@ -215,9 +203,19 @@ class StdioMcpClient:
             payload["params"] = params
         try:
             self._send(payload)
-            response = response_queue.get(timeout=timeout)
-        except queue.Empty as exc:
-            raise McpClientError(f"MCP request `{method}` timed out") from exc
+            deadline = time.monotonic() + timeout
+            while True:
+                if cancel_requested is not None and cancel_requested():
+                    self.notify("notifications/cancelled", {"requestId": request_id})
+                    raise McpClientError(f"MCP request `{method}` cancelled")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise McpClientError(f"MCP request `{method}` timed out")
+                try:
+                    response = response_queue.get(timeout=min(0.01, remaining))
+                    break
+                except queue.Empty:
+                    continue
         finally:
             self._pending.pop(request_id, None)
         if "error" in response:
@@ -362,7 +360,13 @@ class McpClient(Protocol):
 
     def list_tool_summaries(self, *, force: bool = ...) -> tuple[McpToolInfo, ...]: ...
 
-    def call_tool(self, name: str, arguments: JSON) -> JSON: ...
+    def call_tool(
+        self,
+        name: str,
+        arguments: JSON,
+        *,
+        cancel_requested: Callable[[], bool] | None = ...,
+    ) -> JSON: ...
 
     def close(self) -> None: ...
 
@@ -484,13 +488,20 @@ class StreamableHttpClient:
             raise McpClientError("MCP tools/list exceeded 100 pages")
         return tuple(tools)
 
-    def call_tool(self, name: str, arguments: JSON) -> JSON:
+    def call_tool(
+        self,
+        name: str,
+        arguments: JSON,
+        *,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> JSON:
         """Call an MCP tool."""
         self.start()
         return self.request(
             "tools/call",
             {"name": name, "arguments": arguments},
             timeout=self.server.tool_timeout_sec,
+            cancel_requested=cancel_requested,
         )
 
     def request(
@@ -499,13 +510,18 @@ class StreamableHttpClient:
         params: JSON | None = None,
         *,
         timeout: float,
+        cancel_requested: Callable[[], bool] | None = None,
     ) -> JSON:
         """Send one JSON-RPC request and wait for a response."""
         request_id = self._allocate_id()
         payload: JSON = {"jsonrpc": "2.0", "id": request_id, "method": method}
         if params is not None:
             payload["params"] = params
-        response_message = self._post_request(payload, timeout=timeout)
+        response_message = self._post_request(
+            payload,
+            timeout=timeout,
+            cancel_requested=cancel_requested,
+        )
         if "error" in response_message:
             error = response_message["error"]
             if isinstance(error, dict):
@@ -527,7 +543,7 @@ class StreamableHttpClient:
     def close(self) -> None:
         """Terminate the session and close the HTTP client."""
         if self._session_id is not None:
-            with suppress_exceptions:
+            with suppress(Exception):
                 self._client.delete(
                     self.url,
                     headers=self._headers(),
@@ -538,7 +554,13 @@ class StreamableHttpClient:
         self._protocol_version = None
         self._initialized = False
 
-    def _post_request(self, payload: JSON, *, timeout: float) -> JSON:
+    def _post_request(
+        self,
+        payload: JSON,
+        *,
+        timeout: float,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> JSON:
         with self._client.stream(
             "POST",
             self.url,
@@ -546,28 +568,57 @@ class StreamableHttpClient:
             headers=self._headers(),
             timeout=timeout,
         ) as response:
-            if response.status_code >= 400:
-                raise McpClientError(
-                    "MCP HTTP request failed: "
-                    f"{response.status_code} {response.reason_phrase}"
+            finished = threading.Event()
+
+            def close_on_cancel() -> None:
+                if cancel_requested is None:
+                    return
+                while not finished.wait(0.01):
+                    if cancel_requested():
+                        response.close()
+                        return
+
+            threading.Thread(target=close_on_cancel, daemon=True).start()
+            try:
+                return self._read_response(
+                    response,
+                    payload=payload,
+                    cancel_requested=cancel_requested,
                 )
-            self._capture_session_id(response)
-            content_type = (
-                (response.headers.get("content-type") or "").split(";")[0].strip()
-            )
-            if content_type == "text/event-stream":
-                return _wait_for_response_in_sse(
-                    response.iter_lines(), payload.get("id")
-                )
-            if content_type == "application/json":
-                response.read()
-                message = response.json()
-                if not isinstance(message, dict):
-                    raise McpClientError("MCP HTTP response is not a JSON object")
-                return message
+            finally:
+                finished.set()
+
+    def _read_response(
+        self,
+        response: httpx.Response,
+        *,
+        payload: JSON,
+        cancel_requested: Callable[[], bool] | None,
+    ) -> JSON:
+        if response.status_code >= 400:
             raise McpClientError(
-                f"MCP HTTP unexpected content-type: {content_type or 'missing'}"
+                "MCP HTTP request failed: "
+                f"{response.status_code} {response.reason_phrase}"
             )
+        self._capture_session_id(response)
+        content_type = (
+            (response.headers.get("content-type") or "").split(";")[0].strip()
+        )
+        if content_type == "text/event-stream":
+            return wait_for_response_in_sse(
+                response.iter_lines(),
+                payload.get("id"),
+                cancel_requested=cancel_requested,
+            )
+        if content_type == "application/json":
+            response.read()
+            message = response.json()
+            if not isinstance(message, dict):
+                raise McpClientError("MCP HTTP response is not a JSON object")
+            return message
+        raise McpClientError(
+            f"MCP HTTP unexpected content-type: {content_type or 'missing'}"
+        )
 
     def _post_notification(self, payload: JSON, *, timeout: float) -> None:
         response = self._client.post(
@@ -603,68 +654,6 @@ class StreamableHttpClient:
     def _allocate_id(self) -> int:
         self._next_id += 1
         return self._next_id
-
-
-class _SuppressExceptions:
-    """Context manager that silently ignores exceptions."""
-
-    def __enter__(self) -> "_SuppressExceptions":
-        return self
-
-    def __exit__(self, *_args: object) -> bool:
-        return True
-
-
-suppress_exceptions = _SuppressExceptions()
-
-
-def _wait_for_response_in_sse(lines, expected_id: object) -> JSON:
-    """Parse an SSE stream and return the JSON-RPC response matching expected_id."""
-    current_data: list[str] = []
-    for line in lines:
-        if isinstance(line, bytes):
-            line = line.decode("utf-8", errors="replace")
-        if line == "":
-            if current_data:
-                message = _parse_sse_event(current_data)
-                current_data = []
-                if message is None:
-                    continue
-                if _message_matches_id(message, expected_id) and _is_response(message):
-                    return message
-            continue
-        if line.startswith("data:"):
-            data = line[len("data:") :]
-            current_data.append(data[1:] if data.startswith(" ") else data)
-    if current_data:
-        message = _parse_sse_event(current_data)
-        if (
-            message is not None
-            and _message_matches_id(message, expected_id)
-            and _is_response(message)
-        ):
-            return message
-    raise McpClientError("MCP SSE stream ended without a matching JSON-RPC response")
-
-
-def _parse_sse_event(data_lines: list[str]) -> JSON | None:
-    raw = "\n".join(data_lines)
-    try:
-        message = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    return message if isinstance(message, dict) else None
-
-
-def _is_response(message: JSON) -> bool:
-    return "result" in message or "error" in message
-
-
-def _message_matches_id(message: JSON, expected_id: object) -> bool:
-    message_id = message.get("id")
-    if expected_id is not None:
-        return message_id == expected_id
-    return True
 
 
 def create_mcp_client(server: McpServerConfig, *, root: Path) -> McpClient:

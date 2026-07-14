@@ -9,6 +9,11 @@ from threading import Lock
 from threading import Thread
 
 from yoke.agent.loop import AgentStoppedError
+from yoke.agent.loop import ConversationEntryHistory
+from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop.forking import promote_runtime_fork
+from yoke.agent.loop.resources import release_tool_resources
+from yoke.agent.loop.tools.in_process import wait_for_in_process_tools
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import capture_agent_state
@@ -45,44 +50,45 @@ def run_prompt_turn(
     user_message: Message | None,
     callbacks: dict[str, Callable[..., object]],
     turn_renderer_factory: Callable[[int], EventRenderer],
+    message_snapshot: list[Message] | None = None,
+    conversation_entries_snapshot: list[ConversationEntry] | None = None,
 ) -> None:
     """Execute one prompt-toolkit turn in a worker thread."""
-
-    def checkpoint_tool_result(
-        messages: list[Message],
-        conversation_entries: list[ConversationEntry],
-    ) -> None:
-        persist_session_state(
-            active_session,
-            agent,
-            messages,
-            conversation_entries=conversation_entries,
+    messages = (
+        message_snapshot if message_snapshot is not None else list(state.messages)
+    )
+    entries = conversation_entries_snapshot
+    if entries is None:
+        entries = active_branch_entries(
+            active_session.record.conversation_entries,
+            leaf_id=active_session.record.leaf_id,
         )
+    turn_agent = prepare_turn_agent(agent, messages=messages, entries=entries or [])
 
     try:
         result = execute_turn(
-            agent,
+            turn_agent,
             prompt,
-            list(state.messages),
+            messages,
             indicator=turn_renderer_factory(turn_id),
             stop_requested=stop_event.is_set,
             user_message=user_message,
-            conversation_entries=active_branch_entries(
-                active_session.record.conversation_entries,
-                leaf_id=active_session.record.leaf_id,
-            ),
-            after_tool_result_appended=checkpoint_tool_result,
+            conversation_entries=entries,
         )
         if result.status == "stopped":
-            callbacks["handle_outcome"](turn_id, TurnStopped(result=result))
+            callbacks["handle_outcome"](
+                turn_id,
+                TurnStopped(result=result, agent=turn_agent),
+            )
             return
     except AgentStoppedError:
-        state_snapshot = capture_agent_state(agent)
+        state_snapshot = capture_agent_state(turn_agent)
         callbacks["handle_outcome"](
             turn_id,
             TurnStopped(
                 messages=state_snapshot.messages,
                 conversation_entries=state_snapshot.conversation_entries,
+                agent=turn_agent,
             ),
         )
         return
@@ -93,10 +99,69 @@ def run_prompt_turn(
                 error=exc,
                 messages=partial_messages_from_error(exc),
                 conversation_entries=partial_conversation_entries_from_error(exc),
+                agent=turn_agent,
             ),
         )
         return
-    callbacks["handle_outcome"](turn_id, TurnSuccess(result=result))
+    callbacks["handle_outcome"](
+        turn_id,
+        TurnSuccess(result=result, agent=turn_agent),
+    )
+
+
+def prepare_turn_agent(
+    agent: AgentRunner,
+    *,
+    messages: list[Message],
+    entries: list[ConversationEntry],
+) -> AgentRunner:
+    """Fork mutable runtime state so retired turns cannot corrupt new turns."""
+    if not isinstance(agent, RuntimeAgent):
+        return agent
+    turn_agent = agent.fork(isolate_provider=True)
+    turn_agent.load_conversation(
+        ConversationEntryHistory(entries),
+        available_skills=agent.available_skills,
+        active_skills=agent.active_skills,
+    )
+    if not entries and messages:
+        from yoke.agent.loop import MessageHistory
+
+        turn_agent.load_conversation(
+            MessageHistory(messages),
+            available_skills=agent.available_skills,
+            active_skills=agent.active_skills,
+        )
+    return turn_agent
+
+
+def retire_turn_agent(
+    turn_agent: AgentRunner | None,
+    *,
+    primary_agent: AgentRunner,
+) -> None:
+    """Release an isolated turn runtime away from the steering control path."""
+    if turn_agent is None or turn_agent is primary_agent:
+        return
+    if not isinstance(turn_agent, RuntimeAgent):
+        return
+    tool_map = turn_agent.tools
+    tools = list(tool_map.values())
+    turn_agent.tools = {}
+    provider = turn_agent.provider
+
+    def release() -> None:
+        try:
+            wait_for_in_process_tools(tool_map)
+            release_tool_resources(tools)
+        finally:
+            close = getattr(provider, "close", None)
+            if callable(close) and provider is not getattr(
+                primary_agent, "provider", None
+            ):
+                close()
+
+    Thread(target=release, daemon=True, name="yoke-turn-reaper").start()
 
 
 def handle_prompt_turn_outcome(
@@ -115,8 +180,10 @@ def handle_prompt_turn_outcome(
     """Apply a completed turn outcome to prompt-toolkit session state."""
     with state_lock:
         abandoned_turn_ids, steered_turn_ids = prompt_turn_tracking(state)
-        if turn_id in abandoned_turn_ids:
+        if turn_id != state.active_turn_id or turn_id in abandoned_turn_ids:
             abandoned_turn_ids.discard(turn_id)
+            steered_turn_ids.discard(turn_id)
+            retire_turn_agent(outcome.agent, primary_agent=agent)
             return None
         was_steered = turn_id in steered_turn_ids
         steered_turn_ids.discard(turn_id)
@@ -124,13 +191,18 @@ def handle_prompt_turn_outcome(
         turn_tools = state.turn_tool_count
         turn_in_tok = state.turn_input_tokens
         turn_out_tok = state.turn_output_tokens
+    outcome_agent = outcome.agent or agent
+    if isinstance(agent, RuntimeAgent) and isinstance(outcome_agent, RuntimeAgent):
+        if outcome_agent is not agent:
+            promote_runtime_fork(agent, outcome_agent)
+            outcome_agent = agent
     if isinstance(outcome, TurnFailure):
         if outcome.messages is not None:
             with state_lock:
                 state.messages = outcome.messages
             persist_session_state(
                 active_session,
-                agent,
+                outcome_agent,
                 outcome.messages,
                 conversation_entries=outcome.conversation_entries,
             )
@@ -143,6 +215,7 @@ def handle_prompt_turn_outcome(
             input_tokens=turn_in_tok,
             output_tokens=turn_out_tok,
         )
+        retire_turn_agent(outcome.agent, primary_agent=agent)
         return was_steered
     if isinstance(outcome, TurnStopped):
         stopped_messages = (
@@ -158,7 +231,7 @@ def handle_prompt_turn_outcome(
                 state.messages = stopped_messages
             persist_session_state(
                 active_session,
-                agent,
+                outcome_agent,
                 stopped_messages,
                 conversation_entries=stopped_entries,
             )
@@ -178,12 +251,13 @@ def handle_prompt_turn_outcome(
             input_tokens=turn_in_tok,
             output_tokens=turn_out_tok,
         )
+        retire_turn_agent(outcome.agent, primary_agent=agent)
         return was_steered
     with state_lock:
         state.messages = outcome.result.messages
     persist_session_state(
         active_session,
-        agent,
+        outcome_agent,
         outcome.result.messages,
         conversation_entries=outcome.result.conversation_entries,
     )
@@ -203,6 +277,7 @@ def handle_prompt_turn_outcome(
         output_tokens=turn_out_tok,
     )
     print("\a", end="", flush=True)
+    retire_turn_agent(outcome.agent, primary_agent=agent)
     return was_steered
 
 

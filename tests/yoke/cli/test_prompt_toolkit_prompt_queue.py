@@ -183,7 +183,7 @@ def test_finish_prompt_turn_prioritizes_steering_items() -> None:
     ]
 
 
-def test_steer_active_turn_accepts_prompt_while_stop_pending(tmp_path: Path) -> None:
+def test_steer_active_turn_retires_stopped_turn_immediately(tmp_path: Path) -> None:
     from threading import Event
     from threading import Lock
     from threading import Thread
@@ -229,15 +229,14 @@ def test_steer_active_turn_accepts_prompt_while_stop_pending(tmp_path: Path) -> 
 
     assert control.steer_active_turn("use config.py instead", None) is True
 
-    assert state.status_message == "Cancelling model request for steering"
-    assert state.steered_turn_ids == {7}
-    assert [(prompt.prompt, prompt.kind) for prompt in state.pending_prompts] == [
-        ("use config.py instead", "steering")
-    ]
+    worker = state.worker
+    assert worker is not None
+    worker.join(timeout=1)
+    assert state.active_turn_id == 8
+    assert state.abandoned_turn_ids == {7}
+    assert state.pending_prompts == []
     restored_prompts, _restored_images = load_prompt_queue(active_session)
-    assert [(prompt.prompt, prompt.kind) for prompt in restored_prompts] == [
-        ("use config.py instead", "steering")
-    ]
+    assert restored_prompts == []
 
 
 def test_prompt_turn_persists_queue_after_dequeue(tmp_path: Path) -> None:

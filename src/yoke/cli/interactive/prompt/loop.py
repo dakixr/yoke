@@ -9,33 +9,20 @@ from threading import Lock, Thread
 
 from yoke.cli.image_input import attach_standalone_prompt_image_paths
 from yoke.cli.image_input import build_user_message
-from yoke.cli.interactive.completion_menu import YokeCompletionsMenu
-from yoke.cli.interactive.completion_menu import COMPLETION_MENU_STYLE
+from yoke.cli.interactive.completion_menu import (
+    COMPLETION_MENU_STYLE,
+    YokeCompletionsMenu,
+)
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.queue.persistence import clear_prompt_queue
 from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.cli.interactive.slash_commands import handle_slash_command
 from yoke.cli.interactive.slash_commands import slash_command_requires_idle
+from yoke.cli.interactive.prompt.status import update_status_context_usage
 from yoke.cli.interactive.prompt.turns import next_pending_prompt_index
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime import AgentRunner
-from yoke.cli.runtime import persist_session_state
+from yoke.cli.runtime import ActiveSession, AgentRunner, persist_session_state
 from yoke.cli.render import print_scrollback_notice
-
-
-def update_status_context_usage(
-    payload: dict[str, object],
-    *,
-    state: PromptCliState,
-    state_lock: Lock,
-    invalidate_prompt: Callable[[], None],
-    format_context_usage_text: Callable[[Mapping[str, object] | None], str | None],
-) -> None:
-    """Update prompt-toolkit context usage immediately from an event payload."""
-    with state_lock:
-        state.context_usage_text = format_context_usage_text(payload)
-    invalidate_prompt()
 
 
 def persist_prompt_exit_state(
@@ -121,6 +108,7 @@ def process_prompt_toolkit_prompt(
         )
         if handled:
             next_prompt_to_start: PendingPrompt | None = None
+            steering_prompt_to_start: PendingPrompt | None = None
             with state_lock:
                 state.messages = updated_messages
                 active_session_ref["active_session"] = updated_session
@@ -134,10 +122,11 @@ def process_prompt_toolkit_prompt(
                         state.worker is not None
                         and state.active_stop_request is not None
                     ):
-                        state.active_stop_request.set()
-                        if state.steered_turn_ids is not None:
-                            state.steered_turn_ids.add(state.active_turn_id)
-                        state.status_message = "Cancelling model request for steering"
+                        next_index = next_pending_prompt_index(state.pending_prompts)
+                        if next_index is not None:
+                            steering_prompt_to_start = state.pending_prompts.pop(
+                                next_index
+                            )
                     else:
                         next_index = next_pending_prompt_index(state.pending_prompts)
                         if next_index is not None:
@@ -148,7 +137,17 @@ def process_prompt_toolkit_prompt(
                                 state.pending_images,
                             )
             invalidate_prompt()
-            if next_prompt_to_start is not None:
+            if steering_prompt_to_start is not None:
+                steer_active_turn(
+                    steering_prompt_to_start.prompt,
+                    steering_prompt_to_start.user_message,
+                )
+                persist_prompt_queue(
+                    updated_session,
+                    state.pending_prompts,
+                    state.pending_images,
+                )
+            elif next_prompt_to_start is not None:
                 start_turn(
                     next_prompt_to_start.prompt, next_prompt_to_start.user_message
                 )

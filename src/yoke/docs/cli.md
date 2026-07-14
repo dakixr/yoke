@@ -218,33 +218,38 @@ turn.
 - Press `Enter` to steer/send immediately while a turn is running.
 - Press `Ctrl+X` then `M` or run `/model` to open the fullscreen model switcher.
 - Press `Ctrl+X` then `T` or run `/tree` to open the session tree.
-- While a model request is in flight, steering or `Esc Esc` asks providers with
-  cancellation support to abort the request immediately. Providers without the
-  optional cancellation hook still stop at the next safe boundary.
-- Steering submitted while a cancellation is already pending stays marked as
-  steering and runs before normal queued prompts when the interrupted turn
-  finishes.
+- Steering immediately retires the active generation and dispatches its
+  replacement without waiting for the old provider request or tool to exit.
+  Retired renderers and workers are generation-fenced, so they cannot publish
+  output or replace the accepted conversation, provider, or skill state.
+- The handoff target is under 100 ms. This is a logical cancellation guarantee,
+  not a claim that every remote request or kernel process has physically exited:
+  provider aborts, process TERM/KILL escalation, and resource cleanup continue
+  asynchronously after the replacement turn starts.
 - Codex WebSocket follow-up requests only reuse `previous_response_id` while the
   same Codex account profile remains selected; if account rotation changes the
   profile, yoke resends full context for that turn. If Codex reports that the
   previous response anchor is stale or missing, yoke automatically retries the
   same turn without `previous_response_id`, sending full context.
-- Local tool calls run in isolated child processes. When a turn is stopped,
-  steered, or the CLI is interrupted or exited, yoke cancels the running tool
-  process instead of waiting for cooperative tool code to return.
+- Local tools run under cancellation supervision. Process-isolated tools receive
+  TERM/KILL cleanup off the handoff path; tools that require in-process resources
+  run in a supervised daemon thread and are logically detached if they do not
+  cooperate. Detached tools retain their isolated resources until they return.
+- MCP stdio and HTTP/SSE calls receive the same cancellation signal. Image
+  generation publishes through an atomic temporary-file replacement and drops
+  the pending output when cancellation is observed before publication.
 - Press `Tab` to queue the prompt behind the current turn. Queued prompts and
   pending image attachments are persisted in a per-session sidecar and restored
   on resume/restart. Once a queued or steering prompt starts, yoke removes it
   from that sidecar so it does not reappear after a crash or restart.
 - While slash-command completions are open, use `Up`/`Down` to move between
   options; `Left`/`Right` keep moving the cursor in the prompt text.
-- Press `Esc Esc` to stop the current turn; yoke cancels supported in-flight
-  model requests, then waits for the turn to record the user prompt,
-  completed/cancelled tool calls, and interruption marker
-  before processing queued prompts or saving the session.
-- Completed tool results are saved to the active session immediately after each
-  result is appended, so an interrupted CLI process can resume from the latest
-  completed tool call.
+- Press `Esc Esc` to stop the current turn. Yoke immediately records a synthetic
+  interrupted checkpoint containing the user prompt and interruption marker;
+  the retired worker cannot append a late model response or tool result.
+- Session state is persisted from the accepted turn outcome rather than from
+  isolated mid-turn workers, preventing a retired generation from overwriting a
+  newer steering result.
 - `Shift+Tab` cycles only through the active model's advertised thinking
   levels. Models without advertised levels leave thinking effort at the default.
 - OpenCode Go chat-completions requests include a high output-token cap so

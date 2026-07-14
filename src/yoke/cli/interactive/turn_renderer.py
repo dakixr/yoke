@@ -25,7 +25,11 @@ def make_turn_scoped_renderer_factory(
         def _active(self) -> bool:
             with state_lock:
                 abandoned_turn_ids, _ = prompt_turn_tracking(state)
-            return self.turn_id not in abandoned_turn_ids
+                active_turn_id = state.active_turn_id
+            return (
+                self.turn_id == active_turn_id
+                and self.turn_id not in abandoned_turn_ids
+            )
 
         def __enter__(self) -> PromptToolkitLiveRenderer:
             if self._active():

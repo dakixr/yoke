@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
+import tempfile
 from typing import cast
 
 from pydantic import Field
@@ -59,6 +61,8 @@ class ImageGenerationTool(LocalTool):
 
     def execute(self) -> dict[str, object]:
         """Generate the image, write it to disk, and report the context label."""
+        if self._is_cancel_requested():
+            return {"ok": False, "cancelled": True}
         provider = self.context.provider
         generate_image = getattr(provider, "generate_image", None)
         edit_image = getattr(provider, "edit_image", None)
@@ -87,8 +91,26 @@ class ImageGenerationTool(LocalTool):
             image_bytes = base64.b64decode(encoded, validate=True)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+        if self._is_cancel_requested():
+            return {"ok": False, "cancelled": True}
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(image_bytes)
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=output_path.parent,
+                prefix=f".{output_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary.write(image_bytes)
+                temporary_path = Path(temporary.name)
+            if self._is_cancel_requested():
+                return {"ok": False, "cancelled": True}
+            os.replace(temporary_path, output_path)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         next_index = next_image_label_index(self._context_messages())
         return {
             "ok": True,

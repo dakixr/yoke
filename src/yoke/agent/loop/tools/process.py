@@ -8,6 +8,7 @@ import os
 import pickle
 import queue
 import signal
+import threading
 import time
 import weakref
 from multiprocessing.context import BaseContext
@@ -22,7 +23,8 @@ from yoke.agent.tools import LocalTool
 
 
 TOOL_CANCEL_GRACE_SECONDS = 0.25
-TOOL_POLL_SECONDS = 0.02
+TOOL_CANCEL_KILL_SECONDS = 0.04
+TOOL_POLL_SECONDS = 0.005
 SPAWN_UNSAFE_CONTEXT_KEYS = {
     "cancel_requested",
     "provider",
@@ -64,6 +66,7 @@ class ToolProcessInvocation:
         self._owner_pid = os.getpid()
         self._started = False
         self._closed = False
+        self._reaping = False
 
     def start(self) -> None:
         """Start the child process."""
@@ -108,8 +111,8 @@ class ToolProcessInvocation:
         self.close()
         return self._result
 
-    def cancel(self) -> None:
-        """Request cancellation and terminate the child process if needed."""
+    def cancel(self, *, wait: bool = False) -> None:
+        """Request termination without blocking the caller on process cleanup."""
         if os.getpid() != self._owner_pid:
             return
         self._cancelled = True
@@ -124,12 +127,19 @@ class ToolProcessInvocation:
         if not self._process.is_alive():
             self.close()
             return
-        self._process.join(timeout=TOOL_CANCEL_GRACE_SECONDS)
-        if not self._process.is_alive():
-            self.close()
-            return
         _terminate_process_group(self._process)
-        self._process.join(timeout=TOOL_CANCEL_GRACE_SECONDS)
+        if wait:
+            self._reap_cancelled_process()
+        elif not self._reaping:
+            self._reaping = True
+            threading.Thread(
+                target=self._reap_cancelled_process,
+                daemon=True,
+                name="yoke-tool-reaper",
+            ).start()
+
+    def _reap_cancelled_process(self) -> None:
+        self._process.join(timeout=TOOL_CANCEL_KILL_SECONDS)
         if self._process.is_alive():
             _kill_process_group(self._process)
             self._process.join()
@@ -182,7 +192,7 @@ _ACTIVE_INVOCATIONS = weakref.WeakSet()
 def cancel_active_tool_processes() -> None:
     """Cancel any isolated tool processes still owned by this interpreter."""
     for invocation in list(_ACTIVE_INVOCATIONS):
-        invocation.cancel()
+        invocation.cancel(wait=True)
 
 
 atexit.register(cancel_active_tool_processes)
@@ -206,7 +216,7 @@ def wait_for_tool_process(
         _emit_invocation_events(invocation, emit, event_payload)
         return invocation.result(), False
     except BaseException:
-        invocation.cancel()
+        invocation.cancel(wait=True)
         raise
 
 

@@ -92,23 +92,12 @@ def test_prompt_toolkit_stop_persists_interrupted_runtime_state(tmp_path: Path) 
     worker.join(timeout=2)
 
     assert not worker.is_alive()
+    deadline = time.monotonic() + 1
     record = active_session.store.load(active_session.id)
-    assert [message.role for message in record.messages] == [
-        "user",
-        "assistant",
-        "tool",
-        "assistant",
-    ]
+    while len(record.messages) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+        record = active_session.store.load(active_session.id)
+    assert [message.role for message in record.messages] == ["user", "assistant"]
     assert record.messages[0].content == "please run tool"
     assert record.messages[-1].content == INTERRUPTED_TURN_NOTICE
-    assert any(
-        entry.kind == "assistant_tool_calls" for entry in record.conversation_entries
-    )
-    tool_result = json.loads(record.messages[2].text_content() or "{}")
-    assert tool_result["cancelled"] is True
-    assert [message.role for message in state.messages] == [
-        "user",
-        "assistant",
-        "tool",
-        "assistant",
-    ]
+    assert [message.role for message in state.messages] == ["user", "assistant"]

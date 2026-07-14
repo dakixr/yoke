@@ -62,6 +62,7 @@ class TurnSuccess:
     """Successful turn result."""
 
     result: AgentResult
+    agent: AgentRunner | None = None
 
 
 @dataclass(slots=True)
@@ -71,6 +72,7 @@ class TurnFailure:
     error: Exception
     messages: list[Message] | None = None
     conversation_entries: list[ConversationEntry] | None = None
+    agent: AgentRunner | None = None
 
 
 @dataclass(slots=True)
@@ -80,6 +82,7 @@ class TurnStopped:
     result: AgentResult | None = None
     messages: list[Message] | None = None
     conversation_entries: list[ConversationEntry] | None = None
+    agent: AgentRunner | None = None
 
 
 @dataclass(slots=True)

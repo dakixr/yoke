@@ -96,6 +96,13 @@ model requests when a turn is stopped or steered. Providers without this hook
 remain compatible; yoke checks cancellation before and after their synchronous
 `complete()` call.
 
+The interactive CLI isolates replacement generations from a retired turn.
+Provider plugins with mutable request/session state can implement
+`fork_for_turn()` to return an independent provider carrying the state needed
+for the next request. Providers exposing a cloneable `config` are reconstructed
+automatically; providers that expose neither hook remain compatible but may be
+shared, so their own implementation must support concurrent calls safely.
+
 `Agent` is stateful. Reuse the same object to keep conversation context across
 prompts. Call `agent.close()` when finished to release MCP clients and other
 closeable resources owned by registered tools. Forked agents share a lease on

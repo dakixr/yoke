@@ -18,6 +18,7 @@ from yoke.agent.loop.resources import release_tool_resources
 from yoke.agent.loop.state import context_for_run
 from yoke.agent.loop.state import persist_run_context
 from yoke.agent.loop.tools.core import index_tools
+from yoke.agent.loop.forking import copy_tool_for_fork
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import AgentResult
@@ -47,6 +48,7 @@ from yoke.agent.tools.context import normalize_tool_registration
 from yoke.agent.tools.context import resolve_model_identity
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
+from yoke.ai.providers.base import fork_provider
 from yoke.ai.providers.base import provider_system_messages
 
 if TYPE_CHECKING:
@@ -177,11 +179,12 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         if history is not None:
             self.load_conversation(history)
 
-    def fork(self) -> RuntimeAgent:
+    def fork(self, *, isolate_provider: bool = False) -> RuntimeAgent:
         """Create an independent runtime copy of this agent."""
+        provider = fork_provider(self.provider) if isolate_provider else self.provider
         forked = RuntimeAgent(
-            provider=self.provider,
-            tools=[_copy_tool_for_fork(tool) for tool in self.tools.values()],
+            provider=provider,
+            tools=[copy_tool_for_fork(tool) for tool in self.tools.values()],
             tool_factory=self._tool_factory,
             capabilities=(
                 self._capability_resolver.capabilities
@@ -202,6 +205,9 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         )
         if self._context is not None:
             forked._context = self._context.model_copy(deep=True)
+        forked.command_process_manager = self.command_process_manager
+        for tool in forked.tools.values():
+            tool._context["command_process_manager"] = self.command_process_manager
         return forked
 
     @property
@@ -513,13 +519,3 @@ def _bound_tool_path(tools: Sequence[LocalTool], key: str) -> Path | None:
         if isinstance(value, str):
             return Path(value)
     return None
-
-
-def _copy_tool_for_fork(tool: LocalTool) -> LocalTool:
-    copied = tool.model_copy(deep=False)
-    copied._context = {
-        key: value
-        for key, value in tool._context.items()
-        if key not in {"command_process_manager", "runtime_context"}
-    }
-    return copied

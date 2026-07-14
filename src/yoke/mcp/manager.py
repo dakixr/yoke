@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,10 +16,10 @@ from yoke.agent.truncate import DEFAULT_MAX_BYTES
 from yoke.agent.truncate import DEFAULT_MAX_LINES
 from yoke.agent.truncate import format_size
 from yoke.agent.truncate import truncate_head
-from yoke.mcp.client import JSON
 from yoke.mcp.client import create_mcp_client
 from yoke.mcp.client import McpClient
-from yoke.mcp.client import McpToolInfo
+from yoke.mcp.types import JSON
+from yoke.mcp.types import McpToolInfo
 from yoke.mcp.config import McpConfig
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp.config import load_mcp_config
@@ -175,6 +176,7 @@ class McpManager:
         server: str,
         tool: str,
         arguments: JSON,
+        cancel_requested: Callable[[], bool] | None = None,
     ) -> dict[str, object]:
         """Call a configured MCP server tool and compact the result."""
         config = self._server(server)
@@ -193,7 +195,11 @@ class McpManager:
             }
             if tool not in known_tools:
                 return {"ok": False, "error": f"Unknown MCP tool: {server}/{tool}"}
-            result = self._client(config).call_tool(tool, arguments)
+            result = self._client(config).call_tool(
+                tool,
+                arguments,
+                cancel_requested=cancel_requested,
+            )
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         text = _mcp_result_text(result)
