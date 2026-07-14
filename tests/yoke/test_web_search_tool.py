@@ -46,6 +46,31 @@ def test_internal_web_search_returns_agent_fields(monkeypatch: Any) -> None:
     assert first["sourceType"] == "docs"
 
 
+def test_internal_web_search_skips_duckduckgo_ad_links(monkeypatch: Any) -> None:
+    html = """
+    <a class="result__a" href="https://duckduckgo.com/y.js?ad_provider=bingv7aa">
+      Sponsored result
+    </a>
+    <a class="result__snippet">Sponsored text.</a>
+    <a class="result__a" href="https://docs.example.test/guide">Guide</a>
+    <a class="result__snippet">Official guide text.</a>
+    """
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def get(self, *args: object, **kwargs: object) -> FakeResponse:
+            return FakeResponse(html)
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+
+    result = _web_search("example guide", max_results=1)
+
+    results = cast(list[dict[str, str]], result["results"])
+    assert [item["url"] for item in results] == ["https://docs.example.test/guide"]
+
+
 def test_internal_web_search_returns_empty_results_list(monkeypatch: Any) -> None:
     class FakeClient:
         def __init__(self, *args: object, **kwargs: object) -> None:

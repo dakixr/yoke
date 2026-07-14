@@ -156,7 +156,12 @@ def _normalize_search_results(
                     raw_url = unquote(values[0]).strip()
                     parsed = urlparse(raw_url)
                     break
-        if not title or parsed.scheme not in {"http", "https"} or raw_url in seen:
+        if (
+            not title
+            or parsed.scheme not in {"http", "https"}
+            or parsed.netloc.lower().endswith("duckduckgo.com")
+            or raw_url in seen
+        ):
             continue
         seen.add(raw_url)
         results.append(
