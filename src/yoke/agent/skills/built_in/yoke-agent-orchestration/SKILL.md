@@ -68,10 +68,14 @@ assert plan is not None
 
 results: list[WorkerResult] = []
 for item in plan.items:
-    result = worker.prompt(
-        item.model_dump_json(),
-        output_type=WorkerResult,
-    ).structured
+    worker = worker_for(item)
+    try:
+        result = worker.prompt(
+            item.model_dump_json(),
+            output_type=WorkerResult,
+        ).structured
+    finally:
+        worker.close()
     assert result is not None
     results.append(result)
 
@@ -161,7 +165,7 @@ class Decision(BaseModel):
 
 request = initial_request
 for _ in range(5):
-    candidate = coder.prompt(request).text
+    candidate = coder.prompt(request).output
     decision = reviewer.prompt(
         candidate,
         output_type=Decision,

@@ -543,7 +543,7 @@ class ReviewDecision(BaseModel):
 
 request = "Implement the requested change."
 for _ in range(5):
-    draft = coder.prompt(request).text
+    draft = coder.prompt(request).output
     decision = reviewer.prompt(
         f"Review this result:\n{draft}",
         output_type=ReviewDecision,
