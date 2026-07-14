@@ -15,7 +15,6 @@ from yoke.agent.tools.web import WebFetchTool
 from yoke.agent.tools.web import WebResearchTool
 from yoke.agent.tools.web import WebSearchTool
 from yoke.agent.tools.web import _search_terms
-from yoke.agent.tools.web import _web_search
 from yoke.agent.tools.web import recent_research_context
 from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
 
@@ -89,6 +88,16 @@ class HostedSearchProvider(CodexSubscriptionProvider):
     def __init__(self) -> None:
         self.config = cast(Any, SimpleNamespace(timeout_seconds=600.0))
         self.calls: list[tuple[list[Message], list[dict[str, object]]]] = []
+
+    def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Any,
+    ) -> Message:
+        assert not cancel_requested()
+        return self.complete(messages, tools)
 
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
@@ -272,6 +281,40 @@ def test_web_research_unbound_tool_uses_legacy_fallback(monkeypatch: Any) -> Non
     assert cast(list[dict[str, str]], result["sources"])[0]["url"] == (
         "https://example.test/docs"
     )
+
+
+def test_web_research_skips_synthesis_when_search_is_empty(monkeypatch: Any) -> None:
+    provider_calls: list[object] = []
+
+    class FailingIfCalledProvider(UnavailableSynthesisProvider):
+        def complete(self, *args: object, **kwargs: object) -> Message:
+            provider_calls.append((args, kwargs))
+            raise AssertionError("empty search should not be synthesized")
+
+    def fake_search(
+        query: str, *, max_results: int, timeout_s: int
+    ) -> dict[str, object]:
+        del query, max_results, timeout_s
+        return {
+            "ok": True,
+            "results": [],
+            "note": "Search providers returned no results.",
+        }
+
+    monkeypatch.setattr("yoke.agent.tools.web.research.web_search", fake_search)
+
+    result = bind_web_research(
+        WebResearchTool(question="No matching topic"),
+        FailingIfCalledProvider(),
+    ).execute()
+
+    assert result == {
+        "ok": True,
+        "answer": "No search results were found.",
+        "notes": ["Search providers returned no results."],
+        "sources": [],
+    }
+    assert provider_calls == []
 
 
 def test_web_fetch_returns_agent_metadata(monkeypatch: Any) -> None:
@@ -497,79 +540,6 @@ def test_web_fetch_find_keeps_nearby_heading_context(monkeypatch: Any) -> None:
     assert result["ok"] is True
     assert "Path resolve" in content
     assert "strict" in content
-
-
-def test_internal_web_search_returns_agent_fields(monkeypatch: Any) -> None:
-    html = """
-    <a class="result__a"
-       href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.example.test%2Fguide">
-       Guide
-    </a>
-    <a class="result__snippet">Official guide text.</a>
-    """
-
-    class FakeClient:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            pass
-
-        def get(self, *args: object, **kwargs: object) -> FakeResponse:
-            return FakeResponse(html)
-
-    monkeypatch.setattr("httpx.Client", FakeClient)
-
-    result = _web_search("example guide", max_results=1)
-
-    assert result["ok"] is True
-    results = cast(list[dict[str, object]], result["results"])
-    first = results[0]
-    assert first["url"] == "https://docs.example.test/guide"
-    assert first["domain"] == "docs.example.test"
-    assert first["sourceType"] == "docs"
-
-
-def test_internal_web_search_returns_empty_results_list(
-    monkeypatch: Any,
-) -> None:
-    class FakeClient:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            pass
-
-        def get(self, *args: object, **kwargs: object) -> FakeResponse:
-            return FakeResponse("<html><body>No matches</body></html>")
-
-    monkeypatch.setattr("httpx.Client", FakeClient)
-
-    result = _web_search("query with no matches", max_results=1)
-
-    assert result["ok"] is True
-    assert result["results"] == []
-    assert result["exhausted"] is True
-    assert result["requestedResults"] == 1
-    assert result["returnedResults"] == 0
-
-
-def test_internal_web_search_reports_partial_results(monkeypatch: Any) -> None:
-    html = """
-    <a class="result__a" href="https://docs.example.test/guide">Guide</a>
-    <a class="result__snippet">Official guide text.</a>
-    """
-
-    class FakeClient:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            pass
-
-        def get(self, *args: object, **kwargs: object) -> FakeResponse:
-            return FakeResponse(html)
-
-    monkeypatch.setattr("httpx.Client", FakeClient)
-
-    result = _web_search("example guide", max_results=3)
-
-    assert result["ok"] is True
-    assert len(cast(list[object], result["results"])) == 1
-    assert result["exhausted"] is True
-    assert result["requestedResults"] == 3
-    assert result["returnedResults"] == 1
 
 
 def test_web_search_tool_wraps_duckduckgo_search(monkeypatch: Any) -> None:

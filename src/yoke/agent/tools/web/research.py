@@ -112,18 +112,17 @@ class WebResearchTool(LocalTool):
         hosted = self._research_with_codex_hosted_web_search()
         if hosted is not None:
             return hosted
-        codex_provider = self._codex_provider()
 
         query, search = self._search_with_fallback()
         if not search.get("ok"):
             return search
 
         results = search.get("results")
-        if not isinstance(results, list):
+        if not isinstance(results, list) or not results:
             return {
                 "ok": True,
                 "answer": "No search results were found.",
-                "notes": [],
+                "notes": [str(search["note"])] if search.get("note") else [],
                 "sources": [],
             }
 
@@ -171,12 +170,7 @@ class WebResearchTool(LocalTool):
             if len(sources) >= self.fetched_source_target:
                 break
 
-        synthesized = None
-        if codex_provider is None:
-            synthesized = self._synthesize_with_provider(
-                query=query,
-                sources=sources,
-            )
+        synthesized = self._synthesize_with_provider(query=query, sources=sources)
         if synthesized is not None:
             return synthesized
 
@@ -254,7 +248,7 @@ class WebResearchTool(LocalTool):
         provider: CodexSubscriptionProvider,
         prompt: str,
     ) -> Message:
-        return provider.complete(
+        return provider.complete_with_cancel(
             [
                 Message.system(
                     "You are a concise web research tool. Use hosted web "
@@ -265,6 +259,7 @@ class WebResearchTool(LocalTool):
             [
                 self._hosted_web_search_tool(),
             ],
+            cancel_requested=self._is_cancel_requested,
         )
 
     def _hosted_web_search_tool(self) -> dict[str, object]:
@@ -310,7 +305,11 @@ class WebResearchTool(LocalTool):
                     include_agents_file=False,
                 ),
             )
-            result = agent.prompt(prompt, output_type=ResearchBrief)
+            result = agent.prompt(
+                prompt,
+                output_type=ResearchBrief,
+                stop_requested=self._is_cancel_requested,
+            )
             if result.structured is None:
                 return None
             brief = result.structured

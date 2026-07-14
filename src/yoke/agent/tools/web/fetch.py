@@ -11,8 +11,6 @@ from typing import Any
 from typing import BinaryIO
 from typing import Protocol
 import warnings
-from urllib.parse import parse_qs
-from urllib.parse import unquote
 from urllib.parse import urljoin
 from urllib.parse import urlparse
 
@@ -20,8 +18,6 @@ from pydantic import Field
 
 from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.web.common import chunk_text
-from yoke.agent.tools.web.common import domain_for
-from yoke.agent.tools.web.common import DuckDuckGoHTMLParser
 from yoke.agent.tools.web.common import extract_raw_term_windows
 from yoke.agent.tools.web.common import filter_text_blocks
 from yoke.agent.tools.web.common import html_to_text_blocks
@@ -31,6 +27,7 @@ from yoke.agent.tools.web.common import search_terms
 from yoke.agent.tools.web.common import select_fetch_content
 from yoke.agent.tools.web.common import source_type_for
 from yoke.agent.tools.web.common import summarize_text
+from yoke.agent.tools.web.search import web_search
 from yoke.agent.truncate import truncate_head
 
 DOCUMENT_EXTENSIONS = {
@@ -82,86 +79,12 @@ class MarkItDownConverter(Protocol):
         """Convert a binary stream to readable document content."""
 
 
-def web_search(
-    query: str, *, max_results: int = 5, timeout_s: int = 20
-) -> dict[str, object]:
-    """Search the web using DuckDuckGo HTML results."""
-    try:
-        import html
-
-        import httpx
-
-        client = httpx.Client(
-            follow_redirects=True,
-            headers={"User-Agent": http_user_agent()},
-            timeout=timeout_s,
-            verify=False,  # noqa: S501
-        )
-        try:
-            response = client.get(
-                "https://html.duckduckgo.com/html/",
-                params={"q": query.strip()},
-            )
-            response.raise_for_status()
-        finally:
-            getattr(client, "close", lambda: None)()
-
-        parser = DuckDuckGoHTMLParser()
-        parser.feed(response.text)
-
-        results: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for parsed_result in parser.results:
-            title = " ".join(parsed_result.get("title", "").split())
-            raw_url = html.unescape(parsed_result.get("url", "").strip())
-            if raw_url.startswith("//"):
-                raw_url = f"https:{raw_url}"
-            elif raw_url.startswith("/"):
-                raw_url = urljoin("https://duckduckgo.com", raw_url)
-            parsed = urlparse(raw_url)
-            if parsed.netloc.lower().endswith("duckduckgo.com"):
-                parsed_query = parse_qs(parsed.query)
-                for key in ("uddg", "rut"):
-                    values = parsed_query.get(key)
-                    if values and values[0]:
-                        raw_url = unquote(values[0]).strip()
-                        parsed = urlparse(raw_url)
-                        break
-            if not title or parsed.scheme not in {"http", "https"} or raw_url in seen:
-                continue
-            seen.add(raw_url)
-            results.append(
-                {
-                    "title": title,
-                    "url": raw_url,
-                    "domain": domain_for(raw_url),
-                    "sourceType": source_type_for(raw_url),
-                    "snippet": " ".join(parsed_result.get("snippet", "").split()),
-                }
-            )
-            if len(results) >= max_results:
-                break
-
-        result: dict[str, object] = {"ok": True, "results": results}
-        if max_results > len(results):
-            result["exhausted"] = True
-            result["requestedResults"] = max_results
-            result["returnedResults"] = len(results)
-            result["note"] = (
-                "DuckDuckGo HTML returned fewer parseable results than requested; "
-                "use web_research for broader multi-query research."
-            )
-        return result
-    except Exception as exc:
-        return {"ok": False, "error": str(exc), "query": query}
-
-
 class WebSearchTool(LocalTool):
     """Run a simple search and return raw result links/snippets."""
 
     name = "web_search"
     description = (
-        "Run a quick DuckDuckGo HTML search and return raw result links/snippets. "
+        "Run a quick keyless web search and return raw result links/snippets. "
         "Use web_research instead when you need synthesized answers, source "
         "fetching, broader coverage, or current web research."
     )
@@ -171,7 +94,7 @@ class WebSearchTool(LocalTool):
     timeout_s: int = Field(default=30, ge=1, le=180)
 
     def execute(self) -> dict[str, object]:
-        """Run a DuckDuckGo HTML search and return parsed results."""
+        """Run a keyless web search and return parsed results."""
         if self._is_cancel_requested():
             return {"ok": False, "cancelled": True}
         return web_search(

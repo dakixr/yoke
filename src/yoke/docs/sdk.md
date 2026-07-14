@@ -188,7 +188,7 @@ from yoke.agent.tools import ReadTool, EditTool, WriteTool, GrepTool
 | `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
 | `ImageGenerationTool` | `image_generation` | Generate a PNG through Codex subscription auth and attach it to context. |
 | `WebFetchTool` | `web_fetch` | Fetch one known URL and return readable Markdown/text, chunks, links, or metadata. |
-| `WebSearchTool` | `web_search` | Run a quick DuckDuckGo HTML search and return raw result links/snippets. |
+| `WebSearchTool` | `web_search` | Run a quick keyless web search and return raw result links/snippets. |
 | `WebResearchTool` | `web_research` | Autonomously search, fetch, and synthesize a multi-source research answer with evidence. |
 | `SkillTool` | `skill` | Let the agent load configured skills at runtime. |
 
@@ -197,6 +197,10 @@ uses Codex's hosted Responses `web_search` tool in-process through
 `ToolRuntimeContext`. Other providers and standalone tool instances use YOKE's
 local search-and-fetch pipeline with fast HTML parsing for fetched research
 pages; the local synthesis agent can call both `web_fetch` and `web_search`.
+Local searches use DuckDuckGo HTML first and automatically fall back to Bing's
+RSS search feed when DuckDuckGo returns an automated-request challenge or no
+parseable results. Search responses include the provider used and a fallback
+note when applicable.
 Use `web_search` when you only need result URLs/snippets, `web_fetch` when you
 already know the URL to inspect, and `web_research` when the task is an
 open-ended question, needs current facts, or benefits from multiple sources and
