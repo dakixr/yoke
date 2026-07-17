@@ -303,9 +303,7 @@ def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
     agent.load_conversation(MessageHistory([Message.user("existing conversation")]))
 
     assert set(agent.tools) == {"apply_patch"}
-    assert "Use the `apply_patch` tool" in (
-        agent.context_manager.instructions[-1].content or ""
-    )
+    assert "Use the `apply_patch` tool" in agent.tools["apply_patch"].description
 
     set_agent_model(agent, model_id="kimi-code")
 
@@ -314,8 +312,8 @@ def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
         str(message.content or "") for message in agent.context_manager.instructions
     )
     assert "base instructions" in combined
-    assert "Use `edit` for exact replacements" in combined
     assert "Use the `apply_patch` tool" not in combined
+    assert "Use oldString/newString" in agent.tools["edit"].description
     assert agent._context is not None
     context_combined = "\n".join(
         str(message.content or "") for message in agent._context.instructions
@@ -335,9 +333,9 @@ def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
     round_trip = "\n".join(
         str(message.content or "") for message in agent.context_manager.instructions
     )
-    assert "Use the `apply_patch` tool" in round_trip
-    assert "Use `edit` for exact replacements" not in round_trip
-    assert len(agent.context_manager.instructions) == 2
+    assert "Use the `apply_patch` tool" not in round_trip
+    assert "Use the `apply_patch` tool" in agent.tools["apply_patch"].description
+    assert len(agent.context_manager.instructions) == 1
 
 
 def test_same_provider_switch_does_not_copy_provider(

@@ -194,7 +194,7 @@ from yoke.agent.tools import ReadTool, EditTool, WriteTool, GrepTool
 | `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
 | `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
 | `ImageGenerationTool` | `image_generation` | Generate a PNG through Codex subscription auth and attach it to context. |
-| `WebFetchTool` | `web_fetch` | Fetch one known URL and return readable Markdown/text, chunks, links, or metadata. |
+| `WebFetchTool` | `web_fetch` | Fetch one known URL, save its complete extracted Markdown, and return readable content plus the saved path. |
 | `WebSearchTool` | `web_search` | Run a quick keyless web search and return raw result links/snippets. |
 | `WebResearchTool` | `web_research` | Autonomously search, fetch, and synthesize a multi-source research answer with evidence. |
 | `SkillTool` | `skill` | Let the agent load configured skills at runtime. |
@@ -213,7 +213,12 @@ already know the URL to inspect, and `web_research` when the task is an
 open-ended question, needs current facts, or benefits from multiple sources and
 source-grounded synthesis. `web_fetch` uses best-effort document conversion for
 HTML, PDFs, Office files, and other known document responses, and falls back to
-readable text or binary metadata when extraction fails.
+readable text or binary metadata when extraction fails. It rejects HTTP
+responses larger than 5 MiB and caps the complete model-facing result at 50 KiB,
+including auxiliary chunks and links. Workspace-bound agents save the complete
+extracted page before those limits under `~/.yoke/tool-output/` and return its
+absolute path as `path`, so `read`, `rg`, and command tools can inspect the full
+content. At agent-session startup, Yoke deletes outputs older than seven days.
 
 `ImageGenerationTool` is registered only for Codex-backed providers. It sends
 the `prompt` to Codex's subscription image endpoint, writes the PNG
@@ -241,7 +246,8 @@ compatibility paths and are internally wrapped as capabilities.
 `FileEditCapability` exposes model-appropriate writing tools: models whose ID
 contains `gpt` receive `apply_patch`; every other model receives `edit` and
 `write`. The legacy `register_write_tool` callback delegates to this
-capability.
+capability. Their usage instructions are included in the tool definitions and
+are not duplicated as registration-time system messages.
 
 ```python
 from yoke.agent.tools import register_write_tool

@@ -45,7 +45,8 @@ class EditTool(WorkspaceTool):
     description = (
         "Replace exact text in one file. Use oldString/newString for one exact "
         "replacement, or set replaceAll to true to replace every exact match. "
-        "Use write to create or overwrite files."
+        "Use write to create or overwrite files. Re-read the file and retry with "
+        "exact current text if a replacement fails."
     )
 
     path: str = Field(min_length=1)

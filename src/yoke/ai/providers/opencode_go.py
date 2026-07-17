@@ -13,11 +13,17 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
 from yoke.agent.models import (
     Message,
+    MessageImageURLContentPart,
+    MessageLocalImageContentPart,
+    MessageTextContentPart,
     ToolCall,
     ToolFunction,
 )
+from yoke.agent.multimodal import encode_local_image_data_url
 from yoke.ai.providers.base import (
     Provider,
     ProviderCancelledError,
@@ -41,12 +47,7 @@ from yoke.ai.providers.openai_compat import (
     build_model_catalog,
     normalize_openai_request_messages,
 )
-from yoke.agent.multimodal import encode_local_image_data_url
 from yoke.ai.providers.usage import parse_token_usage
-from yoke.agent.models import MessageImageURLContentPart
-from yoke.agent.models import MessageLocalImageContentPart
-from yoke.agent.models import MessageTextContentPart
-from pydantic import BaseModel, Field, ValidationError, field_validator
 
 PROVIDER_NAME = "opencode-go"
 AUTH_FILE_KEY = "opencode-go"
@@ -57,11 +58,13 @@ ANTHROPIC_BASE_URL = "https://opencode.ai/zen/go"
 ANTHROPIC_THINKING_LEVELS = ("high", "max")
 DEEPSEEK_THINKING_LEVELS = ("high", "max")
 GLM_THINKING_LEVELS = ()
+GROK_THINKING_LEVELS = ()
 KIMI_THINKING_LEVELS = ()
 
 MODEL_PROTOCOLS = {
     "glm-5.2": "openai",
     "deepseek-v4-flash": "openai",
+    "grok-4.5": "openai",
     "kimi-k2.7-code": "openai",
     "deepseek-v4-pro": "openai",
 }
@@ -70,10 +73,29 @@ MODEL_CATALOG = build_model_catalog(
     ProviderModelInfo(
         id="glm-5.2",
         display_name="GLM-5.2",
-        context_window_tokens=1_000_000,
+        # Is really 1M, but for code stuff we want to limit it to 400k for now
+        context_window_tokens=400_000,
         thinking_levels=GLM_THINKING_LEVELS,
         default_thinking_level=None,
         supports_image_inputs=False,
+    ),
+    ProviderModelInfo(
+        id="grok-4.5",
+        display_name="Grok 4.5",
+        # Is really 500k, but for code stuff we want to limit it to 400k for now
+        context_window_tokens=400_000,
+        thinking_levels=GROK_THINKING_LEVELS,
+        default_thinking_level=None,
+        supports_image_inputs=True,
+    ),
+    ProviderModelInfo(
+        id="kimi-k3",
+        display_name="Kimi K3",
+        # Is really 1M, but for code stuff we want to limit it to 400k for now
+        context_window_tokens=400_000,
+        thinking_levels=KIMI_THINKING_LEVELS,
+        default_thinking_level=None,
+        supports_image_inputs=True,
     ),
     ProviderModelInfo(
         id="kimi-k2.7-code",
@@ -108,6 +130,7 @@ ALL_THINKING_LEVELS = tuple(
             ANTHROPIC_THINKING_LEVELS,
             DEEPSEEK_THINKING_LEVELS,
             GLM_THINKING_LEVELS,
+            GROK_THINKING_LEVELS,
             KIMI_THINKING_LEVELS,
         )
         for level in levels

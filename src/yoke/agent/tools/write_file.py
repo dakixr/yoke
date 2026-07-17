@@ -14,7 +14,10 @@ class WriteTool(WorkspaceTool):
     """Tool that writes complete file content, creating parent directories."""
 
     name = "write"
-    description = "Write content to one file. Creates the file if it is missing."
+    description = (
+        "Write the complete content of one file, creating or overwriting it and "
+        "creating missing parent directories."
+    )
 
     path: str = Field(min_length=1)
     content: str = Field(description="Content to write to the file")

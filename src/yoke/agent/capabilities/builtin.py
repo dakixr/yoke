@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
 
 from yoke.agent.capabilities.core import BaseCapability
 from yoke.agent.capabilities.core import CapabilityContext
 from yoke.agent.capabilities.core import CapabilityRegistration
-from yoke.agent.models import Message
 from yoke.agent.multimodal import provider_supports_image_inputs
 from yoke.agent.tools.apply_patch import ApplyPatchTool
 from yoke.agent.tools.attach_image import AttachImageTool
@@ -30,12 +28,6 @@ from yoke.agent.tools.web import WebFetchTool
 from yoke.agent.tools.web import WebResearchTool
 from yoke.agent.tools.web import WebSearchTool
 from yoke.agent.tools.write_file import WriteTool
-
-_TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
-APPLY_PATCH_SYSTEM_PROMPT = (
-    (_TOOLS_DIR / "apply_patch" / "prompt.md").read_text(encoding="utf-8").strip()
-)
-EDIT_SYSTEM_PROMPT = (_TOOLS_DIR / "edit_prompt.md").read_text(encoding="utf-8").strip()
 
 
 def bind_tool(
@@ -119,17 +111,12 @@ class FileEditCapability(BaseCapability):
         prefers_patch = model_prefers_apply_patch(context.model_id)
         if prefers_patch:
             tools = (bind_workspace_tool(ApplyPatchTool, context),)
-            system_prompt = APPLY_PATCH_SYSTEM_PROMPT
         else:
             tools = (
                 bind_workspace_tool(EditTool, context),
                 bind_workspace_tool(WriteTool, context),
             )
-            system_prompt = EDIT_SYSTEM_PROMPT
-        return CapabilityRegistration(
-            tools=tools,
-            system_messages=(Message.system(system_prompt),),
-        )
+        return CapabilityRegistration(tools=tools)
 
 
 class CommandExecutionCapability(BaseCapability):
@@ -157,7 +144,7 @@ class WebCapability(BaseCapability):
     def register(self, context: CapabilityContext) -> CapabilityRegistration:
         return CapabilityRegistration(
             tools=(
-                bind_tool(WebFetchTool, context),
+                bind_workspace_tool(WebFetchTool, context),
                 bind_tool(WebSearchTool, context),
                 bind_tool(WebResearchTool, context),
             )

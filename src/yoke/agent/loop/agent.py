@@ -46,6 +46,7 @@ from yoke.agent.tools import ToolRuntimeContext
 from yoke.agent.tools import never_cancel
 from yoke.agent.tools.context import normalize_tool_registration
 from yoke.agent.tools.context import resolve_model_identity
+from yoke.agent.tools.output import cleanup_expired_tool_outputs
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import fork_provider
@@ -145,6 +146,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             tool_root or _bound_tool_path(tools, "root") or Path.cwd()
         ).resolve()
         self._tool_home = tool_home.resolve()
+        cleanup_expired_tool_outputs(self._tool_home)
         self.command_process_manager = CommandProcessManager()
         self._tool_provider: Provider | None = None
         self._tool_model: ModelIdentity | None = None

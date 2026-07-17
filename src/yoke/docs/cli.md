@@ -150,9 +150,9 @@ Each request also opens a fresh HTTP connection to avoid stale
 keep-alive sockets.
 
 OpenCode Go currently exposes maintained OpenAI-compatible models in yoke's
-built-in catalog. Deprecated OpenCode Go model entries such as GLM 5/5.1,
-Kimi K2.5/2.6, MiMo, MiniMax, and Qwen have been removed from the selectable
-inventory.
+built-in catalog, including the image-capable `grok-4.5` with its 500K context
+window. Deprecated OpenCode Go model entries such as GLM 5/5.1, Kimi K2.5/2.6,
+MiMo, MiniMax, and Qwen have been removed from the selectable inventory.
 
 If you omit the model argument from `yoke models set`, yoke opens an interactive
 selector when running in a TTY and otherwise falls back to a numbered prompt.
@@ -641,6 +641,11 @@ The test suite is run with `make test`.
 Never edit migration files directly.
 ```
 
+`web_fetch` saves each complete, converted page under `~/.yoke/tool-output/` and
+returns its absolute `path`. Use `read`, `rg`, or shell commands on that path when
+the model-facing result is truncated. At agent-session startup, Yoke deletes
+outputs older than seven days.
+
 ---
 
 ## Tool policy
@@ -716,6 +721,11 @@ image-edit/reference workflows. Codex image requests use the hosted Responses
 endpoints. Search is environment-aware:
 when ripgrep is installed, only `rg` is active; otherwise `grep`, `find`, and
 `ls` are active as the fallback set.
+
+Built-in writing instructions live in the active tool definitions. Yoke does
+not also add them to the system prompt, avoiding duplicate tool guidance in the
+model context. Custom tool registrations can still contribute separate system
+messages when their instructions do not belong in a tool description.
 
 Every model receives `exec_command` and `write_stdin`; command registration is
 not provider-specific. Command results include `session_id`, `exit_code`,

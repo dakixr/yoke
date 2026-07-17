@@ -57,11 +57,11 @@ def test_sdk_write_registration_selects_schema_from_model_id(
     assert set(gpt_agent._runtime.tools) == {"apply_patch"}
     assert set(non_gpt_agent._runtime.tools) == {"edit", "write"}
     assert "Use the `apply_patch` tool" in (
-        gpt_agent._runtime.context_manager.instructions[-1].content or ""
+        gpt_agent._runtime.tools["apply_patch"].description
     )
-    assert "Use `edit` for exact replacements" in (
-        non_gpt_agent._runtime.context_manager.instructions[-1].content or ""
-    )
+    assert gpt_agent._runtime.context_manager.instructions == []
+    assert non_gpt_agent._runtime.context_manager.instructions == []
+    assert "Use oldString/newString" in non_gpt_agent._runtime.tools["edit"].description
     gpt_schema = gpt_agent._runtime.tools["apply_patch"].to_definition()
     non_gpt_schema = non_gpt_agent._runtime.tools["edit"].to_definition()
     gpt_parameters = cast(

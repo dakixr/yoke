@@ -355,6 +355,7 @@ def test_web_fetch_schema_hides_internal_markitdown_flag() -> None:
     properties = cast(dict[str, object], parameters["properties"])
 
     assert "use_markitdown" not in properties
+    assert "find" not in properties
 
 
 def test_web_fetch_extracts_pdf_with_markitdown(monkeypatch: Any) -> None:
@@ -477,69 +478,6 @@ def test_web_fetch_binary_conversion_failure_returns_best_effort(
     details = cast(dict[str, object], result["details"])
     assert details["extractor"] == "binary"
     assert details["conversionError"] == "cannot parse pdf"
-
-
-def test_web_fetch_find_filters_content(monkeypatch: Any) -> None:
-    def fake_get(*args: object, **kwargs: object) -> FakeResponse:
-        return FakeResponse(
-            "<html><body><p>Alpha setup notes.</p>"
-            "<p>Beta deploy guide.</p></body></html>"
-        )
-
-    monkeypatch.setattr("httpx.get", fake_get)
-
-    result = WebFetchTool(
-        url="https://example.test/page",
-        find="deploy",
-        max_chars=2000,
-    ).execute()
-
-    assert result["ok"] is True
-    assert result["matched"] is True
-    assert "deploy" in str(result["content"]).lower()
-    assert "Alpha" not in str(result["content"])
-
-
-def test_web_fetch_find_reports_no_match(monkeypatch: Any) -> None:
-    def fake_get(*args: object, **kwargs: object) -> FakeResponse:
-        return FakeResponse("<html><body><p>Alpha setup notes.</p></body></html>")
-
-    monkeypatch.setattr("httpx.get", fake_get)
-
-    result = WebFetchTool(
-        url="https://example.test/page",
-        find="deploy",
-        max_chars=2000,
-    ).execute()
-
-    assert result["ok"] is True
-    assert result["matched"] is False
-    assert "No content matched" in str(result["note"])
-    assert result["content"] == ""
-
-
-def test_web_fetch_find_keeps_nearby_heading_context(monkeypatch: Any) -> None:
-    html = (
-        "<html><body><h2>Install</h2><p>General setup.</p>"
-        "<h2>Path resolve</h2><p>Resolve removes dot segments.</p>"
-        "<p>Use strict when missing paths should fail.</p></body></html>"
-    )
-
-    def fake_get(*args: object, **kwargs: object) -> FakeResponse:
-        return FakeResponse(html)
-
-    monkeypatch.setattr("httpx.get", fake_get)
-
-    result = WebFetchTool(
-        url="https://example.test/page",
-        find="Path resolve strict",
-        max_chars=2000,
-    ).execute()
-
-    content = str(result["content"])
-    assert result["ok"] is True
-    assert "Path resolve" in content
-    assert "strict" in content
 
 
 def test_web_search_tool_wraps_duckduckgo_search(monkeypatch: Any) -> None:

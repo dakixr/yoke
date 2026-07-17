@@ -135,11 +135,11 @@ def test_build_agent_preserves_agents_file_system_message(
     agent = build_agent_from_args(CLIArgs(model="codex:gpt-5.4", root=str(tmp_path)))
 
     system_messages = agent.context_manager.instructions
-    assert len(system_messages) == 3
-    assert "You are yoke running in the yoke CLI" in (system_messages[0].content or "")
+    assert len(system_messages) == 2
+    assert "You are yoke" in (system_messages[0].content or "")
     assert "Use the `apply_patch` tool" not in (system_messages[0].content or "")
     assert "Always inspect todo.json first." in (system_messages[1].content or "")
-    assert "Use the `apply_patch` tool" in (system_messages[2].content or "")
+    assert "Use the `apply_patch` tool" in agent.tools["apply_patch"].description
     assert agent.context_manager.max_total_tokens == 400_000
 
 
@@ -167,7 +167,8 @@ def test_build_agent_includes_provider_model_system_message(
 
     system_messages = agent.context_manager.instructions
     assert system_messages[1].content == "Provider steering for gpt-5.4."
-    assert "Use the `apply_patch` tool" in (system_messages[2].content or "")
+    assert len(system_messages) == 2
+    assert "Use the `apply_patch` tool" in agent.tools["apply_patch"].description
 
 
 def test_cli_rejects_unknown_provider(capsys) -> None:

@@ -6,7 +6,7 @@ import io
 import html
 import json
 import re
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 from typing import BinaryIO
 from typing import Protocol
@@ -17,18 +17,20 @@ from urllib.parse import urlparse
 from pydantic import Field
 
 from yoke.agent.tools.base import LocalTool
+from yoke.agent.tools.output import save_markdown_tool_output
 from yoke.agent.tools.web.common import chunk_text
-from yoke.agent.tools.web.common import extract_raw_term_windows
-from yoke.agent.tools.web.common import filter_text_blocks
 from yoke.agent.tools.web.common import html_to_text_blocks
 from yoke.agent.tools.web.common import http_user_agent
 from yoke.agent.tools.web.common import ReadableHTMLParser
-from yoke.agent.tools.web.common import search_terms
 from yoke.agent.tools.web.common import select_fetch_content
 from yoke.agent.tools.web.common import source_type_for
 from yoke.agent.tools.web.common import summarize_text
 from yoke.agent.tools.web.search import web_search
+from yoke.agent.truncate import DEFAULT_MAX_BYTES
 from yoke.agent.truncate import truncate_head
+
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+MAX_FETCH_CHARS = 50_000
 
 DOCUMENT_EXTENSIONS = {
     ".csv",
@@ -110,15 +112,17 @@ class WebFetchTool(LocalTool):
     name = "web_fetch"
     description = (
         "Fetch one known URL and return readable markdown/text, chunks, links, "
-        "or metadata. Use web_search to discover URLs and web_research for "
-        "multi-source researched answers."
+        "or metadata. The complete extracted content is saved as Markdown under "
+        "the global Yoke directory and returned as an absolute path so file tools "
+        "can inspect it beyond model-facing limits. Responses over 5 MiB are "
+        "rejected and model-facing output is capped at 50 KiB. Use web_search to "
+        "discover URLs and web_research for multi-source researched answers."
     )
 
     url: str = Field(min_length=1)
     mode: str = "main_content"
-    find: str | None = Field(default=None, min_length=1)
     timeout_s: int = Field(default=30, ge=1, le=180)
-    max_chars: int = Field(default=20_000, ge=500, le=200_000)
+    max_chars: int = Field(default=20_000, ge=500, le=MAX_FETCH_CHARS)
 
     def execute(self) -> dict[str, object]:
         """Fetch the URL and return its content as text or markdown."""
@@ -138,6 +142,7 @@ class WebFetchTool(LocalTool):
                 verify=False,  # noqa: S501
             )
             response.raise_for_status()
+            _validate_response_size(response)
 
             content_type = response.headers.get("content-type", "").lower()
             raw_text = _response_text(response)
@@ -157,6 +162,7 @@ class WebFetchTool(LocalTool):
                         verify=False,  # noqa: S501
                     )
                     response.raise_for_status()
+                    _validate_response_size(response)
                     request_url = html_redirect_url
                     content_type = response.headers.get("content-type", "").lower()
                     raw_text = _response_text(response)
@@ -223,22 +229,10 @@ class WebFetchTool(LocalTool):
                     text = raw_text
                     extractor = "text"
 
+            saved_path = self._save_complete_text(text, str(response.url))
             html_info = ReadableHTMLParser(str(response.url))
             if is_markup:
                 html_info.feed(raw_text)
-
-            filtered_text = filter_text_blocks(text, self.find)
-            find_terms = search_terms(self.find or "")
-            raw_windows = extract_raw_term_windows(raw_text, self.find)
-            if self.find and len(find_terms) > 1 and raw_windows:
-                if not filtered_text:
-                    text = raw_windows
-                else:
-                    text = filtered_text
-            else:
-                text = filtered_text
-
-            find_miss = bool(self.find and not text.strip())
 
             chunks = chunk_text(text)
             summary = summarize_text(text)
@@ -264,18 +258,10 @@ class WebFetchTool(LocalTool):
                 else selected
             )
 
-            limited = (
-                text_for_limit[: self.max_chars]
-                if len(text_for_limit) > self.max_chars
-                else text_for_limit
-            )
-            truncation = truncate_head(limited)
-            content = truncation.content
-            truncated = truncation.truncated or len(text_for_limit) > self.max_chars
-            if len(text_for_limit) > self.max_chars and not truncation.truncated:
-                content = limited.rstrip() + "\n\n[Output truncated by max_chars.]"
+            content, truncated = _limit_content(text_for_limit, self.max_chars)
             result: dict[str, object] = {
                 "ok": True,
+                "path": saved_path,
                 "content": content,
                 "summary": summary,
                 "chunks": chunks[:20],
@@ -303,18 +289,19 @@ class WebFetchTool(LocalTool):
                     cast_details["htmlRedirectError"] = html_redirect_error
             if truncated:
                 result["truncated"] = True
-            if find_miss:
-                result["matched"] = False
-                result["note"] = f"No content matched find={self.find!r}."
-            elif self.find:
-                result["matched"] = True
-            return result
+            return _bound_fetch_result(result)
         except Exception as exc:
             return {"ok": False, "error": str(exc), "url": self.url}
 
     def _use_markitdown(self) -> bool:
         configured = self._context.get("use_markitdown")
         return configured if isinstance(configured, bool) else True
+
+    def _save_complete_text(self, text: str, source: str) -> str | None:
+        home = self._context.get("home")
+        if not isinstance(home, Path):
+            return None
+        return save_markdown_tool_output(home=home, source=source, content=text)
 
 
 def _markitdown_converter() -> MarkItDownConverter | None:
@@ -340,6 +327,74 @@ def _response_text(response: object) -> str:
     if isinstance(content, bytes):
         return content.decode("utf-8", errors="replace")
     return str(text)
+
+
+def _validate_response_size(response: object) -> None:
+    headers = getattr(response, "headers", {})
+    content_length = headers.get("content-length") if hasattr(headers, "get") else None
+    if content_length:
+        try:
+            parsed_content_length = int(content_length)
+        except (TypeError, ValueError):
+            parsed_content_length = 0
+        if parsed_content_length > MAX_RESPONSE_BYTES:
+            raise ValueError("response too large (exceeds 5 MiB limit)")
+    content = getattr(response, "content", b"")
+    if isinstance(content, bytes) and len(content) > MAX_RESPONSE_BYTES:
+        raise ValueError("response too large (exceeds 5 MiB limit)")
+
+
+def _limit_content(content: str, max_chars: int) -> tuple[str, bool]:
+    limited = content[:max_chars]
+    truncated_by_chars = len(content) > max_chars
+    truncation = truncate_head(limited)
+    if truncation.first_line_exceeds_limit:
+        return limited, True
+    if truncation.truncated:
+        return truncation.content, True
+    if truncated_by_chars:
+        return limited.rstrip() + "\n\n[Output truncated by max_chars.]", True
+    return limited, False
+
+
+def _bound_fetch_result(result: dict[str, object]) -> dict[str, object]:
+    if _serialized_size(result) <= DEFAULT_MAX_BYTES:
+        return result
+
+    bounded = dict(result)
+    bounded["truncated"] = True
+    bounded["chunks"] = []
+    if _serialized_size(bounded) <= DEFAULT_MAX_BYTES:
+        return bounded
+
+    bounded["links"] = []
+    content = bounded.get("content")
+    if not isinstance(content, str):
+        bounded["content"] = str(content)
+        content = str(content)
+
+    marker = (
+        "\n\n[Output truncated to the 50 KiB tool-result limit. "
+        "Use read or rg on the saved path to inspect the complete content.]"
+    )
+    start = 0
+    end = len(content)
+    best = marker
+    while start <= end:
+        middle = (start + end) // 2
+        candidate = content[:middle].rstrip() + marker
+        bounded["content"] = candidate
+        if _serialized_size(bounded) <= DEFAULT_MAX_BYTES:
+            best = candidate
+            start = middle + 1
+        else:
+            end = middle - 1
+    bounded["content"] = best
+    return bounded
+
+
+def _serialized_size(payload: dict[str, object]) -> int:
+    return len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
 
 
 def _json_text(response: Any, fallback: str) -> str:

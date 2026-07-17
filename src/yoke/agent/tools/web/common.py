@@ -234,35 +234,6 @@ def search_terms(text: str) -> list[str]:
     return terms[:10]
 
 
-def block_score(block: str, terms: list[str]) -> int:
-    """Score a text block for term relevance."""
-    lowered = block.lower()
-    score = sum(1 for term in terms if term in lowered)
-    if is_heading_block(block):
-        score += 1
-    navigation_markers = (
-        "table of contents",
-        "this page",
-        "report a bug",
-        "improve this page",
-        "show source",
-        "documentation »",
-    )
-    if any(marker in lowered for marker in navigation_markers):
-        score -= 3
-    if lowered.count("#") > 4 or lowered.count("*") > 12:
-        score -= 2
-    return score
-
-
-def is_heading_block(block: str) -> bool:
-    """Return whether a block looks like a heading."""
-    stripped = block.lstrip()
-    return stripped.startswith("#") or (
-        len(stripped) < 120 and "\n" not in stripped and stripped.endswith(":")
-    )
-
-
 def chunk_text(text: str, *, max_chunk_chars: int = 2500) -> list[dict[str, object]]:
     """Split text into paragraph chunks."""
     paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
@@ -284,33 +255,6 @@ def chunk_text(text: str, *, max_chunk_chars: int = 2500) -> list[dict[str, obje
     return chunks
 
 
-def filter_text_blocks(text: str, find: str | None) -> str:
-    """Filter text to the most relevant blocks."""
-    if not find:
-        return text
-    terms = search_terms(find)
-    if not terms:
-        return text
-    blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
-    scored = [
-        (block_score(block, terms), index, block) for index, block in enumerate(blocks)
-    ]
-    best_score = max((score for score, _, _ in scored), default=0)
-    if best_score <= 0:
-        return ""
-    selected_indexes: set[int] = set()
-    minimum_score = max(1, min(2, best_score))
-    for score, index, _ in scored:
-        if score >= minimum_score:
-            selected_indexes.add(index)
-            if index > 0 and is_heading_block(blocks[index - 1]):
-                selected_indexes.add(index - 1)
-            if is_heading_block(blocks[index]) and index + 1 < len(blocks):
-                selected_indexes.add(index + 1)
-    selected = [blocks[index] for index in sorted(selected_indexes)][:12]
-    return "\n\n".join(selected)
-
-
 def html_to_text_blocks(raw_html: str) -> str:
     """Convert simple HTML markup to paragraph-separated plain text."""
     text = re.sub(r"<script\b.*?</script>", " ", raw_html, flags=re.I | re.S)
@@ -324,34 +268,6 @@ def html_to_text_blocks(raw_html: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text)
     blocks = [" ".join(html.unescape(block).split()) for block in text.split("\n\n")]
     return "\n\n".join(block for block in blocks if block)
-
-
-def extract_raw_term_windows(raw_html: str, find: str | None) -> str:
-    """Extract raw HTML text windows around search terms."""
-    if not find:
-        return ""
-    terms = search_terms(find)
-    if not terms:
-        return ""
-    plain = re.sub(r"<script\b.*?</script>", " ", raw_html, flags=re.I | re.S)
-    plain = re.sub(r"<style\b.*?</style>", " ", plain, flags=re.I | re.S)
-    plain = re.sub(r"<[^>]+>", " ", plain)
-    plain = html.unescape(" ".join(plain.split()))
-    windows: list[tuple[int, str]] = []
-    lowered = plain.lower()
-    for term in terms:
-        start_at = 0
-        while True:
-            index = lowered.find(term, start_at)
-            if index < 0:
-                break
-            start = max(0, index - 250)
-            end = min(len(plain), index + 900)
-            window = plain[start:end].strip()
-            windows.append((block_score(window, terms), window))
-            start_at = index + max(1, len(term))
-    selected = [window for _, window in sorted(windows, reverse=True)[:3]]
-    return "\n\n".join(dict.fromkeys(selected))
 
 
 def select_fetch_content(

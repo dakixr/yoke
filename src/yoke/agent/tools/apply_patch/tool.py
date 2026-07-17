@@ -29,9 +29,7 @@ class ApplyPatchTool(WorkspaceTool):
 
     name = "apply_patch"
     description = (
-        "Apply a codex-style patch to files in the workspace. "
-        "Provide the full patch text in `input` using the "
-        "`*** Begin Patch` / `*** End Patch` envelope."
+        Path(__file__).with_name("prompt.md").read_text(encoding="utf-8").strip()
     )
 
     input: str = Field(min_length=1)
