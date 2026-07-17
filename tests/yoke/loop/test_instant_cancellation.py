@@ -20,10 +20,14 @@ from yoke.agent.loop.tools.in_process import execute_in_process_tool
 from yoke.agent.loop.tools.process import ToolProcessInvocation
 from yoke.agent.loop.tools.process import wait_for_tool_process
 from yoke.agent.models import Message
+from yoke.agent.models import ToolCall
+from yoke.agent.models import ToolFunction
+from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.tools import LocalTool
 from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import ToolRuntimeContext
 from yoke.agent.tools.image_generation import ImageGenerationTool
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
@@ -113,6 +117,150 @@ def test_steering_starts_next_generation_under_100ms(tmp_path: Path) -> None:
         "from the current state and follow the user's next instruction.",
         "second",
         "steered result",
+    ]
+
+
+def test_steering_preserves_completed_active_turn_tool_context(
+    tmp_path: Path,
+) -> None:
+    @dataclass
+    class SharedProviderState:
+        waiting_after_tool: threading.Event = field(default_factory=threading.Event)
+        second_messages: list[Message] = field(default_factory=list)
+
+    class SteeringProvider:
+        supports_image_inputs = False
+        max_images_per_message = None
+
+        def __init__(self, shared: SharedProviderState) -> None:
+            self.shared = shared
+
+        def fork_for_turn(self):
+            return SteeringProvider(self.shared)
+
+        def complete(self, messages, tools):
+            del messages, tools
+            raise AssertionError("expected cancellable completion path")
+
+        def complete_with_cancel(
+            self,
+            messages,
+            tools,
+            *,
+            cancel_requested,
+        ):
+            del tools
+            user_prompts = [
+                message.text_content() for message in messages if message.role == "user"
+            ]
+            current_prompt = user_prompts[-1] if user_prompts else ""
+            if current_prompt == "first":
+                if messages[-1].role == "user":
+                    return Message(
+                        role="assistant",
+                        content="I found the CV and inspected it.",
+                        tool_calls=[
+                            ToolCall(
+                                id="inspect-1",
+                                function=ToolFunction(
+                                    name="inspect_cv",
+                                    arguments="{}",
+                                ),
+                            )
+                        ],
+                    )
+                self.shared.waiting_after_tool.set()
+                while not cancel_requested():
+                    time.sleep(0.005)
+                raise ProviderCancelledError()
+            if current_prompt == "second":
+                self.shared.second_messages = [
+                    message.model_copy(deep=True) for message in messages
+                ]
+                return Message.assistant("continued from inspection")
+            return Message.assistant("Steering context test")
+
+    class InspectCvTool(LocalTool):
+        name = "inspect_cv"
+        description = "Inspect the test CV."
+
+        def execute(self) -> dict[str, object]:
+            return {"ok": True, "path": "daniel_cv.md", "content": "CV details"}
+
+        def apply_result(self, context, result) -> None:
+            del result
+            context.active_skills = [
+                ActiveSkill(
+                    name="frontend-design",
+                    description="Build polished interfaces.",
+                    source_path="<inline>",
+                    content="Preserve this design workflow while steering.",
+                )
+            ]
+
+    shared = SharedProviderState()
+    agent = RuntimeAgent(
+        provider=cast(Any, SteeringProvider(shared)),
+        tools=[InspectCvTool.bind()],
+    )
+    state = PromptCliState(
+        messages=[],
+        pending_prompts=[],
+        abandoned_turn_ids=set(),
+        steered_turn_ids=set(),
+    )
+    active_session = active_session_for(tmp_path)
+    control = create_prompt_toolkit_control(
+        state=state,
+        agent=agent,
+        active_session_ref={"active_session": active_session},
+        renderer=renderer(),
+        scrollback_console=build_console(io.StringIO()),
+        state_lock=threading.Lock(),
+        estimate_toolbar_context_usage=lambda _prompt: None,
+        invalidate_prompt=lambda: None,
+        update_status=lambda _status: None,
+        run_in_scrollback=lambda callback: callback(),
+    )
+
+    retired_worker = control.start_turn("first", None)
+    assert shared.waiting_after_tool.wait(timeout=2)
+    assert control.steer_active_turn("second", None) is True
+    active_worker = state.worker
+    assert active_worker is not None
+    active_worker.join(timeout=2)
+    retired_worker.join(timeout=2)
+
+    assert not active_worker.is_alive()
+    assert not retired_worker.is_alive()
+    assert [
+        message.role for message in shared.second_messages if message.role != "system"
+    ] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    transcript = [
+        message for message in shared.second_messages if message.role != "system"
+    ]
+    assert transcript[1].text_content() == ("I found the CV and inspected it.")
+    assert "daniel_cv.md" in (transcript[2].text_content() or "")
+    assert transcript[3].text_content() == (
+        "The previous turn was interrupted by the user before completion. Continue "
+        "from the current state and follow the user's next instruction."
+    )
+    assert any(
+        "Preserve this design workflow while steering."
+        in (message.text_content() or "")
+        for message in shared.second_messages
+        if message.role == "system"
+    )
+    assert [skill.name for skill in agent.active_skills] == ["frontend-design"]
+    assert [message.text_content() for message in state.messages][-2:] == [
+        "second",
+        "continued from inspection",
     ]
 
 

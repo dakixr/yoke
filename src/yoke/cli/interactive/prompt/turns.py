@@ -14,8 +14,10 @@ from yoke.agent.loop import RuntimeAgent
 from yoke.agent.loop.forking import promote_runtime_fork
 from yoke.agent.loop.resources import release_tool_resources
 from yoke.agent.loop.tools.in_process import wait_for_in_process_tools
+from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
+from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.state import capture_agent_state
 from yoke.agent.state import active_branch_entries
 from yoke.cli.config.runtime import RUN_ERRORS
@@ -52,6 +54,8 @@ def run_prompt_turn(
     turn_renderer_factory: Callable[[int], EventRenderer],
     message_snapshot: list[Message] | None = None,
     conversation_entries_snapshot: list[ConversationEntry] | None = None,
+    active_skills_snapshot: list[ActiveSkill] | None = None,
+    context_checkpoint: Callable[[int, AgentContext], None] | None = None,
 ) -> None:
     """Execute one prompt-toolkit turn in a worker thread."""
     messages = (
@@ -63,7 +67,12 @@ def run_prompt_turn(
             active_session.record.conversation_entries,
             leaf_id=active_session.record.leaf_id,
         )
-    turn_agent = prepare_turn_agent(agent, messages=messages, entries=entries or [])
+    turn_agent = prepare_turn_agent(
+        agent,
+        messages=messages,
+        entries=entries or [],
+        active_skills=active_skills_snapshot,
+    )
 
     try:
         result = execute_turn(
@@ -74,6 +83,13 @@ def run_prompt_turn(
             stop_requested=stop_event.is_set,
             user_message=user_message,
             conversation_entries=entries,
+            context_checkpoint=(
+                lambda context: (
+                    context_checkpoint(turn_id, context)
+                    if context_checkpoint is not None
+                    else None
+                )
+            ),
         )
         if result.status == "stopped":
             callbacks["handle_outcome"](
@@ -114,6 +130,7 @@ def prepare_turn_agent(
     *,
     messages: list[Message],
     entries: list[ConversationEntry],
+    active_skills: list[ActiveSkill] | None = None,
 ) -> AgentRunner:
     """Fork mutable runtime state so retired turns cannot corrupt new turns."""
     if not isinstance(agent, RuntimeAgent):
@@ -122,7 +139,7 @@ def prepare_turn_agent(
     turn_agent.load_conversation(
         ConversationEntryHistory(entries),
         available_skills=agent.available_skills,
-        active_skills=agent.active_skills,
+        active_skills=(agent.active_skills if active_skills is None else active_skills),
     )
     if not entries and messages:
         from yoke.agent.loop import MessageHistory
@@ -130,7 +147,9 @@ def prepare_turn_agent(
         turn_agent.load_conversation(
             MessageHistory(messages),
             available_skills=agent.available_skills,
-            active_skills=agent.active_skills,
+            active_skills=(
+                agent.active_skills if active_skills is None else active_skills
+            ),
         )
     return turn_agent
 

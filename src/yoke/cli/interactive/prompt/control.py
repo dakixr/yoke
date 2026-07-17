@@ -11,8 +11,11 @@ from threading import Lock
 from threading import Thread
 
 from yoke.agent.loop import INTERRUPTED_TURN_NOTICE
+from yoke.agent.loop import RuntimeAgent
+from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
+from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.state import active_branch_entries
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import (
@@ -51,6 +54,15 @@ class PromptToolkitControl:
     steer_active_turn: Callable[[str, Message | None], bool]
 
 
+@dataclass(slots=True)
+class TurnCheckpoint:
+    """Safe completed-tool context captured from an active turn."""
+
+    messages: list[Message]
+    conversation_entries: list[ConversationEntry]
+    active_skills: list[ActiveSkill]
+
+
 def create_prompt_toolkit_control(
     *,
     state: PromptCliState,
@@ -71,6 +83,49 @@ def create_prompt_toolkit_control(
         renderer=renderer,
     )
     callbacks: dict[str, Callable[..., object]] = {}
+    turn_checkpoints: dict[int, TurnCheckpoint] = {}
+
+    def checkpoint_turn(turn_id: int, context: AgentContext) -> None:
+        """Keep the newest provider-valid active-turn continuation point."""
+        messages = [message.model_copy(deep=True) for message in context.messages]
+        if _has_incomplete_tool_turn(messages):
+            return
+        checkpoint = TurnCheckpoint(
+            messages=messages,
+            conversation_entries=[
+                entry.model_copy(deep=True)
+                for entry in context.conversation_log.entries
+            ],
+            active_skills=[
+                skill.model_copy(deep=True) for skill in context.active_skills
+            ],
+        )
+        with state_lock:
+            abandoned_turn_ids, _ = prompt_turn_tracking(state)
+            if turn_id != state.active_turn_id or turn_id in abandoned_turn_ids:
+                return
+            turn_checkpoints[turn_id] = checkpoint
+
+    def interrupt_turn(
+        turn_id: int,
+    ) -> tuple[list[Message], list[ConversationEntry], TurnCheckpoint | None]:
+        """Build a continuation from the newest safe active-turn checkpoint."""
+        checkpoint = turn_checkpoints.pop(turn_id, None)
+        messages, entries = interrupted_turn_snapshot(
+            messages=(checkpoint.messages if checkpoint else state.messages),
+            entries=(
+                checkpoint.conversation_entries
+                if checkpoint
+                else active_branch_entries(
+                    active_session_ref["active_session"].record.conversation_entries,
+                    leaf_id=active_session_ref["active_session"].record.leaf_id,
+                )
+                or []
+            ),
+            user_message=(None if checkpoint else state.active_user_message),
+        )
+        _restore_checkpoint_skills(agent, checkpoint)
+        return messages, entries, checkpoint
 
     def request_exit() -> None:
         state.shutdown_requested = True
@@ -91,6 +146,7 @@ def create_prompt_toolkit_control(
         *,
         message_snapshot: list[Message] | None = None,
         conversation_entries_snapshot: list[ConversationEntry] | None = None,
+        active_skills_snapshot: list[ActiveSkill] | None = None,
     ) -> Thread:
         stop_event = Event()
         active_user_message = user_message or Message.user(prompt)
@@ -129,6 +185,8 @@ def create_prompt_toolkit_control(
                 turn_renderer_factory=turn_renderer_factory,
                 message_snapshot=turn_messages,
                 conversation_entries_snapshot=turn_entries,
+                active_skills_snapshot=active_skills_snapshot,
+                context_checkpoint=checkpoint_turn,
             )
 
         thread = Thread(target=run_turn, daemon=True)
@@ -146,21 +204,21 @@ def create_prompt_toolkit_control(
         turn_id: int,
         outcome: TurnSuccess | TurnFailure | TurnStopped,
     ) -> None:
-        if (
-            handle_prompt_turn_outcome(
-                turn_id=turn_id,
-                outcome=outcome,
-                state=state,
-                state_lock=state_lock,
-                agent=agent,
-                active_session=active_session_ref["active_session"],
-                renderer=renderer,
-                scrollback_console=scrollback_console,
-                run_in_scrollback=run_in_scrollback,
-                invalidate_prompt=invalidate_prompt,
-            )
-            is None
-        ):
+        handled = handle_prompt_turn_outcome(
+            turn_id=turn_id,
+            outcome=outcome,
+            state=state,
+            state_lock=state_lock,
+            agent=agent,
+            active_session=active_session_ref["active_session"],
+            renderer=renderer,
+            scrollback_console=scrollback_console,
+            run_in_scrollback=run_in_scrollback,
+            invalidate_prompt=invalidate_prompt,
+        )
+        with state_lock:
+            turn_checkpoints.pop(turn_id, None)
+        if handled is None:
             return
         next_prompt, next_user_message, should_finish = finish_prompt_turn(
             state=state,
@@ -190,15 +248,7 @@ def create_prompt_toolkit_control(
             retired_turn_id = state.active_turn_id
             stop_event.set()
             abandoned_turn_ids.add(retired_turn_id)
-            messages, entries = interrupted_turn_snapshot(
-                messages=state.messages,
-                entries=active_branch_entries(
-                    active_session_ref["active_session"].record.conversation_entries,
-                    leaf_id=active_session_ref["active_session"].record.leaf_id,
-                )
-                or [],
-                user_message=state.active_user_message,
-            )
+            messages, entries, _checkpoint = interrupt_turn(retired_turn_id)
             state.messages = messages
             state.worker = None
             state.active_stop_request = None
@@ -240,15 +290,7 @@ def create_prompt_toolkit_control(
             retired_turn_id = state.active_turn_id
             stop_event.set()
             abandoned_turn_ids.add(retired_turn_id)
-            messages, entries = interrupted_turn_snapshot(
-                messages=state.messages,
-                entries=active_branch_entries(
-                    active_session_ref["active_session"].record.conversation_entries,
-                    leaf_id=active_session_ref["active_session"].record.leaf_id,
-                )
-                or [],
-                user_message=state.active_user_message,
-            )
+            messages, entries, checkpoint = interrupt_turn(retired_turn_id)
             state.messages = messages
             state.worker = None
             state.active_stop_request = None
@@ -259,6 +301,7 @@ def create_prompt_toolkit_control(
             user_message,
             message_snapshot=messages,
             conversation_entries_snapshot=entries,
+            active_skills_snapshot=(checkpoint.active_skills if checkpoint else None),
         )
         run_in_scrollback(
             lambda: print_scrollback_notice(scrollback_console, "Model steered.")
@@ -318,6 +361,33 @@ def interrupted_turn_snapshot(
         )
     )
     return snapshot_messages, snapshot_entries
+
+
+def _has_incomplete_tool_turn(messages: list[Message]) -> bool:
+    """Return whether the transcript ends inside an assistant tool-call batch."""
+    pending_ids: list[str] = []
+    for message in messages:
+        if message.role == "assistant" and message.tool_calls:
+            pending_ids = [tool_call.id for tool_call in message.tool_calls]
+            continue
+        if message.role == "tool" and message.tool_call_id in pending_ids:
+            pending_ids.remove(message.tool_call_id)
+            continue
+        if pending_ids:
+            return True
+    return bool(pending_ids)
+
+
+def _restore_checkpoint_skills(
+    agent: AgentRunner,
+    checkpoint: TurnCheckpoint | None,
+) -> None:
+    """Promote active skills that were committed before interruption."""
+    if checkpoint is None or not isinstance(agent, RuntimeAgent):
+        return
+    agent.active_skills = [
+        skill.model_copy(deep=True) for skill in checkpoint.active_skills
+    ]
 
 
 def emit_prompt_exit_notice(

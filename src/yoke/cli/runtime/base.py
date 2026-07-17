@@ -6,6 +6,7 @@ import sys
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 from typing import Protocol
@@ -17,6 +18,7 @@ from yoke.agent.loop import AgentResult
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.loop import ConversationEntryHistory
 from yoke.agent.loop import MessageHistory
+from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.protocols import AgentRunner
@@ -81,6 +83,7 @@ def execute_turn(
     conversation_entries: Sequence[ConversationEntry] | None = None,
     after_tool_result_appended: Callable[[list[Message], list[ConversationEntry]], None]
     | None = None,
+    context_checkpoint: Callable[[AgentContext], None] | None = None,
 ) -> AgentResult:
     """Execute one CLI turn against the agent."""
     active_indicator = indicator or StatusIndicator(stderr or sys.stderr)
@@ -102,6 +105,16 @@ def execute_turn(
                     available_skills=cast(Sequence[SkillSpec] | None, available_skills),
                     active_skills=cast(Sequence[ActiveSkill] | None, active_skills),
                 )
+            checkpoint_hook = (
+                partial(
+                    _handle_context_checkpoint,
+                    after_tool_result_appended=after_tool_result_appended,
+                    context_checkpoint=context_checkpoint,
+                )
+                if after_tool_result_appended is not None
+                or context_checkpoint is not None
+                else None
+            )
             return agent.run(
                 prompt,
                 user_message=user_message,
@@ -109,19 +122,7 @@ def execute_turn(
                 stop_requested=stop_requested,
                 active_skills=cast(Sequence[ActiveSkill] | None, active_skills),
                 available_skills=cast(Sequence[SkillSpec] | None, available_skills),
-                after_tool_result_appended=(
-                    lambda context: (
-                        after_tool_result_appended(
-                            list(context.messages),
-                            [
-                                entry.model_copy(deep=True)
-                                for entry in context.conversation_log.entries
-                            ],
-                        )
-                        if after_tool_result_appended is not None
-                        else None
-                    )
-                ),
+                after_tool_result_appended=checkpoint_hook,
             )
         if user_message is not None and getattr(agent, "supports_user_message", False):
             return cast(Any, agent).run(
@@ -148,6 +149,23 @@ def execute_turn(
             on_event=active_indicator.handle_event,
             stop_requested=stop_requested,
         )
+
+
+def _handle_context_checkpoint(
+    context: AgentContext,
+    *,
+    after_tool_result_appended: Callable[[list[Message], list[ConversationEntry]], None]
+    | None,
+    context_checkpoint: Callable[[AgentContext], None] | None,
+) -> None:
+    """Dispatch one post-tool context update to configured checkpoint hooks."""
+    if after_tool_result_appended is not None:
+        after_tool_result_appended(
+            list(context.messages),
+            [entry.model_copy(deep=True) for entry in context.conversation_log.entries],
+        )
+    if context_checkpoint is not None:
+        context_checkpoint(context)
 
 
 def estimate_messages_token_usage(messages: list[Message]) -> TokenEstimate:

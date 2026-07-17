@@ -222,6 +222,9 @@ turn.
   replacement without waiting for the old provider request or tool to exit.
   Retired renderers and workers are generation-fenced, so they cannot publish
   output or replace the accepted conversation, provider, or skill state.
+- The replacement keeps the active turn's latest completed tool checkpoint,
+  including assistant commentary, tool calls and results, and activated skills,
+  so steering instructions continue from work already completed in that turn.
 - The handoff target is under 100 ms. This is a logical cancellation guarantee,
   not a claim that every remote request or kernel process has physically exited:
   provider aborts, process TERM/KILL escalation, and resource cleanup continue
