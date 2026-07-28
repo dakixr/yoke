@@ -43,6 +43,12 @@ if TYPE_CHECKING:
     from yoke.agent.prompting import PromptContext as PromptContext
     from yoke.agent.protocols import AgentRunner as AgentRunner
     from yoke.agent.state import AgentState as AgentState
+    from yoke.agent.persistence import AgentStateLoadError as AgentStateLoadError
+    from yoke.agent.persistence import (
+        AgentStatePersistenceError as AgentStatePersistenceError,
+    )
+    from yoke.agent.persistence import AgentStateSaveError as AgentStateSaveError
+    from yoke.agent.persistence import AgentStateSnapshot as AgentStateSnapshot
     from yoke.agent.state import capture_agent_state as capture_agent_state
     from yoke.agent.state import hydrate_agent_state as hydrate_agent_state
 
@@ -90,6 +96,13 @@ _LAZY_EXPORTS = {
     "PromptContext": ("yoke.agent.prompting", "PromptContext"),
     "AgentRunner": ("yoke.agent.protocols", "AgentRunner"),
     "AgentState": ("yoke.agent.state", "AgentState"),
+    "AgentStateLoadError": ("yoke.agent.persistence", "AgentStateLoadError"),
+    "AgentStatePersistenceError": (
+        "yoke.agent.persistence",
+        "AgentStatePersistenceError",
+    ),
+    "AgentStateSaveError": ("yoke.agent.persistence", "AgentStateSaveError"),
+    "AgentStateSnapshot": ("yoke.agent.persistence", "AgentStateSnapshot"),
     "capture_agent_state": ("yoke.agent.state", "capture_agent_state"),
     "hydrate_agent_state": ("yoke.agent.state", "hydrate_agent_state"),
 }
@@ -112,6 +125,10 @@ __all__ = [
     "MemorySnapshot",
     "PromptContext",
     "AgentState",
+    "AgentStateLoadError",
+    "AgentStatePersistenceError",
+    "AgentStateSaveError",
+    "AgentStateSnapshot",
     "AgentRunner",
     "TokenEstimate",
     "WorkingMemory",

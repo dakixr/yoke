@@ -251,6 +251,41 @@ def worker_capabilities() -> tuple[BaseCapability, ...]:
     )
 
 
+def resolve_builtin_capability_id(
+    capability_id: str,
+    context: CapabilityContext,
+) -> CapabilityRegistration:
+    """Resolve a public SDK capability ID, including Yoke-native aliases."""
+    aliases: dict[str, BaseCapability] = {
+        "file.read": FileReadCapability(),
+        "file.write": FileEditCapability(),
+        "file.edit": FileEditCapability(),
+        "file.search": FileSearchCapability(),
+        "file.extract_context": FileContextCapability(),
+        "file.context": FileContextCapability(),
+        "image.attach": ImageInputCapability(),
+        "image.input": ImageInputCapability(),
+        "image.generation": ImageGenerationCapability(),
+        "shell": CommandExecutionCapability(),
+        "command_execution": CommandExecutionCapability(),
+        "mcp": McpCapability(),
+    }
+    capability = aliases.get(capability_id)
+    if capability is not None:
+        if not capability.is_available(context):
+            return CapabilityRegistration()
+        return capability.register(context)
+    if capability_id in {"web.fetch", "web.research", "web.search", "web"}:
+        registration = WebCapability().register(context)
+        if capability_id == "web":
+            return registration
+        tool_name = capability_id.replace(".", "_")
+        return CapabilityRegistration(
+            tools=tuple(tool for tool in registration.tools if tool.name == tool_name)
+        )
+    raise ValueError(f"Unknown built-in tool capability: {capability_id}")
+
+
 def resolve_builtin_capabilities(
     context: CapabilityContext,
     capabilities: Sequence[BaseCapability] = DEFAULT_CAPABILITIES,

@@ -96,7 +96,9 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             ),
             tool_root=root,
             tool_home=Path.home().resolve(),
-            max_iterations=config.max_iterations,
+            max_iterations=(
+                config.max_iterations if config.max_iterations is not None else 30
+            ),
             context_manager=build_provider_context_manager(
                 provider=provider,
                 instructions=build_system_messages(

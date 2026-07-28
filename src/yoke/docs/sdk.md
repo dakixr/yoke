@@ -66,8 +66,33 @@ asyncio.run(main())
 ```
 
 Use `await agent.aclose()` when an async context manager is not convenient.
-The SDK agent releases its runtime and tool resources; the provider remains
-owned by the application, matching the synchronous API's ownership contract.
+The SDK agent owns its provider and releases it with runtime/tool resources.
+Forked agents share provider ownership and close it after the final fork closes.
+
+For independent async work, use `run_many()` with a fresh-agent factory:
+
+```python
+from yoke.ai import Agent, BatchTask, run_many
+
+batch = await run_many(
+    [
+        BatchTask(id="api", prompt="Review the API layer."),
+        BatchTask(id="tests", prompt="Review test coverage."),
+    ],
+    agent_factory=lambda task: Agent(provider=build_provider("zai")),
+    max_concurrency=2,
+)
+for item in batch.items:
+    if item.result is not None:
+        print(item.task.id, item.result.output)
+    else:
+        print(item.task.id, item.status, item.error)
+```
+
+`run_many()` preserves input order, isolates errors, supports retries and
+cooperative per-task timeouts, reports progress, aggregates provider usage, and
+closes every agent it creates. The factory must return a fresh agent for every
+task and retry attempt.
 
 Built-in provider classes include `CodexSubscriptionProvider`,
 `CodexWebSockets`, `OpenCodeGoProvider`, and
@@ -137,10 +162,9 @@ automatically; providers that expose neither hook remain compatible but may be
 shared, so their own implementation must support concurrent calls safely.
 
 `Agent` is stateful. Reuse the same object to keep conversation context across
-prompts. Call `agent.close()` when finished to release MCP clients and other
-closeable resources owned by registered tools. Forked agents share a lease on
-any explicitly shared resource, so it is closed only after the last runtime
-using it closes.
+prompts. Call `agent.close()` when finished to release its provider, MCP
+clients, and other closeable resources. Forked agents share leases so common
+resources close only after the final fork.
 
 Initialize an agent with exactly one explicit history representation. Use
 `MessageHistory` for a provider transcript or `ConversationEntryHistory` for
@@ -158,9 +182,31 @@ config = RunConfig(
 The tagged history API prevents transcript messages and structured entries
 from being supplied together.
 
-For applications that persist agent state, capture structured session state
-instead of only transcript messages. Structured entries preserve memory
-snapshots and compaction handoffs.
+For durable roles, bind a versioned snapshot path and optionally autosave after
+each successful prompt:
+
+```python
+agent = Agent(
+    provider=provider,
+    config=config,
+    state_path=Path(".agents_local/reviewer.json"),
+    autosave=True,
+)
+
+resumed = Agent.load(
+    ".agents_local/reviewer.json",
+    provider=build_provider("zai"),
+    config=config,
+)
+```
+
+Use `agent.save(path, metadata=...)` for explicit snapshots and
+`agent.restore(path)` to replace an existing agent's state. Autosave only runs
+after a successful prompt. Snapshot envelopes include format/schema versions,
+SDK version, timestamps, metadata, structured entries, selected leaf, and
+active skills.
+
+Applications can also capture state without file IO:
 
 ```python
 from yoke.agent import capture_agent_state
@@ -202,6 +248,22 @@ Built-in capability names include `file.read`, `file.context`, `file.search`,
 `file.edit`, `command_execution`, `web`, `image.input`, and
 `image.generation`. The CLI uses these same agent-owned capabilities for its
 built-in tool set, then applies CLI-specific plugin discovery and tool policy.
+
+`RunConfig.tools` also accepts stable string capability IDs: `file.read`,
+`file.write`, `file.search`, `file.extract_context`,
+`image.attach`, `web.fetch`, `web.research`, `shell`, and `mcp`. Yoke-native
+aliases such as `file.edit`, `file.context`, `image.input`, `web`, and
+`command_execution` remain supported.
+
+```python
+agent = Agent(
+    provider=provider,
+    config=RunConfig(
+        root=Path.cwd(),
+        tools=["file.read", "file.search", "file.write", "shell"],
+    ),
+)
+```
 
 ## Built-In Tools
 
@@ -272,10 +334,10 @@ exits. `ExecCommandTool` and `PythonExecTool` put shims for `python` and
 `python3` at the front of `PATH`, so commands and Python subprocesses use the
 same interpreter and virtual environment as the running yoke process.
 
-Most workspace tools can be passed as classes and are bound to `RunConfig.root`
-automatically. Pass already-bound instances when you need custom context.
-Explicit `RunConfig.tools` and `RunConfig.register_tools` are preserved as
-compatibility paths and are internally wrapped as capabilities.
+Most workspace tools can be passed as capability IDs, classes, or bound
+instances and are bound to `RunConfig.root` automatically. Explicit
+`RunConfig.capabilities` and `RunConfig.register_tools` remain supported and are
+internally normalized into the same capability registry.
 
 `FileEditCapability` exposes model-appropriate writing tools: models whose ID
 contains `gpt` receive `apply_patch`; every other model receives `edit` and

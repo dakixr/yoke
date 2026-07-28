@@ -471,10 +471,13 @@ When a skill is loaded, yoke tells the agent the absolute path of every file in
 that skill directory, so skills may include reference files, examples, or
 templates alongside `SKILL.md`.
 
-Yoke also ships with a built-in `create-skill` skill that helps the agent create
-new skills correctly. It tells the agent to ask where the skill should be
-created first (repo-local, global, or custom directory) and then use
-`yoke skills init` to scaffold it.
+Yoke ships with two built-in skills:
+
+- `create-skill` scaffolds repo-local, global, or custom-rooted skills with
+  `yoke skills init`, then applies predictability and no-op checks.
+- `yoke-subagents` provides async SDK orchestration workflows for research,
+  discovery, bounded fan-out, coder/reviewer loops, and merge handoffs. Its
+  reference files use Yoke's actual provider, capability, and lifecycle APIs.
 
 ### Using skills from the CLI
 
@@ -519,10 +522,10 @@ the prompt after the skill name. A semicolon separator is also supported:
 /skill create-skill ; create a repo-local skill called docs-review
 ```
 
-Yoke ships with a built-in `create-skill` skill in the codebase under
-`yoke/agent/skills/built_in/create-skill/SKILL.md`. It instructs the
-agent to ask where the skill should be created first (repo-local, global, or
-custom location), then scaffold it with `yoke skills init`.
+The built-in skill sources live beneath `yoke/agent/skills/built_in/`.
+`create-skill` instructs the agent to choose a location and scaffold with
+`yoke skills init`; `yoke-subagents` includes progressively disclosed SDK and
+orchestration-pattern references for programmatic multi-agent workflows.
 
 ---
 

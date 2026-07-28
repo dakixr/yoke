@@ -1,71 +1,90 @@
 ---
 name: create-skill
-description: Create a new yoke skill by first confirming where it should live, then scaffolding it with the yoke CLI.
+description: Scaffold a yoke skill with `yoke skills init` and write predictable instructions.
 ---
 
 # Create Skill
 
-Use this skill when the user wants to create a new yoke skill.
+## Core Process
 
-## Always ask location first
+1. Confirm where the skill should live unless the user already specified it:
+   repo-local, global, or custom root.
+2. Choose a lowercase kebab-case skill name.
+3. Scaffold with `yoke skills init`; do not hand-create the initial files.
+4. Edit the generated `SKILL.md` into a predictable skill; follow the writing
+   pass below.
+5. Report the generated path, whether it is repo-local/global/custom-rooted,
+   and any follow-up needed.
 
-Before creating anything, ask where the user wants the skill to be created:
-- in this repo
-- globally
-- in a custom directory
+## Completion Criteria
 
-If the user already specified the location clearly, do not ask again.
+- The generated `SKILL.md` has no placeholder description or body text.
+- Every instruction sentence passes the no-op test: it changes what the agent
+  would do compared with default behavior.
 
-## Use the yoke CLI to scaffold
-
-Always scaffold the skill with the yoke CLI rather than manually creating these files.
+## CLI Scaffolding
 
 `--root` is the workspace root, not the skills directory itself.
-`yoke skills init` always writes to:
+`yoke skills init` writes to:
+
 `<root>/.yoke/skills/<skill-name>/SKILL.md`
 
-Use one of these patterns:
+Use these command shapes:
 
 ### Repo-local skill
+
 ```bash
 yoke skills init <skill-name>
 ```
 
-This uses the current working directory as `<root>`, so it creates:
-`./.yoke/skills/<skill-name>/SKILL.md`
+Creates `./.yoke/skills/<skill-name>/SKILL.md` from the current working
+directory.
 
 ### Global skill
+
 ```bash
 yoke skills init --root ~ <skill-name>
 ```
 
-To create a global skill at `~/.yoke/skills/<skill-name>/SKILL.md`, pass your home directory as `<root>`.
+Creates `~/.yoke/skills/<skill-name>/SKILL.md`. Do not pass `~/.yoke` as
+`--root`; that creates `~/.yoke/.yoke/skills/<skill-name>/SKILL.md`.
 
-Do not pass `~/.yoke` as `--root`, because that creates:
-`~/.yoke/.yoke/skills/<skill-name>/SKILL.md`
-
-### Custom directory
-Use the custom directory as the CLI root, so yoke will create:
-`<custom-dir>/.yoke/skills/<skill-name>/SKILL.md`
+### Custom root
 
 ```bash
 yoke skills init --root <custom-dir> <skill-name>
 ```
 
-## Naming and format rules
-
-Ensure the skill name is lowercase kebab-case.
-The generated folder name must match the skill name.
-The skill file must be named `SKILL.md`.
-
-After scaffolding, edit the generated `SKILL.md` to replace the placeholder description and add the actual reusable instructions.
-
-## Expected follow-up behavior
-
-After scaffolding:
-1. Open the generated `SKILL.md`
-2. Fill in a concrete `description`
-3. Write the instructions the agent should follow when that skill is active
-4. Optionally show the created file path to the user
+Creates `<custom-dir>/.yoke/skills/<skill-name>/SKILL.md`.
 
 If the target file already exists, ask before using `--force`.
+
+## Writing The Skill
+
+1. Decide invocation mode. Use a model-invoked skill when yoke or another skill
+   must select it autonomously. Use `disable-model-invocation: true` when only
+   the user should invoke it explicitly.
+2. Write a one-line `description`. For model invocation, state what the skill
+   does and give one trigger per genuinely distinct branch. For user invocation,
+   write a human-facing summary without trigger lists.
+3. Put the required process near the top as numbered steps. End hard steps with
+   checkable, exhaustive completion criteria that prevent premature completion.
+4. Separate ordered steps from reference material. Inline what every branch
+   needs; move branch-only reference into clearly named linked sibling files.
+5. Co-locate each concept's definition, rules, and caveats under one heading.
+6. Prune sentence by sentence. Delete no-ops, stale material, and duplicated
+   meanings; keep one authoritative source for each behavior.
+7. Prefer positive target behavior over prohibitions. Keep a prohibition only
+   for a hard guardrail, and pair it with what the agent should do instead.
+8. Use compact leading words already meaningful to the model when they replace
+   repeated explanations and make invocation or execution more predictable.
+
+## Design Checks
+
+- Split by invocation only when a distinct trigger must independently reach a
+  new skill; each model-invoked skill adds permanent description context.
+- Split by sequence only when visible later steps repeatedly cause the agent to
+  rush an irreducibly fuzzy current step.
+- Diagnose premature completion by sharpening completion criteria before
+  splitting. Diagnose sprawl with progressive disclosure, not arbitrary length.
+- Reject sediment: every line must remain relevant to current skill behavior.

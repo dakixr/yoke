@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+from typing import Literal
 
 from pydantic import TypeAdapter
 
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
     from yoke.agent.tools import LocalTool
     from yoke.agent.tools import RegisterTools
 
-    type AgentTool = LocalTool | type[LocalTool]
+    type AgentTool = LocalTool | type[LocalTool] | str
 else:
     type AgentTool = object
     type CapabilityInput = object
@@ -192,12 +193,33 @@ class RunConfig:
     register_tools: RegisterTools | None = None
     skills: Sequence[Skill] = ()
     include_agents_file: bool = True
-    max_iterations: int = 10
+    max_iterations: int | None = None
     compaction: CompactionPolicy | None = None
     tool_execution: ToolExecutionMode = "parallel"
     before_tool_call: BeforeToolCallHook | None = None
     after_tool_call: AfterToolCallHook | None = None
     history: ConversationHistory | None = None
+    messages: Sequence[Message] | None = None
+    conversation_entries: Sequence[ConversationEntry] | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize raw history inputs into tagged Yoke history."""
+        provided = sum(
+            value is not None
+            for value in (self.history, self.messages, self.conversation_entries)
+        )
+        if provided > 1:
+            raise ValueError(
+                "Provide only one of history, messages, or conversation_entries."
+            )
+        if self.messages is not None:
+            from yoke.agent.loop.types import MessageHistory
+
+            self.history = MessageHistory(list(self.messages))
+        elif self.conversation_entries is not None:
+            from yoke.agent.loop.types import ConversationEntryHistory
+
+            self.history = ConversationEntryHistory(list(self.conversation_entries))
 
 
 @dataclass(slots=True)
@@ -221,6 +243,74 @@ class AgentResult[StructuredT]:
     status: str = "completed"
     conversation_entries: list[ConversationEntry] | None = None
     structured: StructuredT | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class BatchTask:
+    """One independent prompt submitted to `run_many()`."""
+
+    id: str
+    prompt: str
+    images: Sequence[Image | str | Path] = ()
+    image_urls: Sequence[str] = ()
+
+
+@dataclass(slots=True)
+class BatchUsage:
+    """Provider-reported usage aggregated across batch attempts."""
+
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    total_tokens: int = 0
+    cached_input_tokens: int = 0
+
+
+@dataclass(slots=True)
+class BatchItemResult[StructuredT]:
+    """Terminal outcome for one batch task."""
+
+    task: BatchTask
+    status: Literal["completed", "error", "timed_out"]
+    attempts: int
+    duration_seconds: float
+    result: AgentResult[StructuredT] | None = None
+    error: BaseException | None = None
+    usage: BatchUsage = field(default_factory=BatchUsage)
+
+
+@dataclass(slots=True, frozen=True)
+class BatchProgress:
+    """Progress emitted after one batch task reaches a terminal state."""
+
+    task_id: str
+    index: int
+    completed: int
+    total: int
+    status: Literal["completed", "error", "timed_out"]
+    attempts: int
+    duration_seconds: float
+
+
+@dataclass(slots=True)
+class BatchResult[StructuredT]:
+    """Input-ordered outcomes and aggregate metrics returned by `run_many()`."""
+
+    items: list[BatchItemResult[StructuredT]]
+    usage: BatchUsage
+    duration_seconds: float
+    progress_errors: list[Exception] = field(default_factory=list)
+
+    @property
+    def completed_count(self) -> int:
+        """Return the number of successfully completed tasks."""
+        return sum(item.status == "completed" for item in self.items)
+
+    @property
+    def failed_count(self) -> int:
+        """Return the number of errored or timed-out tasks."""
+        return len(self.items) - self.completed_count
 
 
 def normalize_image_inputs(
@@ -282,6 +372,21 @@ def parse_structured_output[StructuredT](
             f"Failed to parse structured output as {output_type.__name__}.",
             output=output,
         ) from exc
+
+
+def structured_output_retry_message(
+    output_type: type[object], error: StructuredOutputError
+) -> Message:
+    """Build a system correction message for invalid structured outputs."""
+    return Message.system(
+        "Your previous response did not match the required structured output "
+        "schema. Retry now and adhere exactly to the schema. Return only one "
+        "valid JSON object with no markdown fences, prose, comments, or extra "
+        "keys.\n\n"
+        f"Validation error: {error}\n\n"
+        f"Previous response:\n{error.output}\n\n"
+        f"{structured_output_instructions(output_type)}"
+    )
 
 
 def structured_output_instructions(output_type: type[object]) -> str:

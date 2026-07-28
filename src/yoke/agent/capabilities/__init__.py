@@ -23,10 +23,12 @@ from yoke.agent.capabilities.core import CapabilityResolution
 from yoke.agent.capabilities.core import CapabilityResolver
 from yoke.agent.capabilities.core import instantiate_capabilities
 from yoke.agent.capabilities.legacy import ExplicitToolsCapability
+from yoke.agent.capabilities.legacy import BuiltinCapabilityIdsCapability
 from yoke.agent.capabilities.legacy import RegisterToolsCapability
 
 __all__ = [
     "BaseCapability",
+    "BuiltinCapabilityIdsCapability",
     "CapabilityContext",
     "CapabilityInput",
     "CapabilityRegistration",

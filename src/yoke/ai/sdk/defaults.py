@@ -4,13 +4,34 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yoke.agent.capabilities import default_capabilities
+from yoke.ai.sdk.types import AgentTool
 from yoke.ai.sdk.types import RunConfig
+
+DEFAULT_CODING_AGENT_PROMPT = (
+    "You are a focused coding agent. Inspect the workspace, make minimal "
+    "correct changes, prefer patches over broad rewrites, and report changed "
+    "files plus any validation performed."
+)
+
+
+def default_coding_agent_tools() -> list[AgentTool]:
+    """Return the default SDK coding-agent capability IDs."""
+    return [
+        "image.attach",
+        "file.extract_context",
+        "file.search",
+        "file.read",
+        "web.fetch",
+        "web.research",
+        "file.write",
+        "shell",
+    ]
 
 
 def default_coding_agent_config(root: str | Path | None = None) -> RunConfig:
-    """Return the standard coding-agent configuration used by the SDK."""
+    """Build the default SDK coding-agent configuration."""
     return RunConfig(
         root=Path.cwd() if root is None else root,
-        capabilities=default_capabilities(),
+        sys_prompt=DEFAULT_CODING_AGENT_PROMPT,
+        tools=default_coding_agent_tools(),
     )

@@ -19,6 +19,7 @@ from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
 from yoke.agent.tools import WriteTool
 from yoke.ai import Agent
+from yoke.ai import AgentStateSnapshot
 from yoke.ai import Image
 from yoke.ai import RunConfig
 from yoke.ai import Skill
@@ -26,6 +27,7 @@ from yoke.ai import StructuredOutputError
 from yoke.ai import complete
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
+from tests.yoke.ai.support import tool_function_payload
 
 
 class RecordingProvider(Provider):
@@ -168,6 +170,18 @@ def test_complete_returns_structured_output() -> None:
     assert '"risks"' in prompt
 
 
+def test_complete_retries_invalid_structured_output() -> None:
+    provider = RecordingProvider(
+        Message.assistant("not json"),
+        Message.assistant('{"verdict":"pass","risks":[]}'),
+    )
+
+    result = complete(provider=provider, prompt="Summarize.", output_type=Summary)
+
+    assert result.structured == Summary(verdict="pass", risks=[])
+    assert len(provider.calls) == 2
+
+
 def test_complete_structured_output_failure_modes() -> None:
     provider = RecordingProvider(Message.assistant("not json"))
 
@@ -212,6 +226,171 @@ def test_public_agent_prompt_is_stateful_and_uses_sys_prompt(
     ]
     assert second_messages[0].content == "You are concise."
     assert second_messages[-1].content == "second"
+
+
+def test_public_agent_saves_loads_and_restores_durable_state(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "agent-state.json"
+    first = Agent(
+        provider=RecordingProvider(Message.assistant("first")),
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+    )
+    first.prompt("first")
+    saved = first.save(state_path, metadata={"purpose": "test"})
+
+    snapshot = AgentStateSnapshot.model_validate_json(saved.read_text(encoding="utf-8"))
+    assert snapshot.format == "yoke.agent_state"
+    assert snapshot.metadata == {"purpose": "test"}
+    assert [message.content for message in snapshot.state.messages] == [
+        "first",
+        "first",
+    ]
+
+    resumed_provider = RecordingProvider(Message.assistant("second"))
+    resumed = Agent.load(
+        state_path,
+        provider=resumed_provider,
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+    )
+    resumed.prompt("second")
+    assert [message.content for message in resumed_provider.calls[-1][0][-3:]] == [
+        "first",
+        "first",
+        "second",
+    ]
+
+    replacement = Agent(
+        provider=RecordingProvider(Message.assistant("other")),
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+    )
+    replacement.prompt("other")
+    replacement.restore(state_path)
+    assert [message.content for message in replacement.messages] == [
+        "first",
+        "first",
+    ]
+    assert replacement.state_path == state_path.resolve()
+
+
+def test_public_agent_autosaves_only_successful_prompts(tmp_path: Path) -> None:
+    state_path = tmp_path / "autosave.json"
+    agent = Agent(
+        provider=RecordingProvider(Message.assistant("done")),
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+        state_path=state_path,
+        autosave=True,
+    )
+    agent.prompt("hello")
+    assert (
+        AgentStateSnapshot.model_validate_json(state_path.read_text(encoding="utf-8"))
+        .state.messages[-1]
+        .content
+        == "done"
+    )
+
+    failed_path = tmp_path / "failed.json"
+    failing = Agent(
+        provider=RecordingProvider(
+            Message.assistant("bad"),
+            Message.assistant("bad"),
+            Message.assistant("bad"),
+        ),
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+        state_path=failed_path,
+        autosave=True,
+    )
+    with pytest.raises(StructuredOutputError):
+        failing.prompt("hello", output_type=Summary)
+    assert not failed_path.exists()
+
+
+def test_public_agent_constructor_loads_existing_state_path(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    first = Agent(
+        provider=RecordingProvider(Message.assistant("saved")),
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+    )
+    first.prompt("saved")
+    first.save(state_path)
+
+    loaded = Agent(
+        provider=RecordingProvider(Message.assistant("loaded")),
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+        state_path=state_path,
+    )
+    assert loaded.has_state
+    assert loaded.state_path == state_path.resolve()
+
+
+def test_public_agent_validates_durable_configuration(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="autosave=True requires state_path"):
+        Agent(
+            provider=RecordingProvider(Message.assistant("done")),
+            config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+            autosave=True,
+        )
+    agent = Agent(
+        provider=RecordingProvider(Message.assistant("done")),
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+    )
+    with pytest.raises(ValueError, match="requires a path"):
+        agent.save()
+
+
+def test_run_config_accepts_string_capability_ids(tmp_path: Path) -> None:
+    provider = RecordingProvider(Message.assistant("done"))
+    agent = Agent(
+        provider=provider,
+        config=RunConfig(
+            root=tmp_path,
+            tools=[
+                "file.read",
+                "file.search",
+                "file.write",
+                "file.extract_context",
+                "web.fetch",
+                "shell",
+            ],
+            include_agents_file=False,
+        ),
+    )
+    agent.prompt("inspect")
+
+    definitions = provider.calls[-1][1]
+    names = {
+        str(function["name"])
+        for tool in definitions
+        if (function := tool_function_payload(tool)) is not None
+    }
+    assert {"read", "extract_file_context", "web_fetch", "exec_command"} <= names
+    assert {"edit", "write"} <= names
+    assert "rg" in names or {"grep", "find", "ls"} <= names
+
+
+def test_run_config_accepts_axi_history_fields(tmp_path: Path) -> None:
+    provider = RecordingProvider(Message.assistant("done"))
+    agent = Agent(
+        provider=provider,
+        config=RunConfig(
+            root=tmp_path,
+            tools=[],
+            include_agents_file=False,
+            messages=[Message.user("previous")],
+        ),
+    )
+    agent.prompt("next")
+    assert [message.content for message in provider.calls[-1][0][-2:]] == [
+        "previous",
+        "next",
+    ]
+
+    with pytest.raises(ValueError, match="Provide only one"):
+        RunConfig(
+            root=tmp_path,
+            messages=[Message.user("one")],
+            conversation_entries=[],
+        )
 
 
 def test_public_agent_refreshes_provider_model_system_messages(
@@ -290,6 +469,26 @@ def test_public_agent_prompt_adds_structured_output_schema(
     assert "JSON Schema:" in prompt
     assert '"verdict"' in prompt
     assert '"risks"' in prompt
+
+
+def test_public_agent_retries_invalid_structured_output(tmp_path: Path) -> None:
+    provider = RecordingProvider(
+        Message.assistant("not json"),
+        Message.assistant('{"verdict":"pass","risks":[]}'),
+    )
+    agent = Agent(
+        provider=provider,
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+    )
+
+    result = agent.prompt("Summarize.", output_type=Summary)
+
+    assert result.structured == Summary(verdict="pass", risks=[])
+    assert len(provider.calls) == 2
+    retry_system = [
+        message for message in provider.calls[-1][0] if message.role == "system"
+    ]
+    assert "adhere exactly to the schema" in (retry_system[-1].text_content() or "")
 
 
 def test_public_agent_prompt_executes_local_tools(tmp_path: Path) -> None:

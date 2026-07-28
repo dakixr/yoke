@@ -12,7 +12,6 @@ from collections.abc import Callable
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
-from typing import cast
 
 from pydantic import BaseModel
 from pydantic import Field
@@ -130,8 +129,7 @@ def yoke_task_runner(
             config=RunConfig(root=root),
         )
         try:
-            response = await asyncio.to_thread(
-                agent.prompt,
+            response = await agent.prompt_async(
                 task.prompt,
                 output_type=TaskResult,
             )
@@ -139,7 +137,7 @@ def yoke_task_runner(
             agent.close()
         if response.structured is None:
             raise RuntimeError(f"Task {task.id} returned no structured result")
-        return cast(TaskResult, response.structured)
+        return response.structured
 
     return run_task
 

@@ -7,6 +7,11 @@ from typing import Any
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from yoke.agent import AgentState as AgentState
+    from yoke.agent import AgentStateLoadError as AgentStateLoadError
+    from yoke.agent import AgentStatePersistenceError as AgentStatePersistenceError
+    from yoke.agent import AgentStateSaveError as AgentStateSaveError
+    from yoke.agent import AgentStateSnapshot as AgentStateSnapshot
     from yoke.agent.compaction import CompactionPolicy as CompactionPolicy
     from yoke.agent.models import Message as Message
     from yoke.agent.models import MessageImageURL as MessageImageURL
@@ -61,6 +66,11 @@ if TYPE_CHECKING:
     from yoke.ai.providers.zai import ZAIProvider as ZAIProvider
     from yoke.ai.sdk import Agent as Agent
     from yoke.ai.sdk import AgentResult as AgentResult
+    from yoke.ai.sdk import BatchItemResult as BatchItemResult
+    from yoke.ai.sdk import BatchProgress as BatchProgress
+    from yoke.ai.sdk import BatchResult as BatchResult
+    from yoke.ai.sdk import BatchTask as BatchTask
+    from yoke.ai.sdk import BatchUsage as BatchUsage
     from yoke.ai.sdk import CompletionResult as CompletionResult
     from yoke.ai.sdk import Context as Context
     from yoke.ai.sdk import ConversationEntryHistory as ConversationEntryHistory
@@ -72,12 +82,31 @@ if TYPE_CHECKING:
     from yoke.ai.sdk import StructuredOutputError as StructuredOutputError
     from yoke.ai.sdk import complete as complete
     from yoke.ai.sdk import default_coding_agent_config as default_coding_agent_config
+    from yoke.ai.sdk import default_coding_agent_tools as default_coding_agent_tools
+    from yoke.ai.sdk import run_many as run_many
+    from yoke.ai.sdk.providers import (
+        available_builtin_providers as available_builtin_providers,
+    )
+    from yoke.ai.sdk.providers import (
+        build_builtin_provider as build_builtin_provider,
+    )
+    from yoke.ai.sdk.providers import (
+        builtin_provider_status as builtin_provider_status,
+    )
+    from yoke.ai.sdk.providers import (
+        print_builtin_provider_status as print_builtin_provider_status,
+    )
     from yoke.ai.sdk.helpers import build_user_message as build_user_message
     from yoke.ai.sdk.helpers import image_part as image_part
     from yoke.ai.sdk.helpers import remote_image_part as remote_image_part
     from yoke.ai.sdk.helpers import text_part as text_part
 
 _LAZY_EXPORTS = {
+    "AgentState": ("yoke.agent", "AgentState"),
+    "AgentStateLoadError": ("yoke.agent", "AgentStateLoadError"),
+    "AgentStatePersistenceError": ("yoke.agent", "AgentStatePersistenceError"),
+    "AgentStateSaveError": ("yoke.agent", "AgentStateSaveError"),
+    "AgentStateSnapshot": ("yoke.agent", "AgentStateSnapshot"),
     "CompactionPolicy": ("yoke.agent.compaction", "CompactionPolicy"),
     "Message": ("yoke.agent.models", "Message"),
     "MessageImageURL": ("yoke.agent.models", "MessageImageURL"),
@@ -141,6 +170,11 @@ _LAZY_EXPORTS = {
     "ZAIProvider": ("yoke.ai.providers.zai", "ZAIProvider"),
     "Agent": ("yoke.ai.sdk", "Agent"),
     "AgentResult": ("yoke.ai.sdk", "AgentResult"),
+    "BatchItemResult": ("yoke.ai.sdk", "BatchItemResult"),
+    "BatchProgress": ("yoke.ai.sdk", "BatchProgress"),
+    "BatchResult": ("yoke.ai.sdk", "BatchResult"),
+    "BatchTask": ("yoke.ai.sdk", "BatchTask"),
+    "BatchUsage": ("yoke.ai.sdk", "BatchUsage"),
     "CompletionResult": ("yoke.ai.sdk", "CompletionResult"),
     "ConversationEntryHistory": ("yoke.ai.sdk", "ConversationEntryHistory"),
     "ConversationHistory": ("yoke.ai.sdk", "ConversationHistory"),
@@ -155,6 +189,24 @@ _LAZY_EXPORTS = {
         "yoke.ai.sdk",
         "default_coding_agent_config",
     ),
+    "default_coding_agent_tools": ("yoke.ai.sdk", "default_coding_agent_tools"),
+    "run_many": ("yoke.ai.sdk", "run_many"),
+    "available_builtin_providers": (
+        "yoke.ai.sdk.providers",
+        "available_builtin_providers",
+    ),
+    "build_builtin_provider": (
+        "yoke.ai.sdk.providers",
+        "build_builtin_provider",
+    ),
+    "builtin_provider_status": (
+        "yoke.ai.sdk.providers",
+        "builtin_provider_status",
+    ),
+    "print_builtin_provider_status": (
+        "yoke.ai.sdk.providers",
+        "print_builtin_provider_status",
+    ),
     "build_user_message": ("yoke.ai.sdk.helpers", "build_user_message"),
     "image_part": ("yoke.ai.sdk.helpers", "image_part"),
     "remote_image_part": ("yoke.ai.sdk.helpers", "remote_image_part"),
@@ -164,6 +216,16 @@ _LAZY_EXPORTS = {
 __all__ = [
     "Agent",
     "AgentResult",
+    "AgentState",
+    "AgentStateLoadError",
+    "AgentStatePersistenceError",
+    "AgentStateSaveError",
+    "AgentStateSnapshot",
+    "BatchItemResult",
+    "BatchProgress",
+    "BatchResult",
+    "BatchTask",
+    "BatchUsage",
     "CodexSubscriptionConfig",
     "CodexSubscriptionProvider",
     "CodexWebSockets",
@@ -196,16 +258,22 @@ __all__ = [
     "ZAIProvider",
     "build_user_message",
     "available_provider_names",
+    "available_builtin_providers",
+    "build_builtin_provider",
     "build_provider",
+    "builtin_provider_status",
     "complete",
     "default_coding_agent_config",
+    "default_coding_agent_tools",
     "image_part",
     "is_provider_ready",
     "list_provider_readiness",
     "parse_provider_ref",
     "provider_readiness",
     "provider_status",
+    "print_builtin_provider_status",
     "remote_image_part",
+    "run_many",
     "text_part",
 ]
 

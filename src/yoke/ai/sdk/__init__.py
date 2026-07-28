@@ -13,9 +13,18 @@ from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import insert_provider_system_messages
 from yoke.ai.providers.base import start_provider_turn
 from yoke.ai.sdk.agent import Agent as Agent
+from yoke.ai.sdk.batch import run_many as run_many
 from yoke.ai.sdk.defaults import (
     default_coding_agent_config as default_coding_agent_config,
 )
+from yoke.ai.sdk.defaults import (
+    default_coding_agent_tools as default_coding_agent_tools,
+)
+from yoke.ai.sdk.types import BatchItemResult as BatchItemResult
+from yoke.ai.sdk.types import BatchProgress as BatchProgress
+from yoke.ai.sdk.types import BatchResult as BatchResult
+from yoke.ai.sdk.types import BatchTask as BatchTask
+from yoke.ai.sdk.types import BatchUsage as BatchUsage
 from yoke.ai.sdk.types import AgentResult as AgentResult
 from yoke.ai.sdk.types import CompletionResult
 from yoke.ai.sdk.types import Context
@@ -30,6 +39,9 @@ from yoke.ai.sdk.types import build_user_message_from_images
 from yoke.ai.sdk.types import normalize_image_inputs
 from yoke.ai.sdk.types import parse_structured_output
 from yoke.ai.sdk.types import structured_output_instructions
+from yoke.ai.sdk.types import structured_output_retry_message
+
+STRUCTURED_OUTPUT_MAX_ATTEMPTS = 3
 
 
 def complete[StructuredT](
@@ -65,17 +77,35 @@ def complete[StructuredT](
             resolved_messages,
             output_type=output_type,
         )
-    start_provider_turn(provider)
-    response = provider.complete(resolved_messages, [])
-    output = response.final_text_content() or ""
+    attempts = 1 if output_type is None else STRUCTURED_OUTPUT_MAX_ATTEMPTS
+    response: Message | None = None
+    output = ""
+    structured: StructuredT | None = None
+    last_error: StructuredOutputError | None = None
+    for attempt in range(attempts):
+        start_provider_turn(provider)
+        response = provider.complete(resolved_messages, [])
+        output = response.final_text_content() or ""
+        try:
+            structured = parse_structured_output(output, output_type=output_type)
+            break
+        except StructuredOutputError as exc:
+            last_error = exc
+            if output_type is None or attempt == attempts - 1:
+                continue
+            resolved_messages.extend(
+                [response, structured_output_retry_message(output_type, exc)]
+            )
+    else:
+        if last_error is not None:
+            raise last_error
+    if response is None:
+        raise RuntimeError("Provider did not return a response.")
     return CompletionResult(
         message=response,
         output=output,
         messages=[*resolved_messages, response],
-        structured=parse_structured_output(
-            output,
-            output_type=output_type,
-        ),
+        structured=structured,
     )
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.agent.capabilities import BaseCapability
+from yoke.agent.capabilities import BuiltinCapabilityIdsCapability
 from yoke.agent.capabilities import ExplicitToolsCapability
 from yoke.agent.capabilities import RegisterToolsCapability
 from yoke.agent.capabilities import instantiate_capabilities
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from yoke.agent.tools import LocalTool
     from yoke.agent.tools import RegisterTools
 
-    type AgentTool = LocalTool | type[LocalTool]
+    type AgentTool = LocalTool | type[LocalTool] | str
 else:
     type AgentTool = object
     type CapabilityInput = object
@@ -34,8 +35,12 @@ def build_agent_capabilities(
     resolved: list[BaseCapability] = []
     if capabilities is not None:
         resolved.extend(instantiate_capabilities(capabilities))
-    if tools:
-        resolved.append(ExplicitToolsCapability(tools))
+    capability_ids = [tool for tool in tools if isinstance(tool, str)]
+    explicit_tools = [tool for tool in tools if not isinstance(tool, str)]
+    if capability_ids:
+        resolved.append(BuiltinCapabilityIdsCapability(capability_ids))
+    if explicit_tools:
+        resolved.append(ExplicitToolsCapability(explicit_tools))
     if register_tools is not None:
         resolved.append(RegisterToolsCapability(register_tools))
     return tuple(resolved)

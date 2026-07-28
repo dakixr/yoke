@@ -10,6 +10,22 @@ from yoke.agent.skills.discovery import load_skill
 from yoke.agent.skills.registry import SkillRegistry
 
 
+def test_builtin_skills_include_yoke_subagents_references() -> None:
+    from yoke.agent.skills.discovery import builtin_skill_dir
+    from yoke.agent.skills.discovery import discover_skills
+
+    skills = {skill.name: skill for skill in discover_skills([])}
+
+    assert set(skills) == {"create-skill", "yoke-subagents"}
+    subagents = skills["yoke-subagents"]
+    assert {Path(path).name for path in subagents.file_paths} == {
+        "PATTERNS.md",
+        "SDK_SURFACE.md",
+        "SKILL.md",
+    }
+    assert subagents.root.parent == builtin_skill_dir().resolve()
+
+
 def test_active_skill_message_includes_skill_directory_files(
     tmp_path: Path,
 ) -> None:

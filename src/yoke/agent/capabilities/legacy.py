@@ -75,3 +75,36 @@ class RegisterToolsCapability(BaseCapability):
             tools=tuple(registration.tools),
             system_messages=tuple(registration.system_messages),
         )
+
+
+class BuiltinCapabilityIdsCapability(BaseCapability):
+    """Resolve SDK string capability IDs through the built-in registry."""
+
+    name = "tools.capability_ids"
+    description = "Built-in tools selected by stable SDK capability IDs."
+
+    def __init__(self, capability_ids: Sequence[str]) -> None:
+        self._capability_ids = tuple(capability_ids)
+
+    def register(self, context: CapabilityContext) -> CapabilityRegistration:
+        from yoke.agent.capabilities.builtin import resolve_builtin_capability_id
+
+        registrations = [
+            resolve_builtin_capability_id(capability_id, context)
+            for capability_id in self._capability_ids
+        ]
+        tools = []
+        seen_names: set[str] = set()
+        for registration in registrations:
+            for tool in registration.tools:
+                if tool.name not in seen_names:
+                    tools.append(tool)
+                    seen_names.add(tool.name)
+        return CapabilityRegistration(
+            tools=tuple(tools),
+            system_messages=tuple(
+                message
+                for registration in registrations
+                for message in registration.system_messages
+            ),
+        )
