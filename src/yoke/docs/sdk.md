@@ -36,6 +36,39 @@ result = agent.prompt("Add type annotations to src/utils.py")
 print(result.output)
 ```
 
+`RunConfig` is optional when the standard coding-agent capabilities and the
+current working directory are appropriate:
+
+```python
+agent = Agent(provider=provider)
+```
+
+Use `prompt_async()` in asyncio applications. Calls on one stateful agent are
+serialized so their conversation updates stay ordered; independent agents can
+run concurrently. Cancellation and `timeout=` cooperatively stop the active
+provider/tool loop before returning control.
+
+```python
+import asyncio
+
+from yoke.ai import Agent, build_provider
+
+
+async def main() -> None:
+    async with Agent(provider=build_provider("zai")) as agent:
+        result = await agent.prompt_async(
+            "Summarize this repository's architecture.", timeout=120
+        )
+        print(result.output)
+
+
+asyncio.run(main())
+```
+
+Use `await agent.aclose()` when an async context manager is not convenient.
+The SDK agent releases its runtime and tool resources; the provider remains
+owned by the application, matching the synchronous API's ownership contract.
+
 Built-in provider classes include `CodexSubscriptionProvider`,
 `CodexWebSockets`, `OpenCodeGoProvider`, and
 `ZAIProvider`. For standard OpenAI-compatible endpoints, use
@@ -191,6 +224,7 @@ from yoke.agent.tools import ReadTool, EditTool, WriteTool, GrepTool
 | `FindTool` | `find` | Find files or directories by glob pattern. |
 | `GrepTool` | `grep` | Search text files with a regular expression. |
 | `RipgrepTool` | `rg` | Use native ripgrep for file listing and content search. |
+| `FdTool` | `fd` | Use native fd for fast file and directory discovery. |
 | `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
 | `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
 | `ImageGenerationTool` | `image_generation` | Generate a PNG through Codex subscription auth and attach it to context. |
@@ -261,9 +295,11 @@ agent = Agent(
 )
 ```
 
-`FileSearchCapability` exposes `rg` when the ripgrep executable is available.
-Otherwise it exposes the Python fallback tools `grep`, `find`, and `ls`. The
-legacy `register_search_tools` callback delegates to this capability.
+`FileSearchCapability` exposes `rg` and `fd` when their executables are
+available. `rg` handles content search while `fd` specializes in discovering
+files and directories by name or path. When neither native executable is
+available, Yoke exposes the Python fallback tools `grep`, `find`, and `ls`.
+The legacy `register_search_tools` callback delegates to this capability.
 
 ```python
 from yoke.agent.tools import register_search_tools

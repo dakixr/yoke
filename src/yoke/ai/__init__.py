@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from yoke.ai.sdk import Skill as Skill
     from yoke.ai.sdk import StructuredOutputError as StructuredOutputError
     from yoke.ai.sdk import complete as complete
+    from yoke.ai.sdk import default_coding_agent_config as default_coding_agent_config
     from yoke.ai.sdk.helpers import build_user_message as build_user_message
     from yoke.ai.sdk.helpers import image_part as image_part
     from yoke.ai.sdk.helpers import remote_image_part as remote_image_part
@@ -150,6 +151,10 @@ _LAZY_EXPORTS = {
     "Skill": ("yoke.ai.sdk", "Skill"),
     "StructuredOutputError": ("yoke.ai.sdk", "StructuredOutputError"),
     "complete": ("yoke.ai.sdk", "complete"),
+    "default_coding_agent_config": (
+        "yoke.ai.sdk",
+        "default_coding_agent_config",
+    ),
     "build_user_message": ("yoke.ai.sdk.helpers", "build_user_message"),
     "image_part": ("yoke.ai.sdk.helpers", "image_part"),
     "remote_image_part": ("yoke.ai.sdk.helpers", "remote_image_part"),
@@ -193,6 +198,7 @@ __all__ = [
     "available_provider_names",
     "build_provider",
     "complete",
+    "default_coding_agent_config",
     "image_part",
     "is_provider_ready",
     "list_provider_readiness",

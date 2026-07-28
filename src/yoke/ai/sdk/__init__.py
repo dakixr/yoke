@@ -13,6 +13,9 @@ from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import insert_provider_system_messages
 from yoke.ai.providers.base import start_provider_turn
 from yoke.ai.sdk.agent import Agent as Agent
+from yoke.ai.sdk.defaults import (
+    default_coding_agent_config as default_coding_agent_config,
+)
 from yoke.ai.sdk.types import AgentResult as AgentResult
 from yoke.ai.sdk.types import CompletionResult
 from yoke.ai.sdk.types import Context

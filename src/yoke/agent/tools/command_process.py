@@ -13,8 +13,10 @@ import weakref
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from typing import Literal
 
 from yoke.agent.tools.python.env import prepare_python_env
 from yoke.agent.tools.shell import build_shell_command
@@ -26,6 +28,7 @@ DEFAULT_WRITE_YIELD_TIME_MS = 30_000
 DEFAULT_POLL_YIELD_TIME_MS = 30_000
 DEFAULT_MAX_OUTPUT_TOKENS = 10_000
 MAX_PROCESS_COUNT = 64
+MAX_COMPLETED_PROCESS_COUNT = 64
 MAX_RETAINED_OUTPUT_BYTES = 1024 * 1024
 INTERRUPT = "\x03"
 
@@ -67,6 +70,24 @@ class CommandProcessResult:
     original_output_bytes: int
 
 
+@dataclass(slots=True, frozen=True)
+class CommandProcessSnapshot:
+    """Stable, non-consuming view of one managed command process."""
+
+    session_id: int
+    pid: int
+    command: str
+    cwd: Path
+    tty: bool
+    status: Literal["running", "exited", "failed"]
+    started_at: datetime
+    elapsed_seconds: float
+    exit_code: int | None
+    output_tail: str
+    original_output_bytes: int
+    retained_output_bytes: int
+
+
 class _ManagedProcess:
     def __init__(
         self,
@@ -78,6 +99,7 @@ class _ManagedProcess:
         tty: bool,
         master_fd: int | None,
         tool_event: ToolEvent | None,
+        on_change: Callable[[], None],
     ) -> None:
         self.session_id = session_id
         self.command = command
@@ -86,12 +108,18 @@ class _ManagedProcess:
         self.tty = tty
         self.master_fd = master_fd
         self.tool_event = tool_event
+        self.on_change = on_change
         self.started_at = time.monotonic()
+        self.started_datetime = datetime.now().astimezone()
+        self.finished_at: float | None = None
         self.last_used_at = self.started_at
         self.condition = threading.Condition()
         self.pending: deque[tuple[str, bytes]] = deque()
         self.pending_bytes = 0
         self.pending_original_bytes = 0
+        self.history: deque[bytes] = deque()
+        self.history_bytes = 0
+        self.original_output_bytes = 0
         self.open_readers = 0
         self.closed = False
         self._reader_threads: list[threading.Thread] = []
@@ -145,6 +173,7 @@ class _ManagedProcess:
             with self.condition:
                 self.open_readers = max(0, self.open_readers - 1)
                 self.condition.notify_all()
+            self.on_change()
 
     def _read_pipe(self, pipe: Any) -> bytes:
         return os.read(pipe.fileno(), 4096)
@@ -159,10 +188,17 @@ class _ManagedProcess:
             self.pending.append((stream, raw))
             self.pending_bytes += len(raw)
             self.pending_original_bytes += len(raw)
+            self.history.append(raw)
+            self.history_bytes += len(raw)
+            self.original_output_bytes += len(raw)
             while self.pending_bytes > MAX_RETAINED_OUTPUT_BYTES and self.pending:
                 _, dropped = self.pending.popleft()
                 self.pending_bytes -= len(dropped)
+            while self.history_bytes > MAX_RETAINED_OUTPUT_BYTES and self.history:
+                dropped = self.history.popleft()
+                self.history_bytes -= len(dropped)
             self.condition.notify_all()
+        self.on_change()
         if self.tool_event is not None:
             try:
                 self.tool_event(
@@ -181,7 +217,9 @@ class _ManagedProcess:
         with self.condition:
             while self.open_readers:
                 self.condition.wait(timeout=0.05)
+            self.finished_at = time.monotonic()
             self.condition.notify_all()
+        self.on_change()
         if self.tool_event is not None:
             try:
                 self.tool_event(
@@ -227,6 +265,36 @@ class _ManagedProcess:
             wall_time_seconds=time.monotonic() - started_at,
             original_output_bytes=original_output_bytes,
         )
+
+    def snapshot(self) -> CommandProcessSnapshot:
+        """Return process metadata without consuming buffered output."""
+        with self.condition:
+            finished = self.finished
+            output = "".join(decode_command_output_chunk(raw) for raw in self.history)
+            exit_code = self.process.poll() if finished else None
+            status: Literal["running", "exited", "failed"]
+            if not finished:
+                status = "running"
+            elif exit_code == 0:
+                status = "exited"
+            else:
+                status = "failed"
+            return CommandProcessSnapshot(
+                session_id=self.session_id,
+                pid=self.process.pid,
+                command=self.command,
+                cwd=self.cwd,
+                tty=self.tty,
+                status=status,
+                started_at=self.started_datetime,
+                elapsed_seconds=max(
+                    0.0, (self.finished_at or time.monotonic()) - self.started_at
+                ),
+                exit_code=exit_code,
+                output_tail=output.replace("\r\n", "\n").replace("\r", "\n"),
+                original_output_bytes=self.original_output_bytes,
+                retained_output_bytes=self.history_bytes,
+            )
 
     @property
     def finished(self) -> bool:
@@ -301,6 +369,10 @@ class CommandProcessManager:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._processes: dict[int, _ManagedProcess] = {}
+        self._completed: deque[CommandProcessSnapshot] = deque(
+            maxlen=MAX_COMPLETED_PROCESS_COUNT
+        )
+        self._listeners: set[Callable[[], None]] = set()
         _ACTIVE_MANAGERS.add(self)
 
     def exec_command(
@@ -328,7 +400,7 @@ class CommandProcessManager:
             cancel_requested=cancel_requested,
         )
         if result.session_id is None:
-            self._remove(managed.session_id)
+            self._complete(managed.session_id)
         return result
 
     def write_stdin(
@@ -352,8 +424,26 @@ class CommandProcessManager:
             cancel_requested=cancel_requested,
         )
         if result.session_id is None:
-            self._remove(session_id)
+            self._complete(session_id)
         return result
+
+    def snapshots(self) -> list[CommandProcessSnapshot]:
+        """Return retained process snapshots, oldest first."""
+        with self._lock:
+            snapshots = [*self._completed]
+            snapshots.extend(process.snapshot() for process in self._processes.values())
+        return sorted(snapshots, key=lambda item: item.started_at)
+
+    def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Subscribe to process output and lifecycle changes."""
+        with self._lock:
+            self._listeners.add(listener)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                self._listeners.discard(listener)
+
+        return unsubscribe
 
     def list_processes(self) -> list[BackgroundProcessInfo]:
         with self._lock:
@@ -378,6 +468,7 @@ class CommandProcessManager:
         if managed is None:
             return False
         managed.terminate()
+        self._notify()
         return True
 
     def terminate_all(self) -> int:
@@ -386,6 +477,8 @@ class CommandProcessManager:
             self._processes.clear()
         for managed in processes:
             managed.terminate()
+        if processes:
+            self._notify()
         return len(processes)
 
     def _spawn(
@@ -461,11 +554,13 @@ class CommandProcessManager:
             tty=tty,
             master_fd=master_fd,
             tool_event=tool_event,
+            on_change=self._notify,
         )
         managed.start_readers()
         with self._lock:
             self._prune_if_needed()
             self._processes[session_id] = managed
+        self._notify()
         return managed
 
     def _allocate_session_id(self) -> int:
@@ -482,11 +577,15 @@ class CommandProcessManager:
             raise ValueError(f"Unknown command session ID {session_id}")
         return managed
 
-    def _remove(self, session_id: int) -> None:
+    def _complete(self, session_id: int) -> None:
         with self._lock:
             managed = self._processes.pop(session_id, None)
         if managed is not None:
+            snapshot = managed.snapshot()
+            with self._lock:
+                self._completed.append(snapshot)
             managed.close()
+            self._notify()
 
     def _prune_if_needed(self) -> None:
         if len(self._processes) < MAX_PROCESS_COUNT:
@@ -501,7 +600,20 @@ class CommandProcessManager:
         if candidates:
             oldest = candidates[0]
             self._processes.pop(oldest.session_id, None)
-            oldest.terminate()
+            if oldest.finished:
+                self._completed.append(oldest.snapshot())
+                oldest.close()
+            else:
+                oldest.terminate()
+
+    def _notify(self) -> None:
+        with self._lock:
+            listeners = tuple(self._listeners)
+        for listener in listeners:
+            try:
+                listener()
+            except Exception:
+                pass
 
 
 def clamp_exec_yield_time(yield_time_ms: int) -> int:

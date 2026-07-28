@@ -73,6 +73,7 @@ def process_prompt_toolkit_prompt(
     format_context_usage_text: Callable[[Mapping[str, object] | None], str | None],
     estimate_toolbar_context_usage: Callable[[str], str | None] | None = None,
     on_editor_text: Callable[[str], None] | None = None,
+    on_process_inspector: Callable[[], None] | None = None,
 ) -> ActiveSession:
     """Process one submitted prompt-toolkit prompt."""
     active_session = active_session_ref["active_session"]
@@ -158,6 +159,11 @@ def process_prompt_toolkit_prompt(
         if idle:
             start_compaction()
             return active_session_ref["active_session"]
+    process_inspector_callback = (
+        {}
+        if on_process_inspector is None
+        else {"on_process_inspector": on_process_inspector}
+    )
     handled, updated_messages, updated_session = handle_slash_command(
         prompt,
         agent=agent,
@@ -174,6 +180,7 @@ def process_prompt_toolkit_prompt(
             format_context_usage_text=format_context_usage_text,
         ),
         on_editor_text=on_editor_text,
+        **process_inspector_callback,
     )
     if handled:
         editor_text_for_usage = ""
@@ -273,6 +280,7 @@ def run_prompt_toolkit_event_loop(
     steer_active_turn: Callable[..., bool],
     format_context_usage_text: Callable[[Mapping[str, object] | None], str | None],
     estimate_toolbar_context_usage: Callable[[str], str | None],
+    on_process_inspector: Callable[[], None] | None = None,
 ) -> int:
     """Run the prompt-toolkit prompt loop."""
     from yoke.cli.interactive.prompt.rendering import (
@@ -361,6 +369,7 @@ def run_prompt_toolkit_event_loop(
                 "next_editor_text",
                 text,
             ),
+            on_process_inspector=on_process_inspector,
         )
 
 

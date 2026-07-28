@@ -36,6 +36,8 @@ from yoke.cli.interactive.prompt.rendering import (
     initialize_prompt_toolkit_session,
 )
 from yoke.cli.interactive.prompt.rendering import run_scrollback_render
+from yoke.cli.interactive.process_commands import command_process_manager
+from yoke.cli.interactive.process_inspector import open_live_process_inspector
 from yoke.cli.interactive.queue.persistence import load_prompt_queue
 from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
@@ -277,6 +279,28 @@ def run_prompt_toolkit_cli(  # noqa: C901
             )
         )
 
+    def show_process_inspector() -> None:
+        manager = command_process_manager(agent)
+        if manager is None:
+            run_in_scrollback(
+                lambda: print_scrollback_notice(
+                    scrollback_console,
+                    "Process inspection is unavailable for this agent.",
+                )
+            )
+            return
+        app = prompt_session.app
+        loop = app.loop
+        if loop is None:
+            open_live_process_inspector(manager)
+            return
+        loop.call_soon_threadsafe(
+            lambda: run_in_terminal(
+                lambda: open_live_process_inspector(manager),
+                in_executor=True,
+            )
+        )
+
     def open_model_selector(preserved_text: str) -> None:
         with state_lock:
             state.next_editor_text = preserved_text
@@ -400,4 +424,5 @@ def run_prompt_toolkit_cli(  # noqa: C901
         steer_active_turn=control.steer_active_turn,
         format_context_usage_text=format_context_usage_text,
         estimate_toolbar_context_usage=estimate_toolbar_context,
+        on_process_inspector=show_process_inspector,
     )

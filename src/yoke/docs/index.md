@@ -23,8 +23,8 @@ under `yoke.ai.providers.codex`, agent-loop tool execution under
 ### Capabilities and tools
 Capabilities are context-aware bundles of tools, selected from the active
 provider, model, operating system, and workspace environment. For example,
-`file.search` exposes native `rg` when ripgrep is installed and Python fallback
-tools otherwise; `file.edit` exposes `apply_patch` for GPT-style models and
+`file.search` exposes native `rg` and `fd` when installed and Python fallback
+tools when neither is available; `file.edit` exposes `apply_patch` for GPT-style models and
 `edit` plus `write` for other models.
 
 Tools are the executable actions the agent can call: read a file, edit a file,

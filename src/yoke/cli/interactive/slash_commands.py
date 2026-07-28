@@ -15,6 +15,8 @@ from yoke.cli.interactive.common import COMPACTION_IN_PROGRESS_NOTICE
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import SHORTCUTS_NOTICE
 from yoke.cli.interactive.mcp_menu import handle_mcp_menu
+from yoke.cli.interactive.process_commands import command_process_manager
+from yoke.cli.interactive.process_commands import print_process_table
 from yoke.cli.interactive.queue.manager import edit_queue_prompt
 from yoke.cli.interactive.queue.manager import open_queue_manager
 from yoke.cli.interactive.tree_selector import prompt_tree_label
@@ -74,6 +76,7 @@ def handle_slash_command(  # noqa: C901
     on_context_usage: Callable[[dict[str, object]], None] | None = None,
     on_editor_text: Callable[[str], None] | None = None,
     on_queue_changed: Callable[[], None] | None = None,
+    on_process_inspector: Callable[[], None] | None = None,
 ) -> tuple[bool, list[Message], ActiveSession]:
     """Handle slash commands and return updated state."""
     from yoke.cli.render import print_scrollback_notice
@@ -246,7 +249,15 @@ def handle_slash_command(  # noqa: C901
         )
         return True, messages, active_session
     if normalized == "/ps":
-        print_scrollback_notice(console, _format_background_processes(agent))
+        if on_process_inspector is not None:
+            on_process_inspector()
+        elif command_process_manager(agent) is not None:
+            print_process_table(console, agent)
+        else:
+            print_scrollback_notice(console, _format_background_processes(agent))
+        return True, messages, active_session
+    if normalized.startswith("/ps "):
+        print_scrollback_notice(console, "Usage: /ps")
         return True, messages, active_session
     if normalized == "/stop" or normalized.startswith("/stop "):
         print_scrollback_notice(

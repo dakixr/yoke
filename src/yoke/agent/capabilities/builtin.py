@@ -15,6 +15,7 @@ from yoke.agent.tools.command import CommandTool
 from yoke.agent.tools.command import WriteStdinTool
 from yoke.agent.tools.document_extract import ExtractFileContextTool
 from yoke.agent.tools.edit import EditTool
+from yoke.agent.tools.fd import FdTool
 from yoke.agent.tools.image_generation import ImageGenerationTool
 from yoke.agent.tools.image_generation import provider_supports_image_generation
 from yoke.agent.tools.mcp import register_mcp_tools
@@ -82,16 +83,19 @@ class FileContextCapability(BaseCapability):
 
 
 class FileSearchCapability(BaseCapability):
-    """Search workspace files using ripgrep when available."""
+    """Search workspace content and discover paths with native tools."""
 
     name = "file.search"
     description = "Search and list workspace files."
 
     def register(self, context: CapabilityContext) -> CapabilityRegistration:
+        native_tools: list[LocalTool] = []
         if context.executable("rg") is not None:
-            return CapabilityRegistration(
-                tools=(bind_workspace_tool(RipgrepTool, context),)
-            )
+            native_tools.append(bind_workspace_tool(RipgrepTool, context))
+        if context.executable("fd") is not None:
+            native_tools.append(bind_workspace_tool(FdTool, context))
+        if native_tools:
+            return CapabilityRegistration(tools=tuple(native_tools))
         return CapabilityRegistration(
             tools=(
                 bind_workspace_tool(GrepTool, context),

@@ -8,6 +8,7 @@ from yoke.agent.tools.command import ExecCommandTool
 from yoke.agent.tools.command import WriteStdinTool
 from yoke.agent.tools.command_process import BackgroundProcessInfo
 from yoke.agent.tools.command_process import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessSnapshot
 from yoke.agent.tools.context import ModelIdentity
 from yoke.agent.tools.context import never_cancel
 from yoke.agent.tools.context import RegisterTools
@@ -17,6 +18,7 @@ from yoke.agent.tools.context import ToolRegistrationResult
 from yoke.agent.tools.context import ToolRuntimeContext
 from yoke.agent.tools.document_extract import ExtractFileContextTool
 from yoke.agent.tools.edit import EditTool
+from yoke.agent.tools.fd import FdTool
 from yoke.agent.tools.image_generation import ImageGenerationTool
 from yoke.agent.tools.image_generation import provider_supports_image_generation
 from yoke.agent.tools.mcp import McpCallTool
@@ -44,10 +46,12 @@ __all__ = [
     "COMMAND_TOOL_NAME",
     "CommandTool",
     "CommandProcessManager",
+    "CommandProcessSnapshot",
     "DEFAULT_GLOB",
     "EditTool",
     "ExecCommandTool",
     "ExtractFileContextTool",
+    "FdTool",
     "FindTool",
     "GrepTool",
     "ImageGenerationTool",

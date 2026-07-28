@@ -278,8 +278,12 @@ turn.
 - Use `/title new-title` to rename the active session shown in resume/session
   lists and on the right side of the prompt-toolkit bottom toolbar.
 - Use `/shortcuts` or `?` to print the interactive keyboard shortcuts in scrollback.
-- Use `/ps` to list background command sessions and `/stop [session-id]` to
-  stop one session. `/stop` without an ID stops all background commands.
+- Use `/ps` to open the fullscreen process inspector. It retains recent running
+  and completed command sessions, metadata, and a bounded output tail for the
+  current live runtime. Use arrow keys or `j`/`k` to navigate, `w` to toggle
+  wrapping, `y` to copy details, and `q` to close it. The basic CLI prints the
+  same process state as a table. Use `/stop [session-id]` to stop one running
+  session; `/stop` without an ID stops all running commands.
 
 Commands that replace, branch, or persist mutable session state are rejected
 while a turn is active. This includes `/new`, `/fork`, `/tree`, `/model`,
