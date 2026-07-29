@@ -7,6 +7,7 @@ from collections.abc import Callable
 from collections.abc import Mapping
 from threading import Lock, Thread
 
+from yoke.agent.models import Message
 from yoke.cli.image_input import attach_standalone_prompt_image_paths
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.completion_menu import (
@@ -23,6 +24,7 @@ from yoke.cli.interactive.prompt.status import update_status_context_usage
 from yoke.cli.interactive.prompt.turns import next_pending_prompt_index
 from yoke.cli.runtime import ActiveSession, AgentRunner, persist_session_state
 from yoke.cli.render import print_scrollback_notice
+from yoke.cli.render import print_session_scrollback
 
 
 def persist_prompt_exit_state(
@@ -164,6 +166,7 @@ def process_prompt_toolkit_prompt(
         if on_process_inspector is None
         else {"on_process_inspector": on_process_inspector}
     )
+    replay_messages_ref: list[list[Message] | None] = [None]
     handled, updated_messages, updated_session = handle_slash_command(
         prompt,
         agent=agent,
@@ -180,6 +183,10 @@ def process_prompt_toolkit_prompt(
             format_context_usage_text=format_context_usage_text,
         ),
         on_editor_text=on_editor_text,
+        on_replay_messages=lambda messages: replay_messages_ref.__setitem__(
+            0,
+            list(messages),
+        ),
         **process_inspector_callback,
     )
     if handled:
@@ -209,6 +216,9 @@ def process_prompt_toolkit_prompt(
             context_usage_text = estimate_toolbar_context_usage(editor_text_for_usage)
             with state_lock:
                 state.context_usage_text = context_usage_text
+        replay_messages = replay_messages_ref[0]
+        if replay_messages is not None:
+            print_session_scrollback(scrollback_console, replay_messages)
         invalidate_prompt()
         if next_prompt_to_start is not None:
             start_turn(next_prompt_to_start.prompt, next_prompt_to_start.user_message)
@@ -343,6 +353,9 @@ def run_prompt_toolkit_event_loop(
             "/shortcuts",
             "?",
             "/new",
+            "/pin",
+            "/info",
+            "/fork",
             "/ps",
             "/stop",
             "/tree",

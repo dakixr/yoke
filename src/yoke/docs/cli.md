@@ -270,6 +270,7 @@ turn.
 - Use `/image path/to/file.png` to attach a local image file explicitly.
 - Use `/info` to print the current session id, title, root, session file path,
   provider/model, and saved conversation counts.
+- Use `/pin` to pin or unpin the active session.
 - Use `/fork` to copy the current saved session into a new persisted session and
   continue future turns in that fork.
 - Use `/tree` to navigate the current session tree, fork from an older point,
@@ -287,8 +288,8 @@ turn.
 
 Commands that replace, branch, or persist mutable session state are rejected
 while a turn is active. This includes `/new`, `/fork`, `/tree`, `/model`,
-`/tools`, `/mcp`, `/compact`, `/skill`, `/title`, `/pin-session`, and
-`/unpin-session`; stop the turn or let it finish before running them.
+`/tools`, `/mcp`, `/compact`, `/skill`, `/title`, and `/pin`; stop the turn or
+let it finish before running them.
 
 Pending image attachments are shown in the bottom toolbar and are sent with the
 next submitted prompt.
@@ -373,8 +374,8 @@ yoke resume 20240421-143022-abc1
 # Resume a session id that matches a reserved resume action
 yoke resume --session-id list
 
-# Pin the active session from inside the TUI
-/pin-session
+# Pin or unpin the active session from inside the TUI
+/pin
 
 # Continue the most recent session for this directory
 yoke continue
@@ -410,7 +411,9 @@ local folding, color-coded entry types, and entry labels stored as metadata.
 Before moving branches, yoke asks whether to create a branch summary; `No
 summary` is the default, while
 custom summary guidance is appended to the standard summary prompt when chosen.
-If the summary provider request fails, navigation still completes without a
+After navigation, yoke replays the selected branch into the live transcript so
+scrollback and the editor immediately match the newly active conversation. If
+the summary provider request fails, navigation still completes without a
 summary and reports the provider error in scrollback.
 
 In a terminal, `yoke resume` opens a keyboard-driven selector with aligned
@@ -428,8 +431,7 @@ Use `yoke resume list` to print matching sessions without opening the selector
 or resuming one; add `--all` to include every root. If a session id collides
 with a reserved resume action such as `list`, resume it with
 `yoke resume --session-id list`.
-Inside a session, `/pin-session` pins the active session and `/unpin-session`
-removes the pin.
+Inside a session, `/pin` toggles the active session pin.
 Use `--fork <session-id>` to copy an existing session into a new session id and
 continue there without appending to the original; `--fork` cannot be combined
 with `--session` because one selects a source session and the other names the

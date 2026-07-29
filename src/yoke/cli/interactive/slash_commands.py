@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import suppress
 
 from yoke.agent.models import Message
 from yoke.agent.state import active_branch_entries
@@ -19,14 +18,12 @@ from yoke.cli.interactive.process_commands import command_process_manager
 from yoke.cli.interactive.process_commands import print_process_table
 from yoke.cli.interactive.queue.manager import edit_queue_prompt
 from yoke.cli.interactive.queue.manager import open_queue_manager
-from yoke.cli.interactive.tree_selector import prompt_tree_label
-from yoke.cli.interactive.tree_selector import (
-    select_tree_entry_interactive,
-)
+from yoke.cli.interactive.session_commands import handle_pin_session
+from yoke.cli.interactive.session_commands import print_session_info
 from yoke.cli.interactive.tools_menu import handle_tools_menu
+from yoke.cli.interactive.tree_commands import handle_tree_command
 from yoke.cli.render.base import Console
 from yoke.cli.render import format_compaction_note
-from yoke.cli.render import print_session_scrollback
 from yoke.cli.providers.state import bind_provider_session
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
@@ -34,10 +31,6 @@ from yoke.cli.runtime import fork_active_session
 from yoke.cli.runtime import force_compact_history
 from yoke.cli.runtime import persist_session_state
 from yoke.cli.session import fallback_session_title
-from yoke.cli.runtime.selector.ui import select_list_item_interactive
-from yoke.cli.runtime.tree import get_session_tree
-from yoke.cli.runtime.tree import navigate_session_tree
-from yoke.cli.runtime.tree import set_entry_label
 
 
 _IDLE_ONLY_COMMANDS = (
@@ -46,6 +39,7 @@ _IDLE_ONLY_COMMANDS = (
     "/mcp",
     "/model",
     "/new",
+    "/pin",
     "/pin-session",
     "/skill",
     "/title",
@@ -76,6 +70,7 @@ def handle_slash_command(  # noqa: C901
     on_context_usage: Callable[[dict[str, object]], None] | None = None,
     on_editor_text: Callable[[str], None] | None = None,
     on_queue_changed: Callable[[], None] | None = None,
+    on_replay_messages: Callable[[list[Message]], None] | None = None,
     on_process_inspector: Callable[[], None] | None = None,
 ) -> tuple[bool, list[Message], ActiveSession]:
     """Handle slash commands and return updated state."""
@@ -180,14 +175,23 @@ def handle_slash_command(  # noqa: C901
             f"Updated session title: {active_session.title}",
         )
         return True, messages, active_session
+    if normalized == "/pin":
+        print_scrollback_notice(
+            console,
+            handle_pin_session(active_session, agent, messages),
+        )
+        return True, messages, active_session
+    if normalized.startswith("/pin "):
+        print_scrollback_notice(console, "Usage: /pin")
+        return True, messages, active_session
     if normalized == "/pin-session":
-        active_session.record.pinned = True
-        persist_session_state(active_session, agent, messages)
+        if not active_session.record.pinned:
+            handle_pin_session(active_session, agent, messages)
         print_scrollback_notice(console, "Pinned session.")
         return True, messages, active_session
     if normalized == "/unpin-session":
-        active_session.record.pinned = False
-        persist_session_state(active_session, agent, messages)
+        if active_session.record.pinned:
+            handle_pin_session(active_session, agent, messages)
         print_scrollback_notice(console, "Unpinned session.")
         return True, messages, active_session
     if normalized == "/tree":
@@ -196,11 +200,12 @@ def handle_slash_command(  # noqa: C901
                 console, "/tree is only available in the prompt-toolkit TUI."
             )
             return True, messages, active_session
-        result = _handle_tree_command(
+        result = handle_tree_command(
             active_session,
             agent,
             console,
             on_editor_text=on_editor_text,
+            on_replay_messages=on_replay_messages,
         )
         if result is None:
             return True, messages, active_session
@@ -243,10 +248,10 @@ def handle_slash_command(  # noqa: C901
         print_scrollback_notice(console, SHORTCUTS_NOTICE)
         return True, messages, active_session
     if normalized == "/info":
-        print_scrollback_notice(
-            console,
-            _format_session_info(active_session, agent, messages),
-        )
+        print_session_info(console, active_session, agent, messages)
+        return True, messages, active_session
+    if normalized.startswith("/info "):
+        print_scrollback_notice(console, "Usage: /info")
         return True, messages, active_session
     if normalized == "/ps":
         if on_process_inspector is not None:
@@ -272,6 +277,9 @@ def handle_slash_command(  # noqa: C901
             console, f"Forked session {active_session.id} -> {forked_session.id}"
         )
         return True, forked_session.record.messages, forked_session
+    if normalized.startswith("/fork "):
+        print_scrollback_notice(console, "Usage: /fork")
+        return True, messages, active_session
     if normalized == "/new":
         new_session = create_active_session(
             CLIArgs(root=str(active_session.root)),
@@ -292,61 +300,6 @@ def handle_slash_command(  # noqa: C901
             on_context_usage({"usage_percent": 0})
         return True, [], new_session
     return False, messages, active_session
-
-
-def _format_session_info(
-    active_session: ActiveSession,
-    agent: object,
-    messages: list[Message],
-) -> str:
-    record = active_session.record
-    provider = record.provider_name or _agent_provider_name(agent) or "unknown"
-    model = record.model_id or _agent_model_id(agent) or "unknown"
-    lines = [
-        "Session info:",
-        f"Session id: {active_session.id}",
-        f"Title: {active_session.title or record.title or 'Untitled session'}",
-        f"Pinned: {'yes' if record.pinned else 'no'}",
-        f"Root: {active_session.root}",
-        f"Path: {active_session.store.path_for(active_session.id)}",
-        f"Provider: {provider}",
-        f"Model: {model}",
-        f"Messages: {len(messages)}",
-        f"Conversation entries: {len(record.conversation_entries)}",
-    ]
-    if record.leaf_id:
-        lines.append(f"Leaf id: {record.leaf_id}")
-    if record.created_at:
-        lines.append(f"Created: {record.created_at}")
-    if record.updated_at:
-        lines.append(f"Updated: {record.updated_at}")
-    if record.reasoning_effort:
-        lines.append(f"Reasoning effort: {record.reasoning_effort}")
-    if record.context_window_tokens:
-        lines.append(f"Context window: {record.context_window_tokens} tokens")
-    return "\n".join(lines)
-
-
-def _agent_provider_name(agent: object) -> str | None:
-    provider = getattr(agent, "provider", None)
-    name = getattr(provider, "name", None)
-    if isinstance(name, str) and name:
-        return name
-    if provider is not None:
-        return provider.__class__.__name__
-    return None
-
-
-def _agent_model_id(agent: object) -> str | None:
-    provider = getattr(agent, "provider", None)
-    config = getattr(provider, "config", None)
-    model = getattr(config, "model", None)
-    if isinstance(model, str) and model:
-        return model
-    model_id = getattr(provider, "model_id", None)
-    if isinstance(model_id, str) and model_id:
-        return model_id
-    return None
 
 
 def _format_background_processes(agent: object) -> str:
@@ -386,116 +339,6 @@ def _stop_background_processes(command: str, agent: object) -> str:
         return "Background commands are not available for this agent."
     count = terminate_all()
     return f"Stopped {count} background command{'s' if count != 1 else ''}."
-
-
-def _handle_tree_command(
-    active_session: ActiveSession,
-    agent: object,
-    console: Console,
-    *,
-    on_editor_text: Callable[[str], None],
-    initial_selected_id: str | None = None,
-) -> tuple[list[Message], ActiveSession] | None:
-    from yoke.cli.render import print_scrollback_notice
-
-    roots = get_session_tree(active_session)
-    if not roots:
-        print_scrollback_notice(console, "No session entries yet.")
-        return None
-    selection = select_tree_entry_interactive(
-        roots,
-        current_leaf_id=active_session.record.leaf_id,
-        initial_selected_id=initial_selected_id,
-    )
-    if selection is None:
-        print_scrollback_notice(console, "Tree navigation cancelled.")
-        return None
-    if selection.action == "label" and selection.entry_id is not None:
-        label = prompt_tree_label()
-        if label is None:
-            return _handle_tree_command(
-                active_session,
-                agent,
-                console,
-                on_editor_text=on_editor_text,
-                initial_selected_id=selection.entry_id,
-            )
-        set_entry_label(active_session, selection.entry_id, label)
-        print_scrollback_notice(console, "Updated tree label.")
-        return _handle_tree_command(
-            active_session,
-            agent,
-            console,
-            on_editor_text=on_editor_text,
-            initial_selected_id=selection.entry_id,
-        )
-    if selection.entry_id is None:
-        return None
-    if selection.entry_id == active_session.record.leaf_id:
-        print_scrollback_notice(console, "Already at this point.")
-        return None
-    choice = _ask_branch_summary_choice()
-    if choice is None:
-        return _handle_tree_command(
-            active_session,
-            agent,
-            console,
-            on_editor_text=on_editor_text,
-            initial_selected_id=selection.entry_id,
-        )
-    summarize, custom_instructions = choice
-    print_scrollback_notice(console, "Navigating session tree...")
-    result = navigate_session_tree(
-        active_session,
-        agent,
-        selection.entry_id,
-        summarize=summarize,
-        custom_instructions=custom_instructions,
-    )
-    if result.editor_text is not None:
-        on_editor_text(result.editor_text)
-    print_session_scrollback(console, result.messages)
-    if result.summary_error is not None:
-        print_scrollback_notice(
-            console,
-            f"Branch summary failed; navigated without it: {result.summary_error}",
-        )
-    suffix = " with branch summary" if result.summary_created else ""
-    print_scrollback_notice(console, f"Navigated to selected point{suffix}.")
-    return result.messages, result.active_session
-
-
-def _ask_branch_summary_choice() -> tuple[bool, str | None] | None:
-    choices = [
-        "No summary",
-        "Summarize",
-        "Summarize with custom instructions",
-    ]
-    choice = select_list_item_interactive(
-        choices,
-        title="Branch Summary",
-        subtitle="Choose whether to summarize the branch you are leaving.",
-        render_item=lambda item, _index, _selected, _columns: item,
-        footer="enter select · esc returns to tree",
-    )
-    if choice is None:
-        return None
-    if choice == "No summary":
-        return False, None
-    if choice == "Summarize":
-        return True, None
-    custom = _prompt_custom_summary_instructions()
-    if custom is None:
-        return None
-    return True, custom
-
-
-def _prompt_custom_summary_instructions() -> str | None:
-    from prompt_toolkit import prompt
-
-    with suppress(EOFError, KeyboardInterrupt):
-        return prompt("Custom summary guidance: ")
-    return None
 
 
 def _handle_skill_load(

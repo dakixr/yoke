@@ -18,6 +18,7 @@ from .support import *  # noqa: F403, F405
     ("command", "expected"),
     [
         ("/title New title", True),
+        ("/pin", True),
         ("/pin-session", True),
         (" /UNPIN-SESSION ", True),
         ("/titles", False),
@@ -216,14 +217,14 @@ def test_title_slash_command_requires_title(tmp_path: Path) -> None:
     assert "Usage: /title <new-title>" in stdout.getvalue()
 
 
-def test_pin_session_slash_commands_update_active_session(tmp_path: Path) -> None:
+def test_pin_slash_command_toggles_active_session(tmp_path: Path) -> None:
     from yoke.cli.interactive.slash_commands import handle_slash_command
 
     active_session = active_session_for(tmp_path)
     stdout = CaptureStream()
 
     handled, messages, updated_session = handle_slash_command(
-        "/pin-session",
+        "/pin",
         agent=FakeAgent(),
         active_session=active_session,
         messages=[],
@@ -234,10 +235,10 @@ def test_pin_session_slash_commands_update_active_session(tmp_path: Path) -> Non
     assert messages == []
     assert updated_session.record.pinned is True
     assert SessionStore().load(active_session.id).pinned is True
-    assert "Pinned session." in stdout.getvalue()
+    assert f"Session pinned: {active_session.id}" in stdout.getvalue()
 
     handled, _messages, updated_session = handle_slash_command(
-        "/unpin-session",
+        "/pin",
         agent=FakeAgent(),
         active_session=updated_session,
         messages=[],
@@ -247,7 +248,7 @@ def test_pin_session_slash_commands_update_active_session(tmp_path: Path) -> Non
     assert handled is True
     assert updated_session.record.pinned is False
     assert SessionStore().load(active_session.id).pinned is False
-    assert "Unpinned session." in stdout.getvalue()
+    assert f"Session unpinned: {active_session.id}" in stdout.getvalue()
 
 
 def test_info_slash_command_prints_session_details(tmp_path: Path) -> None:

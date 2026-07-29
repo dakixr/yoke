@@ -92,6 +92,7 @@ def test_slash_tree_refreshes_context_usage_after_navigation(
     updated_messages = [Message.user("new branch")]
     estimator_seen: dict[str, object] = {}
     invalidations: list[None] = []
+    replayed_messages: list[list[Message]] = []
 
     def fake_handle_slash_command(
         command: str,
@@ -104,6 +105,7 @@ def test_slash_tree_refreshes_context_usage_after_navigation(
         pending_prompts=None,
         on_context_usage=None,
         on_editor_text=None,
+        on_replay_messages=None,
     ):
         del agent, console, pending_images, pending_prompts, on_context_usage
         assert command == "/tree"
@@ -111,6 +113,8 @@ def test_slash_tree_refreshes_context_usage_after_navigation(
         assert messages == [Message.user("old branch")]
         if on_editor_text is not None:
             on_editor_text("retry draft")
+        if on_replay_messages is not None:
+            on_replay_messages(updated_messages)
         return True, updated_messages, updated_session
 
     def estimate_toolbar_context_usage(prompt: str) -> str:
@@ -123,6 +127,11 @@ def test_slash_tree_refreshes_context_usage_after_navigation(
         prompt_loop_module,
         "handle_slash_command",
         fake_handle_slash_command,
+    )
+    monkeypatch.setattr(
+        prompt_loop_module,
+        "print_session_scrollback",
+        lambda _console, messages: replayed_messages.append(list(messages)),
     )
 
     result = prompt_loop_module.process_prompt_toolkit_prompt(
@@ -153,6 +162,7 @@ def test_slash_tree_refreshes_context_usage_after_navigation(
         "active_session": updated_session,
     }
     assert invalidations == [None]
+    assert replayed_messages == [updated_messages]
 
 
 def test_estimate_context_usage_does_not_append_empty_prompt() -> None:
