@@ -170,7 +170,10 @@ class RuntimeAgentIterationMixin:
             if after_tool_result_appended is not None:
                 after_tool_result_appended(context)
         for message in pending_context_messages:
-            self.context_manager.append_message(context, message)
+            if message.role == "system":
+                self.context_manager.append_skill_message(context, message)
+            else:
+                self.context_manager.append_message(context, message)
             if after_tool_result_appended is not None:
                 after_tool_result_appended(context)
         if tool_results:

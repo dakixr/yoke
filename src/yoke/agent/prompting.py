@@ -58,12 +58,8 @@ class PromptBuilder:
         skill_messages = (
             [
                 render_available_skills_message(context.available_skills),
-                *[
-                    render_active_skill_message(skill)
-                    for skill in context.active_skills
-                ],
             ]
-            if context.available_skills or context.active_skills
+            if context.available_skills
             else []
         )
         recent_messages: list[Message] = []
@@ -178,8 +174,7 @@ def render_available_skills_message(skills: list[SkillSpec]) -> Message:
     """Render a system message listing all available skills."""
     lines = [
         "Available skills:",
-        "Use the `skill` tool to load inactive skills by name when relevant, "
-        "or to intentionally reload an active skill's canonical instructions.",
+        "Use the `skill` tool to activate skills by name when relevant.",
     ]
     for skill in skills:
         lines.append(f"- {skill.name}: {skill.description}")
@@ -188,26 +183,17 @@ def render_available_skills_message(skills: list[SkillSpec]) -> Message:
 
 def render_active_skill_message(skill: ActiveSkill) -> Message:
     """Render a system message for a currently loaded active skill."""
+    directory_files = skill.directory_file_listing()
     lines = [
         "Active skill:",
         f"name: {skill.name}",
         f"description: {skill.description}",
         f"source: {skill.source_path}",
     ]
-    if skill.file_paths:
-        lines.extend(["files:"])
-        lines.extend(f"- {path}" for path in skill.file_paths)
-    if skill.reload_on_next_use:
-        lines.extend(["", skill.load_content().strip()])
-    else:
-        lines.extend(
-            [
-                "",
-                "Skill is active for this session. Reload its canonical "
-                "instructions through the `skill` tool before relying on "
-                "detailed workflow steps.",
-            ]
-        )
+    if directory_files:
+        lines.extend(["", "Skill directory files:"])
+        lines.extend(f"- {path}" for path in directory_files)
+    lines.extend(["", skill.prepare_for_prompt().strip()])
     return Message.system("\n".join(lines))
 
 

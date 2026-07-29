@@ -18,8 +18,8 @@ from .support import CatalogProvider
 from .support import install_builtin_provider
 
 
-@pytest.mark.parametrize("mutation", ["missing_file", "renamed_directory"])
-def test_resume_survives_invalid_skill_directory(
+@pytest.mark.parametrize("mutation", ["deleted", "moved"])
+def test_resume_uses_cached_skill_after_source_disappears(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mutation: str,
@@ -49,7 +49,6 @@ def test_resume_survives_invalid_skill_directory(
     registry = load_skill_registry([skill_dir.parent])
     store = SessionStore()
     active_skill = registry.activate("demo-skill")
-    active_skill.reload_on_next_use = False
     store.save(
         "resume-skills",
         [Message.user("old"), Message.assistant("answer")],
@@ -59,10 +58,11 @@ def test_resume_survives_invalid_skill_directory(
         provider_name="codex",
         model_id="gpt-5.4",
     )
-    if mutation == "missing_file":
+    if mutation == "deleted":
         skill_file.unlink()
+        skill_dir.rmdir()
     else:
-        skill_dir.rename(skill_dir.with_name("renamed-skill"))
+        skill_dir.rename(tmp_path / "archived-skill")
 
     stdout = CaptureStream()
     stderr = CaptureStream()
@@ -80,7 +80,6 @@ def test_resume_survives_invalid_skill_directory(
     )
 
     assert exit_code == 0
-    assert "1 skill load failure(s)" in stdout.getvalue()
     assert "ok" in stdout.getvalue()
     assert any("Be durable." in prompt for prompt in seen_prompts)
     assert "Invalid skill directory" not in stderr.getvalue()
@@ -90,7 +89,7 @@ def test_resume_survives_invalid_skill_directory(
     assert "Be durable." in saved.active_skills[0].content
 
 
-def test_resume_clears_unavailable_legacy_active_skill(
+def test_resume_preserves_unavailable_legacy_active_skill(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -131,4 +130,6 @@ def test_resume_clears_unavailable_legacy_active_skill(
     )
 
     assert exit_code == 0
-    assert store.load("legacy-skill").active_skills == []
+    saved = store.load("legacy-skill")
+    assert len(saved.active_skills) == 1
+    assert saved.active_skills[0].name == "removed-skill"

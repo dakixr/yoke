@@ -507,6 +507,9 @@ def _handle_skill_load(
 ) -> tuple[bool, str | None]:
     """Activate a discovered skill from a slash command."""
     from yoke.agent.loop import RuntimeAgent
+    from yoke.agent.loop import ConversationEntryHistory
+    from yoke.agent.skills.context import skill_conversation_entry
+    from yoke.agent.state import active_branch_entries
     from yoke.cli.render import print_scrollback_notice
 
     skill_request = command.strip()[len("/skill") :].strip()
@@ -528,12 +531,23 @@ def _handle_skill_load(
         print_scrollback_notice(console, f"Unknown skill: {skill_name}")
         return False, None
     agent.active_skills = activation.active_skills
-    persist_session_state(active_session, agent, messages)
-    if activation.reloaded:
-        print_scrollback_notice(
-            console, f"Skill already active; reloading next use: {skill_name}"
+    branch_entries = (
+        active_branch_entries(
+            active_session.record.conversation_entries,
+            leaf_id=active_session.record.leaf_id,
         )
-        return True, extra_prompt or None
+        or []
+    )
+    parent_id = branch_entries[-1].id if branch_entries else None
+    for skill in activation.activated_skills:
+        entry = skill_conversation_entry(skill, parent_id=parent_id)
+        branch_entries.append(entry)
+        parent_id = entry.id
+    agent.load_conversation(
+        ConversationEntryHistory(branch_entries),
+        active_skills=activation.active_skills,
+    )
+    persist_session_state(active_session, agent, messages)
     print_scrollback_notice(console, f"Activated skill: {skill_name}")
     return True, extra_prompt or None
 

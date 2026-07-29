@@ -476,8 +476,9 @@ Yoke ships with two built-in skills:
 - `create-skill` scaffolds repo-local, global, or custom-rooted skills with
   `yoke skills init`, then applies predictability and no-op checks.
 - `yoke-subagents` provides async SDK orchestration workflows for research,
-  discovery, bounded fan-out, coder/reviewer loops, and merge handoffs. Its
-  reference files use Yoke's actual provider, capability, and lifecycle APIs.
+  discovery, planning, bounded fan-out, coder/reviewer loops, coverage review,
+  and merge handoffs. Its reference files include complete async templates and
+  use Yoke's actual provider, capability, and agent lifecycle APIs.
 
 ### Using skills from the CLI
 
@@ -500,19 +501,15 @@ Place skill folders inside these directories and they'll be available by name.
 
 During a session the agent can also activate skills itself when the `skill`
 tool is available. Manual activation with `/skill <name>` and model activation
-through the `skill` tool use the same activation semantics: existing skills are
-not duplicated, reloading marks the skill to send its canonical instructions on
-the next model call, and active skills are preserved when additional skills are
-loaded.
+through the `skill` tool use the same event-based semantics: each activation
+loads the canonical `SKILL.md`, records a unique skill event in the conversation,
+and includes the skill directory's current file list. Re-activating a skill
+appends a fresh event instead of maintaining separate reload state.
 
-Activated skills store an instruction snapshot in the session. Resuming a
-session therefore does not depend on the original skill directory still being
-present: yoke refreshes a saved skill from the current registry when possible,
-falls back to its snapshot after a move or deletion, and safely removes legacy
-skill state that has neither a current source nor a snapshot. Invalid or
-half-deleted skill directories are isolated during normal runtime startup and
-reported in the tool discovery summary instead of preventing resume. Use
-`yoke skills list` for strict validation and the full repairable error.
+Activated content is cached in session state, so a resumed conversation keeps
+the instructions it actually used even if the original skill directory later
+moves or disappears. Skill events remain part of the conversation tree and are
+not rebuilt on every model call.
 
 You can also activate a skill and send the next prompt in one line by placing
 the prompt after the skill name. A semicolon separator is also supported:

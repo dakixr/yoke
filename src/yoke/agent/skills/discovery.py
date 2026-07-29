@@ -100,7 +100,7 @@ def load_skill(root: Path) -> SkillSpec:
             f"Invalid skill directory `{root}`. Expected a `SKILL.md` file."
         )
     try:
-        content = skill_md_path.read_text(encoding="utf-8")
+        content = skill_md_path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         raise SkillDiscoveryError(
             f"Could not read skill file `{skill_md_path}`: {exc}"
@@ -133,12 +133,7 @@ def load_skill(root: Path) -> SkillSpec:
         description=description,
         root=root.resolve(),
         skill_md_path=skill_md_path.resolve(),
-        file_paths=_skill_file_paths(root),
     )
-
-
-def _skill_file_paths(root: Path) -> list[str]:
-    return sorted(str(path.resolve()) for path in root.rglob("*") if path.is_file())
 
 
 def _parse_frontmatter(content: str, path: Path) -> dict[str, str]:

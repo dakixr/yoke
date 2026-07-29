@@ -8,6 +8,8 @@ from pydantic import Field
 from pydantic import PrivateAttr
 
 from yoke.agent.models import AgentContext
+from yoke.agent.models import Message
+from yoke.agent.prompting import render_active_skill_message
 from yoke.agent.skills.activation import activate_skills
 from yoke.agent.skills.registry import SkillRegistry
 from yoke.agent.tools.base import LocalTool
@@ -18,8 +20,8 @@ class SkillTool(LocalTool):
 
     name = "skill"
     description = (
-        "Load skills by name. Use this to activate reusable skill "
-        "instructions when they are relevant to the task."
+        "Activate skills by name. Each activation appends the skill's "
+        "canonical instructions and directory file list to the context."
     )
 
     load: list[str] = Field(default_factory=list)
@@ -39,7 +41,6 @@ class SkillTool(LocalTool):
             "ok": True,
             "requested": list(self.load),
             "loaded": [],
-            "reloaded": [],
             "missing": [],
             "active": [],
         }
@@ -61,6 +62,24 @@ class SkillTool(LocalTool):
         self._context["active_skills"] = list(context.active_skills)
         result["ok"] = activation.ok
         result["loaded"] = activation.loaded
-        result["reloaded"] = activation.reloaded
         result["missing"] = activation.missing
         result["active"] = activation.active_payload()
+
+    def pending_context_messages(
+        self,
+        result: dict[str, object],
+    ) -> list[Message]:
+        """Append activated skill instructions after the tool result."""
+        raw_requested = result.get("requested", [])
+        requested = raw_requested if isinstance(raw_requested, Sequence) else []
+        messages: list[Message] = []
+        seen: set[str] = set()
+        for raw_name in requested:
+            if not isinstance(raw_name, str):
+                continue
+            name = raw_name.strip()
+            if not name or name in seen or self._registry.get(name) is None:
+                continue
+            seen.add(name)
+            messages.append(render_active_skill_message(self._registry.activate(name)))
+        return messages

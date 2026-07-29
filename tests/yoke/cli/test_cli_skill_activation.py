@@ -52,7 +52,7 @@ def test_interactive_cli_can_activate_skill_with_slash_command(
     assert "Activated skill: code-review" in output
 
 
-def test_interactive_cli_marks_active_skill_for_reload_when_reactivated(
+def test_interactive_cli_appends_fresh_event_when_skill_reactivated(
     tmp_path: Path,
 ) -> None:
     from yoke.agent.skills.registry import load_skill_registry
@@ -73,7 +73,6 @@ def test_interactive_cli_marks_active_skill_for_reload_when_reactivated(
         available_skills=registry.skills,
         active_skills=[active_skill],
     )
-    active_skill.reload_on_next_use = False
     prompts = iter(["/skill code-review", "quit"])
 
     def fake_input(_: object = "") -> str:
@@ -97,11 +96,17 @@ def test_interactive_cli_marks_active_skill_for_reload_when_reactivated(
     saved = active_session.store.load(active_session.id)
     output = stdout.getvalue()
     assert exit_code == 0
-    assert [skill.name for skill in agent.active_skills] == ["code-review"]
-    assert [skill.name for skill in saved.active_skills] == ["code-review"]
-    assert agent.active_skills[0].reload_on_next_use is True
-    assert saved.active_skills[0].reload_on_next_use is True
-    assert "Skill already active; reloading next use: code-review" in output
+    assert [skill.name for skill in agent.active_skills] == [
+        "code-review",
+        "code-review",
+    ]
+    assert [skill.name for skill in saved.active_skills] == [
+        "code-review",
+        "code-review",
+    ]
+    assert saved.conversation_entries[-1].kind == "skill_event"
+    assert saved.conversation_entries[-1].metadata["skill_name"] == "code-review"
+    assert "Activated skill: code-review" in output
 
 
 def test_interactive_cli_runs_prompt_after_skill_slash_command_semicolon(

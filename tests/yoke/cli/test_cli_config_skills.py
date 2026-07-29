@@ -111,7 +111,6 @@ def test_session_store_persists_skill_state(tmp_path: Path) -> None:
         name="demo-skill",
         description="Demo skill.",
         source_path=str(tmp_path / "skills" / "demo-skill" / "SKILL.md"),
-        reload_on_next_use=False,
     )
 
     store.save(

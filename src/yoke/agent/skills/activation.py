@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import secrets
 
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.registry import SkillRegistry
@@ -15,8 +16,8 @@ class SkillActivationResult:
 
     active_skills: list[ActiveSkill]
     loaded: list[str]
-    reloaded: list[str]
     missing: list[str]
+    activated_skills: list[ActiveSkill]
 
     @property
     def ok(self) -> bool:
@@ -26,7 +27,7 @@ class SkillActivationResult:
     def active_payload(self) -> list[dict[str, object]]:
         """Return active skill state suitable for tool result JSON."""
         return [
-            skill.model_dump(mode="json", exclude={"content"})
+            skill.model_dump(mode="json", exclude={"activation_id"})
             for skill in sorted(self.active_skills, key=lambda item: item.name)
         ]
 
@@ -39,10 +40,9 @@ def activate_skills(
 ) -> SkillActivationResult:
     """Apply skill activation requests to the current active skill state."""
     next_active = [skill.model_copy(deep=True) for skill in active_skills]
-    active_by_name = {skill.name: skill for skill in next_active}
     loaded: list[str] = []
     missing: list[str] = []
-    reloaded: list[str] = []
+    activated_skills: list[ActiveSkill] = []
     seen_requests: set[str] = set()
 
     for raw_name in names:
@@ -50,48 +50,18 @@ def activate_skills(
         if not name or name in seen_requests:
             continue
         seen_requests.add(name)
-        existing = active_by_name.get(name)
         if registry.get(name) is None:
-            if (
-                existing is not None
-                and isinstance(existing.content, str)
-                and existing.content.strip()
-            ):
-                existing.reload_on_next_use = True
-                reloaded.append(name)
-                continue
             missing.append(name)
             continue
-        try:
-            activated = registry.activate(name)
-        except ValueError:
-            if (
-                existing is not None
-                and isinstance(existing.content, str)
-                and existing.content.strip()
-            ):
-                existing.reload_on_next_use = True
-                reloaded.append(name)
-                continue
-            missing.append(name)
-            continue
-        if existing is not None:
-            activated.reload_on_next_use = True
-            next_active[next_active.index(existing)] = activated
-            active_by_name[name] = activated
-            reloaded.append(name)
-            continue
-        active_skill = activated
-        active_skill.reload_on_next_use = True
-        if active_skill.is_inline:
-            active_skill.content = active_skill.load_content()
+        active_skill = registry.activate(name)
+        active_skill.activation_id = secrets.token_hex(8)
+        activated_skills.append(active_skill.model_copy(deep=True))
         next_active.append(active_skill)
-        active_by_name[name] = active_skill
         loaded.append(name)
 
     return SkillActivationResult(
         active_skills=next_active,
         loaded=loaded,
-        reloaded=reloaded,
         missing=missing,
+        activated_skills=activated_skills,
     )

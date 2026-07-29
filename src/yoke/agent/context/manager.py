@@ -30,6 +30,8 @@ from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import TokenUsage
 from yoke.agent.prompting import PromptBuilder
+from yoke.agent.skills.context import skill_message_conversation_entry
+from yoke.agent.skills.context import skill_name_from_message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
 from yoke.agent.usage import compact_usage_payload
@@ -152,6 +154,43 @@ class ContextManager:
                 message=copied,
                 parent_id=parent_id,
                 metadata=_message_entry_metadata(copied),
+            )
+        )
+        context.messages = self.transcript_messages(context)
+
+    def append_skill_message(self, context: AgentContext, message: Message) -> None:
+        """Append activated skill instructions to the context log."""
+        copied = message.model_copy(deep=True)
+        skill_name = skill_name_from_message(copied)
+        existing_activation_ids = {
+            activation_id
+            for entry in context.conversation_log.entries
+            if entry.kind == "skill_event"
+            and isinstance(
+                activation_id := entry.metadata.get("skill_activation_id"), str
+            )
+        }
+        activation_id = next(
+            (
+                skill.activation_id
+                for skill in reversed(context.active_skills)
+                if skill.name == skill_name
+                and skill.activation_id
+                and skill.activation_id not in existing_activation_ids
+            ),
+            None,
+        )
+        parent_id = (
+            context.conversation_log.entries[-1].id
+            if context.conversation_log.entries
+            else None
+        )
+        context.conversation_log.entries.append(
+            skill_message_conversation_entry(
+                copied,
+                parent_id=parent_id,
+                skill_name=skill_name,
+                skill_activation_id=activation_id,
             )
         )
         context.messages = self.transcript_messages(context)

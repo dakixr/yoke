@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
-from pydantic import Field
 
 
 class SkillSpec(BaseModel):
@@ -17,7 +16,6 @@ class SkillSpec(BaseModel):
     description: str
     root: Path
     skill_md_path: Path
-    file_paths: list[str] = Field(default_factory=list)
 
     def load_content(self) -> str:
         """Read and return the full content of the SKILL.md file."""
@@ -35,11 +33,10 @@ class ActiveSkill(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
+    activation_id: str | None = None
     description: str
     source_path: str
     content: str | None = None
-    reload_on_next_use: bool = True
-    file_paths: list[str] = Field(default_factory=list)
 
     @property
     def is_inline(self) -> bool:
@@ -48,18 +45,37 @@ class ActiveSkill(BaseModel):
 
     def load_content(self) -> str:
         """Return canonical instructions for this active skill."""
-        if self.is_inline:
-            if isinstance(self.content, str) and self.content.strip():
-                return self.content
-            raise ValueError(f"Inline skill `{self.name}` is missing embedded content.")
         if isinstance(self.content, str) and self.content.strip():
             return self.content
+        if self.is_inline:
+            raise ValueError(f"Inline skill `{self.name}` is missing embedded content.")
         if not self.source_path.strip():
             raise ValueError(f"Active skill `{self.name}` is missing a source path.")
         try:
             return Path(self.source_path).read_text(encoding="utf-8")
         except OSError as exc:
-            raise ValueError(
-                f"Could not read active skill `{self.name}` from "
-                f"`{self.source_path}`: {exc}"
-            ) from exc
+            return (
+                f"Skill content unavailable for `{self.name}`. The original "
+                f"skill file `{self.source_path}` could not be read: {exc}"
+            )
+
+    def cache_content(self) -> None:
+        """Store canonical instructions inline for durable session resumes."""
+        self.content = self.load_content()
+
+    def prepare_for_prompt(self) -> str:
+        """Return instructions and cache refreshed content for resumes."""
+        content = self.load_content()
+        self.content = content
+        return content
+
+    def directory_file_listing(self) -> list[str]:
+        """Return full paths for files in the skill directory."""
+        if self.is_inline or not self.source_path.strip():
+            return []
+        root = Path(self.source_path).parent
+        try:
+            paths = [path for path in root.rglob("*") if path.is_file()]
+        except OSError:
+            return []
+        return [str(path) for path in sorted(paths)]

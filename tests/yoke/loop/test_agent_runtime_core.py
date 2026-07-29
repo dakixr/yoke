@@ -31,7 +31,6 @@ def test_agent_fork_duplicates_runtime_configuration(tmp_path: Path) -> None:
         name="demo",
         description="Demo skill.",
         source_path=str(tmp_path / "skills" / "demo" / "SKILL.md"),
-        reload_on_next_use=False,
     )
     available_skill = SkillSpec(
         name="demo",
@@ -72,7 +71,6 @@ def test_agent_fork_duplicates_runtime_configuration(tmp_path: Path) -> None:
             name="other",
             description="Other skill.",
             source_path=str(tmp_path / "skills" / "other" / "SKILL.md"),
-            reload_on_next_use=False,
         )
     )
 
@@ -207,7 +205,7 @@ def test_skill_tool_uses_current_context_active_skills(tmp_path: Path) -> None:
     ]
 
 
-def test_skill_tool_reloads_active_skill_without_duplicate(tmp_path: Path) -> None:
+def test_skill_tool_reactivation_appends_fresh_skill_event(tmp_path: Path) -> None:
     from yoke.agent.skills.registry import load_skill_registry
     from yoke.agent.tools import SkillTool
 
@@ -244,7 +242,6 @@ def test_skill_tool_reloads_active_skill_without_duplicate(tmp_path: Path) -> No
 
     skill_tool = SkillTool.bind(skill_registry=registry, active_skills=[])
     manual_skill = registry.activate("manual-skill")
-    manual_skill.reload_on_next_use = False
     agent = RuntimeAgent(
         provider=SkillReloadingProvider(),
         tools=[skill_tool],
@@ -256,11 +253,22 @@ def test_skill_tool_reloads_active_skill_without_duplicate(tmp_path: Path) -> No
     result = agent.run("reload skill")
 
     assert result.status == "completed"
-    assert [skill.name for skill in agent.active_skills] == ["manual-skill"]
-    assert agent.active_skills[0].reload_on_next_use is False
+    assert [skill.name for skill in agent.active_skills] == [
+        "manual-skill",
+        "manual-skill",
+    ]
+    skill_events = [
+        entry
+        for entry in result.conversation_entries or []
+        if entry.kind == "skill_event"
+    ]
+    assert len(skill_events) == 2
+    assert skill_events[0].metadata["skill_name"] == "manual-skill"
+    assert skill_events[1].metadata["skill_name"] == "manual-skill"
+    assert skill_events[1].metadata["skill_activation_id"] is not None
     tool_messages = [message for message in result.messages if message.role == "tool"]
     assert tool_messages
-    assert '"reloaded": ["manual-skill"]' in (tool_messages[0].text_content() or "")
+    assert '"loaded": ["manual-skill"]' in (tool_messages[0].text_content() or "")
 
 
 def test_agent_fork_clones_conversation_state(tmp_path: Path) -> None:

@@ -78,10 +78,6 @@ def complete_iteration_model(
             agent._tool_definitions(),
             cancel_requested=stop_requested,
         )
-        for skill in context.active_skills:
-            if skill.is_inline:
-                continue
-            skill.reload_on_next_use = False
     except ProviderCancelledError as exc:
         raise AgentStoppedError() from exc
     except ProviderError as exc:
@@ -99,9 +95,6 @@ def complete_iteration_model(
             except ProviderCancelledError as cancelled:
                 raise AgentStoppedError() from cancelled
             if recovered is not None:
-                for skill in context.active_skills:
-                    if not skill.is_inline:
-                        skill.reload_on_next_use = False
                 return recovered
         exc.partial_messages = context.messages
         raise
