@@ -10,7 +10,6 @@ import secrets
 import ssl
 import time
 from collections.abc import Callable
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from typing import Protocol
@@ -40,7 +39,6 @@ from yoke.ai.providers.codex.subscription import DEFAULT_YOKE_ORIGINATOR
 from yoke.ai.providers.codex.subscription import CodexSubscriptionConfig
 from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
 from yoke.ai.providers.codex.subscription import OAuthCredentials
-from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import default_reasoning_effort_for_model_id
 from yoke.ai.providers.codex.subscription import exception_summary
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
@@ -50,6 +48,7 @@ from yoke.ai.providers.codex.subscription import message_phase_from_completed_re
 from yoke.ai.providers.codex.subscription import normalize_message_phase
 from yoke.ai.providers.codex.subscription import originator_for_model
 from yoke.ai.providers.codex.subscription import uses_responses_lite
+from yoke.ai.providers.codex.response_state import CodexResponseChain
 from yoke.ai.providers.usage import parse_token_usage
 
 PROVIDER_NAME = "codex"
@@ -171,6 +170,7 @@ class CodexWebSocketParseState(BaseModel):
     response_id: str | None = None
     usage_payload: object | None = None
     phase: MessagePhase | None = None
+    output_items: list[dict[str, Any]] = []
 
 
 class CodexWebSocketConnection(Protocol):
@@ -192,17 +192,15 @@ class CodexProvider(CodexSubscriptionProvider):
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         super().__init__(config, sleep=sleep)
-        self._websocket_factory = websocket_factory or connect
+        self._websocket_factory = websocket_factory or cast(
+            Callable[..., CodexWebSocketConnection],
+            connect,
+        )
         self._websocket: CodexWebSocketConnection | None = None
         self._websocket_credentials: OAuthCredentials | None = None
         self._websocket_auth_profile: str | None = None
         self._turn_state: str | None = None
-        self._last_request_payload: dict[str, object] | None = None
-        self._last_response_id: str | None = None
-        self._last_response_items: list[dict[str, Any]] = []
-        self._last_response_account_id: str | None = None
-        self._last_response_auth_profile: str | None = None
-        self._pending_response_id: str | None = None
+        self._response_chain = CodexResponseChain()
 
     @property
     def config(self) -> CodexConfig:
@@ -241,6 +239,7 @@ class CodexProvider(CodexSubscriptionProvider):
                 websocket = self._fresh_websocket()
                 auth_profile = self._websocket_auth_profile or self._active_auth_profile
                 websocket_payload = self._prepare_websocket_payload(payload)
+                continuity_mode = self._response_chain.prepared_mode
                 try:
                     websocket.send(json.dumps(websocket_payload, separators=(",", ":")))
                 except ConnectionClosed as exc:
@@ -266,6 +265,7 @@ class CodexProvider(CodexSubscriptionProvider):
                     prompt_cache_key_prefix=self._prompt_cache_key[:12],
                     used_previous_response_id="previous_response_id"
                     in websocket_payload,
+                    continuity_mode=continuity_mode,
                     **request_metrics,
                 )
                 return message
@@ -343,7 +343,7 @@ class CodexProvider(CodexSubscriptionProvider):
                 last_error = exc
                 if isinstance(exc, CodexPreviousResponseNotFoundError):
                     self._close_websocket(clear_credentials=False)
-                    self._reset_response_link()
+                    self._response_chain.drop_anchor()
                     if attempt >= self.config.max_retries:
                         break
                     self._log_event(
@@ -421,7 +421,19 @@ class CodexProvider(CodexSubscriptionProvider):
 
     def close(self) -> None:
         self._close_websocket()
+        self._response_chain.reset()
         super().close()
+
+    def fork_for_turn(self) -> CodexProvider:
+        """Clone replayable response state without sharing a live WebSocket."""
+        forked = type(self)(
+            self.config.model_copy(deep=True),
+            websocket_factory=self._websocket_factory,
+            sleep=self._sleep,
+        )
+        forked._prompt_cache_key = self._prompt_cache_key
+        forked._response_chain = self._response_chain.fork_for_new_connection()
+        return forked
 
     def set_session_id(self, session_id: str) -> None:
         """Switch cache affinity and response chaining to a new session."""
@@ -430,12 +442,16 @@ class CodexProvider(CodexSubscriptionProvider):
         if self._prompt_cache_key == previous_key:
             return
         self._close_websocket()
-        self._reset_response_link()
+        self._response_chain.reset()
 
     def _request_payload(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> dict[str, object]:
         payload = super()._request_payload(messages, tools)
+        reasoning = payload.get("reasoning")
+        if isinstance(reasoning, dict):
+            typed_reasoning = cast(dict[str, object], reasoning)
+            typed_reasoning["context"] = "all_turns"
         if not uses_responses_lite(self.config.model):
             return payload
         metadata = payload.get("client_metadata")
@@ -449,67 +465,25 @@ class CodexProvider(CodexSubscriptionProvider):
     def _prepare_websocket_payload(
         self, payload: dict[str, object]
     ) -> dict[str, object]:
-        websocket_payload = deepcopy(payload)
-        previous_request = self._last_request_payload
-        previous_response_id = self._last_response_id
-        if previous_request is None or not previous_response_id:
-            return websocket_payload
         credentials = self._websocket_credentials
         current_account_id = credentials.account_id if credentials is not None else None
-        selected_auth_profile = self._selected_auth_profile()
-        if (
-            self._last_response_account_id != current_account_id
-            or self._last_response_auth_profile != self._websocket_auth_profile
-            or (
-                selected_auth_profile is not None
-                and self._last_response_auth_profile != selected_auth_profile
-            )
-        ):
-            return websocket_payload
-        if not response_request_properties_match(previous_request, payload):
-            return websocket_payload
-        previous_input = previous_request.get("input")
-        current_input = payload.get("input")
-        if not isinstance(previous_input, list) or not isinstance(current_input, list):
-            return websocket_payload
-        after_previous_input = strip_list_prefix(current_input, previous_input)
-        if after_previous_input is None:
-            return websocket_payload
-        incremental_items = strip_list_prefix(
-            after_previous_input,
-            self._last_response_items,
+        return self._response_chain.prepare(
+            payload,
+            account_id=current_account_id,
+            auth_profile=self._websocket_auth_profile,
+            selected_auth_profile=self._selected_auth_profile(),
         )
-        if incremental_items is None:
-            return websocket_payload
-        websocket_payload["previous_response_id"] = previous_response_id
-        websocket_payload["input"] = incremental_items
-        return websocket_payload
 
     def _remember_successful_response(
         self, payload: dict[str, object], message: Message
     ) -> None:
-        response_id = self._pending_response_id
-        self._pending_response_id = None
-        if not response_id:
-            self._reset_response_link()
-            return
-        self._last_request_payload = deepcopy(payload)
-        _, response_items = convert_messages([message])
-        self._last_response_id = response_id
-        self._last_response_items = response_items
         credentials = self._websocket_credentials
-        self._last_response_account_id = (
-            credentials.account_id if credentials is not None else None
+        self._response_chain.remember(
+            payload,
+            message,
+            account_id=credentials.account_id if credentials is not None else None,
+            auth_profile=self._websocket_auth_profile,
         )
-        self._last_response_auth_profile = self._websocket_auth_profile
-
-    def _reset_response_link(self) -> None:
-        self._last_request_payload = None
-        self._last_response_id = None
-        self._last_response_items = []
-        self._last_response_account_id = None
-        self._last_response_auth_profile = None
-        self._pending_response_id = None
 
     def _request_headers(self, credentials: OAuthCredentials) -> dict[str, str]:
         request_id = secrets.token_hex(16)
@@ -598,17 +572,14 @@ class CodexProvider(CodexSubscriptionProvider):
         self._websocket_credentials = credentials
         self._websocket_auth_profile = self._active_auth_profile
         try:
-            websocket = cast(
-                CodexWebSocketConnection,
-                self._websocket_factory(
-                    self._responses_url(),
-                    additional_headers=self._request_headers(credentials),
-                    open_timeout=self.config.timeout_seconds,
-                    close_timeout=min(self.config.timeout_seconds, 10),
-                    ping_interval=self.config.websocket_ping_interval_seconds,
-                    ping_timeout=self.config.websocket_ping_timeout_seconds,
-                    ssl=ssl_context_for_websocket_url(self._responses_url()),
-                ),
+            websocket = self._websocket_factory(
+                self._responses_url(),
+                additional_headers=self._request_headers(credentials),
+                open_timeout=self.config.timeout_seconds,
+                close_timeout=min(self.config.timeout_seconds, 10),
+                ping_interval=self.config.websocket_ping_interval_seconds,
+                ping_timeout=self.config.websocket_ping_timeout_seconds,
+                ssl=ssl_context_for_websocket_url(self._responses_url()),
             )
             self._websocket = websocket
             return websocket
@@ -663,7 +634,7 @@ class CodexProvider(CodexSubscriptionProvider):
         cancel_requested: Callable[[], bool] | None = None,
     ) -> Message:
         state = CodexWebSocketParseState(text_parts=[], function_calls={})
-        self._pending_response_id = None
+        self._response_chain.clear_staged_response()
         deadline = time.monotonic() + self.config.timeout_seconds
         while True:
             if cancel_requested is not None and cancel_requested():
@@ -700,7 +671,10 @@ class CodexProvider(CodexSubscriptionProvider):
                     provider_name=self.provider_name,
                     model_id=self.config.model,
                 )
-                self._pending_response_id = state.response_id
+                self._response_chain.stage_response(
+                    response_id=state.response_id,
+                    output_items=state.output_items,
+                )
                 return message
 
     def _capture_turn_state(self, event: dict[str, Any]) -> None:
@@ -723,11 +697,11 @@ class CodexProvider(CodexSubscriptionProvider):
     def _close_websocket(self, *, clear_credentials: bool = True) -> None:
         websocket = self._websocket
         self._websocket = None
+        self._response_chain.drop_anchor()
         if clear_credentials:
             self._websocket_credentials = None
             self._websocket_auth_profile = None
             self._turn_state = None
-            self._reset_response_link()
         if websocket is None:
             return
         try:
@@ -793,27 +767,6 @@ def ssl_context_for_websocket_url(url: str) -> ssl.SSLContext | None:
     return context
 
 
-def response_request_properties_match(
-    previous: dict[str, object], current: dict[str, object]
-) -> bool:
-    ignored_keys = {"input", "client_metadata", "previous_response_id"}
-    previous_properties = {
-        key: value for key, value in previous.items() if key not in ignored_keys
-    }
-    current_properties = {
-        key: value for key, value in current.items() if key not in ignored_keys
-    }
-    return previous_properties == current_properties
-
-
-def strip_list_prefix(items: list[Any], prefix: list[Any]) -> list[Any] | None:
-    if len(prefix) > len(items):
-        return None
-    if items[: len(prefix)] != prefix:
-        return None
-    return items[len(prefix) :]
-
-
 def handle_websocket_event(
     event: dict[str, Any], state: CodexWebSocketParseState
 ) -> None:
@@ -842,11 +795,17 @@ def handle_websocket_event(
     elif event_type == "response.output_item.done":
         item = event.get("item")
         if isinstance(item, dict):
+            state.output_items.append(item)
             handle_websocket_output_item(item, state)
     elif event_type in {"response.completed", "response.done"}:
         response_payload = event.get("response")
         if isinstance(response_payload, dict):
             state.completed_payload = response_payload
+            completed_output = response_payload.get("output")
+            if not state.output_items and isinstance(completed_output, list):
+                state.output_items.extend(
+                    item for item in completed_output if isinstance(item, dict)
+                )
             response_id = response_payload.get("id")
             if isinstance(response_id, str) and response_id:
                 state.response_id = response_id

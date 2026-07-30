@@ -159,7 +159,10 @@ Provider plugins with mutable request/session state can implement
 `fork_for_turn()` to return an independent provider carrying the state needed
 for the next request. Providers exposing a cloneable `config` are reconstructed
 automatically; providers that expose neither hook remain compatible but may be
-shared, so their own implementation must support concurrent calls safely.
+shared, so their own implementation must support concurrent calls safely. The
+Codex WebSocket provider copies its in-memory encrypted Responses replay journal
+while dropping the connection-local `previous_response_id`, so the fork starts
+on a new socket and can continue by stateless encrypted replay.
 
 `Agent` is stateful. Reuse the same object to keep conversation context across
 prompts. Call `agent.close()` when finished to release its provider, MCP
