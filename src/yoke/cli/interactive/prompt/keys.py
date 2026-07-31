@@ -82,6 +82,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     def _insert_newline(event) -> None:
         event.current_buffer.insert_text("\n")
 
+    @key_bindings.add("escape", "v")
     @key_bindings.add("c-v")
     def _paste_image_or_text(event) -> None:
         attachment = paste_image_from_clipboard()
