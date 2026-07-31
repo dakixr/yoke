@@ -69,8 +69,27 @@ def test_opencode_go_catalog_includes_kimi_k2_7_code() -> None:
     assert kimi.default_thinking_level is None
 
 
+def test_opencode_go_catalog_includes_gpt_5_6_luna() -> None:
+    models = {model.id: model for model in list_opencode_go_models(None)}
+
+    luna = models["gpt-5.6-luna"]
+    assert luna.display_name == "GPT-5.6 Luna"
+    assert luna.supports_image_inputs is True
+    assert luna.context_window_tokens == 400_000
+    assert luna.thinking_levels == (
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
+    assert luna.default_thinking_level == "medium"
+
+
 def test_opencode_go_catalog_matches_current_reasoning_efforts() -> None:
     expected = {
+        "gpt-5.6-luna": ("none", "low", "medium", "high", "xhigh", "max"),
         "glm-5.2": (),
         "grok-4.5": (),
         "kimi-k2.7-code": (),

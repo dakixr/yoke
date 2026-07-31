@@ -48,6 +48,7 @@ from yoke.ai.providers.openai_compat import (
     normalize_openai_request_messages,
 )
 from yoke.ai.providers.usage import parse_token_usage
+from yoke.ai.providers.responses import complete_response
 
 PROVIDER_NAME = "opencode-go"
 AUTH_FILE_KEY = "opencode-go"
@@ -60,8 +61,10 @@ DEEPSEEK_THINKING_LEVELS = ("high", "max")
 GLM_THINKING_LEVELS = ()
 GROK_THINKING_LEVELS = ()
 KIMI_THINKING_LEVELS = ()
+LUNA_THINKING_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
 
 MODEL_PROTOCOLS = {
+    "gpt-5.6-luna": "responses",
     "glm-5.2": "openai",
     "deepseek-v4-flash": "openai",
     "grok-4.5": "openai",
@@ -70,6 +73,14 @@ MODEL_PROTOCOLS = {
 }
 
 MODEL_CATALOG = build_model_catalog(
+    ProviderModelInfo(
+        id="gpt-5.6-luna",
+        display_name="GPT-5.6 Luna",
+        context_window_tokens=400_000,
+        thinking_levels=LUNA_THINKING_LEVELS,
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
     ProviderModelInfo(
         id="glm-5.2",
         display_name="GLM-5.2",
@@ -132,6 +143,7 @@ ALL_THINKING_LEVELS = tuple(
             GLM_THINKING_LEVELS,
             GROK_THINKING_LEVELS,
             KIMI_THINKING_LEVELS,
+            LUNA_THINKING_LEVELS,
         )
         for level in levels
     )
@@ -344,6 +356,12 @@ class OpenCodeGoProvider(Provider):
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
         self._sync_openai_config()
+        if MODEL_PROTOCOLS.get(self.config.model) == "responses":
+            return self._complete_responses(
+                messages,
+                tools,
+                cancel_requested=lambda: False,
+            )
         if MODEL_PROTOCOLS.get(self.config.model) == "anthropic":
             return self._complete_anthropic(
                 messages,
@@ -360,6 +378,15 @@ class OpenCodeGoProvider(Provider):
         cancel_requested: Callable[[], bool],
     ) -> Message:
         self._sync_openai_config()
+        if MODEL_PROTOCOLS.get(self.config.model) == "responses":
+            return self._with_request_cancellation(
+                lambda: self._complete_responses(
+                    messages,
+                    tools,
+                    cancel_requested=cancel_requested,
+                ),
+                cancel_requested=cancel_requested,
+            )
         if MODEL_PROTOCOLS.get(self.config.model) == "anthropic":
             return self._with_request_cancellation(
                 lambda: self._complete_anthropic(
@@ -387,6 +414,30 @@ class OpenCodeGoProvider(Provider):
         if reasoning_effort == "thinking":
             reasoning_effort = None
         self._openai_provider.config.reasoning_effort = reasoning_effort
+
+    def _complete_responses(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        return complete_response(
+            client=self._client,
+            url=f"{OPENAI_BASE_URL}/responses",
+            api_key=self.config.api_key,
+            provider_name=PROVIDER_NAME,
+            model=self.config.model,
+            messages=messages,
+            tools=tools,
+            reasoning_effort=self.config.reasoning_effort,
+            max_output_tokens=_max_output_tokens(self.config.model),
+            max_retries=self.config.max_retries,
+            retry_backoff_seconds=self.config.retry_backoff_seconds,
+            max_retry_backoff_seconds=self.config.max_retry_backoff_seconds,
+            cancel_requested=cancel_requested,
+            sleep=self._sleep,
+        )
 
     def _complete_anthropic(
         self,

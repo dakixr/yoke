@@ -32,6 +32,7 @@ yoke --model codex:gpt-5.6-sol "..."
 yoke --model codex:gpt-5.6-terra "..."
 yoke --model codex:gpt-5.6-luna "..."
 yoke --model codex:gpt-5.4-mini "..."
+yoke --model opencode-go:gpt-5.6-luna "..."
 yoke --model opencode-go:glm-5.2 "..."
 yoke --model opencode-go:kimi-k2.7-code "..."
 yoke --model opencode-go:deepseek-v4-pro "Review this repository and suggest refactors"
@@ -149,10 +150,13 @@ had no timeout at all and could hang indefinitely on a stalled server.
 Each request also opens a fresh HTTP connection to avoid stale
 keep-alive sockets.
 
-OpenCode Go currently exposes maintained OpenAI-compatible models in yoke's
-built-in catalog, including the image-capable `grok-4.5` with its 500K context
-window. Deprecated OpenCode Go model entries such as GLM 5/5.1, Kimi K2.5/2.6,
-MiMo, MiniMax, and Qwen have been removed from the selectable inventory.
+OpenCode Go currently exposes maintained models in yoke's built-in catalog,
+including `gpt-5.6-luna`. Luna uses OpenCode Go's Responses API, supports image
+inputs and a 400K context window, and advertises reasoning levels from `none`
+through `max` with `medium` as its default. The other maintained Go models use
+their documented OpenAI-compatible chat-completions endpoints. Deprecated
+OpenCode Go model entries such as GLM 5/5.1, Kimi K2.5/2.6, MiMo, MiniMax, and
+Qwen have been removed from the selectable inventory.
 
 If you omit the model argument from `yoke models set`, yoke opens an interactive
 selector when running in a TTY and otherwise falls back to a numbered prompt.
@@ -258,6 +262,9 @@ turn.
   levels. Models without advertised levels leave thinking effort at the default.
 - OpenCode Go chat-completions requests include a high output-token cap so
   large tool calls are less likely to be truncated by provider defaults.
+- OpenCode Go `gpt-5.6-luna` requests use the provider's `/v1/responses`
+  endpoint, including Responses-format tools, tool outputs, reasoning settings,
+  and image inputs.
 - Persisted provider reasoning effort is normalized on resume; provider configs
   accept saved effort values even when a model catalog omits explicit thinking
   levels.
