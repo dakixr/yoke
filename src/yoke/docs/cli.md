@@ -94,6 +94,8 @@ not advertised here because the Codex ChatGPT transport rejects that alias.
 Yoke intentionally budgets each GPT-5.6 tier at 400,000 context tokens, even
 when the backend advertises a larger window, so compaction begins without using
 the full one-million-token family window.
+The GPT-5.6 Codex tiers advertise reasoning levels from `none` through `max`,
+including `gpt-5.6-luna`.
 `gpt-5.6-luna` uses the backend's Responses Lite contract. Yoke marks each Luna
 WebSocket request with the required per-request routing metadata and applies the
 matching reasoning-context and tool-parallelism settings; the streaming HTTP

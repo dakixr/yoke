@@ -135,7 +135,7 @@ def cli(
             "--reasoning-effort",
             help=(
                 "Reasoning effort for supported chat-completions models: "
-                "none, low, medium, high, or xhigh."
+                "none, low, medium, high, xhigh, or max where supported."
             ),
         ),
     ] = None,
@@ -242,7 +242,7 @@ def resume(
             "--reasoning-effort",
             help=(
                 "Reasoning effort for supported chat-completions models: "
-                "none, low, medium, high, or xhigh."
+                "none, low, medium, high, xhigh, or max where supported."
             ),
         ),
     ] = None,
@@ -310,7 +310,7 @@ def continue_command(
             "--reasoning-effort",
             help=(
                 "Reasoning effort for supported chat-completions models: "
-                "none, low, medium, high, or xhigh."
+                "none, low, medium, high, xhigh, or max where supported."
             ),
         ),
     ] = None,

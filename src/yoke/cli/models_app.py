@@ -5,26 +5,28 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Annotated
-from typing import cast
+from typing import Annotated, cast
 
 import typer
 from rich.table import Table
 from rich.text import Text
 
-from yoke.cli.providers.catalog import ProviderModelChoice
 from yoke.cli.config.args import CLIArgs
 from yoke.cli.config.default_model import load_effective_yoke_config
 from yoke.cli.path_display import format_root_label
-from yoke.cli.providers.catalog import list_all_provider_model_choices
-from yoke.cli.providers.catalog import parse_provider_model_identifier
-from yoke.cli.render import OutputStream
-from yoke.cli.render import build_console
+from yoke.cli.providers.catalog import (
+    ProviderModelChoice,
+    list_all_provider_model_choices,
+    parse_provider_model_identifier,
+)
+from yoke.cli.render import OutputStream, build_console
 from yoke.cli.runtime.selector.format import fit_selector_cell
-from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
-from yoke.cli.runtime.selector.ui import SelectorTableColumns
-from yoke.cli.runtime.selector.ui import select_table_item_interactive
-from yoke.cli.tools.policy import PiConfig
+from yoke.cli.runtime.selector.ui import (
+    SelectorTableColumns,
+    can_use_keyboard_selector,
+    select_table_item_interactive,
+)
+from yoke.cli.tools.policy import YokeConfig
 
 DEFAULT_ROOT = Path.cwd().absolute()
 
@@ -42,11 +44,11 @@ def _config_path(*, root: Path, global_scope: bool, repo_scope: bool) -> Path:
     return Path.home() / ".yoke" / "config.json"
 
 
-def _load_config(path: Path) -> PiConfig:
+def _load_config(path: Path) -> YokeConfig:
     if not path.is_file():
-        return PiConfig()
+        return YokeConfig()
     try:
-        return PiConfig.model_validate_json(path.read_text(encoding="utf-8"))
+        return YokeConfig.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise ValueError(
             "Could not update default model because "
@@ -64,7 +66,7 @@ def _write_default_model_config(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            PiConfig(
+            YokeConfig(
                 tools=dict(config.tools),
                 default_model=default_model,
                 default_reasoning_effort=(
@@ -326,7 +328,7 @@ def models_set(
             "--reasoning-effort",
             help=(
                 "Persist the default reasoning effort alongside the default "
-                "model: none, low, medium, high, or xhigh."
+                "model: none, low, medium, high, xhigh, or max."
             ),
         ),
     ] = None,

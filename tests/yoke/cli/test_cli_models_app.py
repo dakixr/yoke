@@ -1,25 +1,23 @@
 from __future__ import annotations
 
 # ruff: noqa: D100, D103, S101
-
 from pathlib import Path
-from typing import Any
-from typing import Callable
-from typing import cast
+from typing import Any, Callable, cast
 
 import httpx
 import pytest
-from typer.testing import CliRunner
-from typer.testing import Result
+from typer.testing import CliRunner, Result
 
 from yoke.agent.models import Message
-from yoke.cli.main import app
-from yoke.cli.tools.policy import PiConfig
 from yoke.ai.providers.opencode_go import (
     OpenCodeGoConfig,
     OpenCodeGoProvider,
+)
+from yoke.ai.providers.opencode_go import (
     list_provider_models as list_opencode_go_models,
 )
+from yoke.cli.main import app
+from yoke.cli.tools.policy import YokeConfig
 
 
 def _invoke_models_set_with_home(
@@ -196,7 +194,7 @@ def test_models_set_writes_repo_default_model_and_preserves_tools(
     assert (
         "Set default_model=codex:gpt-5.4-mini in ~\\.yoke\\config.json" in result.stdout
     )
-    updated = PiConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
+    updated = YokeConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
     assert updated.default_model == "codex:gpt-5.4-mini"
     assert updated.tools["read"].value == "allow"
 
@@ -222,9 +220,33 @@ def test_models_set_persists_default_reasoning_effort(
     assert (
         "Set default_model=codex:gpt-5.4-mini default_reasoning_effort=high"
     ) in result.stdout
-    updated = PiConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
+    updated = YokeConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
     assert updated.default_model == "codex:gpt-5.4-mini"
     assert updated.default_reasoning_effort == "high"
+
+
+def test_models_set_persists_luna_max_reasoning_effort(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config_path = home / ".yoke" / "config.json"
+
+    result = _invoke_models_set_with_home(
+        tmp_path,
+        home,
+        "codex:gpt-5.6-luna",
+        "--reasoning-effort",
+        "max",
+        "--root",
+        str(tmp_path),
+    )
+
+    assert result.exit_code == 0
+    assert (
+        "Set default_model=codex:gpt-5.6-luna default_reasoning_effort=max"
+        in result.stdout
+    )
+    updated = YokeConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
+    assert updated.default_model == "codex:gpt-5.6-luna"
+    assert updated.default_reasoning_effort == "max"
 
 
 def test_models_set_supports_global_config_scope(tmp_path: Path, monkeypatch) -> None:
@@ -244,7 +266,7 @@ def test_models_set_supports_global_config_scope(tmp_path: Path, monkeypatch) ->
     config_path = home / ".yoke" / "config.json"
     assert result.exit_code == 0
     assert "Set default_model=zai:glm-5.2 in ~\\.yoke\\config.json" in result.stdout
-    updated = PiConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
+    updated = YokeConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
     assert updated.default_model == "zai:glm-5.2"
 
 

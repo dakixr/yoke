@@ -1,46 +1,51 @@
 from __future__ import annotations
 
 # ruff: noqa: ANN001, ANN201, D100, D103, S101
-
 from pathlib import Path
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 from yoke.agent.models import Message
-from yoke.cli.config import CLIArgs
-from yoke.cli.config import build_agent_from_args
-from yoke.cli.config import load_effective_yoke_config
-from yoke.cli.config import parse_config_title_model
-from yoke.cli.runtime.session import apply_session_defaults_to_args
-from yoke.cli.runtime.session import generate_session_title_from_messages
+from yoke.cli.config import (
+    CLIArgs,
+    build_agent_from_args,
+    load_effective_yoke_config,
+    parse_config_title_model,
+)
+from yoke.cli.runtime.session import (
+    apply_session_defaults_to_args,
+    generate_session_title_from_messages,
+)
 from yoke.cli.session import SessionRecord
-from yoke.cli.tools.policy import PiConfig
+from yoke.cli.tools.policy import YokeConfig
 
 from .support import install_builtin_provider
 
 
 def test_yoke_config_accepts_valid_default_model() -> None:
-    config = PiConfig.model_validate({"default_model": "Codex:gpt-5.4-mini"})
+    config = YokeConfig.model_validate({"default_model": "Codex:gpt-5.4-mini"})
 
     assert config.default_model == "codex:gpt-5.4-mini"
 
 
 def test_yoke_config_accepts_model_id_with_colon() -> None:
-    config = PiConfig.model_validate({"default_model": "Demo:provider.model-name"})
+    config = YokeConfig.model_validate({"default_model": "Demo:provider.model-name"})
 
     assert config.default_model == "demo:provider.model-name"
 
 
 def test_yoke_config_accepts_default_reasoning_effort() -> None:
-    config = PiConfig.model_validate({"default_reasoning_effort": "High"})
+    config = YokeConfig.model_validate({"default_reasoning_effort": "High"})
 
     assert config.default_reasoning_effort == "high"
 
+    luna_config = YokeConfig.model_validate({"default_reasoning_effort": "Max"})
+    assert luna_config.default_reasoning_effort == "max"
+
 
 def test_yoke_config_accepts_title_model() -> None:
-    config = PiConfig.model_validate(
+    config = YokeConfig.model_validate(
         {
             "title_model": "Codex:gpt-5.4-mini:Medium",
         }
@@ -50,7 +55,9 @@ def test_yoke_config_accepts_title_model() -> None:
 
 
 def test_config_title_model_allows_model_id_with_colon() -> None:
-    config = PiConfig.model_validate({"title_model": "Demo:provider.model-name:v2:Low"})
+    config = YokeConfig.model_validate(
+        {"title_model": "Demo:provider.model-name:v2:Low"}
+    )
     parsed = parse_config_title_model(config.title_model)
 
     assert config.title_model == "demo:provider.model-name:v2:low"
@@ -72,22 +79,22 @@ def test_effective_config_defaults_title_model(tmp_path: Path) -> None:
 )
 def test_yoke_config_rejects_invalid_default_model(value: str) -> None:
     with pytest.raises(ValueError):
-        PiConfig.model_validate({"default_model": value})
+        YokeConfig.model_validate({"default_model": value})
 
 
 def test_yoke_config_rejects_invalid_title_model() -> None:
     with pytest.raises(ValueError):
-        PiConfig.model_validate({"title_model": "codex"})
+        YokeConfig.model_validate({"title_model": "codex"})
 
 
 def test_yoke_config_rejects_invalid_default_reasoning_effort() -> None:
     with pytest.raises(ValueError):
-        PiConfig.model_validate({"default_reasoning_effort": "extreme"})
+        YokeConfig.model_validate({"default_reasoning_effort": "extreme"})
 
 
 def test_yoke_config_rejects_invalid_title_model_reasoning_effort() -> None:
     with pytest.raises(ValueError):
-        PiConfig.model_validate({"title_model": "codex:gpt-title:extreme"})
+        YokeConfig.model_validate({"title_model": "codex:gpt-title:extreme"})
 
 
 def test_build_agent_uses_config_default_model_when_no_cli_override(
@@ -149,6 +156,9 @@ def test_build_agent_uses_model_specific_default_reasoning_effort_when_unset(
             del messages, tools
             return Message.assistant("ok")
 
+    monkeypatch.setattr(
+        "yoke.cli.config.providers.Path.home", lambda: tmp_path / "home"
+    )
     install_builtin_provider(monkeypatch, FakeCodexProvider)
 
     mini_agent = build_agent_from_args(
@@ -166,6 +176,9 @@ def test_cli_model_accepts_qualified_reasoning_effort(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "yoke.cli.config.providers.Path.home", lambda: tmp_path / "home"
+    )
     install_builtin_provider(monkeypatch)
 
     agent = build_agent_from_args(

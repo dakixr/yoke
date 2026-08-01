@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.loop.tools.core import index_tools
-from yoke.cli.bootstrap.types import LoadedTool
-from yoke.cli.bootstrap.types import ToolLoadReport
+from yoke.cli.bootstrap.types import LoadedTool, ToolLoadReport
 from yoke.cli.render.base import Console
-from yoke.cli.runtime.selector.ui import select_list_item_interactive
 from yoke.cli.runtime.selector.multiselect import (
     select_table_items_interactive,
 )
-from yoke.cli.runtime.selector.ui import SelectorTableColumns
-from yoke.cli.tools.policy import PiConfig
-from yoke.cli.tools.policy import ToolPolicy
-from yoke.cli.tools.policy import load_config_file
+from yoke.cli.runtime.selector.ui import (
+    SelectorTableColumns,
+    select_list_item_interactive,
+)
+from yoke.cli.tools.policy import ToolPolicy, YokeConfig, load_config_file
 
 
 @dataclass(slots=True, frozen=True)
@@ -252,7 +251,7 @@ def _write_tool_policy_config(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            PiConfig(
+            YokeConfig(
                 tools=tools,
                 default_model=loaded_config.config.default_model,
                 default_reasoning_effort=(

@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from yoke.cli.tools.policy import PiConfig
-from yoke.cli.tools.policy import default_yoke_config
-from yoke.cli.tools.policy import load_global_config
-from yoke.cli.tools.policy import load_workspace_config
-from yoke.cli.tools.policy import merge_configs
+from yoke.cli.tools.policy import (
+    YokeConfig,
+    default_yoke_config,
+    load_global_config,
+    load_workspace_config,
+    merge_configs,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -53,7 +55,7 @@ def parse_config_title_model(value: str | None) -> ConfigTitleModel | None:
     )
 
 
-def load_effective_yoke_config(*, root: Path, home: Path) -> PiConfig:
+def load_effective_yoke_config(*, root: Path, home: Path) -> YokeConfig:
     """Load the merged yoke config used by CLI startup."""
     resolved_home = home.resolve()
     return merge_configs(

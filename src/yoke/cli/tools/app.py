@@ -5,21 +5,16 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Annotated
-from typing import cast
+from typing import Annotated, cast
 
 import typer
 from rich.table import Table
 from rich.text import Text
 
-from yoke.cli.bootstrap.types import LoadedTool
-from yoke.cli.bootstrap.types import ToolLoadReport
-from yoke.cli.config import build_tool_report
-from yoke.cli.config import format_tool_discovery_message
-from yoke.cli.render import OutputStream
-from yoke.cli.render import build_console
-from yoke.cli.tools.policy import PiConfig
-from yoke.cli.tools.policy import ToolPolicy
+from yoke.cli.bootstrap.types import LoadedTool, ToolLoadReport
+from yoke.cli.config import build_tool_report, format_tool_discovery_message
+from yoke.cli.render import OutputStream, build_console
+from yoke.cli.tools.policy import ToolPolicy, YokeConfig
 
 DEFAULT_ROOT = Path.cwd().absolute()
 
@@ -143,11 +138,11 @@ def _config_path(*, root: Path, global_scope: bool, repo_scope: bool) -> Path:
     return root / ".yoke" / "config.json"
 
 
-def _load_config(path: Path) -> PiConfig:
+def _load_config(path: Path) -> YokeConfig:
     if not path.is_file():
-        return PiConfig()
+        return YokeConfig()
     try:
-        return PiConfig.model_validate_json(path.read_text(encoding="utf-8"))
+        return YokeConfig.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise ValueError(
             "Could not update tool policy because "
@@ -171,7 +166,7 @@ def _write_tool_policy(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            PiConfig(
+            YokeConfig(
                 tools=tools,
                 default_model=config.default_model,
                 default_reasoning_effort=config.default_reasoning_effort,
