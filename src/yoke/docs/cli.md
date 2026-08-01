@@ -65,7 +65,11 @@ Codex prompt-cache affinity follows the yoke session id. Reconstructing the
 provider or resuming the same saved session therefore reuses its cache key,
 while `/new`, `/fork`, and newly created sessions use a distinct key. Direct SDK
 provider instances without a session id retain one generated key for that
-provider instance.
+provider instance. The WebSocket provider requests `all_turns` reasoning
+context and keeps encrypted Responses output items in memory for continuation
+and same-process recovery. The encrypted replay journal is not written into the
+saved yoke transcript, so reconstructing a provider after process exit resumes
+from visible persisted messages.
 
 Provider model catalogs can attach model-specific system messages. Yoke sends
 those messages only for the active `provider:model` and refreshes them when a
@@ -236,9 +240,13 @@ turn.
   asynchronously after the replacement turn starts.
 - Codex WebSocket follow-up requests only reuse `previous_response_id` while the
   same Codex account profile remains selected; if account rotation changes the
-  profile, yoke resends full context for that turn. If Codex reports that the
-  previous response anchor is stale or missing, yoke automatically retries the
-  same turn without `previous_response_id`, sending full context.
+  profile, yoke resends visible full context for that turn. While the same
+  provider instance and account remain active, yoke retains encrypted reasoning
+  output items. If Codex reports that the previous response anchor is stale or
+  missing, yoke automatically retries the turn without `previous_response_id`
+  by replaying those encrypted items plus the new input. Tool continuations send
+  only the new function result instead of duplicating the function call already
+  represented by the response anchor.
 - Local tools run under cancellation supervision. Process-isolated tools receive
   TERM/KILL cleanup off the handoff path; tools that require in-process resources
   run in a supervised daemon thread and are logically detached if they do not

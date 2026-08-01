@@ -56,12 +56,12 @@ def test_codex_websockets_uses_context_session_for_cache_key(tmp_path: Path) -> 
 def test_codex_turn_state_resets_between_logical_user_turns(tmp_path: Path) -> None:
     provider = register_provider(ProviderContext(tmp_path))
     provider._turn_state = "turn-123"
-    provider._last_response_id = "response-123"
+    provider._response_chain.response_id = "response-123"
 
     provider.start_turn()
 
     assert provider._turn_state is None
-    assert provider._last_response_id == "response-123"
+    assert provider._response_chain.response_id == "response-123"
     provider.close()
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from typing import cast
 
 import pytest
@@ -15,7 +16,6 @@ from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import OAuthCredentials
 from yoke.ai.providers.codex.subscription import CODEX_CLI_ORIGINATOR
-from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.websockets import CodexWebSockets
 from yoke.ai.providers.codex.websockets import CodexWebSocketsConfig
 from yoke.ai.providers.codex.websockets import CodexWebSocketConnection
@@ -32,6 +32,36 @@ from yoke.ai.providers.codex.websockets import map_websocket_error_event
 from yoke.ai.providers.codex.websockets import optional_float_env
 from yoke.ai.providers.codex.websockets import register_provider
 from yoke.ai.providers.codex.websockets import websocket_url_for_base
+
+
+def _seed_response_chain(
+    provider: CodexWebSockets,
+    request_messages: list[Message],
+    response_message: Message,
+    *,
+    response_id: str = "resp-1",
+    account_id: str = "acct_123",
+    auth_profile: str | None = None,
+    output_items: list[dict[str, Any]] | None = None,
+) -> None:
+    payload = provider._request_payload(request_messages, [])
+    payload["type"] = "response.create"
+    provider._response_chain.prepare(
+        payload,
+        account_id=account_id,
+        auth_profile=auth_profile,
+        selected_auth_profile=auth_profile,
+    )
+    provider._response_chain.stage_response(
+        response_id=response_id,
+        output_items=output_items or [],
+    )
+    provider._response_chain.remember(
+        payload,
+        response_message,
+        account_id=account_id,
+        auth_profile=auth_profile,
+    )
 
 
 def test_websocket_url_for_chatgpt_codex_base() -> None:
@@ -148,6 +178,23 @@ def test_websocket_response_prefers_deltas_over_output_item_snapshot() -> None:
     )
 
     assert message.text_content() == "streamed"
+
+
+def test_websocket_response_retains_encrypted_reasoning_output_item() -> None:
+    state = CodexWebSocketParseState(text_parts=[], function_calls={})
+    reasoning_item: dict[str, Any] = {
+        "type": "reasoning",
+        "id": "reasoning-1",
+        "encrypted_content": "encrypted-reasoning",
+        "summary": [{"type": "summary_text", "text": "summary"}],
+    }
+
+    handle_websocket_event(
+        {"type": "response.output_item.done", "item": reasoning_item},
+        state,
+    )
+
+    assert state.output_items == [reasoning_item]
 
 
 def test_websocket_response_prefers_deltas_over_completed_snapshot() -> None:
@@ -405,6 +452,32 @@ def test_codex_websockets_marks_luna_requests_as_responses_lite(
         "context": "all_turns",
     }
     assert headers["originator"] == CODEX_CLI_ORIGINATOR
+
+
+def test_codex_websockets_requests_all_turns_reasoning_for_non_luna_model(
+    tmp_path: Path,
+) -> None:
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            model="gpt-5.5",
+            reasoning_effort="low",
+        )
+    )
+
+    try:
+        reasoning = provider._request_payload([Message.user("hello")], [])["reasoning"]
+    finally:
+        provider.close()
+
+    assert reasoning == {
+        "effort": "low",
+        "summary": "auto",
+        "context": "all_turns",
+    }
 
 
 def test_codex_websockets_complete_preserves_non_oauth_provider_error(
@@ -787,6 +860,164 @@ def test_codex_websockets_sends_incremental_input_with_previous_response_id(
     ]
 
 
+def test_codex_websockets_sends_only_tool_output_after_reasoning_tool_call(
+    tmp_path: Path,
+) -> None:
+    sent_payloads: list[str] = []
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.events = iter(
+                [
+                    json.dumps(
+                        {
+                            "type": "response.output_item.done",
+                            "item": {
+                                "type": "reasoning",
+                                "id": "reasoning-1",
+                                "encrypted_content": "encrypted-reasoning",
+                                "summary": [],
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response.output_item.done",
+                            "item": {
+                                "type": "function_call",
+                                "id": "item-1",
+                                "call_id": "call-1",
+                                "name": "read",
+                                "arguments": '{"path":"README.md"}',
+                            },
+                        }
+                    ),
+                    '{"type":"response.completed","response":{"id":"resp-1","usage":{}}}',
+                    json.dumps(
+                        {
+                            "type": "response.output_item.done",
+                            "item": {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "done"}],
+                            },
+                        }
+                    ),
+                    '{"type":"response.completed","response":{"id":"resp-2","usage":{}}}',
+                ]
+            )
+
+        def send(self, payload: str) -> None:
+            sent_payloads.append(payload)
+
+        def recv(self, timeout: float | None = None) -> str:
+            del timeout
+            return next(self.events)
+
+        def close(self) -> None:
+            return None
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+        ),
+        websocket_factory=lambda url, **kwargs: FakeWebSocket(),
+    )
+    provider._websocket_credentials = OAuthCredentials(
+        access="access-token",
+        refresh="refresh-token",
+        expires=4_102_444_800_000,
+        account_id="acct_123",
+    )
+    user = Message.user("read the file")
+
+    first = provider.complete([user], [])
+    assert provider._response_chain.retained_input_items[0] == {
+        "role": "user",
+        "content": [{"type": "input_text", "text": "read the file"}],
+    }
+    second = provider.complete(
+        [user, first, Message.tool("call-1", '{"ok":true}')],
+        [],
+    )
+
+    assert second.text_content() == "done"
+    second_payload = json_loads(sent_payloads[1])
+    assert second_payload["previous_response_id"] == "resp-1"
+    assert second_payload["input"] == [
+        {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": '{"ok":true}',
+        }
+    ]
+
+
+def test_codex_websockets_fork_replays_encrypted_state_without_anchor(
+    tmp_path: Path,
+) -> None:
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+            base_url="ws://127.0.0.1:8765/v1",
+        )
+    )
+    reasoning_item = {
+        "type": "reasoning",
+        "id": "reasoning-1",
+        "encrypted_content": "encrypted-reasoning",
+        "summary": [],
+    }
+    _seed_response_chain(
+        provider,
+        [Message.user("one")],
+        Message.assistant("one"),
+        auth_profile="api-key",
+        account_id="api-key",
+        output_items=[
+            reasoning_item,
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "one",
+                        "annotations": [],
+                    }
+                ],
+            },
+        ],
+    )
+
+    forked = provider.fork_for_turn()
+    forked._websocket_credentials = OAuthCredentials(
+        access="api-key",
+        refresh="api-key",
+        expires=4_102_444_800_000,
+        account_id="api-key",
+    )
+    forked._websocket_auth_profile = "api-key"
+    request_payload = forked._request_payload(
+        [Message.user("one"), Message.assistant("one"), Message.user("two")],
+        [],
+    )
+    request_payload["type"] = "response.create"
+    payload = forked._prepare_websocket_payload(request_payload)
+    payload_input = cast(list[dict[str, object]], payload["input"])
+
+    assert payload.get("previous_response_id") is None
+    assert reasoning_item in payload_input
+    assert forked._response_chain.prepared_mode == "encrypted_replay"
+
+
 def test_codex_websockets_sends_full_input_after_account_switch(
     tmp_path: Path,
 ) -> None:
@@ -805,12 +1036,12 @@ def test_codex_websockets_sends_full_input_after_account_switch(
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,aaa"}},
         ]
     )
-    first_payload = provider._request_payload([image_message], [])
-    provider._last_request_payload = first_payload
-    provider._last_response_id = "resp-1"
-    _, provider._last_response_items = convert_messages([Message.assistant("saw it")])
-    provider._last_response_account_id = "acct_123"
-    provider._last_response_auth_profile = "account-a"
+    _seed_response_chain(
+        provider,
+        [image_message],
+        Message.assistant("saw it"),
+        auth_profile="account-a",
+    )
     provider._websocket_credentials = OAuthCredentials(
         access="access-token-2",
         refresh="refresh-token-2",
@@ -852,12 +1083,12 @@ def test_codex_websockets_sends_full_input_after_selection_changes(
         ),
     )
     (tmp_path / "accounts").mkdir()
-    first_payload = provider._request_payload([Message.user("one")], [])
-    provider._last_request_payload = first_payload
-    provider._last_response_id = "resp-1"
-    _, provider._last_response_items = convert_messages([Message.assistant("one")])
-    provider._last_response_account_id = "acct_123"
-    provider._last_response_auth_profile = "account-a"
+    _seed_response_chain(
+        provider,
+        [Message.user("one")],
+        Message.assistant("one"),
+        auth_profile="account-a",
+    )
     provider._websocket_credentials = OAuthCredentials(
         access="access-token",
         refresh="refresh-token",
@@ -997,12 +1228,23 @@ def test_codex_websockets_retries_full_input_when_previous_response_missing(
         expires=4_102_444_800_000,
         account_id="acct_123",
     )
-    first_payload = provider._request_payload([Message.user("one")], [])
-    first_payload["type"] = "response.create"
-    provider._last_request_payload = first_payload
-    provider._last_response_id = "resp-1"
-    _, provider._last_response_items = convert_messages([Message.assistant("one")])
-    provider._last_response_account_id = "acct_123"
+    encrypted_reasoning: dict[str, Any] = {
+        "type": "reasoning",
+        "id": "reasoning-1",
+        "encrypted_content": "encrypted-reasoning",
+        "summary": [],
+    }
+    assistant_output: dict[str, Any] = {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "one"}],
+    }
+    _seed_response_chain(
+        provider,
+        [Message.user("one")],
+        Message.assistant("one"),
+        output_items=[encrypted_reasoning, assistant_output],
+    )
 
     message = provider.complete(
         [Message.user("one"), Message.assistant("one"), Message.user("two")], []
@@ -1013,12 +1255,12 @@ def test_codex_websockets_retries_full_input_when_previous_response_missing(
     second_sent = json_loads(sent_payloads[1])
     assert first_sent["previous_response_id"] == "resp-1"
     assert second_sent.get("previous_response_id") is None
-    assert (
-        second_sent["input"]
-        == provider._request_payload(
-            [Message.user("one"), Message.assistant("one"), Message.user("two")], []
-        )["input"]
-    )
+    assert second_sent["input"] == [
+        {"role": "user", "content": [{"type": "input_text", "text": "one"}]},
+        encrypted_reasoning,
+        assistant_output,
+        {"role": "user", "content": [{"type": "input_text", "text": "two"}]},
+    ]
 
 
 def test_codex_websockets_captures_and_replays_turn_state(tmp_path: Path) -> None:
