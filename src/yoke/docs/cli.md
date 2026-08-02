@@ -497,8 +497,10 @@ Yoke ships with two built-in skills:
   `yoke skills init`, then applies predictability and no-op checks.
 - `yoke-subagents` provides async SDK orchestration workflows for research,
   discovery, planning, bounded fan-out, coder/reviewer loops, coverage review,
-  and merge handoffs. Its reference files include complete async templates and
-  use Yoke's actual provider, capability, and agent lifecycle APIs.
+  and merge handoffs. Its progressively disclosed references separate capability
+  discovery, SDK lifecycle rules, shared scaffolding, and branch-specific async
+  patterns. The templates use public completion guards, atomic artifacts,
+  provider preflight, and provider-aware least-privilege profiles.
 
 ### Using skills from the CLI
 
@@ -542,7 +544,8 @@ the prompt after the skill name. A semicolon separator is also supported:
 The built-in skill sources live beneath `yoke/agent/skills/built_in/`.
 `create-skill` instructs the agent to choose a location and scaffold with
 `yoke skills init`; `yoke-subagents` includes progressively disclosed SDK and
-orchestration-pattern references for programmatic multi-agent workflows.
+orchestration-pattern references for programmatic multi-agent workflows. Start
+with its core process, then load only the selected capability or workflow branch.
 
 ---
 

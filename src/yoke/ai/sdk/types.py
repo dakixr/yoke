@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Literal
+from typing import Self
 
 from pydantic import TypeAdapter
 
@@ -49,6 +50,15 @@ class StructuredOutputError(ValueError):
 
     def __init__(self, message: str, *, output: str) -> None:
         super().__init__(message)
+        self.output = output
+
+
+class AgentNotCompletedError(RuntimeError):
+    """Raised when a caller requires a completed agent result."""
+
+    def __init__(self, *, status: str, output: str) -> None:
+        super().__init__(f"Agent result is not completed: status={status!r}.")
+        self.status = status
         self.output = output
 
 
@@ -233,9 +243,20 @@ class AgentResult[StructuredT]:
     output: str
     messages: list[Message]
     iterations: int
-    status: str = "completed"
+    status: Literal["completed", "stopped"] = "completed"
     conversation_entries: list[ConversationEntry] | None = None
     structured: StructuredT | None = None
+
+    @property
+    def completed(self) -> bool:
+        """Return whether the agent completed the requested turn."""
+        return self.status == "completed"
+
+    def require_completed(self) -> Self:
+        """Return this result or raise when the turn stopped early."""
+        if not self.completed:
+            raise AgentNotCompletedError(status=self.status, output=self.output)
+        return self
 
 
 @dataclass(slots=True, frozen=True)

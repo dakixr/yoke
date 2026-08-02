@@ -13,7 +13,12 @@ from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import insert_provider_system_messages
 from yoke.ai.providers.base import start_provider_turn
 from yoke.ai.sdk.agent import Agent as Agent
+from yoke.ai.sdk.artifacts import JsonValue as JsonValue
+from yoke.ai.sdk.artifacts import to_jsonable as to_jsonable
+from yoke.ai.sdk.artifacts import write_json_artifact as write_json_artifact
 from yoke.ai.sdk.batch import run_many as run_many
+from yoke.ai.sdk.capabilities import CapabilityInfo as CapabilityInfo
+from yoke.ai.sdk.capabilities import discover_capabilities as discover_capabilities
 from yoke.ai.sdk.defaults import (
     default_coding_agent_config as default_coding_agent_config,
 )
@@ -25,6 +30,7 @@ from yoke.ai.sdk.types import BatchProgress as BatchProgress
 from yoke.ai.sdk.types import BatchResult as BatchResult
 from yoke.ai.sdk.types import BatchTask as BatchTask
 from yoke.ai.sdk.types import BatchUsage as BatchUsage
+from yoke.ai.sdk.types import AgentNotCompletedError as AgentNotCompletedError
 from yoke.ai.sdk.types import AgentResult as AgentResult
 from yoke.ai.sdk.types import CompletionResult
 from yoke.ai.sdk.types import Context

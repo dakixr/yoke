@@ -19,6 +19,7 @@ from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
 from yoke.agent.tools import WriteTool
 from yoke.ai import Agent
+from yoke.ai import AgentNotCompletedError
 from yoke.ai import AgentStateSnapshot
 from yoke.ai import Image
 from yoke.ai import RunConfig
@@ -303,6 +304,22 @@ def test_public_agent_autosaves_only_successful_prompts(tmp_path: Path) -> None:
     with pytest.raises(StructuredOutputError):
         failing.prompt("hello", output_type=Summary)
     assert not failed_path.exists()
+
+    stopped_path = tmp_path / "stopped.json"
+    stopped = Agent(
+        provider=RecordingProvider(Message.assistant("unused")),
+        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
+        state_path=stopped_path,
+        autosave=True,
+    )
+    result = stopped.prompt("stop", stop_requested=lambda: True)
+    assert result.status == "stopped"
+    assert not result.completed
+    with pytest.raises(AgentNotCompletedError) as error:
+        result.require_completed()
+    assert error.value.status == "stopped"
+    assert error.value.output == "Stopped current turn."
+    assert not stopped_path.exists()
 
 
 def test_public_agent_constructor_loads_existing_state_path(tmp_path: Path) -> None:

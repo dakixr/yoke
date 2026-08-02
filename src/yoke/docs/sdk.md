@@ -43,6 +43,9 @@ current working directory are appropriate:
 agent = Agent(provider=provider)
 ```
 
+Use `with Agent(...)` in synchronous code so provider and tool resources close
+on every return or exception. The async equivalent is `async with Agent(...)`.
+
 Use `prompt_async()` in asyncio applications. Calls on one stateful agent are
 serialized so their conversation updates stay ordered; independent agents can
 run concurrently. Cancellation and `timeout=` cooperatively stop the active
@@ -59,6 +62,7 @@ async def main() -> None:
         result = await agent.prompt_async(
             "Summarize this repository's architecture.", timeout=120
         )
+        result.require_completed()
         print(result.output)
 
 
@@ -83,16 +87,20 @@ batch = await run_many(
     max_concurrency=2,
 )
 for item in batch.items:
-    if item.result is not None:
-        print(item.task.id, item.result.output)
+    if item.status == "completed" and item.result is not None:
+        print(item.task.id, item.result.require_completed().output)
     else:
         print(item.task.id, item.status, item.error)
+if batch.progress_errors:
+    raise ExceptionGroup("Progress callbacks failed", batch.progress_errors)
 ```
 
 `run_many()` preserves input order, isolates errors, supports retries and
 cooperative per-task timeouts, reports progress, aggregates provider usage, and
 closes every agent it creates. The factory must return a fresh agent for every
-task and retry attempt.
+task and retry attempt. Per-task timeouts start after a task acquires the batch
+concurrency slot. Use `AgentResult.completed` or `require_completed()` at every
+role boundary; stopped turns can contain partial output but are not completed.
 
 Built-in provider classes include `CodexSubscriptionProvider`,
 `CodexWebSockets`, `OpenCodeGoProvider`, and
@@ -203,9 +211,11 @@ resumed = Agent.load(
 )
 ```
 
-Use `agent.save(path, metadata=...)` for explicit snapshots and
-`agent.restore(path)` to replace an existing agent's state. Autosave only runs
-after a successful prompt. Snapshot envelopes include format/schema versions,
+Use `agent.save(path, metadata=..., atomic=True)` for explicit snapshots and
+`agent.restore(path, strict=True)` to replace an existing agent's state.
+`Agent.load(..., autosave=False, strict=True)` exposes the same validation
+control, and constructing an agent with an existing `state_path` restores it
+immediately. Autosave only runs after a completed prompt. Snapshot envelopes include format/schema versions,
 SDK version, timestamps, metadata, structured entries, selected leaf, and
 active skills.
 
@@ -257,6 +267,44 @@ built-in tool set, then applies CLI-specific plugin discovery and tool policy.
 `image.attach`, `web.fetch`, `web.research`, `shell`, and `mcp`. Yoke-native
 aliases such as `file.edit`, `file.context`, `image.input`, `web`, and
 `command_execution` remain supported.
+
+Pass the capabilities the task needs directly, and inspect provider-aware
+resolution before constructing the agent:
+
+```python
+from yoke.ai import discover_capabilities
+
+tools = [
+    "file.read",
+    "file.search",
+    "file.extract_context",
+    "web.fetch",
+    "web.search",
+    "web.research",
+]
+
+resolved = discover_capabilities(
+    selection="codex:gpt-5.6-luna:high",
+    root=Path.cwd(),
+    capability_ids=tools,
+)
+for capability in resolved:
+    print(capability.id, capability.available, capability.tool_names)
+
+agent = Agent(
+    provider=provider,
+    config=RunConfig(root=Path.cwd(), tools=tools),
+)
+```
+
+Discovery with no `capability_ids` returns the complete stable catalog; pass an
+explicit list for a focused preflight. Availability and concrete tool names
+reflect the active provider/model, installed executables, workspace
+configuration, and MCP servers.
+Discovery is local construction, not a remote health check.
+Selection-based discovery owns and closes its temporary provider. When passing
+`provider=` instead, provider ownership remains with the caller's agent or
+application component.
 
 ```python
 agent = Agent(
@@ -511,9 +559,27 @@ summary = result.structured
 ```
 
 When `output_type` is provided, the SDK asks the model for JSON matching that
-schema and validates the final output. If validation fails, it raises
-`StructuredOutputError` with the raw output attached. Omit `output_type` for
-free-form text.
+schema and makes up to three internal attempts. Correction attempts change the
+prompt and do not resend original images or image URLs. If all attempts fail,
+it raises `StructuredOutputError` with the final raw output attached. A
+`run_many(max_attempts=N)` retry wraps this internal loop, so one item can make
+up to `3 * N` provider attempts. Omit `output_type` for free-form text.
+
+## Workflow artifacts
+
+Use `to_jsonable()` to recursively normalize Pydantic models, SDK dataclasses,
+paths, dates, enums, exceptions, mappings, and sequences. Unknown values raise
+instead of being silently stringified. `write_json_artifact()` creates parent
+directories and atomically replaces the target by default:
+
+```python
+from yoke.ai import write_json_artifact
+
+write_json_artifact(
+    Path(".agents_local") / "handoff.json",
+    {"batch": batch, "review": summary},
+)
+```
 
 ## Agent orchestration
 

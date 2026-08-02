@@ -115,6 +115,16 @@ def test_agent_supports_async_context_manager_and_default_config(
     asyncio.run(scenario())
 
 
+def test_agent_supports_sync_context_manager(tmp_path: Path) -> None:
+    agent = Agent(provider=ConcurrentProvider(delay=0), config=config(tmp_path))
+
+    with agent as entered:
+        assert entered is agent
+        assert entered.prompt("hello").output == "done"
+
+    assert agent.closed
+
+
 def test_prompt_callback_cannot_close_agent(tmp_path: Path) -> None:
     agent = Agent(provider=ConcurrentProvider(delay=0), config=config(tmp_path))
 

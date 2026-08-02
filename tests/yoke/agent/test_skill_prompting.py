@@ -1,5 +1,7 @@
 """Tests for skill prompt rendering."""
 
+import ast
+import re
 from pathlib import Path
 from unittest import TestCase
 
@@ -159,9 +161,73 @@ def test_builtin_skills_include_yoke_subagents_references() -> None:
 
     assert set(skills) == {"create-skill", "yoke-subagents"}
     subagents = skills["yoke-subagents"]
-    assert {path.name for path in subagents.root.rglob("*") if path.is_file()} == {
+    assert {
+        path.relative_to(subagents.root).as_posix()
+        for path in subagents.root.rglob("*")
+        if path.is_file()
+    } == {
+        "CAPABILITIES.md",
+        "COMMON.md",
         "PATTERNS.md",
         "SDK_SURFACE.md",
         "SKILL.md",
+        "patterns/audit-research.md",
+        "patterns/coder-reviewer.md",
+        "patterns/pipeline.md",
+        "patterns/review-merge.md",
     }
     assert subagents.root.parent == builtin_skill_dir().resolve()
+
+
+def test_yoke_subagents_python_examples_compile() -> None:
+    from yoke.agent.skills.discovery import builtin_skill_dir
+
+    root = builtin_skill_dir() / "yoke-subagents"
+    blocks = []
+    for path in root.rglob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        blocks.extend(
+            (path, source)
+            for source in re.findall(r"```python\n(.*?)```", text, re.DOTALL)
+        )
+
+    assert blocks
+    for path, source in blocks:
+        compile(source, str(path), "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
+
+
+def test_yoke_subagents_patterns_keep_safety_guards_discoverable() -> None:
+    from yoke.agent.skills.discovery import builtin_skill_dir
+
+    root = builtin_skill_dir() / "yoke-subagents"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    common = (root / "COMMON.md").read_text(encoding="utf-8")
+    capabilities = (root / "CAPABILITIES.md").read_text(encoding="utf-8")
+    pipeline = (root / "patterns" / "pipeline.md").read_text(encoding="utf-8")
+    pair = (root / "patterns" / "coder-reviewer.md").read_text(encoding="utf-8")
+
+    assert "Progressive references" in skill
+    assert "discover_capabilities" in capabilities
+    assert "require_batch_integrity" in common
+    assert "preflight_selections" in pipeline
+    assert "mutation_attempts: int = 1" in pipeline
+    assert "AsyncExitStack" in pair
+    assert "task_context" in pair
+    assert "checked_files" in pair
+    assert "not review.checked_files or not review.evidence" in pair
+    assert "result.require_completed()" in skill
+
+
+def test_yoke_subagents_markdown_links_resolve() -> None:
+    from yoke.agent.skills.discovery import builtin_skill_dir
+
+    root = builtin_skill_dir() / "yoke-subagents"
+    for path in root.rglob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", text):
+            relative = target.split("#", 1)[0]
+            if not relative or "://" in relative:
+                continue
+            assert (path.parent / relative).resolve().exists(), (
+                f"Broken link {target!r} in {path}"
+            )

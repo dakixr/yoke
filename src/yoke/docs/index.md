@@ -32,6 +32,9 @@ run a shell command, search the web. The CLI resolves yoke's built-in
 capabilities and auto-discovers additional tools from repo `.yoke/tools/` and
 global `~/.yoke/tools/` directories. The SDK can use capabilities, explicit
 tools, or legacy tool registration callbacks.
+SDK applications pass stable capability IDs directly and can call
+`discover_capabilities()` to inspect their provider/model-aware concrete tools
+before constructing an agent.
 MCP servers are exposed through a compact facade instead of raw tool catalogs:
 when `~/.yoke/mcp.json` or `<repo>/.yoke/mcp.json` configures enabled servers,
 yoke adds only `mcp_inspect` and `mcp_call` to the model context. The

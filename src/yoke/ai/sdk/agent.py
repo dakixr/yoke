@@ -214,6 +214,20 @@ class Agent(DurableAgentMixin):
         """Release runtime resources without blocking the event loop."""
         await asyncio.to_thread(self.close)
 
+    def __enter__(self) -> Agent:
+        """Return this agent from a synchronous context manager."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> None:
+        """Close this agent when leaving a synchronous context manager."""
+        del exc_type, exc, traceback
+        self.close()
+
     async def __aenter__(self) -> Agent:
         """Return this agent from an async context manager."""
         return self
@@ -320,7 +334,7 @@ class Agent(DurableAgentMixin):
             if last_error is not None:
                 raise last_error
             raise RuntimeError("Agent did not return a result.")
-        if self._autosave:
+        if self._autosave and result.completed:
             if self._state_path is None:
                 raise RuntimeError("Autosave agent lost its bound state path")
             self._save_unlocked(self._state_path)

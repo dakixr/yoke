@@ -65,17 +65,20 @@ if TYPE_CHECKING:
     from yoke.ai.providers.zai import ZAIConfig as ZAIConfig
     from yoke.ai.providers.zai import ZAIProvider as ZAIProvider
     from yoke.ai.sdk import Agent as Agent
+    from yoke.ai.sdk import AgentNotCompletedError as AgentNotCompletedError
     from yoke.ai.sdk import AgentResult as AgentResult
     from yoke.ai.sdk import BatchItemResult as BatchItemResult
     from yoke.ai.sdk import BatchProgress as BatchProgress
     from yoke.ai.sdk import BatchResult as BatchResult
     from yoke.ai.sdk import BatchTask as BatchTask
     from yoke.ai.sdk import BatchUsage as BatchUsage
+    from yoke.ai.sdk import CapabilityInfo as CapabilityInfo
     from yoke.ai.sdk import CompletionResult as CompletionResult
     from yoke.ai.sdk import Context as Context
     from yoke.ai.sdk import ConversationEntryHistory as ConversationEntryHistory
     from yoke.ai.sdk import ConversationHistory as ConversationHistory
     from yoke.ai.sdk import Image as Image
+    from yoke.ai.sdk import JsonValue as JsonValue
     from yoke.ai.sdk import MessageHistory as MessageHistory
     from yoke.ai.sdk import RunConfig as RunConfig
     from yoke.ai.sdk import Skill as Skill
@@ -83,7 +86,10 @@ if TYPE_CHECKING:
     from yoke.ai.sdk import complete as complete
     from yoke.ai.sdk import default_coding_agent_config as default_coding_agent_config
     from yoke.ai.sdk import default_coding_agent_tools as default_coding_agent_tools
+    from yoke.ai.sdk import discover_capabilities as discover_capabilities
     from yoke.ai.sdk import run_many as run_many
+    from yoke.ai.sdk import to_jsonable as to_jsonable
+    from yoke.ai.sdk import write_json_artifact as write_json_artifact
     from yoke.ai.sdk.providers import (
         available_builtin_providers as available_builtin_providers,
     )
@@ -169,17 +175,20 @@ _LAZY_EXPORTS = {
     "ZAIConfig": ("yoke.ai.providers.zai", "ZAIConfig"),
     "ZAIProvider": ("yoke.ai.providers.zai", "ZAIProvider"),
     "Agent": ("yoke.ai.sdk", "Agent"),
+    "AgentNotCompletedError": ("yoke.ai.sdk", "AgentNotCompletedError"),
     "AgentResult": ("yoke.ai.sdk", "AgentResult"),
     "BatchItemResult": ("yoke.ai.sdk", "BatchItemResult"),
     "BatchProgress": ("yoke.ai.sdk", "BatchProgress"),
     "BatchResult": ("yoke.ai.sdk", "BatchResult"),
     "BatchTask": ("yoke.ai.sdk", "BatchTask"),
     "BatchUsage": ("yoke.ai.sdk", "BatchUsage"),
+    "CapabilityInfo": ("yoke.ai.sdk", "CapabilityInfo"),
     "CompletionResult": ("yoke.ai.sdk", "CompletionResult"),
     "ConversationEntryHistory": ("yoke.ai.sdk", "ConversationEntryHistory"),
     "ConversationHistory": ("yoke.ai.sdk", "ConversationHistory"),
     "Context": ("yoke.ai.sdk", "Context"),
     "Image": ("yoke.ai.sdk", "Image"),
+    "JsonValue": ("yoke.ai.sdk", "JsonValue"),
     "MessageHistory": ("yoke.ai.sdk", "MessageHistory"),
     "RunConfig": ("yoke.ai.sdk", "RunConfig"),
     "Skill": ("yoke.ai.sdk", "Skill"),
@@ -190,7 +199,10 @@ _LAZY_EXPORTS = {
         "default_coding_agent_config",
     ),
     "default_coding_agent_tools": ("yoke.ai.sdk", "default_coding_agent_tools"),
+    "discover_capabilities": ("yoke.ai.sdk", "discover_capabilities"),
     "run_many": ("yoke.ai.sdk", "run_many"),
+    "to_jsonable": ("yoke.ai.sdk", "to_jsonable"),
+    "write_json_artifact": ("yoke.ai.sdk", "write_json_artifact"),
     "available_builtin_providers": (
         "yoke.ai.sdk.providers",
         "available_builtin_providers",
@@ -215,6 +227,7 @@ _LAZY_EXPORTS = {
 
 __all__ = [
     "Agent",
+    "AgentNotCompletedError",
     "AgentResult",
     "AgentState",
     "AgentStateLoadError",
@@ -226,6 +239,7 @@ __all__ = [
     "BatchResult",
     "BatchTask",
     "BatchUsage",
+    "CapabilityInfo",
     "CodexSubscriptionConfig",
     "CodexSubscriptionProvider",
     "CodexWebSockets",
@@ -237,6 +251,7 @@ __all__ = [
     "CompactionPolicy",
     "Context",
     "Image",
+    "JsonValue",
     "Message",
     "MessageHistory",
     "MessageImageURL",
@@ -265,6 +280,7 @@ __all__ = [
     "complete",
     "default_coding_agent_config",
     "default_coding_agent_tools",
+    "discover_capabilities",
     "image_part",
     "is_provider_ready",
     "list_provider_readiness",
@@ -274,6 +290,8 @@ __all__ = [
     "print_builtin_provider_status",
     "remote_image_part",
     "run_many",
+    "to_jsonable",
+    "write_json_artifact",
     "text_part",
 ]
 
