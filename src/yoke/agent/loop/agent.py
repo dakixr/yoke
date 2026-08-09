@@ -3,33 +3,30 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import suppress
 from copy import deepcopy
+from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from yoke.agent.capabilities import BaseCapability
-from yoke.agent.capabilities import CapabilityContext
-from yoke.agent.capabilities import CapabilityResolver
-from yoke.agent.budget import build_provider_context_manager
 from yoke.agent.context import ContextManager
 from yoke.agent.loop.iteration import RuntimeAgentIterationMixin
-from yoke.agent.loop.resources import acquire_tool_resources
-from yoke.agent.loop.resources import release_tool_resources
+from yoke.agent.loop.in_process_tool import shutdown_in_process_tools
+from yoke.agent.loop.forking import copy_tool_for_fork
+from yoke.agent.loop.forking import copy_tool_for_runtime
 from yoke.agent.loop.state import context_for_run
 from yoke.agent.loop.state import persist_run_context
-from yoke.agent.loop.tools.core import index_tools
-from yoke.agent.loop.forking import copy_tool_for_fork
+from yoke.agent.loop.resources import release_tool_resources
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import AgentResult
 from yoke.agent.loop.types import BeforeToolCallHook
-from yoke.agent.loop.types import ConversationEntryHistory
-from yoke.agent.loop.types import ConversationHistory
-from yoke.agent.loop.types import MessageHistory
 from yoke.agent.loop.types import MaxIterationsExceededError
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.loop.types import ToolExecutionMode
 from yoke.agent.loop.types import ToolResultCheckpoint
+from yoke.agent.loop.tool_registration import ToolRegistrationMixin
+from yoke.agent.loop.tool_registration import bound_tool_path
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -39,140 +36,67 @@ from yoke.agent.skills.registry import SkillRegistry
 from yoke.agent.tools import LocalTool
 from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import RegisterTools
-from yoke.agent.tools import BackgroundProcessInfo
-from yoke.agent.tools import CommandProcessManager
-from yoke.agent.tools import ToolRegistrationContext
-from yoke.agent.tools import ToolRuntimeContext
-from yoke.agent.tools import never_cancel
-from yoke.agent.tools.context import normalize_tool_registration
+from yoke.agent.tools.command_process_manager import (
+    CommandProcessManager,
+)
 from yoke.agent.tools.context import resolve_model_identity
-from yoke.agent.tools.output import cleanup_expired_tool_outputs
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import fork_provider
-from yoke.ai.providers.base import provider_system_messages
 
 if TYPE_CHECKING:
-    from yoke.ai.sdk.types import AgentResult as SDKAgentResult
-    from yoke.ai.sdk.types import Image
-    from yoke.ai.sdk.types import RunConfig
     from yoke.cli.bootstrap.types import ToolLoadReport
 
 
-_EMPTY_SKILL_REGISTRY = SkillRegistry([])
-
-
-class RuntimeAgent(RuntimeAgentIterationMixin):
+class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
     """Orchestrates the LLM and tool-calling loop with compaction support."""
 
     supports_message_history = False
     supports_user_message = True
 
-    @classmethod
-    def from_run_config(
-        cls,
-        *,
-        provider: Provider,
-        config: RunConfig,
-    ) -> RuntimeAgent:
-        """Build a runtime agent from the public SDK run configuration."""
-        from yoke.ai.sdk.runtime import build_agent_capabilities
-        from yoke.ai.sdk.runtime import build_system_messages
-
-        root = Path(config.root).resolve()
-        active_skills = [skill.to_active_skill() for skill in config.skills]
-        available_skills = [
-            skill.to_skill_spec()
-            for skill in config.skills
-            if skill.source_path != "<inline>"
-        ]
-        return RuntimeAgent(
-            provider=provider,
-            tools=[],
-            capabilities=build_agent_capabilities(
-                capabilities=config.capabilities,
-                tools=config.tools,
-                register_tools=config.register_tools,
-            ),
-            tool_root=root,
-            tool_home=Path.home().resolve(),
-            max_iterations=(
-                config.max_iterations if config.max_iterations is not None else 30
-            ),
-            context_manager=build_provider_context_manager(
-                provider=provider,
-                instructions=build_system_messages(
-                    root=root,
-                    sys_prompt=config.sys_prompt,
-                    include_agents_file=config.include_agents_file,
-                ),
-                policy_override=config.compaction,
-            ),
-            tool_execution=config.tool_execution,
-            before_tool_call=config.before_tool_call,
-            after_tool_call=config.after_tool_call,
-            available_skills=available_skills,
-            active_skills=active_skills,
-            history=config.history,
-        )
-
     def __init__(
         self,
         provider: Provider,
         tools: Sequence[LocalTool],
-        max_iterations: int = 30,
+        max_iterations: int | None = None,
         context_manager: ContextManager | None = None,
         tool_execution: ToolExecutionMode = "parallel",
         before_tool_call: BeforeToolCallHook | None = None,
         after_tool_call: AfterToolCallHook | None = None,
-        skill_registry: SkillRegistry = _EMPTY_SKILL_REGISTRY,
+        skill_registry: SkillRegistry | None = None,
         available_skills: Sequence[SkillSpec] = (),
         active_skills: Sequence[ActiveSkill] = (),
-        history: ConversationHistory | None = None,
+        messages: Sequence[Message] | None = None,
+        conversation_entries: Sequence[ConversationEntry] | None = None,
         tool_factory: RegisterTools | None = None,
-        capabilities: Sequence[BaseCapability] | None = None,
         tool_root: Path | None = None,
-        tool_home: Path = Path.home(),
-        base_instructions: Sequence[Message] | None = None,
+        tool_home: Path | None = None,
+        command_process_manager: CommandProcessManager | None = None,
     ) -> None:
-        if tool_factory is not None and capabilities is not None:
-            raise ValueError("Use either tool_factory or capabilities, not both.")
+        if messages is not None and conversation_entries is not None:
+            raise ValueError(
+                "Provide either messages or conversation_entries, not both."
+            )
         if tool_factory is not None and tool_root is None:
             raise ValueError("Provider-aware tool registration requires tool_root.")
         self.provider = provider
+        self._closed = False
         self._tool_factory = tool_factory
-        self._capability_resolver = (
-            CapabilityResolver(capabilities) if capabilities is not None else None
-        )
         self._tool_root = (
-            tool_root or _bound_tool_path(tools, "root") or Path.cwd()
+            tool_root or bound_tool_path(tools, "root") or Path.cwd()
         ).resolve()
-        self._tool_home = tool_home.resolve()
-        cleanup_expired_tool_outputs(self._tool_home)
-        self.command_process_manager = CommandProcessManager()
+        self._tool_home = (tool_home or Path.home()).resolve()
         self._tool_provider: Provider | None = None
         self._tool_model: ModelIdentity | None = None
+        self.tools: dict[str, LocalTool] = {}
         self.max_iterations = max_iterations
         self.context_manager = context_manager or ContextManager()
         self._base_instructions = [
             message.model_copy(deep=True)
-            for message in (
-                base_instructions
-                if base_instructions is not None
-                else self.context_manager.instructions
-            )
+            for message in self.context_manager.instructions
         ]
-        self._provider_system_messages: list[Message] = []
         self._tool_system_messages: list[Message] = []
-        self.context_manager.set_instructions(self._base_instructions)
-        self._context: AgentContext | None = None
-        self.tools: dict[str, LocalTool] = {}
-        if tool_factory is not None or self._capability_resolver is not None:
-            self.refresh_tools(force=True)
-        else:
-            model = resolve_model_identity(self.provider)
-            self._install_tools(tools, model=model)
-            self._set_dynamic_system_messages(tool_messages=[])
+        self._session_enabled_tool_names: set[str] | None = None
         self.tool_execution = tool_execution
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
@@ -180,26 +104,55 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         self.available_skills = list(available_skills)
         self.active_skills = list(active_skills)
         self.tool_report: ToolLoadReport | None = None
-        if history is not None:
-            self.load_conversation(history)
+        self._context: AgentContext | None = None
+        self._context_owned_for_run = False
+        self.command_process_manager = (
+            command_process_manager or CommandProcessManager()
+        ).acquire()
+        try:
+            if tool_factory is not None:
+                self.refresh_tools(force=True)
+            else:
+                self._install_tools(
+                    [copy_tool_for_runtime(tool) for tool in tools],
+                    model=resolve_model_identity(self.provider),
+                )
+            if messages is not None or conversation_entries is not None:
+                self.load_conversation(
+                    messages=messages,
+                    conversation_entries=conversation_entries,
+                )
+        except BaseException:
+            with suppress(Exception):
+                self.close()
+            raise
 
-    def fork(self, *, isolate_provider: bool = False) -> RuntimeAgent:
+    def fork(
+        self,
+        *,
+        isolate_provider: bool = False,
+        include_state: bool = True,
+    ) -> RuntimeAgent:
         """Create an independent runtime copy of this agent."""
         provider = fork_provider(self.provider) if isolate_provider else self.provider
+        context_manager = deepcopy(self.context_manager)
+        context_manager.instructions = [
+            message.model_copy(deep=True) for message in self._base_instructions
+        ]
+        context_manager.system_prompt = (
+            context_manager.instructions[0].plain_text_content
+            if context_manager.instructions
+            else None
+        )
         forked = RuntimeAgent(
             provider=provider,
             tools=[copy_tool_for_fork(tool) for tool in self.tools.values()],
             tool_factory=self._tool_factory,
-            capabilities=(
-                self._capability_resolver.capabilities
-                if self._capability_resolver is not None
-                else None
-            ),
             tool_root=self._tool_root,
             tool_home=self._tool_home,
-            base_instructions=self._base_instructions,
+            command_process_manager=self.command_process_manager,
             max_iterations=self.max_iterations,
-            context_manager=deepcopy(self.context_manager),
+            context_manager=context_manager,
             tool_execution=self.tool_execution,
             before_tool_call=self.before_tool_call,
             after_tool_call=self.after_tool_call,
@@ -207,11 +160,9 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
             available_skills=deepcopy(self.available_skills),
             active_skills=deepcopy(self.active_skills),
         )
-        if self._context is not None:
+        if include_state and self._context is not None:
             forked._context = self._context.model_copy(deep=True)
-        forked.command_process_manager = self.command_process_manager
-        for tool in forked.tools.values():
-            tool._context["command_process_manager"] = self.command_process_manager
+            forked._sync_context_instructions(forked._context)
         return forked
 
     @property
@@ -237,137 +188,36 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         ]
 
     def reset(self) -> None:
-        """Clear conversation state and terminate its background commands."""
-        self.command_process_manager.terminate_all()
+        """Clear the owned conversation state and keep runtime config."""
         self._context = None
+        self._context_owned_for_run = False
 
     def close(self) -> None:
-        """Release tools and background commands owned by this runtime."""
+        """Release tool resources owned by this runtime."""
+        if self._closed:
+            return
         tools = self.tools
+        shutdown_in_process_tools(tools)
+        self._closed = True
         self.tools = {}
         try:
             release_tool_resources(tools.values())
         finally:
-            self.command_process_manager.terminate_all()
-
-    def list_background_processes(self) -> list[BackgroundProcessInfo]:
-        """Return running background commands for this runtime."""
-        return self.command_process_manager.list_processes()
-
-    def terminate_background_process(self, session_id: int) -> bool:
-        """Terminate one background command by session identifier."""
-        return self.command_process_manager.terminate_process(session_id)
-
-    def terminate_all_background_processes(self) -> int:
-        """Terminate all background commands and return the count."""
-        return self.command_process_manager.terminate_all()
-
-    def refresh_tools(self, *, force: bool = False) -> bool:
-        """Refresh tool registration and runtime context for the active model."""
-        model = resolve_model_identity(self.provider)
-        changed = self._tool_provider is not self.provider or self._tool_model != model
-        if not force and not changed:
-            return False
-        if self._tool_factory is not None:
-            registration = normalize_tool_registration(
-                self._tool_factory(
-                    ToolRegistrationContext(
-                        root=self._tool_root,
-                        home=self._tool_home,
-                        provider=self.provider,
-                        model=model,
-                        cancel_requested=never_cancel,
-                    )
-                )
-            )
-            tools = list(registration.tools)
-            invalid = [tool for tool in tools if not isinstance(tool, LocalTool)]
-            if invalid:
-                raise TypeError(
-                    "Tool registration callbacks must return LocalTool instances."
-                )
-            self._install_tools(tools, model=model)
-            self._set_dynamic_system_messages(
-                tool_messages=list(registration.system_messages),
-            )
-        elif self._capability_resolver is not None:
-            resolution = self._capability_resolver.resolve(
-                CapabilityContext(
-                    root=self._tool_root,
-                    home=self._tool_home,
-                    provider=self.provider,
-                    model=model,
-                    cancel_requested=never_cancel,
-                )
-            )
-            tools = list(resolution.tools)
-            invalid = [tool for tool in tools if not isinstance(tool, LocalTool)]
-            if invalid:
-                raise TypeError("Capabilities must register LocalTool instances.")
-            self._install_tools(tools, model=model)
-            self._set_dynamic_system_messages(
-                tool_messages=list(resolution.system_messages),
-            )
-        else:
-            self._install_tools(list(self.tools.values()), model=model)
-            self._set_dynamic_system_messages(tool_messages=[])
-        return True
-
-    def _set_dynamic_system_messages(
-        self,
-        *,
-        tool_messages: Sequence[Message],
-    ) -> None:
-        self._provider_system_messages = provider_system_messages(self.provider)
-        self._tool_system_messages = [
-            message.model_copy(deep=True) for message in tool_messages
-        ]
-        self.context_manager.set_instructions(
-            [
-                *self._base_instructions,
-                *self._provider_system_messages,
-                *self._tool_system_messages,
-            ],
-            context=self._context,
-        )
-
-    def _install_tools(
-        self,
-        tools: Sequence[LocalTool],
-        *,
-        model: ModelIdentity | None = None,
-    ) -> None:
-        resolved_model = model or resolve_model_identity(self.provider)
-        runtime_context = ToolRuntimeContext(
-            root=self._tool_root,
-            home=self._tool_home,
-            provider=self.provider,
-            model=resolved_model,
-            cancel_requested=never_cancel,
-        )
-        for tool in tools:
-            tool.bind_runtime_context(runtime_context)
-            tool._context["command_process_manager"] = self.command_process_manager
-        indexed = index_tools(tools)
-        previous_tools = self.tools
-        acquire_tool_resources(indexed.values())
-        self.tools = indexed
-        release_tool_resources(previous_tools.values())
-        self._tool_provider = self.provider
-        self._tool_model = resolved_model
+            self.command_process_manager.release()
 
     def load_conversation(
         self,
-        history: ConversationHistory,
         *,
+        messages: Sequence[Message] | None = None,
+        conversation_entries: Sequence[ConversationEntry] | None = None,
         available_skills: Sequence[SkillSpec] | None = None,
         active_skills: Sequence[ActiveSkill] | None = None,
     ) -> None:
         """Replace the owned conversation state from persisted history."""
-        messages = history.messages if isinstance(history, MessageHistory) else None
-        conversation_entries = (
-            history.entries if isinstance(history, ConversationEntryHistory) else None
-        )
+        if messages is not None and conversation_entries is not None:
+            raise ValueError(
+                "Provide either messages or conversation_entries, not both."
+            )
         self._context = self.context_manager.initialize(
             "",
             list(messages) if messages is not None else None,
@@ -385,6 +235,33 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         self.active_skills = [
             skill.model_copy(deep=True) for skill in self._context.active_skills
         ]
+        self._context_owned_for_run = False
+
+    def load_owned_conversation(
+        self,
+        conversation_entries: list[ConversationEntry],
+        *,
+        available_skills: Sequence[SkillSpec] | None = None,
+        active_skills: Sequence[ActiveSkill] | None = None,
+    ) -> None:
+        """Take a validated active path for one isolated runtime turn."""
+        self._context = self.context_manager.initialize_owned(
+            "",
+            conversation_entries,
+            append_prompt=False,
+            available_skills=(
+                available_skills
+                if available_skills is not None
+                else self.available_skills
+            ),
+            active_skills=(
+                active_skills if active_skills is not None else self.active_skills
+            ),
+        )
+        self.active_skills = [
+            skill.model_copy(deep=True) for skill in self._context.active_skills
+        ]
+        self._context_owned_for_run = True
 
     def run(
         self,
@@ -400,7 +277,7 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         active_skills: Sequence[ActiveSkill] | None = None,
     ) -> AgentResult:
         """Run the agent loop for the given prompt and return the result."""
-        self.refresh_tools(force=True)
+        self.refresh_tools()
         context = context_for_run(
             self,
             prompt,
@@ -415,7 +292,12 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
                 stopped = self._stopped_result(context, iterations=0)
                 persist_run_context(self, context)
                 return stopped
-            for iteration in range(1, self.max_iterations + 1):
+            iterations = (
+                count(1)
+                if self.max_iterations is None
+                else range(1, self.max_iterations + 1)
+            )
+            for iteration in iterations:
                 iteration_result = self._run_iteration(
                     context,
                     iteration=iteration,
@@ -449,78 +331,3 @@ class RuntimeAgent(RuntimeAgentIterationMixin):
         except Exception:
             persist_run_context(self, context)
             raise
-
-    def prompt[StructuredT](
-        self,
-        prompt: str,
-        *,
-        images: Sequence[Image | str | Path] = (),
-        image_urls: Sequence[str] = (),
-        output_type: type[StructuredT] | None = None,
-        on_event: AgentEventHandler | None = None,
-        stop_requested: StopRequested | None = None,
-        before_tool_call: BeforeToolCallHook | None = None,
-        after_tool_call: AfterToolCallHook | None = None,
-    ) -> SDKAgentResult[StructuredT]:
-        """Run the SDK-style agent prompt flow and return the public result."""
-        from yoke.ai.sdk.types import AgentResult as SDKAgentResult
-        from yoke.ai.sdk.types import (
-            append_structured_output_instructions,
-        )
-        from yoke.ai.sdk.types import build_user_message_from_images
-        from yoke.ai.sdk.types import normalize_image_inputs
-        from yoke.ai.sdk.types import parse_structured_output
-
-        user_message = None
-        normalized_images, normalized_urls = normalize_image_inputs(
-            images=images,
-            image_urls=image_urls,
-        )
-        if normalized_images or normalized_urls:
-            user_message = build_user_message_from_images(
-                prompt,
-                images=normalized_images,
-                image_urls=normalized_urls,
-            )
-        if output_type is not None:
-            base_message = user_message or Message.user(prompt)
-            user_message = append_structured_output_instructions(
-                base_message,
-                output_type=output_type,
-            )
-        runtime_result = self.run(
-            prompt,
-            user_message=user_message,
-            on_event=on_event,
-            stop_requested=stop_requested,
-            before_tool_call=before_tool_call,
-            after_tool_call=after_tool_call,
-        )
-        structured = parse_structured_output(
-            runtime_result.output,
-            output_type=output_type,
-        )
-        message = (
-            runtime_result.messages[-1]
-            if runtime_result.messages
-            else Message.assistant(runtime_result.output)
-        )
-        return SDKAgentResult(
-            message=message,
-            output=runtime_result.output,
-            messages=runtime_result.messages,
-            iterations=runtime_result.iterations,
-            status=runtime_result.status,
-            conversation_entries=runtime_result.conversation_entries,
-            structured=structured,
-        )
-
-
-def _bound_tool_path(tools: Sequence[LocalTool], key: str) -> Path | None:
-    for tool in tools:
-        value = tool._context.get(key)
-        if isinstance(value, Path):
-            return value
-        if isinstance(value, str):
-            return Path(value)
-    return None

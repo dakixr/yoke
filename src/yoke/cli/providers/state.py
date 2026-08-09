@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
 
+from yoke.agent.budget import rebind_context_manager_budget
 from yoke.agent.context import ContextManager
-from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop.agent import RuntimeAgent
 from yoke.ai.providers.base import ModelCatalogProvider
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
-from yoke.ai.providers.resolution import available_provider_names
-from yoke.agent.budget import current_context_fits_provider_budget
-from yoke.agent.budget import rebind_context_manager_budget
-from yoke.cli.config.args import CLIArgs
+from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
+from yoke.cli.config import CLIArgs
+from yoke.cli.config.providers import build_provider_from_args
+from yoke.cli.config.providers import prepare_provider_args
 from yoke.cli.providers.catalog import parse_provider_model_identifier
+from yoke.cli.providers.context_transition import (
+    prepare_context_for_provider,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -51,14 +55,6 @@ class TargetModelProvider:
         del reasoning_effort
         if model_id != self.model_info.id:
             raise ValueError(f"Unknown model {model_id!r}.")
-
-
-def bind_provider_session(agent: object, session_id: str) -> None:
-    """Bind a session-aware provider to the active CLI session."""
-    provider = getattr(agent, "provider", None)
-    set_session_id = getattr(provider, "set_session_id", None)
-    if callable(set_session_id):
-        set_session_id(session_id)
 
 
 def provider_session_state_from_values(
@@ -114,13 +110,6 @@ def apply_session_provider_defaults(
     session_state: ProviderSessionState,
 ) -> None:
     """Fill unset CLI args from persisted session provider state."""
-    if (
-        args.model is None
-        and session_state.provider_name is not None
-        and session_state.provider_name
-        not in available_provider_names(home=Path.home())
-    ):
-        return
     if getattr(args, "model", None) is None and session_state.model_id:
         if session_state.provider_name:
             args.model = f"{session_state.provider_name}:{session_state.model_id}"
@@ -143,27 +132,43 @@ def set_agent_model(
     provider = getattr(agent, "provider", None)
     if not isinstance(provider, ModelCatalogProvider):
         raise ValueError("The current provider does not support model switching.")
-    _ensure_context_fits_target_model(
-        agent,
-        provider=provider,
+    target_provider = _target_provider_for_model(
+        provider,
         model_id=model_id,
-        reasoning_effort=reasoning_effort,
     )
-    provider.set_model(model_id, reasoning_effort=reasoning_effort)
-    if isinstance(agent, RuntimeAgent):
-        agent.refresh_tools(force=True)
+    transition = prepare_context_for_provider(
+        agent,
+        target_provider=target_provider,
+    )
+    source_model_id = provider.current_model_id()
+    source_effort = getattr(getattr(provider, "config", None), "reasoning_effort", None)
+    resolved_effort = compatible_reasoning_effort_for_model(
+        target_provider.model_info,
+        reasoning_effort,
+    )
+    try:
+        provider.set_model(model_id, reasoning_effort=resolved_effort)
+        provider_config = getattr(provider, "config", None)
+        if provider_config is not None and hasattr(
+            provider_config,
+            "reasoning_effort",
+        ):
+            with suppress(AttributeError, TypeError):
+                setattr(provider_config, "reasoning_effort", resolved_effort)
+    except Exception:
+        with suppress(Exception):
+            if source_model_id is not None:
+                provider.set_model(
+                    source_model_id,
+                    reasoning_effort=source_effort,
+                )
+        if transition is not None:
+            transition.rollback()
+        raise
     context_manager = _agent_context_manager(agent)
     if context_manager is not None:
         rebind_context_manager_budget(context_manager, provider=provider)
     return capture_provider_session_state(agent)
-
-
-def provider_model_choices(agent: object) -> list[str]:
-    """Return known model ids for slash-command completion."""
-    provider = getattr(agent, "provider", None)
-    if not isinstance(provider, ModelCatalogProvider):
-        return []
-    return [model.id for model in provider.list_models()]
 
 
 def switch_agent_provider_model(
@@ -191,9 +196,8 @@ def switch_agent_provider_model(
         model_id=model_id,
         reasoning_effort=reasoning_effort,
     )
-    _ensure_context_fits_target_model(agent, provider=target_provider)
+    prepare_context_for_provider(agent, target_provider=target_provider)
     agent.provider = target_provider
-    agent.refresh_tools(force=True)
     rebind_context_manager_budget(
         agent.context_manager,
         provider=target_provider,
@@ -232,58 +236,15 @@ def _build_provider_for_model(
     model_id: str,
     reasoning_effort: str | None,
 ) -> Provider:
-    from yoke.cli.config.providers import build_provider_from_args
-    from yoke.cli.config.providers import prepare_provider_args
-
-    provider_args = CLIArgs(
+    target_args = CLIArgs(
         model=f"{provider_name}:{model_id}",
         reasoning_effort=reasoning_effort,
         root=args.root,
         skills=args.skills,
         images=args.images,
     )
-    prepare_provider_args(provider_args)
-    return build_provider_from_args(provider_args)
-
-
-def _ensure_context_fits_target_model(
-    agent: object,
-    *,
-    provider: object,
-    model_id: str | None = None,
-    reasoning_effort: str | None = None,
-) -> None:
-    if not isinstance(agent, RuntimeAgent):
-        return
-    target_provider = provider
-    if model_id is not None:
-        if not isinstance(provider, ModelCatalogProvider):
-            return
-        target_provider = _target_provider_for_model(
-            provider,
-            model_id=model_id,
-        )
-    context = agent._context
-    if context is None:
-        return
-    provider_messages = agent.context_manager.messages_for_provider(context)
-    fits, budget, input_tokens = current_context_fits_provider_budget(
-        agent.context_manager,
-        provider_messages,
-        provider=target_provider,
-    )
-    if fits:
-        return
-    available_input_tokens = (
-        budget.policy.max_total_tokens - budget.policy.reserved_output_tokens
-    )
-    raise ValueError(
-        "compact before switching. context too large for "
-        f"{budget.provider_name}:{budget.model_id} model "
-        f"({input_tokens} input tokens > "
-        f"{available_input_tokens} "
-        "available)"
-    )
+    prepare_provider_args(target_args)
+    return build_provider_from_args(target_args)
 
 
 def _agent_context_manager(agent: object) -> ContextManager | None:

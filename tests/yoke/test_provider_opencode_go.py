@@ -12,24 +12,6 @@ from yoke.ai.providers.opencode_go import OpenCodeGoConfig
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 
 
-def _payload_messages(captured: dict[str, object]) -> list[dict[str, object]]:
-    payload = cast(dict[str, object], captured["payload"])
-    return cast(list[dict[str, object]], payload["messages"])
-
-
-def _msg_content(msg: dict[str, object]) -> list[dict[str, object]]:
-    return cast(list[dict[str, object]], msg["content"])
-
-
-def _anthropic_handler(captured: dict[str, object], response_json: dict[str, object]):
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["headers"] = dict(request.headers)
-        captured["payload"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(200, json=response_json)
-
-    return handler
-
-
 def test_opencode_go_catalog_excludes_deprecated_models() -> None:
     provider = OpenCodeGoProvider(OpenCodeGoConfig(api_key="test"))
     try:

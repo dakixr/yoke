@@ -10,7 +10,7 @@ from typing import cast
 from yoke.agent.compaction.core import CompactionPreparation
 from yoke.agent.compaction.core import CompactionResult
 from yoke.agent.compaction.core import TokenEstimate
-from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.loop.lifecycle import compact_context_for_iteration
 from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.agent.models import ConversationEntry
@@ -44,17 +44,11 @@ def force_compact_agent(
     context = context_manager.initialize(
         "/compact",
         messages,
+        append_prompt=False,
         conversation_entries=conversation_entries,
         available_skills=agent.available_skills,
         active_skills=agent.active_skills,
     )
-    if (
-        context.messages
-        and context.messages[-1].role == "user"
-        and context.messages[-1].plain_text_content == "/compact"
-    ):
-        context.conversation_log.entries.pop()
-        context.messages = context_manager.transcript_messages(context)
     compaction = compact_context_for_iteration(
         agent,
         context,
@@ -87,6 +81,7 @@ def estimate_agent_context_usage(
     messages: list[Message],
     *,
     conversation_entries: Sequence[ConversationEntry] | None = None,
+    take_entry_ownership: bool = False,
 ) -> dict[str, Any] | None:
     """Estimate current prompt context usage against provider budget."""
     if not isinstance(agent, RuntimeAgent) and not hasattr(agent, "context_manager"):
@@ -97,18 +92,27 @@ def estimate_agent_context_usage(
     max_total_tokens = getattr(context_manager, "max_total_tokens", None)
     if not isinstance(max_total_tokens, int) or max_total_tokens <= 0:
         return None
-    context = context_manager.initialize(
-        prompt,
-        messages,
-        append_prompt=bool(prompt),
-        conversation_entries=conversation_entries,
-        available_skills=cast(
-            Sequence[object] | None, getattr(agent, "available_skills", None)
-        ),
-        active_skills=cast(
-            Sequence[object] | None, getattr(agent, "active_skills", None)
-        ),
+    available_skills = cast(
+        Sequence[object] | None, getattr(agent, "available_skills", None)
     )
+    active_skills = cast(Sequence[object] | None, getattr(agent, "active_skills", None))
+    if take_entry_ownership and isinstance(conversation_entries, list):
+        context = context_manager.initialize_owned(
+            prompt,
+            conversation_entries,
+            append_prompt=bool(prompt),
+            available_skills=available_skills,
+            active_skills=active_skills,
+        )
+    else:
+        context = context_manager.initialize(
+            prompt,
+            messages,
+            append_prompt=bool(prompt),
+            conversation_entries=conversation_entries,
+            available_skills=available_skills,
+            active_skills=active_skills,
+        )
     estimate = context_manager.estimate_tokens(
         messages_for_provider_capabilities(
             context_manager.messages_for_provider(context),
@@ -118,6 +122,8 @@ def estimate_agent_context_usage(
     accounting = effective_usage_accounting(
         estimate,
         latest_usage=_latest_entry_usage(context.conversation_log.entries),
+        provider_name=context_manager.compactor.provider_name,
+        model_id=context_manager.compactor.model,
     )
     usage_percent = min(
         100,

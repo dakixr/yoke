@@ -5,16 +5,21 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated
+from typing import cast
 
 import typer
 from rich.table import Table
 from rich.text import Text
 
-from yoke.cli.bootstrap.types import LoadedTool, ToolLoadReport
-from yoke.cli.config import build_tool_report, format_tool_discovery_message
-from yoke.cli.render import OutputStream, build_console
-from yoke.cli.tools.policy import ToolPolicy, YokeConfig
+from yoke.cli.bootstrap.types import ToolLoadReport
+from yoke.cli.config import build_tool_report
+from yoke.cli.config import format_tool_discovery_message
+from yoke.cli.render import OutputStream
+from yoke.cli.render import build_console
+from yoke.cli.tools.policy import PiConfig
+from yoke.cli.tools.policy import ToolPolicy
+from yoke.cli.tools.policy import known_builtin_capability_ids
 
 DEFAULT_ROOT = Path.cwd().absolute()
 
@@ -25,48 +30,35 @@ def print_tool_inventory_table(stream: OutputStream, report: ToolLoadReport) -> 
     """print_tool_inventory_table."""
     console = build_console(stream)
     table = Table(title="Tool Inventory", show_header=True, header_style="bold cyan")
-    table.add_column("Name", style="bold")
-    table.add_column("Status")
-    table.add_column("Source")
-    table.add_column("Location")
-    active_targets = {_tool_policy_target(entry) for entry in report.active_tools}
-    for target, entries in _inventory_rows(report).items():
-        first = entries[0]
-        if first.capability_name is not None:
-            source = "builtin capability"
-            location = ", ".join(entry.tool.name for entry in entries)
-        else:
-            source = first.source_kind
-            location = (
-                "builtin" if first.source_path is None else str(first.source_path)
-            )
-        if target in active_targets:
+    table.add_column("Name", style="bold", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Cap", max_width=14)
+    table.add_column("Source", no_wrap=True)
+    table.add_column("Location", overflow="ellipsis")
+    active_names = {entry.tool.name for entry in report.active_tools}
+    all_entries = sorted(
+        [*report.active_tools, *report.denied_tools],
+        key=lambda item: (
+            item.tool.name,
+            item.source_kind,
+            str(item.source_path or ""),
+        ),
+    )
+    for entry in all_entries:
+        source = "builtin" if entry.source_path is None else str(entry.source_path)
+        if entry.tool.name in active_names:
             status = "active"
         else:
             status = "disabled"
         status_text = Text(status, style="green" if status == "active" else "red")
-        table.add_row(target, status_text, source, location)
-    console.print(table)
-
-
-def _tool_policy_target(entry: LoadedTool) -> str:
-    return entry.capability_name or entry.tool.name
-
-
-def _inventory_rows(report: ToolLoadReport) -> dict[str, list[LoadedTool]]:
-    rows: dict[str, list[LoadedTool]] = {}
-    for entry in report.discovered_tools:
-        rows.setdefault(_tool_policy_target(entry), []).append(entry)
-    return dict(
-        sorted(
-            rows.items(),
-            key=lambda item: (
-                item[0],
-                item[1][0].source_kind,
-                str(item[1][0].source_path or ""),
-            ),
+        table.add_row(
+            entry.tool.name,
+            status_text,
+            entry.capability_id or "-",
+            entry.source_kind,
+            source,
         )
-    )
+    console.print(table)
 
 
 TOOLS_INIT_TEMPLATE = '''from __future__ import annotations
@@ -120,7 +112,7 @@ def tools_init(
     ] = False,
 ) -> None:
     """tools_init."""
-    target = root / ".yoke" / "tools" / "example_tools.py"
+    target = root / ".yoke" / "example_tools.py"
     if target.exists() and not force:
         typer.echo(f"Refusing to overwrite existing file: {target}")
         raise typer.Exit(1)
@@ -138,11 +130,11 @@ def _config_path(*, root: Path, global_scope: bool, repo_scope: bool) -> Path:
     return root / ".yoke" / "config.json"
 
 
-def _load_config(path: Path) -> YokeConfig:
+def _load_config(path: Path) -> PiConfig:
     if not path.is_file():
-        return YokeConfig()
+        return PiConfig()
     try:
-        return YokeConfig.model_validate_json(path.read_text(encoding="utf-8"))
+        return PiConfig.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise ValueError(
             "Could not update tool policy because "
@@ -150,27 +142,28 @@ def _load_config(path: Path) -> YokeConfig:
         ) from exc
 
 
-def _write_tool_policy(
+def _write_policy(
     path: Path,
-    tool_name: str,
+    name: str,
     policy: ToolPolicy,
     *,
-    preserve_allow: bool,
+    capability: bool,
 ) -> None:
     config = _load_config(path)
+    capabilities = dict(config.capabilities)
     tools = dict(config.tools)
-    if policy == ToolPolicy.allow and not preserve_allow:
-        tools.pop(tool_name, None)
+    if capability:
+        capabilities[name] = policy
     else:
-        tools[tool_name] = policy
+        tools[name] = policy
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            YokeConfig(
+            PiConfig(
+                capabilities=capabilities,
                 tools=tools,
                 default_model=config.default_model,
                 default_reasoning_effort=config.default_reasoning_effort,
-                title_model=config.title_model,
             ).model_dump(mode="json", exclude_none=True),
             indent=2,
         )
@@ -181,31 +174,68 @@ def _write_tool_policy(
 
 def _set_tool_policy(
     *,
-    tool_name: str,
+    name: str,
     policy: ToolPolicy,
     root: Path,
     global_scope: bool,
     repo_scope: bool,
+    tool_override: bool,
 ) -> None:
     path = _config_path(root=root, global_scope=global_scope, repo_scope=repo_scope)
     try:
-        _write_tool_policy(
-            path,
-            tool_name,
-            policy,
-            preserve_allow=not global_scope,
-        )
+        _load_config(path)
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
-    typer.echo(f"Set {tool_name}={policy.value} in {path}")
+    if tool_override:
+        _validate_tool_name(name, root=root)
+    else:
+        _validate_capability_id(name)
+    try:
+        _write_policy(path, name, policy, capability=not tool_override)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    layer = "tool" if tool_override else "capability"
+    typer.echo(f"Set {layer} {name}={policy.value} in {path}")
+
+
+def _validate_capability_id(name: str) -> None:
+    known = known_builtin_capability_ids()
+    if name in known:
+        return
+    suggestion = name.replace("_", ".")
+    if suggestion in known:
+        detail = f" Did you mean capability `{suggestion}`?"
+    else:
+        detail = " Use --tool for an exact concrete tool override."
+    typer.echo(
+        f"Unknown capability ID `{name}`.{detail}",
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
+def _validate_tool_name(name: str, *, root: Path) -> None:
+    try:
+        report = build_tool_report(root=root)
+    except Exception:
+        return
+    known = {entry.tool.name for entry in report.discovered_tools}
+    if name in known:
+        return
+    typer.echo(
+        f"Unknown concrete tool `{name}` for this root.",
+        err=True,
+    )
+    raise typer.Exit(2)
 
 
 @tools_app.command("activate")
 def tools_activate(
-    tool_name: Annotated[
+    name: Annotated[
         str,
-        typer.Argument(help="Exact built-in capability or custom tool name."),
+        typer.Argument(help="Capability ID, or exact tool name with --tool."),
     ],
     root: Annotated[
         Path,
@@ -225,22 +255,27 @@ def tools_activate(
         bool,
         typer.Option("--repo", help="Update the repo .yoke/config.json."),
     ] = False,
+    tool_override: Annotated[
+        bool,
+        typer.Option("--tool", help="Write an exact concrete tool override."),
+    ] = False,
 ) -> None:
     """tools_activate."""
     _set_tool_policy(
-        tool_name=tool_name,
+        name=name,
         policy=ToolPolicy.allow,
         root=root,
         global_scope=global_scope,
         repo_scope=repo_scope,
+        tool_override=tool_override,
     )
 
 
 @tools_app.command("deactivate")
 def tools_deactivate(
-    tool_name: Annotated[
+    name: Annotated[
         str,
-        typer.Argument(help="Exact built-in capability or custom tool name."),
+        typer.Argument(help="Capability ID, or exact tool name with --tool."),
     ],
     root: Annotated[
         Path,
@@ -260,14 +295,19 @@ def tools_deactivate(
         bool,
         typer.Option("--repo", help="Update the repo .yoke/config.json."),
     ] = False,
+    tool_override: Annotated[
+        bool,
+        typer.Option("--tool", help="Write an exact concrete tool override."),
+    ] = False,
 ) -> None:
     """tools_deactivate."""
     _set_tool_policy(
-        tool_name=tool_name,
+        name=name,
         policy=ToolPolicy.deny,
         root=root,
         global_scope=global_scope,
         repo_scope=repo_scope,
+        tool_override=tool_override,
     )
 
 
@@ -291,28 +331,24 @@ def tools_list(
     except ValueError as exc:
         console.print(Text(f"Tool loading failed: {exc}", style="red"))
         raise typer.Exit(1) from exc
-    if report.failures:
-        console.print(
-            Text(
-                f"Tool loading completed with {len(report.failures)} failure(s).",
-                style="yellow",
-            )
-        )
-        for failure in report.failures:
-            console.print(Text(f"- {failure.source_path}", style="yellow"))
-            console.print(Text(f"  {failure.error}", style="yellow"))
-    else:
-        console.print(Text("Tool loading OK.", style="green"))
+    console.print(Text("Tool loading OK.", style="green"))
     console.print(format_tool_discovery_message(report))
     print_tool_inventory_table(cast(OutputStream, sys.stdout), report)
     if report.config_path is not None:
         console.print(f"Config: {report.config_path}")
-    for pattern in report.unmatched_config_patterns:
+    for tool_name in report.unmatched_tool_names or []:
         console.print(
             Text(
-                f"Warning: tool rule did not match any loaded tool: {pattern}",
+                "Warning: exact tool override did not match any loaded tool: "
+                f"{tool_name}",
                 style="yellow",
             )
         )
-    if report.failures:
-        raise typer.Exit(1)
+    for capability_id in report.unmatched_capability_ids or []:
+        console.print(
+            Text(
+                "Warning: capability policy is not a known capability ID: "
+                f"{capability_id}",
+                style="yellow",
+            )
+        )

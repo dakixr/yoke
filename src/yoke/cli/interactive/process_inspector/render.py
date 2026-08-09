@@ -7,11 +7,16 @@ from collections.abc import Sequence
 from typing import Literal
 from typing import Protocol
 
-from yoke.agent.tools import CommandProcessSnapshot
-from yoke.cli.interactive.tools.inspector_render import escape
-from yoke.cli.interactive.tools.inspector_render import fit
-from yoke.cli.interactive.tools.inspector_render import format_duration
-from yoke.cli.interactive.tools.inspector_render import terminal_size
+from yoke.agent.tools.command_process_types import (
+    CommandProcessSnapshot,
+)
+from yoke.cli.interactive.tool_inspector.display import format_duration
+from yoke.cli.interactive.tool_inspector.render import terminal_size
+from yoke.cli.interactive.tool_inspector.styles import escape_html
+from yoke.cli.interactive.tool_inspector.styles import escape_line
+from yoke.cli.interactive.tool_inspector.styles import fit
+from yoke.cli.interactive.tool_inspector.styles import fit_cell
+from yoke.cli.interactive.tool_inspector.styles import pane_label
 
 
 class ProcessInspectorRenderState(Protocol):
@@ -39,38 +44,38 @@ def render_view_html(
     process = selected_process(state, items)
     left_lines = _list_lines(state, items, list_width, body_rows)
     detail_lines = _detail_lines(process, state.wrap, detail_width)
-    state.detail_scroll = max(
-        0, min(state.detail_scroll, max(0, len(detail_lines) - body_rows))
-    )
+    max_scroll = max(0, len(detail_lines) - body_rows)
+    state.detail_scroll = max(0, min(state.detail_scroll, max_scroll))
     detail_window = detail_lines[state.detail_scroll : state.detail_scroll + body_rows]
     lines = [
-        escape(_title(columns)),
+        escape_line(_title(columns), True),
         _pane_header(state, list_width, detail_width),
         "─" * columns,
     ]
     for index in range(body_rows):
-        left = (
-            left_lines[index]
-            if index < len(left_lines)
-            else _styled_cell("", list_width)
-        )
+        left = left_lines[index] if index < len(left_lines) else ""
         right = detail_window[index] if index < len(detail_window) else ""
-        lines.append(f"{left} │ {escape(fit(right, detail_width))}")
-    lines.extend(
-        [
-            "─" * columns,
-            escape(fit(_footer(state, items, len(detail_lines), body_rows), columns)),
-        ]
+        lines.append(
+            f"{fit_cell(left, list_width, html=True, trusted_markup=True)} │ "
+            f"{fit_cell(right, detail_width, html=True)}"
+        )
+    lines.append("─" * columns)
+    lines.append(
+        escape_line(
+            fit(_footer(state, items, len(detail_lines), body_rows), columns),
+            True,
+        )
     )
     return "\n".join(lines)
 
 
 def detail_text(process: CommandProcessSnapshot) -> str:
-    """Return readable details and retained output for one process."""
+    """Return readable details and output for one process."""
     exit_code = "-" if process.exit_code is None else str(process.exit_code)
     output_note = ""
     if process.original_output_bytes > process.retained_output_bytes:
         output_note = f" (tail of {process.original_output_bytes:,} output bytes)"
+    output = process.output_tail or "(no output)"
     return "\n".join(
         [
             f"Command session {process.session_id}",
@@ -89,7 +94,7 @@ def detail_text(process: CommandProcessSnapshot) -> str:
             process.command,
             "",
             f"OUTPUT{output_note}",
-            process.output_tail or "(no output)",
+            output,
         ]
     )
 
@@ -100,11 +105,10 @@ def move_selection(
     delta: int,
 ) -> None:
     """Move process selection and reset detail scrolling."""
-    if processes:
-        state.selected_index = max(
-            0, min(state.selected_index + delta, len(processes) - 1)
-        )
-        state.detail_scroll = 0
+    if not processes:
+        return
+    state.selected_index = max(0, min(state.selected_index + delta, len(processes) - 1))
+    state.detail_scroll = 0
 
 
 def selected_process(
@@ -123,9 +127,15 @@ def page_step() -> int:
     return max(1, terminal_size()[1] - 8)
 
 
-def _list_lines(state, processes, width: int, row_count: int) -> list[str]:
+def _list_lines(
+    state: ProcessInspectorRenderState,
+    processes: list[CommandProcessSnapshot],
+    width: int,
+    row_count: int,
+) -> list[str]:
     if not processes:
-        return [_styled_cell("No command processes yet.", width)]
+        return ["No command processes yet."]
+    state.selected_index = max(0, min(state.selected_index, len(processes) - 1))
     if state.selected_index < state.list_scroll:
         state.list_scroll = state.selected_index
     if state.selected_index >= state.list_scroll + row_count:
@@ -137,39 +147,47 @@ def _list_lines(state, processes, width: int, row_count: int) -> list[str]:
     ]
 
 
-def _list_line(state, process, index: int, width: int) -> str:
+def _list_line(
+    state: ProcessInspectorRenderState,
+    process: CommandProcessSnapshot,
+    index: int,
+    width: int,
+) -> str:
     marker = ">" if index == state.selected_index else " "
     icon = {"running": "…", "exited": "✓", "failed": "✗"}[process.status]
+    command = " ".join(process.command.split())
     text = fit(
         f"{marker} {icon} {process.session_id} "
-        f"{format_duration(process.elapsed_seconds)} {' '.join(process.command.split())}",
+        f"{format_duration(process.elapsed_seconds)} {command}",
         width,
     )
-    if state.active_pane != "sidebar":
-        style = "ansibrightblack"
-    else:
-        style = {"running": "ansiyellow", "exited": "ansigreen", "failed": "ansired"}[
-            process.status
-        ]
-    return _styled_cell(text, width, style=style)
+    style = _sidebar_style(process.status, state.active_pane)
+    return f"<{style}>{escape_html(text)}</{style}>"
 
 
-def _styled_cell(text: str, width: int, *, style: str | None = None) -> str:
-    fitted = fit(text, width)
-    escaped = escape(fitted)
-    return f"<{style}>{escaped}</{style}>" if style else escaped
+def _sidebar_style(status: str, active_pane: str) -> str:
+    if active_pane != "sidebar":
+        return "ansibrightblack"
+    if status == "exited":
+        return "ansigreen"
+    if status == "failed":
+        return "ansired"
+    return "ansiyellow"
 
 
-def _detail_lines(process, wrap: bool, width: int) -> list[str]:
+def _detail_lines(
+    process: CommandProcessSnapshot | None,
+    wrap: bool,
+    width: int,
+) -> list[str]:
     if process is None:
         return ["No command processes have been started in this live runtime."]
     lines = detail_text(process).splitlines() or [""]
     if not wrap:
         return lines
-    return [
-        wrapped
-        for line in lines
-        for wrapped in (
+    wrapped: list[str] = []
+    for line in lines:
+        wrapped.extend(
             textwrap.wrap(
                 line,
                 width=max(1, width),
@@ -178,37 +196,45 @@ def _detail_lines(process, wrap: bool, width: int) -> list[str]:
             )
             or [""]
         )
-    ]
+    return wrapped
 
 
 def _title(columns: int) -> str:
     return fit(
-        "Process Inspector - /ps  ←/→ panes  ↑/↓ move  g/G top/bottom  "
-        "PgUp/PgDn page  w wrap  y copy  q close",
+        "Process Inspector - /ps  ←/→ panes  ↑/↓ move  "
+        "g/G top/bottom  PgUp/PgDn page  w wrap  y copy  q close",
         columns,
     )
 
 
-def _pane_header(state, list_width: int, detail_width: int) -> str:
-    def label(value: str, width: int, active: bool) -> str:
-        text = escape(fit(f" {value} ", width))
-        return f"<reverse>{text}</reverse>" if active else text
-
-    return (
-        f"{label('PROCESSES', list_width, state.active_pane == 'sidebar')} │ "
-        f"{label('DETAIL', detail_width, state.active_pane == 'detail')}"
+def _pane_header(
+    state: ProcessInspectorRenderState,
+    list_width: int,
+    detail_width: int,
+) -> str:
+    processes = pane_label(
+        "PROCESSES", list_width, active=state.active_pane == "sidebar"
     )
+    detail = pane_label("DETAIL", detail_width, active=state.active_pane == "detail")
+    return f"{processes} │ {detail}"
 
 
-def _footer(state, processes, detail_count: int, body_rows: int) -> str:
+def _footer(
+    state: ProcessInspectorRenderState,
+    processes: list[CommandProcessSnapshot],
+    detail_line_count: int,
+    body_rows: int,
+) -> str:
     if state.notice:
         return state.notice
     running = sum(process.status == "running" for process in processes)
     if state.active_pane == "sidebar":
         return (
-            f"PROCESSES focused · ↑/↓ move · → details · {running} running · "
-            f"{len(processes)} retained"
+            f"PROCESSES focused · ↑/↓ move · → details · "
+            f"{running} running · {len(processes)} retained"
         )
-    start = min(detail_count, state.detail_scroll + 1)
-    end = min(detail_count, state.detail_scroll + body_rows)
-    return f"DETAIL focused · ↑/↓ scroll · ← processes · {start}-{end}/{detail_count}"
+    start = min(detail_line_count, state.detail_scroll + 1)
+    end = min(detail_line_count, state.detail_scroll + body_rows)
+    return (
+        f"DETAIL focused · ↑/↓ scroll · ← processes · {start}-{end}/{detail_line_count}"
+    )

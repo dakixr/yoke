@@ -5,6 +5,7 @@ from __future__ import annotations
 from yoke.agent.compaction import CompactionPreparation
 from yoke.agent.compaction import CompactionReason
 from yoke.agent.compaction import CompactionResult
+from yoke.agent.loop.cache_scope import conversation_cache_scope
 from yoke.agent.loop.compaction_summary import summarize_compaction
 from yoke.agent.loop.overflow import guard_newest_user_message_images
 from yoke.agent.loop.overflow import retry_with_compacted_history
@@ -14,14 +15,19 @@ from yoke.agent.loop.types import AgentResult
 from yoke.agent.loop.types import AgentStoppedError
 from yoke.agent.loop.types import CompactionAttempt
 from yoke.agent.loop.types import INTERRUPTED_TURN_NOTICE
-from yoke.agent.loop.types import StopRequested
 from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
 from yoke.agent.usage import compact_usage_payload
-from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
+from yoke.ai.providers.base import ProviderCancelledError
+from yoke.ai.providers.base import ProviderRequestContext
 from yoke.ai.providers.base import complete_with_cancel
+from yoke.ai.providers.base import provider_event_handler
+from yoke.ai.providers.usage_context import (
+    current_usage_metric_context,
+)
+from yoke.ai.providers.usage_context import usage_metric_context
 
 
 def handle_pre_model_compaction(
@@ -29,8 +35,6 @@ def handle_pre_model_compaction(
     context: AgentContext,
     iteration: int,
     on_event: AgentEventHandler | None,
-    *,
-    stop_requested: StopRequested | None,
 ) -> bool:
     """Compact before the provider call when needed."""
     compaction = compact_context_for_iteration(
@@ -38,7 +42,6 @@ def handle_pre_model_compaction(
         context,
         iteration=iteration,
         on_event=on_event,
-        stop_requested=stop_requested,
     )
     if compaction.failed:
         return True
@@ -59,7 +62,7 @@ def complete_iteration_model(
     *,
     iteration: int,
     on_event: AgentEventHandler | None,
-    stop_requested: StopRequested | None,
+    stop_requested=None,
 ) -> Message:
     """Run one provider completion call."""
     guard_newest_user_message_images(agent, context)
@@ -72,32 +75,40 @@ def complete_iteration_model(
         {"iteration": iteration, "message_count": len(provider_messages)},
     )
     try:
-        assistant_message = complete_with_cancel(
-            agent.provider,
-            provider_messages,
-            agent._tool_definitions(),
-            cancel_requested=stop_requested,
-        )
+        current_call_kind = current_usage_metric_context().call_kind
+        with (
+            provider_event_handler(on_event),
+            usage_metric_context(call_kind=current_call_kind or "model_iteration"),
+        ):
+            assistant_message = complete_with_cancel(
+                agent.provider,
+                provider_messages,
+                agent._tool_definitions(),
+                cancel_requested=stop_requested,
+                request_context=ProviderRequestContext(
+                    cache_scope=conversation_cache_scope(context),
+                    response_continuity=(
+                        "reset" if context.provider_epoch_reset else "continue"
+                    ),
+                ),
+            )
     except ProviderCancelledError as exc:
         raise AgentStoppedError() from exc
     except ProviderError as exc:
         if should_retry_after_overflow(exc):
-            try:
-                recovered = retry_with_compacted_history(
-                    agent,
-                    context,
-                    iteration=iteration,
-                    on_event=on_event,
-                    stop_requested=stop_requested,
-                    compact_context=compact_context_for_iteration,
-                    emit_event=lambda event, payload: emit(on_event, event, payload),
-                )
-            except ProviderCancelledError as cancelled:
-                raise AgentStoppedError() from cancelled
+            recovered = retry_with_compacted_history(
+                agent,
+                context,
+                iteration=iteration,
+                on_event=on_event,
+                compact_context=compact_context_for_iteration,
+                emit_event=lambda event, payload: emit(on_event, event, payload),
+            )
             if recovered is not None:
                 return recovered
         exc.partial_messages = context.messages
         raise
+    context.provider_epoch_reset = False
     emit(
         on_event,
         "model_end",
@@ -136,13 +147,13 @@ def handle_post_tool_results(
     context: AgentContext,
     iteration: int,
     on_event: AgentEventHandler | None,
-    *,
-    stop_requested: StopRequested | None,
 ) -> None:
     """Refresh state and compact after tool results when needed."""
     agent.active_skills = [
         skill.model_copy(deep=True) for skill in context.active_skills
     ]
+    if agent.refresh_tools(force=True):
+        agent._sync_context_instructions(context)
     emit_context_usage(
         agent,
         on_event,
@@ -156,7 +167,6 @@ def handle_post_tool_results(
         iteration=iteration,
         on_event=on_event,
         after_tool_results=True,
-        stop_requested=stop_requested,
     )
     if compaction.failed:
         raise AgentStoppedError()
@@ -172,9 +182,12 @@ def handle_post_tool_results(
 
 def sync_runtime_skills_from_context(agent, context: AgentContext) -> None:
     """Mirror active skill state from the working context back to the agent."""
+    changed = agent.active_skills != context.active_skills
     agent.active_skills = [
         skill.model_copy(deep=True) for skill in context.active_skills
     ]
+    if changed and agent.refresh_tools(force=True):
+        agent._sync_context_instructions(context)
 
 
 def completed_result(
@@ -209,9 +222,8 @@ def compact_context_for_iteration(
     on_event: AgentEventHandler | None,
     after_tool_results: bool = False,
     reason: CompactionReason = "threshold",
-    stop_requested: StopRequested | None = None,
 ) -> CompactionAttempt:
-    """Attempt context compaction for one iteration."""
+    """Generate a handoff and start a reduced provider-context epoch."""
     preparation = (
         agent.context_manager.prepare_post_tool_compaction(context)
         if after_tool_results
@@ -219,15 +231,14 @@ def compact_context_for_iteration(
     )
     if preparation is None:
         return CompactionAttempt()
-    summary_text = summarize_compaction(
+    summary = summarize_compaction(
         agent,
         preparation,
         context=context,
         on_event=on_event,
-        stop_requested=stop_requested,
         emit=emit,
     )
-    if summary_text is None:
+    if summary is None:
         emit_compaction_failed(
             on_event,
             preparation,
@@ -237,7 +248,8 @@ def compact_context_for_iteration(
     result = agent.context_manager.apply_compaction(
         context,
         preparation,
-        summary_text=summary_text,
+        instruction_message=summary.instruction,
+        summary_message=summary.response,
     )
     compacted_estimate = agent.context_manager.estimate_tokens(result.messages)
     emit_compaction_event(
@@ -331,6 +343,8 @@ def emit_context_usage(
         payload["provider_reported_total_tokens"] = accounting.total_tokens
     if accounting.cached_input_tokens is not None:
         payload["cached_input_tokens"] = accounting.cached_input_tokens
+    if accounting.cache_creation_input_tokens is not None:
+        payload["cache_creation_input_tokens"] = accounting.cache_creation_input_tokens
     max_total_tokens = agent.context_manager.max_total_tokens
     if isinstance(max_total_tokens, int) and max_total_tokens > 0:
         payload["max_total_tokens"] = max_total_tokens

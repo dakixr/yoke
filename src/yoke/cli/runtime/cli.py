@@ -10,16 +10,14 @@ from pathlib import Path
 
 from rich.text import Text
 
-from yoke.agent.loop import RuntimeAgent
-from yoke.agent.loop import ConversationEntryHistory
+from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
-from yoke.agent.state import active_branch_entries
 from yoke.agent.state import capture_agent_state
 from yoke.cli.bootstrap.types import ToolLoadReport
-from yoke.cli.config.args import CLIArgs
-from yoke.cli.config.runtime import RUN_ERRORS
-from yoke.cli.config.runtime import build_cli_agent_from_args
+from yoke.cli.config import CLIArgs
+from yoke.cli.config import RUN_ERRORS
+from yoke.cli.config import build_cli_agent_from_args
 from yoke.cli.image_input import build_user_message
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
@@ -29,17 +27,17 @@ from yoke.cli.runtime.base import ActiveSession
 from yoke.cli.runtime.base import AgentRunner
 from yoke.cli.runtime.base import ToolReportAgent
 from yoke.cli.runtime.base import execute_turn
+from yoke.cli.runtime.lifetime import close_cli_owned_agent
+from yoke.cli.runtime.lifetime import register_cli_owned_agent
 from yoke.cli.runtime.session import create_active_session
 from yoke.cli.runtime.session import apply_session_defaults_to_args
+from yoke.cli.runtime.session import ensure_session_title
 from yoke.cli.runtime.session import persist_session_state
-from yoke.cli.runtime.session import print_session_list
-from yoke.cli.runtime.session import RESERVED_RESUME_ACTIONS
 from yoke.cli.runtime.session import save_active_session
 from yoke.cli.runtime.session import save_agent_session_state
-from yoke.cli.runtime.session import select_latest_session_id
 from yoke.cli.runtime.session import select_session_id
-from yoke.cli.runtime.session import start_session_title_generation
-from yoke.cli.runtime.skills import restore_active_session_skills
+from yoke.cli.runtime.session import session_usage_metric_context
+from yoke.cli.runtime.resume import project_resumed_session
 from yoke.cli.session import SessionStore
 
 
@@ -58,7 +56,7 @@ def print_tool_discovery_message(
     """Print the formatted tool discovery summary."""
     if report is None:
         return
-    from yoke.cli.config.runtime import format_tool_discovery_message
+    from yoke.cli.config import format_tool_discovery_message
 
     build_console(stream).print(
         Text(format_tool_discovery_message(report), style="dim")
@@ -82,12 +80,7 @@ def resolve_cli_mode(
             raise ValueError(
                 "Headless mode requires --prompt or prompt text from stdin."
             )
-        try:
-            prompt = input_func().strip()
-        except EOFError as exc:
-            raise ValueError(
-                "Headless mode requires --prompt or prompt text from stdin."
-            ) from exc
+        prompt = input_func().strip()
         if not prompt:
             raise ValueError("Headless mode requires non-empty prompt text from stdin.")
         return CLIMode(kind="headless", prompt=prompt, images=args.images)
@@ -96,6 +89,7 @@ def resolve_cli_mode(
     return CLIMode(kind="interactive", prompt=args.prompt, images=args.images)
 
 
+@close_cli_owned_agent
 def run_cli(
     args: CLIArgs,
     agent: AgentRunner | None = None,
@@ -105,49 +99,37 @@ def run_cli(
     stderr: OutputStream | None = None,
 ) -> int:
     """Run the yoke CLI for a fresh session."""
-    if args.fork_session_id is not None:
-        return run_resume_cli(
-            args,
-            args.fork_session_id,
-            fork=True,
-            agent=agent,
-            input_func=input_func,
-            stdout=stdout,
-            stderr=stderr,
-        )
     error_stream = stderr or sys.stderr
     output_stream = stdout or sys.stdout
     error_console = build_console(error_stream)
     tool_report: ToolLoadReport | None = None
     try:
-        mode = resolve_cli_mode(args, input_func=input_func)
-        active_session = create_active_session(args, root=Path(args.root))
         active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
+        mode = resolve_cli_mode(args, input_func=input_func)
+    except ValueError as exc:
+        print_error(error_console, str(exc))
+        return 1
+    try:
+        active_session = create_active_session(args, root=Path(args.root))
     except ValueError as exc:
         print_error(error_console, str(exc))
         return 1
     if isinstance(active_agent, RuntimeAgent):
         active_agent.load_conversation(
-            ConversationEntryHistory(
-                active_branch_entries(
-                    active_session.record.conversation_entries,
-                    leaf_id=active_session.record.leaf_id,
-                )
-                or []
-            ),
+            conversation_entries=active_session.active_entries(),
             active_skills=active_session.record.active_skills,
         )
     save_active_session(
         active_session,
-        active_session.record.messages,
-        conversation_entries=active_session.record.conversation_entries,
+        active_session.messages(),
+        conversation_entries=active_session.active_entries(),
         leaf_id=active_session.record.leaf_id,
         agent=active_agent,
     )
-    session_messages = active_session.record.messages
+    session_messages = active_session.messages()
     if mode.kind == "headless":
         try:
-            result = _run_headless_mode(
+            return _run_headless_mode(
                 args=args,
                 active_agent=active_agent,
                 active_session=active_session,
@@ -161,11 +143,6 @@ def run_cli(
         except ValueError as exc:
             print_error(error_console, str(exc))
             return 1
-        finally:
-            close_agent = getattr(active_agent, "close", None)
-            if callable(close_agent):
-                close_agent()
-        return result
     if mode.prompt is not None:
         try:
             resolved_images = _resolve_image_paths(
@@ -178,6 +155,7 @@ def run_cli(
             build_user_message(mode.prompt, image_paths=resolved_images)
         )
         save_active_session(active_session, session_messages)
+        ensure_session_title(active_session, mode.prompt)
     print_tool_discovery_message(output_stream, tool_report)
     from yoke.cli.interactive import run_interactive_cli
 
@@ -192,13 +170,12 @@ def run_cli(
     )
 
 
+@close_cli_owned_agent
 def run_resume_cli(
     args: CLIArgs,
     session_id: str | None,
     *,
     all_sessions: bool = False,
-    fork: bool = False,
-    allow_reserved_actions: bool = True,
     agent: AgentRunner | None = None,
     input_func=input,
     stdout: OutputStream | None = None,
@@ -212,18 +189,6 @@ def run_resume_cli(
     tool_report: ToolLoadReport | None = None
     store = SessionStore()
     root = Path(args.root).resolve()
-    if allow_reserved_actions and not fork and session_id in RESERVED_RESUME_ACTIONS:
-        try:
-            print_session_list(
-                store,
-                root=root,
-                all_sessions=all_sessions,
-                stdout=output_stream,
-            )
-        except ValueError as exc:
-            print_error(error_console, str(exc))
-            return 1
-        return 0
     if session_id is None:
         try:
             session_id = select_session_id(
@@ -242,26 +207,29 @@ def run_resume_cli(
     except ValueError as exc:
         print_error(error_console, str(exc))
         return 1
-    if record.created_at is None and not record.messages:
+    if record.created_at is None and not record.conversation_entries:
         print_error(error_console, f"Session not found: {session_id}")
         return 1
-    if fork:
-        try:
-            record = store.fork(session_id)
-        except ValueError as exc:
-            print_error(error_console, str(exc))
-            return 1
-        source_session_id = session_id
-        session_id = record.id
-        output_console.print(f"Forked session {source_session_id} -> {session_id}")
     session_root = Path(record.root).resolve() if record.root else root
     args.root = str(session_root)
     apply_session_defaults_to_args(args, record)
     try:
         active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
     except ValueError as exc:
-        print_error(error_console, str(exc))
-        return 1
+        if not _is_unsupported_resumed_provider_error(exc):
+            print_error(error_console, str(exc))
+            return 1
+        print_error(
+            error_console,
+            f"Warning: {exc} Falling back to an available provider.",
+        )
+        args.provider_name = None
+        args.model = None
+        try:
+            active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
+        except ValueError as fallback_exc:
+            print_error(error_console, str(fallback_exc))
+            return 1
     active_session = ActiveSession(
         id=session_id,
         root=session_root,
@@ -269,61 +237,37 @@ def run_resume_cli(
         record=record,
         title=record.title,
     )
-    restore_active_session_skills(active_session, active_agent)
+    resume_projection = project_resumed_session(
+        record,
+        tree_index=active_session.tree_index,
+    )
+    if record.active_skills and isinstance(active_agent, RuntimeAgent):
+        active_agent.active_skills = list(record.active_skills)
+    if isinstance(active_agent, RuntimeAgent):
+        active_agent.load_conversation(
+            conversation_entries=resume_projection.active_entries,
+            active_skills=record.active_skills,
+        )
     print_tool_discovery_message(output_stream, tool_report)
     from yoke.cli.interactive import run_interactive_cli
 
     return run_interactive_cli(
         args,
         active_agent,
-        record.messages,
+        resume_projection.runtime_messages,
         active_session=active_session,
         input_func=input_func,
         stdout=output_stream,
         stderr=error_stream,
         replay_session=True,
+        replay_messages=resume_projection.scrollback_messages,
+        replay_notice=resume_projection.scrollback_notice,
     )
 
 
-def run_continue_cli(
-    args: CLIArgs,
-    *,
-    all_sessions: bool = False,
-    fork_session_id: str | None = None,
-    agent: AgentRunner | None = None,
-    input_func=input,
-    stdout: OutputStream | None = None,
-    stderr: OutputStream | None = None,
-) -> int:
-    """Resume the most recent saved yoke session."""
-    output_stream = stdout or sys.stdout
-    error_stream = stderr or sys.stderr
-    error_console = build_console(error_stream)
-    store = SessionStore()
-    root = Path(args.root).resolve()
-    if fork_session_id is None:
-        try:
-            session_id = select_latest_session_id(
-                store,
-                root=root,
-                all_sessions=all_sessions,
-            )
-        except ValueError as exc:
-            print_error(error_console, str(exc))
-            return 1
-        build_console(output_stream).print(f"Continuing session {session_id}")
-    else:
-        session_id = fork_session_id
-    return run_resume_cli(
-        args,
-        session_id,
-        all_sessions=all_sessions,
-        fork=fork_session_id is not None,
-        agent=agent,
-        input_func=input_func,
-        stdout=output_stream,
-        stderr=error_stream,
-    )
+def _is_unsupported_resumed_provider_error(exc: ValueError) -> bool:
+    """Return whether a resume failed because its saved provider is gone."""
+    return str(exc).startswith("Unsupported provider ")
 
 
 def _resolve_runtime_agent(
@@ -333,6 +277,7 @@ def _resolve_runtime_agent(
 ) -> tuple[AgentRunner, ToolLoadReport | None]:
     if agent is None:
         built_agent = build_cli_agent_from_args(args)
+        register_cli_owned_agent(built_agent.agent)
         return built_agent.agent, built_agent.tool_report
     tool_report = agent.tool_report if isinstance(agent, ToolReportAgent) else None
     return agent, tool_report
@@ -356,39 +301,27 @@ def _run_headless_mode(
     previous_yoke_headless = os.environ.get("YOKE_HEADLESS")
     os.environ["YOKE_HEADLESS"] = "1"
     try:
-
-        def checkpoint_tool_result(
-            messages: list[Message],
-            conversation_entries: list[ConversationEntry],
-        ) -> None:
-            persist_session_state(
-                active_session,
+        ensure_session_title(active_session, prompt)
+        with session_usage_metric_context(active_session, prompt):
+            result = execute_turn(
                 active_agent,
-                messages,
-                conversation_entries=conversation_entries,
-            )
-
-        result = execute_turn(
-            active_agent,
-            prompt,
-            session_messages,
-            stderr=error_stream,
-            user_message=build_user_message(
                 prompt,
-                image_paths=_resolve_image_paths(image_paths, root=active_session.root),
-            ),
-            conversation_entries=active_branch_entries(
-                active_session.record.conversation_entries,
-                leaf_id=active_session.record.leaf_id,
-            ),
-            active_skills=active_session.record.active_skills,
-            available_skills=(
-                active_agent.available_skills
-                if isinstance(active_agent, RuntimeAgent)
-                else []
-            ),
-            after_tool_result_appended=checkpoint_tool_result,
-        )
+                session_messages,
+                stderr=error_stream,
+                user_message=build_user_message(
+                    prompt,
+                    image_paths=_resolve_image_paths(
+                        image_paths, root=active_session.root
+                    ),
+                ),
+                conversation_entries=active_session.active_entries(),
+                active_skills=active_session.record.active_skills,
+                available_skills=(
+                    active_agent.available_skills
+                    if isinstance(active_agent, RuntimeAgent)
+                    else []
+                ),
+            )
     except RUN_ERRORS as exc:
         partial_state = capture_agent_state(
             active_agent,
@@ -414,13 +347,6 @@ def _run_headless_mode(
         result.messages,
         conversation_entries=result.conversation_entries,
     )
-    title_thread = start_session_title_generation(
-        active_session,
-        active_agent,
-        result.messages,
-    )
-    if title_thread is not None:
-        title_thread.join()
     print_agent_output(output_console, result.output)
     return 0
 

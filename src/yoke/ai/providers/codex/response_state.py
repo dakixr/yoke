@@ -22,9 +22,7 @@ type ContinuityMode = Literal[
 class CodexResponseChain:
     """Track one Codex response anchor and its stateless replay fallback."""
 
-    last_request_payload: dict[str, object] | None = None
     response_id: str | None = None
-    visible_response_items: list[dict[str, Any]] = field(default_factory=list)
     response_account_id: str | None = None
     response_auth_profile: str | None = None
     retained_request_payload: dict[str, object] | None = None
@@ -110,9 +108,7 @@ class CodexResponseChain:
         else:
             retained_input = [*self.prepared_input_items, *raw_output_items]
 
-        self.last_request_payload = deepcopy(payload)
         self.response_id = self.pending_response_id
-        self.visible_response_items = deepcopy(visible_items)
         self.response_account_id = account_id
         self.response_auth_profile = auth_profile
         self.retained_request_payload = deepcopy(payload)
@@ -127,9 +123,7 @@ class CodexResponseChain:
 
     def reset(self) -> None:
         """Clear response linkage and all retained replay state."""
-        self.last_request_payload = None
         self.response_id = None
-        self.visible_response_items = []
         self.response_account_id = None
         self.response_auth_profile = None
         self.retained_request_payload = None

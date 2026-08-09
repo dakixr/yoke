@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from yoke.agent.models import Message
-from yoke.cli.config.args import CLIArgs
+from yoke.cli.config import CLIArgs
 from yoke.cli.interactive.basic import run_basic_interactive_cli
 from yoke.cli.interactive.common import (
     COMPACTION_IN_PROGRESS_NOTICE as COMPACTION_IN_PROGRESS_NOTICE,
@@ -39,6 +39,8 @@ def run_interactive_cli(
     stdout: OutputStream,
     stderr: OutputStream,
     replay_session: bool = False,
+    replay_messages: list[Message] | None = None,
+    replay_notice: str | None = None,
 ) -> int:
     """Run the appropriate interactive CLI implementation."""
     stdout_console = build_console(stdout)
@@ -49,9 +51,10 @@ def run_interactive_cli(
             session_messages,
             active_session=active_session,
             replay_session=replay_session,
+            replay_messages=replay_messages,
+            replay_notice=replay_notice,
         )
     return run_basic_interactive_cli(
-        args,
         agent,
         session_messages,
         active_session=active_session,
@@ -59,4 +62,6 @@ def run_interactive_cli(
         stdout=stdout,
         stderr=stderr,
         replay_session=replay_session,
+        replay_messages=replay_messages,
+        replay_notice=replay_notice,
     )

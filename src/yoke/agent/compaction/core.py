@@ -21,12 +21,12 @@ from yoke.agent.models import Message
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import MessageTextContentPart
-from yoke.agent.prompting import render_memory_message
 
 TOKEN_WIDTH_GUESS = 4
 DEFAULT_TOTAL_CONTEXT_TOKENS = 400_000
 DEFAULT_KEEP_RECENT_TOKENS = 20_000
 DEFAULT_RECENT_USER_TOKENS = 20_000
+DEFAULT_HANDOFF_TARGET_TOKENS = 12_000
 DEFAULT_RESERVED_OUTPUT_TOKENS = 128_000
 DEFAULT_OPENAI_MODEL_GROUP = "gpt4o_4_1_4_5"
 DEFAULT_IMAGE_DETAIL = "high"
@@ -55,6 +55,9 @@ COMPACTION_SUMMARY_PROMPT = "\n".join(
         "when relevant",
         "- Do not restate obvious boilerplate",
         "- Do not include raw logs unless essential",
+        "- Do not call tools",
+        "- Return only the handoff summary as response text",
+        "- Keep the handoff below 12,000 estimated tokens",
         "- Assume the next model will not see prior assistant replies or tool output",
         "- Optimize for seamless continuation by another agent",
     ]
@@ -69,6 +72,7 @@ class CompactionPolicy:
     reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS
     keep_recent_tokens: int = DEFAULT_KEEP_RECENT_TOKENS
     recent_user_tokens: int = DEFAULT_RECENT_USER_TOKENS
+    handoff_target_tokens: int = DEFAULT_HANDOFF_TARGET_TOKENS
     soft_trigger_ratio: float | None = 0.95
     enabled: bool = True
 
@@ -145,26 +149,6 @@ class Compactor:
                 return True
         return False
 
-    def compact_messages(
-        self,
-        preparation: CompactionPreparation,
-        *,
-        instruction_messages: list[Message],
-        summary_text: str,
-    ) -> CompactionResult:
-        """Build a compacted message list from preparation and summary."""
-        recent_user_messages = (
-            preparation.recent_user_messages or preparation.kept_messages
-        )
-        return CompactionResult(
-            messages=[
-                *instruction_messages,
-                Message.user(render_memory_message(summary_text)),
-                *recent_user_messages,
-            ],
-            summary_text=summary_text,
-        )
-
     def collect_recent_user_messages(
         self,
         messages: Sequence[Message],
@@ -190,7 +174,11 @@ class Compactor:
             truncated = truncate_message_to_token_budget(
                 message, token_budget=remaining
             )
-            if truncated is not None:
+            if (
+                truncated is not None
+                and self.estimate_tokens([truncated], reserve_tokens=0).input_tokens
+                <= remaining
+            ):
                 selected.insert(0, truncated)
             break
         return selected
@@ -202,20 +190,22 @@ class Compactor:
         return max(1, total)
 
     def _estimate_message_tokens(self, message: Message) -> int:
-        total = self._estimate_text_tokens(message.role)
+        role_tokens = self._estimate_text_tokens(message.role)
         content = message.content
+        if content is None:
+            return role_tokens
         if isinstance(content, str):
-            total += self._estimate_text_tokens(content)
-        elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, MessageTextContentPart):
-                    total += self._estimate_text_tokens(part.text)
-                    continue
-                if isinstance(part, MessageLocalImageContentPart):
-                    total += self._estimate_local_image_tokens(part)
-                    continue
-                if isinstance(part, MessageImageURLContentPart):
-                    total += self._estimate_remote_image_tokens(part)
+            return role_tokens + self._estimate_text_tokens(content)
+        total = role_tokens
+        for part in content:
+            if isinstance(part, MessageTextContentPart):
+                total += self._estimate_text_tokens(part.text)
+                continue
+            if isinstance(part, MessageLocalImageContentPart):
+                total += self._estimate_local_image_tokens(part)
+                continue
+            if isinstance(part, MessageImageURLContentPart):
+                total += self._estimate_remote_image_tokens(part)
         if message.tool_calls:
             total += self._estimate_text_tokens(
                 json.dumps(
@@ -225,8 +215,6 @@ class Compactor:
             )
         if message.tool_call_id:
             total += self._estimate_text_tokens(message.tool_call_id)
-        if message.reasoning_content:
-            total += self._estimate_text_tokens(message.reasoning_content)
         return total
 
     def _estimate_text_tokens(self, text: str) -> int:
@@ -235,7 +223,7 @@ class Compactor:
         return max(1, (len(text) + TOKEN_WIDTH_GUESS - 1) // TOKEN_WIDTH_GUESS)
 
     def _estimate_local_image_tokens(self, part: MessageLocalImageContentPart) -> int:
-        dimensions = _read_image_dimensions(part)
+        dimensions = _read_local_image_dimensions(part.path)
         detail = _normalize_image_detail(part.detail)
         if dimensions is None:
             return self._estimate_text_tokens(part.path)
@@ -339,14 +327,6 @@ def _normalize_image_detail(detail: str | None) -> str:
     if normalized == "auto":
         return DEFAULT_IMAGE_DETAIL
     return normalized
-
-
-def _read_image_dimensions(
-    part: MessageLocalImageContentPart,
-) -> tuple[int, int] | None:
-    if part.data_url:
-        return _read_data_url_image_dimensions(part.data_url)
-    return _read_local_image_dimensions(part.path)
 
 
 def _read_local_image_dimensions(path: str) -> tuple[int, int] | None:

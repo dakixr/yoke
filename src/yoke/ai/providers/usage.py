@@ -31,15 +31,23 @@ def parse_token_usage(
         reasoning_tokens = output_details.reasoning_tokens
     cached_input_tokens = _int_value(raw_dict, "cached_input_tokens")
     if cached_input_tokens is None:
+        cached_input_tokens = _int_value(raw_dict, "cache_read_input_tokens")
+    if cached_input_tokens is None:
         cached_input_tokens = input_details.cached_tokens
+    cache_creation_input_tokens = _int_value(raw_dict, "cache_creation_input_tokens")
+    if cache_creation_input_tokens is None:
+        cache_creation_input_tokens = input_details.cache_creation_tokens
+    input_tokens = _total_input_tokens(raw_dict, input_details)
     usage = TokenUsage(
         provider_name=provider_name,
         model_id=model_id,
-        input_tokens=_first_int_value(raw_dict, "input_tokens", "prompt_tokens"),
-        output_tokens=_first_int_value(raw_dict, "output_tokens", "completion_tokens"),
+        input_tokens=input_tokens,
+        output_tokens=_int_value(raw_dict, "output_tokens")
+        or _int_value(raw_dict, "completion_tokens"),
         reasoning_tokens=reasoning_tokens,
         total_tokens=_int_value(raw_dict, "total_tokens"),
         cached_input_tokens=cached_input_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
         input_details=input_details,
         output_details=output_details,
         raw=raw_dict,
@@ -52,6 +60,7 @@ def parse_token_usage(
             usage.reasoning_tokens,
             usage.total_tokens,
             usage.cached_input_tokens,
+            usage.cache_creation_input_tokens,
         )
     ):
         return None
@@ -64,6 +73,7 @@ def _details(raw: object) -> TokenUsageDetails:
     raw_dict = dict(raw)
     return TokenUsageDetails(
         cached_tokens=_int_value(raw_dict, "cached_tokens"),
+        cache_creation_tokens=_int_value(raw_dict, "cache_creation_tokens"),
         reasoning_tokens=_int_value(raw_dict, "reasoning_tokens"),
         audio_tokens=_int_value(raw_dict, "audio_tokens"),
         accepted_prediction_tokens=_int_value(raw_dict, "accepted_prediction_tokens"),
@@ -76,6 +86,24 @@ def _mapping_value(raw: dict[object, object], key: str) -> object:
     return value if isinstance(value, Mapping) else None
 
 
+def _total_input_tokens(
+    raw: dict[object, object], input_details: TokenUsageDetails
+) -> int | None:
+    prompt_tokens = _int_value(raw, "prompt_tokens")
+    if prompt_tokens is not None:
+        return prompt_tokens
+    input_tokens = _int_value(raw, "input_tokens")
+    if input_tokens is None:
+        return None
+    cache_read_tokens = _int_value(raw, "cache_read_input_tokens") or 0
+    cache_creation_tokens = (
+        _int_value(raw, "cache_creation_input_tokens")
+        or input_details.cache_creation_tokens
+        or 0
+    )
+    return input_tokens + cache_read_tokens + cache_creation_tokens
+
+
 def _int_value(raw: dict[object, object], key: str) -> int | None:
     value = raw.get(key)
     if isinstance(value, bool) or not isinstance(value, int):
@@ -83,12 +111,3 @@ def _int_value(raw: dict[object, object], key: str) -> int | None:
     if value < 0:
         return None
     return value
-
-
-def _first_int_value(
-    raw: dict[object, object],
-    primary_key: str,
-    fallback_key: str,
-) -> int | None:
-    primary = _int_value(raw, primary_key)
-    return primary if primary is not None else _int_value(raw, fallback_key)

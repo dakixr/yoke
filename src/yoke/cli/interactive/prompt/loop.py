@@ -3,28 +3,39 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from threading import Lock, Thread
 
 from yoke.agent.models import Message
-from yoke.cli.image_input import attach_standalone_prompt_image_paths
-from yoke.cli.image_input import build_user_message
-from yoke.cli.interactive.completion_menu import (
-    COMPLETION_MENU_STYLE,
-    YokeCompletionsMenu,
-)
+from yoke.cli.interactive.completion.menu import YokeCompletionsMenu
+from yoke.cli.interactive.completion.menu import COMPLETION_MENU_STYLE
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
+from yoke.cli.interactive.common import handle_slash_command
+from yoke.cli.interactive.prompt.submission import (
+    submit_prompt_toolkit_prompt,
+)
+from yoke.cli.interactive.prompt.turns import next_pending_prompt_index
 from yoke.cli.interactive.queue.persistence import clear_prompt_queue
 from yoke.cli.interactive.queue.persistence import persist_prompt_queue
-from yoke.cli.interactive.slash_commands import handle_slash_command
-from yoke.cli.interactive.slash_commands import slash_command_requires_idle
-from yoke.cli.interactive.prompt.status import update_status_context_usage
-from yoke.cli.interactive.prompt.turns import next_pending_prompt_index
-from yoke.cli.runtime import ActiveSession, AgentRunner, persist_session_state
-from yoke.cli.render import print_scrollback_notice
+from yoke.cli.interactive.skill_commands import is_skill_command
 from yoke.cli.render import print_session_scrollback
+from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime.metadata import persist_active_session_metadata
+
+
+def update_status_context_usage(
+    payload: dict[str, object],
+    *,
+    state: PromptCliState,
+    state_lock: Lock,
+    invalidate_prompt: Callable[[], None],
+    format_context_usage_text: Callable[[Mapping[str, object] | None], str | None],
+) -> None:
+    """Update prompt-toolkit context usage immediately from an event payload."""
+    with state_lock:
+        state.context_usage_text = format_context_usage_text(payload)
+    invalidate_prompt()
 
 
 def persist_prompt_exit_state(
@@ -34,31 +45,19 @@ def persist_prompt_exit_state(
     agent: AgentRunner,
 ) -> None:
     """Persist prompt-toolkit state before leaving the interactive loop."""
-    original_reasoning_effort = active_session.record.reasoning_effort
-    config = getattr(getattr(agent, "provider", None), "config", None)
-    original_config_effort = getattr(config, "reasoning_effort", None)
-    if state.thinking_effort is not None:
-        active_session.record.reasoning_effort = state.thinking_effort
-        if config is not None and hasattr(config, "reasoning_effort"):
-            config.reasoning_effort = state.thinking_effort
-    try:
-        persist_session_state(
-            active_session,
-            agent,
-            list(state.messages),
-        )
-        persist_prompt_queue(
-            active_session,
-            list(state.pending_prompts),
-            list(state.pending_images),
-        )
-    finally:
-        active_session.record.reasoning_effort = original_reasoning_effort
-        if config is not None and hasattr(config, "reasoning_effort"):
-            config.reasoning_effort = original_config_effort
+    persist_active_session_metadata(
+        active_session,
+        agent,
+        reasoning_effort=state.thinking_effort,
+    )
+    persist_prompt_queue(
+        active_session,
+        list(state.pending_prompts),
+        list(state.pending_images),
+    )
 
 
-def process_prompt_toolkit_prompt(
+def process_prompt_toolkit_prompt(  # noqa: C901
     prompt: str,
     *,
     state: PromptCliState,
@@ -70,12 +69,13 @@ def process_prompt_toolkit_prompt(
     invalidate_prompt: Callable[[], None],
     request_exit: Callable[[], None],
     start_turn: Callable[..., Thread],
+    start_pending_prompt: (Callable[[PendingPrompt | None, bool], None] | None) = None,
     start_compaction: Callable[[], Thread] | None = None,
     steer_active_turn: Callable[..., bool],
+    open_process_inspector: Callable[[], None] | None = None,
     format_context_usage_text: Callable[[Mapping[str, object] | None], str | None],
-    estimate_toolbar_context_usage: Callable[[str], str | None] | None = None,
+    request_context_usage: Callable[[str], None] | None = None,
     on_editor_text: Callable[[str], None] | None = None,
-    on_process_inspector: Callable[[], None] | None = None,
 ) -> ActiveSession:
     """Process one submitted prompt-toolkit prompt."""
     active_session = active_session_ref["active_session"]
@@ -83,16 +83,23 @@ def process_prompt_toolkit_prompt(
     state.submit_action = "steer"
     if not prompt and not state.pending_images:
         return active_session
+    if action == "queue" and is_skill_command(prompt):
+        with state_lock:
+            must_wait = state.worker is not None or bool(state.pending_prompts)
+        if must_wait:
+            submit_prompt_toolkit_prompt(
+                prompt,
+                action=action,
+                state=state,
+                active_session=active_session,
+                state_lock=state_lock,
+                invalidate_prompt=invalidate_prompt,
+                start_turn=start_turn,
+                steer_active_turn=steer_active_turn,
+            )
+            return active_session
     if prompt.lower() in {"exit", "quit"}:
         request_exit()
-        return active_session
-    with state_lock:
-        busy = state.worker is not None
-    if busy and slash_command_requires_idle(prompt):
-        print_scrollback_notice(
-            scrollback_console,
-            "Wait for the active turn to finish or stop it before changing session state.",
-        )
         return active_session
     if prompt.strip().lower() == "/queue":
         handled, updated_messages, updated_session = handle_slash_command(
@@ -151,21 +158,23 @@ def process_prompt_toolkit_prompt(
                     state.pending_images,
                 )
             elif next_prompt_to_start is not None:
-                start_turn(
-                    next_prompt_to_start.prompt, next_prompt_to_start.user_message
-                )
+                if start_pending_prompt is None:
+                    start_turn(
+                        next_prompt_to_start.prompt,
+                        next_prompt_to_start.user_message,
+                    )
+                else:
+                    start_pending_prompt(next_prompt_to_start, False)
             return updated_session
     if prompt.strip().lower() == "/compact" and start_compaction is not None:
         with state_lock:
             idle = state.worker is None and not state.pending_prompts
         if idle:
             start_compaction()
+            if request_context_usage is not None:
+                request_context_usage("")
+            invalidate_prompt()
             return active_session_ref["active_session"]
-    process_inspector_callback = (
-        {}
-        if on_process_inspector is None
-        else {"on_process_inspector": on_process_inspector}
-    )
     replay_messages_ref: list[list[Message] | None] = [None]
     handled, updated_messages, updated_session = handle_slash_command(
         prompt,
@@ -174,7 +183,6 @@ def process_prompt_toolkit_prompt(
         messages=state.messages,
         console=scrollback_console,
         pending_images=state.pending_images,
-        pending_prompts=state.pending_prompts,
         on_context_usage=lambda payload: update_status_context_usage(
             payload,
             state=state,
@@ -183,88 +191,51 @@ def process_prompt_toolkit_prompt(
             format_context_usage_text=format_context_usage_text,
         ),
         on_editor_text=on_editor_text,
+        on_submit_prompt=lambda submitted: submit_prompt_toolkit_prompt(
+            submitted,
+            action=action,
+            state=state,
+            active_session=active_session,
+            state_lock=state_lock,
+            invalidate_prompt=invalidate_prompt,
+            start_turn=start_turn,
+            steer_active_turn=steer_active_turn,
+        ),
         on_replay_messages=lambda messages: replay_messages_ref.__setitem__(
             0,
             list(messages),
         ),
-        **process_inspector_callback,
+        on_process_inspector=open_process_inspector,
     )
     if handled:
-        editor_text_for_usage = ""
-        next_prompt_to_start: PendingPrompt | None = None
+        provider_config = getattr(getattr(agent, "provider", None), "config", None)
+        provider_effort = getattr(provider_config, "reasoning_effort", None)
         with state_lock:
             state.messages = updated_messages
             active_session_ref["active_session"] = updated_session
+            state.thinking_effort = (
+                provider_effort
+                if isinstance(provider_effort, str) and provider_effort.strip()
+                else None
+            )
             editor_text_for_usage = state.next_editor_text or ""
-            if prompt.strip().lower().startswith("/image "):
-                persist_prompt_queue(
-                    updated_session,
-                    state.pending_prompts,
-                    state.pending_images,
-                )
-            elif state.pending_prompts:
-                if state.worker is None:
-                    next_index = next_pending_prompt_index(state.pending_prompts)
-                    if next_index is not None:
-                        next_prompt_to_start = state.pending_prompts.pop(next_index)
-                persist_prompt_queue(
-                    updated_session,
-                    state.pending_prompts,
-                    state.pending_images,
-                )
-        if estimate_toolbar_context_usage is not None:
-            context_usage_text = estimate_toolbar_context_usage(editor_text_for_usage)
-            with state_lock:
-                state.context_usage_text = context_usage_text
+        if request_context_usage is not None:
+            request_context_usage(editor_text_for_usage)
         replay_messages = replay_messages_ref[0]
         if replay_messages is not None:
             print_session_scrollback(scrollback_console, replay_messages)
         invalidate_prompt()
-        if next_prompt_to_start is not None:
-            start_turn(next_prompt_to_start.prompt, next_prompt_to_start.user_message)
         return updated_session
-    prompt, dropped_images = attach_standalone_prompt_image_paths(
+    submit_prompt_toolkit_prompt(
         prompt,
-        root=active_session.root,
+        action=action,
+        state=state,
+        active_session=active_session,
+        state_lock=state_lock,
+        invalidate_prompt=invalidate_prompt,
+        start_turn=start_turn,
+        steer_active_turn=steer_active_turn,
     )
-    with state_lock:
-        idle = state.worker is None and not state.pending_prompts
-        pending_images = [
-            image.path for image in [*state.pending_images, *dropped_images]
-        ]
-        user_message = build_user_message(prompt, image_paths=pending_images)
-        state.pending_images.clear()
-        if not idle and action == "queue":
-            state.pending_prompts.append(
-                PendingPrompt(
-                    prompt,
-                    user_message=user_message,
-                    kind="queued",
-                )
-            )
-            persist_prompt_queue(
-                active_session, state.pending_prompts, state.pending_images
-            )
-    if idle:
-        start_turn(prompt, user_message=user_message)
-        return active_session_ref["active_session"]
-    if action == "queue":
-        invalidate_prompt()
-        return active_session_ref["active_session"]
-    if steer_active_turn(prompt, user_message=user_message):
-        return active_session_ref["active_session"]
-    with state_lock:
-        state.pending_prompts.append(
-            PendingPrompt(
-                prompt,
-                user_message=user_message,
-                kind="queued",
-            )
-        )
-        persist_prompt_queue(
-            active_session, state.pending_prompts, state.pending_images
-        )
-    invalidate_prompt()
     return active_session_ref["active_session"]
 
 
@@ -286,11 +257,12 @@ def run_prompt_toolkit_event_loop(
     update_status: Callable[[str], None],
     invalidate_prompt: Callable[[], None],
     start_turn: Callable[..., Thread],
+    start_pending_prompt: Callable[[PendingPrompt | None, bool], None],
     start_compaction: Callable[[], Thread] | None = None,
     steer_active_turn: Callable[..., bool],
+    open_process_inspector: Callable[[], None] | None = None,
     format_context_usage_text: Callable[[Mapping[str, object] | None], str | None],
-    estimate_toolbar_context_usage: Callable[[str], str | None],
-    on_process_inspector: Callable[[], None] | None = None,
+    request_context_usage: Callable[[str], None],
 ) -> int:
     """Run the prompt-toolkit prompt loop."""
     from yoke.cli.interactive.prompt.rendering import (
@@ -308,20 +280,13 @@ def run_prompt_toolkit_event_loop(
     )
     while True:
         with state_lock:
-            if (
-                state.shutdown_requested
-                and state.worker is None
-                and not state.pending_prompts
-            ):
+            if state.shutdown_requested and state.worker is None:
                 active_session = active_session_ref["active_session"]
                 persist_prompt_exit_state(
                     state=state,
                     active_session=active_session,
                     agent=agent,
                 )
-                close_agent = getattr(agent, "close", None)
-                if callable(close_agent):
-                    close_agent()
                 return 0
         if state.shutdown_requested:
             time.sleep(0.05)
@@ -356,10 +321,7 @@ def run_prompt_toolkit_event_loop(
             "/pin",
             "/info",
             "/fork",
-            "/ps",
-            "/stop",
             "/tree",
-            "/queue",
         }:
             submitted_prompt = submitted_prompt.strip()
         process_prompt_toolkit_prompt(
@@ -373,16 +335,17 @@ def run_prompt_toolkit_event_loop(
             invalidate_prompt=invalidate_prompt,
             request_exit=request_exit,
             start_turn=start_turn,
+            start_pending_prompt=start_pending_prompt,
             start_compaction=start_compaction,
             steer_active_turn=steer_active_turn,
+            open_process_inspector=open_process_inspector,
             format_context_usage_text=format_context_usage_text,
-            estimate_toolbar_context_usage=estimate_toolbar_context_usage,
+            request_context_usage=request_context_usage,
             on_editor_text=lambda text: setattr(
                 state,
                 "next_editor_text",
                 text,
             ),
-            on_process_inspector=on_process_inspector,
         )
 
 

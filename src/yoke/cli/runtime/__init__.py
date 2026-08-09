@@ -22,7 +22,6 @@ from yoke.cli.runtime.cli import (
     print_tool_discovery_message as print_tool_discovery_message,
 )
 from yoke.cli.runtime.cli import resolve_cli_mode as resolve_cli_mode
-from yoke.cli.runtime.cli import run_continue_cli as run_continue_cli
 from yoke.cli.runtime.cli import run_cli as run_cli
 from yoke.cli.runtime.cli import run_resume_cli as run_resume_cli
 from yoke.cli.runtime.session import (
@@ -38,25 +37,16 @@ from yoke.cli.runtime.session import (
     fork_active_session as fork_active_session,
 )
 from yoke.cli.runtime.session import (
-    generate_session_title as generate_session_title,
-)
-from yoke.cli.runtime.session import (
-    start_session_title_generation as start_session_title_generation,
-)
-from yoke.cli.runtime.session import (
     persist_session_state as persist_session_state,
-)
-from yoke.cli.runtime.session import (
-    resume_command_for_session_id as resume_command_for_session_id,
 )
 from yoke.cli.runtime.session import (
     save_active_session as save_active_session,
 )
 from yoke.cli.runtime.session import (
-    select_session_id as select_session_id,
+    session_usage_metric_context as session_usage_metric_context,
 )
 from yoke.cli.runtime.session import (
-    select_latest_session_id as select_latest_session_id,
+    select_session_id as select_session_id,
 )
 from yoke.cli.runtime.session import (
     sync_agent_skill_state_to_session as sync_agent_skill_state_to_session,

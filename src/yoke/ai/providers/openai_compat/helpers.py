@@ -65,7 +65,6 @@ def thinking_levels_for_reasoning_effort(
     if reasoning_effort is None:
         return (
             "none",
-            "minimal",
             "low",
             "medium",
             "high",
@@ -78,7 +77,6 @@ def thinking_levels_for_reasoning_effort(
         if normalized
         else (
             "none",
-            "minimal",
             "low",
             "medium",
             "high",

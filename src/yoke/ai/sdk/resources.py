@@ -10,15 +10,32 @@ from yoke.ai.providers.base import Provider
 class ProviderLease:
     """Reference-count ownership of a provider shared by agent forks."""
 
+    _registry_lock = threading.Lock()
+    _registry: dict[int, ProviderLease] = {}
+
     def __init__(self, provider: Provider) -> None:
         self.provider = provider
-        self._lock = threading.Lock()
         self._references = 1
         self._released = False
 
+    @classmethod
+    def claim(cls, provider: Provider) -> ProviderLease:
+        """Claim shared ownership for one provider identity."""
+        identity = id(provider)
+        with cls._registry_lock:
+            existing = cls._registry.get(identity)
+            if existing is not None and existing.provider is provider:
+                if existing._released:
+                    raise RuntimeError("Cannot claim a released provider lease")
+                existing._references += 1
+                return existing
+            lease = cls(provider)
+            cls._registry[identity] = lease
+            return lease
+
     def acquire(self) -> ProviderLease:
         """Add one owner and return this lease."""
-        with self._lock:
+        with self._registry_lock:
             if self._released:
                 raise RuntimeError("Cannot acquire a released provider lease")
             self._references += 1
@@ -26,13 +43,16 @@ class ProviderLease:
 
     def release(self) -> None:
         """Release one owner and close the provider after the final owner."""
-        with self._lock:
+        with self._registry_lock:
             if self._released:
                 return
             self._references -= 1
             if self._references:
                 return
             self._released = True
+            identity = id(self.provider)
+            if self._registry.get(identity) is self:
+                del self._registry[identity]
         close = getattr(self.provider, "close", None)
         if callable(close):
             close()

@@ -25,9 +25,9 @@ class SkillActivationResult:
         return not self.missing
 
     def active_payload(self) -> list[dict[str, object]]:
-        """Return active skill state suitable for tool result JSON."""
+        """Return compact active skill metadata for tool result JSON."""
         return [
-            skill.model_dump(mode="json", exclude={"activation_id"})
+            skill.model_dump(mode="json", exclude={"activation_id", "content"})
             for skill in sorted(self.active_skills, key=lambda item: item.name)
         ]
 

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 def build_summary_handoff_messages(
     preparation: CompactionPreparation,
 ) -> list[Message]:
-    """Build messages that prompt the model to produce a handoff summary."""
+    """Build legacy flattened input, unused by runtime epoch compaction."""
     from yoke.agent.compaction.core import COMPACTION_SUMMARY_PROMPT
 
     return [
@@ -24,8 +24,22 @@ def build_summary_handoff_messages(
     ]
 
 
+def build_compaction_summary_prompt(target_tokens: int) -> str:
+    """Build the appended handoff instruction for one target size."""
+    if target_tokens <= 0:
+        raise ValueError("Compaction handoff target must be positive.")
+    from yoke.agent.compaction.core import COMPACTION_SUMMARY_PROMPT
+    from yoke.agent.compaction.core import DEFAULT_HANDOFF_TARGET_TOKENS
+
+    return COMPACTION_SUMMARY_PROMPT.replace(
+        f"{DEFAULT_HANDOFF_TARGET_TOKENS:,} estimated tokens",
+        f"{target_tokens:,} estimated tokens",
+        1,
+    )
+
+
 def summary_source_text(preparation: CompactionPreparation) -> str:
-    """Render the transcript slice used as compaction-summary input."""
+    """Render legacy flattened input outside the runtime compaction path."""
     lines = [
         "Summarize this visible transcript for handoff.",
         "",
@@ -38,17 +52,6 @@ def summary_source_text(preparation: CompactionPreparation) -> str:
     if preparation.boundary == "split_turn" and preparation.turn_prefix_messages:
         lines.extend(["", "Current turn prefix before the kept recent messages:"])
         for message in preparation.turn_prefix_messages:
-            rendered = render_message(message)
-            if rendered:
-                lines.append(rendered)
-    if preparation.kept_messages:
-        lines.extend(
-            [
-                "",
-                "Recent real user messages that will remain visible after compaction:",
-            ]
-        )
-        for message in preparation.kept_messages:
             rendered = render_message(message)
             if rendered:
                 lines.append(rendered)
@@ -84,16 +87,16 @@ def truncate_text(text: str, *, limit: int) -> str:
 
 def is_real_user_message(message: Message) -> bool:
     """Return True if the message is a real user message (not a summary)."""
-    plain_text = message.plain_text_content
-    if message.role != "user" or not plain_text:
+    if message.role != "user":
         return False
-    return parse_memory_safe(plain_text) is None
+    plain_text = message.plain_text_content
+    return not plain_text or parse_memory_safe(plain_text) is None
 
 
 def parse_memory_safe(content: str) -> str | None:
     """Parse a memory message, returning None if parsing fails."""
     try:
-        from yoke.agent.prompting import parse_memory_message
+        from yoke.agent.conversation import parse_memory_message
 
         return parse_memory_message(content)
     except Exception:
@@ -110,12 +113,10 @@ def truncate_message_to_token_budget(
         return None
     from yoke.agent.compaction.core import TOKEN_WIDTH_GUESS
 
-    char_budget = max(16, token_budget * TOKEN_WIDTH_GUESS)
+    char_budget = max(0, (token_budget - 1) * TOKEN_WIDTH_GUESS)
     text_content = message.text_content()
     if not text_content:
-        return message.model_copy(deep=True)
-    if len(text_content) <= char_budget:
-        return message.model_copy(deep=True)
+        return None
     suffix = (
         "\n\n[Earlier part of this user message was truncated during context "
         "compaction.]"
@@ -123,15 +124,7 @@ def truncate_message_to_token_budget(
     usable = max(0, char_budget - len(suffix))
     if usable <= 0:
         return None
-    if isinstance(message.content, str):
-        return Message.user(text_content[-usable:].lstrip() + suffix)
-    return Message.user(
-        truncate_structured_user_content(
-            message.content,
-            usable=usable,
-            suffix=suffix,
-        )
-    )
+    return Message.user(text_content[-usable:].lstrip() + suffix)
 
 
 def truncate_structured_user_content(

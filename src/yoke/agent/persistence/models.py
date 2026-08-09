@@ -13,8 +13,9 @@ from pydantic import Field
 from yoke._version import __version__
 from yoke.agent.state import AgentState
 
+
 AGENT_STATE_FORMAT = "yoke.agent_state"
-AGENT_STATE_SCHEMA_VERSION = 1
+AGENT_STATE_SCHEMA_VERSION = 2
 
 
 def utc_timestamp() -> str:

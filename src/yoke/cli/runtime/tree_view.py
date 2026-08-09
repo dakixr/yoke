@@ -7,10 +7,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from yoke.agent.models import ConversationEntry
-from yoke.agent.state import migrate_conversation_tree
-from yoke.agent.state import transcript_messages_from_entries
+from yoke.agent.session_tree import SessionTree
 from yoke.cli.runtime.base import ActiveSession
-from yoke.cli.runtime.session import save_active_session
 
 TreeFilterMode = Literal[
     "default",
@@ -19,6 +17,22 @@ TreeFilterMode = Literal[
     "labeled-only",
     "all",
 ]
+_FILTER_BITS: dict[TreeFilterMode, int] = {
+    "default": 1,
+    "no-tools": 2,
+    "user-only": 4,
+    "labeled-only": 8,
+    "all": 16,
+}
+
+
+@dataclass(slots=True)
+class TreeViewIndex:
+    """Reusable filter candidates and search generation for one tree."""
+
+    candidates: dict[int, tuple[TreeNode, ...]]
+    all_nodes: tuple[TreeNode, ...]
+    generation: int = 0
 
 
 @dataclass(slots=True)
@@ -28,6 +42,14 @@ class TreeNode:
     entry: ConversationEntry
     children: list[TreeNode]
     label: str | None = None
+    active: bool = False
+    filter_mask: int = 0
+    subtree_filter_mask: int = 0
+    search_text: str | None = None
+    parent: TreeNode | None = None
+    match_generation: int = 0
+    subtree_generation: int = 0
+    view_index: TreeViewIndex | None = None
 
 
 @dataclass(slots=True)
@@ -47,40 +69,52 @@ class TreeRow:
 
 def get_session_tree(active_session: ActiveSession) -> list[TreeNode]:
     """Build the persisted session tree."""
-    entries, leaf_id, changed = migrate_conversation_tree(
-        active_session.record.conversation_entries,
-        leaf_id=active_session.record.leaf_id,
-    )
-    if changed:
-        save_active_session(
-            active_session,
-            transcript_messages_from_entries(entries, leaf_id=leaf_id),
-            conversation_entries=entries,
-            leaf_id=leaf_id,
-        )
-    nodes = {
-        entry.id: TreeNode(
-            entry=entry.model_copy(deep=True),
-            children=[],
-            label=_entry_label(entry),
-        )
-        for entry in entries
-    }
+    source = active_session.record.conversation_entries
+    active_ids = {entry.id for entry in active_session.tree_index.active_entry_refs()}
+    nodes_by_id: dict[str, TreeNode] = {}
     roots: list[TreeNode] = []
-    for entry in entries:
-        node = nodes[entry.id]
-        parent = nodes.get(entry.parent_id or "")
-        if parent is None or entry.parent_id == entry.id:
+    for entry in source:
+        label = entry.metadata.get("label")
+        node = TreeNode(
+            entry=entry,
+            children=[],
+            label=label if isinstance(label, str) else None,
+            active=entry.id in active_ids,
+        )
+        nodes_by_id[entry.id] = node
+        if entry.parent_id is None:
             roots.append(node)
         else:
+            parent = nodes_by_id[entry.parent_id]
+            node.parent = parent
             parent.children.append(node)
-    for node in nodes.values():
-        node.children.sort(key=lambda child: child.entry.created_at)
+    for node in nodes_by_id.values():
+        node.filter_mask = _filter_mask(node)
+        if node.filter_mask & _FILTER_BITS["default"]:
+            node.search_text = _search_text(node).lower()
+        if len(node.children) > 1:
+            node.children.sort(key=lambda child: child.entry.created_at)
+    for node in reversed(nodes_by_id.values()):
+        node.subtree_filter_mask = node.filter_mask
+        for child in node.children:
+            node.subtree_filter_mask |= child.subtree_filter_mask
+    all_nodes = tuple(nodes_by_id.values())
+    default_bit = _FILTER_BITS["default"]
+    view_index = TreeViewIndex(
+        candidates={
+            default_bit: tuple(
+                node for node in all_nodes if node.filter_mask & default_bit
+            )
+        },
+        all_nodes=all_nodes,
+    )
+    for root in roots:
+        root.view_index = view_index
     roots.sort(key=lambda node: node.entry.created_at)
     return roots
 
 
-def flatten_tree_rows(
+def flatten_tree_rows(  # noqa: C901
     roots: list[TreeNode],
     *,
     current_leaf_id: str | None,
@@ -90,8 +124,29 @@ def flatten_tree_rows(
 ) -> list[TreeRow]:
     """Return visible rows for selector rendering."""
     folded = folded_ids or set()
-    active_path = _active_path_ids(roots, current_leaf_id)
     query_tokens = [token for token in search.lower().split() if token]
+    filter_bit = _FILTER_BITS[filter_mode]
+    search_generation = 0
+    if query_tokens:
+        search_generation = _mark_subtree_matches(
+            roots,
+            filter_mode,
+            query_tokens,
+            current_leaf_id,
+        )
+
+    def node_matches(node: TreeNode) -> bool:
+        if node.entry.id == current_leaf_id:
+            return True
+        if query_tokens:
+            return node.match_generation == search_generation
+        return bool(node.filter_mask & filter_bit)
+
+    def subtree_matches(node: TreeNode) -> bool:
+        if query_tokens:
+            return node.active or node.subtree_generation == search_generation
+        return node.active or bool(node.subtree_filter_mask & filter_bit)
+
     rows: list[TreeRow] = []
     next_branch_index = 1
 
@@ -107,13 +162,9 @@ def flatten_tree_rows(
 
     stack: list[tuple[TreeNode, int, str, str, int]] = []
     pending_roots: list[tuple[TreeNode, int, str, str, int]] = []
-    visible_roots = [
-        root
-        for root in _active_first(roots, active_path)
-        if _subtree_matches(root, filter_mode, query_tokens)
-    ]
+    visible_roots = [root for root in _active_last(roots) if subtree_matches(root)]
     for index, root in enumerate(visible_roots):
-        root_active = root.entry.id in active_path
+        root_active = root.active
         root_has_siblings = len(visible_roots) > 1
         root_is_last = index == len(visible_roots) - 1
         if root_active or not root_has_siblings:
@@ -129,18 +180,16 @@ def flatten_tree_rows(
     while stack:
         node, depth, graph_prefix, child_prefix, branch_index = stack.pop()
         visible_children = [
-            child
-            for child in _active_first(node.children, active_path)
-            if _subtree_matches(child, filter_mode, query_tokens)
+            child for child in _active_last(node.children) if subtree_matches(child)
         ]
-        if _node_matches(node, filter_mode, query_tokens):
+        if node_matches(node):
             rows.append(
                 TreeRow(
                     entry=node.entry,
                     depth=depth,
                     graph_prefix=graph_prefix,
                     label=node.label,
-                    active=node.entry.id in active_path,
+                    active=node.active,
                     current=node.entry.id == current_leaf_id,
                     has_children=bool(visible_children),
                     folded=node.entry.id in folded,
@@ -155,7 +204,7 @@ def flatten_tree_rows(
         pending_children: list[tuple[TreeNode, int, str, str, int]] = []
         for index, child in enumerate(visible_children):
             child_has_siblings = len(visible_children) > 1
-            child_active = child.entry.id in active_path
+            child_active = child.active
             child_is_last = index == len(visible_children) - 1
             if child_active:
                 next_graph_prefix = ""
@@ -170,7 +219,7 @@ def flatten_tree_rows(
                 next_child_prefix = child_prefix
             if len(visible_children) == 1:
                 child_branch_index = branch_index
-            elif child.entry.id in active_path:
+            elif child.active:
                 child_branch_index = branch_index
             else:
                 child_branch_index = next_branch_index
@@ -189,42 +238,42 @@ def flatten_tree_rows(
     return rows
 
 
+def default_folded_tree_ids(roots: Iterable[TreeNode]) -> set[str]:
+    """Fold inactive branches at their first default-visible entry."""
+    folded: set[str] = set()
+    stack = list(roots)
+    while stack:
+        node = stack.pop()
+        if node.active:
+            stack.extend(node.children)
+            continue
+        if node.filter_mask & _FILTER_BITS["default"]:
+            if node.children:
+                folded.add(node.entry.id)
+            continue
+        stack.extend(node.children)
+    return folded
+
+
 def set_entry_label(
     active_session: ActiveSession,
     entry_id: str,
     label: str | None,
 ) -> None:
     """Persist a selector label on an entry's metadata."""
-    entries = [
-        entry.model_copy(deep=True)
-        for entry in active_session.record.conversation_entries
-    ]
-    for entry in entries:
-        if entry.id != entry_id:
-            continue
-        normalized = " ".join((label or "").split()).strip()
-        metadata = dict(entry.metadata)
-        if normalized:
-            metadata["label"] = normalized
-        else:
-            metadata.pop("label", None)
-        entry.metadata = metadata
-        save_active_session(
-            active_session,
-            transcript_messages_from_entries(
-                entries,
-                leaf_id=active_session.record.leaf_id,
-            ),
-            conversation_entries=entries,
-            leaf_id=active_session.record.leaf_id,
+    tree = SessionTree.borrow_validated(
+        active_session.record.conversation_entries,
+        active_session.record.leaf_id,
+    )
+    tree.set_label(tree.ref_from_persisted_id(entry_id), label)
+    entry = tree.export_entry_for_persistence(entry_id)
+    with active_session.save_lock:
+        active_session.record = active_session.store.save_entry_metadata(
+            active_session.id,
+            entry,
+            existing_record=active_session.record,
+            tree_index=active_session.tree_index,
         )
-        return
-    raise ValueError(f"Tree entry not found: {entry_id}")
-
-
-def _entry_label(entry: ConversationEntry) -> str | None:
-    label = entry.metadata.get("label")
-    return label if isinstance(label, str) and label.strip() else None
 
 
 def _node_matches(
@@ -236,44 +285,64 @@ def _node_matches(
         return False
     if not query_tokens:
         return True
-    text = _search_text(node).lower()
+    if node.search_text is None:
+        node.search_text = _search_text(node).lower()
+    text = node.search_text
     return all(token in text for token in query_tokens)
 
 
-def _subtree_matches(
-    node: TreeNode,
+def _mark_subtree_matches(
+    roots: list[TreeNode],
     filter_mode: TreeFilterMode,
     query_tokens: list[str],
-) -> bool:
-    stack = [node]
-    while stack:
-        current = stack.pop()
-        if _node_matches(current, filter_mode, query_tokens):
-            return True
-        stack.extend(current.children)
-    return False
+    current_leaf_id: str | None = None,
+) -> int:
+    del current_leaf_id
+    view_index = roots[0].view_index if roots else None
+    if view_index is None:
+        return 0
+    view_index.generation += 1
+    generation = view_index.generation
+    filter_bit = _FILTER_BITS[filter_mode]
+    candidates = view_index.candidates.get(filter_bit)
+    if candidates is None:
+        candidates = tuple(
+            node for node in view_index.all_nodes if node.filter_mask & filter_bit
+        )
+        view_index.candidates[filter_bit] = candidates
+    for node in candidates:
+        if not _node_matches(node, filter_mode, query_tokens):
+            continue
+        node.match_generation = generation
+        ancestor: TreeNode | None = node
+        while ancestor is not None and ancestor.subtree_generation != generation:
+            ancestor.subtree_generation = generation
+            ancestor = ancestor.parent
+    return generation
 
 
 def _filter_matches(node: TreeNode, filter_mode: TreeFilterMode) -> bool:
+    return bool(node.filter_mask & _FILTER_BITS[filter_mode])
+
+
+def _filter_mask(node: TreeNode) -> int:
     entry = node.entry
     if entry.kind == "instruction":
-        return False
-    if filter_mode == "all":
-        return True
-    if filter_mode == "labeled-only":
-        return bool(node.label)
-    if filter_mode == "user-only":
-        return entry.kind == "user"
-    if filter_mode == "default":
-        return entry.kind in {"user", "assistant"}
-    if entry.kind in {"memory_snapshot", "skill_event"}:
-        return False
-    if filter_mode == "no-tools" and entry.kind == "tool_result":
-        return False
+        return 0
+    mask = _FILTER_BITS["all"]
+    if node.label:
+        mask |= _FILTER_BITS["labeled-only"]
+    if entry.kind == "user":
+        mask |= _FILTER_BITS["user-only"] | _FILTER_BITS["default"]
+    elif entry.kind == "assistant":
+        mask |= _FILTER_BITS["default"]
+    if entry.kind in {"memory_snapshot", "skill_event", "tool_result"}:
+        return mask
     if entry.kind == "assistant_tool_calls":
         text = entry.message.display_text_content() if entry.message else None
-        return bool(text and text.strip())
-    return True
+        if not text or not text.strip():
+            return mask
+    return mask | _FILTER_BITS["no-tools"]
 
 
 def _search_text(node: TreeNode) -> str:
@@ -288,50 +357,12 @@ def _search_text(node: TreeNode) -> str:
     return " ".join(parts)
 
 
-def _active_path_ids(
-    roots: list[TreeNode],
-    current_leaf_id: str | None,
-) -> set[str]:
-    if current_leaf_id is None:
-        return set()
-    nodes = {node.entry.id: node for node in _walk_nodes(roots)}
-    active: set[str] = set()
-    current_id: str | None = current_leaf_id
-    while current_id is not None and current_id not in active:
-        node = nodes.get(current_id)
-        if node is None:
-            break
-        active.add(current_id)
-        current_id = node.entry.parent_id
-    return active
-
-
-def _active_first(
+def _active_last(
     nodes: Iterable[TreeNode],
-    active_path: set[str],
 ) -> list[TreeNode]:
-    return sorted(
-        nodes,
-        key=lambda node: (
-            1 if _contains_active(node, active_path) else 0,
-            node.entry.created_at,
-        ),
-    )
-
-
-def _contains_active(node: TreeNode, active_path: set[str]) -> bool:
-    stack = [node]
-    while stack:
-        current = stack.pop()
-        if current.entry.id in active_path:
-            return True
-        stack.extend(current.children)
-    return False
-
-
-def _walk_nodes(nodes: Iterable[TreeNode]) -> Iterable[TreeNode]:
-    stack = list(reversed(list(nodes)))
-    while stack:
-        node = stack.pop()
-        yield node
-        stack.extend(reversed(node.children))
+    inactive: list[TreeNode] = []
+    active: list[TreeNode] = []
+    for node in nodes:
+        target = active if node.active else inactive
+        target.append(node)
+    return [*inactive, *active]

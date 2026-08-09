@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from dataclasses import replace
 
 from yoke.agent.compaction import CompactionPolicy
 from yoke.agent.compaction import Compactor
+from yoke.agent.compaction import DEFAULT_HANDOFF_TARGET_TOKENS
 from yoke.agent.compaction import DEFAULT_KEEP_RECENT_TOKENS
 from yoke.agent.compaction import DEFAULT_RECENT_USER_TOKENS
 from yoke.agent.compaction import DEFAULT_RESERVED_OUTPUT_TOKENS
@@ -18,9 +18,11 @@ from yoke.ai.providers.base import ProviderModelInfo
 _DEFAULT_RESERVED_OUTPUT_RATIO = 0.16
 _DEFAULT_KEEP_RECENT_RATIO = 0.11
 _DEFAULT_RECENT_USER_RATIO = 0.11
+_DEFAULT_HANDOFF_TARGET_RATIO = 0.06
 _MIN_RESERVED_OUTPUT_TOKENS = 8_000
 _MIN_KEEP_RECENT_TOKENS = 4_000
 _MIN_RECENT_USER_TOKENS = 4_000
+_MIN_HANDOFF_TARGET_TOKENS = 2_000
 
 
 @dataclass(slots=True, frozen=True)
@@ -38,14 +40,12 @@ def build_provider_context_manager(
     *,
     provider: object,
     instructions,
-    policy_override: CompactionPolicy | None = None,
 ) -> ContextManager:
     """Create a context manager budgeted from the provider's active model."""
     budget = resolve_provider_compaction_budget(provider)
-    policy = policy_override or budget.policy
     return ContextManager(
         instructions=instructions,
-        compaction_policy=policy,
+        compaction_policy=budget.policy,
         compactor=budget.compactor,
     )
 
@@ -69,16 +69,14 @@ def rebind_context_manager_budget(
     context_manager: ContextManager,
     *,
     provider: object,
-    policy_override: CompactionPolicy | None = None,
 ) -> ProviderCompactionBudget:
     """Reapply provider-derived compaction settings to one context manager."""
     budget = resolve_provider_compaction_budget(provider)
-    policy = policy_override or budget.policy
-    context_manager.compaction_policy = policy
+    context_manager.compaction_policy = budget.policy
     context_manager.compactor = budget.compactor
-    context_manager.max_total_tokens = policy.max_total_tokens
-    context_manager.keep_recent_tokens = policy.keep_recent_tokens
-    return replace(budget, policy=policy)
+    context_manager.max_total_tokens = budget.policy.max_total_tokens
+    context_manager.keep_recent_tokens = budget.policy.keep_recent_tokens
+    return budget
 
 
 def current_context_fits_provider_budget(
@@ -153,6 +151,7 @@ def _policy_from_context_window(context_window_tokens: int) -> CompactionPolicy:
             reserved_output_tokens=DEFAULT_RESERVED_OUTPUT_TOKENS,
             keep_recent_tokens=DEFAULT_KEEP_RECENT_TOKENS,
             recent_user_tokens=DEFAULT_RECENT_USER_TOKENS,
+            handoff_target_tokens=DEFAULT_HANDOFF_TARGET_TOKENS,
         )
     reserved_output_tokens = min(
         max(
@@ -179,9 +178,17 @@ def _policy_from_context_window(context_window_tokens: int) -> CompactionPolicy:
         ),
         keep_recent_tokens,
     )
+    handoff_target_tokens = min(
+        max(
+            _MIN_HANDOFF_TARGET_TOKENS,
+            round(context_window_tokens * _DEFAULT_HANDOFF_TARGET_RATIO),
+        ),
+        max(1, recent_user_tokens - 1),
+    )
     return CompactionPolicy(
         max_total_tokens=context_window_tokens,
         reserved_output_tokens=reserved_output_tokens,
         keep_recent_tokens=keep_recent_tokens,
         recent_user_tokens=recent_user_tokens,
+        handoff_target_tokens=handoff_target_tokens,
     )

@@ -8,18 +8,20 @@ from pathlib import Path
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import format_attachment_reference
 from yoke.cli.image_input import paste_image_from_clipboard
-from yoke.cli.interactive.completion_menu import (
+from yoke.cli.image_input import paste_text_from_clipboard
+from yoke.cli.interactive.completion.menu import (
     register_completion_menu_key_bindings,
 )
-from yoke.cli.interactive.completion_menu import selected_completion
+from yoke.cli.interactive.completion.menu import selected_completion
 from yoke.cli.interactive.common import PromptCliState
 
-THINKING_EFFORT_VALUES: tuple[str, ...] = (
+DEFAULT_THINKING_EFFORT_VALUES: tuple[str, ...] = (
     "none",
     "low",
     "medium",
     "high",
     "xhigh",
+    "max",
 )
 
 
@@ -39,7 +41,6 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     open_queue_manager: Callable[[str], None] | None = None,
 ) -> None:
     """Register prompt-toolkit key bindings."""
-
     register_completion_menu_key_bindings(key_bindings)
 
     @key_bindings.add("escape", "escape")
@@ -66,6 +67,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         state.submit_action = "queue"
         event.current_buffer.validate_and_handle()
 
+    @key_bindings.add("escape", "tab")
     @key_bindings.add("s-tab")
     def _cycle_thinking_effort(event) -> None:
         del event
@@ -95,6 +97,8 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
             return
         text = event.app.clipboard.get_data().text
         if not text:
+            text = paste_text_from_clipboard()
+        if not text:
             return
         try:
             attachment = ImageAttachment(path=resolve_image_path(text))
@@ -111,6 +115,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         del event
         remove_last_image()
 
+    @key_bindings.add("c-x", "c-p")
     @key_bindings.add("c-o")
     def _open_tool_inspector(event) -> None:
         del event
@@ -134,10 +139,9 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         event.current_buffer.validate_and_handle()
 
     @key_bindings.add("c-x", "t")
-    def _open_tree_selector(event) -> None:
-        if open_tree_selector is None:
-            return
-        open_tree_selector(event.current_buffer.text)
+    def _open_session_tree(event) -> None:
+        if open_tree_selector is not None:
+            open_tree_selector(event.current_buffer.text)
         event.current_buffer.text = "/tree"
         event.current_buffer.validate_and_handle()
 
@@ -149,19 +153,20 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
 
 def cycle_prompt_thinking_effort(
     current: str | None,
-    available_efforts: tuple[str, ...] | None = None,
-) -> str | None:
+    values: tuple[str, ...] = DEFAULT_THINKING_EFFORT_VALUES,
+) -> str:
     """Return the next configured thinking effort value."""
-    values = THINKING_EFFORT_VALUES if available_efforts is None else available_efforts
-    if not values:
-        return None
-    normalized_current = current.strip().lower() if current else None
-    default_index = max(len(values) - 2, 0)
+    normalized_values = tuple(
+        value.strip().lower() for value in values if value.strip()
+    )
+    if not normalized_values:
+        normalized_values = DEFAULT_THINKING_EFFORT_VALUES
+    current_value = current.strip().lower() if current else "high"
     try:
-        index = values.index(normalized_current or values[default_index])
+        index = normalized_values.index(current_value)
     except ValueError:
-        index = default_index
-    return values[(index + 1) % len(values)]
+        index = normalized_values.index("high") if "high" in normalized_values else -1
+    return normalized_values[(index + 1) % len(normalized_values)]
 
 
 def insert_attachment_reference(buffer, attachment: ImageAttachment) -> None:

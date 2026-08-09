@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
-from typing import Any
-from typing import Self
+import threading
+from typing import Any, Self
 
 from yoke.agent.persistence import restore_agent_state
 from yoke.agent.persistence import save_agent_state
@@ -39,29 +38,35 @@ class DurableAgentMixin:
         metadata: dict[str, Any] | None = None,
         atomic: bool = True,
     ) -> Path:
-        """Save the current portable agent state to a snapshot file."""
-        target = normalize_state_path(path) or self._state_path
-        if target is None:
-            raise ValueError("Agent.save() requires a path or bound state_path.")
+        """Save the current portable agent state to a durable snapshot file."""
         with self._prompt_lock:
             self._ensure_open()
             self._ensure_not_prompt_callback("save")
-            return self._save_unlocked(target, metadata=metadata, atomic=atomic)
+            target = (
+                normalize_state_path(path) if path is not None else self._state_path
+            )
+            if target is None:
+                raise ValueError("Agent.save() requires a path or bound state_path.")
+            return self._save_unlocked(
+                target,
+                metadata=metadata,
+                atomic=atomic,
+            )
 
-    def restore(self, path: str | os.PathLike[str], *, strict: bool = True) -> Self:
-        """Replace this agent's portable state from a snapshot file."""
+    def restore(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        strict: bool = True,
+    ) -> Self:
+        """Replace this agent's portable state from a durable snapshot file."""
         target = normalize_state_path(path)
         if target is None:
             raise ValueError("Agent.restore() requires a path.")
         with self._prompt_lock:
             self._ensure_open()
             self._ensure_not_prompt_callback("restore")
-            restore_agent_state(
-                self._runtime,
-                target,
-                strict=strict,
-                available_skills=list(self._runtime.available_skills),
-            )
+            restore_agent_state(self._runtime, target, strict=strict)
             self._state_path = target
             return self
 
@@ -72,8 +77,12 @@ class DurableAgentMixin:
         metadata: dict[str, Any] | None = None,
         atomic: bool = True,
     ) -> Path:
+        """Save state while the caller owns the prompt lock."""
         saved_path = save_agent_state(
-            self._runtime, target, metadata=metadata, atomic=atomic
+            self._runtime,
+            target,
+            metadata=metadata,
+            atomic=atomic,
         )
         self._state_path = saved_path
         return saved_path
@@ -85,6 +94,10 @@ class DurableAgentMixin:
         raise NotImplementedError
 
 
-def normalize_state_path(path: str | os.PathLike[str] | None) -> Path | None:
+def normalize_state_path(
+    path: str | os.PathLike[str] | None,
+) -> Path | None:
     """Resolve an optional durable-state path."""
-    return None if path is None else Path(path).expanduser().resolve()
+    if path is None:
+        return None
+    return Path(path).expanduser().resolve()

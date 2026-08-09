@@ -8,6 +8,8 @@ from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 
+from prompt_toolkit.key_binding import KeyBindingsBase
+
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
@@ -38,25 +40,26 @@ def open_queue_manager(
     """Open a fullscreen queue manager and return updated prompts."""
     state = QueueManagerState(prompts=[prompt.copy_for_queue() for prompt in prompts])
     changed = False
-    while True:
-        result = _run_queue_manager(state, prompts=prompts, changed=changed)
-        if isinstance(result, _QueueManagerEditRequest):
-            if result.index >= len(state.prompts):
-                state.notice = "Queue item no longer exists."
+    with suppress_terminal_output_for_fullscreen():
+        while True:
+            result = _run_queue_manager(state, prompts=prompts, changed=changed)
+            if isinstance(result, _QueueManagerEditRequest):
+                if result.index >= len(state.prompts):
+                    state.notice = "Queue item no longer exists."
+                    continue
+                edited = edit_prompt(state.prompts[result.index])
+                if edited is None:
+                    state.notice = "Edit cancelled."
+                    continue
+                state.prompts[result.index] = edited
+                state.selected_index = result.index
+                state.notice = "Saved queue item."
+                changed = True
                 continue
-            edited = edit_prompt(state.prompts[result.index])
-            if edited is None:
-                state.notice = "Edit cancelled."
-                continue
-            state.prompts[result.index] = edited
-            state.selected_index = result.index
-            state.notice = "Saved queue item."
-            changed = True
-            continue
-        return result
+            return result
 
 
-def _run_queue_manager(
+def _run_queue_manager(  # noqa: C901
     state: QueueManagerState,
     *,
     prompts: Sequence[PendingPrompt],
@@ -213,12 +216,13 @@ def edit_queue_prompt(prompt: PendingPrompt) -> PendingPrompt | None:
     key_bindings = queue_edit_key_bindings()
     session: PromptSession[str] = PromptSession(multiline=True)
     with suppress(EOFError, KeyboardInterrupt):
-        edited = session.prompt(
-            "edit queued prompt › ",
-            default=prompt.prompt,
-            key_bindings=key_bindings,
-            bottom_toolbar="Enter saves · Ctrl+J newline · Ctrl+C cancels",
-        )
+        with suppress_terminal_output_for_fullscreen():
+            edited = session.prompt(
+                "edit queued prompt › ",
+                default=prompt.prompt,
+                key_bindings=key_bindings,
+                bottom_toolbar=("Enter saves · Ctrl+J newline · Ctrl+C cancels"),
+            )
         if not edited.strip():
             return None
         updated = prompt.copy_for_queue()
@@ -229,7 +233,7 @@ def edit_queue_prompt(prompt: PendingPrompt) -> PendingPrompt | None:
     return None
 
 
-def queue_edit_key_bindings():
+def queue_edit_key_bindings() -> KeyBindingsBase:
     """Return key bindings for the queue item editor."""
     from prompt_toolkit.key_binding import KeyBindings
 
@@ -258,7 +262,8 @@ def render_queue_manager_html(state: QueueManagerState) -> str:
     """Render the queue manager as prompt-toolkit HTML."""
     lines = [
         "<b>Prompt Queue</b>",
-        "<ansidim>↑/↓ select · Enter/e edit · d delete · p promote · s steering · Space pause · Alt+↑/↓ move · q save</ansidim>",
+        "<ansidim>↑/↓ select · Enter/e edit · d delete · p promote · "
+        "s steering · Space pause · Alt+↑/↓ move · q save</ansidim>",
         "",
     ]
     if not state.prompts:

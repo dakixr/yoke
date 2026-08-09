@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: Scaffold a yoke skill with `yoke skills init` and write predictable instructions.
+description: Scaffold an yoke skill with `yoke skills init` and write predictable instructions.
 ---
 
 # Create Skill
@@ -42,12 +42,12 @@ directory.
 
 ### Global skill
 
-```bash
-yoke skills init --root ~ <skill-name>
+```powershell
+yoke skills init --root "$HOME" <skill-name>
 ```
 
-Creates `~/.yoke/skills/<skill-name>/SKILL.md`. Do not pass `~/.yoke` as
-`--root`; that creates `~/.yoke/.yoke/skills/<skill-name>/SKILL.md`.
+Creates `$HOME/.yoke/skills/<skill-name>/SKILL.md`. Use the shell-expanded home
+directory path as `--root`, not the `.yoke` directory itself.
 
 ### Custom root
 

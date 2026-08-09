@@ -22,6 +22,17 @@ def default_reasoning_effort_for_model(
     return None
 
 
+def compatible_reasoning_effort_for_model(
+    model: ProviderModelInfo,
+    requested: str | None,
+) -> str | None:
+    """Return a supported requested effort or the model's declared default."""
+    normalized = requested.strip().lower() if requested is not None else None
+    if normalized in model.thinking_levels:
+        return normalized
+    return default_reasoning_effort_for_model(model)
+
+
 def cloned_model_catalog(
     models: Sequence[ProviderModelInfo],
 ) -> list[ProviderModelInfo]:
@@ -60,7 +71,7 @@ def set_config_model_from_catalog(
     model_id: str,
     reasoning_effort: str | None = None,
 ) -> None:
-    """Validate and set the configured model and optional reasoning effort."""
+    """Set a catalog model, falling back to its default thinking level."""
     normalized_model = model_id.strip()
     if not normalized_model:
         raise ValueError("model_id must be a non-empty string")
@@ -72,20 +83,12 @@ def set_config_model_from_catalog(
             f"Unknown model {normalized_model!r} for provider "
             f"{provider_name!r}. Available: {options}."
         )
-    if reasoning_effort is not None:
-        normalized_reasoning = reasoning_effort.strip().lower()
-        if normalized_reasoning not in selected.thinking_levels:
-            allowed = ", ".join(selected.thinking_levels)
-            raise ValueError(
-                f"Unsupported reasoning effort {reasoning_effort!r} for "
-                f"model {normalized_model!r}. Allowed: {allowed}."
-            )
-        if hasattr(config, "reasoning_effort"):
-            cast_config = cast(Any, config)
-            cast_config.reasoning_effort = normalized_reasoning
-    elif hasattr(config, "reasoning_effort"):
+    if hasattr(config, "reasoning_effort"):
         cast_config = cast(Any, config)
-        cast_config.reasoning_effort = default_reasoning_effort_for_model(selected)
+        cast_config.reasoning_effort = compatible_reasoning_effort_for_model(
+            selected,
+            reasoning_effort,
+        )
     if not hasattr(config, "model"):
         raise ValueError("Provider config does not expose a mutable model")
     cast(Any, config).model = normalized_model

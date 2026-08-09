@@ -7,9 +7,17 @@ import os
 import shlex
 import shutil
 import subprocess
+from pathlib import Path
 
 from yoke.agent.tools.base import WorkspaceTool
 from pydantic import Field
+
+
+def _resolve_rg_binary() -> str:
+    rg_path = shutil.which("rg")
+    if rg_path:
+        return rg_path
+    raise FileNotFoundError("ripgrep binary 'rg' was not found on PATH")
 
 
 class RipgrepTool(WorkspaceTool):
@@ -23,22 +31,38 @@ class RipgrepTool(WorkspaceTool):
     )
 
     raw_args: str = Field(min_length=1)
+    root_dir: str | None = Field(
+        default=None,
+        description=(
+            "Optional directory to run ripgrep from. Relative paths resolve "
+            "from the workspace root."
+        ),
+    )
     max_output_chars: int = 12_000
 
     def execute(self) -> dict[str, object]:
-        rg_path = self._find_rg_binary()
+        try:
+            rg_binary = _resolve_rg_binary()
+        except FileNotFoundError as exc:
+            return {"ok": False, "output": str(exc)}
+
+        try:
+            search_root = self._resolve_search_root()
+        except ValueError as exc:
+            return {"ok": False, "output": str(exc)}
+
         user_argv = self._parse_raw_args()
-        command = [rg_path]
+        command = [rg_binary]
         if "--json" not in user_argv:
             command.append("--json")
         command.extend(user_argv)
         if not self._has_explicit_path(user_argv):
-            command.append(str(self.root))
+            command.append(str(search_root))
 
         try:
             completed = subprocess.run(
                 command,
-                cwd=self.root,
+                cwd=search_root,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -59,11 +83,16 @@ class RipgrepTool(WorkspaceTool):
             return self._render_text(completed.stdout, completed.stderr)
         return parsed
 
-    def _find_rg_binary(self) -> str:
-        rg_path = shutil.which("rg")
-        if rg_path:
-            return rg_path
-        raise FileNotFoundError("ripgrep binary 'rg' was not found on PATH")
+    def _resolve_search_root(self) -> Path:
+        if self.root_dir is None:
+            return self.root
+        try:
+            root_dir = self._resolve_path(self.root_dir)
+        except Exception as exc:
+            raise ValueError(f"Invalid rg root_dir: {exc}") from exc
+        if not root_dir.is_dir():
+            raise ValueError(f"rg root_dir is not a directory: {root_dir}")
+        return root_dir
 
     def _parse_raw_args(self) -> list[str]:
         argv = shlex.split(self.raw_args, posix=os.name != "nt")

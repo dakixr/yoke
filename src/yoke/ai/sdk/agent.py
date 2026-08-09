@@ -3,32 +3,36 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import threading
 from collections.abc import Sequence
 from functools import partial
+import os
 from pathlib import Path
+import threading
+from uuid import uuid4
 
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import BeforeToolCallHook
 from yoke.agent.loop.types import StopRequested
-from yoke.agent.budget import rebind_context_manager_budget
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
+from yoke.agent.persistence import restore_agent_state
+from yoke.ai.sdk.async_support import drain_worker
+from yoke.ai.sdk.async_support import run_sync_cooperatively
+from yoke.ai.sdk.durable import DurableAgentMixin
+from yoke.ai.sdk.durable import normalize_state_path
+from yoke.ai.sdk.observability import AgentObserver
+from yoke.ai.sdk.prompt_runner import run_agent_prompt
+from yoke.ai.sdk.resources import ProviderLease
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.usage_context import (
+    current_usage_metric_context,
+)
+from yoke.ai.providers.usage_context import usage_metric_context
+from yoke.ai.sdk.defaults import default_coding_agent_config
 from yoke.ai.sdk.types import AgentResult
 from yoke.ai.sdk.types import Image
 from yoke.ai.sdk.types import RunConfig
-from yoke.ai.sdk.async_support import run_sync_cooperatively
-from yoke.ai.sdk.defaults import default_coding_agent_config
-from yoke.ai.sdk.durable import DurableAgentMixin
-from yoke.ai.sdk.durable import normalize_state_path
-from yoke.ai.sdk.resources import ProviderLease
-from yoke.ai.sdk.types import StructuredOutputError
-from yoke.ai.sdk.types import structured_output_retry_message
-
-STRUCTURED_OUTPUT_MAX_ATTEMPTS = 3
 
 
 class Agent(DurableAgentMixin):
@@ -41,39 +45,38 @@ class Agent(DurableAgentMixin):
         config: RunConfig | None = None,
         state_path: str | os.PathLike[str] | None = None,
         autosave: bool = False,
+        observer: AgentObserver | None = None,
     ) -> None:
         """Create a public SDK agent."""
-        from yoke.agent.loop.agent import RuntimeAgent
+        from yoke.ai.sdk.runtime import build_runtime_agent
 
-        if config is None:
-            config = default_coding_agent_config()
         if autosave and state_path is None:
             raise ValueError("autosave=True requires state_path.")
+        if config is None:
+            config = default_coding_agent_config()
+        self.provider = provider
+        self._provider_lease = ProviderLease.claim(provider)
         self.config = config
         self.root = Path(config.root).resolve()
-        self._provider_lease = ProviderLease(provider)
         self._state_path = normalize_state_path(state_path)
         self._autosave = autosave
+        self.observer = observer
         self._prompt_lock = threading.RLock()
-        self._async_prompt_lock = asyncio.Lock()
+        self._async_prompt_lock: asyncio.Lock | None = None
+        self._async_loop: asyncio.AbstractEventLoop | None = None
+        self._async_loop_lock = threading.Lock()
+        self._prompt_owner: int | None = None
         self._state_lock = threading.Lock()
         self._closed_event = threading.Event()
-        self._prompt_owner: int | None = None
         self._closing = False
         self._closed = False
         try:
-            self._runtime = RuntimeAgent.from_run_config(
+            self._runtime = build_runtime_agent(
                 provider=provider,
                 config=config,
             )
             if self._state_path is not None and self._state_path.exists():
-                from yoke.agent.persistence import restore_agent_state
-
-                restore_agent_state(
-                    self._runtime,
-                    self._state_path,
-                    available_skills=list(self._runtime.available_skills),
-                )
+                restore_agent_state(self._runtime, self._state_path)
         except BaseException:
             runtime = getattr(self, "_runtime", None)
             try:
@@ -92,9 +95,10 @@ class Agent(DurableAgentMixin):
         config: RunConfig | None = None,
         autosave: bool = False,
         strict: bool = True,
+        observer: AgentObserver | None = None,
     ) -> Agent:
         """Create an agent by loading durable state from a snapshot file."""
-        agent = cls(provider=provider, config=config)
+        agent = cls(provider=provider, config=config, observer=observer)
         try:
             agent.restore(path, strict=strict)
         except BaseException:
@@ -105,42 +109,19 @@ class Agent(DurableAgentMixin):
         return agent
 
     @property
-    def provider(self) -> Provider:
-        """Return the provider currently used by this agent."""
-        return self._runtime.provider
-
-    @provider.setter
-    def provider(self, provider: Provider) -> None:
-        """Replace the provider and refresh provider-aware tools."""
-        with self._prompt_lock:
-            self._ensure_open()
-            self._ensure_not_prompt_callback("replace provider on")
-            if provider is self._runtime.provider:
-                return
-            old_lease = self._provider_lease
-            self._runtime.provider = provider
-            self._provider_lease = ProviderLease(provider)
-            try:
-                rebind_context_manager_budget(
-                    self._runtime.context_manager,
-                    provider=provider,
-                    policy_override=self.config.compaction,
-                )
-                self._runtime.refresh_tools(force=True)
-            finally:
-                old_lease.release()
-
-    @property
     def messages(self) -> list[Message]:
         """Return the current transcript messages."""
         with self._prompt_lock:
-            return self._runtime.messages
+            return [message.model_copy(deep=True) for message in self._runtime.messages]
 
     @property
     def conversation_entries(self) -> list[ConversationEntry]:
         """Return the structured conversation log."""
         with self._prompt_lock:
-            return self._runtime.conversation_entries
+            return [
+                entry.model_copy(deep=True)
+                for entry in self._runtime.conversation_entries
+            ]
 
     @property
     def has_state(self) -> bool:
@@ -155,34 +136,8 @@ class Agent(DurableAgentMixin):
             self._ensure_not_prompt_callback("reset")
             self._runtime.reset()
 
-    def fork(self) -> Agent:
-        """Fork, creating a new instance with the same configuration."""
-        with self._prompt_lock:
-            self._ensure_open()
-            self._ensure_not_prompt_callback("fork")
-            runtime = self._runtime.fork(isolate_provider=True)
-            new = object.__new__(Agent)
-            new.config = self.config
-            new.root = self.root
-            new._state_path = None
-            new._autosave = False
-            new._prompt_lock = threading.RLock()
-            new._async_prompt_lock = asyncio.Lock()
-            new._state_lock = threading.Lock()
-            new._closed_event = threading.Event()
-            new._prompt_owner = None
-            new._closing = False
-            new._closed = False
-            new._provider_lease = (
-                self._provider_lease.acquire()
-                if runtime.provider is self.provider
-                else ProviderLease(runtime.provider)
-            )
-            new._runtime = runtime
-            return new
-
     def close(self) -> None:
-        """Release resources owned by the underlying runtime."""
+        """Release provider and tool resources owned by this agent."""
         if self._prompt_owner == threading.get_ident():
             raise RuntimeError("Cannot close an agent from its prompt callback")
         with self._state_lock:
@@ -206,27 +161,18 @@ class Agent(DurableAgentMixin):
 
     @property
     def closed(self) -> bool:
-        """Return whether this agent has released runtime resources."""
+        """Return whether this agent has released its resources."""
         with self._state_lock:
             return self._closed
 
     async def aclose(self) -> None:
-        """Release runtime resources without blocking the event loop."""
-        await asyncio.to_thread(self.close)
-
-    def __enter__(self) -> Agent:
-        """Return this agent from a synchronous context manager."""
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: object | None,
-    ) -> None:
-        """Close this agent when leaving a synchronous context manager."""
-        del exc_type, exc, traceback
-        self.close()
+        """Release owned resources without blocking the event loop."""
+        worker = asyncio.create_task(asyncio.to_thread(self.close))
+        try:
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            await drain_worker(worker)
+            raise
 
     async def __aenter__(self) -> Agent:
         """Return this agent from an async context manager."""
@@ -234,13 +180,42 @@ class Agent(DurableAgentMixin):
 
     async def __aexit__(
         self,
-        exc_type: type[BaseException] | None,
+        _exc_type: type[BaseException] | None,
         exc: BaseException | None,
-        traceback: object | None,
+        _traceback: object | None,
     ) -> None:
         """Close this agent when leaving an async context manager."""
-        del exc_type, exc, traceback
         await self.aclose()
+
+    def fork(self) -> Agent:
+        """Fork state while preventing duplicate shared-provider ownership."""
+        with self._prompt_lock:
+            self._ensure_open()
+            self._ensure_not_prompt_callback("fork")
+            runtime = self._runtime.fork(isolate_provider=True)
+            new = object.__new__(Agent)
+            new.provider = runtime.provider
+            new.config = self.config
+            new.root = self.root
+            new._state_path = None
+            new._autosave = False
+            new.observer = self.observer
+            new._prompt_lock = threading.RLock()
+            new._async_prompt_lock = None
+            new._async_loop = None
+            new._async_loop_lock = threading.Lock()
+            new._prompt_owner = None
+            new._state_lock = threading.Lock()
+            new._closed_event = threading.Event()
+            new._closing = False
+            new._closed = False
+            new._provider_lease = (
+                self._provider_lease.acquire()
+                if runtime.provider is self.provider
+                else ProviderLease.claim(runtime.provider)
+            )
+            new._runtime = runtime
+            return new
 
     def prompt[StructuredT](
         self,
@@ -250,6 +225,7 @@ class Agent(DurableAgentMixin):
         image_urls: Sequence[str] = (),
         output_type: type[StructuredT] | None = None,
         on_event: AgentEventHandler | None = None,
+        observer: AgentObserver | None = None,
         stop_requested: StopRequested | None = None,
         before_tool_call: BeforeToolCallHook | None = None,
         after_tool_call: AfterToolCallHook | None = None,
@@ -261,84 +237,25 @@ class Agent(DurableAgentMixin):
                 raise RuntimeError("Recursive prompts on one agent are not supported")
             self._prompt_owner = threading.get_ident()
             try:
-                return self._prompt_unlocked(
-                    prompt,
-                    images=images,
-                    image_urls=image_urls,
-                    output_type=output_type,
-                    on_event=on_event,
-                    stop_requested=stop_requested,
-                    before_tool_call=before_tool_call,
-                    after_tool_call=after_tool_call,
-                )
-            finally:
-                self._prompt_owner = None
-
-    def _prompt_unlocked[StructuredT](
-        self,
-        prompt: str,
-        *,
-        images: Sequence[Image | str | Path],
-        image_urls: Sequence[str],
-        output_type: type[StructuredT] | None,
-        on_event: AgentEventHandler | None,
-        stop_requested: StopRequested | None,
-        before_tool_call: BeforeToolCallHook | None,
-        after_tool_call: AfterToolCallHook | None,
-    ) -> AgentResult[StructuredT]:
-        """Run one prompt with structured-output retries and autosave."""
-        attempts = 1 if output_type is None else STRUCTURED_OUTPUT_MAX_ATTEMPTS
-        last_error: StructuredOutputError | None = None
-        result: AgentResult[StructuredT] | None = None
-        next_prompt = prompt
-        next_images = images
-        next_image_urls = image_urls
-        retry_instructions: list[Message] = []
-        try:
-            for attempt in range(attempts):
-                try:
-                    result = self._runtime.prompt(
-                        next_prompt,
-                        images=next_images,
-                        image_urls=next_image_urls,
+                usage_context = current_usage_metric_context()
+                with usage_metric_context(
+                    surface="sdk",
+                    sdk_operation=usage_context.sdk_operation or "agent",
+                    sdk_run_id=usage_context.sdk_run_id or uuid4().hex,
+                ):
+                    return self._prompt_unlocked(
+                        prompt,
+                        images=images,
+                        image_urls=image_urls,
                         output_type=output_type,
                         on_event=on_event,
+                        observer=observer,
                         stop_requested=stop_requested,
                         before_tool_call=before_tool_call,
                         after_tool_call=after_tool_call,
                     )
-                    break
-                except StructuredOutputError as exc:
-                    last_error = exc
-                    if output_type is None or attempt == attempts - 1:
-                        continue
-                    retry_message = structured_output_retry_message(output_type, exc)
-                    self._runtime._base_instructions.append(retry_message)
-                    retry_instructions.append(retry_message)
-                    next_prompt = "Retry with corrected structured output."
-                    next_images = ()
-                    next_image_urls = ()
-            else:
-                if last_error is not None:
-                    raise last_error
-        finally:
-            if retry_instructions:
-                retry_ids = {id(message) for message in retry_instructions}
-                self._runtime._base_instructions[:] = [
-                    message
-                    for message in self._runtime._base_instructions
-                    if id(message) not in retry_ids
-                ]
-                self._runtime.refresh_tools(force=True)
-        if result is None:
-            if last_error is not None:
-                raise last_error
-            raise RuntimeError("Agent did not return a result.")
-        if self._autosave and result.completed:
-            if self._state_path is None:
-                raise RuntimeError("Autosave agent lost its bound state path")
-            self._save_unlocked(self._state_path)
-        return result
+            finally:
+                self._prompt_owner = None
 
     async def prompt_async[StructuredT](
         self,
@@ -348,14 +265,16 @@ class Agent(DurableAgentMixin):
         image_urls: Sequence[str] = (),
         output_type: type[StructuredT] | None = None,
         on_event: AgentEventHandler | None = None,
+        observer: AgentObserver | None = None,
         stop_requested: StopRequested | None = None,
         before_tool_call: BeforeToolCallHook | None = None,
         after_tool_call: AfterToolCallHook | None = None,
         timeout: float | None = None,
     ) -> AgentResult[StructuredT]:
-        """Prompt asynchronously with cooperative cancellation and timeout."""
+        """Prompt asynchronously with cooperative timeout and cancellation."""
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be positive")
+        prompt_lock = self._async_lock_for_current_loop()
         cancelled = threading.Event()
 
         def combined_stop() -> bool:
@@ -363,38 +282,80 @@ class Agent(DurableAgentMixin):
                 stop_requested is not None and stop_requested()
             )
 
-        prompt_call = partial(
+        call = partial(
             self.prompt,
             prompt,
             images=images,
             image_urls=image_urls,
             output_type=output_type,
             on_event=on_event,
+            observer=observer,
             stop_requested=combined_stop,
             before_tool_call=before_tool_call,
             after_tool_call=after_tool_call,
         )
-
-        def call() -> AgentResult[StructuredT]:
-            result = prompt_call()
-            if cancelled.is_set() and result.status == "stopped":
-                raise RuntimeError("Async prompt stopped after cancellation")
-            return result
-
-        async def run() -> AgentResult[StructuredT]:
-            async with self._async_prompt_lock:
-                return await run_sync_cooperatively(call, stop_event=cancelled)
-
         if timeout is None:
-            return await run()
+            async with prompt_lock:
+                return await run_sync_cooperatively(
+                    call,
+                    timeout=None,
+                    stop_event=cancelled,
+                )
         async with asyncio.timeout(timeout):
-            return await run()
+            async with prompt_lock:
+                return await run_sync_cooperatively(
+                    call,
+                    timeout=None,
+                    stop_event=cancelled,
+                )
+
+    def _prompt_unlocked[StructuredT](
+        self,
+        prompt: str,
+        *,
+        images: Sequence[Image | str | Path],
+        image_urls: Sequence[str],
+        output_type: type[StructuredT] | None,
+        on_event: AgentEventHandler | None,
+        observer: AgentObserver | None,
+        stop_requested: StopRequested | None,
+        before_tool_call: BeforeToolCallHook | None,
+        after_tool_call: AfterToolCallHook | None,
+    ) -> AgentResult[StructuredT]:
+        """Run one prompt while the caller owns the prompt lock."""
+        return run_agent_prompt(
+            self,
+            prompt,
+            images=images,
+            image_urls=image_urls,
+            output_type=output_type,
+            on_event=on_event,
+            observer=observer,
+            stop_requested=stop_requested,
+            before_tool_call=before_tool_call,
+            after_tool_call=after_tool_call,
+        )
+
+    def _async_lock_for_current_loop(self) -> asyncio.Lock:
+        """Bind asynchronous use to one event loop."""
+        loop = asyncio.get_running_loop()
+        with self._async_loop_lock:
+            if self._async_loop is None:
+                self._async_loop = loop
+                self._async_prompt_lock = asyncio.Lock()
+            elif self._async_loop is not loop:
+                raise RuntimeError("One Agent cannot be used from multiple event loops")
+            if self._async_prompt_lock is None:
+                raise RuntimeError("Agent async prompt lock was not initialized")
+            return self._async_prompt_lock
 
     def _ensure_open(self) -> None:
+        """Reject operations that require resources after closure."""
         with self._state_lock:
             if self._closing or self._closed:
                 raise RuntimeError("Agent is closing or closed")
 
     def _ensure_not_prompt_callback(self, operation: str) -> None:
+        """Reject state mutation re-entered from a running prompt callback."""
         if self._prompt_owner == threading.get_ident():
             raise RuntimeError(f"Cannot {operation} an agent from its prompt callback")

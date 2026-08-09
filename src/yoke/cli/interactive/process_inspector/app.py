@@ -6,13 +6,21 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
 
-from yoke.agent.tools import CommandProcessManager
-from yoke.agent.tools import CommandProcessSnapshot
+from yoke.agent.tools.command_process_manager import (
+    CommandProcessManager,
+)
+from yoke.agent.tools.command_process_types import (
+    CommandProcessSnapshot,
+)
 from yoke.cli.interactive.process_inspector.render import detail_text
 from yoke.cli.interactive.process_inspector.render import move_selection
 from yoke.cli.interactive.process_inspector.render import page_step
-from yoke.cli.interactive.process_inspector.render import render_view_html
-from yoke.cli.interactive.process_inspector.render import selected_process
+from yoke.cli.interactive.process_inspector.render import (
+    render_view_html,
+)
+from yoke.cli.interactive.process_inspector.render import (
+    selected_process,
+)
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )
@@ -31,6 +39,7 @@ class ProcessInspectorState:
     active_pane: Literal["sidebar", "detail"] = "sidebar"
 
     def __post_init__(self) -> None:
+        """Start with the newest retained process selected."""
         if self.processes:
             self.selected_index = len(self.processes) - 1
 
@@ -46,24 +55,33 @@ def open_live_process_inspector(manager: CommandProcessManager) -> None:
     from prompt_toolkit.layout.controls import FormattedTextControl
 
     state = ProcessInspectorState(manager.snapshots())
-    bindings = KeyBindings()
+    key_bindings = KeyBindings()
 
     def current_processes() -> list[CommandProcessSnapshot]:
         _refresh_processes(state, manager.snapshots())
         return state.processes
 
-    control = FormattedTextControl(
-        lambda: HTML(render_view_html(state, current_processes())), focusable=True
+    def formatted_rows() -> HTML:
+        return HTML(render_view_html(state, current_processes()))
+
+    _register_keys(
+        key_bindings,
+        state=state,
+        current_processes=current_processes,
+        up=Keys.Up,
+        down=Keys.Down,
+        left=Keys.Left,
+        right=Keys.Right,
     )
+    control = FormattedTextControl(formatted_rows, focusable=True)
     app: Application[None] = Application(
         layout=Layout(Window(content=control, always_hide_cursor=True)),
-        key_bindings=bindings,
+        key_bindings=key_bindings,
         full_screen=True,
         mouse_support=False,
         refresh_interval=0.5,
     )
-    _register_keys(bindings, state, current_processes, Keys.Up, Keys.Down)
-    unsubscribe = manager.subscribe(app.invalidate)
+    unsubscribe = manager.subscribe(lambda: app.invalidate())
     with suppress(EOFError, KeyboardInterrupt):
         with suppress_terminal_output_for_fullscreen():
             try:
@@ -72,61 +90,70 @@ def open_live_process_inspector(manager: CommandProcessManager) -> None:
                 unsubscribe()
 
 
-def _register_keys(bindings, state, current_processes, up, down) -> None:  # noqa: C901
-    @bindings.add(down)
-    @bindings.add("j")
-    def _down(event) -> None:
+def _register_keys(  # noqa: C901
+    key_bindings,
+    *,
+    state: ProcessInspectorState,
+    current_processes,
+    up,
+    down,
+    left,
+    right,
+) -> None:
+    @key_bindings.add(down)
+    @key_bindings.add("j")
+    def _move_down(event) -> None:
         if state.active_pane == "sidebar":
             move_selection(state, current_processes(), 1)
         else:
             state.detail_scroll += 1
         event.app.invalidate()
 
-    @bindings.add(up)
-    @bindings.add("k")
-    def _up(event) -> None:
+    @key_bindings.add(up)
+    @key_bindings.add("k")
+    def _move_up(event) -> None:
         if state.active_pane == "sidebar":
             move_selection(state, current_processes(), -1)
         else:
             state.detail_scroll = max(0, state.detail_scroll - 1)
         event.app.invalidate()
 
-    @bindings.add("left")
-    def _left(event) -> None:
+    @key_bindings.add(left)
+    def _focus_sidebar(event) -> None:
         state.active_pane = "sidebar"
         event.app.invalidate()
 
-    @bindings.add("right")
-    def _right(event) -> None:
+    @key_bindings.add(right)
+    def _focus_detail(event) -> None:
         state.active_pane = "detail"
         event.app.invalidate()
 
-    @bindings.add("h")
-    @bindings.add("l")
+    @key_bindings.add("h")
+    @key_bindings.add("l")
     def _toggle_pane(event) -> None:
         state.active_pane = "detail" if state.active_pane == "sidebar" else "sidebar"
         event.app.invalidate()
 
-    @bindings.add("pageup")
+    @key_bindings.add("pageup")
     def _page_up(event) -> None:
         state.detail_scroll = max(0, state.detail_scroll - page_step())
         event.app.invalidate()
 
-    @bindings.add("pagedown")
+    @key_bindings.add("pagedown")
     def _page_down(event) -> None:
         state.detail_scroll += page_step()
         event.app.invalidate()
 
-    @bindings.add("home")
-    @bindings.add("g")
+    @key_bindings.add("home")
+    @key_bindings.add("g")
     def _home(event) -> None:
         if state.active_pane == "sidebar":
             state.selected_index = 0
         state.detail_scroll = 0
         event.app.invalidate()
 
-    @bindings.add("end")
-    @bindings.add("G")
+    @key_bindings.add("end")
+    @key_bindings.add("G")
     def _end(event) -> None:
         if state.active_pane == "sidebar":
             state.selected_index = max(0, len(current_processes()) - 1)
@@ -135,48 +162,49 @@ def _register_keys(bindings, state, current_processes, up, down) -> None:  # noq
             state.detail_scroll = 10**9
         event.app.invalidate()
 
-    @bindings.add("w")
-    def _wrap(event) -> None:
+    @key_bindings.add("w")
+    def _toggle_wrap(event) -> None:
         state.wrap = not state.wrap
         state.detail_scroll = 0
         event.app.invalidate()
 
-    @bindings.add("y")
-    def _copy(event) -> None:
+    @key_bindings.add("y")
+    def _copy_selected(event) -> None:
         from prompt_toolkit.clipboard import ClipboardData
 
         process = selected_process(state, current_processes())
-        if process is not None:
-            event.app.clipboard.set_data(ClipboardData(detail_text(process)))
-            state.notice = "Copied selected process details to clipboard."
-            event.app.invalidate()
+        if process is None:
+            return
+        event.app.clipboard.set_data(ClipboardData(detail_text(process)))
+        state.notice = "Copied selected process details to clipboard."
+        event.app.invalidate()
 
-    @bindings.add("escape")
-    @bindings.add("c-c")
-    @bindings.add("q")
+    @key_bindings.add("escape")
+    @key_bindings.add("c-c")
+    @key_bindings.add("q")
     def _quit(event) -> None:
         event.app.exit()
 
 
 def _refresh_processes(
-    state: ProcessInspectorState, processes: list[CommandProcessSnapshot]
+    state: ProcessInspectorState,
+    processes: list[CommandProcessSnapshot],
 ) -> None:
+    """Refresh snapshots while preserving the selected session ID."""
     selected = selected_process(state, state.processes)
     selected_id = selected.session_id if selected is not None else None
-    was_at_tail = (
-        bool(state.processes) and state.selected_index == len(state.processes) - 1
+    was_at_tail = bool(state.processes) and state.selected_index >= (
+        len(state.processes) - 1
     )
     state.processes = processes
     if not processes:
         state.selected_index = 0
-    elif was_at_tail:
+        return
+    if was_at_tail:
         state.selected_index = len(processes) - 1
-    else:
-        state.selected_index = next(
-            (
-                index
-                for index, process in enumerate(processes)
-                if process.session_id == selected_id
-            ),
-            min(state.selected_index, len(processes) - 1),
-        )
+        return
+    for index, process in enumerate(processes):
+        if process.session_id == selected_id:
+            state.selected_index = index
+            return
+    state.selected_index = min(state.selected_index, len(processes) - 1)

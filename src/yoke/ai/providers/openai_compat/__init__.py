@@ -13,20 +13,20 @@ from yoke.ai.providers.openai_compat.helpers import (
 from yoke.ai.providers.openai_compat.helpers import (
     retry_after_seconds as _retry_after_seconds,
 )
-from yoke.ai.providers.openai_compat.provider import (
+from yoke.ai.providers.openai_compat.models import (
     OpenAICompatibleChatCompletionResponse,
 )
-from yoke.ai.providers.openai_compat.provider import (
+from yoke.ai.providers.openai_compat.models import (
     OpenAICompatibleChoice,
+)
+from yoke.ai.providers.openai_compat.models import (
+    OpenAICompatibleResponseMessage,
 )
 from yoke.ai.providers.openai_compat.provider import (
     OpenAICompatibleConfig,
 )
 from yoke.ai.providers.openai_compat.provider import (
     OpenAICompatibleProvider,
-)
-from yoke.ai.providers.openai_compat.provider import (
-    OpenAICompatibleResponseMessage,
 )
 
 __all__ = [

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from yoke.agent.tools import CommandProcessManager
+from yoke.agent.tools.command_process_manager import (
+    CommandProcessManager,
+)
 from yoke.cli.render.base import Console
 
 
@@ -13,20 +15,22 @@ def command_process_manager(agent: object) -> CommandProcessManager | None:
 
 
 def print_process_table(console: Console, agent: object) -> None:
-    """Print the basic-CLI fallback view of retained command processes."""
+    """Print the basic-CLI fallback view of live command processes."""
     from rich.table import Table
     from rich.text import Text
 
-    from yoke.cli.render import print_scrollback_notice
-
     manager = command_process_manager(agent)
     if manager is None:
+        from yoke.cli.render import print_scrollback_notice
+
         print_scrollback_notice(
             console, "Process inspection is unavailable for this agent."
         )
         return
     processes = manager.snapshots()
     if not processes:
+        from yoke.cli.render import print_scrollback_notice
+
         print_scrollback_notice(console, "No command processes yet.")
         return
     table = Table(title="Command Processes", box=None, pad_edge=False)
@@ -48,20 +52,22 @@ def print_process_table(console: Console, agent: object) -> None:
 
 
 def _format_elapsed(seconds: float) -> str:
-    return f"{seconds:.1f}s" if seconds < 10 else f"{seconds:.0f}s"
+    if seconds < 10:
+        return f"{seconds:.1f}s"
+    return f"{seconds:.0f}s"
 
 
-def _safe_text(value: str) -> str:
+def _safe_text(text: str) -> str:
     safe: list[str] = []
-    for char in value:
-        codepoint = ord(char)
-        if codepoint <= 0x1F:
-            safe.append(chr(0x2400 + codepoint))
-        elif codepoint == 0x7F:
+    for char in text:
+        value = ord(char)
+        if value <= 0x1F:
+            safe.append(chr(0x2400 + value))
+        elif value == 0x7F:
             safe.append("␡")
-        elif 0x80 <= codepoint <= 0x9F:
-            safe.append(f"\\x{codepoint:02x}")
-        elif 0xD800 <= codepoint <= 0xDFFF:
+        elif 0x80 <= value <= 0x9F:
+            safe.append(f"\\x{value:02x}")
+        elif 0xD800 <= value <= 0xDFFF:
             safe.append("�")
         else:
             safe.append(char)

@@ -1,11 +1,14 @@
 """MCP configuration loading."""
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from typing import cast
 
 
@@ -19,7 +22,6 @@ class McpServerConfig:
     """Configuration for one MCP server."""
 
     name: str
-    description: str = ""
     transport: str = "stdio"
     enabled: bool = True
     command: str | None = None
@@ -34,6 +36,7 @@ class McpServerConfig:
     enabled_tools: tuple[str, ...] | None = None
     disabled_tools: tuple[str, ...] = ()
     headers: dict[str, str] | None = None
+    verify: bool = True
     source_path: Path | None = None
 
 
@@ -173,6 +176,7 @@ def _parse_server(
         raise ValueError(
             f"Invalid MCP config `{source_path}`: server `{name}` must be an object"
         )
+    value = cast(dict[str, object], value)
     server_name = name.strip()
     transport = _string(value.get("transport"), default=None)
     if transport is None:
@@ -182,7 +186,6 @@ def _parse_server(
     if transport not in SUPPORTED_TRANSPORTS:
         return McpServerConfig(
             name=server_name,
-            description=_string(value.get("description"), default="") or "",
             transport=transport,
             enabled=_bool(value.get("enabled"), default=True),
             command=command,
@@ -201,6 +204,7 @@ def _parse_server(
             enabled_tools=_optional_string_tuple(value.get("enabled_tools")),
             disabled_tools=_string_tuple(value.get("disabled_tools")),
             headers=_string_dict(value.get("headers")),
+            verify=_bool(value.get("verify"), default=True),
             source_path=source_path,
         )
     if transport == "stdio" and command is None:
@@ -209,7 +213,6 @@ def _parse_server(
         )
     return McpServerConfig(
         name=server_name,
-        description=_string(value.get("description"), default="") or "",
         transport=transport,
         enabled=_bool(value.get("enabled"), default=True),
         command=command,
@@ -226,6 +229,7 @@ def _parse_server(
         enabled_tools=_optional_string_tuple(value.get("enabled_tools")),
         disabled_tools=_string_tuple(value.get("disabled_tools")),
         headers=_string_dict(value.get("headers")),
+        verify=_bool(value.get("verify"), default=True),
         source_path=source_path,
     )
 
@@ -301,10 +305,13 @@ def server_supports_tool(server: McpServerConfig, tool_name: str) -> bool:
     return tool_name not in server.disabled_tools
 
 
-def tool_schema_for_inspection(
-    schema: object, *, include_schema: bool
-) -> object | None:
-    """Return a full schema for optional inspection output."""
+def compact_tool_schema(schema: object, *, include_schema: bool) -> object | None:
+    """Return a compact schema for optional inspection output."""
     if not include_schema or not isinstance(schema, dict):
         return None
-    return cast(dict[str, object], schema)
+    schema_dict = cast(dict[str, object], schema)
+    allowed: dict[str, Any] = {}
+    for key in ("type", "properties", "required", "additionalProperties"):
+        if key in schema_dict:
+            allowed[key] = schema_dict[key]
+    return allowed

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from pydantic import Field
 
 from yoke.agent.truncate import DEFAULT_MAX_BYTES
@@ -13,9 +15,16 @@ from .base import WorkspaceTool
 
 def single_line_read_hint(path: str, line_number: int) -> str:
     """Return a platform hint for reading a single oversized line."""
+    if os.name == "nt":
+        escaped_path = path.replace("'", "''")
+        return (
+            "Use powershell: "
+            f"Get-Content -Path '{escaped_path}' "
+            f"| Select-Object -Index {line_number - 1}"
+        )
     escaped_path = path.replace("'", "'\"'\"'")
     return (
-        f"Use zsh: sed -n '{line_number}p' '{escaped_path}'"
+        f"Use bash: sed -n '{line_number}p' '{escaped_path}'"
         f" | head -c {DEFAULT_MAX_BYTES}"
     )
 

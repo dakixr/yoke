@@ -2,20 +2,85 @@
 
 from __future__ import annotations
 
-import secrets
 from collections.abc import Sequence
 
+from yoke.agent.conversation import project_conversation
+from yoke.agent.conversation import memory_message_has_continuation_note
+from yoke.agent.conversation import parse_memory_message
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import ConversationEntryKind
 from yoke.agent.models import ConversationLog
 from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import Message
-from yoke.agent.models import WorkingMemory
-from yoke.agent.prompting import memory_message_has_continuation_note
-from yoke.agent.prompting import parse_memory_message
+from yoke.agent.session_tree import SessionTree
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
+from yoke.agent.state import _active_branch_entry_refs
+
+
+def append_conversation_entry(context: AgentContext, entry: ConversationEntry) -> bool:
+    """Append an entry at the active leaf and return whether it branches."""
+    entries = context.conversation_log.entries
+    tree = SessionTree.borrow_validated(
+        entries,
+        context.conversation_log.leaf_id,
+    )
+    branching = bool(entries and tree.leaf_id != entries[-1].id)
+    cursor = len(entries)
+    _append_entry_intent(tree, entry)
+    delta = tree.export_append_delta(cursor)
+    entries.extend(delta.entries)
+    context.conversation_log.leaf_id = delta.leaf_id
+    return branching
+
+
+def _append_entry_intent(tree: SessionTree, entry: ConversationEntry) -> None:
+    if entry.kind == "skill_event" and entry.message is not None:
+        tree.append_system_event(entry.message, metadata=entry.metadata)
+        return
+    if entry.kind == "control":
+        tree.append_control(entry.metadata, message=entry.message)
+        return
+    if entry.kind == "compaction_summary":
+        tree.append_compaction_attempt(entry.metadata, message=entry.message)
+        return
+    if entry.kind == "memory_snapshot":
+        tree.append_snapshot(
+            MemorySnapshot.model_validate(entry.metadata),
+            message=entry.message,
+        )
+        return
+    if entry.kind == "branch_summary" and entry.message is not None:
+        tree.append_branch_summary(entry.message, metadata=entry.metadata)
+        return
+    if entry.message is None:
+        raise ValueError(f"Entry kind {entry.kind!r} requires a message.")
+    if entry.message.role == "system":
+        tree.append_system_event(entry.message, metadata=entry.metadata)
+        return
+    tree.append_message(entry.message)
+
+
+def update_message_projection(
+    context: AgentContext, message: Message, *, branching: bool
+) -> None:
+    """Update the transcript projection after one message append."""
+    if not branching:
+        context.messages.append(message.model_copy(deep=True))
+        return
+    entries = _active_branch_entry_refs(
+        context.conversation_log.entries,
+        leaf_id=context.conversation_log.leaf_id,
+    )
+    context.messages = [
+        instruction.model_copy(deep=True) for instruction in context.instructions
+    ]
+    context.messages.extend(
+        entry.message.model_copy(deep=True)
+        for entry in entries or []
+        if entry.kind != "memory_snapshot" and entry.message is not None
+    )
 
 
 def initialize_context_state(
@@ -34,18 +99,17 @@ def initialize_context_state(
 ) -> AgentContext:
     """Build the initial AgentContext state from persisted messages/entries."""
     if conversation_entries is not None:
-        persisted_entries = [
-            entry.model_copy(deep=True) for entry in conversation_entries
-        ]
         persisted_messages = [
-            entry.message.model_copy(deep=True)
-            for entry in persisted_entries
+            entry.message
+            for entry in conversation_entries
             if entry.message is not None and entry.kind != "instruction"
         ]
         resolved_instructions = resolve_instructions(persisted_messages, instructions)
-        prior_memory_snapshot = extract_memory_snapshot_from_entries(persisted_entries)
+        prior_memory_snapshot = extract_memory_snapshot_from_entries(
+            conversation_entries
+        )
         conversation_log = build_conversation_log_from_entries(
-            persisted_entries,
+            conversation_entries,
             resolved_instructions,
             prior_memory_snapshot,
         )
@@ -66,28 +130,63 @@ def initialize_context_state(
         messages=[],
         instructions=resolved_instructions,
         conversation_log=conversation_log,
-        memory=WorkingMemory(current_snapshot=prior_memory_snapshot),
         available_skills=[
             skill.model_copy(deep=True) for skill in available_skills or []
         ],
         active_skills=[skill.model_copy(deep=True) for skill in active_skills or []],
     )
+    context.messages = transcript_messages(context)
     if append_prompt:
         append_message(context, user_message or Message.user(prompt))
-    else:
-        context.messages = transcript_messages(context)
+    return context
+
+
+def initialize_owned_context_state(
+    *,
+    prompt: str,
+    entries: list[ConversationEntry],
+    instructions: list[Message],
+    system_prompt: str | None,
+    user_message: Message | None,
+    append_prompt: bool,
+    available_skills: Sequence[SkillSpec] | None,
+    active_skills: Sequence[ActiveSkill] | None,
+    append_message,
+) -> AgentContext:
+    """Take a validated active path without recopying its entry values."""
+    persisted_messages = [
+        entry.message
+        for entry in entries
+        if entry.message is not None and entry.kind != "instruction"
+    ]
+    resolved_instructions = resolve_instructions(persisted_messages, instructions)
+    seed = SessionTree.take_validated_runtime(entries)
+    context = AgentContext.model_construct(
+        system_prompt=system_prompt,
+        messages=[*resolved_instructions, *seed.messages],
+        instructions=resolved_instructions,
+        conversation_log=ConversationLog.model_construct(
+            entries=seed.entries,
+            leaf_id=seed.leaf_id,
+        ),
+        available_skills=[
+            skill.model_copy(deep=True) for skill in available_skills or []
+        ],
+        active_skills=[skill.model_copy(deep=True) for skill in active_skills or []],
+        provider_epoch_reset=False,
+    )
+    if append_prompt:
+        append_message(context, user_message or Message.user(prompt))
     return context
 
 
 def recent_log_messages(context: AgentContext) -> list[Message]:
     """Return recent non-instruction, non-snapshot conversation messages."""
-    messages: list[Message] = []
-    for entry in context.conversation_log.entries:
-        if entry.kind in {"instruction", "memory_snapshot"}:
-            continue
-        if entry.message is not None:
-            messages.append(entry.message.model_copy(deep=True))
-    return messages
+    projection = project_conversation(
+        context.conversation_log.entries,
+        leaf_id=context.conversation_log.leaf_id,
+    )
+    return [message.model_copy(deep=True) for message in projection.provider_messages]
 
 
 def resolve_instructions(
@@ -114,49 +213,12 @@ def build_conversation_log(
     instructions: Sequence[Message],
 ) -> ConversationLog:
     """Build a conversation log from persisted transcript messages."""
-    entries: list[ConversationEntry] = []
-    parent_id: str | None = None
-
-    def append_entry(entry: ConversationEntry) -> None:
-        nonlocal parent_id
-        entry.parent_id = parent_id
-        entries.append(entry)
-        parent_id = entry.id
-
-    stripped_messages = strip_persisted_memory_messages(messages)
-    for message in resolve_instructions(stripped_messages, instructions):
-        append_entry(ConversationEntry(kind="instruction", message=message))
-    memory_snapshot_added = False
-    for message in messages:
-        plain_text = message.plain_text_content
-        if message.role in {"system", "user"} and plain_text:
-            if parse_memory_message(plain_text) is not None:
-                if memory_snapshot is not None:
-                    append_entry(
-                        ConversationEntry(
-                            kind="memory_snapshot",
-                            metadata=memory_snapshot.model_dump(),
-                        )
-                    )
-                    memory_snapshot_added = True
-                continue
-        if message.role == "system":
-            continue
-        append_entry(
-            ConversationEntry(
-                kind=entry_kind_for_message(message),
-                message=message.model_copy(deep=True),
-            )
-        )
-    if memory_snapshot is not None and not memory_snapshot_added:
-        insertion_index = len(resolve_instructions(stripped_messages, instructions))
-        snapshot = ConversationEntry(
-            kind="memory_snapshot",
-            metadata=memory_snapshot.model_dump(),
-        )
-        entries.insert(insertion_index, snapshot)
-        _relink_linear_entries(entries)
-    return ConversationLog(entries=entries)
+    tree = SessionTree.from_runtime_messages(messages, memory_snapshot)
+    exported = tree.export()
+    return ConversationLog(
+        entries=list(exported.entries),
+        leaf_id=exported.leaf_id,
+    )
 
 
 def build_conversation_log_from_entries(
@@ -165,50 +227,13 @@ def build_conversation_log_from_entries(
     memory_snapshot: MemorySnapshot | None,
 ) -> ConversationLog:
     """Rebuild a conversation log from stored ConversationEntry values."""
-    old_instruction_entries = [
-        entry for entry in entries if entry.kind == "instruction"
-    ]
-    rebuilt_entries: list[ConversationEntry] = []
-    for index, message in enumerate(instructions):
-        old_entry = (
-            old_instruction_entries[index]
-            if index < len(old_instruction_entries)
-            else None
-        )
-        rebuilt_entries.append(
-            ConversationEntry(
-                id=old_entry.id if old_entry is not None else secrets.token_hex(8),
-                kind="instruction",
-                message=message.model_copy(deep=True),
-                parent_id=(rebuilt_entries[-1].id if rebuilt_entries else None),
-            )
-        )
-    replacement_parent = rebuilt_entries[-1].id if rebuilt_entries else None
-    old_instruction_ids = {entry.id for entry in old_instruction_entries}
-    for entry in entries:
-        if entry.kind != "instruction":
-            copied = entry.model_copy(deep=True)
-            if copied.parent_id in old_instruction_ids:
-                copied.parent_id = replacement_parent
-            rebuilt_entries.append(copied)
-    if memory_snapshot is not None and not any(
-        entry.kind == "memory_snapshot" for entry in rebuilt_entries
-    ):
-        rebuilt_entries.insert(
-            len(instructions),
-            ConversationEntry(
-                kind="memory_snapshot",
-                metadata=memory_snapshot.model_dump(),
-            ),
-        )
-    return ConversationLog(entries=rebuilt_entries)
-
-
-def _relink_linear_entries(entries: list[ConversationEntry]) -> None:
-    parent_id: str | None = None
-    for entry in entries:
-        entry.parent_id = parent_id
-        parent_id = entry.id
+    del instructions
+    tree = SessionTree.restore_runtime(entries, memory_snapshot)
+    exported = tree.export()
+    return ConversationLog(
+        entries=list(exported.entries),
+        leaf_id=exported.leaf_id,
+    )
 
 
 def entry_kind_for_message(message: Message) -> ConversationEntryKind:
@@ -251,15 +276,7 @@ def extract_memory_snapshot_from_entries(
     entries: Sequence[ConversationEntry],
 ) -> MemorySnapshot | None:
     """Extract the latest memory snapshot from stored entries."""
-    snapshot: MemorySnapshot | None = None
-    for entry in entries:
-        if entry.kind != "memory_snapshot":
-            continue
-        try:
-            snapshot = MemorySnapshot.model_validate(entry.metadata)
-        except ValueError:
-            continue
-    return snapshot
+    return project_conversation(entries).checkpoint
 
 
 def strip_persisted_memory_messages(
@@ -278,7 +295,10 @@ def strip_persisted_memory_messages(
 
 def next_compaction_generation(context: AgentContext) -> int:
     """Compute the next compaction generation number."""
-    snapshot = context.memory.current_snapshot
+    snapshot = project_conversation(
+        context.conversation_log.entries,
+        leaf_id=context.conversation_log.leaf_id,
+    ).checkpoint
     if snapshot is None:
         return 1
     if snapshot.compaction_handoff is not None:

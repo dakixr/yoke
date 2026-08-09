@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable
 from collections.abc import Mapping
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -17,6 +18,7 @@ from typing import cast
 from yoke.ai.providers.base import ModelCatalogProvider
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.model_selection import set_config_model_from_catalog
 
 
 @dataclass(slots=True, frozen=True)
@@ -149,7 +151,7 @@ def create_custom_provider(
             name=plugin.name,
             home=home.resolve(),
             model=model,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=reasoning_effort if model is not None else None,
             session_id=session_id,
             env=resolved_env,
         )
@@ -261,10 +263,15 @@ def _attach_plugin_model_catalog(
     context: ProviderPluginContext,
 ) -> None:
     if isinstance(provider, ModelCatalogProvider):
+        _normalize_plugin_provider_config(
+            provider,
+            provider.list_models(),
+            reasoning_effort=context.reasoning_effort,
+        )
         return
     if plugin.list_models is None:
         return
-    model_catalog = plugin.list_models(context)
+    model_catalog = plugin.list_models(replace(context, reasoning_effort=None))
     dynamic_provider = cast(Any, provider)
     dynamic_provider.provider_name = plugin.name
     dynamic_provider.list_models = lambda: [
@@ -281,6 +288,30 @@ def _attach_plugin_model_catalog(
             model_id,
             reasoning_effort=reasoning_effort,
         )
+    )
+    _normalize_plugin_provider_config(
+        provider,
+        model_catalog,
+        reasoning_effort=context.reasoning_effort,
+    )
+
+
+def _normalize_plugin_provider_config(
+    provider: Provider,
+    model_catalog: list[ProviderModelInfo],
+    *,
+    reasoning_effort: str | None,
+) -> None:
+    current_model = _current_plugin_model_id(provider)
+    config = getattr(provider, "config", None)
+    if current_model is None or config is None:
+        return
+    set_config_model_from_catalog(
+        config,
+        model_catalog,
+        provider_name=getattr(provider, "provider_name", "custom"),
+        model_id=current_model,
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -312,26 +343,13 @@ def _set_plugin_model(
     *,
     reasoning_effort: str | None = None,
 ) -> None:
-    normalized_model = model_id.strip()
-    if not normalized_model:
-        raise ValueError("model_id must be a non-empty string")
-    available = {model.id: model for model in model_catalog}
-    selected = available.get(normalized_model)
-    if selected is None:
-        options = ", ".join(sorted(available))
-        raise ValueError(f"Unknown model {normalized_model!r}. Available: {options}.")
-    if reasoning_effort is not None:
-        normalized_reasoning = reasoning_effort.strip().lower()
-        if normalized_reasoning not in selected.thinking_levels:
-            allowed = ", ".join(selected.thinking_levels)
-            raise ValueError(
-                f"Unsupported reasoning effort {reasoning_effort!r} for "
-                f"model {normalized_model!r}. Allowed: {allowed}."
-            )
-        config = getattr(provider, "config", None)
-        if config is not None and hasattr(config, "reasoning_effort"):
-            cast(Any, config).reasoning_effort = normalized_reasoning
     config = getattr(provider, "config", None)
-    if config is None or not hasattr(config, "model"):
+    if config is None:
         raise ValueError("Provider does not expose a mutable config.model")
-    cast(Any, config).model = normalized_model
+    set_config_model_from_catalog(
+        config,
+        model_catalog,
+        provider_name=getattr(provider, "provider_name", "custom"),
+        model_id=model_id,
+        reasoning_effort=reasoning_effort,
+    )

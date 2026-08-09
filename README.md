@@ -29,7 +29,7 @@ yoke
 yoke --headless "Fix the failing tests"
 
 # Resume the latest session for this repo
-yoke continue
+yoke resume
 ```
 
 Interactive sessions support slash commands, session history, image input, model
@@ -38,7 +38,8 @@ selection, skills, MCP configuration, and tool inspection.
 ## SDK
 
 ```python
-from yoke.ai import Agent, OpenCodeGoConfig, OpenCodeGoProvider, RunConfig
+from yoke.ai import Agent, RunConfig
+from yoke.ai.providers import OpenCodeGoConfig, OpenCodeGoProvider
 
 agent = Agent(
     provider=OpenCodeGoProvider(OpenCodeGoConfig(api_key="...")),

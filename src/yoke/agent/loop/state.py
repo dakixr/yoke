@@ -6,7 +6,9 @@ from collections.abc import Sequence
 
 from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
-from yoke.agent.skills.context import append_missing_active_skill_messages
+from yoke.agent.skills.context import (
+    append_missing_active_skill_messages,
+)
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
 from yoke.ai.providers.base import start_provider_turn
@@ -42,7 +44,11 @@ def context_for_run(
             context, user_message or Message.user(prompt)
         )
         return context
-    context = agent._context.model_copy(deep=True)
+    if agent._context_owned_for_run:
+        context = agent._context
+        agent._context_owned_for_run = False
+    else:
+        context = agent._context.model_copy(deep=True)
     context.available_skills = [
         skill.model_copy(deep=True) for skill in resolved_available_skills
     ]

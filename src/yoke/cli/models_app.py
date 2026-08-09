@@ -5,28 +5,26 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated
+from typing import cast
 
 import typer
 from rich.table import Table
 from rich.text import Text
 
-from yoke.cli.config.args import CLIArgs
-from yoke.cli.config.default_model import load_effective_yoke_config
+from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
+from yoke.ai.providers.resolution import list_provider_models
+from yoke.cli.config import CLIArgs
+from yoke.cli.config import load_effective_yoke_config
 from yoke.cli.path_display import format_root_label
-from yoke.cli.providers.catalog import (
-    ProviderModelChoice,
-    list_all_provider_model_choices,
-    parse_provider_model_identifier,
-)
-from yoke.cli.render import OutputStream, build_console
-from yoke.cli.runtime.selector.format import fit_selector_cell
-from yoke.cli.runtime.selector.ui import (
-    SelectorTableColumns,
-    can_use_keyboard_selector,
-    select_table_item_interactive,
-)
-from yoke.cli.tools.policy import YokeConfig
+from yoke.cli.providers.catalog import list_all_provider_model_choices
+from yoke.cli.providers.catalog import parse_provider_model_identifier
+from yoke.cli.render import OutputStream
+from yoke.cli.render import build_console
+from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
+from yoke.cli.runtime.selector.ui import SelectorTableColumns
+from yoke.cli.runtime.selector.ui import select_table_item_interactive
+from yoke.cli.tools.policy import PiConfig
 
 DEFAULT_ROOT = Path.cwd().absolute()
 
@@ -44,11 +42,11 @@ def _config_path(*, root: Path, global_scope: bool, repo_scope: bool) -> Path:
     return Path.home() / ".yoke" / "config.json"
 
 
-def _load_config(path: Path) -> YokeConfig:
+def _load_config(path: Path) -> PiConfig:
     if not path.is_file():
-        return YokeConfig()
+        return PiConfig()
     try:
-        return YokeConfig.model_validate_json(path.read_text(encoding="utf-8"))
+        return PiConfig.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise ValueError(
             "Could not update default model because "
@@ -66,15 +64,11 @@ def _write_default_model_config(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            YokeConfig(
+            PiConfig(
+                capabilities=dict(config.capabilities),
                 tools=dict(config.tools),
                 default_model=default_model,
-                default_reasoning_effort=(
-                    default_reasoning_effort
-                    if default_reasoning_effort is not None
-                    else config.default_reasoning_effort
-                ),
-                title_model=config.title_model,
+                default_reasoning_effort=default_reasoning_effort,
             ).model_dump(mode="json", exclude_none=True),
             indent=2,
         )
@@ -94,6 +88,18 @@ def set_default_model(
     """Persist the configured default model and return the config path."""
     provider_name, model_name = parse_provider_model_identifier(default_model)
     normalized = f"{provider_name}:{model_name}"
+    models = list_provider_models(
+        provider_name,
+        model=model_name,
+        reasoning_effort=None,
+        home=Path.home(),
+    )
+    selected = next((model for model in models or () if model.id == model_name), None)
+    resolved_effort = (
+        compatible_reasoning_effort_for_model(selected, reasoning_effort)
+        if selected is not None
+        else reasoning_effort
+    )
     path = _config_path(
         root=root,
         global_scope=global_scope,
@@ -102,7 +108,7 @@ def set_default_model(
     _write_default_model_config(
         path,
         default_model=normalized,
-        default_reasoning_effort=reasoning_effort,
+        default_reasoning_effort=resolved_effort,
     )
     return path
 
@@ -113,17 +119,17 @@ def _prompt_for_default_model(
     reasoning_effort: str | None = None,
 ) -> str:
     choices = list_all_provider_model_choices(
-        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort),
-        home=Path.home(),
+        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort)
     )
     if not choices:
         raise ValueError("No models advertised by providers.")
+    qualified_ids = [choice.qualified_id for choice in choices]
     if can_use_keyboard_selector(sys.stdout):
-        selected = _select_model_interactive(choices, root=root)
+        selected = _select_model_interactive(qualified_ids, root=root)
         if selected is None:
             raise ValueError("Model selection cancelled.")
-        return selected.qualified_id
-    return _select_model_by_number([choice.qualified_id for choice in choices])
+        return selected
+    return _select_model_by_number(qualified_ids)
 
 
 def _select_model_by_number(qualified_ids: list[str]) -> str:
@@ -141,30 +147,26 @@ def _select_model_by_number(qualified_ids: list[str]) -> str:
     return qualified_ids[selected - 1]
 
 
-def _format_image_support(supports_image_inputs: bool | None) -> str:
-    if supports_image_inputs is True:
-        return "yes"
-    if supports_image_inputs is False:
-        return "no"
-    return "unknown"
-
-
 def _select_model_interactive(
-    choices: list[ProviderModelChoice],
+    qualified_ids: list[str],
     *,
     root: Path,
-) -> ProviderModelChoice | None:
-    index_width = max(3, len(str(len(choices))) + 2)
+) -> str | None:
+    index_width = max(3, len(str(len(qualified_ids))) + 2)
+    model_width = max(
+        len("Model"),
+        max((len(model_id) for model_id in qualified_ids), default=0),
+    )
     return select_table_item_interactive(
-        choices,
+        qualified_ids,
         title="Select a default model for new sessions:",
         subtitle=(
             "Default scope: global (`~\\.yoke\\config.json`).\n"
             "For this repo, use `yoke models set --repo`."
         ),
-        columns=_default_model_selector_columns(
-            choices,
-            index_width=index_width,
+        columns=SelectorTableColumns(
+            headers=("#", "Model"),
+            widths=(index_width, model_width),
         ),
         render_row=_render_model_selector_row,
         footer=(
@@ -173,38 +175,8 @@ def _select_model_interactive(
     )
 
 
-def _default_model_selector_columns(
-    choices: list[ProviderModelChoice],
-    *,
-    index_width: int,
-) -> SelectorTableColumns:
-    return SelectorTableColumns(
-        headers=("#", "Provider", "Model", "Images", "Context", "Thinking"),
-        widths=(
-            index_width,
-            max(len("Provider"), max(len(choice.provider_name) for choice in choices)),
-            max(len("Model"), max(len(choice.model.id) for choice in choices)),
-            len("Images"),
-            max(
-                len("Context"),
-                max(len(str(choice.model.context_window_tokens)) for choice in choices),
-            ),
-            min(
-                42,
-                max(
-                    len("Thinking"),
-                    max(
-                        len(", ".join(choice.model.thinking_levels))
-                        for choice in choices
-                    ),
-                ),
-            ),
-        ),
-    )
-
-
 def _render_model_selector_row(
-    choice: ProviderModelChoice,
+    qualified_id: str,
     index: int,
     is_selected: bool,
     columns: SelectorTableColumns,
@@ -213,16 +185,7 @@ def _render_model_selector_row(
     return "  ".join(
         (
             f"{marker} {index + 1:>{max(1, columns.widths[0] - 2)}}",
-            choice.provider_name.ljust(columns.widths[1]),
-            choice.model.id.ljust(columns.widths[2]),
-            _format_image_support(choice.model.supports_image_inputs).ljust(
-                columns.widths[3]
-            ),
-            str(choice.model.context_window_tokens).rjust(columns.widths[4]),
-            fit_selector_cell(
-                ", ".join(choice.model.thinking_levels),
-                columns.widths[5],
-            ),
+            qualified_id.ljust(columns.widths[1]),
         )
     )
 
@@ -235,7 +198,7 @@ def print_model_inventory(
 ) -> None:
     """Print the provider-qualified model catalog known to the CLI."""
     console = build_console(stream)
-    effective_config = load_effective_yoke_config(root=root, home=Path.home())
+    effective_config = load_effective_yoke_config(root=root)
     table = Table(
         title="Model Inventory",
         show_header=True,
@@ -243,19 +206,16 @@ def print_model_inventory(
     )
     table.add_column("Model", style="bold")
     table.add_column("Default")
-    table.add_column("Images")
     table.add_column("Context")
     table.add_column("Thinking")
     choices = list_all_provider_model_choices(
-        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort),
-        home=Path.home(),
+        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort)
     )
     for choice in choices:
         is_default = effective_config.default_model == choice.qualified_id
         table.add_row(
             choice.qualified_id,
             Text("default" if is_default else "", style="green"),
-            _format_image_support(choice.model.supports_image_inputs),
             str(choice.model.context_window_tokens),
             ", ".join(choice.model.thinking_levels),
         )

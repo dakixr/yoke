@@ -35,12 +35,12 @@ def class_tool[ToolClassT: type[LocalTool]](
     def decorate(tool_cls: ToolClassT) -> ToolClassT:
         if not issubclass(tool_cls, LocalTool):
             raise TypeError("@class_tool can only decorate LocalTool subclasses.")
-        typed_tool_cls = cast(type[LocalTool], tool_cls)
+        mutable_tool_cls = cast(type[LocalTool], tool_cls)
         if name is not None:
-            typed_tool_cls.name = name
+            mutable_tool_cls.name = name
         if description is not None:
-            typed_tool_cls.description = description
-        typed_tool_cls.is_yoke_tool = True
+            mutable_tool_cls.description = description
+        mutable_tool_cls.is_yoke_tool = True
         return tool_cls
 
     return decorate if cls is None else decorate(cls)

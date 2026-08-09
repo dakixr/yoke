@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.agent.loop import MaxIterationsExceededError
-from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.skills import ActiveSkill
 from yoke.agent.skills import SkillRegistry
 from yoke.agent.skills import load_skill_registry
@@ -17,11 +18,9 @@ from yoke.ai.providers.base import Provider
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
 from yoke.agent.budget import build_provider_context_manager
-from yoke.cli.bootstrap.agents import build_system_messages
 from yoke.cli.bootstrap.config import ToolDiscoveryProvider
 from yoke.cli.bootstrap.config import resolve_agent_config
 from yoke.cli.bootstrap.types import ToolLoadReport
-from yoke.cli.config.args import CLIArgs
 from yoke.cli.config.providers import build_provider_from_args
 from yoke.cli.config.providers import prepare_provider_args
 
@@ -38,6 +37,22 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 RUN_ERRORS = (ProviderError, MaxIterationsExceededError)
+
+
+@dataclass(slots=True)
+class CLIArgs:
+    """CLIArgs."""
+
+    prompt: str | None = None
+    headless: bool = False
+    session: str | None = None
+    fork_session_id: str | None = None
+    model: str | None = None
+    provider_name: str | None = None
+    reasoning_effort: str | None = None
+    root: str = os.getcwd()
+    skills: tuple[str, ...] = ()
+    images: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -63,7 +78,9 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
     agent_holder: list[RuntimeAgent] = []
     report_holder: list[ToolLoadReport] = []
 
-    def tool_factory(context: ToolRegistrationContext):
+    def tool_factory(
+        context: ToolRegistrationContext,
+    ) -> ToolRegistrationResult:
         active_skills = (
             agent_holder[0].active_skills if agent_holder else initial_active_skills
         )
@@ -78,15 +95,15 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
             agent_holder[0].tool_report = resolved.tool_report
         return ToolRegistrationResult(
             tools=resolved.tools,
-            system_messages=resolved.tool_system_messages,
+            system_messages=resolved.tool_system_messages or [],
         )
 
-    initial_messages = build_system_messages(
+    initial_messages = _resolve_cli_agent_config(
         root=root,
-        base_system_prompt=DEFAULT_SYSTEM_PROMPT,
-        include_agents_file=True,
-        home=Path.home(),
-    )
+        skill_registry=skill_registry,
+        active_skills=initial_active_skills,
+        provider=provider,
+    ).system_messages
     context_manager = build_provider_context_manager(
         provider=provider,
         instructions=initial_messages,
@@ -98,10 +115,9 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
         tool_factory=tool_factory,
         tool_root=root,
         tool_home=Path.home().resolve(),
-        max_iterations=42_000_000,
         context_manager=context_manager,
         skill_registry=skill_registry,
-        available_skills=skill_registry.skills,
+        available_skills=(skill_registry.skills if skill_registry is not None else []),
         active_skills=initial_active_skills,
     )
     agent_holder.append(agent)
@@ -131,35 +147,33 @@ def format_tool_discovery_message(report: ToolLoadReport) -> str:
     """format_tool_discovery_message."""
     message = (
         f"Loaded {report.count('default')} builtin tools, "
-        f"{report.count('repo')} repo tools from .yoke/tools, "
-        f"{report.count('global')} global tools from ~/.yoke/tools"
+        f"{report.count('repo')} repo tools from .yoke, "
+        f"{report.count('global')} global tools from ~/.yoke"
     )
     config_denied_count = len(report.denied_tools)
     if config_denied_count:
         message += f", {config_denied_count} denied by config"
-    if report.failures:
-        message += f", {len(report.failures)} plugin load failure(s)"
-    if report.skill_failures:
-        message += f", {len(report.skill_failures)} skill load failure(s)"
     return message
 
 
-def _load_cli_skill_registry(root: Path) -> SkillRegistry:
+def _load_cli_skill_registry(root: Path) -> SkillRegistry | None:
     skill_dirs = default_cli_skill_dirs(root)
-    return load_skill_registry(skill_dirs, strict=False)
+    return load_skill_registry(skill_dirs)
 
 
 def _activate_cli_skills(
-    skill_registry: SkillRegistry,
+    skill_registry: SkillRegistry | None,
     skill_names: tuple[str, ...],
 ) -> list[ActiveSkill]:
+    if skill_registry is None:
+        return []
     return [skill_registry.activate(name) for name in skill_names]
 
 
 def _resolve_cli_agent_config(
     *,
     root: Path,
-    skill_registry: SkillRegistry,
+    skill_registry: SkillRegistry | None,
     active_skills: Sequence[ActiveSkill],
     provider: Provider,
 ) -> ResolvedAgentConfig:
@@ -168,15 +182,12 @@ def _resolve_cli_agent_config(
         base_system_prompt=DEFAULT_SYSTEM_PROMPT,
         include_repo_tools=True,
         include_global_tools=True,
-        home=Path.home(),
         provider=provider,
     )
+    if skill_registry is None:
+        return resolved
     from yoke.agent.tools import SkillTool
     from yoke.cli.bootstrap.types import ResolvedAgentConfig
-
-    resolved.tool_report.skill_failures = [
-        failure.error for failure in skill_registry.failures
-    ]
 
     skill_tool = SkillTool.bind(
         skill_registry=skill_registry,
@@ -186,7 +197,7 @@ def _resolve_cli_agent_config(
         system_messages=list(resolved.system_messages),
         tools=[*resolved.tools, skill_tool],
         tool_report=resolved.tool_report,
-        tool_system_messages=list(resolved.tool_system_messages),
+        tool_system_messages=list(resolved.tool_system_messages or []),
     )
 
 

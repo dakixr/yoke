@@ -1,4 +1,4 @@
-"""Convenient defaults for programmatically constructed coding agents."""
+"""Default SDK agent configurations."""
 
 from __future__ import annotations
 
@@ -15,13 +15,14 @@ DEFAULT_CODING_AGENT_PROMPT = (
 
 
 def default_coding_agent_tools() -> list[AgentTool]:
-    """Return the default SDK coding-agent capability IDs."""
+    """Return the default SDK coding-agent tool set."""
     return [
         "image.attach",
-        "file.extract_context",
+        "image.generate",
         "file.search",
         "file.read",
         "web.fetch",
+        "web.search",
         "web.research",
         "file.write",
         "shell",

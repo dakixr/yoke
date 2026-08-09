@@ -2,29 +2,24 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Literal
-from typing import Self
 
-from pydantic import TypeAdapter
 
-from yoke.agent.context import CompactionPolicy
+from yoke.agent.compaction.core import CompactionPolicy
 from yoke.agent.loop.types import (
     AfterToolCallHook,
     BeforeToolCallHook,
     ToolExecutionMode,
 )
-from yoke.agent.loop.types import ConversationHistory
 from yoke.agent.models import (
     ConversationEntry,
     Message,
     MessageImageURLContentPart,
     MessageLocalImageContentPart,
-    MessageTextContentPart,
 )
 from yoke.agent.skills import (
     ActiveSkill,
@@ -32,17 +27,14 @@ from yoke.agent.skills import (
     load_skill_registry,
 )
 from yoke.agent.skills.discovery import load_skill
-from yoke.ai.sdk.helpers import image_part, remote_image_part, text_part
+from yoke.ai.sdk.helpers import image_part, remote_image_part
 
 if TYPE_CHECKING:
-    from yoke.agent.capabilities import CapabilityInput
     from yoke.agent.tools import LocalTool
-    from yoke.agent.tools import RegisterTools
 
     type AgentTool = LocalTool | type[LocalTool] | str
 else:
     type AgentTool = object
-    type CapabilityInput = object
 
 
 class StructuredOutputError(ValueError):
@@ -50,15 +42,6 @@ class StructuredOutputError(ValueError):
 
     def __init__(self, message: str, *, output: str) -> None:
         super().__init__(message)
-        self.output = output
-
-
-class AgentNotCompletedError(RuntimeError):
-    """Raised when a caller requires a completed agent result."""
-
-    def __init__(self, *, status: str, output: str) -> None:
-        super().__init__(f"Agent result is not completed: status={status!r}.")
-        self.status = status
         self.output = output
 
 
@@ -191,9 +174,7 @@ class RunConfig:
 
     root: str | Path
     sys_prompt: str | None = None
-    capabilities: Sequence[CapabilityInput] | None = None
     tools: Sequence[AgentTool] = ()
-    register_tools: RegisterTools | None = None
     skills: Sequence[Skill] = ()
     include_agents_file: bool = True
     max_iterations: int | None = None
@@ -201,28 +182,8 @@ class RunConfig:
     tool_execution: ToolExecutionMode = "parallel"
     before_tool_call: BeforeToolCallHook | None = None
     after_tool_call: AfterToolCallHook | None = None
-    history: ConversationHistory | None = None
     messages: Sequence[Message] | None = None
     conversation_entries: Sequence[ConversationEntry] | None = None
-
-    def __post_init__(self) -> None:
-        """Normalize raw history inputs into tagged Yoke history."""
-        provided = sum(
-            value is not None
-            for value in (self.history, self.messages, self.conversation_entries)
-        )
-        if provided > 1:
-            raise ValueError(
-                "Provide only one of history, messages, or conversation_entries."
-            )
-        if self.messages is not None:
-            from yoke.agent.loop.types import MessageHistory
-
-            self.history = MessageHistory(list(self.messages))
-        elif self.conversation_entries is not None:
-            from yoke.agent.loop.types import ConversationEntryHistory
-
-            self.history = ConversationEntryHistory(list(self.conversation_entries))
 
 
 @dataclass(slots=True)
@@ -243,20 +204,9 @@ class AgentResult[StructuredT]:
     output: str
     messages: list[Message]
     iterations: int
-    status: Literal["completed", "stopped"] = "completed"
+    status: str = "completed"
     conversation_entries: list[ConversationEntry] | None = None
     structured: StructuredT | None = None
-
-    @property
-    def completed(self) -> bool:
-        """Return whether the agent completed the requested turn."""
-        return self.status == "completed"
-
-    def require_completed(self) -> Self:
-        """Return this result or raise when the turn stopped early."""
-        if not self.completed:
-            raise AgentNotCompletedError(status=self.status, output=self.output)
-        return self
 
 
 @dataclass(slots=True, frozen=True)
@@ -279,6 +229,7 @@ class BatchUsage:
     reasoning_tokens: int = 0
     total_tokens: int = 0
     cached_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
 
 
 @dataclass(slots=True)
@@ -296,7 +247,7 @@ class BatchItemResult[StructuredT]:
 
 @dataclass(slots=True, frozen=True)
 class BatchProgress:
-    """Progress emitted after one batch task reaches a terminal state."""
+    """Progress event emitted after one batch task reaches a terminal state."""
 
     task_id: str
     index: int
@@ -325,108 +276,3 @@ class BatchResult[StructuredT]:
     def failed_count(self) -> int:
         """Return the number of errored or timed-out tasks."""
         return len(self.items) - self.completed_count
-
-
-def normalize_image_inputs(
-    *,
-    images: Sequence[Image | str | Path],
-    image_urls: Sequence[str],
-) -> tuple[list[Image], list[str]]:
-    """Normalize explicit Image values and path shortcuts."""
-    normalized_images: list[Image] = []
-    for image in images:
-        if isinstance(image, Image):
-            normalized_images.append(image)
-        else:
-            normalized_images.append(Image.from_path(image))
-    return normalized_images, list(image_urls)
-
-
-def build_user_message_from_images(
-    text: str = "",
-    *,
-    images: Sequence[Image] = (),
-    image_urls: Sequence[str] = (),
-) -> Message:
-    """Build a multimodal user message from SDK image inputs."""
-    if not images and not image_urls:
-        return Message.user(text)
-    content = []
-    if text:
-        content.append(text_part(text))
-    image_index = 1
-    for image in images:
-        part = image.content
-        if isinstance(part, MessageLocalImageContentPart):
-            copied = part.model_copy(deep=True)
-            if copied.label is None:
-                copied.label = f"[Image #{image_index}]"
-            content.append(copied)
-        else:
-            content.append(part)
-        image_index += 1
-    for image_url in image_urls:
-        content.append(remote_image_part(image_url))
-        image_index += 1
-    return Message.user(content)
-
-
-def parse_structured_output[StructuredT](
-    output: str,
-    *,
-    output_type: type[StructuredT] | None,
-) -> StructuredT | None:
-    """Parse final text into a structured output value."""
-    if output_type is None:
-        return None
-    try:
-        return TypeAdapter(output_type).validate_json(output)
-    except Exception as exc:
-        raise StructuredOutputError(
-            f"Failed to parse structured output as {output_type.__name__}.",
-            output=output,
-        ) from exc
-
-
-def structured_output_retry_message(
-    output_type: type[object], error: StructuredOutputError
-) -> Message:
-    """Build a system correction message for invalid structured outputs."""
-    return Message.system(
-        "Your previous response did not match the required structured output "
-        "schema. Retry now and adhere exactly to the schema. Return only one "
-        "valid JSON object with no markdown fences, prose, comments, or extra "
-        "keys.\n\n"
-        f"Validation error: {error}\n\n"
-        f"Previous response:\n{error.output}\n\n"
-        f"{structured_output_instructions(output_type)}"
-    )
-
-
-def structured_output_instructions(output_type: type[object]) -> str:
-    """Build model-facing instructions for structured SDK outputs."""
-    schema = TypeAdapter(output_type).json_schema()
-    schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
-    return (
-        "Return exactly one valid JSON object matching this JSON Schema. "
-        "Do not include markdown fences, prose, comments, or extra keys. "
-        "Use the exact field names and required fields from the schema.\n\n"
-        f"JSON Schema:\n{schema_json}"
-    )
-
-
-def append_structured_output_instructions(
-    message: Message,
-    *,
-    output_type: type[object],
-) -> Message:
-    """Return a user message with structured-output instructions appended."""
-    instruction = structured_output_instructions(output_type)
-    copied = message.model_copy(deep=True)
-    if isinstance(copied.content, list):
-        copied.content.append(MessageTextContentPart(text=instruction))
-    elif isinstance(copied.content, str):
-        copied.content = f"{copied.content}\n\n{instruction}"
-    else:
-        copied.content = instruction
-    return copied

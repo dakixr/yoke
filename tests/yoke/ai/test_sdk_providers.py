@@ -1,55 +1,99 @@
-"""Tests for Axi-compatible SDK provider helpers."""
-
-# ruff: noqa: D101,D103,S101
+# ruff: noqa: D100, D103, S101
 
 from __future__ import annotations
 
-from yoke.ai.providers.base import ProviderModelInfo
-from yoke.ai.providers.resolution import ProviderReadiness
-from yoke.ai.sdk import providers
+import httpx
+import pytest
+from typing import cast
+
+from yoke.agent.models import Message
+from yoke.ai import build_builtin_provider
+from yoke.ai.providers import OpenAICompatibleConfig
+from yoke.ai.providers import OpenAICompatibleProvider
+from yoke.ai.providers.base import ProviderError
+from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
+from yoke.ai.providers.opencode_go import OpenCodeGoProvider
+from yoke.ai.providers.zai import ZAIProvider
 
 
-class FakeProvider:
-    pass
+def test_openai_compatible_provider_does_not_retry_read_timeout() -> None:
+    calls = 0
 
+    def timeout(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("slow response")
 
-def readiness() -> list[ProviderReadiness]:
-    return [
-        ProviderReadiness(
-            provider_name="demo",
-            ready=True,
-            model="demo-model",
-            reasoning_effort="high",
-            models=(
-                ProviderModelInfo(
-                    id="demo-model",
-                    display_name="Demo Model",
-                    context_window_tokens=10_000,
-                    thinking_levels=("low", "high"),
-                    default_thinking_level="high",
-                ),
-            ),
-        )
-    ]
-
-
-def test_provider_status_and_builder_compatibility(monkeypatch, capsys) -> None:
-    built: list[str] = []
-    monkeypatch.setattr(providers, "provider_readiness", readiness)
-    monkeypatch.setattr(
-        providers,
-        "build_provider",
-        lambda selection: built.append(selection) or FakeProvider(),
+    provider = OpenAICompatibleProvider(
+        OpenAICompatibleConfig(api_key="test", model="test", max_retries=8),
+        http_client=httpx.Client(transport=httpx.MockTransport(timeout)),
+        sleep=lambda _seconds: None,
     )
 
-    statuses = providers.builtin_provider_status()
-    provider = providers.build_builtin_provider()
-    selected = providers.available_builtin_providers(["demo:demo-model:high"])
-    providers.print_builtin_provider_status()
+    with pytest.raises(ProviderError, match="timed out"):
+        provider.complete([Message.user("hello")], [])
 
-    assert statuses[0].default_selection == "demo:demo-model:high"
-    assert statuses[0].models[0].selection == "demo:demo-model:high"
-    assert isinstance(provider, FakeProvider)
-    assert list(selected) == ["demo:demo-model:high"]
-    assert built == ["demo:demo-model:high", "demo:demo-model:high"]
-    assert "Ready providers:" in capsys.readouterr().out
+    assert calls == 1
+
+
+def test_build_builtin_provider_accepts_selection_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YOKE_CODEX_API_KEY", "test-key")
+
+    provider = cast(
+        CodexSubscriptionProvider,
+        build_builtin_provider("codex:gpt-5.5:high"),
+    )
+
+    config = provider.config
+    assert config.model == "gpt-5.5"
+    assert config.reasoning_effort == "high"
+    provider.close()
+
+
+def test_build_builtin_provider_rejects_unknown_provider_selection() -> None:
+    with pytest.raises(ValueError, match="Unsupported provider 'legacy'"):
+        build_builtin_provider("legacy:gpt-test:high")
+
+
+def test_build_builtin_provider_rejects_unknown_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZAI_API_KEY", "test-key")
+
+    with pytest.raises(ValueError, match="Unknown model 'glm-missing'"):
+        build_builtin_provider("zai:glm-missing:thinking")
+
+
+def test_build_builtin_provider_uses_default_for_invalid_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZAI_API_KEY", "test-key")
+
+    provider = cast(
+        ZAIProvider,
+        build_builtin_provider("zai:glm-5.2:high"),
+    )
+
+    try:
+        assert provider.config.model == "glm-5.2"
+        assert provider.config.reasoning_effort == "thinking"
+    finally:
+        provider.close()
+
+
+def test_build_builtin_opencode_luna_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
+
+    provider = cast(
+        OpenCodeGoProvider,
+        build_builtin_provider("opencode-go:gpt-5.6-luna:max"),
+    )
+
+    config = provider.config
+    assert config.model == "gpt-5.6-luna"
+    assert config.reasoning_effort == "max"
+    provider.close()

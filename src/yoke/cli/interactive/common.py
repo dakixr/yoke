@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -16,9 +17,11 @@ from uuid import uuid4
 
 from yoke.agent.context.manager import _drop_incomplete_tool_turns
 from yoke.agent.loop import AgentResult
+from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.cli.image_input import ImageAttachment
-from yoke.agent.models import ConversationEntry
+from yoke.cli.render.base import Console
+from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import estimate_context_usage
 
@@ -31,9 +34,10 @@ SHORTCUT_LINES = (
     "Press `Esc` twice to stop the current turn.",
     "Press `Ctrl+J` or `Shift+Enter` to insert a newline.",
     "Press `Esc` then `Enter` to insert a newline.",
+    "Use `Left` or `Right` to move across prompt text and newlines.",
     "Press `Ctrl+V` or `Alt+V` to paste text or attach an image.",
     "Press `Ctrl+U` to remove the last pending image.",
-    "Press `Ctrl+O` to open the tool inspector.",
+    "Press `Ctrl+O` or `Ctrl+X` then `Ctrl+P` to open the process inspector.",
     "Press `Ctrl+Q` to open the queue manager.",
     "Press `Ctrl+X` then `M` to switch model.",
     "Press `Ctrl+X` then `T` to open the session tree.",
@@ -42,19 +46,55 @@ SHORTCUT_LINES = (
 SHORTCUTS_NOTICE = "Keyboard shortcuts:\n" + "\n".join(SHORTCUT_LINES)
 
 
+def session_resume_notice(session_id: str) -> str:
+    """Return the canonical command shown when leaving an interactive session."""
+    return f"To resume this session run:\nyoke resume {session_id}"
+
+
+def handle_slash_command(
+    command: str,
+    *,
+    agent: AgentRunner,
+    active_session: ActiveSession,
+    messages: list[Message],
+    console: Console,
+    pending_images: list[ImageAttachment] | None = None,
+    pending_prompts: list[PendingPrompt] | None = None,
+    on_context_usage: Callable[[dict[str, object]], None] | None = None,
+    on_editor_text: Callable[[str], None] | None = None,
+    on_submit_prompt: Callable[[str], None] | None = None,
+    on_queue_changed: Callable[[], None] | None = None,
+    on_replay_messages: Callable[[list[Message]], None] | None = None,
+    on_process_inspector: Callable[[], None] | None = None,
+) -> tuple[bool, list[Message], ActiveSession]:
+    """Dispatch a slash command without importing the dispatcher eagerly."""
+    from yoke.cli.interactive.slash_commands import (
+        handle_slash_command as dispatch,
+    )
+
+    return dispatch(
+        command,
+        agent=agent,
+        active_session=active_session,
+        messages=messages,
+        console=console,
+        pending_images=pending_images,
+        pending_prompts=pending_prompts,
+        on_context_usage=on_context_usage,
+        on_editor_text=on_editor_text,
+        on_submit_prompt=on_submit_prompt,
+        on_queue_changed=on_queue_changed,
+        on_replay_messages=on_replay_messages,
+        on_process_inspector=on_process_inspector,
+    )
+
+
 class InputFunc(Protocol):
     """Input function protocol."""
 
     def __call__(self, prompt: object = "", /) -> str:
         """Read the next input value."""
         ...
-
-
-def handle_slash_command(*args, **kwargs):
-    """Dispatch a slash command without importing the dispatcher eagerly."""
-    from yoke.cli.interactive.slash_commands import handle_slash_command as dispatch
-
-    return dispatch(*args, **kwargs)
 
 
 @dataclass(slots=True)
@@ -131,11 +171,9 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand("/shortcuts", "Show interactive keyboard shortcuts."),
     SlashCommand("?", "Alias for /shortcuts."),
-    SlashCommand("/info", "Show details about the current session."),
-    SlashCommand("/ps", "List running background command sessions."),
-    SlashCommand("/stop", "Stop one or all background command sessions.", "session-id"),
     SlashCommand("/new", "Start a fresh session in the current workspace."),
     SlashCommand("/pin", "Pin or unpin the active session."),
+    SlashCommand("/info", "Show active session metadata."),
     SlashCommand("/fork", "Copy this session and continue in the fork."),
     SlashCommand("/title", "Rename the active session.", "new-title"),
     SlashCommand("/tree", "Navigate the current session tree."),
@@ -145,7 +183,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand(
         "/tools",
-        "Toggle tools for this session, this root, or globally.",
+        "Toggle available tools for this run only.",
     ),
     SlashCommand(
         "/mcp",
@@ -153,11 +191,12 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         "server",
     ),
     SlashCommand("/queue", "Open the interactive prompt queue manager."),
+    SlashCommand("/ps", "Inspect command processes for this live runtime."),
     SlashCommand("/image", "Attach an image file to the next prompt.", "path"),
     SlashCommand(
         "/skill",
         "Activate a discovered skill for this session.",
-        "name",
+        "name [prompt]",
     ),
 )
 
@@ -186,6 +225,7 @@ class PromptCliState:
     worker: Thread | None = None
     active_stop_request: Event | None = None
     active_user_message: Message | None = None
+    continuation_entries: list[ConversationEntry] | None = None
     active_turn_id: int = 0
     abandoned_turn_ids: set[int] | None = None
     steered_turn_ids: set[int] | None = None
@@ -194,6 +234,7 @@ class PromptCliState:
     status_message: str = ""
     submit_action: str = "steer"
     context_usage_text: str | None = None
+    context_usage_revision: int = 0
     context_usage_percent: int | None = None
     context_input_tokens: int | None = None
     context_max_tokens: int | None = None
@@ -202,9 +243,6 @@ class PromptCliState:
     turn_input_tokens: int | None = None
     turn_output_tokens: int | None = None
     turn_reasoning_tokens: int | None = None
-    session_input_tokens: int = 0
-    session_output_tokens: int = 0
-    session_tool_calls: int = 0
     spinner_index: int = 0
     thinking_effort: str | None = None
     next_editor_text: str | None = None
@@ -278,14 +316,14 @@ def format_context_usage_text(
 def parse_context_usage_details(
     usage: Mapping[str, object] | None,
 ) -> dict[str, int | None]:
-    """Extract usage percent, input tokens, and max tokens from a usage payload."""
+    """Extract context usage details from a usage payload."""
     if usage is None:
         return {"usage_percent": None, "input_tokens": None, "max_tokens": None}
     usage_percent = usage.get("usage_percent")
     input_tokens = usage.get("input_tokens")
     max_tokens = usage.get("max_total_tokens")
     return {
-        "usage_percent": usage_percent if isinstance(usage_percent, int) else None,
+        "usage_percent": (usage_percent if isinstance(usage_percent, int) else None),
         "input_tokens": input_tokens if isinstance(input_tokens, int) else None,
         "max_tokens": max_tokens if isinstance(max_tokens, int) else None,
     }
@@ -304,5 +342,6 @@ def estimate_context_usage_text(
         prompt,
         messages,
         conversation_entries=conversation_entries,
+        take_entry_ownership=isinstance(conversation_entries, list),
     )
     return format_context_usage_text(usage)

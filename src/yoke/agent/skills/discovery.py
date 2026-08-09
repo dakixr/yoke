@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from dataclasses import field
 from pathlib import Path
 
 from yoke.agent.skills.models import SkillSpec
@@ -19,22 +17,6 @@ class SkillDiscoveryError(ValueError):
     pass
 
 
-@dataclass(slots=True, frozen=True)
-class SkillLoadFailure:
-    """One skill directory that could not be loaded."""
-
-    source_path: Path
-    error: str
-
-
-@dataclass(slots=True)
-class SkillDiscoveryResult:
-    """Valid discovered skills plus isolated load failures."""
-
-    skills: list[SkillSpec]
-    failures: list[SkillLoadFailure] = field(default_factory=list)
-
-
 def builtin_skill_dir() -> Path:
     """Return the directory containing built-in skills shipped with yoke."""
     return Path(__file__).resolve().parent / "built_in"
@@ -42,16 +24,7 @@ def builtin_skill_dir() -> Path:
 
 def discover_skills(skill_dirs: list[Path]) -> list[SkillSpec]:
     """Discover all skills in the given directories and return their specs."""
-    result = discover_skills_with_failures(skill_dirs)
-    if result.failures:
-        raise SkillDiscoveryError(result.failures[0].error)
-    return result.skills
-
-
-def discover_skills_with_failures(skill_dirs: list[Path]) -> SkillDiscoveryResult:
-    """Discover valid skills without letting one stale directory abort loading."""
     discovered: list[SkillSpec] = []
-    failures: list[SkillLoadFailure] = []
     seen: set[str] = set()
     all_skill_dirs = [builtin_skill_dir(), *skill_dirs]
     for skill_dir in all_skill_dirs:
@@ -61,35 +34,22 @@ def discover_skills_with_failures(skill_dirs: list[Path]) -> SkillDiscoveryResul
         try:
             children = sorted(resolved_dir.iterdir())
         except OSError as exc:
-            failures.append(
-                SkillLoadFailure(
-                    source_path=resolved_dir,
-                    error=f"Could not read skill directory `{resolved_dir}`: {exc}",
-                )
-            )
-            continue
+            raise SkillDiscoveryError(
+                f"Could not read skill directory `{resolved_dir}`: {exc}"
+            ) from exc
         for child in children:
             if not child.is_dir():
                 continue
-            try:
-                spec = load_skill(child)
-            except SkillDiscoveryError as exc:
-                failures.append(SkillLoadFailure(source_path=child, error=str(exc)))
-                continue
+            spec = load_skill(child)
             if spec.name in seen:
-                failures.append(
-                    SkillLoadFailure(
-                        source_path=child,
-                        error=(
-                            f"Duplicate skill name `{spec.name}` found while "
-                            "loading skills. Rename one of the skill directories."
-                        ),
-                    )
+                raise SkillDiscoveryError(
+                    f"Duplicate skill name `{spec.name}` found while "
+                    "loading skills. Rename one of the skill "
+                    "directories."
                 )
-                continue
             seen.add(spec.name)
             discovered.append(spec)
-    return SkillDiscoveryResult(skills=discovered, failures=failures)
+    return discovered
 
 
 def load_skill(root: Path) -> SkillSpec:
@@ -131,8 +91,8 @@ def load_skill(root: Path) -> SkillSpec:
     return SkillSpec(
         name=name,
         description=description,
-        root=root.resolve(),
-        skill_md_path=skill_md_path.resolve(),
+        root=root,
+        skill_md_path=skill_md_path,
     )
 
 

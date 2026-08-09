@@ -10,9 +10,9 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from yoke.agent.models import Message
-from yoke.agent.prompting import parse_memory_message
+from yoke.agent.conversation import parse_memory_message
+from yoke.cli.render.base import format_tool_error
 from yoke.cli.render.base import format_tool_preview
-from yoke.cli.render.base import truncate_cli_text
 from yoke.cli.render.base import _sanitize_console_output
 from yoke.cli.render.base import _supports_console_chrome
 
@@ -126,27 +126,34 @@ def print_scrollback_notice(console: Console, message: str) -> None:
     console.file.flush()
 
 
+def print_scrollback_warning(console: Console, message: str) -> None:
+    """Print a warning line in scrollback."""
+    message = _sanitize_console_output(console, message)
+    if console.is_terminal:
+        console.print(f"[bold #f0a030]warning[/bold #f0a030] {message}")
+        return
+    console.file.write(f"warning {message}\n")
+    console.file.flush()
+
+
 def print_session_scrollback(console: Console, messages: list[Message]) -> None:
     """Render session transcript scrollback."""
-    emitted_tool_divider = False
     pending_tool_response_divider = False
+    in_tool_block = False
     for message in _visible_scrollback_messages(messages):
         if message.role == "user":
             print_scrollback_user(console, message.display_text_content() or "")
-            emitted_tool_divider = False
             pending_tool_response_divider = False
+            in_tool_block = False
             continue
         if message.role == "assistant":
             text_content = message.text_content()
             if _starts_tool_activity(message):
-                emitted_tool_divider = _ensure_scrollback_tool_divider(
-                    console, emitted_tool_divider
-                )
                 pending_tool_response_divider = True
             if message.commentary_text_content() and text_content:
                 print_scrollback_commentary(console, text_content)
             if message.tool_calls:
-                if not message.commentary_text_content():
+                if not in_tool_block and not message.commentary_text_content():
                     console.print()
                 for tool_call in message.tool_calls:
                     print_scrollback_tool(
@@ -156,12 +163,13 @@ def print_session_scrollback(console: Console, messages: list[Message]) -> None:
                             tool_call.function.arguments,
                         ),
                     )
+                in_tool_block = True
             if text_content and not message.commentary_text_content():
                 if pending_tool_response_divider:
                     print_tool_response_divider(console)
                 print_scrollback_agent(console, text_content)
-                emitted_tool_divider = False
                 pending_tool_response_divider = False
+                in_tool_block = False
             continue
         if message.role == "tool":
             error_text = _tool_result_error(message.plain_text_content)
@@ -170,29 +178,19 @@ def print_session_scrollback(console: Console, messages: list[Message]) -> None:
             pending_tool_response_divider = True
 
 
-def _ensure_scrollback_tool_divider(
-    console: Console, emitted_tool_divider: bool
-) -> bool:
-    del console
-    if emitted_tool_divider:
-        return True
-    return True
-
-
 def _starts_tool_activity(message: Message) -> bool:
     return bool(message.tool_calls) or bool(message.commentary_text_content())
 
 
 def _visible_scrollback_messages(messages: list[Message]) -> list[Message]:
-    last_memory_index: int | None = None
-    for index, message in enumerate(messages):
-        if message.role == "user" and parse_memory_message(
-            message.plain_text_content or ""
-        ):
-            last_memory_index = index
-    if last_memory_index is None:
-        return messages
-    return messages[last_memory_index + 1 :]
+    return [
+        message
+        for message in messages
+        if not (
+            message.role == "user"
+            and parse_memory_message(message.plain_text_content or "")
+        )
+    ]
 
 
 def _tool_result_error(content: str | None) -> str | None:
@@ -204,7 +202,7 @@ def _tool_result_error(content: str | None) -> str | None:
         return None
     if not isinstance(payload, dict) or payload.get("ok", True):
         return None
-    raw_error = payload.get("error")
-    if isinstance(raw_error, str) and raw_error.strip():
-        return truncate_cli_text(raw_error, 120)
+    error_text = format_tool_error(payload)
+    if error_text:
+        return error_text
     return "The tool returned an error."

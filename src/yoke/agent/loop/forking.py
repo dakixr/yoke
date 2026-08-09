@@ -1,35 +1,43 @@
-"""Tool cloning helpers for isolated agent turns."""
+"""Helpers for isolated interactive turns."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from yoke.agent.loop.types import ConversationEntryHistory
 from yoke.agent.tools import LocalTool
 
 if TYPE_CHECKING:
     from yoke.agent.loop.agent import RuntimeAgent
 
 
+def copy_tool_for_runtime(tool: LocalTool) -> LocalTool:
+    """Copy a caller-provided tool before binding it to one runtime."""
+    copied = tool.model_copy(deep=False)
+    copied._context = dict(tool._context)
+    return copied
+
+
 def copy_tool_for_fork(tool: LocalTool) -> LocalTool:
-    """Copy a tool without sharing mutable per-turn runtime context."""
+    """Copy a tool without deep-copying process and network resources."""
     copied = tool.model_copy(deep=False)
     copied._context = {
         key: value
         for key, value in tool._context.items()
-        if key not in {"command_process_manager", "runtime_context"}
+        if key not in {"runtime_context", "provider", "model", "cancel_requested"}
     }
     return copied
 
 
 def promote_runtime_fork(primary: RuntimeAgent, forked: RuntimeAgent) -> None:
-    """Promote a completed turn and leave displaced resources on its old owner."""
+    """Promote one accepted turn while leaving old resources on the fork."""
     previous_provider = primary.provider
     primary.provider = forked.provider
     forked.provider = previous_provider
-    primary.load_conversation(
-        ConversationEntryHistory(forked.conversation_entries),
-        available_skills=forked.available_skills,
-        active_skills=forked.active_skills,
-    )
-    primary.refresh_tools(force=True)
+    primary._context = forked._context
+    primary._context_owned_for_run = False
+    forked._context = None
+    primary.active_skills = [
+        skill.model_copy(deep=True) for skill in forked.active_skills
+    ]
+    if primary.refresh_tools(force=True) and primary._context is not None:
+        primary._sync_context_instructions(primary._context)

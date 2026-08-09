@@ -140,7 +140,7 @@ def test_websocket_response_done_builds_message_from_output_item() -> None:
     message = build_message_from_websocket_state(
         state,
         provider_name="codex",
-        model_id="gpt-5.4",
+        model_id="gpt-5.5",
     )
 
     assert message.text_content() == "done"
@@ -174,7 +174,7 @@ def test_websocket_response_prefers_deltas_over_output_item_snapshot() -> None:
     message = build_message_from_websocket_state(
         state,
         provider_name="codex",
-        model_id="gpt-5.4",
+        model_id="gpt-5.5",
     )
 
     assert message.text_content() == "streamed"
@@ -223,7 +223,7 @@ def test_websocket_response_prefers_deltas_over_completed_snapshot() -> None:
     message = build_message_from_websocket_state(
         state,
         provider_name="codex",
-        model_id="gpt-5.4",
+        model_id="gpt-5.5",
     )
 
     assert message.text_content() == "streamed"
@@ -342,7 +342,7 @@ def test_websocket_function_call_output_item_builds_tool_call() -> None:
     message = build_message_from_websocket_state(
         state,
         provider_name="codex",
-        model_id="gpt-5.4",
+        model_id="gpt-5.5",
     )
 
     assert message.tool_calls is not None
@@ -390,7 +390,7 @@ def test_codex_websockets_complete_sends_request_frame_and_headers(
             / "codex-auth"
             / "selection.json",
             base_url="ws://127.0.0.1:8765/v1",
-            model="gpt-5.4",
+            model="gpt-5.5",
             max_retries=0,
         ),
         websocket_factory=fake_factory,
@@ -414,7 +414,7 @@ def test_codex_websockets_complete_sends_request_frame_and_headers(
     assert factory_calls[0]["ping_interval"] is None
     assert factory_calls[0]["ping_timeout"] == 20.0
     assert '"type":"response.create"' in sent_payloads[0]
-    assert '"model":"gpt-5.4"' in sent_payloads[0]
+    assert '"model":"gpt-5.5"' in sent_payloads[0]
 
 
 def test_codex_websockets_marks_luna_requests_as_responses_lite(
@@ -505,7 +505,7 @@ def test_codex_websockets_complete_preserves_non_oauth_provider_error(
             / "codex-auth"
             / "selection.json",
             base_url="ws://127.0.0.1:8765/v1",
-            model="gpt-5.4",
+            model="gpt-5.5",
             max_retries=0,
         ),
         websocket_factory=lambda url, **kwargs: FakeWebSocket(),
@@ -577,7 +577,7 @@ def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
             / "codex-auth"
             / "selection.json",
             base_url="ws://127.0.0.1:8765/v1",
-            model="gpt-5.4",
+            model="gpt-5.5",
             max_retries=1,
         ),
         websocket_factory=fake_factory,

@@ -12,6 +12,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import ClassVar
 from typing import cast
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -19,7 +20,9 @@ from pydantic import PrivateAttr
 
 from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
-from yoke.agent.tools.context import ToolRuntimeContext
+
+if TYPE_CHECKING:
+    from yoke.agent.tools.context import ToolRuntimeContext
 
 DEFAULT_GLOB = "*"
 
@@ -48,56 +51,31 @@ class LocalTool(BaseModel, ABC):
     def _inherit_context(self, prototype: LocalTool) -> None:
         self._bind_context(**prototype._context)
 
-    @property
-    def context(self) -> ToolRuntimeContext:
-        """Return the public runtime context bound by an agent."""
-        context = self.runtime_context
-        if context is None:
-            raise RuntimeError("Tool is not bound to an agent runtime context")
-        return context
-
-    @property
-    def runtime_context(self) -> ToolRuntimeContext | None:
-        """Return the runtime context, or None for a standalone bound tool."""
-        context = self._context.get("runtime_context")
-        return context if isinstance(context, ToolRuntimeContext) else None
-
-    def bind_runtime_context(self, context: ToolRuntimeContext) -> None:
-        """Bind the current public runtime context to this tool."""
-        self._context["runtime_context"] = context
-        self._context["provider"] = context.provider
-        self._context["provider_name"] = context.provider_name
-        self._context["model_id"] = context.model_id
-        self._context["model_name"] = context.model_name
-        self._context["model_key"] = context.model_key
-        self._context["reasoning_effort"] = context.reasoning_effort
-        self._context["root"] = context.root
-        self._context["home"] = context.home
-        self._context["cancel_requested"] = context.cancel_requested
-        self._context["tool_event"] = context.tool_event
-        self._context["recent_messages"] = context.recent_messages
+    def bind_runtime_context(self, runtime_context: object) -> None:
+        """Attach provider/model runtime context metadata to this tool."""
+        self._context["runtime_context"] = runtime_context
+        for key in ("root", "home", "provider", "model", "cancel_requested"):
+            if hasattr(runtime_context, key):
+                self._context.setdefault(key, getattr(runtime_context, key))
+        if hasattr(runtime_context, "command_process_manager"):
+            self._context["command_process_manager"] = getattr(
+                runtime_context, "command_process_manager"
+            )
 
     def _is_cancel_requested(self) -> bool:
-        runtime_context = self._context.get("runtime_context")
-        callback = (
-            runtime_context.cancel_requested
-            if isinstance(runtime_context, ToolRuntimeContext)
-            else self._context.get("cancel_requested")
-        )
+        callback = self._context.get("cancel_requested")
         if not callable(callback):
             return False
         callback_fn = cast(Callable[[], object], callback)
         return bool(callback_fn())
 
-    def _emit_tool_event(self, event: str, payload: dict[str, object]) -> None:
-        runtime_context = self._context.get("runtime_context")
-        callback = self._context.get("tool_event")
-        if isinstance(runtime_context, ToolRuntimeContext):
-            callback = runtime_context.tool_event or callback
-        if not callable(callback):
-            return
-        callback_fn = cast(Callable[[str, dict[str, object]], object], callback)
-        callback_fn(event, payload)
+    @property
+    def context(self) -> ToolRuntimeContext:
+        """Return the provider-aware runtime context bound by the agent."""
+        value = self._context.get("runtime_context")
+        if value is None:
+            raise RuntimeError("Tool runtime context is not bound")
+        return cast("ToolRuntimeContext", value)
 
     def to_definition(self) -> dict[str, object]:
         """Return the tool definition dict for the provider API."""
@@ -138,12 +116,12 @@ class LocalTool(BaseModel, ABC):
         return []
 
     def owned_resources(self) -> tuple[object, ...]:
-        """Return closeable resources whose lifetime is owned by this tool."""
+        """Return closeable resources whose lifetime follows this tool."""
         return ()
 
 
 class WorkspaceTool(LocalTool):
-    """A tool that resolves relative paths from a workspace directory."""
+    """A tool that operates within a bounded workspace directory."""
 
     _root: Path = PrivateAttr()
 

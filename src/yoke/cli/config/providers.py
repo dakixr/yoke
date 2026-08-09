@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.credentials import provider_environment
+from yoke.ai.providers.model_selection import (
+    compatible_reasoning_effort_for_model,
+)
 from yoke.ai.providers.plugins import ProviderPluginContext
 from yoke.ai.providers.plugins import available_custom_provider_names
 from yoke.ai.providers.plugins import create_custom_provider
@@ -39,9 +42,12 @@ _BUILTIN_MODEL_LISTERS: dict[str, BuiltinModelLister] = {}
 
 def prepare_provider_args(args: CLIArgs) -> None:
     """Apply default model config and split provider-qualified models."""
+    model_was_explicit = args.model is not None
     _apply_config_default_model(args)
-    _apply_config_default_reasoning_effort(args)
     _normalize_provider_model_args(args)
+    if not model_was_explicit:
+        _apply_config_default_reasoning_effort(args)
+    _apply_compatible_model_reasoning_effort(args)
 
 
 def build_provider_from_args(args: CLIArgs) -> Provider:
@@ -151,7 +157,6 @@ def _apply_config_default_model(args: CLIArgs) -> None:
     if default_model is None:
         return
     args.model = f"{default_model.provider_name}:{default_model.model_name}"
-    args.provider_from_default = True
 
 
 def _apply_config_default_reasoning_effort(args: CLIArgs) -> None:
@@ -181,18 +186,26 @@ def _normalize_provider_model_args(args: CLIArgs) -> None:
         args.reasoning_effort = provider_ref.reasoning_effort
 
 
-def _parse_cli_provider_model_identifier(value: str) -> tuple[str, str]:
-    normalized = value.strip()
-    if ":" not in normalized:
-        raise ValueError("Expected `provider-name:model-name` separated by `:`.")
-    provider_name, model_id = normalized.split(":", maxsplit=1)
-    provider_name = provider_name.strip().lower()
-    model_id = model_id.strip()
-    if not provider_name or not model_id:
-        raise ValueError(
-            "Expected `provider-name:model-name` with both parts non-empty."
-        )
-    return provider_name, model_id
+def _apply_compatible_model_reasoning_effort(args: CLIArgs) -> None:
+    """Use the selected model's default when the requested effort is invalid."""
+    if args.model is None:
+        return
+    provider_name = args.provider_name or _resolve_provider_name(args)
+    models = list_provider_models(
+        provider_name,
+        model=args.model,
+        reasoning_effort=None,
+        home=Path.home(),
+    )
+    if models is None:
+        return
+    selected = next((model for model in models if model.id == args.model), None)
+    if selected is None:
+        return
+    args.reasoning_effort = compatible_reasoning_effort_for_model(
+        selected,
+        args.reasoning_effort,
+    )
 
 
 def _resolve_provider_name(args: CLIArgs) -> str:

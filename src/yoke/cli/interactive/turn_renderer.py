@@ -42,20 +42,8 @@ def make_turn_scoped_renderer_factory(
 
         def handle_event(self, event: str, payload: dict[str, object]) -> None:
             if self._active():
-                renderer.handle_event(event, payload)
-
-        def print_agent_output(self, text: str) -> None:
-            if self._active():
-                renderer.print_agent_output(text)
-
-        def print_error(self, message: str) -> None:
-            if self._active():
-                renderer.print_error(message)
-
-        def _emit_turn_summary(self, summary: dict[str, object]) -> None:
-            if self._active():
-                emit = getattr(renderer, "_emit_turn_summary", None)
-                if callable(emit):
-                    emit(summary)
+                turn_payload = dict(payload)
+                turn_payload["turn_id"] = self.turn_id
+                renderer.handle_event(event, turn_payload)
 
     return TurnScopedRenderer

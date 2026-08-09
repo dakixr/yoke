@@ -15,4 +15,4 @@ def format_root_label(root: Path) -> str:
         return str(resolved)
     if not str(relative):
         return "~"
-    return "~" + "\\" + str(relative).replace("/", "\\")
+    return "~" + "\\" + str(relative)

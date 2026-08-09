@@ -9,11 +9,9 @@ import pytest
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from threading import Event
 import time
 from typing import Any
-from typing import Callable
 from typing import cast
 from collections.abc import Sequence
 from collections.abc import Callable
@@ -30,7 +28,7 @@ from yoke.agent.models import (
     ToolCall,
     ToolFunction,
 )
-from yoke.agent.prompting import render_memory_message
+from yoke.agent.conversation import render_memory_message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
 from yoke.agent.tools import COMMAND_TOOL_NAME
@@ -40,8 +38,6 @@ from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.config import build_agent_from_args
 from yoke.cli.config import build_tool_report
 from yoke.cli.image_input import ImageAttachment
-from yoke.cli.interactive import _format_bottom_toolbar
-from yoke.cli.interactive import _format_context_usage_text
 from yoke.cli.interactive import COMPACTION_IN_PROGRESS_NOTICE
 from yoke.cli.interactive import PendingPrompt
 from yoke.cli.interactive.prompt.paste import (
@@ -62,7 +58,6 @@ from yoke.cli.main import (
     PromptToolkitLiveRenderer,
     app,
     main,
-    run_continue_cli,
     run_cli,
     run_prompt_toolkit_cli,
     run_resume_cli,
@@ -138,22 +133,6 @@ class ImageAwareAgent:
         )
 
 
-class TitleProvider:
-    supports_image_inputs = False
-    max_images_per_message: int | None = None
-
-    def __init__(self, title: str) -> None:
-        self.title = title
-        self.prompts: list[str] = []
-
-    def complete(
-        self, messages: list[Message], tools: list[dict[str, object]]
-    ) -> Message:
-        del tools
-        self.prompts.append(messages[-1].text_content() or "")
-        return Message.assistant(self.title)
-
-
 class ProviderConfig:
     model = "gpt-test"
 
@@ -161,7 +140,7 @@ class ProviderConfig:
 class FakeProvider:
     config = ProviderConfig()
     supports_image_inputs = False
-    max_images_per_message: int | None = None
+    max_images_per_message = None
 
 
 class CaptureStream(io.StringIO):
@@ -169,86 +148,8 @@ class CaptureStream(io.StringIO):
         return False
 
 
-class EncodedTTYCaptureStream(CaptureStream):
-    encoding = "cp1252"
-
-    def isatty(self) -> bool:
-        return True
-
-    def write(self, text: str) -> int:
-        visible_text = text
-        while "\x1b[" in visible_text:
-            prefix, _, remainder = visible_text.partition("\x1b[")
-            _, sep, suffix = remainder.partition("m")
-            visible_text = prefix + (suffix if sep else remainder)
-        visible_text.encode(self.encoding)
-        return super().write(text)
-
-
 def active_session_for(root: Path):
     return create_active_session(CLIArgs(root=str(root)), root=root)
-
-
-class FakePromptToolkitLoop:
-    def call_soon_threadsafe(self, callback: Callable[[], object]) -> None:
-        callback()
-
-
-class FakePromptToolkitApp:
-    def __init__(self) -> None:
-        self.loop = FakePromptToolkitLoop()
-
-    def invalidate(self) -> None:
-        return None
-
-
-PromptSource = Sequence[str] | Callable[[int], str]
-
-
-class FakePromptToolkitSession:
-    def __init__(self, prompts: PromptSource) -> None:
-        self.app = FakePromptToolkitApp()
-        self._prompt_callback = (
-            cast(Callable[[int], str], prompts) if callable(prompts) else None
-        )
-        self._prompt_sequence = None if callable(prompts) else prompts
-        self.calls = 0
-        self.prompt_kwargs: dict[str, object] = {}
-
-    def prompt(self, *_args: object, **kwargs: object) -> str:
-        self.calls += 1
-        self.prompt_kwargs = kwargs
-        if self._prompt_callback is not None:
-            return self._prompt_callback(self.calls)
-        assert self._prompt_sequence is not None
-        return self._prompt_sequence[self.calls - 1]
-
-
-def install_fake_prompt_toolkit(
-    monkeypatch: Any,
-    prompts: PromptSource,
-) -> dict[str, FakePromptToolkitSession]:
-    import importlib
-    import prompt_toolkit
-
-    run_in_terminal_module = importlib.import_module(
-        "prompt_toolkit.application.run_in_terminal"
-    )
-    holder: dict[str, FakePromptToolkitSession] = {}
-
-    class PromptSessionFactory(FakePromptToolkitSession):
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            del args, kwargs
-            super().__init__(prompts)
-            holder["session"] = self
-
-    monkeypatch.setattr(prompt_toolkit, "PromptSession", PromptSessionFactory)
-    monkeypatch.setattr(
-        run_in_terminal_module,
-        "run_in_terminal",
-        lambda func, *args, **kwargs: func(),
-    )
-    return holder
 
 
 class ConfigOnlyProvider:
@@ -257,7 +158,7 @@ class ConfigOnlyProvider:
 
 
 class CatalogProvider(ConfigOnlyProvider):
-    provider_name = "codex"
+    provider_name = "demo"
     context_window_tokens = 200_000
 
     def complete(self, messages: object, tools: object) -> Message:
@@ -289,34 +190,3 @@ class CatalogProvider(ConfigOnlyProvider):
     ) -> None:
         self.config.model = model_id
         self.config.reasoning_effort = reasoning_effort
-
-
-def install_builtin_provider(
-    monkeypatch: pytest.MonkeyPatch,
-    provider_cls: Callable[[Any], Any] = ConfigOnlyProvider,
-    *,
-    provider_name: str = "codex",
-) -> None:
-    import yoke.cli.config.providers as providers
-
-    def factory(context: Any) -> ConfigOnlyProvider:
-        model = context.model or "gpt-5.4"
-        reasoning_effort = context.reasoning_effort
-        if reasoning_effort is None and provider_name == "codex":
-            reasoning_effort = "xhigh" if model == "gpt-5.4-mini" else "medium"
-        return provider_cls(
-            SimpleNamespace(
-                model=model,
-                reasoning_effort=reasoning_effort,
-                home=context.home,
-                name=context.name,
-                env=context.env,
-                session_id=context.session_id,
-            )
-        )
-
-    monkeypatch.setitem(
-        providers._BUILTIN_PROVIDER_FACTORIES,
-        provider_name,
-        factory,
-    )

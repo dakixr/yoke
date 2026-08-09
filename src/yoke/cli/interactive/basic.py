@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import time
-from queue import Empty
-from queue import Queue
-from threading import Event
-from threading import Thread
+from queue import Empty, Queue
+from threading import Event, Thread
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
-from yoke.agent.state import active_branch_entries
-from yoke.cli.config.args import CLIArgs
-from yoke.cli.config.runtime import RUN_ERRORS
-from yoke.cli.image_input import attach_standalone_prompt_image_paths
+from yoke.cli.config import RUN_ERRORS
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.common import BasicCliState
 from yoke.cli.interactive.common import InputFunc
@@ -22,12 +17,12 @@ from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import TurnFailure
 from yoke.cli.interactive.common import TurnStopped
 from yoke.cli.interactive.common import TurnSuccess
+from yoke.cli.interactive.common import handle_slash_command
 from yoke.cli.interactive.common import (
     partial_conversation_entries_from_error,
 )
 from yoke.cli.interactive.common import partial_messages_from_error
-from yoke.cli.interactive.slash_commands import handle_slash_command
-from yoke.cli.interactive.slash_commands import slash_command_requires_idle
+from yoke.cli.interactive.common import session_resume_notice
 from yoke.cli.render import InteractiveRenderer
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
@@ -38,15 +33,14 @@ from yoke.cli.render import print_session_scrollback
 from yoke.cli.render import print_user_prompt
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
+from yoke.cli.runtime import ensure_session_title
 from yoke.cli.runtime import execute_turn
 from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime import resume_command_for_session_id
-from yoke.cli.runtime import start_session_title_generation
+from yoke.cli.runtime import session_usage_metric_context
 from yoke.cli.runtime import sync_agent_skill_state_to_session
 
 
 def run_basic_interactive_cli(
-    args: CLIArgs,
     agent: AgentRunner,
     session_messages: list[Message],
     *,
@@ -55,9 +49,10 @@ def run_basic_interactive_cli(
     stdout: OutputStream,
     stderr: OutputStream,
     replay_session: bool = False,
+    replay_messages: list[Message] | None = None,
+    replay_notice: str | None = None,
 ) -> int:
     """Run the fallback interactive CLI without prompt-toolkit."""
-    del args
     state = BasicCliState(messages=list(session_messages), pending_prompts=[])
     stdout_console = build_console(stdout)
     renderer = InteractiveRenderer(stdout)
@@ -69,6 +64,8 @@ def run_basic_interactive_cli(
     _seed_basic_session_if_needed(
         state=state,
         replay_session=replay_session,
+        replay_messages=replay_messages,
+        replay_notice=replay_notice,
         console=stdout_console,
         active_session=active_session,
         agent=agent,
@@ -77,19 +74,6 @@ def run_basic_interactive_cli(
         result_queue=result_queue,
     )
     while True:
-        try:
-            active_session = _drain_basic_input_queue(
-                state=state,
-                input_queue=input_queue,
-                active_session=active_session,
-                agent=agent,
-                console=stdout_console,
-                stderr=stderr,
-                renderer=renderer,
-                result_queue=result_queue,
-            )
-        except Empty:
-            pass
         try:
             outcome = result_queue.get_nowait()
         except Empty:
@@ -105,6 +89,19 @@ def run_basic_interactive_cli(
                 renderer=renderer,
                 result_queue=result_queue,
             )
+        try:
+            active_session = _drain_basic_input_queue(
+                state=state,
+                input_queue=input_queue,
+                active_session=active_session,
+                agent=agent,
+                console=stdout_console,
+                stderr=stderr,
+                renderer=renderer,
+                result_queue=result_queue,
+            )
+        except Empty:
+            pass
         if (
             state.shutdown_requested
             and state.worker is None
@@ -112,27 +109,31 @@ def run_basic_interactive_cli(
         ):
             if state.input_closed:
                 stdout_console.print()
-            close_agent = getattr(agent, "close", None)
-            if callable(close_agent):
-                close_agent()
             return 0
         time.sleep(0.05)
 
 
 def _request_basic_exit(
-    state: BasicCliState,
-    console,
-    active_session: ActiveSession,
+    state: BasicCliState, console, active_session: ActiveSession
 ) -> None:
     state.shutdown_requested = True
     if state.active_stop_request is not None:
         state.active_stop_request.set()
+    worker = state.worker
+    if worker is not None:
+
+        def release_worker_slot() -> None:
+            worker.join(timeout=0.05)
+            if state.worker is worker:
+                state.worker = None
+
+        Thread(target=release_worker_slot, daemon=True, name="yoke-basic-stop").start()
     if state.exit_notice_emitted:
         return
     state.exit_notice_emitted = True
     print_scrollback_notice(
         console,
-        f"To resume this session run:\n{resume_command_for_session_id(active_session.id)}",
+        session_resume_notice(active_session.id),
     )
 
 
@@ -165,20 +166,19 @@ def _start_basic_turn(
 
     def run_turn() -> None:
         try:
-            result = execute_turn(
-                agent,
-                prompt,
-                history,
-                stderr=stderr,
-                indicator=renderer,
-                stop_requested=stop_event.is_set,
-                user_message=user_message,
-                conversation_entries=active_branch_entries(
-                    active_session.record.conversation_entries,
-                    leaf_id=active_session.record.leaf_id,
-                ),
-                after_tool_result_appended=checkpoint_tool_result,
-            )
+            ensure_session_title(active_session, prompt)
+            with session_usage_metric_context(active_session, prompt):
+                result = execute_turn(
+                    agent,
+                    prompt,
+                    history,
+                    stderr=stderr,
+                    indicator=renderer,
+                    stop_requested=stop_event.is_set,
+                    user_message=user_message,
+                    conversation_entries=active_session.active_entries(),
+                    after_tool_result_appended=checkpoint_tool_result,
+                )
             if result.status == "stopped":
                 result_queue.put(TurnStopped(result=result))
                 return
@@ -223,12 +223,7 @@ def _drain_basic_input_queue(
         if prompt.lower() in {"exit", "quit"}:
             _request_basic_exit(state, console, active_session)
             continue
-        if state.worker is not None and slash_command_requires_idle(prompt):
-            print_scrollback_notice(
-                console,
-                "Wait for the active turn to finish or stop it before changing session state.",
-            )
-            continue
+        submitted_prompts: list[str] = []
         handled, state.messages, active_session = handle_slash_command(
             prompt,
             agent=agent,
@@ -236,28 +231,12 @@ def _drain_basic_input_queue(
             messages=state.messages,
             console=console,
             pending_images=state.pending_images,
-            pending_prompts=state.pending_prompts,
+            on_submit_prompt=submitted_prompts.append,
         )
         if handled:
-            if state.worker is None and state.pending_prompts:
-                pending = state.pending_prompts.pop(0)
-                print_user_prompt(console, pending.prompt)
-                state.worker = _start_basic_turn(
-                    pending.prompt,
-                    state=state,
-                    active_session=active_session,
-                    agent=agent,
-                    stderr=stderr,
-                    renderer=renderer,
-                    result_queue=result_queue,
-                    user_message=pending.user_message,
-                )
-            continue
-        prompt, dropped_images = attach_standalone_prompt_image_paths(
-            prompt,
-            root=active_session.root,
-        )
-        state.pending_images.extend(dropped_images)
+            if not submitted_prompts:
+                continue
+            prompt = submitted_prompts[0]
         if state.worker is None and not state.pending_prompts:
             print_user_prompt(console, prompt)
             pending_images = [image.path for image in state.pending_images]
@@ -275,7 +254,7 @@ def _drain_basic_input_queue(
                     image_paths=pending_images,
                 ),
             )
-            continue
+            return active_session
         pending_images = [image.path for image in state.pending_images]
         state.pending_images.clear()
         state.pending_prompts.append(
@@ -333,7 +312,6 @@ def _handle_basic_outcome(
             state.messages,
             conversation_entries=outcome.result.conversation_entries,
         )
-        start_session_title_generation(active_session, agent, state.messages)
         print_agent_output(console, outcome.result.output)
         print("\a", end="", flush=True)
     if not state.pending_prompts:
@@ -379,6 +357,8 @@ def _seed_basic_session_if_needed(
     *,
     state: BasicCliState,
     replay_session: bool,
+    replay_messages: list[Message] | None,
+    replay_notice: str | None,
     console,
     active_session: ActiveSession,
     agent: AgentRunner,
@@ -387,7 +367,9 @@ def _seed_basic_session_if_needed(
     result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped],
 ) -> None:
     if replay_session and state.messages:
-        print_session_scrollback(console, state.messages)
+        if replay_notice:
+            print_scrollback_notice(console, replay_notice)
+        print_session_scrollback(console, replay_messages or state.messages)
     if replay_session or not state.messages or state.messages[-1].role != "user":
         return
     seeded_message = state.messages[-1].model_copy(deep=True)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yoke.agent.context.helpers import append_conversation_entry
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -13,20 +14,16 @@ def append_missing_active_skill_messages(context: AgentContext) -> None:
     """Append skill system messages for active skills not yet in context."""
     existing_ids = _skill_event_ids(context)
     existing_names = _skill_event_names(context)
-    parent_id = (
-        context.conversation_log.entries[-1].id
-        if context.conversation_log.entries
-        else None
-    )
     for skill in context.active_skills:
         activation_id = _skill_activation_id(skill)
         if activation_id in existing_ids:
             continue
         if skill.activation_id is None and skill.name in existing_names:
             continue
-        entry = skill_conversation_entry(skill, parent_id=parent_id)
-        context.conversation_log.entries.append(entry)
-        parent_id = entry.id
+        entry = skill_conversation_entry(skill, parent_id=None)
+        append_conversation_entry(context, entry)
+        if entry.message is not None:
+            context.messages.append(entry.message.model_copy(deep=True))
         existing_ids.add(activation_id)
         existing_names.add(skill.name)
 

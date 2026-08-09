@@ -48,6 +48,9 @@ if TYPE_CHECKING:
         provider_readiness as provider_readiness,
     )
     from yoke.ai.providers.resolution import provider_status as provider_status
+    from yoke.ai.providers.usage_writer import (
+        UsageLogWriteError as UsageLogWriteError,
+    )
     from yoke.ai.providers.zai import ZAIConfig as ZAIConfig
     from yoke.ai.providers.zai import ZAIProvider as ZAIProvider
 
@@ -61,6 +64,10 @@ _LAZY_EXPORTS = {
     "ProviderError": ("yoke.ai.providers.base", "ProviderError"),
     "ProviderRateLimitError": ("yoke.ai.providers.base", "ProviderRateLimitError"),
     "ProviderServerError": ("yoke.ai.providers.base", "ProviderServerError"),
+    "UsageLogWriteError": (
+        "yoke.ai.providers.usage_writer",
+        "UsageLogWriteError",
+    ),
     "CodexSubscriptionConfig": (
         "yoke.ai.providers.codex.subscription",
         "CodexSubscriptionConfig",
@@ -123,6 +130,7 @@ __all__ = [
     "ProviderRef",
     "ProviderRateLimitError",
     "ProviderServerError",
+    "UsageLogWriteError",
     "ZAIConfig",
     "ZAIProvider",
     "available_provider_names",

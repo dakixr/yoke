@@ -3,59 +3,42 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 
 from yoke.agent.models import Message
-from yoke.agent.state import active_branch_entries
-from yoke.cli.config.args import CLIArgs
+from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import resolve_image_path
-from yoke.cli.interactive.model_commands import handle_switch_model
 from yoke.cli.interactive.common import COMPACTION_IN_PROGRESS_NOTICE
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import SHORTCUTS_NOTICE
+from yoke.cli.interactive.model_commands import handle_switch_model
 from yoke.cli.interactive.mcp_menu import handle_mcp_menu
-from yoke.cli.interactive.process_commands import command_process_manager
 from yoke.cli.interactive.process_commands import print_process_table
 from yoke.cli.interactive.queue.manager import edit_queue_prompt
 from yoke.cli.interactive.queue.manager import open_queue_manager
 from yoke.cli.interactive.session_commands import handle_pin_session
 from yoke.cli.interactive.session_commands import print_session_info
+from yoke.cli.interactive.skill_commands import handle_skill_load
+from yoke.cli.interactive.tree_selector import prompt_tree_label
+from yoke.cli.interactive.tree_selector import (
+    select_tree_entry_interactive,
+)
 from yoke.cli.interactive.tools_menu import handle_tools_menu
-from yoke.cli.interactive.tree_commands import handle_tree_command
 from yoke.cli.render.base import Console
 from yoke.cli.render import format_compaction_note
-from yoke.cli.providers.state import bind_provider_session
+from yoke.cli.render import print_session_scrollback
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import fork_active_session
 from yoke.cli.runtime import force_compact_history
 from yoke.cli.runtime import persist_session_state
+from yoke.cli.runtime import session_usage_metric_context
 from yoke.cli.session import fallback_session_title
-
-
-_IDLE_ONLY_COMMANDS = (
-    "/compact",
-    "/fork",
-    "/mcp",
-    "/model",
-    "/new",
-    "/pin",
-    "/pin-session",
-    "/skill",
-    "/title",
-    "/tools",
-    "/tree",
-    "/unpin-session",
-)
-
-
-def slash_command_requires_idle(command: str) -> bool:
-    """Return whether a slash command mutates active agent/session state."""
-    normalized = command.strip().lower()
-    return any(
-        normalized == prefix or normalized.startswith(f"{prefix} ")
-        for prefix in _IDLE_ONLY_COMMANDS
-    )
+from yoke.cli.runtime.selector.ui import select_list_item_interactive
+from yoke.cli.runtime.tree import get_session_tree
+from yoke.cli.runtime.tree import navigate_session_tree
+from yoke.cli.runtime.tree import set_entry_label
 
 
 def handle_slash_command(  # noqa: C901
@@ -69,6 +52,7 @@ def handle_slash_command(  # noqa: C901
     pending_prompts: list[PendingPrompt] | None = None,
     on_context_usage: Callable[[dict[str, object]], None] | None = None,
     on_editor_text: Callable[[str], None] | None = None,
+    on_submit_prompt: Callable[[str], None] | None = None,
     on_queue_changed: Callable[[], None] | None = None,
     on_replay_messages: Callable[[list[Message]], None] | None = None,
     on_process_inspector: Callable[[], None] | None = None,
@@ -78,6 +62,15 @@ def handle_slash_command(  # noqa: C901
     from yoke.cli.runtime import create_active_session
 
     normalized = command.strip().lower()
+    if normalized == "/ps":
+        if on_process_inspector is None:
+            print_process_table(console, agent)
+        else:
+            on_process_inspector()
+        return True, messages, active_session
+    if normalized.startswith("/ps "):
+        print_scrollback_notice(console, "Usage: /ps")
+        return True, messages, active_session
     if normalized.startswith("/image "):
         if pending_images is None:
             print_scrollback_notice(
@@ -119,14 +112,17 @@ def handle_slash_command(  # noqa: C901
         )
         return True, messages, active_session
     if normalized == "/skill" or normalized.startswith("/skill "):
-        skill_loaded, extra_prompt = _handle_skill_load(
-            command, agent, active_session, messages, console
+        handle_skill_load(
+            command,
+            agent,
+            active_session,
+            messages,
+            console,
+            on_submit_prompt=on_submit_prompt,
         )
-        if skill_loaded and extra_prompt and pending_prompts is not None:
-            pending_prompts.append(PendingPrompt(extra_prompt, kind="queued"))
         return True, messages, active_session
     if normalized == "/model" or normalized.startswith("/model "):
-        handle_switch_model(
+        updated_messages = handle_switch_model(
             command,
             agent=agent,
             active_session=active_session,
@@ -141,11 +137,10 @@ def handle_slash_command(  # noqa: C901
                     else active_session.record.model_id
                 ),
                 reasoning_effort=active_session.record.reasoning_effort,
-                session=active_session.id,
                 root=str(active_session.root),
             ),
         )
-        return True, messages, active_session
+        return True, updated_messages, active_session
     if normalized == "/tools":
         handle_tools_menu(
             agent=agent,
@@ -184,15 +179,21 @@ def handle_slash_command(  # noqa: C901
     if normalized.startswith("/pin "):
         print_scrollback_notice(console, "Usage: /pin")
         return True, messages, active_session
-    if normalized == "/pin-session":
-        if not active_session.record.pinned:
-            handle_pin_session(active_session, agent, messages)
-        print_scrollback_notice(console, "Pinned session.")
+    if normalized == "/info":
+        print_session_info(console, active_session)
         return True, messages, active_session
-    if normalized == "/unpin-session":
-        if active_session.record.pinned:
-            handle_pin_session(active_session, agent, messages)
-        print_scrollback_notice(console, "Unpinned session.")
+    if normalized.startswith("/info "):
+        print_scrollback_notice(console, "Usage: /info")
+        return True, messages, active_session
+    if normalized == "/fork":
+        forked_session = fork_active_session(active_session, agent, messages)
+        print_scrollback_notice(
+            console,
+            f"Forked session {active_session.id} -> {forked_session.id}",
+        )
+        return True, forked_session.messages(), forked_session
+    if normalized.startswith("/fork "):
+        print_scrollback_notice(console, "Usage: /fork")
         return True, messages, active_session
     if normalized == "/tree":
         if on_editor_text is None:
@@ -200,26 +201,25 @@ def handle_slash_command(  # noqa: C901
                 console, "/tree is only available in the prompt-toolkit TUI."
             )
             return True, messages, active_session
-        result = handle_tree_command(
-            active_session,
-            agent,
-            console,
-            on_editor_text=on_editor_text,
-            on_replay_messages=on_replay_messages,
-        )
+        with session_usage_metric_context(active_session, ""):
+            result = _handle_tree_command(
+                active_session,
+                agent,
+                console,
+                on_editor_text=on_editor_text,
+                on_replay_messages=on_replay_messages,
+            )
         if result is None:
             return True, messages, active_session
         return True, result[0], result[1]
     if normalized == "/compact":
         print_scrollback_notice(console, COMPACTION_IN_PROGRESS_NOTICE)
-        compacted = force_compact_history(
-            agent,
-            messages,
-            conversation_entries=active_branch_entries(
-                active_session.record.conversation_entries,
-                leaf_id=active_session.record.leaf_id,
-            ),
-        )
+        with session_usage_metric_context(active_session, ""):
+            compacted = force_compact_history(
+                agent,
+                messages,
+                conversation_entries=active_session.active_entries(),
+            )
         if compacted is None:
             print_scrollback_notice(console, "Nothing to compact right now.")
             return True, messages, active_session
@@ -247,39 +247,6 @@ def handle_slash_command(  # noqa: C901
     if normalized in {"/shortcuts", "?"}:
         print_scrollback_notice(console, SHORTCUTS_NOTICE)
         return True, messages, active_session
-    if normalized == "/info":
-        print_session_info(console, active_session, agent, messages)
-        return True, messages, active_session
-    if normalized.startswith("/info "):
-        print_scrollback_notice(console, "Usage: /info")
-        return True, messages, active_session
-    if normalized == "/ps":
-        if on_process_inspector is not None:
-            on_process_inspector()
-        elif command_process_manager(agent) is not None:
-            print_process_table(console, agent)
-        else:
-            print_scrollback_notice(console, _format_background_processes(agent))
-        return True, messages, active_session
-    if normalized.startswith("/ps "):
-        print_scrollback_notice(console, "Usage: /ps")
-        return True, messages, active_session
-    if normalized == "/stop" or normalized.startswith("/stop "):
-        print_scrollback_notice(
-            console,
-            _stop_background_processes(command, agent),
-        )
-        return True, messages, active_session
-    if normalized == "/fork":
-        forked_session = fork_active_session(active_session, agent, messages)
-        bind_provider_session(agent, forked_session.id)
-        print_scrollback_notice(
-            console, f"Forked session {active_session.id} -> {forked_session.id}"
-        )
-        return True, forked_session.record.messages, forked_session
-    if normalized.startswith("/fork "):
-        print_scrollback_notice(console, "Usage: /fork")
-        return True, messages, active_session
     if normalized == "/new":
         new_session = create_active_session(
             CLIArgs(root=str(active_session.root)),
@@ -288,117 +255,129 @@ def handle_slash_command(  # noqa: C901
         reset_agent = getattr(agent, "reset", None)
         if callable(reset_agent):
             reset_agent()
-        bind_provider_session(agent, new_session.id)
         persist_session_state(
             new_session,
             agent,
             [],
             conversation_entries=[],
         )
-        print_scrollback_notice(console, f"Started new session {new_session.id}")
+        print_scrollback_notice(
+            console,
+            f"Started new session {new_session.id}",
+        )
         if on_context_usage is not None:
             on_context_usage({"usage_percent": 0})
         return True, [], new_session
     return False, messages, active_session
 
 
-def _format_background_processes(agent: object) -> str:
-    list_processes = getattr(agent, "list_background_processes", None)
-    if not callable(list_processes):
-        return "Background commands are not available for this agent."
-    processes = list_processes()
-    if not isinstance(processes, (list, tuple)):
-        return "Background command state is unavailable."
-    if not processes:
-        return "No background commands running."
-    lines = ["Background commands:"]
-    for process in processes:
-        session_id = getattr(process, "session_id", "?")
-        command = getattr(process, "command", "")
-        cwd = getattr(process, "cwd", "")
-        tty = " tty" if getattr(process, "tty", False) else ""
-        lines.append(f"{session_id}{tty}  {command}  [{cwd}]")
-    return "\n".join(lines)
-
-
-def _stop_background_processes(command: str, agent: object) -> str:
-    raw_session_id = command.strip()[len("/stop") :].strip()
-    if raw_session_id:
-        try:
-            session_id = int(raw_session_id)
-        except ValueError:
-            return "Usage: /stop [session-id]"
-        terminate = getattr(agent, "terminate_background_process", None)
-        if not callable(terminate):
-            return "Background commands are not available for this agent."
-        if terminate(session_id):
-            return f"Stopped background command {session_id}."
-        return f"No background command with session ID {session_id}."
-    terminate_all = getattr(agent, "terminate_all_background_processes", None)
-    if not callable(terminate_all):
-        return "Background commands are not available for this agent."
-    count = terminate_all()
-    return f"Stopped {count} background command{'s' if count != 1 else ''}."
-
-
-def _handle_skill_load(
-    command: str,
-    agent: object,
+def _handle_tree_command(
     active_session: ActiveSession,
-    messages: list[Message],
+    agent: object,
     console: Console,
-) -> tuple[bool, str | None]:
-    """Activate a discovered skill from a slash command."""
-    from yoke.agent.loop import RuntimeAgent
-    from yoke.agent.loop import ConversationEntryHistory
-    from yoke.agent.skills.context import skill_conversation_entry
-    from yoke.agent.state import active_branch_entries
+    *,
+    on_editor_text: Callable[[str], None],
+    on_replay_messages: Callable[[list[Message]], None] | None = None,
+    initial_selected_id: str | None = None,
+) -> tuple[list[Message], ActiveSession] | None:
     from yoke.cli.render import print_scrollback_notice
 
-    skill_request = command.strip()[len("/skill") :].strip()
-    skill_name, extra_prompt = _parse_skill_request(skill_request)
-    if not skill_name:
-        print_scrollback_notice(console, "Usage: /skill <name> [prompt]")
-        return False, None
-    if not isinstance(agent, RuntimeAgent):
-        print_scrollback_notice(console, "No skills are available in this session.")
-        return False, None
-    from yoke.agent.skills.activation import activate_skills
-
-    activation = activate_skills(
-        registry=agent.skill_registry,
-        active_skills=agent.active_skills,
-        names=[skill_name],
+    roots = get_session_tree(active_session)
+    if not roots:
+        print_scrollback_notice(console, "No session entries yet.")
+        return None
+    selection = select_tree_entry_interactive(
+        roots,
+        current_leaf_id=active_session.record.leaf_id,
+        initial_selected_id=initial_selected_id,
     )
-    if activation.missing:
-        print_scrollback_notice(console, f"Unknown skill: {skill_name}")
-        return False, None
-    agent.active_skills = activation.active_skills
-    branch_entries = (
-        active_branch_entries(
-            active_session.record.conversation_entries,
-            leaf_id=active_session.record.leaf_id,
+    if selection is None:
+        print_scrollback_notice(console, "Tree navigation cancelled.")
+        return None
+    if selection.action == "label" and selection.entry_id is not None:
+        label = prompt_tree_label()
+        if label is None:
+            return _handle_tree_command(
+                active_session,
+                agent,
+                console,
+                on_editor_text=on_editor_text,
+                on_replay_messages=on_replay_messages,
+                initial_selected_id=selection.entry_id,
+            )
+        set_entry_label(active_session, selection.entry_id, label)
+        print_scrollback_notice(console, "Updated tree label.")
+        return _handle_tree_command(
+            active_session,
+            agent,
+            console,
+            on_editor_text=on_editor_text,
+            on_replay_messages=on_replay_messages,
+            initial_selected_id=selection.entry_id,
         )
-        or []
+    if selection.entry_id is None:
+        return None
+    if selection.entry_id == active_session.record.leaf_id:
+        print_scrollback_notice(console, "Already at this point.")
+        return None
+    choice = _ask_branch_summary_choice()
+    if choice is None:
+        return _handle_tree_command(
+            active_session,
+            agent,
+            console,
+            on_editor_text=on_editor_text,
+            on_replay_messages=on_replay_messages,
+            initial_selected_id=selection.entry_id,
+        )
+    summarize, custom_instructions = choice
+    print_scrollback_notice(console, "Navigating session tree...")
+    result = navigate_session_tree(
+        active_session,
+        agent,
+        selection.entry_id,
+        summarize=summarize,
+        custom_instructions=custom_instructions,
     )
-    parent_id = branch_entries[-1].id if branch_entries else None
-    for skill in activation.activated_skills:
-        entry = skill_conversation_entry(skill, parent_id=parent_id)
-        branch_entries.append(entry)
-        parent_id = entry.id
-    agent.load_conversation(
-        ConversationEntryHistory(branch_entries),
-        active_skills=activation.active_skills,
-    )
-    persist_session_state(active_session, agent, messages)
-    print_scrollback_notice(console, f"Activated skill: {skill_name}")
-    return True, extra_prompt or None
+    if result.editor_text is not None:
+        on_editor_text(result.editor_text)
+    if on_replay_messages is None:
+        print_session_scrollback(console, result.messages)
+    else:
+        on_replay_messages(result.messages)
+    suffix = " with branch summary" if result.summary_created else ""
+    print_scrollback_notice(console, f"Navigated to selected point{suffix}.")
+    return result.messages, result.active_session
 
 
-def _parse_skill_request(skill_request: str) -> tuple[str, str]:
-    """Return the requested skill name and optional prompt text."""
-    before_separator, separator, after_separator = skill_request.partition(";")
-    if separator:
-        return before_separator.strip(), after_separator.strip()
-    skill_name, _, extra_prompt = skill_request.strip().partition(" ")
-    return skill_name.strip(), extra_prompt.strip()
+def _ask_branch_summary_choice() -> tuple[bool, str | None] | None:
+    choices = [
+        "No summary",
+        "Summarize",
+        "Summarize with custom instructions",
+    ]
+    choice = select_list_item_interactive(
+        choices,
+        title="Branch Summary",
+        subtitle="Choose whether to summarize the branch you are leaving.",
+        render_item=lambda item, _index, _selected, _columns: item,
+        footer="enter select · esc returns to tree",
+    )
+    if choice is None:
+        return None
+    if choice == "No summary":
+        return False, None
+    if choice == "Summarize":
+        return True, None
+    custom = _prompt_custom_summary_instructions()
+    if custom is None:
+        return None
+    return True, custom
+
+
+def _prompt_custom_summary_instructions() -> str | None:
+    from prompt_toolkit import prompt
+
+    with suppress(EOFError, KeyboardInterrupt):
+        return prompt("Custom summary guidance: ")
+    return None

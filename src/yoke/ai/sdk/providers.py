@@ -1,19 +1,24 @@
-"""SDK helpers for provider discovery and construction."""
+"""SDK provider discovery and construction with Yoke provider semantics."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.model_selection import default_reasoning_effort_for_model
+from yoke.ai.providers.resolution import available_provider_names
 from yoke.ai.providers.resolution import build_provider
+from yoke.ai.providers.resolution import list_provider_models
 from yoke.ai.providers.resolution import parse_provider_ref
-from yoke.ai.providers.resolution import provider_readiness
+from yoke.ai.providers.resolution import provider_status
+
+DEFAULT_BUILTIN_PROVIDER_SELECTION = "codex:gpt-5.5:medium"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BuiltinProviderModelStatus:
     """Status for one provider/model combination."""
 
@@ -23,14 +28,14 @@ class BuiltinProviderModelStatus:
 
     @property
     def selection(self) -> str:
-        """Return the default provider:model:thinking selection."""
+        """Return the provider-qualified default selection."""
         base = f"{self.provider_name}:{self.model.id}"
         if self.default_thinking_effort is None:
             return base
         return f"{base}:{self.default_thinking_effort}"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BuiltinProviderStatus:
     """Readiness and model metadata for one provider."""
 
@@ -39,43 +44,42 @@ class BuiltinProviderStatus:
     missing_env: tuple[str, ...]
     default_model: str
     default_selection: str
-    provider_import: str
-    config_import: str
     models: tuple[BuiltinProviderModelStatus, ...]
 
 
-def builtin_provider_status() -> tuple[BuiltinProviderStatus, ...]:
-    """Return readiness and selectable model metadata for providers."""
+def builtin_provider_status(
+    *,
+    env: Mapping[str, str] | None = None,
+    home: Path | str | None = None,
+) -> tuple[BuiltinProviderStatus, ...]:
+    """Return readiness and model metadata for every known provider."""
+    resolved_home = (Path.home() if home is None else Path(home)).resolve()
     statuses: list[BuiltinProviderStatus] = []
-    for readiness in provider_readiness():
-        models = tuple(
+    for name in available_provider_names(home=resolved_home):
+        readiness = provider_status(name, env=env, home=resolved_home)
+        models = tuple(list_provider_models(name, env=env, home=resolved_home) or ())
+        model_statuses = tuple(
             BuiltinProviderModelStatus(
-                provider_name=readiness.provider_name,
+                provider_name=name,
                 model=model.model_copy(deep=True),
                 default_thinking_effort=default_reasoning_effort_for_model(model),
             )
-            for model in readiness.models
+            for model in models
         )
-        default_model = readiness.model or (models[0].model.id if models else "")
-        default_effort = readiness.reasoning_effort
-        if default_effort is None and models:
-            selected = next(
-                (item for item in models if item.model.id == default_model), models[0]
-            )
-            default_effort = selected.default_thinking_effort
-        default_selection = _selection(
-            readiness.provider_name, default_model, default_effort
+        default = _default_model(models, readiness.model)
+        default_effort = (
+            default_reasoning_effort_for_model(default) if default is not None else None
         )
         statuses.append(
             BuiltinProviderStatus(
-                name=readiness.provider_name,
+                name=name,
                 ready=readiness.ready,
-                missing_env=_missing_env_from_reason(readiness.reason),
-                default_model=default_model,
-                default_selection=default_selection,
-                provider_import="",
-                config_import="",
-                models=models,
+                missing_env=(
+                    () if readiness.ready else (readiness.reason or "unavailable",)
+                ),
+                default_model=default.id if default is not None else "",
+                default_selection=_selection(name, default, default_effort),
+                models=model_statuses,
             )
         )
     return tuple(statuses)
@@ -88,63 +92,75 @@ def print_builtin_provider_status() -> None:
     unavailable = [status for status in statuses if not status.ready]
     print("Ready providers:" if ready else "Ready providers: none")
     for status in ready:
-        print(f"- {status.name}: ready")
-        print(f"  default selection: {status.default_selection}")
-        print("  models:")
-        for model in status.models:
-            efforts = ", ".join(model.model.thinking_levels)
-            print(f"    - {status.name}:{model.model.id}")
-            print(f"      display: {model.model.display_name}")
-            print(f"      thinking efforts: {efforts}")
-            print(f"      default selection: {model.selection}")
+        _print_status(status)
     if unavailable:
         print("\nUnavailable providers:")
         for status in unavailable:
-            detail = ", ".join(status.missing_env) or "not configured"
-            print(f"- {status.name}: missing {detail}")
+            print(f"- {status.name}: {', '.join(status.missing_env)}")
 
 
-def build_builtin_provider(selection: str | None = None) -> Provider:
-    """Build one provider from provider:model:thinking_effort."""
-    selected = selection or _default_ready_selection()
-    return build_provider(selected)
+def build_builtin_provider(
+    selection: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    home: Path | str | None = None,
+    session_id: str | None = None,
+) -> Provider:
+    """Build a provider from ``provider:model:thinking_effort``."""
+    return build_provider(
+        selection or DEFAULT_BUILTIN_PROVIDER_SELECTION,
+        env=env,
+        home=home,
+        session_id=session_id,
+    )
 
 
 def available_builtin_providers(
     selections: Sequence[str] | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    home: Path | str | None = None,
 ) -> dict[str, Provider]:
-    """Build ready providers for requested selections."""
-    requested = list(selections or [_default_ready_selection()])
+    """Build every requested provider that is ready."""
+    requested = tuple(selections or (DEFAULT_BUILTIN_PROVIDER_SELECTION,))
     providers: dict[str, Provider] = {}
     for selection in requested:
         try:
-            parsed = parse_provider_ref(selection)
-            providers[parsed.qualified_name] = build_provider(selection)
+            provider = build_builtin_provider(selection, env=env, home=home)
         except ValueError:
             continue
+        providers[parse_provider_ref(selection).qualified_name] = provider
     return providers
 
 
-def _default_ready_selection() -> str:
-    for status in builtin_provider_status():
-        if status.ready:
-            return status.default_selection or status.name
-    raise ValueError("No locally ready Yoke provider is available.")
+def _default_model(
+    models: tuple[ProviderModelInfo, ...], configured: str | None
+) -> ProviderModelInfo | None:
+    if configured is not None:
+        selected = next((model for model in models if model.id == configured), None)
+        if selected is not None:
+            return selected
+    return models[0] if models else None
 
 
-def _selection(provider: str, model: str, effort: str | None) -> str:
-    if not model:
-        return provider
-    if effort is None:
-        return f"{provider}:{model}"
-    return f"{provider}:{model}:{effort}"
+def _selection(
+    name: str,
+    model: ProviderModelInfo | None,
+    effort: str | None,
+) -> str:
+    if model is None:
+        return name
+    base = f"{name}:{model.id}"
+    return base if effort is None else f"{base}:{effort}"
 
 
-def _missing_env_from_reason(reason: str | None) -> tuple[str, ...]:
-    if reason is None:
-        return ()
-    marker = " requires "
-    if marker not in reason:
-        return ()
-    value = reason.split(marker, 1)[1].rstrip(".")
-    return tuple(part.strip() for part in value.split(" or ") if part.strip())
+def _print_status(status: BuiltinProviderStatus) -> None:
+    print(f"- {status.name}: ready")
+    print(f"  default selection: {status.default_selection}")
+    print("  models:")
+    for item in status.models:
+        efforts = ", ".join(item.model.thinking_levels)
+        print(f"    - {status.name}:{item.model.id}")
+        print(f"      display: {item.model.display_name}")
+        print(f"      thinking efforts: {efforts}")
+        print(f"      default selection: {item.selection}")

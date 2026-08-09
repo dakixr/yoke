@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin
@@ -232,69 +231,3 @@ def search_terms(text: str) -> list[str]:
         add(term)
 
     return terms[:10]
-
-
-def chunk_text(text: str, *, max_chunk_chars: int = 2500) -> list[dict[str, object]]:
-    """Split text into paragraph chunks."""
-    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
-    chunks: list[dict[str, object]] = []
-    current: list[str] = []
-    current_len = 0
-    for paragraph in paragraphs or [text.strip()]:
-        if current and current_len + len(paragraph) + 2 > max_chunk_chars:
-            chunk_value = "\n\n".join(current)
-            chunks.append({"id": f"chunk-{len(chunks) + 1}", "content": chunk_value})
-            current = []
-            current_len = 0
-        current.append(paragraph)
-        current_len += len(paragraph) + 2
-    if current:
-        chunks.append(
-            {"id": f"chunk-{len(chunks) + 1}", "content": "\n\n".join(current)}
-        )
-    return chunks
-
-
-def html_to_text_blocks(raw_html: str) -> str:
-    """Convert simple HTML markup to paragraph-separated plain text."""
-    text = re.sub(r"<script\b.*?</script>", " ", raw_html, flags=re.I | re.S)
-    text = re.sub(r"<style\b.*?</style>", " ", text, flags=re.I | re.S)
-    text = re.sub(
-        r"</(?:p|div|li|h[1-6]|tr|section|article|br)\s*>",
-        "\n\n",
-        text,
-        flags=re.I,
-    )
-    text = re.sub(r"<[^>]+>", " ", text)
-    blocks = [" ".join(html.unescape(block).split()) for block in text.split("\n\n")]
-    return "\n\n".join(block for block in blocks if block)
-
-
-def select_fetch_content(
-    *,
-    mode: str,
-    text: str,
-    raw_text: str,
-    summary: str,
-    chunks: list[dict[str, object]],
-    links: list[dict[str, str]],
-    html_info: ReadableHTMLParser,
-) -> object:
-    """Select the payload shape for a fetch mode."""
-    if mode == "summary":
-        return summary
-    if mode == "links":
-        return links
-    if mode == "code_blocks":
-        return html_info.code_blocks[:50]
-    if mode == "metadata":
-        return {
-            "title": html_info.title,
-            "headings": html_info.headings[:100],
-            "summary": summary,
-        }
-    if mode == "chunks":
-        return chunks
-    if mode == "raw":
-        return raw_text
-    return text

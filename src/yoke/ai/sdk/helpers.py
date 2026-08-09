@@ -25,18 +25,10 @@ def image_part(
     detail: str | None = None,
 ) -> MessageLocalImageContentPart:
     """Create a local image content part from a filesystem path."""
-    from yoke.agent.multimodal import encode_local_image_data_url
-
-    resolved = str(Path(path).expanduser().resolve())
-    try:
-        data_url = encode_local_image_data_url(resolved)
-    except OSError:
-        data_url = None
     return MessageLocalImageContentPart(
-        path=resolved,
+        path=str(Path(path).expanduser().resolve()),
         label=label,
         detail=detail,
-        data_url=data_url,
     )
 
 

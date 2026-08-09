@@ -24,6 +24,7 @@ class UsageAccounting:
     reasoning_tokens: int | None = None
     total_tokens: int | None = None
     cached_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
     source: UsageAccountingSource = "estimate"
 
 
@@ -31,11 +32,18 @@ def effective_usage_accounting(
     estimate: TokenEstimate,
     *,
     latest_usage: TokenUsage | None,
+    provider_name: str | None = None,
+    model_id: str | None = None,
 ) -> UsageAccounting:
-    """Prefer provider-reported input tokens when available."""
+    """Prefer provider usage only when it does not understate current input."""
     if (
         latest_usage is None
         or latest_usage.input_tokens is None
+        or not _usage_matches_model(
+            latest_usage,
+            provider_name=provider_name,
+            model_id=model_id,
+        )
         or not _is_plausible_current_usage(
             latest_usage.input_tokens,
             estimate.input_tokens,
@@ -47,12 +55,10 @@ def effective_usage_accounting(
             estimated_input_tokens=estimate.input_tokens,
             estimated_total_with_reserve=estimate.total_with_reserve,
         )
-    reported_input_tokens = latest_usage.input_tokens
-    effective_input_tokens = max(estimate.input_tokens, reported_input_tokens)
     reserve_tokens = max(0, estimate.total_with_reserve - estimate.input_tokens)
     return UsageAccounting(
-        input_tokens=effective_input_tokens,
-        total_with_reserve=effective_input_tokens + reserve_tokens,
+        input_tokens=latest_usage.input_tokens,
+        total_with_reserve=latest_usage.input_tokens + reserve_tokens,
         estimated_input_tokens=estimate.input_tokens,
         estimated_total_with_reserve=estimate.total_with_reserve,
         provider_reported_input_tokens=latest_usage.input_tokens,
@@ -60,10 +66,35 @@ def effective_usage_accounting(
         reasoning_tokens=latest_usage.reasoning_tokens,
         total_tokens=latest_usage.total_tokens,
         cached_input_tokens=latest_usage.cached_input_tokens,
-        source=(
-            "provider" if reported_input_tokens >= estimate.input_tokens else "estimate"
-        ),
+        cache_creation_input_tokens=latest_usage.cache_creation_input_tokens,
+        source="provider",
     )
+
+
+def _usage_matches_model(
+    usage: TokenUsage,
+    *,
+    provider_name: str | None,
+    model_id: str | None,
+) -> bool:
+    expected_provider = _normalize_identity(provider_name)
+    expected_model = _normalize_identity(model_id)
+    if expected_provider is not None and (
+        _normalize_identity(usage.provider_name) != expected_provider
+    ):
+        return False
+    if expected_model is not None and (
+        _normalize_identity(usage.model_id) != expected_model
+    ):
+        return False
+    return True
+
+
+def _normalize_identity(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
 
 
 def _is_plausible_current_usage(
@@ -74,7 +105,14 @@ def _is_plausible_current_usage(
         return False
     if estimated_input_tokens <= 0:
         return True
-    return reported_input_tokens <= max(estimated_input_tokens * 20, 8_000)
+    return (
+        estimated_input_tokens
+        <= reported_input_tokens
+        <= max(
+            estimated_input_tokens * 20,
+            8_000,
+        )
+    )
 
 
 def compact_usage_payload(usage: TokenUsage | None) -> dict[str, int] | None:
@@ -87,6 +125,7 @@ def compact_usage_payload(usage: TokenUsage | None) -> dict[str, int] | None:
         "reasoning_tokens": usage.reasoning_tokens,
         "total_tokens": usage.total_tokens,
         "cached_input_tokens": usage.cached_input_tokens,
+        "cache_creation_input_tokens": usage.cache_creation_input_tokens,
     }
     compact = {key: value for key, value in payload.items() if value is not None}
     return compact or None

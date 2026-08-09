@@ -13,30 +13,16 @@ from yoke.agent.tools import (
     LocalTool,
     LsTool,
     ReadTool,
-    WriteTool,
 )
-from yoke.ai import (
-    Agent,
-    CompactionPolicy,
-    Context,
-    MessageHistory,
-    OpenAICompatibleConfig,
-    OpenAICompatibleProvider,
-    RunConfig,
-    Skill,
-    complete,
-)
+from yoke.agent.context import CompactionPolicy
+from yoke.ai import Agent
+from yoke.ai import RunConfig
+from yoke.ai import complete
+from yoke.ai.providers import OpenAICompatibleConfig
+from yoke.ai.providers import OpenAICompatibleProvider
+from yoke.ai.skills import Skill
+from yoke.ai.types import Context
 from yoke.ai.providers.base import Provider
-
-
-def tool_function_payload(tool: dict[str, object]) -> dict[str, object] | None:
-    """Return the function payload from a tool definition."""
-    payload = tool.get("function")
-    if not isinstance(payload, dict):
-        return None
-    if not all(isinstance(key, str) for key in payload):
-        return None
-    return cast(dict[str, object], payload)
 
 
 class StaticProvider(Provider):

@@ -10,26 +10,32 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from yoke.agent.tools.base import WorkspaceTool
 from pydantic import Field
 
-from yoke.agent.tools.base import WorkspaceTool
+
+def _resolve_fd_binary() -> str:
+    fd_path = shutil.which("fd")
+    if fd_path:
+        return fd_path
+    raise FileNotFoundError("fd binary was not found on PATH")
 
 
 class FdTool(WorkspaceTool):
-    """Run fd for fast file and directory discovery."""
+    """Run fd for fast, ergonomic file and directory discovery."""
 
     is_yoke_tool = True
     name = "fd"
     description = (
         "Run fd, the fast and user-friendly file finder. Pass raw_args exactly "
         "as you would after `fd`; supports regex/glob search, ignore files, "
-        "hidden paths, extensions, types, depth, and excludes. Prefer fd for "
-        "discovering files and directories by name or path."
+        "hidden paths, extensions, types, depth, excludes, and execution. "
+        "Prefer fd for discovering files and directories by name or path."
     )
 
     raw_args: str = Field(
         default="",
-        description="Exact arguments to pass after `fd`; empty lists all files.",
+        description=("Exact arguments to pass after `fd`; empty lists all files."),
     )
     root_dir: str | None = Field(
         default=None,
@@ -43,11 +49,11 @@ class FdTool(WorkspaceTool):
     def execute(self) -> dict[str, object]:
         """Run fd and return bounded path results."""
         try:
-            binary = self._find_fd_binary()
+            fd_binary = _resolve_fd_binary()
             search_root = self._resolve_search_root()
-            command = [binary, *self._parse_raw_args()]
+            command = [fd_binary, *self._parse_raw_args()]
         except (FileNotFoundError, ValueError) as exc:
-            return {"ok": False, "output": str(exc)}
+            return self._error(str(exc))
 
         try:
             completed = subprocess.run(
@@ -61,36 +67,33 @@ class FdTool(WorkspaceTool):
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            return {"ok": False, "output": "fd timed out after 20 seconds"}
+            return self._error("fd timed out after 20 seconds")
         except Exception as exc:
-            return {"ok": False, "output": str(exc)}
+            return self._error(str(exc))
 
         if completed.returncode not in {0, 1}:
-            return {
-                "ok": False,
-                "command": command,
-                "exit_code": completed.returncode,
-                "output": self._combined_output(completed.stdout, completed.stderr),
-            }
-        return self._render_output(completed.stdout, completed.stderr, command)
-
-    @staticmethod
-    def _find_fd_binary() -> str:
-        binary = shutil.which("fd")
-        if binary:
-            return binary
-        raise FileNotFoundError("fd binary 'fd' was not found on PATH")
+            return self._error(
+                self._combined_error(completed.stdout, completed.stderr),
+                command=command,
+                exit_code=completed.returncode,
+            )
+        return self._render_output(
+            completed.stdout,
+            completed.stderr,
+            command,
+            completed.returncode,
+        )
 
     def _resolve_search_root(self) -> Path:
         if self.root_dir is None:
             return self.root
         try:
-            root = self._resolve_path(self.root_dir)
+            root_dir = self._resolve_path(self.root_dir)
         except Exception as exc:
             raise ValueError(f"Invalid fd root_dir: {exc}") from exc
-        if not root.is_dir():
-            raise ValueError(f"fd root_dir is not a directory: {root}")
-        return root
+        if not root_dir.is_dir():
+            raise ValueError(f"fd root_dir is not a directory: {root_dir}")
+        return root_dir
 
     def _parse_raw_args(self) -> list[str]:
         argv = shlex.split(self.raw_args, posix=os.name != "nt")
@@ -109,35 +112,34 @@ class FdTool(WorkspaceTool):
         stdout: str,
         stderr: str,
         command: list[str],
+        exit_code: int,
     ) -> dict[str, object]:
         separator = "\0" if "\0" in stdout else None
         paths = stdout.rstrip("\0\r\n").split(separator) if stdout else []
         output: list[str] = []
         output_chars = 0
+        truncated = False
         for path in paths:
             path = path.rstrip("\r")
-            if output_chars + len(path) + 1 > self.max_output_chars:
-                return {
-                    "ok": True,
-                    "command": command,
-                    "output": output,
-                    "exit_code": 0,
-                    "truncated": True,
-                    "summary": f"showing {len(output)} paths",
-                }
+            added_chars = len(path) + 1
+            if output_chars + added_chars > self.max_output_chars:
+                truncated = True
+                break
             output.append(path)
-            output_chars += len(path) + 1
-        result: dict[str, object] = {
-            "ok": True,
-            "command": command,
-            "output": output,
-            "exit_code": 0,
-        }
+            output_chars += added_chars
+        result = self._success(
+            command=command,
+            output=output,
+            exit_code=exit_code,
+        )
         if stderr.strip():
             result["stderr"] = stderr.rstrip("\r\n")
+        if truncated:
+            result["truncated"] = True
+            result["summary"] = f"showing {len(output)} paths"
         return result
 
     @staticmethod
-    def _combined_output(stdout: str, stderr: str) -> str:
+    def _combined_error(stdout: str, stderr: str) -> str:
         parts = [part.rstrip("\r\n") for part in (stderr, stdout) if part.strip()]
         return "\n".join(parts) or "fd failed"

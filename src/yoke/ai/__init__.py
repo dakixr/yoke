@@ -1,307 +1,126 @@
-"""Public SDK surface for embedding yoke in Python code."""
+"""Small public SDK surface for embedding yoke in Python code.
+
+Typical usage:
+
+```python
+from yoke.ai import Agent, build_builtin_provider
+
+provider = build_builtin_provider("codex:gpt-5.5:medium")
+
+agent = Agent(provider=provider)
+
+result = agent.prompt("Create hello.py")
+print(result.output)
+```
+"""
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import Any
 from typing import TYPE_CHECKING
+from typing import Any
 
 if TYPE_CHECKING:
-    from yoke.agent import AgentState as AgentState
-    from yoke.agent import AgentStateLoadError as AgentStateLoadError
-    from yoke.agent import AgentStatePersistenceError as AgentStatePersistenceError
-    from yoke.agent import AgentStateSaveError as AgentStateSaveError
-    from yoke.agent import AgentStateSnapshot as AgentStateSnapshot
-    from yoke.agent.compaction import CompactionPolicy as CompactionPolicy
-    from yoke.agent.models import Message as Message
-    from yoke.agent.models import MessageImageURL as MessageImageURL
-    from yoke.agent.models import (
-        MessageImageURLContentPart as MessageImageURLContentPart,
-    )
-    from yoke.agent.models import (
-        MessageLocalImageContentPart as MessageLocalImageContentPart,
-    )
-    from yoke.agent.models import MessageTextContentPart as MessageTextContentPart
-    from yoke.ai.providers.base import CancellableProvider as CancellableProvider
-    from yoke.ai.providers.base import ProviderCancelledError as ProviderCancelledError
-    from yoke.ai.providers.base import ProviderModelInfo as ProviderModelInfo
-    from yoke.ai.providers.codex.subscription import (
-        CodexSubscriptionConfig as CodexSubscriptionConfig,
-    )
-    from yoke.ai.providers.codex.subscription import (
-        CodexSubscriptionProvider as CodexSubscriptionProvider,
-    )
-    from yoke.ai.providers.codex.websockets import CodexWebSockets as CodexWebSockets
-    from yoke.ai.providers.codex.websockets import (
-        CodexWebSocketsConfig as CodexWebSocketsConfig,
-    )
-    from yoke.ai.providers.opencode_go import OpenCodeGoConfig as OpenCodeGoConfig
-    from yoke.ai.providers.opencode_go import OpenCodeGoProvider as OpenCodeGoProvider
-    from yoke.ai.providers.openai_compat import (
-        OpenAICompatibleConfig as OpenAICompatibleConfig,
-    )
-    from yoke.ai.providers.openai_compat import (
-        OpenAICompatibleProvider as OpenAICompatibleProvider,
-    )
-    from yoke.ai.providers.resolution import ProviderReadiness as ProviderReadiness
-    from yoke.ai.providers.resolution import ProviderRef as ProviderRef
-    from yoke.ai.providers.resolution import (
-        available_provider_names as available_provider_names,
-    )
-    from yoke.ai.providers.resolution import build_provider as build_provider
-    from yoke.ai.providers.resolution import (
-        is_provider_ready as is_provider_ready,
-    )
-    from yoke.ai.providers.resolution import (
-        list_provider_readiness as list_provider_readiness,
-    )
-    from yoke.ai.providers.resolution import (
-        parse_provider_ref as parse_provider_ref,
-    )
-    from yoke.ai.providers.resolution import (
-        provider_readiness as provider_readiness,
-    )
-    from yoke.ai.providers.resolution import provider_status as provider_status
-    from yoke.ai.providers.zai import ZAIConfig as ZAIConfig
-    from yoke.ai.providers.zai import ZAIProvider as ZAIProvider
-    from yoke.ai.sdk import Agent as Agent
-    from yoke.ai.sdk import AgentNotCompletedError as AgentNotCompletedError
-    from yoke.ai.sdk import AgentResult as AgentResult
-    from yoke.ai.sdk import BatchItemResult as BatchItemResult
-    from yoke.ai.sdk import BatchProgress as BatchProgress
-    from yoke.ai.sdk import BatchResult as BatchResult
-    from yoke.ai.sdk import BatchTask as BatchTask
-    from yoke.ai.sdk import BatchUsage as BatchUsage
-    from yoke.ai.sdk import CapabilityInfo as CapabilityInfo
-    from yoke.ai.sdk import CompletionResult as CompletionResult
-    from yoke.ai.sdk import Context as Context
-    from yoke.ai.sdk import ConversationEntryHistory as ConversationEntryHistory
-    from yoke.ai.sdk import ConversationHistory as ConversationHistory
-    from yoke.ai.sdk import Image as Image
-    from yoke.ai.sdk import JsonValue as JsonValue
-    from yoke.ai.sdk import MessageHistory as MessageHistory
-    from yoke.ai.sdk import RunConfig as RunConfig
-    from yoke.ai.sdk import Skill as Skill
-    from yoke.ai.sdk import StructuredOutputError as StructuredOutputError
-    from yoke.ai.sdk import complete as complete
-    from yoke.ai.sdk import default_coding_agent_config as default_coding_agent_config
-    from yoke.ai.sdk import default_coding_agent_tools as default_coding_agent_tools
-    from yoke.ai.sdk import discover_capabilities as discover_capabilities
-    from yoke.ai.sdk import run_many as run_many
-    from yoke.ai.sdk import to_jsonable as to_jsonable
-    from yoke.ai.sdk import write_json_artifact as write_json_artifact
-    from yoke.ai.sdk.providers import (
-        available_builtin_providers as available_builtin_providers,
-    )
-    from yoke.ai.sdk.providers import (
-        build_builtin_provider as build_builtin_provider,
-    )
-    from yoke.ai.sdk.providers import (
-        builtin_provider_status as builtin_provider_status,
-    )
-    from yoke.ai.sdk.providers import (
-        print_builtin_provider_status as print_builtin_provider_status,
-    )
-    from yoke.ai.sdk.helpers import build_user_message as build_user_message
-    from yoke.ai.sdk.helpers import image_part as image_part
-    from yoke.ai.sdk.helpers import remote_image_part as remote_image_part
-    from yoke.ai.sdk.helpers import text_part as text_part
+    from yoke.agent import AgentState
+    from yoke.agent import AgentStateLoadError
+    from yoke.agent import AgentStatePersistenceError
+    from yoke.agent import AgentStateSaveError
+    from yoke.agent import AgentStateSnapshot
+    from yoke.ai.sdk import Agent
+    from yoke.ai.sdk import AgentObserver
+    from yoke.ai.sdk import AgentTraceEvent
+    from yoke.ai.sdk import BatchItemResult
+    from yoke.ai.sdk import BatchProgress
+    from yoke.ai.sdk import BatchResult
+    from yoke.ai.sdk import BatchTask
+    from yoke.ai.sdk import BatchUsage
+    from yoke.ai.sdk import CompositeObserver
+    from yoke.ai.sdk import Image
+    from yoke.ai.sdk import ConsoleObserver
+    from yoke.ai.sdk import JsonlObserver
+    from yoke.ai.sdk import LoggingObserver
+    from yoke.ai.sdk import RunConfig
+    from yoke.ai.sdk import TraceDetail
+    from yoke.ai.sdk import complete
+    from yoke.ai.sdk import run_many
+    from yoke.ai.sdk.providers import available_builtin_providers
+    from yoke.ai.sdk.providers import build_builtin_provider
 
-_LAZY_EXPORTS = {
-    "AgentState": ("yoke.agent", "AgentState"),
-    "AgentStateLoadError": ("yoke.agent", "AgentStateLoadError"),
-    "AgentStatePersistenceError": ("yoke.agent", "AgentStatePersistenceError"),
-    "AgentStateSaveError": ("yoke.agent", "AgentStateSaveError"),
-    "AgentStateSnapshot": ("yoke.agent", "AgentStateSnapshot"),
-    "CompactionPolicy": ("yoke.agent.compaction", "CompactionPolicy"),
-    "Message": ("yoke.agent.models", "Message"),
-    "MessageImageURL": ("yoke.agent.models", "MessageImageURL"),
-    "MessageImageURLContentPart": (
-        "yoke.agent.models",
-        "MessageImageURLContentPart",
-    ),
-    "MessageLocalImageContentPart": (
-        "yoke.agent.models",
-        "MessageLocalImageContentPart",
-    ),
-    "MessageTextContentPart": ("yoke.agent.models", "MessageTextContentPart"),
-    "CodexSubscriptionConfig": (
-        "yoke.ai.providers.codex.subscription",
-        "CodexSubscriptionConfig",
-    ),
-    "CodexSubscriptionProvider": (
-        "yoke.ai.providers.codex.subscription",
-        "CodexSubscriptionProvider",
-    ),
-    "CodexWebSockets": ("yoke.ai.providers.codex.websockets", "CodexWebSockets"),
-    "CodexWebSocketsConfig": (
-        "yoke.ai.providers.codex.websockets",
-        "CodexWebSocketsConfig",
-    ),
-    "CancellableProvider": ("yoke.ai.providers.base", "CancellableProvider"),
-    "ProviderCancelledError": (
-        "yoke.ai.providers.base",
-        "ProviderCancelledError",
-    ),
-    "ProviderModelInfo": ("yoke.ai.providers.base", "ProviderModelInfo"),
-    "OpenCodeGoConfig": ("yoke.ai.providers.opencode_go", "OpenCodeGoConfig"),
-    "OpenCodeGoProvider": ("yoke.ai.providers.opencode_go", "OpenCodeGoProvider"),
-    "OpenAICompatibleConfig": (
-        "yoke.ai.providers.openai_compat",
-        "OpenAICompatibleConfig",
-    ),
-    "OpenAICompatibleProvider": (
-        "yoke.ai.providers.openai_compat",
-        "OpenAICompatibleProvider",
-    ),
-    "ProviderReadiness": ("yoke.ai.providers.resolution", "ProviderReadiness"),
-    "ProviderRef": ("yoke.ai.providers.resolution", "ProviderRef"),
-    "available_provider_names": (
-        "yoke.ai.providers.resolution",
-        "available_provider_names",
-    ),
-    "build_provider": ("yoke.ai.providers.resolution", "build_provider"),
-    "is_provider_ready": ("yoke.ai.providers.resolution", "is_provider_ready"),
-    "list_provider_readiness": (
-        "yoke.ai.providers.resolution",
-        "list_provider_readiness",
-    ),
-    "parse_provider_ref": ("yoke.ai.providers.resolution", "parse_provider_ref"),
-    "provider_readiness": (
-        "yoke.ai.providers.resolution",
-        "provider_readiness",
-    ),
-    "provider_status": ("yoke.ai.providers.resolution", "provider_status"),
-    "ZAIConfig": ("yoke.ai.providers.zai", "ZAIConfig"),
-    "ZAIProvider": ("yoke.ai.providers.zai", "ZAIProvider"),
-    "Agent": ("yoke.ai.sdk", "Agent"),
-    "AgentNotCompletedError": ("yoke.ai.sdk", "AgentNotCompletedError"),
-    "AgentResult": ("yoke.ai.sdk", "AgentResult"),
-    "BatchItemResult": ("yoke.ai.sdk", "BatchItemResult"),
-    "BatchProgress": ("yoke.ai.sdk", "BatchProgress"),
-    "BatchResult": ("yoke.ai.sdk", "BatchResult"),
-    "BatchTask": ("yoke.ai.sdk", "BatchTask"),
-    "BatchUsage": ("yoke.ai.sdk", "BatchUsage"),
-    "CapabilityInfo": ("yoke.ai.sdk", "CapabilityInfo"),
-    "CompletionResult": ("yoke.ai.sdk", "CompletionResult"),
-    "ConversationEntryHistory": ("yoke.ai.sdk", "ConversationEntryHistory"),
-    "ConversationHistory": ("yoke.ai.sdk", "ConversationHistory"),
-    "Context": ("yoke.ai.sdk", "Context"),
-    "Image": ("yoke.ai.sdk", "Image"),
-    "JsonValue": ("yoke.ai.sdk", "JsonValue"),
-    "MessageHistory": ("yoke.ai.sdk", "MessageHistory"),
-    "RunConfig": ("yoke.ai.sdk", "RunConfig"),
-    "Skill": ("yoke.ai.sdk", "Skill"),
-    "StructuredOutputError": ("yoke.ai.sdk", "StructuredOutputError"),
-    "complete": ("yoke.ai.sdk", "complete"),
-    "default_coding_agent_config": (
-        "yoke.ai.sdk",
-        "default_coding_agent_config",
-    ),
-    "default_coding_agent_tools": ("yoke.ai.sdk", "default_coding_agent_tools"),
-    "discover_capabilities": ("yoke.ai.sdk", "discover_capabilities"),
-    "run_many": ("yoke.ai.sdk", "run_many"),
-    "to_jsonable": ("yoke.ai.sdk", "to_jsonable"),
-    "write_json_artifact": ("yoke.ai.sdk", "write_json_artifact"),
-    "available_builtin_providers": (
-        "yoke.ai.sdk.providers",
-        "available_builtin_providers",
-    ),
-    "build_builtin_provider": (
-        "yoke.ai.sdk.providers",
-        "build_builtin_provider",
-    ),
-    "builtin_provider_status": (
-        "yoke.ai.sdk.providers",
-        "builtin_provider_status",
-    ),
-    "print_builtin_provider_status": (
-        "yoke.ai.sdk.providers",
-        "print_builtin_provider_status",
-    ),
-    "build_user_message": ("yoke.ai.sdk.helpers", "build_user_message"),
-    "image_part": ("yoke.ai.sdk.helpers", "image_part"),
-    "remote_image_part": ("yoke.ai.sdk.helpers", "remote_image_part"),
-    "text_part": ("yoke.ai.sdk.helpers", "text_part"),
-}
-
-__all__ = [
-    "Agent",
-    "AgentNotCompletedError",
-    "AgentResult",
+_AGENT_EXPORTS = {
     "AgentState",
     "AgentStateLoadError",
     "AgentStatePersistenceError",
     "AgentStateSaveError",
     "AgentStateSnapshot",
+}
+
+_SDK_EXPORTS = {
+    "Agent",
+    "AgentObserver",
+    "AgentTraceEvent",
     "BatchItemResult",
     "BatchProgress",
     "BatchResult",
     "BatchTask",
     "BatchUsage",
-    "CapabilityInfo",
-    "CodexSubscriptionConfig",
-    "CodexSubscriptionProvider",
-    "CodexWebSockets",
-    "CodexWebSocketsConfig",
-    "CompletionResult",
-    "CancellableProvider",
-    "ConversationEntryHistory",
-    "ConversationHistory",
-    "CompactionPolicy",
-    "Context",
+    "CompositeObserver",
+    "ConsoleObserver",
     "Image",
-    "JsonValue",
-    "Message",
-    "MessageHistory",
-    "MessageImageURL",
-    "MessageImageURLContentPart",
-    "MessageLocalImageContentPart",
-    "MessageTextContentPart",
-    "OpenCodeGoConfig",
-    "OpenCodeGoProvider",
-    "OpenAICompatibleConfig",
-    "OpenAICompatibleProvider",
-    "ProviderModelInfo",
-    "ProviderCancelledError",
-    "ProviderReadiness",
-    "ProviderRef",
+    "JsonlObserver",
+    "LoggingObserver",
     "RunConfig",
-    "Skill",
-    "StructuredOutputError",
-    "ZAIConfig",
-    "ZAIProvider",
-    "build_user_message",
-    "available_provider_names",
+    "TraceDetail",
+    "complete",
+    "run_many",
+}
+
+_PROVIDER_EXPORTS = {
     "available_builtin_providers",
     "build_builtin_provider",
-    "build_provider",
-    "builtin_provider_status",
-    "complete",
-    "default_coding_agent_config",
-    "default_coding_agent_tools",
-    "discover_capabilities",
-    "image_part",
-    "is_provider_ready",
-    "list_provider_readiness",
-    "parse_provider_ref",
-    "provider_readiness",
-    "provider_status",
-    "print_builtin_provider_status",
-    "remote_image_part",
-    "run_many",
-    "to_jsonable",
-    "write_json_artifact",
-    "text_part",
-]
+}
 
 
-def __getattr__(name: str) -> Any:
-    """Lazily resolve SDK exports."""
-    target = _LAZY_EXPORTS.get(name)
-    if target is None:
+def __getattr__(name: str) -> Any:  # noqa: ANN401
+    if name in _AGENT_EXPORTS:
+        from yoke import agent
+
+        value = getattr(agent, name)
+    elif name in _SDK_EXPORTS:
+        from yoke.ai import sdk
+
+        value = getattr(sdk, name)
+    elif name in _PROVIDER_EXPORTS:
+        from yoke.ai.sdk import providers
+
+        value = getattr(providers, name)
+    else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name, attribute = target
-    value = getattr(import_module(module_name), attribute)
     globals()[name] = value
     return value
+
+
+__all__ = [
+    "Agent",
+    "AgentObserver",
+    "AgentState",
+    "AgentStateLoadError",
+    "AgentStatePersistenceError",
+    "AgentStateSaveError",
+    "AgentStateSnapshot",
+    "AgentTraceEvent",
+    "available_builtin_providers",
+    "BatchItemResult",
+    "BatchProgress",
+    "BatchResult",
+    "BatchTask",
+    "BatchUsage",
+    "build_builtin_provider",
+    "CompositeObserver",
+    "ConsoleObserver",
+    "Image",
+    "JsonlObserver",
+    "LoggingObserver",
+    "RunConfig",
+    "TraceDetail",
+    "complete",
+    "run_many",
+]

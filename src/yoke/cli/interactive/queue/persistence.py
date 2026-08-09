@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC
-from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -97,8 +95,14 @@ def persist_prompt_queue(
         ],
         pending_images=[str(image.path) for image in images],
     )
+    serialized = payload.model_dump_json(indent=2)
+    try:
+        if path.read_text(encoding="utf-8") == serialized:
+            return
+    except OSError:
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(payload.model_dump_json(indent=2), encoding="utf-8")
+    path.write_text(serialized, encoding="utf-8")
 
 
 def clear_prompt_queue(active_session: ActiveSession) -> None:
@@ -112,8 +116,3 @@ def clear_prompt_queue(active_session: ActiveSession) -> None:
 def prompt_queue_path(active_session: ActiveSession) -> Path:
     """Return the sidecar path for a session prompt queue."""
     return active_session.store.directory / "queues" / f"{active_session.id}.json"
-
-
-def now_iso() -> str:
-    """Return a UTC timestamp for prompt queue entries."""
-    return datetime.now(UTC).isoformat(timespec="seconds")

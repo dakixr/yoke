@@ -1,26 +1,34 @@
 from __future__ import annotations
 
+# ruff: noqa: D100, D103, S101
+
 from pathlib import Path
 import shlex
+import subprocess
 import sys
 import threading
 import time
 from typing import Any, cast
 
+import pytest
+
 from yoke.agent.tools import (
+    AttachImageTool,
     CommandTool,
-    CommandProcessManager,
     EditTool,
-    ExecCommandTool,
-    ExtractFileContextTool,
-    GrepTool,
     LocalTool,
     PythonExecTool,
     ReadTool,
     WriteStdinTool,
     COMMAND_TOOL_NAME,
 )
-from yoke.agent.tools.shell import build_shell_command
+from yoke.agent.models import MessageImageURLContentPart
+from yoke.agent.tools.command_process_types import (
+    clamp_write_yield_time,
+)
+from yoke.agent.tools.command_process_manager import (
+    CommandProcessManager,
+)
 
 
 def as_dict(value: object) -> dict[str, Any]:
@@ -28,20 +36,10 @@ def as_dict(value: object) -> dict[str, Any]:
 
 
 def tool_set(tmp_path: Path, *, cancel_requested=None) -> list[LocalTool]:
-    manager = CommandProcessManager()
     return [
         ReadTool.bind(root=tmp_path, cancel_requested=cancel_requested),
-        CommandTool.bind(
-            root=tmp_path,
-            cancel_requested=cancel_requested,
-            command_process_manager=manager,
-        ),
-        WriteStdinTool.bind(
-            root=tmp_path,
-            cancel_requested=cancel_requested,
-            command_process_manager=manager,
-        ),
-        PythonExecTool.bind(root=tmp_path, cancel_requested=cancel_requested),
+        CommandTool.bind(root=tmp_path, cancel_requested=cancel_requested),
+        WriteStdinTool.bind(root=tmp_path, cancel_requested=cancel_requested),
         EditTool.bind(root=tmp_path, cancel_requested=cancel_requested),
     ]
 
@@ -64,22 +62,35 @@ def test_tools_expose_pydantic_definitions(tmp_path: Path) -> None:
 
     assert sorted(definitions) == ["edit", "read"]
     assert "offset" in definitions["read"]["parameters"]["properties"]
-    assert "oldString" in definitions["edit"]["parameters"]["properties"]
-    assert "old_string" not in definitions["edit"]["parameters"]["properties"]
-    assert "newString" in definitions["edit"]["parameters"]["properties"]
-    assert "occurrence" not in definitions["edit"]["parameters"]["properties"]
+    assert "oldText" in definitions["edit"]["parameters"]["properties"]
+    assert "old_text" not in definitions["edit"]["parameters"]["properties"]
+    assert "occurrence" in definitions["edit"]["parameters"]["properties"]
     assert "replaceAll" in definitions["edit"]["parameters"]["properties"]
 
 
-def test_tools_allow_paths_outside_root(tmp_path: Path) -> None:
-    tools = tool_set(tmp_path)
-    outside = tmp_path.parent / "escape.txt"
-    outside.write_text("outside", encoding="utf-8")
+def test_attach_image_keeps_base64_out_of_tool_result(tmp_path: Path) -> None:
+    image_path = tmp_path / "preview.png"
+    image_path.write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+        b"\x1f\x15\xc4\x89\x00\x00\x00\rIDAT\x08\xd7c\xf8\xcf\xc0\xf0\x1f"
+        b"\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    tool = AttachImageTool.bind(root=tmp_path, messages=[])
+    invocation = tool.parse_arguments(
+        {"path": str(image_path), "caption": "Inspect this image"}
+    )
 
-    result = as_dict(execute_tool(tools, "read", {"path": "../escape.txt"}))
+    result = invocation.execute()
+    pending = invocation.pending_context_messages(result)
 
-    assert result["ok"] is True
-    assert result["content"] == "outside"
+    assert "context_messages" not in result
+    assert len(str(result)) < 1_000
+    assert len(pending) == 1
+    assert isinstance(pending[0].content, list)
+    image_part = pending[0].content[-1]
+    assert isinstance(image_part, MessageImageURLContentPart)
+    assert image_part.image_url.url.startswith("data:image/png;base64,")
 
 
 def test_read_defaults_to_first_150_lines_and_reports_next_offset(
@@ -99,377 +110,237 @@ def test_read_defaults_to_first_150_lines_and_reports_next_offset(
     assert "details" not in result
 
 
-def test_command_tool_turn_cancel_leaves_background_process_running(
-    tmp_path: Path,
-) -> None:
+def test_command_tool_can_be_cancelled(tmp_path: Path) -> None:
     stop_event = threading.Event()
+    stop_event.set()
     tools = tool_set(tmp_path, cancel_requested=stop_event.is_set)
     command = f'{shlex.quote(sys.executable)} -c "import time; time.sleep(2)"'
-
-    def request_stop() -> None:
-        time.sleep(0.1)
-        stop_event.set()
-
-    stopper = threading.Thread(target=request_stop, daemon=True)
-    stopper.start()
     result = as_dict(execute_tool(tools, COMMAND_TOOL_NAME, {"command": command}))
-    stopper.join(timeout=1)
 
-    assert result["ok"] is True
-    assert result["running"] is True
-    assert isinstance(result["session_id"], int)
-    command_tool = next(tool for tool in tools if tool.name == COMMAND_TOOL_NAME)
-    manager = cast(
-        CommandProcessManager,
-        command_tool._context["command_process_manager"],
-    )
-    assert manager.terminate_process(cast(int, result["session_id"])) is True
+    assert result["ok"] is False
+    assert result["cancelled"] is True
+    assert result["error"] == "Command cancelled"
 
 
-def test_command_tool_is_universally_named_exec_command_and_runs_zsh() -> None:
-    assert COMMAND_TOOL_NAME == "exec_command"
-    env = {"YOKE_ZSH": "zsh"}
-    command = build_shell_command("echo ok", env)
+def test_command_tool_defaults_to_thirty_second_yield(tmp_path: Path) -> None:
+    tool = CommandTool.bind(root=tmp_path)
 
-    assert command[0] == "zsh"
-    assert command[1:3] == ["-l", "-c"]
-    assert env["YOKE_COMMAND_TOOL_COMMAND"] == "echo ok"
+    parsed = cast(CommandTool, tool.parse_arguments({"cmd": "echo ready"}))
+    definition = cast(dict[str, Any], tool.to_definition())
+    properties = definition["function"]["parameters"]["properties"]
+
+    assert parsed.yield_time_ms == 30_000
+    assert properties["yield_time_ms"]["default"] == 30_000
 
 
-def test_command_tool_keeps_universal_name_on_windows(monkeypatch) -> None:
-    import importlib
-    import yoke.agent.tools.shell as shell
+def test_python_exec_defaults_to_thirty_second_yield(tmp_path: Path) -> None:
+    tool = PythonExecTool.bind(root=tmp_path)
 
-    real_os_name = shell.os.name
-    monkeypatch.setattr(shell.os, "name", "nt")
+    parsed = cast(PythonExecTool, tool.parse_arguments({"code": "pass"}))
+    definition = cast(dict[str, Any], tool.to_definition())
+    properties = definition["function"]["parameters"]["properties"]
+
+    assert parsed.yield_time_ms == 30_000
+    assert properties["yield_time_ms"]["default"] == 30_000
+
+
+def test_python_exec_streams_output_through_write_stdin(
+    tmp_path: Path,
+) -> None:
+    manager = CommandProcessManager()
+    python_tool = PythonExecTool.bind(root=tmp_path, command_process_manager=manager)
+    stdin_tool = WriteStdinTool.bind(root=tmp_path, command_process_manager=manager)
     try:
-        assert importlib.reload(shell).COMMAND_TOOL_NAME == "exec_command"
-    finally:
-        monkeypatch.setattr(shell.os, "name", real_os_name)
-        importlib.reload(shell)
-
-
-def test_build_shell_command_uses_powershell_on_windows(monkeypatch) -> None:
-    import yoke.agent.tools.shell as shell
-
-    monkeypatch.setattr(shell.os, "name", "nt")
-    monkeypatch.setattr(shell.shutil, "which", lambda name: None)
-    env = {"ComSpec": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"}
-
-    command = shell.build_shell_command(
-        '"C:\\Program Files\\Python\\python.exe" -V && echo ok', env
-    )
-
-    assert command[:5] == [
-        env["ComSpec"],
-        "-NoLogo",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-    ]
-    assert env["YOKE_COMMAND_TOOL_COMMAND"] == (
-        '& "C:\\Program Files\\Python\\python.exe" -V ; echo ok'
-    )
-
-
-def test_build_shell_command_uses_cmd_fallback_on_windows(monkeypatch) -> None:
-    import yoke.agent.tools.shell as shell
-
-    monkeypatch.setattr(shell.os, "name", "nt")
-    monkeypatch.setattr(shell.shutil, "which", lambda name: None)
-
-    command = shell.build_shell_command("echo ok", {"ComSpec": "cmd.exe"})
-
-    assert command == ["cmd.exe", "/d", "/s", "/c", "echo ok"]
-
-
-def test_command_tool_exposes_current_python_as_python_commands(tmp_path: Path) -> None:
-    tools = tool_set(tmp_path)
-    result = as_dict(
-        execute_tool(
-            tools,
-            COMMAND_TOOL_NAME,
-            {
-                "command": (
-                    "python -c 'import sys; print(sys.executable)' && "
-                    "python3 -c 'import sys; print(sys.executable)'"
-                )
-            },
+        started = as_dict(
+            python_tool.parse_arguments(
+                {
+                    "code": (
+                        "import time\nprint('first')\ntime.sleep(2)\nprint('second')"
+                    ),
+                    "yield_time_ms": 1_000,
+                }
+            ).execute()
         )
+
+        assert started["running"] is True
+        assert started["session_id"] is not None
+        assert "first" in started["output"]
+        completed = as_dict(
+            stdin_tool.parse_arguments(
+                {
+                    "session_id": started["session_id"],
+                    "yield_time_ms": 3_000,
+                }
+            ).execute()
+        )
+
+        assert completed["ok"] is True
+        assert completed["running"] is False
+        assert "second" in completed["output"]
+    finally:
+        manager.close()
+
+
+def test_python_exec_timeout_applies_after_yield(tmp_path: Path) -> None:
+    manager = CommandProcessManager()
+    tool = PythonExecTool.bind(root=tmp_path, command_process_manager=manager)
+    try:
+        result = as_dict(
+            tool.parse_arguments(
+                {
+                    "code": "import time\nprint('ready')\ntime.sleep(5)",
+                    "yield_time_ms": 2_000,
+                    "timeout": 1,
+                }
+            ).execute()
+        )
+
+        assert result["ok"] is False
+        assert result["timed_out"] is True
+        assert result["running"] is False
+        assert "ready" in result["output"]
+        assert result["error"] == "Python execution timed out after 1 seconds"
+    finally:
+        manager.close()
+
+
+def test_command_process_close_waits_for_in_flight_spawn(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import yoke.agent.tools.command_process_manager as manager_module
+
+    opening = threading.Event()
+    allow_open = threading.Event()
+
+    class FinishedProcess:
+        pid = 2_000_000_000
+        stdin = None
+        stdout = None
+        stderr = None
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return 0
+
+    def delayed_open_process(
+        argv: list[str] | str,
+        cwd: Path,
+        env: dict[str, str],
+        *,
+        tty: bool,
+    ) -> tuple[subprocess.Popen[bytes], int | None, int | None]:
+        del argv, cwd, env, tty
+        opening.set()
+        assert allow_open.wait(timeout=5)
+        return cast(subprocess.Popen[bytes], FinishedProcess()), None, None
+
+    monkeypatch.setattr(manager_module, "_open_process", delayed_open_process)
+    manager = CommandProcessManager()
+    errors: list[BaseException] = []
+
+    def execute() -> None:
+        try:
+            manager.exec_command(
+                command="ignored",
+                cwd=tmp_path,
+                tty=False,
+                yield_time_ms=250,
+                shell=None,
+                login=True,
+                cancel_requested=None,
+            )
+        except BaseException as exc:  # pragma: no cover - assertion below
+            errors.append(exc)
+
+    worker = threading.Thread(target=execute)
+    worker.start()
+    assert opening.wait(timeout=5)
+    closer = threading.Thread(target=manager.close)
+    closer.start()
+    time.sleep(0.05)
+    assert closer.is_alive()
+    allow_open.set()
+    worker.join(timeout=10)
+    closer.join(timeout=10)
+
+    assert not worker.is_alive()
+    assert not closer.is_alive()
+    assert errors == []
+    assert manager.snapshots() == []
+    with pytest.raises(RuntimeError, match="manager is closed"):
+        manager.acquire()
+
+
+def test_final_release_is_atomic_with_acquire(monkeypatch) -> None:
+    manager = CommandProcessManager().acquire()
+    original_close = manager.close
+    closing = threading.Event()
+    allow_close = threading.Event()
+    errors: list[BaseException] = []
+
+    def delayed_close() -> None:
+        closing.set()
+        assert allow_close.wait(timeout=5)
+        original_close()
+
+    def acquire() -> None:
+        try:
+            manager.acquire()
+        except BaseException as exc:  # pragma: no cover - assertion below
+            errors.append(exc)
+
+    monkeypatch.setattr(manager, "close", delayed_close)
+    releaser = threading.Thread(target=manager.release)
+    releaser.start()
+    assert closing.wait(timeout=5)
+    acquirer = threading.Thread(target=acquire)
+    acquirer.start()
+    time.sleep(0.05)
+    assert acquirer.is_alive()
+    allow_close.set()
+    releaser.join(timeout=5)
+    acquirer.join(timeout=5)
+
+    assert not releaser.is_alive()
+    assert not acquirer.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], RuntimeError)
+
+
+def test_write_stdin_poll_yield_clamps_to_one_hour() -> None:
+    assert clamp_write_yield_time(3_700_000, has_input=False) == 3_600_000
+
+
+def test_write_stdin_schema_accepts_one_hour_poll(tmp_path: Path) -> None:
+    tool = WriteStdinTool.bind(root=tmp_path)
+
+    parsed = cast(
+        WriteStdinTool,
+        tool.parse_arguments(
+            {"session_id": 1, "chars": "", "yield_time_ms": 3_600_000}
+        ),
     )
 
-    assert result["ok"] is True
-    assert result["exit_code"] == 0
-    assert result["running"] is False
-    assert isinstance(result["wall_time_seconds"], float)
-    assert result["wall_time_seconds"] >= 0
-    assert "content" not in cast(dict[str, object], result["outputTruncationDetails"])
-    assert "stdout" not in result
-    assert "stderr" not in result
-    assert "details" not in result
-    lines = cast(str, result["output"]).splitlines()
-    assert lines == [sys.executable, sys.executable]
+    assert parsed.yield_time_ms == 3_600_000
 
 
-def test_command_tool_streams_output_chunks(tmp_path: Path) -> None:
-    events: list[tuple[str, dict[str, object]]] = []
-    tool = CommandTool.bind(
-        root=tmp_path,
-        tool_event=lambda event, payload: events.append((event, payload)),
-    )
+def test_write_tool_creates_text_file(tmp_path: Path) -> None:
+    from yoke.agent.tools import WriteTool
 
+    tool = WriteTool.bind(root=tmp_path)
     result = as_dict(
         tool.parse_arguments(
             {
-                "command": (
-                    f"{shlex.quote(sys.executable)} -c "
-                    '\'import sys; print("out"); print("err", file=sys.stderr)\''
-                )
+                "path": "nested/notes.txt",
+                "content": "hello\n",
+                "createDirs": True,
             }
         ).execute()
     )
 
     assert result["ok"] is True
-    streamed = {
-        (cast(str, payload["stream"]), cast(str, payload["text"]))
-        for event, payload in events
-        if event == "tool_execution_output_delta"
-    }
-    assert ("stdout", "out\n") in streamed
-    assert ("stderr", "err\n") in streamed
-
-
-def test_command_tool_yields_and_write_stdin_polls_to_completion(
-    tmp_path: Path,
-) -> None:
-    tools = tool_set(tmp_path)
-    started = as_dict(
-        execute_tool(
-            tools,
-            COMMAND_TOOL_NAME,
-            {
-                "cmd": (
-                    f"{shlex.quote(sys.executable)} -u -c "
-                    '\'import time; print("started"); time.sleep(0.6); print("done")\''
-                ),
-                "yield_time_ms": 50,
-            },
-        )
-    )
-
-    assert started["ok"] is True
-    assert started["running"] is True
-    assert isinstance(started["session_id"], int)
-
-    completed = as_dict(
-        execute_tool(
-            tools,
-            "write_stdin",
-            {
-                "session_id": started["session_id"],
-                "yield_time_ms": 5000,
-            },
-        )
-    )
-
-    assert completed["ok"] is True
-    assert completed["running"] is False
-    assert completed["session_id"] is None
-    assert completed["exit_code"] == 0
-    combined_output = (
-        cast(str, started["output"]) + "\n" + cast(str, completed["output"])
-    )
-    assert "started" in combined_output
-    assert "done" in combined_output
-
-
-def test_write_stdin_interacts_with_tty_session(tmp_path: Path) -> None:
-    tools = tool_set(tmp_path)
-    started = as_dict(
-        execute_tool(
-            tools,
-            COMMAND_TOOL_NAME,
-            {
-                "cmd": "read value; echo received:$value",
-                "tty": True,
-                "yield_time_ms": 50,
-            },
-        )
-    )
-
-    completed = as_dict(
-        execute_tool(
-            tools,
-            "write_stdin",
-            {
-                "session_id": started["session_id"],
-                "chars": "hello\n",
-                "yield_time_ms": 5000,
-            },
-        )
-    )
-
-    assert completed["exit_code"] == 0
-    assert "received:hello" in cast(str, completed["output"])
-
-
-def test_exec_command_schema_uses_new_public_api(tmp_path: Path) -> None:
-    definition = ExecCommandTool.bind(root=tmp_path).to_definition()
-    function = cast(dict[str, object], definition["function"])
-    parameters = cast(dict[str, object], function["parameters"])
-    properties = cast(dict[str, object], parameters["properties"])
-
-    assert function["name"] == "exec_command"
-    assert "cmd" in properties
-    assert "command" not in properties
-    assert "timeout" not in properties
-
-
-def test_command_yield_defaults_and_bounds(tmp_path: Path) -> None:
-    exec_definition = ExecCommandTool.bind(root=tmp_path).to_definition()
-    exec_function = cast(dict[str, object], exec_definition["function"])
-    exec_parameters = cast(dict[str, object], exec_function["parameters"])
-    exec_properties = cast(dict[str, object], exec_parameters["properties"])
-    exec_yield = cast(dict[str, object], exec_properties["yield_time_ms"])
-
-    stdin_definition = WriteStdinTool.bind(root=tmp_path).to_definition()
-    stdin_function = cast(dict[str, object], stdin_definition["function"])
-    stdin_parameters = cast(dict[str, object], stdin_function["parameters"])
-    stdin_properties = cast(dict[str, object], stdin_parameters["properties"])
-    stdin_yield = cast(dict[str, object], stdin_properties["yield_time_ms"])
-
-    assert exec_yield["default"] == 30_000
-    assert exec_yield["maximum"] == 7_200_000
-    stdin_yield_types = cast(list[dict[str, object]], stdin_yield["anyOf"])
-    assert stdin_yield_types[0]["maximum"] == 7_200_000
-
-
-def test_python_exec_exposes_current_python_to_subprocesses(tmp_path: Path) -> None:
-    tools = tool_set(tmp_path)
-    result = as_dict(
-        execute_tool(
-            tools,
-            "python_exec",
-            {
-                "code": (
-                    "import os, subprocess, sys\n"
-                    "print(sys.executable)\n"
-                    "print(os.environ['YOKE_PYTHON_EXECUTABLE'])\n"
-                    "print(subprocess.check_output(["
-                    "'python', '-c', 'import sys; print(sys.executable)'"
-                    "], text=True).strip())\n"
-                    "print(subprocess.check_output(["
-                    "'python3', '-c', 'import sys; print(sys.executable)'"
-                    "], text=True).strip())"
-                )
-            },
-        )
-    )
-
-    assert result["ok"] is True
-    assert result["python_executable"] == sys.executable
-    lines = cast(str, result["output"]).splitlines()
-    assert lines == [sys.executable] * 4
-
-
-def test_python_exec_streams_output_chunks(tmp_path: Path) -> None:
-    events: list[tuple[str, dict[str, object]]] = []
-    tool = PythonExecTool.bind(
-        root=tmp_path,
-        tool_event=lambda event, payload: events.append((event, payload)),
-    )
-
-    result = as_dict(
-        tool.parse_arguments(
-            {"code": "import sys\nprint('out')\nprint('err', file=sys.stderr)"}
-        ).execute()
-    )
-
-    assert result["ok"] is True
-    assert (
-        "tool_execution_output_delta",
-        {"stream": "stdout", "text": "out\n"},
-    ) in events
-    assert (
-        "tool_execution_output_delta",
-        {"stream": "stderr", "text": "err\n"},
-    ) in events
-
-
-def test_command_tool_preserves_quoted_heredoc_content(tmp_path: Path) -> None:
-    tools = tool_set(tmp_path)
-    result = as_dict(
-        execute_tool(
-            tools,
-            COMMAND_TOOL_NAME,
-            {
-                "command": (
-                    "cat > plan.md <<'EOF'\n"
-                    "# Plan: Scoped `/tools` Changes\n"
-                    "1. `in_progress` Inspect the current `/tools` selector.\n"
-                    "EOF"
-                )
-            },
-        )
-    )
-
-    assert result["ok"] is True
-    assert (tmp_path / "plan.md").read_text(encoding="utf-8") == (
-        "# Plan: Scoped `/tools` Changes\n"
-        "1. `in_progress` Inspect the current `/tools` selector.\n"
-    )
-
-
-def test_grep_truncates_long_matched_lines(tmp_path: Path) -> None:
-    tools = [GrepTool.bind(root=tmp_path)]
-    long_line = "needle " + ("x" * 800)
-    (tmp_path / "search.txt").write_text(long_line, encoding="utf-8")
-
-    result = as_dict(execute_tool(tools, "grep", {"path": ".", "pattern": "needle"}))
-
-    assert result["ok"] is True
-    files = cast(list[dict[str, Any]], result["files"])
-    assert result["match_count"] == 1
-    assert files[0]["path"] == "search.txt"
-    matches = cast(list[dict[str, Any]], files[0]["matches"])
-    assert matches[0]["line_truncated"] is True
-    assert cast(str, matches[0]["text"]).endswith("[truncated]")
-
-
-def test_extract_file_context_reads_text_files(tmp_path: Path) -> None:
-    tool = ExtractFileContextTool.bind(root=tmp_path)
-    (tmp_path / "notes.txt").write_text("alpha\nbeta\n", encoding="utf-8")
-
-    result = as_dict(tool.parse_arguments({"path": "notes.txt"}).execute())
-
-    assert result["ok"] is True
-    assert result["extractor"] == "text"
-    assert result["content"] == "alpha\nbeta\n"
-
-
-def test_extract_file_context_reports_unsupported_binary_files(
-    tmp_path: Path,
-) -> None:
-    tool = ExtractFileContextTool.bind(root=tmp_path)
-    (tmp_path / "blob.bin").write_bytes(b"\x00\x01\x02\x03")
-
-    result = as_dict(tool.parse_arguments({"path": "blob.bin"}).execute())
-
-    assert result["ok"] is True
-    assert result["extractor"] == "binary"
-    assert "Unsupported binary file" in cast(str, result["content"])
-
-
-def test_extract_file_context_can_be_used_as_explicit_tool(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "notes.txt").write_text("a\nb\n", encoding="utf-8")
-    tools = [
-        ReadTool.bind(root=tmp_path),
-        ExtractFileContextTool.bind(root=tmp_path),
-    ]
-
-    result = as_dict(execute_tool(tools, "extract_file_context", {"path": "notes.txt"}))
-
-    assert result["ok"] is True
-    assert result["extractor"] == "text"
+    assert result["created"] is True
+    assert (tmp_path / "nested" / "notes.txt").read_text(encoding="utf-8") == "hello\n"

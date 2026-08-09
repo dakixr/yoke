@@ -1,298 +1,14 @@
 from __future__ import annotations
 
-# ruff: noqa: F403, F405
 # ruff: noqa: D100, D103, F403, F405, S101
 
-from .support import *  # noqa: F403, F405
+from yoke.cli.interactive.prompt.turns import retire_turn_agent
+from yoke.agent.models import ConversationEntry
+from yoke.agent.tools.command_process_manager import (
+    CommandProcessManager,
+)
 
-
-def write_test_skill(root: Path, name: str, description: str) -> Path:
-    skill_dir = root / ".yoke" / "skills" / name
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: {description}\n---\n\nUse {name}.\n",
-        encoding="utf-8",
-    )
-    return skill_dir
-
-
-def test_agent_fork_duplicates_runtime_configuration(tmp_path: Path) -> None:
-    provider = FakeProvider()
-
-    def before_tool_call(context: BeforeToolCallContext) -> None:
-        del context
-        return None
-
-    def after_tool_call(context: AfterToolCallContext) -> None:
-        del context
-        return None
-
-    active_skill = ActiveSkill(
-        name="demo",
-        description="Demo skill.",
-        source_path=str(tmp_path / "skills" / "demo" / "SKILL.md"),
-    )
-    available_skill = SkillSpec(
-        name="demo",
-        description="Demo skill.",
-        root=tmp_path / "skills" / "demo",
-        skill_md_path=tmp_path / "skills" / "demo" / "SKILL.md",
-    )
-    agent = RuntimeAgent(
-        provider=provider,
-        tools=tools(tmp_path),
-        max_iterations=7,
-        context_manager=ContextManager(instructions=[Message.system("system prompt")]),
-        tool_execution="sequential",
-        before_tool_call=before_tool_call,
-        after_tool_call=after_tool_call,
-        available_skills=[available_skill],
-        active_skills=[active_skill],
-    )
-
-    forked = agent.fork()
-
-    assert forked is not agent
-    assert forked.provider is provider
-    assert forked.max_iterations == 7
-    assert forked.tool_execution == "sequential"
-    assert forked.before_tool_call is before_tool_call
-    assert forked.after_tool_call is after_tool_call
-    assert forked.context_manager is not agent.context_manager
-    assert list(forked.tools) == list(agent.tools)
-    assert all(forked.tools[name] is not agent.tools[name] for name in agent.tools)
-    assert forked.active_skills == agent.active_skills
-    assert forked.active_skills is not agent.active_skills
-    assert forked.available_skills == agent.available_skills
-    assert forked.available_skills is not agent.available_skills
-
-    forked.active_skills.append(
-        ActiveSkill(
-            name="other",
-            description="Other skill.",
-            source_path=str(tmp_path / "skills" / "other" / "SKILL.md"),
-        )
-    )
-
-    assert [skill.name for skill in agent.active_skills] == ["demo"]
-
-
-def test_agent_fork_shares_owned_resource_until_both_runtimes_close() -> None:
-    class Resource:
-        def __init__(self) -> None:
-            self.close_calls = 0
-
-        def close(self) -> None:
-            self.close_calls += 1
-
-    class ResourceTool(LocalTool):
-        name = "resource"
-        description = "resource"
-
-        def execute(self) -> dict[str, object]:
-            return {"ok": True}
-
-        def owned_resources(self) -> tuple[object, ...]:
-            return (self._context["resource"],)
-
-    resource = Resource()
-    agent = RuntimeAgent(
-        provider=FakeProvider(),
-        tools=[ResourceTool.bind(resource=resource)],
-    )
-    forked = agent.fork()
-
-    agent.close()
-    assert resource.close_calls == 0
-
-    forked.close()
-    forked.close()
-    assert resource.close_calls == 1
-
-
-def test_agent_close_releases_all_resources_when_one_close_fails() -> None:
-    closed: list[str] = []
-
-    class FailingResource:
-        def close(self) -> None:
-            closed.append("failing")
-            raise RuntimeError("cannot close")
-
-    class HealthyResource:
-        def close(self) -> None:
-            closed.append("healthy")
-
-    class FirstResourceTool(LocalTool):
-        name = "first_resource"
-        description = "first"
-
-        def execute(self) -> dict[str, object]:
-            return {"ok": True}
-
-        def owned_resources(self) -> tuple[object, ...]:
-            return (self._context["resource"],)
-
-    class SecondResourceTool(FirstResourceTool):
-        name = "second_resource"
-
-    agent = RuntimeAgent(
-        provider=FakeProvider(),
-        tools=[
-            FirstResourceTool.bind(resource=FailingResource()),
-            SecondResourceTool.bind(resource=HealthyResource()),
-        ],
-    )
-
-    with pytest.raises(ExceptionGroup, match="Failed to close tool resources"):
-        agent.close()
-
-    assert closed == ["failing", "healthy"]
-    agent.close()
-
-
-def test_skill_tool_uses_current_context_active_skills(tmp_path: Path) -> None:
-    from yoke.agent.skills.registry import load_skill_registry
-    from yoke.agent.tools import SkillTool
-
-    write_test_skill(tmp_path, "manual-skill", "Manual skill.")
-    write_test_skill(tmp_path, "model-skill", "Model skill.")
-    registry = load_skill_registry([tmp_path / ".yoke" / "skills"])
-
-    class SkillLoadingProvider(Provider):
-        supports_image_inputs = True
-        max_images_per_message = 50
-
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def complete(
-            self, messages: list[Message], tools: list[dict[str, object]]
-        ) -> Message:
-            del messages, tools
-            self.calls += 1
-            if self.calls == 1:
-                return Message(
-                    role="assistant",
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="call-1",
-                            function=ToolFunction(
-                                name="skill",
-                                arguments='{"load":["model-skill"]}',
-                            ),
-                        )
-                    ],
-                )
-            return Message.assistant("done")
-
-    skill_tool = SkillTool.bind(skill_registry=registry, active_skills=[])
-    manual_skill = registry.activate("manual-skill")
-    agent = RuntimeAgent(
-        provider=SkillLoadingProvider(),
-        tools=[skill_tool],
-        skill_registry=registry,
-        available_skills=registry.skills,
-        active_skills=[manual_skill],
-    )
-
-    result = agent.run("use skills")
-
-    assert result.status == "completed"
-    assert [skill.name for skill in agent.active_skills] == [
-        "manual-skill",
-        "model-skill",
-    ]
-
-
-def test_skill_tool_reactivation_appends_fresh_skill_event(tmp_path: Path) -> None:
-    from yoke.agent.skills.registry import load_skill_registry
-    from yoke.agent.tools import SkillTool
-
-    write_test_skill(tmp_path, "manual-skill", "Manual skill.")
-    registry = load_skill_registry([tmp_path / ".yoke" / "skills"])
-
-    class SkillReloadingProvider(Provider):
-        supports_image_inputs = True
-        max_images_per_message = 50
-
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def complete(
-            self, messages: list[Message], tools: list[dict[str, object]]
-        ) -> Message:
-            del messages, tools
-            self.calls += 1
-            if self.calls == 1:
-                return Message(
-                    role="assistant",
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="call-1",
-                            function=ToolFunction(
-                                name="skill",
-                                arguments='{"load":["manual-skill"]}',
-                            ),
-                        )
-                    ],
-                )
-            return Message.assistant("done")
-
-    skill_tool = SkillTool.bind(skill_registry=registry, active_skills=[])
-    manual_skill = registry.activate("manual-skill")
-    agent = RuntimeAgent(
-        provider=SkillReloadingProvider(),
-        tools=[skill_tool],
-        skill_registry=registry,
-        available_skills=registry.skills,
-        active_skills=[manual_skill],
-    )
-
-    result = agent.run("reload skill")
-
-    assert result.status == "completed"
-    assert [skill.name for skill in agent.active_skills] == [
-        "manual-skill",
-        "manual-skill",
-    ]
-    skill_events = [
-        entry
-        for entry in result.conversation_entries or []
-        if entry.kind == "skill_event"
-    ]
-    assert len(skill_events) == 2
-    assert skill_events[0].metadata["skill_name"] == "manual-skill"
-    assert skill_events[1].metadata["skill_name"] == "manual-skill"
-    assert skill_events[1].metadata["skill_activation_id"] is not None
-    tool_messages = [message for message in result.messages if message.role == "tool"]
-    assert tool_messages
-    assert '"loaded": ["manual-skill"]' in (tool_messages[0].text_content() or "")
-
-
-def test_agent_fork_clones_conversation_state(tmp_path: Path) -> None:
-    class EchoProvider(Provider):
-        def complete(
-            self, messages: list[Message], tools: list[dict[str, object]]
-        ) -> Message:
-            del tools
-            return Message.assistant(messages[-1].text_content() or "")
-
-    agent = RuntimeAgent(provider=EchoProvider(), tools=tools(tmp_path))
-    first = agent.run("alpha")
-    forked = agent.fork()
-
-    second = forked.run("beta")
-
-    assert [message.content for message in first.messages] == ["alpha", "alpha"]
-    assert [message.content for message in second.messages] == [
-        "alpha",
-        "alpha",
-        "beta",
-        "beta",
-    ]
-    assert [message.content for message in agent.messages] == ["alpha", "alpha"]
+from .support import *  # noqa: F403
 
 
 def test_agent_loop_runs_until_final_answer(tmp_path: Path) -> None:
@@ -311,57 +27,103 @@ def test_agent_loop_runs_until_final_answer(tmp_path: Path) -> None:
     ]
 
 
-def test_agent_loop_emits_commentary_before_tool_calls(
+def test_runtime_command_process_managers_are_isolated_and_shared_by_forks(
     tmp_path: Path,
 ) -> None:
-    class CommentaryProvider(Provider):
-        def __init__(self) -> None:
-            self.calls = 0
+    shared_tools = tools(tmp_path)
+    primary = RuntimeAgent(provider=FakeProvider(), tools=shared_tools)
+    independent = RuntimeAgent(provider=FakeProvider(), tools=shared_tools)
+    forked = primary.fork()
+    try:
+        assert (
+            primary.command_process_manager is not independent.command_process_manager
+        )
+        assert forked.command_process_manager is primary.command_process_manager
+        assert (
+            primary.tools[COMMAND_TOOL_NAME] is not independent.tools[COMMAND_TOOL_NAME]
+        )
+        assert (
+            primary.tools[COMMAND_TOOL_NAME]._context["command_process_manager"]
+            is primary.command_process_manager
+        )
+        assert (
+            independent.tools[COMMAND_TOOL_NAME]._context["command_process_manager"]
+            is independent.command_process_manager
+        )
+        assert (
+            forked.tools[COMMAND_TOOL_NAME]._context["command_process_manager"]
+            is primary.command_process_manager
+        )
+    finally:
+        forked.close()
+        independent.close()
+        primary.close()
 
-        def complete(
-            self, messages: list[Message], tools: list[dict[str, object]]
-        ) -> Message:
-            del tools
-            self.calls += 1
-            if self.calls == 1:
-                return Message(
-                    role="assistant",
-                    content="I will create the file first.",
-                    phase="commentary",
-                    tool_calls=[
-                        ToolCall(
-                            id="call-1",
-                            function=ToolFunction(
-                                name="write",
-                                arguments='{"path":"hello.txt","content":"hello"}',
-                            ),
-                        )
-                    ],
-                )
-            assert messages[-1].role == "tool"
-            return Message.assistant("done", phase="final_answer")
 
-    events: list[tuple[str, dict[str, object]]] = []
-    agent = RuntimeAgent(provider=CommentaryProvider(), tools=tools(tmp_path))
+def test_retired_turn_releases_command_process_manager_lease(
+    tmp_path: Path,
+) -> None:
+    primary = RuntimeAgent(provider=FakeProvider(), tools=tools(tmp_path))
+    forked = primary.fork(isolate_provider=True)
+    manager = primary.command_process_manager
+    try:
+        retire_turn_agent(forked, primary_agent=primary)
+        deadline = time.monotonic() + 5
+        while not forked._closed and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert forked._closed
+    finally:
+        forked.close()
+        primary.close()
 
-    result = agent.run(
-        "Create a file",
-        on_event=lambda event, payload: events.append((event, payload)),
+    with pytest.raises(RuntimeError, match="manager is closed"):
+        manager.acquire()
+
+
+def test_runtime_releases_process_manager_when_tool_cleanup_fails(
+    tmp_path: Path,
+) -> None:
+    class RaisingResource:
+        def close(self) -> None:
+            raise RuntimeError("cleanup failed")
+
+    class ResourceTool(LocalTool):
+        name = "resource"
+        description = "Own a test resource."
+
+        def execute(self) -> dict[str, object]:
+            return {}
+
+        def owned_resources(self) -> tuple[object, ...]:
+            return (self._context["resource"],)
+
+    agent = RuntimeAgent(
+        provider=FakeProvider(),
+        tools=[ResourceTool.bind(resource=RaisingResource())],
+        tool_root=tmp_path,
     )
+    manager = agent.command_process_manager
 
-    assert result.output == "done"
-    event_names = [event for event, _payload in events]
-    assert event_names.index("assistant_message") < event_names.index(
-        "tool_execution_start"
-    )
-    commentary_payload = next(
-        payload for event, payload in events if event == "assistant_message"
-    )
-    assert commentary_payload == {
-        "iteration": 1,
-        "phase": "commentary",
-        "content": "I will create the file first.",
-    }
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        agent.close()
+    with pytest.raises(RuntimeError, match="manager is closed"):
+        manager.acquire()
+
+
+def test_runtime_constructor_failure_releases_process_manager(
+    tmp_path: Path,
+) -> None:
+    manager = CommandProcessManager()
+
+    with pytest.raises(ValueError, match="Duplicate tool names"):
+        RuntimeAgent(
+            provider=FakeProvider(),
+            tools=[ReadTool.bind(root=tmp_path), ReadTool.bind(root=tmp_path)],
+            command_process_manager=manager,
+        )
+
+    with pytest.raises(RuntimeError, match="manager is closed"):
+        manager.acquire()
 
 
 def test_agent_loop_attaches_partial_messages_to_provider_error(
@@ -384,9 +146,9 @@ def test_agent_loop_attaches_partial_messages_to_provider_error(
                         ToolCall(
                             id="call-1",
                             function=ToolFunction(
-                                name="write",
+                                name="fast_write",
                                 arguments=(
-                                    '{"path":"side_effect.txt","content":"persisted"}'
+                                    '{"path":"side_effect.txt","text":"persisted"}'
                                 ),
                             ),
                         )
@@ -420,12 +182,10 @@ def test_agent_loop_can_continue_existing_history(tmp_path: Path) -> None:
         context_manager=ContextManager(
             instructions=[Message.system("system prompt")],
         ),
-        history=MessageHistory(
-            [
-                Message.user("previous task"),
-                Message.assistant("previous answer"),
-            ]
-        ),
+        messages=[
+            Message.user("previous task"),
+            Message.assistant("previous answer"),
+        ],
     )
 
     result = agent.run("next task")
@@ -440,26 +200,81 @@ def test_agent_loop_can_continue_existing_history(tmp_path: Path) -> None:
     ]
 
 
-def test_agent_loop_uses_context_manager_before_provider_boundary(
+def test_loaded_entries_keep_new_user_prompt_visible_to_provider(
     tmp_path: Path,
 ) -> None:
-    def transform(messages: list[Message]) -> list[Message]:
-        updated = [message.model_copy(deep=True) for message in messages]
-        updated[0] = Message.system("transformed system")
-        return updated
+    class RecordingProvider(Provider):
+        def complete(self, messages, tools):
+            del tools
+            assert [message.role for message in messages] == [
+                "system",
+                "user",
+                "assistant",
+                "user",
+            ]
+            assert messages[-1].plain_text_content == "explore the folder"
+            return Message.assistant("working")
 
+    instruction = ConversationEntry(
+        id="instruction", kind="instruction", message=Message.system("old")
+    )
+    user = ConversationEntry(
+        id="user",
+        parent_id=instruction.id,
+        kind="user",
+        message=Message.user("hi"),
+    )
+    assistant = ConversationEntry(
+        id="assistant",
+        parent_id=user.id,
+        kind="assistant",
+        message=Message.assistant("hello"),
+    )
     agent = RuntimeAgent(
-        provider=TransformProvider(),
+        provider=RecordingProvider(),
         tools=tools(tmp_path),
-        context_manager=ContextManager(
-            instructions=[Message.system("original system")],
-            transform_messages=transform,
-        ),
+        context_manager=ContextManager(instructions=[Message.system("current")]),
+        conversation_entries=[instruction, user, assistant],
     )
 
-    result = agent.run("hello")
+    result = agent.run("explore the folder")
 
-    assert result.output == "done"
+    assert result.output == "working"
+    assert result.conversation_entries is not None
+    assert all(entry.kind != "instruction" for entry in result.conversation_entries)
+
+
+def test_loaded_entries_preserve_sibling_branches(tmp_path: Path) -> None:
+    class DoneProvider(Provider):
+        def complete(self, messages, tools):
+            del messages, tools
+            return Message.assistant("done")
+
+    root = ConversationEntry(id="root", kind="user", message=Message.user("root"))
+    first = ConversationEntry(
+        id="first",
+        parent_id=root.id,
+        kind="assistant",
+        message=Message.assistant("first branch"),
+    )
+    second = ConversationEntry(
+        id="second",
+        parent_id=root.id,
+        kind="assistant",
+        message=Message.assistant("second branch"),
+    )
+    agent = RuntimeAgent(
+        provider=DoneProvider(),
+        tools=tools(tmp_path),
+        conversation_entries=[root, first, second],
+    )
+
+    result = agent.run("continue second")
+
+    assert result.conversation_entries is not None
+    by_id = {entry.id: entry for entry in result.conversation_entries}
+    assert by_id[first.id].parent_id == root.id
+    assert by_id[second.id].parent_id == root.id
 
 
 def test_agent_loop_emits_context_usage_after_tool_results(
@@ -494,54 +309,7 @@ def test_agent_loop_rejects_newest_message_over_provider_image_limit(
     newest_message = Message.user(
         [MessageTextContentPart(text="Too many images."), *image_parts]
     )
-    agent = RuntimeAgent(
-        provider=FakeProvider(),
-        tools=[],
-        history=MessageHistory([newest_message]),
-    )
+    agent = RuntimeAgent(provider=FakeProvider(), tools=[], messages=[newest_message])
 
     with pytest.raises(ProviderError, match="exceeds provider image limit"):
         agent.run("", user_message=newest_message)
-
-
-def test_agent_loop_omits_historical_images_for_text_only_provider(
-    tmp_path: Path,
-) -> None:
-    class TextOnlyProvider(Provider):
-        supports_image_inputs = False
-
-        def __init__(self) -> None:
-            self.received_messages: list[Message] = []
-
-        def complete(
-            self, messages: list[Message], tools: list[dict[str, object]]
-        ) -> Message:
-            del tools
-            self.received_messages = messages
-            return Message.assistant("done")
-
-    image_message = Message.user(
-        [
-            MessageTextContentPart(text="Review this screenshot."),
-            MessageLocalImageContentPart(
-                path=str(tmp_path / "screenshot.png"),
-                label="[Image #1]",
-            ),
-        ]
-    )
-    provider = TextOnlyProvider()
-    agent = RuntimeAgent(
-        provider=provider,
-        tools=[],
-        history=MessageHistory([image_message, Message.assistant("Reviewed.")]),
-    )
-
-    result = agent.run("continue")
-
-    assert result.output == "done"
-    assert agent.messages[0].has_image_inputs()
-    assert not any(message.has_image_inputs() for message in provider.received_messages)
-    first_message_text = provider.received_messages[0].text_content() or ""
-    assert "Review this screenshot." in first_message_text
-    assert "[Image omitted: [Image #1]" in first_message_text
-    assert "does not support image inputs" in first_message_text

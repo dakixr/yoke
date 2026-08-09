@@ -2,24 +2,12 @@
 
 from __future__ import annotations
 
-import base64
-import io
-import json
-
-from PIL import Image
-
 from yoke.agent.compaction import CompactionPolicy
-from yoke.agent.compaction import Compactor
 from yoke.agent.context import ContextManager
-from yoke.agent.message_sanitizer import normalize_tool_call_sequence
 from yoke.ai.providers.openai_compat import (
     normalize_openai_request_messages,
 )
 from yoke.agent.models import Message, ToolCall, ToolFunction
-from yoke.agent.models import MessageImageURLContentPart
-from yoke.agent.models import MessageImageURL
-from yoke.agent.models import MessageLocalImageContentPart
-from yoke.cli.runtime import estimate_messages_token_usage
 
 
 def test_context_manager_prepare_compaction_rebuilds_checkpoint() -> None:
@@ -63,312 +51,21 @@ def test_context_manager_prepare_compaction_rebuilds_checkpoint() -> None:
     assert preparation.kept_messages[-1].content == "follow-up"
 
 
-def test_tool_result_internal_context_messages_are_not_model_visible() -> None:
+def test_retained_user_messages_obey_strict_token_budget() -> None:
     manager = ContextManager()
-    context = manager.initialize("")
-    result: dict[str, object] = {
-        "ok": True,
-        "path": "/tmp/screenshot.png",
-        "context_messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Attached [Image #1]."},
-                    {
-                        "type": "local_image",
-                        "path": "/tmp/screenshot.png",
-                        "label": "[Image #1]",
-                        "data_url": "data:image/png;base64," + ("A" * 100_000),
-                    },
-                ],
-            }
+    retained = manager.compactor.collect_recent_user_messages(
+        [
+            Message.user("old intent " + ("alpha " * 100)),
+            Message.user("latest intent"),
         ],
-    }
-
-    tool_message = manager.append_tool_result(
-        context,
-        tool_call_id="call-image",
-        result=result,
+        token_budget=32,
     )
 
-    assert isinstance(tool_message.content, str)
-    stored_payload = json.loads(tool_message.content)
-    assert stored_payload == {"ok": True, "path": "/tmp/screenshot.png"}
-    provider_messages = manager.messages_for_provider(context)
-    assert isinstance(provider_messages[-1].content, str)
-    assert "context_messages" not in provider_messages[-1].content
-    assert "data:image" not in provider_messages[-1].content
+    estimate = manager.compactor.estimate_tokens(retained, reserve_tokens=0)
 
-
-def test_legacy_tool_result_context_messages_are_sanitized_for_provider() -> None:
-    manager = ContextManager()
-    legacy_tool_message = Message.tool(
-        "call-image",
-        json.dumps(
-            {
-                "ok": True,
-                "context_messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "local_image",
-                                "path": "/tmp/screenshot.png",
-                                "data_url": "data:image/png;base64," + ("A" * 100_000),
-                            }
-                        ],
-                    }
-                ],
-            }
-        ),
-    )
-    context = manager.initialize("", [legacy_tool_message])
-
-    provider_messages = manager.messages_for_provider(context)
-
-    assert isinstance(provider_messages[0].content, str)
-    assert provider_messages[0].content == '{"ok": true}'
-
-
-def test_image_only_message_counts_more_than_filename_text(tmp_path) -> None:
-    image_path = tmp_path / "vision.png"
-    image = Image.new("RGB", (1024, 1024), color=(255, 0, 0))
-    image.save(image_path, format="PNG")
-
-    message = Message.user([MessageLocalImageContentPart(path=str(image_path))])
-    estimate = estimate_messages_token_usage([message])
-
-    assert estimate.input_tokens == 766
-
-
-def test_image_token_estimate_respects_detail_and_model_group(tmp_path) -> None:
-    image_path = tmp_path / "detail.png"
-    image = Image.new("RGB", (1024, 1024), color=(0, 255, 0))
-    image.save(image_path, format="PNG")
-
-    low_detail = Message.user(
-        [MessageLocalImageContentPart(path=str(image_path), detail="low")]
-    )
-    high_detail = Message.user(
-        [MessageLocalImageContentPart(path=str(image_path), detail="high")]
-    )
-
-    low_estimate = Compactor(model="gpt-5.4").estimate_tokens(
-        [low_detail], reserve_tokens=0
-    )
-    high_estimate = Compactor(model="gpt-4o").estimate_tokens(
-        [high_detail], reserve_tokens=0
-    )
-    mini_estimate = Compactor(model="gpt-4o-mini").estimate_tokens(
-        [high_detail], reserve_tokens=0
-    )
-
-    assert low_estimate.input_tokens == 71
-    assert high_estimate.input_tokens == 766
-    assert mini_estimate.input_tokens == 25502
-
-
-def test_remote_data_url_image_uses_embedded_dimensions() -> None:
-    image = Image.new("RGB", (2048, 4096), color=(0, 0, 255))
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    data_url = base64.b64encode(buffer.getvalue()).decode("ascii")
-    message = Message.user(
-        [
-            MessageImageURLContentPart(
-                image_url=MessageImageURL(url=f"data:image/png;base64,{data_url}"),
-                detail="high",
-            )
-        ]
-    )
-
-    estimate = Compactor(model="gpt-4o").estimate_tokens([message], reserve_tokens=0)
-
-    assert estimate.input_tokens == 1106
-
-
-def test_remote_image_without_dimensions_uses_fallback_estimate() -> None:
-    message = Message.user(
-        [
-            MessageImageURLContentPart(
-                image_url=MessageImageURL(url="https://example.com/image.png"),
-                detail="high",
-            )
-        ]
-    )
-
-    estimate = Compactor(model="unknown-model").estimate_tokens(
-        [message], reserve_tokens=0
-    )
-
-    assert estimate.input_tokens == 1025
-
-
-def test_drop_incomplete_tool_turns_removes_dangling_assistant_tool_call() -> None:
-    messages = [
-        Message.user("Generate previews"),
-        Message(
-            role="assistant",
-            content="Attaching previews now.",
-            tool_calls=[
-                ToolCall(
-                    id="call-image-1",
-                    function=ToolFunction(
-                        name="attach_image",
-                        arguments='{"path":"page1.png"}',
-                    ),
-                ),
-                ToolCall(
-                    id="call-image-2",
-                    function=ToolFunction(
-                        name="attach_image",
-                        arguments='{"path":"page2.png"}',
-                    ),
-                ),
-            ],
-        ),
-        Message.tool("call-image-1", '{"ok": true}'),
-        Message.user("Continue"),
-    ]
-
-    repaired = normalize_tool_call_sequence(
-        messages,
-        drop_incomplete_assistant=True,
-    )
-
-    assert [message.role for message in repaired] == ["user", "user"]
-    assert repaired[1].content == "Continue"
-
-
-def test_drop_incomplete_tool_turns_keeps_completed_tool_turn() -> None:
-    messages = [
-        Message.user("Generate previews"),
-        Message(
-            role="assistant",
-            content="Attaching previews now.",
-            tool_calls=[
-                ToolCall(
-                    id="call-image-1",
-                    function=ToolFunction(
-                        name="attach_image",
-                        arguments='{"path":"page1.png"}',
-                    ),
-                ),
-                ToolCall(
-                    id="call-image-2",
-                    function=ToolFunction(
-                        name="attach_image",
-                        arguments='{"path":"page2.png"}',
-                    ),
-                ),
-            ],
-        ),
-        Message.tool("call-image-1", '{"ok": true}'),
-        Message.tool("call-image-2", '{"ok": true}'),
-        Message.user("Continue"),
-    ]
-
-    repaired = normalize_tool_call_sequence(
-        messages,
-        drop_incomplete_assistant=True,
-    )
-
-    assert [message.role for message in repaired] == [
-        "user",
-        "assistant",
-        "tool",
-        "tool",
-        "user",
-    ]
-
-
-def test_drop_incomplete_tool_turns_preserves_non_tool_assistant_text() -> None:
-    messages = [
-        Message.user("Start"),
-        Message.assistant("Working on it"),
-        Message(
-            role="assistant",
-            content="Attaching previews now.",
-            tool_calls=[
-                ToolCall(
-                    id="call-image-1",
-                    function=ToolFunction(
-                        name="attach_image",
-                        arguments='{"path":"page1.png"}',
-                    ),
-                )
-            ],
-        ),
-        Message.user("Continue"),
-    ]
-
-    repaired = normalize_tool_call_sequence(
-        messages,
-        drop_incomplete_assistant=True,
-    )
-
-    assert [message.role for message in repaired] == [
-        "user",
-        "assistant",
-        "user",
-    ]
-    assert repaired[1].content == "Working on it"
-
-
-def test_drop_incomplete_tool_turns_keeps_follow_up_messages_after_bad_tool_turn() -> (
-    None
-):
-    messages = [
-        Message.user("Start"),
-        Message(
-            role="assistant",
-            content="Attaching previews now.",
-            tool_calls=[
-                ToolCall(
-                    id="call-image-1",
-                    function=ToolFunction(
-                        name="attach_image",
-                        arguments='{"path":"page1.png"}',
-                    ),
-                ),
-                ToolCall(
-                    id="call-image-2",
-                    function=ToolFunction(
-                        name="attach_image",
-                        arguments='{"path":"page2.png"}',
-                    ),
-                ),
-                ToolCall(
-                    id="call-run",
-                    function=ToolFunction(
-                        name="python_exec",
-                        arguments='{"code":"print(1)"}',
-                    ),
-                ),
-            ],
-        ),
-        Message.tool("call-image-1", '{"ok": true}'),
-        Message.user("page 1 preview"),
-        Message.user("page 2 preview"),
-        Message.user("continue"),
-    ]
-
-    repaired = normalize_tool_call_sequence(
-        messages,
-        drop_incomplete_assistant=True,
-    )
-
-    assert [message.role for message in repaired] == [
-        "user",
-        "user",
-        "user",
-        "user",
-    ]
-    assert [message.content for message in repaired[1:]] == [
-        "page 1 preview",
-        "page 2 preview",
-        "continue",
-    ]
+    assert estimate.input_tokens <= 32
+    assert retained[-1].content == "latest intent"
+    assert "truncated during context compaction" in str(retained[0].content)
 
 
 def test_normalize_openai_request_messages_drops_invalid_tool_turn_and_tool_calls_on_tool() -> (
@@ -416,30 +113,3 @@ def test_normalize_openai_request_messages_drops_invalid_tool_turn_and_tool_call
     normalized = normalize_openai_request_messages(messages)
 
     assert [message.role for message in normalized] == ["user", "user"]
-
-
-def test_normalize_openai_request_messages_drops_orphan_tool_result() -> None:
-    messages = [
-        Message.user("Start"),
-        Message(
-            role="assistant",
-            content="Need two tools.",
-            tool_calls=[
-                ToolCall(
-                    id="call-found",
-                    function=ToolFunction(name="read", arguments='{"path":"a.py"}'),
-                ),
-                ToolCall(
-                    id="call-missing",
-                    function=ToolFunction(name="read", arguments='{"path":"b.py"}'),
-                ),
-            ],
-        ),
-        Message.tool("call-found", '{"ok": true}'),
-        Message.user("Switch models and continue"),
-    ]
-
-    normalized = normalize_openai_request_messages(messages)
-
-    assert [message.role for message in normalized] == ["user", "user"]
-    assert all(message.tool_call_id is None for message in normalized)

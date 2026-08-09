@@ -54,6 +54,7 @@ class TokenUsageDetails(BaseModel):
     """Provider-reported token usage details."""
 
     cached_tokens: int | None = None
+    cache_creation_tokens: int | None = None
     reasoning_tokens: int | None = None
     audio_tokens: int | None = None
     accepted_prediction_tokens: int | None = None
@@ -70,6 +71,7 @@ class TokenUsage(BaseModel):
     reasoning_tokens: int | None = None
     total_tokens: int | None = None
     cached_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
     input_details: TokenUsageDetails = Field(default_factory=TokenUsageDetails)
     output_details: TokenUsageDetails = Field(default_factory=TokenUsageDetails)
     estimated_input_tokens: int | None = None
@@ -82,6 +84,7 @@ class MessageTextContentPart(BaseModel):
 
     type: Literal["text"] = "text"
     text: str
+    cache_control: dict[str, object] | None = None
 
 
 class MessageImageURL(BaseModel):
@@ -96,6 +99,12 @@ class MessageImageURLContentPart(BaseModel):
     type: Literal["image_url"] = "image_url"
     image_url: MessageImageURL
     detail: str | None = None
+    label: str | None = None
+
+    @property
+    def display_label(self) -> str:
+        """Return the stable model-facing label for this image."""
+        return self.label or "[Image]"
 
 
 class MessageLocalImageContentPart(BaseModel):
@@ -188,8 +197,6 @@ class Message(BaseModel):
             return "\n".join(text_parts)
         image_labels = [
             part.display_label
-            if isinstance(part, MessageLocalImageContentPart)
-            else "[Image]"
             for part in self.content
             if isinstance(
                 part,
@@ -208,12 +215,7 @@ class Message(BaseModel):
         """Return assistant text that should count as final answer output."""
         if self.role == "assistant" and self.phase == "commentary":
             return None
-        text = self.display_text_content()
-        if text:
-            return text
-        if self.role == "assistant" and not self.tool_calls:
-            return self.reasoning_content
-        return text
+        return self.display_text_content()
 
     def commentary_text_content(self) -> str | None:
         """Return assistant text that should be shown as mid-turn commentary."""
@@ -276,6 +278,7 @@ class ConversationLog(BaseModel):
     """Ordered log of all conversation entries."""
 
     entries: list[ConversationEntry] = Field(default_factory=list)
+    leaf_id: str | None = None
 
 
 class CompactionHandoff(BaseModel):
@@ -301,12 +304,6 @@ class MemorySnapshot(BaseModel):
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
-class WorkingMemory(BaseModel):
-    """Holds the current memory snapshot for the active agent context."""
-
-    current_snapshot: MemorySnapshot | None = None
-
-
 class AgentContext(BaseModel):
     """Runtime context for a single agent run including messages and memory."""
 
@@ -314,6 +311,6 @@ class AgentContext(BaseModel):
     messages: list[Message] = Field(default_factory=list)
     instructions: list[Message] = Field(default_factory=list)
     conversation_log: ConversationLog = Field(default_factory=ConversationLog)
-    memory: WorkingMemory = Field(default_factory=WorkingMemory)
     available_skills: list[SkillSpec] = Field(default_factory=list)
     active_skills: list[ActiveSkill] = Field(default_factory=list)
+    provider_epoch_reset: bool = False

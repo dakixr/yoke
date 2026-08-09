@@ -1,0 +1,127 @@
+"""Python interpreter environment helpers for local tools."""
+
+from __future__ import annotations
+
+import os
+import shlex
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+
+PYTHON_BIN_DIR_ENV = "YOKE_PYTHON_BIN_DIR"
+PYTHON_EXECUTABLE_ENV = "YOKE_PYTHON_EXECUTABLE"
+
+
+def current_python_executable() -> str:
+    """Return the active shell Python, falling back to yoke's interpreter."""
+    if active_executable := active_env_python_executable():
+        return active_executable
+    executable = Path(sys.executable)
+    if executable.is_absolute():
+        return str(executable)
+    return str(executable.absolute())
+
+
+def active_env_python_executable() -> str | None:
+    """Return Python from the parent shell's active virtual environment."""
+    for env_name in ("VIRTUAL_ENV", "CONDA_PREFIX"):
+        env_path = os.environ.get(env_name)
+        if not env_path:
+            continue
+        executable = python_executable_in_env(Path(env_path))
+        if executable.is_file():
+            return str(executable)
+    return None
+
+
+def python_executable_in_env(env_path: Path) -> Path:
+    """Return the expected Python executable path for an env directory."""
+    if os.name == "nt":
+        return env_path / "Scripts" / "python.exe"
+    return env_path / "bin" / "python"
+
+
+def prepare_python_env(
+    env: dict[str, str], python_executable: str | None = None
+) -> dict[str, str]:
+    """Expose stable `python` and `python3` commands for child processes."""
+    resolved_python_executable = python_executable or current_python_executable()
+    bin_dir = ensure_python_alias_bin(resolved_python_executable)
+    path_key, path = get_path_entry(env)
+    env[PYTHON_EXECUTABLE_ENV] = resolved_python_executable
+    env[PYTHON_BIN_DIR_ENV] = str(bin_dir)
+    env.setdefault("PYTHONIOENCODING", "utf-8:replace")
+    env.setdefault("PYTHONUTF8", "1")
+    python_path = Path(resolved_python_executable)
+    path_parts = []
+    if python_path.parent != Path("."):
+        path_parts.append(str(python_path.parent))
+    path_parts.append(str(bin_dir))
+    if path:
+        path_parts.append(path)
+    prepared_path = os.pathsep.join(path_parts)
+    env[path_key] = prepared_path
+    if os.name == "nt":
+        env["PATH"] = prepared_path
+        env["Path"] = prepared_path
+    return env
+
+
+def get_path_entry(env: dict[str, str]) -> tuple[str, str]:
+    """Return the environment path key/value without Windows duplicates."""
+    matching_keys = [key for key in env if key.upper() == "PATH"]
+    if not matching_keys:
+        return "Path" if os.name == "nt" else "PATH", ""
+    path_key = next((key for key in matching_keys if key == "Path"), matching_keys[0])
+    path = env.get(path_key, "")
+    if os.name == "nt":
+        for key in matching_keys:
+            if key != path_key:
+                env.pop(key, None)
+    return path_key, path
+
+
+def ensure_python_alias_bin(python_executable: str | None = None) -> Path:
+    """Create a temp bin dir with `python`/`python3` shims to yoke's Python."""
+    executable = python_executable or current_python_executable()
+    if os.name == "nt":
+        return ensure_windows_python_alias_bin(executable)
+
+    bin_dir = Path(tempfile.gettempdir()) / f"yoke-python-bin-{os.getuid()}"
+    bin_dir.mkdir(mode=0o700, exist_ok=True)
+    for name in ("python", "python3"):
+        shim = bin_dir / name
+        desired = _python_shim(executable)
+        if not _same_file_content(shim, desired):
+            shim.write_text(desired, encoding="utf-8")
+        shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
+    return bin_dir
+
+
+def ensure_windows_python_alias_bin(python_executable: str) -> Path:
+    """Create a temp bin dir with Windows command shims to yoke's Python."""
+    bin_dir = Path(tempfile.gettempdir()) / "yoke-python-bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in ("python", "python3"):
+        shim = bin_dir / f"{name}.cmd"
+        desired = _python_cmd_shim(python_executable)
+        if not _same_file_content(shim, desired):
+            shim.write_text(desired, encoding="utf-8")
+    return bin_dir
+
+
+def _python_shim(executable: str) -> str:
+    return f'#!/bin/sh\nexec {shlex.quote(executable)} "$@"\n'
+
+
+def _python_cmd_shim(executable: str) -> str:
+    return f'@echo off\r\n"{executable}" %*\r\nexit /b %ERRORLEVEL%\r\n'
+
+
+def _same_file_content(path: Path, content: str) -> bool:
+    try:
+        return path.read_text(encoding="utf-8") == content
+    except OSError:
+        return False

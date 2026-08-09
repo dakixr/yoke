@@ -6,8 +6,9 @@ import sys
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import partial
+from dataclasses import field
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from typing import Protocol
 from typing import cast
@@ -15,9 +16,7 @@ from typing import runtime_checkable
 
 from yoke.agent.compaction import TokenEstimate
 from yoke.agent.loop import AgentResult
-from yoke.agent.loop import RuntimeAgent
-from yoke.agent.loop import ConversationEntryHistory
-from yoke.agent.loop import MessageHistory
+from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -35,6 +34,7 @@ from yoke.cli.runtime.stats import (
 )
 from yoke.cli.session import SessionRecord
 from yoke.cli.session import SessionStore
+from yoke.cli.session import SessionTreeIndex
 
 
 @runtime_checkable
@@ -67,6 +67,32 @@ class ActiveSession:
     store: SessionStore
     record: SessionRecord
     title: str | None = None
+    save_lock: RLock = field(default_factory=RLock, repr=False)
+    tree_index: SessionTreeIndex = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Validate and index loaded topology once for this session lifetime."""
+        self.tree_index = SessionTreeIndex(
+            self.record.conversation_entries,
+            self.record.leaf_id,
+        )
+
+    def active_entry_refs(self) -> list[ConversationEntry]:
+        """Return a shallow active-path snapshot for internal runtime use."""
+        return list(self.tree_index.active_entry_refs())
+
+    def active_entries(self) -> list[ConversationEntry]:
+        """Return defensive active-path entries for an ownership transfer."""
+        return self.tree_index.active_entries()
+
+    def messages(self) -> list[Message]:
+        """Project transcript messages from the retained active path."""
+        return [
+            entry.message.model_copy(deep=True)
+            for entry in self.tree_index.active_entry_refs()
+            if entry.kind not in {"instruction", "memory_snapshot"}
+            and entry.message is not None
+        ]
 
 
 def execute_turn(
@@ -81,9 +107,9 @@ def execute_turn(
     active_skills: Sequence[object] | None = None,
     available_skills: Sequence[object] | None = None,
     conversation_entries: Sequence[ConversationEntry] | None = None,
-    after_tool_result_appended: Callable[[list[Message], list[ConversationEntry]], None]
-    | None = None,
-    context_checkpoint: Callable[[AgentContext], None] | None = None,
+    after_tool_result_appended: (
+        Callable[[list[Message], list[ConversationEntry]], None] | None
+    ) = None,
 ) -> AgentResult:
     """Execute one CLI turn against the agent."""
     active_indicator = indicator or StatusIndicator(stderr or sys.stderr)
@@ -97,24 +123,11 @@ def execute_turn(
         if isinstance(agent, RuntimeAgent):
             if not agent.has_state:
                 agent.load_conversation(
-                    (
-                        ConversationEntryHistory(conversation_entries)
-                        if conversation_entries is not None
-                        else MessageHistory(messages)
-                    ),
+                    messages=messages if conversation_entries is None else None,
+                    conversation_entries=conversation_entries,
                     available_skills=cast(Sequence[SkillSpec] | None, available_skills),
                     active_skills=cast(Sequence[ActiveSkill] | None, active_skills),
                 )
-            checkpoint_hook = (
-                partial(
-                    _handle_context_checkpoint,
-                    after_tool_result_appended=after_tool_result_appended,
-                    context_checkpoint=context_checkpoint,
-                )
-                if after_tool_result_appended is not None
-                or context_checkpoint is not None
-                else None
-            )
             return agent.run(
                 prompt,
                 user_message=user_message,
@@ -122,7 +135,17 @@ def execute_turn(
                 stop_requested=stop_requested,
                 active_skills=cast(Sequence[ActiveSkill] | None, active_skills),
                 available_skills=cast(Sequence[SkillSpec] | None, available_skills),
-                after_tool_result_appended=checkpoint_hook,
+                after_tool_result_appended=(
+                    lambda context: (
+                        _checkpoint_runtime_context(
+                            agent,
+                            context,
+                            after_tool_result_appended,
+                        )
+                        if after_tool_result_appended is not None
+                        else None
+                    )
+                ),
             )
         if user_message is not None and getattr(agent, "supports_user_message", False):
             return cast(Any, agent).run(
@@ -151,21 +174,19 @@ def execute_turn(
         )
 
 
-def _handle_context_checkpoint(
+def _checkpoint_runtime_context(
+    agent: RuntimeAgent,
     context: AgentContext,
-    *,
-    after_tool_result_appended: Callable[[list[Message], list[ConversationEntry]], None]
-    | None,
-    context_checkpoint: Callable[[AgentContext], None] | None,
+    callback: Callable[[list[Message], list[ConversationEntry]], None],
 ) -> None:
-    """Dispatch one post-tool context update to configured checkpoint hooks."""
-    if after_tool_result_appended is not None:
-        after_tool_result_appended(
-            list(context.messages),
-            [entry.model_copy(deep=True) for entry in context.conversation_log.entries],
-        )
-    if context_checkpoint is not None:
-        context_checkpoint(context)
+    """Expose one accepted tool-result checkpoint to CLI state."""
+    agent.active_skills = [
+        skill.model_copy(deep=True) for skill in context.active_skills
+    ]
+    callback(
+        list(context.messages),
+        [entry.model_copy(deep=True) for entry in context.conversation_log.entries],
+    )
 
 
 def estimate_messages_token_usage(messages: list[Message]) -> TokenEstimate:

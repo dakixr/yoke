@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from collections.abc import Iterable
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,6 +28,7 @@ class ModelIdentity:
     provider_name: str
     model_id: str | None = None
     reasoning_effort: str | None = None
+    supports_image_inputs: bool | None = None
 
     @property
     def model_name(self) -> str | None:
@@ -81,15 +81,14 @@ class ToolRegistrationContext:
 
 @dataclass(slots=True, frozen=True)
 class ToolRuntimeContext:
-    """Current provider and workspace context available during tool execution."""
+    """Provider and workspace context available during tool execution."""
 
     root: Path
     home: Path
     provider: Provider
     model: ModelIdentity
     cancel_requested: Callable[[], bool] = never_cancel
-    tool_event: Callable[[str, dict[str, object]], None] | None = None
-    recent_messages: Sequence[Message] = ()
+    command_process_manager: object | None = None
 
     @property
     def provider_name(self) -> str:
@@ -121,19 +120,18 @@ class ToolRuntimeContext:
 class ToolRegistrationResult:
     """Tools and system instructions contributed by one registration."""
 
-    tools: Iterable["LocalTool"]
+    tools: Iterable[LocalTool]
     system_messages: Iterable[Message] = ()
 
 
 type ToolRegistration = Iterable["LocalTool"] | ToolRegistrationResult
-type RegisterTools = Callable[
-    [ToolRegistrationContext],
-    ToolRegistration,
-]
+type RegisterTools = Callable[[ToolRegistrationContext], ToolRegistration]
 
 
-def normalize_tool_registration(value: ToolRegistration) -> ToolRegistrationResult:
-    """Normalize legacy iterable returns into a structured registration result."""
+def normalize_tool_registration(
+    value: ToolRegistration,
+) -> ToolRegistrationResult:
+    """Normalize legacy iterable returns into a registration result."""
     if isinstance(value, ToolRegistrationResult):
         system_messages: list[Message] = []
         for message in value.system_messages:
@@ -163,10 +161,16 @@ def resolve_model_identity(provider: Provider) -> ModelIdentity:
         reasoning_effort = None
     else:
         reasoning_effort = reasoning_effort.strip().lower()
+    supports_image_inputs = None
+    if isinstance(provider, ModelCatalogProvider):
+        model_info = provider.current_model_info()
+        if model_info is not None:
+            supports_image_inputs = model_info.supports_image_inputs
     return ModelIdentity(
         provider_name=provider_name,
         model_id=model_id,
         reasoning_effort=reasoning_effort,
+        supports_image_inputs=supports_image_inputs,
     )
 
 

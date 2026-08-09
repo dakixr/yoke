@@ -1,56 +1,24 @@
 from __future__ import annotations
 
-# ruff: noqa: F403, F405
-from yoke.agent.models import MessageLocalImageContentPart
+# ruff: noqa: F405
+
+from threading import Lock
+from threading import Thread
+from types import SimpleNamespace
+
+from yoke.agent.state import conversation_entries_from_messages
+from yoke.cli.interactive.tree_selector import TreeSelectorResult
+from yoke.cli.interactive.common import format_context_usage_text
+from yoke.cli.interactive.prompt.loop import (
+    process_prompt_toolkit_prompt,
+)
+
+from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageTextContentPart
+from yoke.cli.runtime.lifetime import close_cli_owned_agent
+from yoke.cli.runtime.lifetime import register_cli_owned_agent
 
-from .support import *  # noqa: F403, F405
-
-
-def test_cli_seeds_interactive_prompt(monkeypatch) -> None:
-    seen: dict[str, list[Message]] = {}
-
-    def fake_run_interactive_cli(
-        args: CLIArgs,
-        agent: FakeAgent,
-        session_messages: list[Message],
-        *,
-        active_session,
-        input_func,
-        stdout,
-        stderr,
-        replay_session: bool = False,
-    ) -> int:
-        del (
-            args,
-            agent,
-            active_session,
-            input_func,
-            stdout,
-            stderr,
-            replay_session,
-        )
-        seen["session_messages"] = list(session_messages)
-        return 0
-
-    monkeypatch.setattr(
-        "yoke.cli.interactive.run_interactive_cli",
-        fake_run_interactive_cli,
-    )
-    exit_code = run_cli(CLIArgs(prompt="hello world"), agent=FakeAgent())
-
-    assert exit_code == 0
-    assert seen["session_messages"][-1].role == "user"
-    assert seen["session_messages"][-1].content == "hello world"
-
-
-def test_main_prints_concise_usage_errors(capsys) -> None:
-    exit_code = main(["tools", "bogus"])
-    captured = capsys.readouterr()
-
-    assert exit_code == 2
-    assert "No such command 'bogus'" in captured.err
-    assert "Traceback" not in captured.err
+from .support import *  # noqa: F403
 
 
 def test_cli_runs_headless_prompt(capsys) -> None:
@@ -58,6 +26,166 @@ def test_cli_runs_headless_prompt(capsys) -> None:
 
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == "synthetic response"
+
+
+def test_prompt_state_adopts_provider_effort_after_model_command(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    agent = FakeAgent(
+        provider=SimpleNamespace(
+            config=SimpleNamespace(reasoning_effort="medium"),
+        )
+    )
+    active_session = active_session_for(tmp_path)
+    state = PromptCliState(
+        messages=[],
+        pending_prompts=[],
+        thinking_effort="medium",
+    )
+
+    def switch_model(*_args, **_kwargs):
+        agent.provider.config.reasoning_effort = "thinking"
+        return True, [], active_session
+
+    monkeypatch.setattr(
+        "yoke.cli.interactive.prompt.loop.handle_slash_command",
+        switch_model,
+    )
+
+    process_prompt_toolkit_prompt(
+        "/model",
+        state=state,
+        agent=agent,
+        active_session_ref={"active_session": active_session},
+        scrollback_console=build_console(CaptureStream()),
+        state_lock=Lock(),
+        update_status=lambda _message: None,
+        invalidate_prompt=lambda: None,
+        request_exit=lambda: None,
+        start_turn=lambda *_args, **_kwargs: Thread(),
+        steer_active_turn=lambda *_args, **_kwargs: False,
+        format_context_usage_text=format_context_usage_text,
+    )
+
+    assert state.thinking_effort == "thinking"
+
+
+def test_headless_cli_propagates_session_usage_attribution(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from yoke.ai.providers.usage_context import (
+        current_usage_metric_context,
+    )
+
+    class AttributionAgent(FakeAgent):
+        observed_context = None
+
+        def run(self, *args, **kwargs):
+            self.observed_context = current_usage_metric_context()
+            return super().run(*args, **kwargs)
+
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
+    agent = AttributionAgent()
+
+    exit_code = run_cli(
+        CLIArgs(
+            prompt="CLI attribution title",
+            headless=True,
+            root=str(tmp_path),
+        ),
+        agent=agent,
+        stdout=CaptureStream(),
+        stderr=CaptureStream(),
+    )
+
+    assert exit_code == 0
+    assert agent.observed_context is not None
+    assert agent.observed_context.surface == "cli"
+    session_id = agent.observed_context.session_id
+    assert session_id is not None
+    assert session_id.startswith("20")
+    assert agent.observed_context.session_title == "CLI attribution title"
+
+
+def test_cli_closes_runtime_it_constructs(tmp_path: Path, monkeypatch) -> None:
+    class CloseTrackingAgent(FakeAgent):
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    agent = CloseTrackingAgent()
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setattr(
+        "yoke.cli.runtime.cli.build_cli_agent_from_args",
+        lambda _args: SimpleNamespace(agent=agent, tool_report=None),
+    )
+
+    exit_code = run_cli(
+        CLIArgs(prompt="hello", headless=True, root=str(tmp_path)),
+        stdout=CaptureStream(),
+        stderr=CaptureStream(),
+    )
+
+    assert exit_code == 0
+    assert agent.closed is True
+
+
+def test_close_cli_owned_agent_preserves_entrypoint_error() -> None:
+    class FailingCloseAgent:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            raise RuntimeError("close failed")
+
+    agent = FailingCloseAgent()
+
+    @close_cli_owned_agent
+    def entrypoint() -> None:
+        register_cli_owned_agent(agent)
+        raise ValueError("original failure")
+
+    with pytest.raises(ValueError, match="original failure"):
+        entrypoint()
+    assert agent.closed is True
+
+
+def test_close_cli_owned_agent_tolerates_close_failure() -> None:
+    class FailingCloseAgent:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            raise RuntimeError("close failed")
+
+    agent = FailingCloseAgent()
+
+    @close_cli_owned_agent
+    def entrypoint() -> str:
+        register_cli_owned_agent(agent)
+        return "ok"
+
+    assert entrypoint() == "ok"
+    assert agent.closed is True
+
+
+def test_close_cli_owned_agent_leaves_caller_owned_agent() -> None:
+    class CloseTrackingAgent:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    agent = CloseTrackingAgent()
+
+    @close_cli_owned_agent
+    def entrypoint(agent: object | None = None) -> str:
+        return "ok"
+
+    assert entrypoint(agent=agent) == "ok"
+    assert agent.closed is False
 
 
 def test_cli_reads_headless_prompt_from_stdin(monkeypatch) -> None:
@@ -109,8 +237,8 @@ def test_cli_headless_accepts_image_attachments(tmp_path: Path, monkeypatch) -> 
     image_part = content[1]
     assert isinstance(text_part, MessageTextContentPart)
     assert text_part.text == "describe [tiny.png] please"
-    assert isinstance(image_part, MessageLocalImageContentPart)
-    assert Path(image_part.path) == image_path.resolve()
+    assert isinstance(image_part, MessageImageURLContentPart)
+    assert image_part.image_url.url.startswith("data:image/png;base64,")
     assert image_part.label == "[Image #1]"
 
     stored = SessionStore(session_dir).load("image-demo")
@@ -122,7 +250,8 @@ def test_cli_headless_accepts_image_attachments(tmp_path: Path, monkeypatch) -> 
     stored_image_part = stored_content[1]
     assert isinstance(stored_text_part, MessageTextContentPart)
     assert stored_text_part.text == "describe [tiny.png] please"
-    assert isinstance(stored_image_part, MessageLocalImageContentPart)
+    assert isinstance(stored_image_part, MessageImageURLContentPart)
+    assert stored_image_part.image_url.url.startswith("data:image/png;base64,")
     assert stored_image_part.label == "[Image #1]"
 
 
@@ -144,3 +273,72 @@ def test_cli_requires_prompt_in_headless_mode(monkeypatch) -> None:
         "Headless mode requires --prompt or prompt text from stdin."
         in stderr.getvalue()
     )
+
+
+def test_tree_navigation_reprints_history_after_state_update(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    active_session = active_session_for(tmp_path)
+    messages = [
+        Message.user("first"),
+        Message.assistant("answer"),
+        Message.user("second"),
+        Message.assistant("second answer"),
+    ]
+    active_session.store.save(
+        active_session.id,
+        messages,
+        conversation_entries=conversation_entries_from_messages(messages),
+        root=tmp_path,
+    )
+    active_session.record = active_session.store.load(active_session.id)
+    assistant_entry = active_session.record.conversation_entries[1]
+    state = PromptCliState(
+        messages=list(active_session.record.messages),
+        pending_prompts=[],
+    )
+    active_session_ref = {"active_session": active_session}
+    stdout = CaptureStream()
+    console = build_console(stdout)
+    monkeypatch.setattr(
+        "yoke.cli.interactive.slash_commands.select_tree_entry_interactive",
+        lambda *_args, **_kwargs: TreeSelectorResult(
+            "select",
+            assistant_entry.id,
+        ),
+    )
+    monkeypatch.setattr(
+        "yoke.cli.interactive.slash_commands._ask_branch_summary_choice",
+        lambda: (False, None),
+    )
+    monkeypatch.setattr(
+        "yoke.cli.interactive.prompt.loop.print_session_scrollback",
+        lambda _console, messages: _console.print(
+            "replayed " + ",".join(message.role for message in messages)
+        ),
+    )
+
+    updated_session = process_prompt_toolkit_prompt(
+        "/tree",
+        state=state,
+        agent=FakeAgent(),
+        active_session_ref=active_session_ref,
+        scrollback_console=console,
+        state_lock=Lock(),
+        update_status=lambda _message: None,
+        invalidate_prompt=lambda: None,
+        request_exit=lambda: None,
+        start_turn=lambda *_args, **_kwargs: Thread(),
+        steer_active_turn=lambda *_args, **_kwargs: False,
+        format_context_usage_text=format_context_usage_text,
+        on_editor_text=lambda _text: None,
+    )
+
+    assert updated_session.record.leaf_id is not None
+    assert [message.role for message in state.messages] == [
+        "user",
+        "assistant",
+    ]
+    assert "replayed user,assistant" in stdout.getvalue()
+    assert "Navigated to selected point." in stdout.getvalue()

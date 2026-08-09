@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from yoke.agent.loop.cache_scope import conversation_cache_scope
 from yoke.agent.loop.types import AgentEventHandler
-from yoke.agent.loop.types import StopRequested
 from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
 from yoke.agent.usage import compact_usage_payload
-from yoke.ai.providers.base import complete_with_cancel
-from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
+from yoke.ai.providers.base import ProviderRequestContext
+from yoke.ai.providers.base import complete_with_cancel
+from yoke.ai.providers.usage_context import usage_metric_context
 
 
 def guard_newest_user_message_images(agent, context: AgentContext) -> None:
@@ -68,10 +69,9 @@ def should_retry_after_overflow(error: ProviderError) -> bool:
             "more than 50img",
             "more than 50 img",
             "context_length_exceeded",
-            "context length exceeded",
-            "context too long",
             "exceeds the context window",
-            "myokemum context length",
+            "context too long",
+            "maximum context length",
             "prompt token count",
             "exceeds the limit",
             "token limit",
@@ -92,55 +92,39 @@ def retry_with_compacted_history(
     *,
     iteration: int,
     on_event: AgentEventHandler | None,
-    stop_requested: StopRequested | None,
     compact_context,
     emit_event: Callable[[str, dict[str, object]], None],
 ) -> Message | None:
-    """Compact older history, re-append the newest message, and retry."""
-    newest_message = agent.context_manager.newest_real_user_message(context)
-    if newest_message is None:
-        return None
-    compacted_context = context.model_copy(deep=True)
-    newest_entries = compacted_context.conversation_log.entries
-    for index in range(len(newest_entries) - 1, -1, -1):
-        entry = newest_entries[index]
-        if entry.message is not None and entry.message.role == "user":
-            del newest_entries[index]
-            break
-    compacted_context.messages = agent.context_manager.transcript_messages(
-        compacted_context
-    )
+    """Start one reduced epoch and retry the rejected request once."""
     compaction = compact_context(
         agent,
-        compacted_context,
+        context,
         iteration=iteration,
         on_event=on_event,
         reason="overflow_retry",
-        stop_requested=stop_requested,
     )
-    if compaction.failed:
+    if compaction.failed or compaction.result is None:
         return None
-    agent.context_manager.append_message(compacted_context, newest_message)
-    guard_newest_user_message_images(agent, compacted_context)
-    guard_newest_user_message_tokens(agent, compacted_context)
+    guard_newest_user_message_images(agent, context)
+    guard_newest_user_message_tokens(agent, context)
     provider_messages = messages_for_provider_capabilities(
-        agent.context_manager.messages_for_provider(compacted_context),
+        agent.context_manager.messages_for_provider(context),
         agent.provider,
     )
     try:
-        assistant_message = complete_with_cancel(
-            agent.provider,
-            provider_messages,
-            agent._tool_definitions(),
-            cancel_requested=stop_requested,
-        )
-    except ProviderCancelledError:
-        raise
+        with usage_metric_context(call_kind="overflow_retry"):
+            assistant_message = complete_with_cancel(
+                agent.provider,
+                provider_messages,
+                agent._tool_definitions(),
+                request_context=ProviderRequestContext(
+                    cache_scope=conversation_cache_scope(context),
+                    response_continuity="reset",
+                ),
+            )
     except ProviderError:
         return None
-    context.conversation_log = compacted_context.conversation_log.model_copy(deep=True)
-    context.memory = compacted_context.memory.model_copy(deep=True)
-    context.messages = agent.context_manager.transcript_messages(context)
+    context.provider_epoch_reset = False
     emit_event(
         "model_end",
         _model_end_payload(iteration=iteration, message=assistant_message),

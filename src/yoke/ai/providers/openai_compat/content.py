@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from yoke.agent.image_data import (
+    local_image_to_data_url as _local_image_to_data_url,
+)
 from yoke.agent.message_sanitizer import normalize_tool_call_sequence
 from yoke.agent.models import Message
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import MessageTextContentPart
-from yoke.agent.multimodal import encode_local_image_data_url
 
 
 def normalize_openai_request_messages(
@@ -19,6 +22,7 @@ def normalize_openai_request_messages(
     return normalize_tool_call_sequence(
         messages,
         drop_incomplete_assistant=True,
+        drop_orphan_tool_results=True,
     )
 
 
@@ -51,21 +55,29 @@ def _serialize_content(message: Message) -> object:
     serialized: list[dict[str, Any]] = []
     for part in content:
         if isinstance(part, MessageTextContentPart):
-            serialized.append({"type": "text", "text": part.text})
+            text_payload: dict[str, Any] = {"type": "text", "text": part.text}
+            if part.cache_control is not None:
+                text_payload["cache_control"] = part.cache_control
+            serialized.append(text_payload)
             continue
         if isinstance(part, MessageImageURLContentPart):
             serialized.extend(
                 _wrap_image_content(
                     image_url=part.image_url.url,
-                    label=None,
+                    label=part.label,
                     detail=part.detail,
                 )
             )
             continue
         if isinstance(part, MessageLocalImageContentPart):
+            try:
+                image_url = _local_image_to_data_url(part.path)
+            except OSError:
+                serialized.append(_missing_local_image_content(part))
+                continue
             serialized.extend(
                 _wrap_image_content(
-                    image_url=part.data_url or encode_local_image_data_url(part.path),
+                    image_url=image_url,
                     label=part.display_label,
                     detail=part.detail,
                 )
@@ -94,10 +106,14 @@ def _wrap_image_content(
     ]
 
 
-def _local_image_to_data_url(path_value: str) -> str:
-    """Read a local image and encode it as a prompt-safe data URL.
-
-    Deprecated: delegates to ``yoke.agent.multimodal.encode_local_image_data_url``.
-    Kept for backward compatibility with external callers and tests.
-    """
-    return encode_local_image_data_url(path_value)
+def _missing_local_image_content(
+    part: MessageLocalImageContentPart,
+) -> dict[str, str]:
+    path = Path(part.path).expanduser().resolve()
+    return {
+        "type": "text",
+        "text": (
+            f"[Image unavailable: {part.display_label} was attached from "
+            f"{path}, but that local file no longer exists.]"
+        ),
+    }

@@ -8,7 +8,8 @@ from urllib.parse import parse_qs
 from urllib.parse import unquote
 from urllib.parse import urljoin
 from urllib.parse import urlparse
-from xml.etree import ElementTree
+
+from defusedxml import ElementTree
 
 from yoke.agent.tools.web.common import domain_for
 from yoke.agent.tools.web.common import DuckDuckGoHTMLParser
@@ -27,7 +28,6 @@ def web_search(
             follow_redirects=True,
             headers={"User-Agent": http_user_agent()},
             timeout=timeout_s,
-            verify=False,  # noqa: S501
         )
         try:
             duckduckgo_failed = False

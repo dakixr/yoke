@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-import time
 from collections.abc import Callable
-from collections.abc import Iterable
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
+from dataclasses import dataclass
+import time
+from typing import TYPE_CHECKING
+from typing import Literal
 from typing import Protocol
 from typing import cast
 from typing import runtime_checkable
@@ -13,17 +18,37 @@ from typing import runtime_checkable
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
+from pydantic import model_validator
 
-from yoke.agent.models import ConversationEntry
+if TYPE_CHECKING:
+    from yoke.agent.models import ConversationEntry
+
 from yoke.agent.models import Message
 
-DEFAULT_THINKING_LEVELS = (
-    "none",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
+ProviderEventHandler = Callable[[str, dict[str, object]], None]
+_PROVIDER_EVENT_HANDLER: ContextVar[ProviderEventHandler | None] = ContextVar(
+    "yoke_provider_event_handler",
+    default=None,
 )
+
+
+@contextmanager
+def provider_event_handler(
+    handler: ProviderEventHandler | None,
+) -> Iterator[None]:
+    """Route provider telemetry from the current request to a handler."""
+    token = _PROVIDER_EVENT_HANDLER.set(handler)
+    try:
+        yield
+    finally:
+        _PROVIDER_EVENT_HANDLER.reset(token)
+
+
+def emit_provider_event(event: str, payload: dict[str, object]) -> None:
+    """Emit provider telemetry when the caller installed a handler."""
+    handler = _PROVIDER_EVENT_HANDLER.get()
+    if handler is not None:
+        handler(event, payload)
 
 
 class ProviderError(RuntimeError):
@@ -111,12 +136,22 @@ class ProviderModelInfo(BaseModel):
             raise ValueError("default_thinking_level must not be empty")
         return normalized
 
+    @model_validator(mode="after")
+    def validate_default_is_supported(self) -> ProviderModelInfo:
+        """Require a declared default to be one of the supported levels."""
+        if (
+            self.default_thinking_level is not None
+            and self.default_thinking_level not in self.thinking_levels
+        ):
+            raise ValueError("default_thinking_level must appear in thinking_levels")
+        return self
+
     @field_validator("system_messages")
     @classmethod
     def validate_system_messages(
         cls, value: tuple[Message, ...]
     ) -> tuple[Message, ...]:
-        """Ensure provider/model prompt contributions are system messages."""
+        """Require provider/model prompt contributions to be system messages."""
         messages: list[Message] = []
         for message in value:
             if message.role != "system":
@@ -151,9 +186,6 @@ class ModelCatalogProvider(Protocol):
 class Provider(Protocol):
     """Protocol for AI provider implementations."""
 
-    supports_image_inputs: bool = False
-    max_images_per_message: int | None = None
-
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
@@ -161,8 +193,34 @@ class Provider(Protocol):
         ...
 
 
+ResponseContinuity = Literal["continue", "reset", "isolated"]
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRequestContext:
+    """Stable request metadata supplied by the agent runtime."""
+
+    cache_scope: str
+    response_continuity: ResponseContinuity = "continue"
+
+
+@runtime_checkable
+class ContextualProvider(Protocol):
+    """Optional protocol for providers using runtime request metadata."""
+
+    def complete_with_context(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        request_context: ProviderRequestContext,
+    ) -> Message:
+        """Complete a request with stable conversation metadata."""
+        ...
+
+
 def fork_provider(provider: Provider) -> Provider:
-    """Create a request-isolated provider when its constructor supports cloning."""
+    """Create a request-isolated provider when its constructor supports it."""
     custom_fork = getattr(provider, "fork_for_turn", None)
     if callable(custom_fork):
         return cast(Provider, custom_fork())
@@ -173,8 +231,7 @@ def fork_provider(provider: Provider) -> Provider:
     cloned_config = (
         copy_config(deep=True) if callable(copy_config) else deepcopy(config)
     )
-    provider_type = type(provider)
-    constructor = cast(Callable[..., Provider], provider_type)
+    constructor = cast(Callable[..., Provider], type(provider))
     sleep = getattr(provider, "_sleep", None)
     try:
         return constructor(cloned_config, **({"sleep": sleep} if sleep else {}))
@@ -187,7 +244,7 @@ def fork_provider(provider: Provider) -> Provider:
 
 @runtime_checkable
 class CancellableProvider(Protocol):
-    """Optional protocol for providers that can abort in-flight requests."""
+    """Optional protocol for providers that support cooperative cancellation."""
 
     def complete_with_cancel(
         self,
@@ -196,7 +253,7 @@ class CancellableProvider(Protocol):
         *,
         cancel_requested: Callable[[], bool],
     ) -> Message:
-        """Send messages and abort promptly when cancellation is requested."""
+        """Complete while observing the supplied cancellation callback."""
         ...
 
 
@@ -206,17 +263,33 @@ def complete_with_cancel(
     tools: list[dict[str, object]],
     *,
     cancel_requested: Callable[[], bool] | None = None,
+    request_context: ProviderRequestContext | None = None,
 ) -> Message:
-    """Run a provider completion, using provider-native cancellation when available."""
+    """Use provider-native cancellation when available."""
     if cancel_requested is not None and cancel_requested():
         raise ProviderCancelledError()
-    if isinstance(provider, CancellableProvider):
-        return provider.complete_with_cancel(
+    if request_context is not None and isinstance(provider, ContextualProvider):
+        response = provider.complete_with_context(
             messages,
             tools,
-            cancel_requested=cancel_requested or never_cancel,
+            request_context=request_context,
         )
-    response = provider.complete(messages, tools)
+    elif isinstance(provider, CancellableProvider):
+        try:
+            response = provider.complete_with_cancel(
+                messages,
+                tools,
+                cancel_requested=cancel_requested or _never_cancel,
+            )
+        except ProviderError as exc:
+            if cancel_requested is not None and cancel_requested():
+                raise ProviderCancelledError() from exc
+            raise
+    else:
+        response = provider.complete(messages, tools)
+    from yoke.ai.providers.usage_log import record_provider_usage
+
+    record_provider_usage(provider, response)
     if cancel_requested is not None and cancel_requested():
         raise ProviderCancelledError()
     return response
@@ -232,6 +305,9 @@ def start_provider_turn(provider: Provider) -> None:
 def never_cancel() -> bool:
     """Return false for APIs that require a cancellation callback."""
     return False
+
+
+_never_cancel = never_cancel
 
 
 def sleep_with_cancel(
@@ -257,54 +333,3 @@ def sleep_with_cancel(
         if remaining <= 0:
             return
         time.sleep(min(interval_seconds, remaining))
-
-
-@runtime_checkable
-class ProviderSystemMessageProvider(Protocol):
-    """Optional provider hook for active model system instructions."""
-
-    def current_model_system_messages(self) -> Iterable[Message]:
-        """Return system messages for the provider's active model."""
-        ...
-
-
-def provider_system_messages(provider: Provider) -> list[Message]:
-    """Return validated system messages for a provider's active model."""
-    messages: list[Message] = []
-    if isinstance(provider, ModelCatalogProvider):
-        model_info = provider.current_model_info()
-        if model_info is not None:
-            messages.extend(model_info.system_messages)
-    if isinstance(provider, ProviderSystemMessageProvider):
-        messages.extend(provider.current_model_system_messages())
-    return _copy_system_messages(messages)
-
-
-def insert_provider_system_messages(
-    messages: list[Message],
-    provider: Provider,
-) -> list[Message]:
-    """Insert provider/model system messages after leading system messages."""
-    provider_messages = provider_system_messages(provider)
-    if not provider_messages:
-        return [message.model_copy(deep=True) for message in messages]
-    resolved = [message.model_copy(deep=True) for message in messages]
-    insert_at = 0
-    while insert_at < len(resolved) and resolved[insert_at].role == "system":
-        insert_at += 1
-    return [
-        *resolved[:insert_at],
-        *provider_messages,
-        *resolved[insert_at:],
-    ]
-
-
-def _copy_system_messages(messages: Iterable[Message]) -> list[Message]:
-    copied: list[Message] = []
-    for message in messages:
-        if not isinstance(message, Message):
-            raise TypeError("Provider system messages must contain Message values")
-        if message.role != "system":
-            raise ValueError("Provider system messages must have role='system'")
-        copied.append(message.model_copy(deep=True))
-    return copied

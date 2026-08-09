@@ -87,6 +87,7 @@ def estimate_context_usage(
     messages: list[Message],
     *,
     conversation_entries: Sequence[ConversationEntry] | None = None,
+    take_entry_ownership: bool = False,
 ) -> dict[str, int] | None:
     """Estimate current prompt context usage against provider budget."""
     return estimate_agent_context_usage(
@@ -94,4 +95,5 @@ def estimate_context_usage(
         prompt,
         messages,
         conversation_entries=conversation_entries,
+        take_entry_ownership=take_entry_ownership,
     )

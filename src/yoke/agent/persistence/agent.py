@@ -32,14 +32,18 @@ def save_agent_state(
 
 
 def load_agent_state(
-    path: str | os.PathLike[str], *, strict: bool = True
+    path: str | os.PathLike[str],
+    *,
+    strict: bool = True,
 ) -> AgentState:
     """Load portable agent state from a durable snapshot file."""
     return read_agent_state_snapshot(path, strict=strict).state
 
 
 def load_agent_state_snapshot(
-    path: str | os.PathLike[str], *, strict: bool = True
+    path: str | os.PathLike[str],
+    *,
+    strict: bool = True,
 ) -> AgentStateSnapshot:
     """Load a durable snapshot including metadata and state."""
     return read_agent_state_snapshot(path, strict=strict)
@@ -52,7 +56,11 @@ def restore_agent_state(
     strict: bool = True,
     available_skills: list[SkillSpec] | None = None,
 ) -> AgentState:
-    """Load portable state and hydrate an agent-like object."""
+    """Load portable state from a snapshot and hydrate an agent-like object."""
     state = load_agent_state(path, strict=strict)
-    hydrate_agent_state(agent, state, available_skills=available_skills)
+    hydrate_agent_state(
+        agent,
+        state,
+        available_skills=available_skills,
+    )
     return state

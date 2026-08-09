@@ -20,7 +20,9 @@ from yoke.agent.state import AgentState
 
 
 def read_agent_state_snapshot(
-    path: str | os.PathLike[str], *, strict: bool = True
+    path: str | os.PathLike[str],
+    *,
+    strict: bool = True,
 ) -> AgentStateSnapshot:
     """Read and validate a durable agent state snapshot."""
     resolved = _resolve_path(path)
@@ -51,13 +53,18 @@ def write_agent_state_snapshot(
     atomic: bool = True,
 ) -> Path:
     """Write a durable agent state snapshot and return its path."""
+    resolved = _resolve_path(path)
     snapshot = AgentStateSnapshot(
         created_at=utc_timestamp(),
         updated_at=utc_timestamp(),
         metadata=dict(metadata or {}),
         state=state,
     )
-    return write_agent_state_snapshot_model(path, snapshot, atomic=atomic)
+    return write_agent_state_snapshot_model(
+        resolved,
+        snapshot,
+        atomic=atomic,
+    )
 
 
 def write_agent_state_snapshot_model(
@@ -93,8 +100,8 @@ def _validate_envelope(payload: dict[str, Any], *, strict: bool) -> None:
     if schema_version > AGENT_STATE_SCHEMA_VERSION:
         qualifier = "" if strict else " yet"
         raise AgentStateLoadError(
-            f"Agent state snapshot schema_version {schema_version} "
-            f"is not supported{qualifier}."
+            "Agent state snapshot schema_version "
+            f"{schema_version} is not supported{qualifier}."
         )
     if schema_version < 1:
         raise AgentStateLoadError(
@@ -106,7 +113,10 @@ def _atomic_write_text(path: Path, data: str) -> None:
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=path.parent, delete=False
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            delete=False,
         ) as handle:
             temp_path = Path(handle.name)
             handle.write(data)

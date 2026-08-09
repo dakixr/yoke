@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
-from yoke.agent.loop import RuntimeAgent
-from yoke.agent.loop.tools.core import index_tools
-from yoke.cli.bootstrap.types import LoadedTool, ToolLoadReport
+from yoke.agent.loop.agent import RuntimeAgent
+from yoke.agent.loop.tool_core import index_tools
+from yoke.cli.bootstrap.types import LoadedTool
+from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.render.base import Console
+from yoke.cli.runtime.selector.ui import select_list_item_interactive
 from yoke.cli.runtime.selector.multiselect import (
     select_table_items_interactive,
 )
-from yoke.cli.runtime.selector.ui import (
-    SelectorTableColumns,
-    select_list_item_interactive,
-)
-from yoke.cli.tools.policy import ToolPolicy, YokeConfig, load_config_file
+from yoke.cli.runtime.selector.ui import SelectorTableColumns
+from yoke.cli.tools.policy import PiConfig
+from yoke.cli.tools.policy import ToolPolicy
+from yoke.cli.tools.policy import load_config_file
 
 
 @dataclass(slots=True, frozen=True)
@@ -34,42 +35,31 @@ class ToolMenuRow:
     """One row in the interactive tools menu."""
 
     loaded_tools: tuple[LoadedTool, ...]
-
-    @property
-    def primary_tool(self) -> LoadedTool:
-        """Return the first loaded tool represented by this row."""
-        return self.loaded_tools[0]
-
-    @property
-    def target(self) -> str:
-        """Return the policy target represented by this row."""
-        return self.primary_tool.capability_name or self.primary_tool.tool.name
+    policy_kind: str
+    policy_key: str
 
     @property
     def name(self) -> str:
-        """Return the display name."""
-        return self.target
+        """Return the tool name."""
+        names = [loaded.tool.name for loaded in self.loaded_tools]
+        return ", ".join(names)
+
+    @property
+    def tool_names(self) -> set[str]:
+        """Return concrete tool names controlled by this row."""
+        return {loaded.tool.name for loaded in self.loaded_tools}
 
     @property
     def source(self) -> str:
         """Return the tool source kind."""
-        if self.primary_tool.capability_name is not None:
-            return "builtin capability"
-        return self.primary_tool.source_kind
+        return self.loaded_tools[0].source_kind
 
     @property
     def location(self) -> str:
         """Return a displayable source location."""
-        if self.primary_tool.capability_name is not None:
-            return ", ".join(tool.tool.name for tool in self.loaded_tools)
-        if self.primary_tool.source_path is None:
+        if self.loaded_tools[0].source_path is None:
             return "builtin"
-        return str(self.primary_tool.source_path)
-
-    @property
-    def tool_names(self) -> set[str]:
-        """Return runtime tool names represented by this row."""
-        return {loaded.tool.name for loaded in self.loaded_tools}
+        return str(self.loaded_tools[0].source_path)
 
 
 def handle_tools_menu(
@@ -97,11 +87,10 @@ def handle_tools_menu(
         return
 
     active_names = set(agent.tools)
-    visible_active_targets = {
-        row.target for row in rows if row.tool_names.issubset(active_names)
-    }
+    visible_names = {name for row in rows for name in row.tool_names}
+    active_visible_names = active_names & visible_names
     selected_indexes = {
-        index for index, row in enumerate(rows) if row.tool_names.issubset(active_names)
+        index for index, row in enumerate(rows) if row.tool_names & active_visible_names
     }
     result = select_table_items_interactive(
         rows,
@@ -118,8 +107,10 @@ def handle_tools_menu(
         print_scrollback_notice(console, "Tool changes cancelled.")
         return
 
-    new_targets = {rows[index].target for index in result}
-    if new_targets == visible_active_targets:
+    selected_visible_names = {
+        tool_name for index in result for tool_name in rows[index].tool_names
+    }
+    if selected_visible_names == active_visible_names:
         print_scrollback_notice(console, "No tool changes applied.")
         return
 
@@ -132,21 +123,22 @@ def handle_tools_menu(
         agent=agent,
         report=report,
         rows=rows,
-        active_targets=new_targets,
+        active_names=selected_visible_names,
     )
     if scope.id != "session":
         config_path = _tool_scope_config_path(scope=scope, root=root)
-        assert config_path is not None
-        _write_tool_policy_config(
-            config_path,
-            rows=rows,
-            active_targets=new_targets,
-        )
+        if config_path is not None:
+            _write_tool_policy_config(
+                config_path,
+                rows=rows,
+                active_names=selected_visible_names,
+            )
+    effective_names = selected_visible_names | (active_names - visible_names)
     print_scrollback_notice(
         console,
         _format_tool_change_summary(
-            before=visible_active_targets,
-            after=new_targets,
+            before=active_names,
+            after=effective_names,
             scope=scope,
         ),
     )
@@ -156,6 +148,7 @@ def _select_tool_change_scope(
     *,
     root: Path | None,
 ) -> ToolChangeScope | None:
+    home = Path.home()
     scopes = [
         ToolChangeScope(
             id="session",
@@ -174,10 +167,10 @@ def _select_tool_change_scope(
         ToolChangeScope(
             id="global",
             label="Globally",
-            description=f"Write {Path.home() / '.yoke' / 'config.json'}",
+            description=f"Write {home / '.yoke' / 'config.json'}",
         ),
     ]
-    if root is None:
+    if root is None or root.resolve() == home.resolve():
         scopes = [scope for scope in scopes if scope.id != "root"]
     return select_list_item_interactive(
         scopes,
@@ -204,21 +197,27 @@ def _apply_session_tool_changes(
     agent: RuntimeAgent,
     report: ToolLoadReport,
     rows: list[ToolMenuRow],
-    active_targets: set[str],
+    active_names: set[str],
 ) -> None:
-    visible_names = set().union(*(row.tool_names for row in rows))
+    visible_tool_names = {name for row in rows for name in row.tool_names}
     selected_tools = [
         loaded.tool
         for row in rows
-        if row.target in active_targets
+        if row.tool_names & active_names
         for loaded in row.loaded_tools
+        if loaded.tool.name in active_names
     ]
     hidden_runtime_tools = [
-        tool for name, tool in agent.tools.items() if name not in visible_names
+        tool for name, tool in agent.tools.items() if name not in visible_tool_names
     ]
     selected_tools.extend(hidden_runtime_tools)
-    agent.tools = index_tools(selected_tools)
-    agent.tool_report = _tool_report_with_active_targets(report, active_targets)
+    if getattr(agent, "_tool_factory", None) is None:
+        agent.tools = index_tools(selected_tools)
+    else:
+        hidden_names = {tool.name for tool in hidden_runtime_tools}
+        agent.set_session_enabled_tools(active_names | hidden_names)
+    agent.tool_report = _tool_report_with_active_names(report, active_names)
+    agent._install_session_filtered_tool_system_messages()
 
 
 def _tool_scope_config_path(
@@ -239,19 +238,24 @@ def _write_tool_policy_config(
     path: Path,
     *,
     rows: list[ToolMenuRow],
-    active_targets: set[str],
+    active_names: set[str],
 ) -> None:
     loaded_config = load_config_file(path)
+    capabilities = dict(loaded_config.config.capabilities)
     tools = dict(loaded_config.config.tools)
     for row in rows:
-        if row.target in active_targets:
-            tools.pop(row.target, None)
+        policy = ToolPolicy.allow if row.tool_names & active_names else ToolPolicy.deny
+        if row.policy_kind == "capability":
+            capabilities[row.policy_key] = policy
+            for tool_name in row.tool_names:
+                tools.pop(tool_name, None)
         else:
-            tools[row.target] = ToolPolicy.deny
+            tools[row.policy_key] = policy
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            YokeConfig(
+            PiConfig(
+                capabilities=capabilities,
                 tools=tools,
                 default_model=loaded_config.config.default_model,
                 default_reasoning_effort=(
@@ -266,18 +270,26 @@ def _write_tool_policy_config(
 
 
 def _tool_rows(report: ToolLoadReport) -> list[ToolMenuRow]:
-    by_target: dict[str, list[LoadedTool]] = {}
+    by_key: dict[tuple[str, str], list[LoadedTool]] = {}
     for loaded in report.discovered_tools:
-        target = loaded.capability_name or loaded.tool.name
-        by_target.setdefault(target, []).append(loaded)
+        if loaded.source_kind == "default" and loaded.capability_id:
+            key = ("capability", loaded.capability_id)
+        else:
+            key = ("tool", loaded.tool.name)
+        by_key.setdefault(key, []).append(loaded)
     return [
-        ToolMenuRow(loaded_tools=tuple(loaded_tools))
-        for loaded_tools in sorted(
-            by_target.values(),
+        ToolMenuRow(
+            loaded_tools=tuple(tools),
+            policy_kind=kind,
+            policy_key=key,
+        )
+        for (kind, key), tools in sorted(
+            by_key.items(),
             key=lambda item: (
-                item[0].capability_name or item[0].tool.name,
-                item[0].source_kind,
-                str(item[0].source_path or ""),
+                item[0][0],
+                item[0][1],
+                item[1][0].source_kind,
+                str(item[1][0].source_path or ""),
             ),
         )
     ]
@@ -285,10 +297,10 @@ def _tool_rows(report: ToolLoadReport) -> list[ToolMenuRow]:
 
 def _tool_menu_columns(rows: list[ToolMenuRow]) -> SelectorTableColumns:
     return SelectorTableColumns(
-        headers=("On", "Tool", "Source", "Location"),
+        headers=("On", "Target", "Source", "Location"),
         widths=(
             4,
-            max(len("Tool"), max(len(row.name) for row in rows)),
+            max(len("Target"), max(len(row.policy_key) for row in rows)),
             max(len("Source"), max(len(row.source) for row in rows)),
             max(
                 len("Location"),
@@ -312,7 +324,7 @@ def _render_tool_row(
     return "  ".join(
         (
             state.ljust(columns.widths[0]),
-            row.name.ljust(columns.widths[1]),
+            row.policy_key.ljust(columns.widths[1]),
             row.source.ljust(columns.widths[2]),
             location.ljust(columns.widths[3]),
         )
@@ -336,30 +348,8 @@ def _tool_report_with_active_names(
             if entry.tool.name not in active_names
         ],
         config_path=report.config_path,
-        unmatched_config_patterns=report.unmatched_config_patterns,
-        failures=list(report.failures),
-    )
-
-
-def _tool_report_with_active_targets(
-    report: ToolLoadReport,
-    active_targets: set[str],
-) -> ToolLoadReport:
-    return ToolLoadReport(
-        discovered_tools=list(report.discovered_tools),
-        active_tools=[
-            entry
-            for entry in report.discovered_tools
-            if (entry.capability_name or entry.tool.name) in active_targets
-        ],
-        denied_tools=[
-            entry
-            for entry in report.discovered_tools
-            if (entry.capability_name or entry.tool.name) not in active_targets
-        ],
-        config_path=report.config_path,
-        unmatched_config_patterns=report.unmatched_config_patterns,
-        failures=list(report.failures),
+        unmatched_tool_names=report.unmatched_tool_names,
+        unmatched_capability_ids=report.unmatched_capability_ids,
     )
 
 

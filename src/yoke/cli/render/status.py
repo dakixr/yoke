@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from threading import Lock
-from typing import cast
 
 from rich.status import Status
 from rich.text import Text
@@ -13,8 +12,12 @@ from yoke.cli.render.base import OutputStream
 from yoke.cli.render.base import build_console
 from yoke.cli.render.base import format_compaction_note
 from yoke.cli.render.base import format_tool_preview
+from yoke.cli.render.base import format_tool_result_error
 from yoke.cli.render.base import print_version_banner
-from yoke.cli.render.base import truncate_cli_text
+from yoke.cli.render.provider_events import PROVIDER_WARNING_STYLE
+from yoke.cli.render.provider_events import format_provider_event
+from yoke.cli.render.provider_events import is_provider_event
+from yoke.cli.render.provider_events import provider_status_for_event
 from yoke.cli.render.scrollback import (
     print_scrollback_commentary,
 )
@@ -52,6 +55,9 @@ class StatusIndicator:
 
     def handle_event(self, event: str, payload: dict[str, object]) -> None:
         """Handle one agent runtime event."""
+        if is_provider_event(event):
+            self._handle_provider_event(event, payload)
+            return
         if event == "compaction_summary_start":
             if not self._turn_has_tool_output:
                 self._log_blank_line()
@@ -92,17 +98,17 @@ class StatusIndicator:
             self._update("Thinking")
             return
         if event == "model_start":
-            self._update("Thinking")
+            if self._last_message not in {
+                "Rate limited",
+                "Retrying provider",
+            }:
+                self._update("Thinking")
             return
         if event == "model_end":
             self._update("Streaming")
             return
         if event == "assistant_message":
-            if payload.get("phase") == "commentary":
-                content = payload.get("content")
-                if isinstance(content, str) and content.strip():
-                    self._log_commentary(content.strip())
-                self._update("Streaming")
+            self._handle_assistant_message(payload)
             return
         if event == "tool_execution_start":
             if not self._turn_has_tool_output:
@@ -124,6 +130,22 @@ class StatusIndicator:
                     style="dim",
                 )
             self._update("Thinking" if ok else "Recovering")
+
+    def _handle_provider_event(
+        self,
+        event: str,
+        payload: dict[str, object],
+    ) -> None:
+        self._log_provider_warning(format_provider_event(event, payload))
+        self._update(provider_status_for_event(event))
+
+    def _handle_assistant_message(self, payload: dict[str, object]) -> None:
+        if payload.get("phase") != "commentary":
+            return
+        content = payload.get("content")
+        if isinstance(content, str) and content.strip():
+            self._log_commentary(content.strip())
+        self._update("Streaming")
 
     def clear(self) -> None:
         """Clear the active status line."""
@@ -171,6 +193,19 @@ class StatusIndicator:
                 )
                 self._status.start()
 
+    def _log_provider_warning(self, text: str) -> None:
+        with self._lock:
+            had_status = self._status is not None
+            if had_status and self._status is not None:
+                self._status.stop()
+            self._console.print(Text(f"warning {text}", style=PROVIDER_WARNING_STYLE))
+            if had_status and self._animate:
+                self._status = self._console.status(
+                    f"[bold cyan]{self._last_message}[/bold cyan]",
+                    spinner="dots",
+                )
+                self._status.start()
+
     def _log_commentary(self, text: str) -> None:
         with self._lock:
             if not self._enabled or not self._console.is_terminal:
@@ -206,6 +241,13 @@ class InteractiveRenderer:
 
     def handle_event(self, event: str, payload: dict[str, object]) -> None:
         """Handle one agent runtime event."""
+        if is_provider_event(event):
+            self._print_labeled_line(
+                "warn",
+                format_provider_event(event, payload),
+                style=PROVIDER_WARNING_STYLE,
+            )
+            return
         if event == "compaction_summary_start":
             tokens = payload.get("estimated_input_tokens", "?")
             self._print_labeled_line(
@@ -286,14 +328,6 @@ class InteractiveRenderer:
         """Print an error line."""
         self._print_labeled_line("error", message, style="red")
 
-    def _print_block(self, label: str, text: str, *, style: str) -> None:
-        with self._lock:
-            lines = (text.rstrip() or "(empty)").splitlines() or ["(empty)"]
-            self._print_labeled_line(label, lines[0], style=style)
-            padding = " " * (len(label) + 2)
-            for line in lines[1:]:
-                self._console.print(f"{padding}{line}")
-
     def _print_labeled_line(self, label: str, text: str, *, style: str) -> None:
         with self._lock:
             self._console.print(Text(f"{label:>5} {text}", style=style))
@@ -304,11 +338,4 @@ class InteractiveRenderer:
 
 
 def _tool_error_text(payload: dict[str, object]) -> str | None:
-    result = payload.get("result")
-    if not isinstance(result, dict) or not all(isinstance(key, str) for key in result):
-        return None
-    result_dict = cast(dict[str, object], result)
-    raw_error = result_dict.get("error")
-    if isinstance(raw_error, str) and raw_error.strip():
-        return truncate_cli_text(raw_error, 120)
-    return None
+    return format_tool_result_error(payload)

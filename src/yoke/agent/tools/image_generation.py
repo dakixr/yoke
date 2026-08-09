@@ -209,7 +209,7 @@ def _recent_image_urls(messages: list[Message], count: int) -> list[str]:
             continue
         for part in reversed(content):
             if isinstance(part, MessageLocalImageContentPart):
-                images.append(part.data_url or encode_local_image_data_url(part.path))
+                images.append(encode_local_image_data_url(part.path))
             elif isinstance(part, MessageImageURLContentPart):
                 images.append(part.image_url.url)
             if len(images) == count:

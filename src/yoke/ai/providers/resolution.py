@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,10 +11,15 @@ from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.builtin_registry import BUILTIN_PROVIDER_NAMES
 from yoke.ai.providers.builtin_registry import build_registered_provider
 from yoke.ai.providers.builtin_registry import list_registered_models
-from yoke.ai.providers.credentials import provider_environment
 from yoke.ai.providers.plugins import available_custom_provider_names
 from yoke.ai.providers.plugins import create_custom_provider
 from yoke.ai.providers.plugins import list_custom_provider_models
+from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
+from yoke.ai.providers.resolution_environment import (
+    credential_issue as find_credential_issue,
+)
+from yoke.ai.providers.resolution_environment import resolved_env as resolve_env
+from yoke.ai.providers.resolution_environment import resolved_home as resolve_home
 
 
 @dataclass(slots=True, frozen=True)
@@ -82,15 +86,20 @@ def build_provider(
 ) -> Provider:
     """Build a provider from `provider:model:thinking-effort`."""
     provider_ref = parse_provider_ref(qualified_name)
-    resolved_home = _resolved_home(home)
-    resolved_env = _resolved_env(env, home=resolved_home)
-    credential_issue = _credential_issue(
+    resolved_home = resolve_home(home)
+    resolved_env = resolve_env(env, home=resolved_home)
+    credential_issue = find_credential_issue(
         provider_ref.provider_name,
         env=resolved_env,
         home=resolved_home,
     )
     if credential_issue is not None:
         raise ValueError(credential_issue)
+    provider_ref = _resolve_provider_selection(
+        provider_ref,
+        env=resolved_env,
+        home=resolved_home,
+    )
     if provider_ref.provider_name in BUILTIN_PROVIDER_NAMES:
         return build_registered_provider(
             provider_ref.provider_name,
@@ -129,17 +138,28 @@ def build_builtin_provider(
     normalized = provider_name.strip().lower()
     if normalized not in BUILTIN_PROVIDER_NAMES:
         raise ValueError(f"Unsupported built-in provider {normalized!r}.")
-    resolved_home = _resolved_home(home)
-    return build_registered_provider(
-        normalized,
+    resolved_home = resolve_home(home)
+    provider_ref = ProviderRef(
+        provider_name=normalized,
         model=_normalized_optional(model) if model is not None else None,
         reasoning_effort=(
             _normalized_optional(reasoning_effort.lower())
             if reasoning_effort is not None
             else None
         ),
+    )
+    resolved_env = resolve_env(env, home=resolved_home)
+    provider_ref = _resolve_provider_selection(
+        provider_ref,
+        env=resolved_env,
+        home=resolved_home,
+    )
+    return build_registered_provider(
+        normalized,
+        model=provider_ref.model,
+        reasoning_effort=provider_ref.reasoning_effort,
         session_id=session_id,
-        env=_resolved_env(env, home=resolved_home),
+        env=resolved_env,
         home=resolved_home,
     )
 
@@ -150,7 +170,7 @@ def provider_readiness(
     home: Path | str | None = None,
 ) -> list[ProviderReadiness]:
     """Report readiness for all known providers in this env."""
-    resolved_home = _resolved_home(home)
+    resolved_home = resolve_home(home)
     return [
         provider_status(provider_name, env=env, home=resolved_home)
         for provider_name in available_provider_names(home=resolved_home)
@@ -170,9 +190,9 @@ def provider_status(
         return ProviderReadiness(
             provider_name=qualified_name, ready=False, reason=str(exc)
         )
-    resolved_home = _resolved_home(home)
+    resolved_home = resolve_home(home)
     try:
-        resolved_env = _resolved_env(env, home=resolved_home)
+        resolved_env = resolve_env(env, home=resolved_home)
     except ValueError as exc:
         return ProviderReadiness(
             provider_name=provider_ref.provider_name,
@@ -203,7 +223,7 @@ def provider_status(
             model=provider_ref.model,
             reasoning_effort=provider_ref.reasoning_effort,
         )
-    credential_issue = _credential_issue(
+    credential_issue = find_credential_issue(
         provider_ref.provider_name,
         env=resolved_env,
         home=resolved_home,
@@ -279,7 +299,7 @@ def is_provider_ready(
 
 def available_provider_names(*, home: Path | str | None = None) -> list[str]:
     """Return known built-in and custom provider names."""
-    resolved_home = _resolved_home(home)
+    resolved_home = resolve_home(home)
     return sorted(
         {
             *BUILTIN_PROVIDER_NAMES,
@@ -298,8 +318,8 @@ def list_provider_models(
 ) -> list[ProviderModelInfo] | None:
     """Return model metadata for a built-in or custom provider."""
     normalized = provider_name.strip().lower()
-    resolved_home = _resolved_home(home)
-    resolved_env = _resolved_env(env, home=resolved_home)
+    resolved_home = resolve_home(home)
+    resolved_env = resolve_env(env, home=resolved_home)
     models = list_registered_models(
         normalized,
         model=model,
@@ -318,32 +338,39 @@ def list_provider_models(
     )
 
 
-def _credential_issue(
-    provider_name: str,
+def _resolve_provider_selection(
+    provider_ref: ProviderRef,
     *,
     env: Mapping[str, str],
     home: Path,
-) -> str | None:
-    if provider_name == "zai" and not env.get("ZAI_API_KEY"):
-        return "zai provider requires ZAI_API_KEY."
-    if provider_name == "opencode-go" and not env.get("OPENCODE_API_KEY"):
-        return "opencode-go provider requires OPENCODE_API_KEY."
-    if provider_name != "codex":
-        return None
-    if env.get("YOKE_CODEX_API_KEY"):
-        return None
-    if (home / ".codex" / "auth.json").is_file():
-        return None
-    if any((home / ".codex-auth" / "accounts").glob("*/auth.json")):
-        return None
-    auths_path = (
-        Path(env["YOKE_CODEX_AUTHS_PATH"])
-        if env.get("YOKE_CODEX_AUTHS_PATH")
-        else home / ".yoke" / "providers" / "codex-auth" / "auths.json"
+) -> ProviderRef:
+    """Validate the model and resolve thinking to a supported model default."""
+    if provider_ref.model is None:
+        return provider_ref
+    models = list_provider_models(
+        provider_ref.provider_name,
+        model=provider_ref.model,
+        reasoning_effort=None,
+        env=env,
+        home=home,
     )
-    if auths_path.is_file():
-        return None
-    return "codex provider requires YOKE_CODEX_API_KEY or stored Codex auth."
+    if models is None:
+        return provider_ref
+    selected = next((model for model in models if model.id == provider_ref.model), None)
+    if selected is None:
+        choices = ", ".join(sorted(model.id for model in models)) or "none"
+        raise ValueError(
+            f"Unknown model {provider_ref.model!r} for provider "
+            f"{provider_ref.provider_name!r}. Available: {choices}."
+        )
+    return ProviderRef(
+        provider_name=provider_ref.provider_name,
+        model=provider_ref.model,
+        reasoning_effort=compatible_reasoning_effort_for_model(
+            selected,
+            provider_ref.reasoning_effort,
+        ),
+    )
 
 
 def _current_model(provider: Provider) -> str | None:
@@ -356,20 +383,6 @@ def _current_reasoning_effort(provider: Provider) -> str | None:
     config = getattr(provider, "config", None)
     effort = getattr(config, "reasoning_effort", None)
     return effort.strip() if isinstance(effort, str) and effort.strip() else None
-
-
-def _resolved_home(home: Path | str | None) -> Path:
-    return (Path.home() if home is None else Path(home)).resolve()
-
-
-def _resolved_env(
-    env: Mapping[str, str] | None,
-    *,
-    home: Path,
-) -> Mapping[str, str]:
-    if env is not None:
-        return env
-    return provider_environment(home=home, env=os.environ)
 
 
 def _normalized_optional(value: str) -> str | None:

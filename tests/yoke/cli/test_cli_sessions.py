@@ -1,39 +1,27 @@
 from __future__ import annotations
 
+# ruff: noqa: F403,F405,S101,D100,D103,ANN401
+
+from typing import Any
 from typing import cast
 
-# ruff: noqa: F403, F405
-from .support import *  # noqa: F403, F405
+from yoke.agent.models import ConversationEntry
+from yoke.cli.session.io import decode_session_record
+from yoke.cli.session.models import SessionRecord
+from yoke.cli.session.writer import write_session_record
+from yoke.cli.interactive.common import handle_slash_command
+
+from .support import *  # noqa: F403
 
 
-def _entry_message(entry: dict[str, object]) -> dict[str, object]:
-    message = entry["message"]
-    assert isinstance(message, dict)
-    return cast(dict[str, object], message)
+def session_payload(path: Path) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        decode_session_record(path.read_text(encoding="utf-8")).model_dump(mode="json"),
+    )
 
 
-def _entry_metadata(entry: dict[str, object]) -> dict[str, object]:
-    metadata = entry["metadata"]
-    assert isinstance(metadata, dict)
-    return cast(dict[str, object], metadata)
-
-
-def _compaction_handoff(entry: dict[str, object]) -> dict[str, object]:
-    handoff = _entry_metadata(entry)["compaction_handoff"]
-    assert isinstance(handoff, dict)
-    return cast(dict[str, object], handoff)
-
-
-def _jsonl_conversation_entries(path: Path) -> list[dict[str, object]]:
-    entries: list[dict[str, object]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        payload = json.loads(line)
-        if payload.get("type") == "conversation_entry":
-            entries.append(payload["entry"])
-    return entries
-
-
-def test_cli_session_jsonl_keeps_transcript_after_compaction(
+def test_cli_session_json_keeps_transcript_after_compaction(
     tmp_path: Path, monkeypatch
 ) -> None:
     class CompactingProvider(Provider):
@@ -41,7 +29,7 @@ def test_cli_session_jsonl_keeps_transcript_after_compaction(
             self, messages: list[Message], tools: list[dict[str, object]]
         ) -> Message:
             del tools
-            if messages[0].content == COMPACTION_SUMMARY_PROMPT:
+            if messages[-1].content == COMPACTION_SUMMARY_PROMPT:
                 return Message.assistant("summary of older work")
             if "Create a concise title" in (messages[0].content or ""):
                 return Message.assistant("compact title")
@@ -87,143 +75,19 @@ def test_cli_session_jsonl_keeps_transcript_after_compaction(
         "older answer alpha" in (message.content or "") for message in record.messages
     )
     assert any(entry.kind == "memory_snapshot" for entry in record.conversation_entries)
-    entries = _jsonl_conversation_entries(session_dir / "compact-demo.jsonl")
+    payload = session_payload(session_dir / "compact-demo.jsonl")
+    assert "messages" not in payload
     assert any(
-        "older answer alpha" in str(_entry_message(entry).get("content") or "")
-        for entry in entries
+        "older answer alpha" in (entry["message"].get("content") or "")
+        for entry in payload["conversation_entries"]
         if entry.get("message") is not None
     )
-    assert all("messages" not in entry for entry in entries)
-    assert any(entry["kind"] == "memory_snapshot" for entry in entries)
-    memory_entries = [entry for entry in entries if entry["kind"] == "memory_snapshot"]
-    handoff = _compaction_handoff(memory_entries[-1])
-    assert handoff["summary_text"] == "summary of older work"
-    assert handoff["reason"] == "threshold"
-    assert handoff["retained_messages"]
-
-
-def test_cli_persists_compaction_handoff_after_provider_error(
-    tmp_path: Path, monkeypatch
-) -> None:
-    class FailingAfterCompactionProvider(Provider):
-        def complete(
-            self, messages: list[Message], tools: list[dict[str, object]]
-        ) -> Message:
-            del tools
-            if messages[0].content == COMPACTION_SUMMARY_PROMPT:
-                return Message.assistant("handoff before failure")
-            if "Create a concise title" in (messages[0].content or ""):
-                return Message.assistant("failure title")
-            raise ProviderError("synthetic provider failure")
-
-    session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
-    agent = RuntimeAgent(
-        provider=FailingAfterCompactionProvider(),
-        tools=[],
-        context_manager=ContextManager(
-            compaction_policy=CompactionPolicy(
-                max_total_tokens=300,
-                keep_recent_tokens=80,
-            ),
-        ),
+    assert any(
+        entry["kind"] == "memory_snapshot" for entry in payload["conversation_entries"]
     )
-
-    exit_code = run_cli(
-        CLIArgs(
-            prompt="new request " + ("alpha " * 500),
-            headless=True,
-            session="failed-compact",
-            root=str(tmp_path),
-        ),
-        agent=agent,
-    )
-
-    assert exit_code == 1
-    entries = _jsonl_conversation_entries(session_dir / "failed-compact.jsonl")
-    memory_entries = [entry for entry in entries if entry["kind"] == "memory_snapshot"]
-    assert memory_entries
-    handoff = _compaction_handoff(memory_entries[-1])
-    assert handoff["summary_text"] == "handoff before failure"
-
-
-def test_session_store_list_prunes_expired_sessions(tmp_path: Path) -> None:
-    store = SessionStore(directory=tmp_path)
-    now = datetime.now(UTC)
-    expired = (now - timedelta(days=31)).isoformat()
-    recent = (now - timedelta(days=5)).isoformat()
-
-    old_payload = {
-        "id": "old-session",
-        "messages": [],
-        "created_at": expired,
-        "updated_at": expired,
-        "root": str(tmp_path.resolve()),
-        "title": "Old session",
-    }
-    fresh_payload = {
-        "id": "fresh-session",
-        "messages": [],
-        "created_at": recent,
-        "updated_at": recent,
-        "root": str(tmp_path.resolve()),
-        "title": "Fresh session",
-    }
-    (tmp_path / "old-session.json").write_text(
-        json.dumps(old_payload, indent=2), encoding="utf-8"
-    )
-    (tmp_path / "fresh-session.json").write_text(
-        json.dumps(fresh_payload, indent=2), encoding="utf-8"
-    )
-    (tmp_path / "index.json").write_text(
-        json.dumps(
-            {
-                "sessions": {
-                    "old-session": {
-                        "id": "old-session",
-                        "root": str(tmp_path.resolve()),
-                        "title": "Old session",
-                        "created_at": expired,
-                        "updated_at": expired,
-                    },
-                    "fresh-session": {
-                        "id": "fresh-session",
-                        "root": str(tmp_path.resolve()),
-                        "title": "Fresh session",
-                        "created_at": recent,
-                        "updated_at": recent,
-                    },
-                    "missing-session": {
-                        "id": "missing-session",
-                        "root": str(tmp_path.resolve()),
-                        "title": "Missing session",
-                        "created_at": recent,
-                        "updated_at": recent,
-                    },
-                }
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-    records = store.list(root=tmp_path)
-
-    assert [record.id for record in records] == ["fresh-session"]
-    assert not (tmp_path / "old-session.json").exists()
-    assert (tmp_path / "fresh-session.jsonl").exists()
-    assert not (tmp_path / "fresh-session.json").exists()
-    index_payload = json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))
-    assert sorted(index_payload["sessions"]) == ["fresh-session"]
 
 
 def test_cli_auto_persists_unnamed_session_globally(tmp_path: Path, capsys) -> None:
-    config_dir = tmp_path / ".yoke"
-    config_dir.mkdir(parents=True)
-    (config_dir / "config.json").write_text(
-        '{"title_model": "missing:gpt-title:low"}\n',
-        encoding="utf-8",
-    )
     agent = FakeAgent()
 
     exit_code = run_cli(
@@ -244,29 +108,68 @@ def test_cli_auto_persists_unnamed_session_globally(tmp_path: Path, capsys) -> N
     ]
 
 
-def test_cli_uses_configured_title_model_for_completed_first_turn(
-    tmp_path: Path, capsys, monkeypatch
+def test_session_writer_normalizes_surrogate_pair_prompt(
+    tmp_path: Path,
 ) -> None:
-    provider = TitleProvider("Fix config loading")
-
-    class TitleModelProvider:
-        def __init__(self, config: object) -> None:
-            self.config = config
-
-        def complete(
-            self,
-            messages: list[Message],
-            tools: list[dict[str, object]],
-        ) -> Message:
-            return provider.complete(messages, tools)
-
-    config_dir = tmp_path / ".yoke"
-    config_dir.mkdir(parents=True)
-    (config_dir / "config.json").write_text(
-        '{"title_model": "codex:gpt-title:low"}\n',
-        encoding="utf-8",
+    record = SessionRecord(
+        id="emoji-demo",
+        conversation_entries=[
+            ConversationEntry(kind="user", message=Message.user("hi \ud83d\ude0a")),
+            ConversationEntry(
+                kind="control",
+                metadata={"raw": "broken \ud83d"},
+            ),
+        ],
     )
-    install_builtin_provider(monkeypatch, TitleModelProvider)
+    path = tmp_path / "emoji-demo.jsonl"
+
+    write_session_record(
+        record,
+        path=path,
+    )
+
+    raw_text = path.read_text(encoding="utf-8")
+    decoded = decode_session_record(raw_text)
+
+    assert "😊" in raw_text
+    assert "�" in raw_text
+    assert decoded.conversation_entries[0].message is not None
+    assert decoded.conversation_entries[0].message.content == "hi 😊"
+    assert decoded.conversation_entries[1].metadata["raw"] == "broken �"
+
+
+def test_session_save_can_clear_skills_and_skill_directories(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path)
+    store.save(
+        "skills",
+        [Message.user("hello")],
+        active_skills=[
+            ActiveSkill(
+                name="demo",
+                activation_id="one",
+                description="demo",
+                source_path="<inline>",
+                content="demo",
+            )
+        ],
+        skill_dirs=["skills"],
+    )
+
+    store.save(
+        "skills",
+        [Message.user("hello")],
+        active_skills=[],
+        skill_dirs=[],
+    )
+
+    loaded = store.load("skills")
+    assert loaded.active_skills == []
+    assert loaded.skill_dirs == []
+
+
+def test_cli_uses_local_title_for_first_prompt(tmp_path: Path, capsys) -> None:
     agent = FakeAgent()
 
     exit_code = run_cli(
@@ -281,81 +184,205 @@ def test_cli_uses_configured_title_model_for_completed_first_turn(
     assert exit_code == 0
     capsys.readouterr()
     records = SessionStore().list(root=tmp_path)
-    assert records[0].title == "Fix config loading"
-    assert provider.prompts == ["synthetic response"]
+    assert records[0].title == "please fix the config loader bug"
 
 
-def test_typer_entrypoint_invokes_cli() -> None:
-    from typer.testing import CliRunner
+def test_pin_slash_command_toggles_active_session(tmp_path: Path, monkeypatch) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    store = SessionStore()
+    store.save("pin-demo", [Message.user("hello")], root=tmp_path)
+    active_session = create_active_session(
+        CLIArgs(session="pin-demo", root=str(tmp_path)),
+        root=tmp_path,
+    )
+    console_stream = CaptureStream()
+    console = build_console(console_stream)
 
-    runner = CliRunner()
-    result = runner.invoke(app, ["--help"])
+    handled, messages, updated_session = handle_slash_command(
+        "/pin",
+        agent=FakeAgent(),
+        active_session=active_session,
+        messages=active_session.record.messages,
+        console=console,
+    )
 
-    assert result.exit_code == 0
-    assert "Usage:" in result.stdout
-    assert "--root" in result.stdout
+    assert handled is True
+    assert messages == active_session.record.messages
+    assert updated_session.record.pinned is True
+    assert store.load("pin-demo").pinned is True
+    assert "Session pinned: pin-demo" in console_stream.getvalue()
 
 
-def test_interactive_cli_accepts_queued_prompts_while_busy(
-    tmp_path: Path,
+def test_pin_slash_command_persists_new_session(tmp_path: Path, monkeypatch) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    active_session = create_active_session(
+        CLIArgs(root=str(tmp_path)),
+        root=tmp_path,
+    )
+
+    handled, _messages, updated_session = handle_slash_command(
+        "/pin",
+        agent=FakeAgent(),
+        active_session=active_session,
+        messages=[],
+        console=build_console(CaptureStream()),
+    )
+
+    assert handled is True
+    assert updated_session.record.pinned is True
+    assert SessionStore().load(updated_session.id).pinned is True
+
+
+def test_session_store_fork_copies_session_without_pin(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    @dataclass
-    class SlowAgent:
-        supports_message_history = True
-        supports_user_message = False
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    store = SessionStore()
+    store.save(
+        "source",
+        [Message.user("hello"), Message.assistant("hi")],
+        root=tmp_path,
+        title="Source title",
+        provider_name="codex",
+        model_id="gpt-5.5",
+    )
+    store.set_pinned("source", True)
 
-        seen_history_lengths: list[int] = field(default_factory=list)
+    forked = store.fork("source", new_session_id_value="forked")
 
-        def run(
-            self,
-            prompt: str,
-            messages: Sequence[Message] | None = None,
-            *,
-            on_event: Any = None,
-            stop_requested: Any = None,
-        ) -> AgentResult:
-            del stop_requested
-            self.seen_history_lengths.append(len(messages or []))
-            if on_event is not None:
-                on_event("model_start", {"iteration": 1})
-                on_event(
-                    "tool_execution_start",
-                    {
-                        "tool_name": COMMAND_TOOL_NAME,
-                        "tool_arguments": '{"command":"sleep 0.1"}',
-                    },
-                )
-            time.sleep(0.1)
-            if on_event is not None:
-                on_event(
-                    "tool_execution_end",
-                    {"tool_name": COMMAND_TOOL_NAME, "ok": True},
-                )
-            conversation = list(messages or [])
-            conversation.append(Message.user(prompt))
-            conversation.append(Message.assistant(f"done {prompt}"))
-            return AgentResult(
-                output=f"done {prompt}", messages=conversation, iterations=1
-            )
+    assert forked.id == "forked"
+    assert forked.messages == store.load("source").messages
+    assert forked.title == "Source title (fork)"
+    assert forked.pinned is False
+    assert forked.provider_name == "codex"
+    assert forked.model_id == "gpt-5.5"
+    assert (session_dir / "forked.jsonl").exists()
 
-    prompts = iter(["first", "second", "quit"])
 
-    def fake_input(_: object = "") -> str:
-        return next(prompts)
+def test_fork_slash_command_switches_to_persisted_copy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    store = SessionStore()
+    messages = [Message.user("hello"), Message.assistant("hi")]
+    store.save("fork-source", messages, root=tmp_path, title="Fork title")
+    active_session = create_active_session(
+        CLIArgs(session="fork-source", root=str(tmp_path)),
+        root=tmp_path,
+    )
+    console_stream = CaptureStream()
 
-    stdout = CaptureStream()
-    stderr = CaptureStream()
-    agent = SlowAgent()
+    handled, forked_messages, forked_session = handle_slash_command(
+        "/fork",
+        agent=FakeAgent(),
+        active_session=active_session,
+        messages=messages,
+        console=build_console(console_stream),
+    )
+
+    forked = SessionStore().load(forked_session.id)
+    assert handled is True
+    assert forked_session.id != active_session.id
+    assert forked_messages == messages
+    assert forked.messages == messages
+    assert forked.title == "Fork title (fork)"
+    assert (session_dir / f"{forked_session.id}.jsonl").exists()
+    assert f"Forked session fork-source -> {forked_session.id}" in (
+        console_stream.getvalue()
+    )
+
+
+def test_cli_fork_starts_from_source_session(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    store = SessionStore()
+    store.save(
+        "source-cli",
+        [Message.user("hello"), Message.assistant("hi")],
+        root=tmp_path,
+        title="CLI title",
+        provider_name="codex",
+        model_id="gpt-5.5",
+    )
 
     exit_code = run_cli(
-        CLIArgs(root=str(tmp_path)),
-        agent=agent,
-        input_func=fake_input,
-        stdout=stdout,
-        stderr=stderr,
+        CLIArgs(
+            prompt="next",
+            headless=True,
+            fork_session_id="source-cli",
+            root=str(tmp_path),
+        ),
+        agent=FakeAgent(),
     )
 
     assert exit_code == 0
-    assert "done first" in stdout.getvalue()
-    assert "done second" in stdout.getvalue()
-    assert agent.seen_history_lengths == [0, 2]
+    capsys.readouterr()
+    records = [
+        record for record in store.list(root=tmp_path) if record.id != "source-cli"
+    ]
+    assert len(records) == 1
+    forked = store.load(records[0].id)
+    assert forked.title == "CLI title (fork)"
+    assert [message.text_content() for message in forked.messages] == [
+        "hello",
+        "hi",
+        "next",
+        "synthetic response",
+    ]
+    assert [
+        message.text_content() for message in store.load("source-cli").messages
+    ] == [
+        "hello",
+        "hi",
+    ]
+
+
+def test_info_slash_command_prints_active_session_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    store = SessionStore()
+    store.save(
+        "info-demo",
+        [Message.user("hello"), Message.assistant("hi")],
+        root=tmp_path,
+        title="Info demo",
+        provider_name="codex",
+        model_id="gpt-5.5",
+        reasoning_effort="low",
+        context_window_tokens=300_000,
+    )
+    active_session = create_active_session(
+        CLIArgs(session="info-demo", root=str(tmp_path)),
+        root=tmp_path,
+    )
+    console_stream = CaptureStream()
+
+    handled, _messages, _session = handle_slash_command(
+        "/info",
+        agent=FakeAgent(),
+        active_session=active_session,
+        messages=active_session.record.messages,
+        console=build_console(console_stream),
+    )
+
+    output = console_stream.getvalue()
+    assert handled is True
+    assert "note Session info:" in output
+    assert "Session id: info-demo" in output
+    assert "Title: Info demo" in output
+    assert "Pinned: no" in output
+    assert f"Path: {session_dir / 'info-demo.jsonl'}" in output
+    assert "Provider: codex" in output
+    assert "Model: gpt-5.5" in output
+    assert "Messages: 2" in output
+    assert "Conversation entries: 2" in output
+    assert "Reasoning effort: low" in output
+    assert "Context window: 300000 tokens" in output

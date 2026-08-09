@@ -47,7 +47,7 @@ def _sse_response(
 
 
 def test_zai_catalog_exposes_documented_thinking_toggle() -> None:
-    provider = ZAIProvider(ZAIConfig(ayoke_key="test"))
+    provider = ZAIProvider(ZAIConfig(api_key="test"))
 
     try:
         models = {model.id: model for model in provider.list_models()}
@@ -83,7 +83,7 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = ZAIProvider(
-        ZAIConfig(ayoke_key="test", reasoning_effort="thinking"),
+        ZAIConfig(api_key="test", reasoning_effort="thinking"),
         http_client=client,
     )
 
@@ -105,7 +105,7 @@ def test_zai_provider_preserves_structured_tool_history() -> None:
         return _sse_response(content="done")
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+    provider = ZAIProvider(ZAIConfig(api_key="test"), http_client=client)
     assistant = Message(
         role="assistant",
         content="",
@@ -149,7 +149,7 @@ def test_zai_provider_can_disable_thinking() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = ZAIProvider(
-        ZAIConfig(ayoke_key="test", reasoning_effort="none"),
+        ZAIConfig(api_key="test", reasoning_effort="none"),
         http_client=client,
     )
 
@@ -158,16 +158,30 @@ def test_zai_provider_can_disable_thinking() -> None:
     assert captured["payload"]["thinking"] == {"type": "disabled"}
 
 
-def test_zai_set_model_rejects_unsupported_reasoning_effort() -> None:
-    provider = ZAIProvider(ZAIConfig(ayoke_key="test"))
+def test_zai_provider_normalizes_stale_reasoning_effort_on_construction() -> None:
+    provider = ZAIProvider(ZAIConfig(api_key="test", reasoning_effort="medium"))
 
     try:
-        provider.set_model("glm-5.2", reasoning_effort="thinking")
         assert provider.config.model == "glm-5.2"
         assert provider.config.reasoning_effort == "thinking"
+    finally:
+        provider.close()
 
-        with pytest.raises(ValueError, match="Unsupported reasoning effort"):
-            provider.set_model("glm-5.2", reasoning_effort="high")
+
+def test_zai_set_model_uses_supported_effort_or_model_default() -> None:
+    provider = ZAIProvider(ZAIConfig(api_key="test", reasoning_effort="none"))
+
+    try:
+        provider.set_model("glm-5.2", reasoning_effort="none")
+        assert provider.config.model == "glm-5.2"
+        assert provider.config.reasoning_effort == "none"
+
+        provider.set_model("glm-5.2", reasoning_effort="high")
+        assert provider.config.reasoning_effort == "thinking"
+
+        provider.config.reasoning_effort = "none"
+        provider.set_model("glm-5.2")
+        assert provider.config.reasoning_effort == "thinking"
     finally:
         provider.close()
 
@@ -180,7 +194,7 @@ def test_zai_provider_parses_reasoning_content_from_response() -> None:
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+    provider = ZAIProvider(ZAIConfig(api_key="test"), http_client=client)
 
     message = provider.complete([Message.user("hello")], [])
 
@@ -199,7 +213,7 @@ def test_zai_provider_does_not_replay_reasoning_content_on_next_request() -> Non
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+    provider = ZAIProvider(ZAIConfig(api_key="test"), http_client=client)
 
     first = provider.complete([Message.user("hello")], [])
     provider.complete([Message.user("hello"), first], [])
@@ -222,7 +236,7 @@ def test_zai_provider_assembles_streaming_tool_calls() -> None:
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+    provider = ZAIProvider(ZAIConfig(api_key="test"), http_client=client)
 
     message = provider.complete([Message.user("read the file")], [])
     provider.close()
@@ -233,6 +247,48 @@ def test_zai_provider_assembles_streaming_tool_calls() -> None:
     assert tool_call.id == "call_1"
     assert tool_call.function.name == "read"
     assert tool_call.function.arguments == '{"path":"README.md"}'
+
+
+def test_zai_message_recovery_resends_with_zero_retry_budget() -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content.decode("utf-8")))
+        if len(payloads) == 1:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "messages parameter is illegal"}},
+            )
+        return _sse_response(content="recovered")
+
+    provider = ZAIProvider(
+        ZAIConfig(api_key="test", max_retries=0),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    messages = [
+        Message.user("read"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    type="function",
+                    function=ToolFunction(name="read", arguments='{"path":"x"}'),
+                )
+            ],
+        ),
+        Message.tool("call-1", "content"),
+    ]
+
+    try:
+        response = provider.complete(messages, [])
+    finally:
+        provider.close()
+
+    assert response.text_content() == "recovered"
+    assert len(payloads) == 2
+    assert payloads[0]["messages"] != payloads[1]["messages"]
 
 
 def test_zai_provider_retries_on_streaming_idle_timeout() -> None:
@@ -247,7 +303,7 @@ def test_zai_provider_retries_on_streaming_idle_timeout() -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = ZAIProvider(
         ZAIConfig(
-            ayoke_key="test",
+            api_key="test",
             read_idle_timeout_seconds=0.2,
             max_retries=3,
             retry_backoff_seconds=0.01,
@@ -274,7 +330,7 @@ def test_zai_provider_raises_on_empty_streaming_completion() -> None:
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = ZAIProvider(ZAIConfig(ayoke_key="test"), http_client=client)
+    provider = ZAIProvider(ZAIConfig(api_key="test"), http_client=client)
 
     with pytest.raises(Exception):  # noqa: PT011
         provider.complete([Message.user("hello")], [])

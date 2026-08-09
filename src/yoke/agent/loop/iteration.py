@@ -9,11 +9,11 @@ from yoke.agent.loop.lifecycle import handle_post_tool_results
 from yoke.agent.loop.lifecycle import handle_pre_model_compaction
 from yoke.agent.loop.lifecycle import stopped_result
 from yoke.agent.loop.lifecycle import sync_runtime_skills_from_context
-from yoke.agent.loop.tools.core import cancelled_tool_result
-from yoke.agent.loop.tools.core import is_stopped
-from yoke.agent.loop.tools.core import prepare_tool_calls
-from yoke.agent.loop.tools.core import tool_definitions
-from yoke.agent.loop.tools.runner import execute_tool_calls
+from yoke.agent.loop.tool_core import cancelled_tool_result
+from yoke.agent.loop.tool_core import is_stopped
+from yoke.agent.loop.tool_core import prepare_tool_calls
+from yoke.agent.loop.tool_core import tool_definitions
+from yoke.agent.loop.tool_runner import execute_tool_calls
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import AgentResult
@@ -23,7 +23,6 @@ from yoke.agent.loop.types import StopRequested
 from yoke.agent.loop.types import ToolExecutionMode
 from yoke.agent.loop.types import ToolResultCheckpoint
 from yoke.agent.models import AgentContext
-from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
 from yoke.agent.tools import LocalTool
 
@@ -48,24 +47,15 @@ class RuntimeAgentIterationMixin:
     ) -> AgentResult | None:
         if self._is_stopped(stop_requested):
             return self._stopped_result(context, iterations=iteration - 1)
-        if handle_pre_model_compaction(
+        if handle_pre_model_compaction(self, context, iteration, on_event):
+            return self._stopped_result(context, iterations=iteration - 1)
+        assistant_message = complete_iteration_model(
             self,
             context,
-            iteration,
-            on_event,
+            iteration=iteration,
+            on_event=on_event,
             stop_requested=stop_requested,
-        ):
-            return self._stopped_result(context, iterations=iteration - 1)
-        try:
-            assistant_message = complete_iteration_model(
-                self,
-                context,
-                iteration=iteration,
-                on_event=on_event,
-                stop_requested=stop_requested,
-            )
-        except AgentStoppedError:
-            return self._stopped_result(context, iterations=iteration - 1)
+        )
         self.context_manager.append_message(context, assistant_message)
         if self._is_stopped(stop_requested):
             self._append_cancelled_context_tool_results(
@@ -152,63 +142,45 @@ class RuntimeAgentIterationMixin:
             stop_requested=stop_requested,
             after_tool_call=after_tool_call,
         )
-        pending_context_messages: list[Message] = []
         for tool_call, arguments, result in tool_results:
-            pending = self._pending_tool_context_messages(
-                context,
-                tool_name=tool_call.function.name,
-                arguments=arguments,
-                result=result,
-                already_pending=pending_context_messages,
-            )
-            pending_context_messages.extend(pending)
             self.context_manager.append_tool_result(
                 context,
                 tool_call_id=tool_call.id,
                 result=result,
             )
-            if after_tool_result_appended is not None:
-                after_tool_result_appended(context)
-        for message in pending_context_messages:
-            if message.role == "system":
-                self.context_manager.append_skill_message(context, message)
-            else:
-                self.context_manager.append_message(context, message)
+            self._append_tool_context_messages(
+                context,
+                tool_name=tool_call.function.name,
+                arguments=arguments,
+                result=result,
+            )
             if after_tool_result_appended is not None:
                 after_tool_result_appended(context)
         if tool_results:
-            handle_post_tool_results(
-                self,
-                context,
-                iteration,
-                on_event,
-                stop_requested=stop_requested,
-            )
+            handle_post_tool_results(self, context, iteration, on_event)
         return stopped
 
-    def _pending_tool_context_messages(
+    def _append_tool_context_messages(
         self,
         context: AgentContext,
         *,
         tool_name: str,
         arguments: dict[str, object],
         result: dict[str, object],
-        already_pending: list[Message],
-    ) -> list[Message]:
+    ) -> None:
         tool = self.tools.get(tool_name)
         if tool is None or not hasattr(tool, "pending_context_messages"):
-            return []
+            return
         try:
             invocation = tool.parse_arguments(arguments)
-            invocation._context["messages"] = [
-                *self.context_manager.transcript_messages(context),
-                *already_pending,
-            ]
-            return invocation.pending_context_messages(result)
-        except Exception as exc:
-            result["ok"] = False
-            result["error"] = f"Tool context-message handling failed: {exc}"
-            return []
+            pending = invocation.pending_context_messages(result)
+        except Exception:
+            return
+        for message in pending:
+            if message.role == "system":
+                self.context_manager.append_skill_message(context, message)
+            else:
+                self.context_manager.append_message(context, message)
 
     def _append_cancelled_context_tool_results(
         self,

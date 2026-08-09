@@ -1,31 +1,31 @@
 """MCP server manager used by yoke tools and CLI commands."""
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
-import atexit
-import functools
 import json
-import re
-import shutil
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from typing import cast
 
 from yoke.agent.truncate import DEFAULT_MAX_BYTES
 from yoke.agent.truncate import DEFAULT_MAX_LINES
 from yoke.agent.truncate import format_size
 from yoke.agent.truncate import truncate_head
+from yoke.mcp.client import JSON
 from yoke.mcp.client import create_mcp_client
 from yoke.mcp.client import McpClient
-from yoke.mcp.types import JSON
-from yoke.mcp.types import McpToolInfo
+from yoke.mcp.client import McpToolInfo
 from yoke.mcp.config import McpConfig
 from yoke.mcp.config import McpServerConfig
+from yoke.mcp.config import compact_tool_schema
 from yoke.mcp.config import load_mcp_config
 from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import server_supports_tool
-from yoke.mcp.config import tool_schema_for_inspection
 
 
 class McpManager:
@@ -65,16 +65,17 @@ class McpManager:
 
     def close(self) -> None:
         """Close all active clients."""
-        clients = list(self._clients.values())
+        clients = tuple(self._clients.values())
         self._clients.clear()
-        errors: list[Exception] = []
+        first_error: BaseException | None = None
         for client in clients:
             try:
                 client.close()
-            except Exception as exc:
-                errors.append(exc)
-        if errors:
-            raise ExceptionGroup("Failed to close MCP clients", errors)
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
     def status_text(self, server_name: str | None = None) -> str:
         """Return human-readable MCP status."""
@@ -91,6 +92,7 @@ class McpManager:
         for item in servers:
             if not isinstance(item, dict):
                 continue
+            item = cast(dict[str, object], item)
             status = item.get("status", "unknown")
             name = item.get("name", "unknown")
             tools = item.get("tools", [])
@@ -118,7 +120,10 @@ class McpManager:
         """Inspect configured servers and compact tool metadata."""
         selected = self._selected_servers(server)
         if server is not None and not selected:
-            return {"ok": False, "error": f"Unknown or disabled MCP server: {server}"}
+            return {
+                "ok": False,
+                "error": f"Unknown or disabled MCP server: {server}",
+            }
         needle = query.lower().strip() if query else None
         servers: list[dict[str, object]] = []
         for config in selected:
@@ -140,14 +145,9 @@ class McpManager:
                 servers.append(entry)
                 continue
             try:
-                listed_tools = (
-                    self._client(config).list_tools()
-                    if include_schemas
-                    else self._client(config).list_tool_summaries()
-                )
                 tools = [
                     tool
-                    for tool in listed_tools
+                    for tool in self._client(config).list_tools()
                     if server_supports_tool(config, tool.name)
                     and (server_matches_query or _matches_tool(tool, needle))
                 ]
@@ -181,20 +181,27 @@ class McpManager:
         """Call a configured MCP server tool and compact the result."""
         config = self._server(server)
         if config is None:
-            return {"ok": False, "error": f"Unknown or disabled MCP server: {server}"}
+            return {
+                "ok": False,
+                "error": f"Unknown or disabled MCP server: {server}",
+            }
         if config.transport not in {"stdio", "streamable-http", "http"}:
             return {
                 "ok": False,
                 "error": f"MCP transport `{config.transport}` is not supported yet",
             }
         if not server_supports_tool(config, tool):
-            return {"ok": False, "error": f"MCP tool is disabled: {server}/{tool}"}
-        try:
-            known_tools = {
-                item.name for item in self._client(config).list_tool_summaries()
+            return {
+                "ok": False,
+                "error": f"MCP tool is disabled: {server}/{tool}",
             }
+        try:
+            known_tools = {item.name for item in self._client(config).list_tools()}
             if tool not in known_tools:
-                return {"ok": False, "error": f"Unknown MCP tool: {server}/{tool}"}
+                return {
+                    "ok": False,
+                    "error": f"Unknown MCP tool: {server}/{tool}",
+                }
             result = self._client(config).call_tool(
                 tool,
                 arguments,
@@ -204,31 +211,28 @@ class McpManager:
             return {"ok": False, "error": str(exc)}
         text = _mcp_result_text(result)
         truncated = _truncate_result_text(text, server=server, tool=tool)
-        payload: dict[str, object] = {
+        structured = _bounded_structured_content(
+            result.get("structuredContent"),
+            full_output_path=cast(str | None, truncated.get("file")),
+        )
+        return {
             "ok": not bool(result.get("isError")),
             "server": server,
             "tool": tool,
             "content": truncated["text"],
             "isError": bool(result.get("isError")),
+            "structuredContent": structured,
             "truncation": truncated["truncation"],
             **(
                 {"full_output_path": truncated["file"]} if truncated.get("file") else {}
             ),
         }
-        structured_content, structured_truncated = _bounded_structured_content(
-            result.get("structuredContent")
-        )
-        if structured_content is not None:
-            payload["structuredContent"] = structured_content
-        if structured_truncated:
-            payload["structuredContentTruncated"] = True
-        return payload
 
     def list_configured_tools(self, server: McpServerConfig) -> tuple[McpToolInfo, ...]:
-        """Return tool names/descriptions advertised by a configured server."""
+        """Return all tools advertised by a configured server."""
         if server.transport not in {"stdio", "streamable-http", "http"}:
             return ()
-        return tuple(self._client(server).list_tool_summaries())
+        return tuple(self._client(server).list_tools())
 
     def _client(self, server: McpServerConfig) -> McpClient:
         client = self._clients.get(server.name)
@@ -267,10 +271,7 @@ def _tool_summary(tool: McpToolInfo, *, include_schema: bool) -> dict[str, objec
     if len(description) > 240:
         description = description[:239].rstrip() + "…"
     summary: dict[str, object] = {"name": tool.name, "description": description}
-    schema = tool_schema_for_inspection(
-        tool.input_schema,
-        include_schema=include_schema,
-    )
+    schema = compact_tool_schema(tool.input_schema, include_schema=include_schema)
     if schema is not None:
         summary["input_schema"] = schema
     return summary
@@ -296,6 +297,7 @@ def _mcp_result_text(result: dict[str, Any]) -> str:
 def _content_part_text(item: object) -> str:
     if not isinstance(item, dict):
         return str(item)
+    item = cast(dict[str, object], item)
     item_type = item.get("type")
     if item_type == "text":
         text = item.get("text")
@@ -307,12 +309,35 @@ def _content_part_text(item: object) -> str:
     if item_type == "resource":
         resource = item.get("resource")
         if isinstance(resource, dict):
+            resource = cast(dict[str, object], resource)
             uri = resource.get("uri", "unknown")
             text = resource.get("text")
             if isinstance(text, str):
                 return f"[Resource: {uri}]\n{text}"
             return f"[Resource: {uri}]"
     return json.dumps(item, ensure_ascii=False)
+
+
+def _bounded_structured_content(
+    structured: object, *, full_output_path: str | None
+) -> object:
+    if structured is None:
+        return None
+    serialized = json.dumps(structured, indent=2, ensure_ascii=False)
+    truncation = truncate_head(
+        serialized,
+        max_lines=DEFAULT_MAX_LINES,
+        max_bytes=DEFAULT_MAX_BYTES,
+    )
+    if not truncation.truncated:
+        return structured
+    result: dict[str, object] = {
+        "truncated": True,
+        "truncation": truncation.to_dict(),
+    }
+    if full_output_path is not None:
+        result["full_output_path"] = full_output_path
+    return result
 
 
 def _truncate_result_text(text: str, *, server: str, tool: str) -> dict[str, object]:
@@ -324,17 +349,12 @@ def _truncate_result_text(text: str, *, server: str, tool: str) -> dict[str, obj
     file_path: str | None = None
     content = truncation.content
     if truncation.truncated:
-        safe = _safe_output_prefix(server=server, tool=tool)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=safe,
-            suffix=".txt",
-            dir=_private_output_dir(),
-            delete=False,
-        ) as handle:
-            handle.write(text)
-            file_path = handle.name
+        directory = Path(tempfile.gettempdir()) / "yoke-mcp"
+        directory.mkdir(parents=True, exist_ok=True)
+        safe = f"{int(time.time())}-{server}-{tool}".replace("/", "_")
+        path = directory / f"{safe}.txt"
+        path.write_text(text, encoding="utf-8")
+        file_path = str(path)
         content = (
             content
             + "\n\n"
@@ -348,36 +368,3 @@ def _truncate_result_text(text: str, *, server: str, tool: str) -> dict[str, obj
         "file": file_path,
         "truncation": truncation.to_dict(),
     }
-
-
-def _bounded_structured_content(value: object) -> tuple[object | None, bool]:
-    if value is None:
-        return None, False
-    try:
-        encoded = json.dumps(value, ensure_ascii=False).encode("utf-8")
-    except (TypeError, ValueError):
-        return None, True
-    if len(encoded) > DEFAULT_MAX_BYTES:
-        return None, True
-    return value, False
-
-
-def _safe_output_prefix(*, server: str, tool: str) -> str:
-    prefix = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{server}-{tool}")
-    prefix = prefix.strip("._-")[:80] or "result"
-    return f"{prefix}-"
-
-
-@functools.lru_cache(maxsize=1)
-def _private_output_dir() -> Path:
-    directory = Path(tempfile.mkdtemp(prefix="yoke-mcp-"))
-    directory.chmod(0o700)
-    return directory
-
-
-def _cleanup_private_output_dir() -> None:
-    if _private_output_dir.cache_info().currsize:
-        shutil.rmtree(_private_output_dir(), ignore_errors=True)
-
-
-atexit.register(_cleanup_private_output_dir)

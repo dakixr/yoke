@@ -21,7 +21,7 @@ class AttachImageTool(LocalTool):
     name = "attach_image"
     description = (
         "Attach an image from disk into the conversation context so the model "
-        "can inspect it natively in a following turn. Use this when an image "
+        "can inspect it natively. Use this when an image "
         "file exists locally and should become part of the multimodal context."
     )
 
@@ -47,28 +47,23 @@ class AttachImageTool(LocalTool):
             "caption": self.caption,
         }
 
-    def apply_result(self, context, result: dict[str, object]) -> None:
-        """Leave attachment construction to ordered context-message handling."""
-        del context, result
-
     def pending_context_messages(self, result: dict[str, object]) -> list[Message]:
-        """Build the attached message using the latest ordered context."""
+        """Build the image message without embedding it in the tool result."""
         if not result.get("ok"):
             return []
         raw_path = result.get("path")
         if not isinstance(raw_path, str) or not raw_path:
             return []
-        next_index = next_image_label_index(self._context_messages())
         caption = result.get("caption")
         prompt = caption if isinstance(caption, str) else ""
-        message = build_image_user_message(
-            prompt,
-            image_paths=[Path(raw_path)],
-            start_index=next_index,
-        )
-        result["label"] = format_image_label(next_index)
-        result["context_messages"] = [message.model_dump(mode="json")]
-        return [message]
+        return [
+            build_image_user_message(
+                prompt,
+                image_paths=[Path(raw_path)],
+                start_index=next_image_label_index(self._context_messages()),
+                embed_local_images=True,
+            )
+        ]
 
     def _context_messages(self) -> list[Message]:
         raw_messages = self._context.get("messages", [])

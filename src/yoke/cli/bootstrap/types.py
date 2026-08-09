@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from dataclasses import field
 from pathlib import Path
 from typing import Literal
 
 from yoke.agent.models import Message
 from yoke.agent.tools import LocalTool
-from yoke.agent.tools import RegisterTools
-from yoke.agent.tools import ToolRegistrationContext
 
 ToolSourceKind = Literal["default", "global", "repo"]
-RegisterToolsFunc = RegisterTools
-ToolPluginContext = ToolRegistrationContext
 
 
 @dataclass(slots=True)
@@ -24,7 +19,7 @@ class ResolvedAgentConfig:
     system_messages: list[Message]
     tools: list[LocalTool]
     tool_report: ToolLoadReport
-    tool_system_messages: list[Message]
+    tool_system_messages: list[Message] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -35,35 +30,27 @@ class LoadedTool:
     source_kind: ToolSourceKind
     source_label: str
     source_path: Path | None = None
-    capability_name: str | None = None
+    capability_id: str | None = None
+    registration_id: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
-class LoadedToolContribution:
-    """System messages associated with one tool registration."""
-
-    system_messages: tuple[Message, ...]
-    tool_names: frozenset[str]
-    source_kind: ToolSourceKind
-    source_label: str
-
-
-@dataclass(slots=True, frozen=True)
-class ToolLoadFailure:
-    """One tool plugin that could not be imported or registered."""
-
-    source_kind: ToolSourceKind
-    source_path: Path
-    error: str
-
-
-@dataclass(slots=True)
-class ToolDiscoveryResult:
-    """Discovered tools and their registration-time prompt contributions."""
+class LoadedToolGroup:
+    """Tools and system messages loaded from one source group."""
 
     tools: list[LoadedTool]
-    contributions: list[LoadedToolContribution]
-    failures: list[ToolLoadFailure] = field(default_factory=list)
+    system_messages: list[LoadedSystemMessage]
+
+
+@dataclass(slots=True, frozen=True)
+class LoadedSystemMessage:
+    """One system message contributed by a loaded registration."""
+
+    message: Message
+    source_kind: ToolSourceKind
+    source_label: str
+    source_path: Path | None = None
+    registration_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -74,9 +61,9 @@ class ToolLoadReport:
     active_tools: list[LoadedTool]
     denied_tools: list[LoadedTool]
     config_path: Path | None = None
-    unmatched_config_patterns: list[str] = field(default_factory=list)
-    failures: list[ToolLoadFailure] = field(default_factory=list)
-    skill_failures: list[str] = field(default_factory=list)
+    unmatched_tool_names: list[str] | None = None
+    unmatched_capability_ids: list[str] | None = None
+    system_messages: list[LoadedSystemMessage] | None = None
 
     def count(self, source_kind: ToolSourceKind) -> int:
         """Count active tools by source kind."""

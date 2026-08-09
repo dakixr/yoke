@@ -99,12 +99,12 @@ def _extract_docx(path: Path) -> str:
 
 def _extract_xlsx(path: Path) -> str:
     try:
-        from openpyxl import load_workbook  # type: ignore[import-untyped]  # ty: ignore[unresolved-import]
+        openpyxl_module = importlib.import_module("openpyxl")
     except ImportError:
         return _extract_xlsx_xml(path)
 
     try:
-        workbook = load_workbook(path, data_only=True)
+        workbook = openpyxl_module.load_workbook(path, data_only=True)
         lines: list[str] = []
         for sheet_name in workbook.sheetnames:
             worksheet = workbook[sheet_name]
@@ -142,7 +142,7 @@ def _extract_pdf(path: Path) -> str:
 
 def _extract_pptx(path: Path) -> str:
     try:
-        from pptx import Presentation  # ty: ignore[unresolved-import]
+        pptx_module = importlib.import_module("pptx")
     except ImportError:
         return _extract_office_xml(
             path,
@@ -151,7 +151,7 @@ def _extract_pptx(path: Path) -> str:
         )
 
     try:
-        presentation = Presentation(str(path))
+        presentation = pptx_module.Presentation(str(path))
         lines: list[str] = []
         for index, slide in enumerate(presentation.slides, start=1):
             lines.append(f"Slide {index}:")

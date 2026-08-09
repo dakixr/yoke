@@ -3,25 +3,35 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
-import time
+from contextlib import suppress
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Sequence
+import inspect
+import time
 from typing import cast
+from uuid import uuid4
 
 from yoke.agent.models import Message
 from yoke.agent.models import TokenUsage
 from yoke.ai.sdk.agent import Agent
+from yoke.ai.sdk.async_support import drain_worker
+from yoke.ai.sdk.batch_safety import close_attempt_agent
+from yoke.ai.sdk.batch_safety import emit_batch_error
+from yoke.ai.sdk.batch_safety import prepare_retry
+from yoke.ai.sdk.batch_safety import register_agent
+from yoke.ai.sdk.batch_safety import RetryPredicate
+from yoke.ai.sdk.observability import AgentObserver
+from yoke.ai.sdk.observability import BoundObserver
 from yoke.ai.sdk.types import BatchItemResult
 from yoke.ai.sdk.types import BatchProgress
 from yoke.ai.sdk.types import BatchResult
 from yoke.ai.sdk.types import BatchTask
 from yoke.ai.sdk.types import BatchUsage
+from yoke.ai.providers.usage_context import usage_metric_context
 
 type AgentFactory = Callable[[BatchTask], Agent | Awaitable[Agent]]
 type ProgressCallback = Callable[[BatchProgress], Awaitable[None] | None]
-type RetryPredicate = Callable[[Exception], bool]
 
 
 async def run_many[StructuredT](
@@ -35,8 +45,13 @@ async def run_many[StructuredT](
     retry_delay: float = 0,
     should_retry: RetryPredicate | None = None,
     on_progress: ProgressCallback | None = None,
+    observer: AgentObserver | None = None,
 ) -> BatchResult[StructuredT]:
-    """Run independent tasks concurrently and return input-ordered outcomes."""
+    """Run independent tasks concurrently and return input-ordered outcomes.
+
+    The factory is called once per attempt. Every created agent is closed after
+    that attempt, including failures and cooperative timeouts.
+    """
     _validate_inputs(
         tasks,
         max_concurrency=max_concurrency,
@@ -48,6 +63,7 @@ async def run_many[StructuredT](
     semaphore = asyncio.Semaphore(max_concurrency)
     progress_lock = asyncio.Lock()
     used_agents: set[Agent] = set()
+    used_providers: dict[int, object] = {}
     used_agents_lock = asyncio.Lock()
     progress_errors: list[Exception] = []
     completed = 0
@@ -63,7 +79,9 @@ async def run_many[StructuredT](
                 max_attempts=max_attempts,
                 retry_delay=retry_delay,
                 should_retry=should_retry,
+                observer=observer,
                 used_agents=used_agents,
+                used_providers=used_providers,
                 used_agents_lock=used_agents_lock,
             )
         async with progress_lock:
@@ -110,7 +128,9 @@ async def _run_task[StructuredT](
     max_attempts: int,
     retry_delay: float,
     should_retry: RetryPredicate | None,
+    observer: AgentObserver | None,
     used_agents: set[Agent],
+    used_providers: dict[int, object],
     used_agents_lock: asyncio.Lock,
 ) -> BatchItemResult[StructuredT]:
     started = time.monotonic()
@@ -123,8 +143,14 @@ async def _run_task[StructuredT](
         baseline_usage = BatchUsage()
         result = None
         attempt_error: Exception | None = None
+        attempt_stage = "factory"
+        close_candidate = False
+        registered = False
+        bound_observer = (
+            BoundObserver(observer, task.id, attempt) if observer is not None else None
+        )
         try:
-            created = agent_factory(task)
+            created = await _call_factory(agent_factory, task)
             candidate = (
                 await cast(Awaitable[Agent], created)
                 if inspect.isawaitable(created)
@@ -133,15 +159,33 @@ async def _run_task[StructuredT](
             if not isinstance(candidate, Agent):
                 raise TypeError("agent_factory must return an Agent")
             agent = candidate
-            baseline_usage = _usage_from_messages(agent.messages)
-            await _register_agent(agent, used_agents, used_agents_lock)
-            result = await agent.prompt_async(
-                task.prompt,
-                images=task.images,
-                image_urls=task.image_urls,
-                output_type=output_type,
-                timeout=timeout,
+            close_candidate = True
+            attempt_stage = "registration"
+            registration_error = await register_agent(
+                agent,
+                used_agents,
+                used_providers,
+                used_agents_lock,
             )
+            if registration_error is not None:
+                close_candidate = registration_error.close_candidate
+                raise registration_error
+            registered = True
+            baseline_usage = _usage_from_messages(agent.messages)
+            attempt_stage = "prompt"
+            with usage_metric_context(
+                surface="sdk",
+                sdk_operation="run_many",
+                sdk_run_id=uuid4().hex,
+            ):
+                result = await agent.prompt_async(
+                    task.prompt,
+                    images=task.images,
+                    image_urls=task.image_urls,
+                    output_type=output_type,
+                    observer=bound_observer,
+                    timeout=timeout,
+                )
             usage = _add_usage(
                 usage,
                 _subtract_usage(_usage_from_messages(result.messages), baseline_usage),
@@ -150,21 +194,23 @@ async def _run_task[StructuredT](
             raise
         except Exception as exc:
             attempt_error = exc
-            if agent is not None:
+            if agent is not None and registered:
+                attempt_usage = _usage_from_messages(agent.messages)
                 usage = _add_usage(
                     usage,
                     _subtract_usage(
-                        _usage_from_messages(agent.messages), baseline_usage
+                        attempt_usage,
+                        baseline_usage,
                     ),
                 )
         finally:
-            if agent is not None:
-                try:
-                    await agent.aclose()
-                except Exception as close_error:
-                    if attempt_error is None:
-                        attempt_error = close_error
-                        result = None
+            close_error = await close_attempt_agent(agent, close_candidate)
+            if close_error is not None and attempt_error is not None:
+                emit_batch_error(bound_observer, close_error, stage="cleanup")
+            elif close_error is not None:
+                attempt_error = close_error
+                attempt_stage = "cleanup"
+                result = None
         if result is not None:
             return BatchItemResult(
                 task=task,
@@ -177,22 +223,45 @@ async def _run_task[StructuredT](
         last_error = attempt_error
         if attempt_error is None:
             break
-        if attempt == max_attempts or (
-            should_retry is not None and not should_retry(attempt_error)
-        ):
+        emit_batch_error(bound_observer, attempt_error, stage=attempt_stage)
+        if attempt == max_attempts:
             break
-        if retry_delay:
-            await asyncio.sleep(retry_delay)
+        retry, last_error = await prepare_retry(
+            attempt_error,
+            should_retry=should_retry,
+            retry_delay=retry_delay,
+            observer=bound_observer,
+        )
+        if not retry:
+            break
     if last_error is None:
         last_error = RuntimeError("Batch task did not produce a result")
+    status = "timed_out" if isinstance(last_error, TimeoutError) else "error"
     return BatchItemResult(
         task=task,
-        status="timed_out" if isinstance(last_error, TimeoutError) else "error",
+        status=status,
         attempts=attempts,
         duration_seconds=time.monotonic() - started,
         error=last_error,
         usage=usage,
     )
+
+
+async def _call_factory(
+    factory: AgentFactory, task: BatchTask
+) -> Agent | Awaitable[Agent]:
+    """Call a potentially blocking factory outside the event loop."""
+    worker = asyncio.create_task(asyncio.to_thread(factory, task))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        outcome = await drain_worker(worker)
+        if isinstance(outcome, Agent):
+            with suppress(BaseException):
+                await outcome.aclose()
+        elif inspect.iscoroutine(outcome):
+            outcome.close()
+        raise
 
 
 async def _emit_progress(
@@ -203,17 +272,6 @@ async def _emit_progress(
     outcome = callback(progress)
     if inspect.isawaitable(outcome):
         await outcome
-
-
-async def _register_agent(
-    agent: Agent, used_agents: set[Agent], lock: asyncio.Lock
-) -> None:
-    async with lock:
-        if agent in used_agents:
-            raise ValueError(
-                "agent_factory must return a fresh Agent for every attempt"
-            )
-        used_agents.add(agent)
 
 
 def _aggregate_usage[StructuredT](
@@ -235,6 +293,7 @@ def _usage_from_messages(messages: Sequence[Message]) -> BatchUsage:
         reasoning_tokens=_sum_usage(usages, "reasoning_tokens"),
         total_tokens=_sum_usage(usages, "total_tokens"),
         cached_input_tokens=_sum_usage(usages, "cached_input_tokens"),
+        cache_creation_input_tokens=_sum_usage(usages, "cache_creation_input_tokens"),
     )
 
 
@@ -246,6 +305,9 @@ def _sum_batch_usage(usages: list[BatchUsage]) -> BatchUsage:
         reasoning_tokens=sum(usage.reasoning_tokens for usage in usages),
         total_tokens=sum(usage.total_tokens for usage in usages),
         cached_input_tokens=sum(usage.cached_input_tokens for usage in usages),
+        cache_creation_input_tokens=sum(
+            usage.cache_creation_input_tokens for usage in usages
+        ),
     )
 
 
@@ -262,6 +324,10 @@ def _subtract_usage(total: BatchUsage, baseline: BatchUsage) -> BatchUsage:
         total_tokens=max(0, total.total_tokens - baseline.total_tokens),
         cached_input_tokens=max(
             0, total.cached_input_tokens - baseline.cached_input_tokens
+        ),
+        cache_creation_input_tokens=max(
+            0,
+            total.cache_creation_input_tokens - baseline.cache_creation_input_tokens,
         ),
     )
 

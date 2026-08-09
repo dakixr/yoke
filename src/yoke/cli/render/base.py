@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from yoke._version import __version__
+from yoke import __version__
 
 
 def truncate_cli_text(text: str, limit: int) -> str:
@@ -73,6 +73,44 @@ def format_tool_preview(tool_name: str, raw_arguments: object) -> str:
     if preview:
         return f"{tool_name} {preview}"
     return tool_name
+
+
+def format_tool_error(payload: object) -> str | None:
+    """Extract a compact tool error message from a result payload."""
+    if not isinstance(payload, dict) or not all(
+        isinstance(key, str) for key in payload
+    ):
+        return None
+    payload_dict = cast(dict[str, object], payload)
+    raw_error = payload_dict.get("error")
+    if isinstance(raw_error, str) and raw_error.strip():
+        return truncate_cli_text(raw_error, 120)
+    return None
+
+
+def format_tool_result_error(event_payload: dict[str, object]) -> str | None:
+    """Extract a compact tool error message from a runtime event payload."""
+    return format_tool_error(event_payload.get("result"))
+
+
+def format_compaction_summary_start(payload: dict[str, object]) -> str:
+    """Format the start of a compaction summary event."""
+    tokens = payload.get("estimated_input_tokens", "?")
+    return f"summarizing {tokens} input tokens\u2026"
+
+
+def format_compaction_summary_end(
+    payload: dict[str, object], *, concise: bool = False
+) -> str:
+    """Format the end of a compaction summary event."""
+    duration = payload.get("duration_seconds", "?")
+    if payload.get("ok", False):
+        chars = payload.get("response_chars", "?")
+        if concise:
+            return f"\u2713 {duration}s ({chars} chars)"
+        return f"\u2713 done in {duration}s (summary: {chars} chars)"
+    error = payload.get("error", "unknown")
+    return f"\u2717 failed after {duration}s ({error})"
 
 
 def format_compaction_note(payload: dict[str, object]) -> str:
@@ -149,6 +187,11 @@ def print_user_prompt(console: Console, prompt: str) -> None:
 
 
 def _user_prompt_block(console: Console, prompt: str) -> Text:
+    return format_user_prompt_block(console, prompt)
+
+
+def format_user_prompt_block(console: Console, prompt: str) -> Text:
+    """Format a full-width terminal prompt block."""
     width = max(1, console.width)
     content_width = width
     content_lines = prompt.splitlines() or [""]

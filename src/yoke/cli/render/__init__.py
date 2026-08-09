@@ -6,13 +6,28 @@ from yoke.cli.render.base import (
     format_compaction_note as format_compaction_note,
 )
 from yoke.cli.render.base import (
+    format_compaction_summary_end as format_compaction_summary_end,
+)
+from yoke.cli.render.base import (
+    format_compaction_summary_start as format_compaction_summary_start,
+)
+from yoke.cli.render.base import (
     format_tool_argument_value as format_tool_argument_value,
 )
 from yoke.cli.render.base import (
     format_tool_arguments_preview as format_tool_arguments_preview,
 )
 from yoke.cli.render.base import (
+    format_tool_error as format_tool_error,
+)
+from yoke.cli.render.base import (
     format_tool_preview as format_tool_preview,
+)
+from yoke.cli.render.base import (
+    format_tool_result_error as format_tool_result_error,
+)
+from yoke.cli.render.base import (
+    format_user_prompt_block as format_user_prompt_block,
 )
 from yoke.cli.render.base import (
     format_user_separator as format_user_separator,
@@ -54,6 +69,9 @@ from yoke.cli.render.scrollback import (
     print_scrollback_user as print_scrollback_user,
 )
 from yoke.cli.render.scrollback import (
+    print_scrollback_warning as print_scrollback_warning,
+)
+from yoke.cli.render.scrollback import (
     print_session_scrollback as print_session_scrollback,
 )
 from yoke.cli.render.scrollback import (
@@ -63,23 +81,3 @@ from yoke.cli.render.status import (
     InteractiveRenderer as InteractiveRenderer,
 )
 from yoke.cli.render.status import StatusIndicator as StatusIndicator
-from yoke.cli.render.theme import (
-    PHASE_COMPACTING as PHASE_COMPACTING,
-)
-from yoke.cli.render.theme import (
-    PHASE_RECOVERING as PHASE_RECOVERING,
-)
-from yoke.cli.render.theme import (
-    PHASE_RUNNING_TOOL as PHASE_RUNNING_TOOL,
-)
-from yoke.cli.render.theme import (
-    PHASE_STREAMING as PHASE_STREAMING,
-)
-from yoke.cli.render.theme import (
-    PHASE_THINKING as PHASE_THINKING,
-)
-from yoke.cli.render.theme import (
-    TOOLBAR_STYLE_ENTRIES as TOOLBAR_STYLE_ENTRIES,
-)
-from yoke.cli.render.theme import gauge_level as gauge_level
-from yoke.cli.render.theme import format_token_count as format_token_count

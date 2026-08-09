@@ -1,225 +1,349 @@
 # SDK
 
-Embed yoke in Python with a small public surface:
+Embed yoke in Python with a small top-level surface and explicit submodules:
 
-- `Agent` for stateful, tool-using workflows
-- `RunConfig` for agent runtime configuration
-- `complete()` for direct completions without local tools
-- `Image` for multimodal prompt inputs
-- `Skill` for composable instruction sets
-- `LocalTool` for user-authored executable tools
+- `yoke.ai` for the common path: `Agent`, `RunConfig`, `Image`, `complete()`, and built-in provider construction
+- `yoke.ai.types` for result and error value types
+- `yoke.ai.providers` for concrete provider/config classes
+- `yoke.ai.skills` for composable instruction sets
+- `yoke.ai.utils` for optional diagnostics and low-level convenience helpers
 
 ## Agent
 
 ```python
-from pathlib import Path
+from yoke.ai import Agent, build_builtin_provider
 
-from yoke.agent.tools import EditTool
-from yoke.agent.tools import ReadTool
-from yoke.ai import Agent
-from yoke.ai import OpenCodeGoConfig
-from yoke.ai import OpenCodeGoProvider
-from yoke.ai import RunConfig
-
-provider = OpenCodeGoProvider(OpenCodeGoConfig(api_key="..."))
-
-agent = Agent(
-    provider=provider,
-    config=RunConfig(
-        root=Path.cwd(),
-        sys_prompt="Be concise and precise.",
-        tools=[ReadTool, EditTool],
-    ),
-)
+provider = build_builtin_provider("codex:gpt-5.5:medium")
+agent = Agent(provider=provider)
 
 result = agent.prompt("Add type annotations to src/utils.py")
 print(result.output)
+agent.close()
 ```
 
-`RunConfig` is optional when the standard coding-agent capabilities and the
-current working directory are appropriate:
+`Agent` is stateful. Reuse one instance to retain conversation context and
+close it when finished. When `config` is omitted, the SDK builds a coding
+configuration rooted at the current working directory. Its high-level
+capabilities include file read/write/search, shell execution, image attachment
+and generation, web fetch/search/research, and document extraction.
+Provider-aware resolution removes unsupported tools and chooses the appropriate
+concrete implementation.
+
+Pass `RunConfig` when you need an explicit root, system prompt, tool list,
+skills, hooks, compaction policy, or execution mode:
 
 ```python
-agent = Agent(provider=provider)
+from yoke.ai import Agent, RunConfig, build_builtin_provider
+
+agent = Agent(
+    provider=build_builtin_provider("opencode-go:gpt-5.6-luna:high"),
+    config=RunConfig(
+        root=".",
+        tools=["file.read", "file.search", "file.write", "web.research"],
+    ),
+)
 ```
 
-Use `with Agent(...)` in synchronous code so provider and tool resources close
-on every return or exception. The async equivalent is `async with Agent(...)`.
+Provider selections use `provider:model:thinking_effort`. Yoke's public SDK
+exposes `Agent`, `RunConfig`, `complete()`, `run_many()`, observers, durable
+state, structured outputs, and provider helpers with consistent call shapes.
 
-Use `prompt_async()` in asyncio applications. Calls on one stateful agent are
-serialized so their conversation updates stay ordered; independent agents can
-run concurrently. Cancellation and `timeout=` cooperatively stop the active
-provider/tool loop before returning control.
+```python
+from yoke.ai import build_builtin_provider
+from yoke.ai.utils import print_builtin_provider_status
+
+print_builtin_provider_status()
+provider = build_builtin_provider("codex:gpt-5.5:medium")
+```
+
+The default SDK selection is `codex:gpt-5.5:medium`. Built-in providers are
+`codex`, `opencode-go`, and `zai`. The same helper also resolves global
+custom provider plugins under `~/.yoke/providers/`. Provider status includes
+credential readiness, model catalogs, context windows, thinking controls, and
+image-input metadata.
+
+Codex can authenticate from its OAuth state, the Codex account vault, or
+`YOKE_CODEX_API_KEY`. OpenCode Go uses `OPENCODE_API_KEY`; Z.ai uses
+`ZAI_API_KEY`. The CLI credential store is also included in provider
+resolution.
+
+Codex uses Responses continuity and a stable cache scope. Healthy follow-up
+requests can send only the new input against the prior response; stale anchors
+recover from retained opaque output or visible history. Forked agents receive
+isolated provider state. Provider/model system messages and tool capabilities
+refresh when model identity changes.
+
+## Async Agents
+
+Use `prompt_async()` from an asyncio application. It has the same inputs and
+result type as `prompt()`, plus an optional timeout.
 
 ```python
 import asyncio
 
-from yoke.ai import Agent, build_provider
+from yoke.ai import Agent, build_builtin_provider
 
 
 async def main() -> None:
-    async with Agent(provider=build_provider("zai")) as agent:
+    agent = Agent(
+        provider=build_builtin_provider("codex:gpt-5.4-mini:low")
+    )
+    async with agent:
         result = await agent.prompt_async(
-            "Summarize this repository's architecture.", timeout=120
+            "Summarize the current project.", timeout=120
         )
-        result.require_completed()
         print(result.output)
 
 
 asyncio.run(main())
 ```
 
-Use `await agent.aclose()` when an async context manager is not convenient.
-The SDK agent owns its provider and releases it with runtime/tool resources.
-Forked agents share provider ownership and close it after the final fork closes.
+The underlying agent runtime remains synchronous, so `prompt_async()` runs it
+in a worker thread instead of blocking the event loop. Concurrent calls on the
+same stateful `Agent` serialize before allocating worker threads, protecting its
+conversation state without exhausting the executor. One `Agent` is bound to the
+first event loop that calls `prompt_async()`; use a separate agent in another
+event loop. Cross-loop use raises `RuntimeError` instead of risking a blocked
+waiter. Closing is idempotent,
+waits for active work, rejects queued prompts once closing begins, and prevents
+subsequent state mutation. Cancelling `aclose()` still waits for its close worker
+before it propagates cancellation. Transcript properties and prompt results
+return snapshots, so changing their lists does not change agent state. Use
+`run_many()` for independent work.
 
-For independent async work, use `run_many()` with a fresh-agent factory:
+Synchronous event and tool hooks run in the worker thread. They must be
+thread-safe and must not recursively prompt, close, save, restore, reset, or
+fork the same agent.
+
+## Usage Metrics
+
+Yoke records every completed provider response from the CLI and SDK in daily
+JSONL files under `~/.yoke/usage-metric-logs/<provider>/`. Records contain only
+the provider, model, completion time, normalized token counts, and explicit
+execution attribution. Attribution includes `surface`, `call_kind`, CLI session
+identity, or the SDK operation and a random SDK run ID as applicable. CLI
+`session_title` can contain up to 80 characters derived from the first user
+prompt when the user has not assigned a title. Records do not contain complete
+prompts, responses, tools, paths, caller-supplied batch task IDs, or raw provider
+payloads. A provider that does not report token counts still gets a completion
+record with an empty `usage` object. Usage records continue to use
+`schema_version: 1`; the attribution fields are optional additions.
+
+SDK operations are `complete`, `agent`, and `run_many`. A random `sdk_run_id`
+groups the provider calls produced by one direct completion, agent prompt, or
+batch task attempt. Call kinds distinguish direct completions, model iterations,
+structured-output retries, compaction summaries, branch summaries, and overflow
+retries. Yoke sets this metadata at its CLI and SDK entry points and propagates it
+with execution context; it does not infer attribution from process arguments or
+stack frames.
+
+Set `YOKE_USAGE_METRIC_LOG_DIR` to store these local metrics in another
+directory. Writes use a cross-process lock, retry transient failures, and flush
+data to disk before returning. A persistent failure raises
+`yoke.ai.providers.UsageLogWriteError` instead of silently losing a completed
+usage record.
+
+## Observing Agent Work
+
+Use an SDK observer for live, structured visibility into an agent run. The
+`actions` detail level shows assistant commentary, the final assistant message,
+compact tool-call signatures, and tool failures. It redacts argument keys that
+look like credentials and is the recommended level for subagents.
 
 ```python
-from yoke.ai import Agent, BatchTask, run_many
+from yoke.ai import Agent, ConsoleObserver
 
-batch = await run_many(
-    [
-        BatchTask(id="api", prompt="Review the API layer."),
-        BatchTask(id="tests", prompt="Review test coverage."),
-    ],
-    agent_factory=lambda task: Agent(provider=build_provider("zai")),
-    max_concurrency=2,
+agent = Agent(
+    provider=provider,
+    observer=ConsoleObserver("actions", label="reviewer"),
 )
-for item in batch.items:
-    if item.status == "completed" and item.result is not None:
-        print(item.task.id, item.result.require_completed().output)
-    else:
-        print(item.task.id, item.status, item.error)
-if batch.progress_errors:
-    raise ExceptionGroup("Progress callbacks failed", batch.progress_errors)
+result = agent.prompt("Review the current changes.")
 ```
 
-`run_many()` preserves input order, isolates errors, supports retries and
-cooperative per-task timeouts, reports progress, aggregates provider usage, and
-closes every agent it creates. The factory must return a fresh agent for every
-task and retry attempt. Per-task timeouts start after a task acquires the batch
-concurrency slot. Use `AgentResult.completed` or `require_completed()` at every
-role boundary; stopped turns can contain partial output but are not completed.
+The available detail levels are:
 
-Built-in provider classes include `CodexSubscriptionProvider`,
-`CodexWebSockets`, `OpenCodeGoProvider`, and
-`ZAIProvider`. For standard OpenAI-compatible endpoints, use
-`OpenAICompatibleProvider` with `OpenAICompatibleConfig.from_env()`.
+- `quiet`: do not emit live activity.
+- `messages`: emit assistant commentary, the final message, and agent errors.
+- `actions`: add compact tool-call signatures and tool failures.
+- `full`: emit every runtime event, including tool results, usage, retries, and
+  compaction activity.
 
-For workflow scripts and automations, construct providers from a qualified
-reference string:
+`LoggingObserver` sends the same rendered output to a Python logger.
+`JsonlObserver` writes redacted structured events for later inspection. Use
+`CompositeObserver` to send one run to multiple destinations. You can set an
+observer on `Agent`, pass one for a specific `prompt()` or `prompt_async()`
+call, or pass one to `run_many()`. A batch observer automatically adds the task
+ID and retry attempt to each event. The existing raw `on_event` callback remains
+available for compatibility and custom runtime integrations. Observer failures
+are logged and do not fail the agent run. Each observer receives an isolated
+deep payload snapshot, so an observer cannot change runtime results or another
+observer's input. Serialized tool arguments are parsed before credential
+redaction; malformed serialized arguments are hidden rather than logged.
+
+Cancellation and timeouts are cooperative. They signal the runtime through its
+existing stop callback and propagate to the async caller immediately. The
+synchronous worker may continue until it observes that signal, and its eventual
+outcome is consumed in the background. The agent's prompt lock prevents another
+prompt from mutating the same state while that worker retires, and closing the
+agent waits for active work before releasing resources. Providers and tools
+should still implement cooperative cancellation and lower-level timeouts. The
+timeout budget includes time queued behind another prompt; a late completion
+never replaces an already-raised timeout or cancellation.
+In-process tools receive a latched cancellation signal during shutdown. Yoke
+waits for a bounded cleanup window before releasing their resources; if a tool
+ignores cancellation beyond that window, `close()` raises and leaves the agent
+open so cleanup can be retried safely.
+
+## Async Batches
+
+`run_many()` executes independent tasks with bounded concurrency. Supply a
+synchronous or asynchronous factory that creates a fresh `Agent` for each task
+and retry attempt. Each agent must also own a different provider instance;
+reused agents and providers are rejected. The helper closes every accepted
+agent after its attempt without closing an active owner when it rejects a
+duplicate. Results preserve input order even when tasks finish in a different
+order. Synchronous factories run in worker threads and do not block the event
+loop.
 
 ```python
-from yoke.ai import build_provider, provider_readiness
+import asyncio
 
-readiness = provider_readiness()
-ready_names = [item.provider_name for item in readiness if item.ready]
-if "zai" not in ready_names:
-    raise RuntimeError("zai is not ready in this environment")
+from yoke.ai import Agent, BatchTask, ConsoleObserver, RunConfig
+from yoke.ai import build_builtin_provider, run_many
 
-provider = build_provider("zai:glm-5.2:none")
+
+def make_agent(task: BatchTask) -> Agent:
+    return Agent(
+        provider=build_builtin_provider("codex:gpt-5.4-mini:low"),
+        config=RunConfig(root=".", tools=[]),
+    )
+
+
+async def main() -> None:
+    batch = await run_many(
+        [
+            BatchTask(id="one", prompt="Return the number 1."),
+            BatchTask(id="two", prompt="Return the number 2."),
+        ],
+        agent_factory=make_agent,
+        max_concurrency=2,
+        timeout=60,
+        max_attempts=2,
+        observer=ConsoleObserver("actions"),
+    )
+    for item in batch.items:
+        output = item.result.output if item.result else item.error
+        print(item.task.id, item.status, output)
+    print(batch.usage.total_tokens)
+
+
+asyncio.run(main())
 ```
 
-For a Codex provider that may be reconstructed while continuing the same
-logical conversation, pass a durable `session_id` to `build_provider(...)` so
-the prompt-cache key remains stable across instances.
+Each item has a terminal status of `completed`, `error`, or `timed_out`, plus
+its attempt count, duration, result, and exception. Failures remain isolated in
+their input slots rather than cancelling unrelated tasks. `BatchResult.usage`
+sums every provider-reported call retained in successful or partial task
+transcripts, including tool-loop and structured-output retry calls. Calls that
+fail before reporting usage cannot be counted. Usage already present in an
+agent's initial or restored transcript is excluded from batch totals.
 
-The accepted forms are `provider`, `provider:model`, and
-`provider:model:thinking-effort`. Pass `env=` and `home=` to check or build
-against a specific environment rather than the current process. Agents should
-call `provider_readiness(env=..., home=...)` first to decide which providers
-are available before writing or running a workflow. Use `provider_status(...)`
-when you need to inspect one specific qualified provider reference.
+Pass `on_progress` a synchronous or asynchronous callback accepting one
+`BatchProgress` event. Callback failures do not abort work; they are retained in
+`BatchResult.progress_errors`. `should_retry` can reject non-transient errors,
+and `retry_delay` adds a fixed non-negative delay before another fresh attempt.
+A `should_retry` failure becomes the error for that item and does not stop other
+items.
 
-Providers can contribute model-specific system messages through their model
-catalog. Those messages are inserted only for the active provider/model and are
-refreshed when the selected model changes:
+Batch observers also receive `batch_attempt_error` events for factory,
+registration, prompt, retry-policy, and cleanup failures. The event carries the
+task ID, attempt number, and failure stage. Built-in console and logging
+observers bound the rendered error text.
+
+`max_attempts` retries failed or timed-out tasks with a newly created agent.
+Cancelling `run_many()` cancels queued tasks, cooperatively stops active agents,
+waits for cleanup, and then re-raises `asyncio.CancelledError`.
+Worker shutdown errors are suppressed in these paths so callers consistently
+receive their original `TimeoutError` or `asyncio.CancelledError`.
+
+## Durable Agent State
+
+Use `Agent.save()` and `Agent.load()` to persist SDK agent state across
+processes. The snapshot stores portable `AgentState` only: conversation entries,
+active skills, and skill directories. It does not store provider clients, API
+keys, tool instances, callbacks, shell sessions, or other live runtime objects.
+Supply provider and `RunConfig` again when loading.
+Codex response identifiers, routing state, and encrypted replay journals are
+process-local provider state and are not serialized into `AgentState`. A
+resumed process reconstructs provider context from the persisted visible
+conversation. Direct compaction-summary requests retain the active provider
+scope, then Yoke begins a reduced provider epoch containing stable
+instructions, bounded recent user context, the newest handoff, and subsequent
+messages. The canonical conversation log remains append-oriented and preserves
+omitted history for audit and branching. Providers without native response
+journals replay the reduced projection with the same logical cache scope.
 
 ```python
-from yoke.agent.models import Message
-from yoke.ai import ProviderModelInfo
+from yoke.ai import Agent, RunConfig, build_builtin_provider
 
-ProviderModelInfo(
-    id="kimi-k2.7-code",
-    display_name="Kimi K2.7 Code",
-    context_window_tokens=262_144,
-    thinking_levels=("low", "medium", "high"),
-    system_messages=(
-        Message.system("Use Kimi-specific coding guidance."),
-    ),
+provider = build_builtin_provider("codex:gpt-5.5:medium")
+config = RunConfig(root=".")
+
+agent = Agent(provider=provider, config=config)
+agent.prompt("Summarize the latest input file.")
+agent.save("state/summary-agent.json")
+
+resumed = Agent.load(
+    "state/summary-agent.json",
+    provider=provider,
+    config=config,
 )
+result = resumed.prompt("Draft the follow-up email.")
+resumed.save()
+print(result.output)
 ```
 
-Provider classes that do not expose a model catalog can instead implement
-`current_model_system_messages(self) -> Iterable[Message]`. CLI sessions, SDK
-`Agent`, and direct `complete()` calls all apply the same provider/model prompt
-layer.
-
-Providers can optionally implement
-`complete_with_cancel(messages, tools, *, cancel_requested)` to abort in-flight
-model requests when a turn is stopped or steered. Providers without this hook
-remain compatible; yoke checks cancellation before and after their synchronous
-`complete()` call.
-
-The interactive CLI isolates replacement generations from a retired turn.
-Provider plugins with mutable request/session state can implement
-`fork_for_turn()` to return an independent provider carrying the state needed
-for the next request. Providers exposing a cloneable `config` are reconstructed
-automatically; providers that expose neither hook remain compatible but may be
-shared, so their own implementation must support concurrent calls safely. The
-Codex WebSocket provider copies its in-memory encrypted Responses replay journal
-while dropping the connection-local `previous_response_id`, so the fork starts
-on a new socket and can continue by stateless encrypted replay.
-
-`Agent` is stateful. Reuse the same object to keep conversation context across
-prompts. Call `agent.close()` when finished to release its provider, MCP
-clients, and other closeable resources. Forked agents share leases so common
-resources close only after the final fork.
-
-Initialize an agent with exactly one explicit history representation. Use
-`MessageHistory` for a provider transcript or `ConversationEntryHistory` for
-structured state:
-
-```python
-from yoke.ai import MessageHistory
-
-config = RunConfig(
-    root=Path.cwd(),
-    history=MessageHistory(previous_messages),
-)
-```
-
-The tagged history API prevents transcript messages and structured entries
-from being supplied together.
-
-For durable roles, bind a versioned snapshot path and optionally autosave after
-each successful prompt:
+For recurring jobs, bind an agent to a state file and opt in to autosave.
+If the file exists, the constructor restores it. If it does not exist, the
+agent starts empty and uses that path for future saves.
 
 ```python
 agent = Agent(
     provider=provider,
-    config=config,
-    state_path=Path(".agents_local/reviewer.json"),
+    config=RunConfig(root=".", tools=["file.read"]),
+    state_path="state/nightly-agent.json",
     autosave=True,
 )
 
-resumed = Agent.load(
-    ".agents_local/reviewer.json",
-    provider=build_provider("zai"),
-    config=config,
-)
+agent.prompt("Process any new work since the previous run.")
 ```
 
-Use `agent.save(path, metadata=..., atomic=True)` for explicit snapshots and
-`agent.restore(path, strict=True)` to replace an existing agent's state.
-`Agent.load(..., autosave=False, strict=True)` exposes the same validation
-control, and constructing an agent with an existing `state_path` restores it
-immediately. Autosave only runs after a completed prompt. Snapshot envelopes include format/schema versions,
-SDK version, timestamps, metadata, structured entries, selected leaf, and
-active skills.
+Use `restore()` to replace an existing agent's portable state while keeping the
+current provider and runtime configuration.
 
-Applications can also capture state without file IO:
+```python
+agent.restore("state/checkpoint.json")
+```
+
+The default file format is a single human-readable JSON snapshot:
+
+```json
+{
+  "format": "yoke.agent_state",
+  "schema_version": 2,
+  "sdk_version": "...",
+  "created_at": "...",
+  "updated_at": "...",
+  "metadata": {},
+  "state": { "conversation_entries": [] }
+}
+```
+
+Treat state files as sensitive: they can contain prompts, model outputs, tool
+results, local paths, and proprietary data. Do not load untrusted state into an
+agent with privileged tools. Lower-level persistence helpers live in
+`yoke.agent.persistence` for applications that need to store
+`AgentState` in their own storage layer.
 
 ```python
 from yoke.agent import capture_agent_state
@@ -228,267 +352,69 @@ state = capture_agent_state(agent)
 # Store `state.model_dump(mode="json")` in your application's storage layer.
 ```
 
-`AgentState.leaf_id` identifies the selected leaf when `conversation_entries`
-contains multiple branches. Its `messages` projection and state hydration use
-only that root-to-leaf path, while persistence can retain the complete tree.
-Pass an explicit `leaf_id` when capturing a full tree whose selected branch is
-not the last stored entry.
-
 Custom runner objects used with CLI runtime helpers should implement
 `run(prompt, *, on_event=None, stop_requested=None)`. Set
 `supports_message_history = True` to receive `messages` as the second argument,
 or `supports_user_message = True` to receive explicit multimodal
 `user_message=...` payloads.
 
-## Capabilities
-
-Capabilities are context-aware bundles that register one or more tools based on
-the active provider, model, operating system, and workspace environment.
-
-```python
-from yoke.agent.capabilities import FileEditCapability, FileSearchCapability
-
-agent = Agent(
-    provider=provider,
-    config=RunConfig(
-        root=Path.cwd(),
-        capabilities=[FileSearchCapability, FileEditCapability],
-    ),
-)
-```
-
-Built-in capability names include `file.read`, `file.context`, `file.search`,
-`file.edit`, `command_execution`, `web`, `image.input`, and
-`image.generation`. The CLI uses these same agent-owned capabilities for its
-built-in tool set, then applies CLI-specific plugin discovery and tool policy.
-
-`RunConfig.tools` also accepts stable string capability IDs: `file.read`,
-`file.write`, `file.search`, `file.extract_context`,
-`image.attach`, `web.fetch`, `web.research`, `shell`, and `mcp`. Yoke-native
-aliases such as `file.edit`, `file.context`, `image.input`, `web`, and
-`command_execution` remain supported.
-
-Pass the capabilities the task needs directly, and inspect provider-aware
-resolution before constructing the agent:
-
-```python
-from yoke.ai import discover_capabilities
-
-tools = [
-    "file.read",
-    "file.search",
-    "file.extract_context",
-    "web.fetch",
-    "web.search",
-    "web.research",
-]
-
-resolved = discover_capabilities(
-    selection="codex:gpt-5.6-luna:high",
-    root=Path.cwd(),
-    capability_ids=tools,
-)
-for capability in resolved:
-    print(capability.id, capability.available, capability.tool_names)
-
-agent = Agent(
-    provider=provider,
-    config=RunConfig(root=Path.cwd(), tools=tools),
-)
-```
-
-Discovery with no `capability_ids` returns the complete stable catalog; pass an
-explicit list for a focused preflight. Availability and concrete tool names
-reflect the active provider/model, installed executables, workspace
-configuration, and MCP servers.
-Discovery is local construction, not a remote health check.
-Selection-based discovery owns and closes its temporary provider. When passing
-`provider=` instead, provider ownership remains with the caller's agent or
-application component.
-
-```python
-agent = Agent(
-    provider=provider,
-    config=RunConfig(
-        root=Path.cwd(),
-        tools=["file.read", "file.search", "file.write", "shell"],
-    ),
-)
-```
+Providers may implement `complete_with_cancel(messages, tools, *,
+cancel_requested)` for native request cancellation and `fork_for_turn()` for
+independent mutable request state. Interactive turns reconstruct providers with
+a clone of their `config` when possible; providers with neither hook remain
+compatible but must tolerate concurrent calls if a retired request overlaps its
+replacement. `Agent.close()` releases owned provider and tool resources.
 
 ## Built-In Tools
 
-Import built-in tools from `yoke.agent.tools` and pass the classes or
-bound instances to `RunConfig.tools`.
+Import built-in tools from `yoke.agent.tools` and pass capability IDs,
+classes, or bound instances to `RunConfig.tools`.
 
 ```python
-from yoke.agent.tools import ReadTool, EditTool, WriteTool, GrepTool
+from yoke.agent.tools import ReadTool, EditTool, WriteTool
 ```
 
 | Class | Runtime name | Purpose |
 | --- | --- | --- |
 | `ReadTool` | `read` | Read text files from the workspace, with pagination for large files. |
-| `EditTool` | `edit` | Replace exact text in files, with optional replace-all behavior. |
-| `WriteTool` | `write` | Create or overwrite complete text files. |
+| `EditTool` | `edit` | Replace exact text in files, including targeted occurrences or replace-all edits. |
+| `WriteTool` | `write` | Create or overwrite a UTF-8 text file under the workspace. |
 | `ApplyPatchTool` | `apply_patch` | Apply codex-style multi-file patches inside the workspace. |
-| `ExecCommandTool` (`CommandTool` alias) | `exec_command` | Run a shell command until it exits or yields a background session. |
-| `WriteStdinTool` | `write_stdin` | Poll a background command or send it terminal input. |
-| `LsTool` | `ls` | List files and directories under a workspace path. |
-| `FindTool` | `find` | Find files or directories by glob pattern. |
-| `GrepTool` | `grep` | Search text files with a regular expression. |
-| `RipgrepTool` | `rg` | Use native ripgrep for file listing and content search. |
-| `FdTool` | `fd` | Use native fd for fast file and directory discovery. |
+| `ExecCommandTool` / `CommandTool` | `exec_command` | Run shell commands from the workspace root, returning output or a background session ID. |
+| `WriteStdinTool` | `write_stdin` | Poll a running command session for up to 1 hour or send interactive input. |
+| `FdTool` | `fd` | Run fd for file and directory discovery with regex, glob, ignore, type, extension, and depth behavior. |
+| `RipgrepTool` | `rg` | Run ripgrep for fast recursive content search and file listing. |
 | `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
 | `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
-| `ImageGenerationTool` | `image_generation` | Generate a PNG through Codex subscription auth and attach it to context. |
-| `WebFetchTool` | `web_fetch` | Fetch one known URL, save its complete extracted Markdown, and return readable content plus the saved path. |
-| `WebSearchTool` | `web_search` | Run a quick keyless web search and return raw result links/snippets. |
-| `WebResearchTool` | `web_research` | Autonomously search, fetch, and synthesize a multi-source research answer with evidence. |
+| `ImageGenerationTool` | `image_generation` | Generate or edit images when the active Codex provider supports it. |
+| `WebFetchTool` | `web_fetch` | Fetch and page through readable URL content by character offset. |
+| `WebSearchTool` | `web_search` | Return quick search links and snippets. |
+| `WebResearchTool` | `web_research` | Answer a web research question with concise sources and notes. |
 | `SkillTool` | `skill` | Let the agent load configured skills at runtime. |
 
-When the active provider is `codex`, `WebResearchTool`
-uses Codex's hosted Responses `web_search` tool in-process through
-`ToolRuntimeContext`. Other providers and standalone tool instances use YOKE's
-local search-and-fetch pipeline with fast HTML parsing for fetched research
-pages; the local synthesis agent can call both `web_fetch` and `web_search`.
-Local searches use DuckDuckGo HTML first and automatically fall back to Bing's
-RSS search feed when DuckDuckGo returns an automated-request challenge or no
-parseable results. Search responses include the provider used and a fallback
-note when applicable.
-Use `web_search` when you only need result URLs/snippets, `web_fetch` when you
-already know the URL to inspect, and `web_research` when the task is an
-open-ended question, needs current facts, or benefits from multiple sources and
-source-grounded synthesis. `web_fetch` uses best-effort document conversion for
-HTML, PDFs, Office files, and other known document responses, and falls back to
-readable text or binary metadata when extraction fails. It rejects HTTP
-responses larger than 5 MiB and caps the complete model-facing result at 50 KiB,
-including auxiliary chunks and links. Workspace-bound agents save the complete
-extracted page before those limits under `~/.yoke/tool-output/` and return its
-absolute path as `path`, so `read`, `rg`, and command tools can inspect the full
-content. At agent-session startup, Yoke deletes outputs older than seven days.
+Most workspace tools can be passed as classes and are bound to `RunConfig.root`
+automatically. Pass already-bound instances when you need custom context. Pass
+capability IDs such as `"file.write"` when you want the SDK to choose the
+provider/model-specific concrete tools.
 
-`ImageGenerationTool` is registered only for Codex-backed providers. It sends
-the `prompt` to Codex's subscription image endpoint, writes the PNG
-to the requested output path, and appends the generated image as follow-up
-multimodal context. Optional `referenced_image_paths` and
-`num_last_images_to_include` inputs switch it to Codex's image-edit endpoint
-with up to five reference images.
+Capabilities are implemented in `yoke.agent.capabilities`. Each
+`BaseCapability` resolves a high-level ability into one or more concrete tools
+for the active provider/model, and both the CLI and SDK use that same registry.
+Built-in `file.write` exposes `apply_patch` for GPT-family models and
+`edit` plus `write` for other models. Image attachment is omitted when a
+model is known not to support image input, and `image.generate` resolves only
+for a compatible Codex provider. `web_research` uses Codex hosted Responses
+web search when available; other providers use bounded local search, fetch, and
+provider synthesis. The local workflow applies a shared fetched-source
+character budget so many large pages cannot grow context without a bound.
+SDK-bound tool classes receive provider context when they are resolved through
+a capability or agent runtime.
 
-`exec_command` and `write_stdin` are available to every model and replace the
-former platform-specific `bash`/`powershell` interface. `exec_command` waits up
-to `yield_time_ms` and returns a numeric `session_id` when the process remains
-active. Command waits default to 30 seconds and accept up to 2 hours. Pass that
-ID to `write_stdin` with empty `chars` to poll or non-empty `chars` to interact.
-Background commands survive turn interruption and later
-turns in the same live runtime, but they are not restored after the yoke process
-exits. `ExecCommandTool` and `PythonExecTool` put shims for `python` and
-`python3` at the front of `PATH`, so commands and Python subprocesses use the
-same interpreter and virtual environment as the running yoke process.
-
-Most workspace tools can be passed as capability IDs, classes, or bound
-instances and are bound to `RunConfig.root` automatically. Explicit
-`RunConfig.capabilities` and `RunConfig.register_tools` remain supported and are
-internally normalized into the same capability registry.
-
-`FileEditCapability` exposes model-appropriate writing tools: models whose ID
-contains `gpt` receive `apply_patch`; every other model receives `edit` and
-`write`. The legacy `register_write_tool` callback delegates to this
-capability. Their usage instructions are included in the tool definitions and
-are not duplicated as registration-time system messages.
-
-```python
-from yoke.agent.tools import register_write_tool
-
-agent = Agent(
-    provider=provider,
-    config=RunConfig(
-        root=Path.cwd(),
-        register_tools=register_write_tool,
-    ),
-)
-```
-
-`FileSearchCapability` exposes `rg` and `fd` when their executables are
-available. `rg` handles content search while `fd` specializes in discovering
-files and directories by name or path. When neither native executable is
-available, Yoke exposes the Python fallback tools `grep`, `find`, and `ls`.
-The legacy `register_search_tools` callback delegates to this capability.
-
-```python
-from yoke.agent.tools import register_search_tools
-```
-
-The CLI uses these selectors automatically. Explicit tool classes remain
-available when an SDK application needs a fixed interface.
-
-## Provider-Aware Tools
-
-CLI and SDK tools receive the same public runtime context. Use `self.context`
-inside a `LocalTool`:
-
-```python
-class ProviderBackedTool(LocalTool):
-    name = "provider_backed"
-    description = "Run a provider-backed operation."
-    execute_in_process = True
-
-    def execute(self) -> dict[str, object]:
-        provider = self.context.provider
-        return {
-            "ok": True,
-            "provider_name": self.context.provider_name,
-            "model_id": self.context.model_id,
-            "model_key": self.context.model_key,
-            "reasoning_effort": self.context.reasoning_effort,
-        }
-```
-
-The raw provider supports direct completions and nested agents. Stable string
-metadata should be preferred for provider/model routing. Provider-backed tools
-should set `execute_in_process = True`; provider objects are not guaranteed to
-be serializable into isolated tool worker processes.
-
-Use a custom `RunConfig.register_tools` callback for other model-dependent
-implementations or schemas:
-
-```python
-from yoke.agent.tools import ToolRegistrationContext
-from yoke.agent.tools import ToolRegistrationResult
-from yoke.agent.models import Message
-
-
-def register_tools(context: ToolRegistrationContext):
-    if context.model_key == "opencode-go:kimi-k2.7-code":
-        return ToolRegistrationResult(
-            tools=[KimiWriteTool.bind(root=context.root)],
-            system_messages=[
-                Message.system("Use the Kimi write schema conservatively.")
-            ],
-        )
-    return ToolRegistrationResult(
-        tools=[SimpleEditTool.bind(root=context.root)],
-    )
-
-
-agent = Agent(
-    provider=provider,
-    config=RunConfig(
-        root=Path.cwd(),
-        register_tools=register_tools,
-    ),
-)
-```
-
-`ToolRegistrationContext` exposes `root`, `home`, `provider`,
-`provider_name`, `model_id`/`model_name`, `model_key`, and
-`reasoning_effort`. Workspace, home, provider, and cancellation callback are
-always present. Yoke invokes the callback again when the provider, model, or
-reasoning effort changes. `ToolRegistrationResult.system_messages`
-contributes tool-use instructions while those registered tools are active.
-Re-registration replaces the previous tool instruction layer rather than
-appending to it. Plain iterable returns remain supported for callbacks that do
-not need prompt contributions. The resulting tools receive matching
-`ToolRuntimeContext` metadata.
+`WebFetchTool` defaults to the first 20,000 characters of normalized page
+content. Use its 1-based `offset` and `limit` fields to continue reading. Set
+`mode="raw"` to page through the unprocessed response text. The tool caches the
+selected representation for continuation calls and returns `next_offset` while
+more content remains. It does not return duplicate summaries, chunks, or links.
 
 ## Direct Completion
 
@@ -513,10 +439,6 @@ to `Agent`.
 
 Use the same `Image` helper with `complete()` and `Agent.prompt()`.
 
-Local images are read and encoded as base64 data URLs at attachment time, so
-the full image content is embedded in the session data. This means conversations
-remain intact even if the original file on disk is renamed, moved, or deleted.
-
 ```python
 from yoke.ai import Image
 
@@ -536,6 +458,12 @@ result = agent.prompt(
     ],
 )
 ```
+
+CLI and `AttachImageTool` local images are snapshotted as data URLs before they
+are stored in session history, which keeps resumed sessions independent from
+temporary or later-deleted local files.
+The snapshot is stored only in the image message, not duplicated inside the
+tool-result JSON sent back to the model.
 
 ## Structured Outputs
 
@@ -559,186 +487,17 @@ summary = result.structured
 ```
 
 When `output_type` is provided, the SDK asks the model for JSON matching that
-schema and makes up to three internal attempts. Correction attempts change the
-prompt and do not resend original images or image URLs. If all attempts fail,
-it raises `StructuredOutputError` with the final raw output attached. A
-`run_many(max_attempts=N)` retry wraps this internal loop, so one item can make
-up to `3 * N` provider attempts. Omit `output_type` for free-form text.
-
-## Workflow artifacts
-
-Use `to_jsonable()` to recursively normalize Pydantic models, SDK dataclasses,
-paths, dates, enums, exceptions, mappings, and sequences. Unknown values raise
-instead of being silently stringified. `write_json_artifact()` creates parent
-directories and atomically replaces the target by default:
-
-```python
-from yoke.ai import write_json_artifact
-
-write_json_artifact(
-    Path(".agents_local") / "handoff.json",
-    {"batch": batch, "review": summary},
-)
-```
-
-## Agent orchestration
-
-Compose multiple `Agent` instances with normal Python. Give each agent a clear
-role, exchange Pydantic models at boundaries, and keep control flow explicit.
-Separate `Agent` objects have separate conversation histories; reuse one object
-when later prompts should continue the same conversation.
-
-```python
-from pathlib import Path
-
-from pydantic import BaseModel
-
-from yoke.ai import Agent, RunConfig, build_provider
-
-
-class ReviewPlan(BaseModel):
-    files: list[str]
-
-
-class FileReview(BaseModel):
-    path: str
-    findings: list[str]
-
-
-class FinalReview(BaseModel):
-    summary: str
-    should_merge: bool
-
-
-root = Path.cwd()
-provider_ref = "zai:glm-5.2:none"
-
-planner = Agent(
-    provider=build_provider(provider_ref),
-    config=RunConfig(root=root),
-)
-reviewer = Agent(
-    provider=build_provider(provider_ref),
-    config=RunConfig(root=root),
-)
-merger = Agent(
-    provider=build_provider(provider_ref),
-    config=RunConfig(root=root),
-)
-
-plan = planner.prompt(
-    "Choose the files that need review.",
-    output_type=ReviewPlan,
-).structured
-assert plan is not None
-
-reviews: list[FileReview] = []
-for path in plan.files:
-    review = reviewer.prompt(
-        f"Review {path}. Return its path and concrete findings.",
-        output_type=FileReview,
-    ).structured
-    assert review is not None
-    reviews.append(review)
-
-final = merger.prompt(
-    "Synthesize these reviews:\n"
-    + "\n".join(review.model_dump_json() for review in reviews),
-    output_type=FinalReview,
-).structured
-assert final is not None
-print(final.model_dump_json(indent=2))
-```
-
-Use separate reviewer instances when workers need isolated context. For large
-independent batches, run isolated agents concurrently with your application's
-thread or task executor, subject to provider rate limits. Do not call one
-stateful `Agent` concurrently from multiple workers.
-
-### Dependency-driven pipelines
-
-A planner/worker/merger batch has a barrier: merging starts after every worker
-finishes. For larger dependency graphs, schedule each task when its own
-dependencies are satisfied. This lets one branch progress through investigation,
-implementation, and review while unrelated investigations are still running:
-
-```text
-A investigate -> A implement -> A review -----------\
-B investigate -----------> B implement -> B review --+-> integrate
-C investigate -> split -> C1 and C2 reviews --------/
-```
-
-This resembles independent depth-first traversal, but multiple branches may run
-concurrently. More precisely, it is ready-node scheduling with a soft
-depth-first preference. Avoid `asyncio.gather()` when it creates a barrier around
-the current ready set. Instead, process completions incrementally:
-
-```python
-while pending or running:
-    for task in ready_tasks(pending, completed):
-        future = asyncio.create_task(run_task(task))
-        running[future] = task
-
-    done, _ = await asyncio.wait(
-        running,
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    for future in done:
-        task = running.pop(future)
-        result = future.result()
-        completed[task.id] = result
-        pending.update(result.discovered_tasks)
-```
-
-`run_task` can call synchronous `Agent.prompt()` through a bounded thread
-executor. Give each independent branch its own agent; reuse a task-owned agent
-for branch continuations that need conversation context. Keep reviewers
-isolated from implementers.
-
-Task and result models should include stable IDs and explicit dependencies.
-Results may return typed `discovered_tasks`, allowing the graph to grow during
-execution. Limit concurrency and graph expansion, use aging to prevent a deep
-branch from starving older ready work, and block only descendants of a failed
-task so unrelated branches can continue.
-
-See [`examples/agent_pipeline.py`](examples/agent_pipeline.py) for a complete
-executable scheduler with typed dynamic tasks, bounded concurrency, incremental
-completion handling, and descendant-only failure propagation.
-
-For iterative coder/reviewer coordination, use structured decisions and an
-explicit limit:
-
-```python
-class ReviewDecision(BaseModel):
-    approved: bool
-    feedback: str
-
-
-request = "Implement the requested change."
-for _ in range(5):
-    draft = coder.prompt(request).output
-    decision = reviewer.prompt(
-        f"Review this result:\n{draft}",
-        output_type=ReviewDecision,
-    ).structured
-    assert decision is not None
-    if decision.approved:
-        break
-    request = f"Address this review feedback: {decision.feedback}"
-else:
-    raise RuntimeError("Review did not converge within five iterations")
-```
-
-Close agents when orchestration is finished, especially in long-lived
-processes. Keep temporary orchestration scripts outside committed source unless
-they are intended to become maintained automation.
+schema and validates the final output. If validation fails, it sends a schema
+correction system message and retries up to three total attempts before raising
+`StructuredOutputError` from `yoke.ai.types` with the raw output
+attached. Omit `output_type` for free-form text.
 
 ## Skills
 
 Pass materialized `Skill` objects in `RunConfig.skills`.
 
 ```python
-from yoke.ai import Skill
+from yoke.ai.skills import Skill
 
 agent = Agent(
     provider=provider,
@@ -755,11 +514,6 @@ agent = Agent(
     ),
 )
 ```
-
-When a directory-backed skill is active, yoke includes the absolute path of
-every file in that skill directory in the skill system message. Use this for
-skills that have supporting reference files, templates, or examples next to
-`SKILL.md`.
 
 ## Local Tools
 
@@ -782,6 +536,9 @@ class EchoTool(LocalTool):
 ```
 
 Workspace-aware tools should subclass `WorkspaceTool`.
-Its root anchors relative paths but is not a security boundary; `_resolve_path`
-also accepts absolute paths and `..` traversal. Applications that accept
-untrusted tool arguments should enforce their own path allow-list or sandbox.
+
+CLI tool plugins can use provider-aware registration with
+`register_tools(context)`. The context exposes `root`, `home`, `provider`,
+`provider_name`, `model_id`, `model_name`, `model_key`, `reasoning_effort`, and
+`cancel_requested`; interactive CLI sessions refresh this registration when the
+active provider or model changes.

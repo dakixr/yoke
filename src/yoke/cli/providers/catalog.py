@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from yoke.ai.providers.base import ProviderModelInfo
-from yoke.cli.config.args import CLIArgs
+from yoke.cli.config import CLIArgs
 from yoke.cli.config.providers import BUILTIN_PROVIDER_NAMES
 from yoke.cli.config.providers import list_builtin_provider_models
 from yoke.cli.providers import available_custom_provider_names
@@ -44,15 +44,16 @@ def parse_provider_model_identifier(value: str) -> tuple[str, str]:
 def list_all_provider_model_choices(
     *,
     args: CLIArgs,
-    home: Path,
+    home: Path | None = None,
 ) -> list[ProviderModelChoice]:
     """Return provider-qualified model choices across all providers."""
+    resolved_home = (home or Path.home()).resolve()
     choices: list[ProviderModelChoice] = []
     for provider_name in BUILTIN_PROVIDER_NAMES:
         models = list_builtin_provider_models(
             provider_name,
-            reasoning_effort=args.reasoning_effort,
-            home=home,
+            reasoning_effort=None,
+            home=resolved_home,
         )
         if models is None:
             continue
@@ -60,11 +61,11 @@ def list_all_provider_model_choices(
             ProviderModelChoice(provider_name=provider_name, model=model)
             for model in models
         )
-    for provider_name in available_custom_provider_names(home=home):
+    for provider_name in available_custom_provider_names(home=resolved_home):
         models = list_custom_provider_models(
             provider_name,
-            reasoning_effort=args.reasoning_effort,
-            home=home,
+            reasoning_effort=None,
+            home=resolved_home,
         )
         if models is None:
             continue
@@ -80,15 +81,3 @@ def list_all_provider_model_choices(
             item.model.id,
         ),
     )
-
-
-def provider_qualified_model_choices(
-    *,
-    args: CLIArgs,
-    home: Path,
-) -> list[str]:
-    """Return provider-qualified model ids for prompt completion."""
-    return [
-        choice.qualified_id
-        for choice in list_all_provider_model_choices(args=args, home=home)
-    ]

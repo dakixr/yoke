@@ -250,7 +250,7 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
         return fresh_credentials
 
     monkeypatch.setattr(
-        "yoke.ai.providers.codex.subscription.login_openai_codex",
+        "yoke.ai.providers.codex.subscription.request.login_openai_codex",
         fake_login,
     )
 
@@ -279,7 +279,7 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
             accounts_dir=accounts_dir,
             auths_path=tmp_path / ".yoke" / "providers" / "codex-auth" / "auths.json",
             selection_path=selection_path,
-            model="gpt-5.4",
+            model="gpt-5.5",
             max_retries=1,
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
@@ -335,7 +335,7 @@ def test_codex_subscription_cancellation_closes_client_before_stream_enters(
             / "providers"
             / "codex-auth"
             / "selection.json",
-            model="gpt-5.4",
+            model="gpt-5.5",
         )
     )
     monkeypatch.setattr(provider, "_client", cast(httpx.Client, BlockingClient()))
@@ -377,7 +377,7 @@ def test_codex_provider_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:
             accounts_dir=tmp_path / "accounts",
             auths_path=tmp_path / "auths.json",
             selection_path=tmp_path / "selection.json",
-            model="gpt-5.4",
+            model="gpt-5.5",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
@@ -429,7 +429,7 @@ def test_codex_provider_captures_and_replays_turn_state(tmp_path: Path) -> None:
             accounts_dir=tmp_path / "accounts",
             auths_path=tmp_path / "auths.json",
             selection_path=tmp_path / "selection.json",
-            model="gpt-5.4",
+            model="gpt-5.5",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
@@ -468,7 +468,7 @@ def test_codex_profile_store_keeps_local_profile_when_quota_probe_fails(
     )
 
     monkeypatch.setattr(
-        "yoke.ai.providers.codex.subscription.query_codex_quota",
+        "yoke.ai.providers.codex.subscription.quota.query_codex_quota",
         lambda payload: (_ for _ in ()).throw(RuntimeError("usage unavailable")),
     )
 

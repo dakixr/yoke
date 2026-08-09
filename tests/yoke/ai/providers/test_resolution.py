@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
+from typing import cast
 
 import pytest
 
@@ -79,6 +81,25 @@ def test_build_provider_constructs_zai_from_qualified_name(tmp_path: Path) -> No
         provider.close()
 
 
+@pytest.mark.parametrize("selection", ["zai", "zai:glm-5.2:medium"])
+def test_build_provider_uses_zai_model_default_thinking(
+    tmp_path: Path,
+    selection: str,
+) -> None:
+    provider = build_provider(
+        selection,
+        env={"ZAI_API_KEY": "test"},
+        home=tmp_path,
+    )
+
+    assert isinstance(provider, ZAIProvider)
+    try:
+        assert provider.config.model == "glm-5.2"
+        assert provider.config.reasoning_effort == "thinking"
+    finally:
+        provider.close()
+
+
 def test_build_provider_constructs_opencode_go_from_explicit_env(
     tmp_path: Path,
 ) -> None:
@@ -94,6 +115,58 @@ def test_build_provider_constructs_opencode_go_from_explicit_env(
         assert provider.config.model == "kimi-k2.7-code"
     finally:
         provider.close()
+
+
+def test_custom_provider_catalog_normalizes_constructed_default(
+    tmp_path: Path,
+) -> None:
+    provider_dir = tmp_path / ".yoke" / "providers"
+    provider_dir.mkdir(parents=True)
+    (provider_dir / "demo.py").write_text(
+        """
+from types import SimpleNamespace
+
+from yoke.agent.models import Message
+from yoke.ai.providers.base import ProviderModelInfo
+
+PROVIDER_NAME = "demo"
+
+
+class DemoProvider:
+    provider_name = PROVIDER_NAME
+
+    def __init__(self):
+        self.config = SimpleNamespace(model="demo-model", reasoning_effort="medium")
+
+    def complete(self, messages, tools):
+        return Message.assistant("done")
+
+
+def register_provider(context):
+    return DemoProvider()
+
+
+def list_provider_models(context):
+    if context.reasoning_effort is not None:
+        raise ValueError("catalog discovery must not inherit thinking effort")
+    return [
+        ProviderModelInfo(
+            id="demo-model",
+            display_name="Demo Model",
+            context_window_tokens=1000,
+            thinking_levels=("none", "thinking"),
+            default_thinking_level="thinking",
+        )
+    ]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    provider = build_provider("demo", env={}, home=tmp_path)
+
+    custom_provider = cast(Any, provider)
+    assert custom_provider.config.model == "demo-model"
+    assert custom_provider.config.reasoning_effort == "thinking"
 
 
 def test_provider_readiness_reports_known_providers(tmp_path: Path) -> None:

@@ -18,6 +18,7 @@ from yoke.cli.runtime.terminal_output_gate import (
 from yoke.cli.runtime.tree import TreeFilterMode
 from yoke.cli.runtime.tree import TreeNode
 from yoke.cli.runtime.tree import TreeRow
+from yoke.cli.runtime.tree import default_folded_tree_ids
 from yoke.cli.runtime.tree import flatten_tree_rows
 
 FILTER_MODES: tuple[TreeFilterMode, ...] = (
@@ -26,15 +27,6 @@ FILTER_MODES: tuple[TreeFilterMode, ...] = (
     "user-only",
     "labeled-only",
     "all",
-)
-
-BRANCH_STYLES: tuple[str, ...] = (
-    "ansired",
-    "ansigreen",
-    "ansiyellow",
-    "ansiblue",
-    "ansimagenta",
-    "ansicyan",
 )
 
 KIND_STYLES: dict[str, str] = {
@@ -77,7 +69,7 @@ def select_tree_entry_interactive(  # noqa: C901
     scroll_offset = 0
     search = ""
     filter_mode: TreeFilterMode = "default"
-    folded_ids: set[str] = set()
+    folded_ids = default_folded_tree_ids(roots)
     rows: list[TreeRow] = []
 
     def rebuild_rows() -> None:
@@ -87,7 +79,7 @@ def select_tree_entry_interactive(  # noqa: C901
             current_leaf_id=current_leaf_id,
             filter_mode=filter_mode,
             search=search,
-            folded_ids=folded_ids,
+            folded_ids=set() if search else folded_ids,
         )
         if not rows:
             selected_index = 0

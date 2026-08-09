@@ -9,18 +9,13 @@ from threading import Lock
 from threading import Thread
 
 from yoke.agent.loop import AgentStoppedError
-from yoke.agent.loop import ConversationEntryHistory
-from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.loop.forking import promote_runtime_fork
-from yoke.agent.loop.resources import release_tool_resources
-from yoke.agent.loop.tools.in_process import wait_for_in_process_tools
-from yoke.agent.models import AgentContext
+from yoke.agent.loop.in_process_tool import wait_for_in_process_tools
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
-from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.state import capture_agent_state
-from yoke.agent.state import active_branch_entries
-from yoke.cli.config.runtime import RUN_ERRORS
+from yoke.cli.config import RUN_ERRORS
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import (
@@ -33,12 +28,13 @@ from yoke.cli.interactive.common import (
 )
 from yoke.cli.interactive.common import partial_messages_from_error
 from yoke.cli.interactive.common import prompt_turn_tracking
+from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.render import print_scrollback_notice
 from yoke.cli.runtime import ActiveSession, AgentRunner, EventRenderer
-from yoke.cli.runtime import execute_turn
+from yoke.cli.runtime import ensure_session_title, execute_turn
 from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime import start_session_title_generation
+from yoke.cli.runtime import session_usage_metric_context
 
 
 def run_prompt_turn(
@@ -46,6 +42,7 @@ def run_prompt_turn(
     turn_id: int,
     prompt: str,
     state: PromptCliState,
+    state_lock: Lock,
     agent: AgentRunner,
     active_session: ActiveSession,
     stop_event: Event,
@@ -54,8 +51,6 @@ def run_prompt_turn(
     turn_renderer_factory: Callable[[int], EventRenderer],
     message_snapshot: list[Message] | None = None,
     conversation_entries_snapshot: list[ConversationEntry] | None = None,
-    active_skills_snapshot: list[ActiveSkill] | None = None,
-    context_checkpoint: Callable[[int, AgentContext], None] | None = None,
 ) -> None:
     """Execute one prompt-toolkit turn in a worker thread."""
     messages = (
@@ -63,38 +58,51 @@ def run_prompt_turn(
     )
     entries = conversation_entries_snapshot
     if entries is None:
-        entries = active_branch_entries(
-            active_session.record.conversation_entries,
-            leaf_id=active_session.record.leaf_id,
-        )
-    turn_agent = prepare_turn_agent(
-        agent,
-        messages=messages,
-        entries=entries or [],
-        active_skills=active_skills_snapshot,
-    )
+        entries = active_session.active_entries()
+    turn_agent = prepare_turn_agent(agent, messages=messages, entries=entries or [])
+
+    def checkpoint_tool_result(
+        checkpoint_messages: list[Message],
+        checkpoint_entries: list[ConversationEntry],
+    ) -> None:
+        with state_lock:
+            if turn_id != state.active_turn_id or stop_event.is_set():
+                return
+            if isinstance(agent, RuntimeAgent) and isinstance(turn_agent, RuntimeAgent):
+                agent.active_skills = [
+                    skill.model_copy(deep=True) for skill in turn_agent.active_skills
+                ]
+            persist_session_state(
+                active_session,
+                turn_agent,
+                checkpoint_messages,
+                conversation_entries=checkpoint_entries,
+            )
+            state.messages = list(checkpoint_messages)
+            # The checkpoint already contains the active user message.
+            state.active_user_message = None
 
     try:
-        result = execute_turn(
-            turn_agent,
-            prompt,
-            messages,
-            indicator=turn_renderer_factory(turn_id),
-            stop_requested=stop_event.is_set,
-            user_message=user_message,
-            conversation_entries=entries,
-            context_checkpoint=(
-                lambda context: (
-                    context_checkpoint(turn_id, context)
-                    if context_checkpoint is not None
-                    else None
-                )
-            ),
-        )
+        Thread(
+            target=ensure_session_title,
+            args=(active_session, prompt),
+            daemon=True,
+            name="yoke-session-title",
+        ).start()
+        with session_usage_metric_context(active_session, prompt):
+            result = execute_turn(
+                turn_agent,
+                prompt,
+                messages,
+                indicator=turn_renderer_factory(turn_id),
+                stop_requested=stop_event.is_set,
+                user_message=user_message,
+                conversation_entries=entries,
+                after_tool_result_appended=checkpoint_tool_result,
+            )
         if result.status == "stopped":
             callbacks["handle_outcome"](
-                turn_id,
-                TurnStopped(result=result, agent=turn_agent),
+                turn_id, TurnStopped(result=result, agent=turn_agent)
             )
             return
     except AgentStoppedError:
@@ -119,10 +127,7 @@ def run_prompt_turn(
             ),
         )
         return
-    callbacks["handle_outcome"](
-        turn_id,
-        TurnSuccess(result=result, agent=turn_agent),
-    )
+    callbacks["handle_outcome"](turn_id, TurnSuccess(result=result, agent=turn_agent))
 
 
 def prepare_turn_agent(
@@ -130,26 +135,22 @@ def prepare_turn_agent(
     *,
     messages: list[Message],
     entries: list[ConversationEntry],
-    active_skills: list[ActiveSkill] | None = None,
 ) -> AgentRunner:
-    """Fork mutable runtime state so retired turns cannot corrupt new turns."""
+    """Fork mutable runtime state so retired turns cannot corrupt new ones."""
     if not isinstance(agent, RuntimeAgent):
         return agent
-    turn_agent = agent.fork(isolate_provider=True)
-    turn_agent.load_conversation(
-        ConversationEntryHistory(entries),
-        available_skills=agent.available_skills,
-        active_skills=(agent.active_skills if active_skills is None else active_skills),
-    )
-    if not entries and messages:
-        from yoke.agent.loop import MessageHistory
-
-        turn_agent.load_conversation(
-            MessageHistory(messages),
+    turn_agent = agent.fork(isolate_provider=True, include_state=False)
+    if entries:
+        turn_agent.load_owned_conversation(
+            entries,
             available_skills=agent.available_skills,
-            active_skills=(
-                agent.active_skills if active_skills is None else active_skills
-            ),
+            active_skills=agent.active_skills,
+        )
+    else:
+        turn_agent.load_conversation(
+            messages=messages,
+            available_skills=agent.available_skills,
+            active_skills=agent.active_skills,
         )
     return turn_agent
 
@@ -159,20 +160,16 @@ def retire_turn_agent(
     *,
     primary_agent: AgentRunner,
 ) -> None:
-    """Release an isolated turn runtime away from the steering control path."""
-    if turn_agent is None or turn_agent is primary_agent:
-        return
-    if not isinstance(turn_agent, RuntimeAgent):
+    """Release an isolated turn runtime away from the control path."""
+    if not isinstance(turn_agent, RuntimeAgent) or turn_agent is primary_agent:
         return
     tool_map = turn_agent.tools
-    tools = list(tool_map.values())
-    turn_agent.tools = {}
     provider = turn_agent.provider
 
     def release() -> None:
         try:
             wait_for_in_process_tools(tool_map)
-            release_tool_resources(tools)
+            turn_agent.close()
         finally:
             close = getattr(provider, "close", None)
             if callable(close) and provider is not getattr(
@@ -194,7 +191,6 @@ def handle_prompt_turn_outcome(
     renderer: PromptToolkitLiveRenderer,
     scrollback_console,
     run_in_scrollback: Callable[[Callable[[], None]], None],
-    invalidate_prompt: Callable[[], None],
 ) -> bool | None:
     """Apply a completed turn outcome to prompt-toolkit session state."""
     with state_lock:
@@ -226,9 +222,8 @@ def handle_prompt_turn_outcome(
                 conversation_entries=outcome.conversation_entries,
             )
         renderer.print_error(str(outcome.error))
-        _emit_turn_summary(
+        emit_turn_summary(
             renderer,
-            turn_id=turn_id,
             turn_start=turn_start,
             tool_count=turn_tools,
             input_tokens=turn_in_tok,
@@ -262,9 +257,8 @@ def handle_prompt_turn_outcome(
                 else ("Stopped current turn. Send a correction to continue from here."),
             )
         )
-        _emit_turn_summary(
+        emit_turn_summary(
             renderer,
-            turn_id=turn_id,
             turn_start=turn_start,
             tool_count=turn_tools,
             input_tokens=turn_in_tok,
@@ -280,16 +274,9 @@ def handle_prompt_turn_outcome(
         outcome.result.messages,
         conversation_entries=outcome.result.conversation_entries,
     )
-    start_session_title_generation(
-        active_session,
-        agent,
-        outcome.result.messages,
-        on_done=invalidate_prompt,
-    )
     renderer.print_agent_output(outcome.result.output)
-    _emit_turn_summary(
+    emit_turn_summary(
         renderer,
-        turn_id=turn_id,
         turn_start=turn_start,
         tool_count=turn_tools,
         input_tokens=turn_in_tok,
@@ -304,8 +291,9 @@ def finish_prompt_turn(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    estimate_toolbar_context_usage: Callable[[str], str | None],
-) -> tuple[str | None, Message | None, bool]:
+    active_session: ActiveSession,
+    request_context_usage: Callable[[str], None],
+) -> tuple[PendingPrompt | None, bool]:
     """Clear active turn state and return next prompt/shutdown flags."""
     next_prompt: PendingPrompt | None = None
     should_finish = False
@@ -317,12 +305,15 @@ def finish_prompt_turn(
             next_index = next_pending_prompt_index(state.pending_prompts)
             if next_index is not None:
                 next_prompt = state.pending_prompts.pop(next_index)
+                persist_prompt_queue(
+                    active_session,
+                    list(state.pending_prompts),
+                    list(state.pending_images),
+                )
         else:
             should_finish = state.shutdown_requested
-    state.context_usage_text = estimate_toolbar_context_usage("")
-    if next_prompt is None:
-        return None, None, should_finish
-    return next_prompt.prompt, next_prompt.user_message, should_finish
+    request_context_usage("")
+    return next_prompt, should_finish
 
 
 def next_pending_prompt_index(prompts: list[PendingPrompt]) -> int | None:
@@ -336,38 +327,23 @@ def next_pending_prompt_index(prompts: list[PendingPrompt]) -> int | None:
     return None
 
 
-def get_active_turn_state(
-    *,
-    state: PromptCliState,
-    state_lock: Lock,
-) -> tuple[Event | None, Thread | None, int, Message | None]:
-    """Return stop event, worker, and active turn id."""
-    with state_lock:
-        return (
-            state.active_stop_request,
-            state.worker,
-            state.active_turn_id,
-            state.active_user_message,
-        )
-
-
-def _emit_turn_summary(
+def emit_turn_summary(
     renderer: PromptToolkitLiveRenderer,
     *,
-    turn_id: int,
     turn_start: float | None,
     tool_count: int,
     input_tokens: int | None,
     output_tokens: int | None,
+    always: bool = False,
 ) -> None:
-    """Emit a dim 'Worked for ...' line only when the turn took over 60s."""
+    """Emit the standard dim turn summary line."""
     emit = getattr(renderer, "_emit_turn_summary", None)
     if not callable(emit):
         return
     duration = None
     if turn_start is not None:
         duration = time.monotonic() - turn_start
-    if duration is None or duration < 60:
+    if duration is None or (duration < 60 and not always):
         return
     emit(
         {

@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
+import logging
 from threading import RLock
+
+LOGGER = logging.getLogger(__name__)
 
 
 class TerminalOutputGate:
@@ -40,7 +43,10 @@ class TerminalOutputGate:
         finally:
             callbacks = self._exit_and_collect_pending()
             for callback in callbacks:
-                callback()
+                try:
+                    callback()
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception("Deferred terminal output callback failed")
 
     def _exit_and_collect_pending(self) -> list[Callable[[], None]]:
         with self._lock:

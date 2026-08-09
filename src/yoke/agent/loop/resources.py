@@ -25,7 +25,6 @@ def acquire_tool_resources(tools: Iterable[LocalTool]) -> None:
 
 def release_tool_resources(tools: Iterable[LocalTool]) -> None:
     """Release leases and close resources after their final runtime releases."""
-    errors: list[Exception] = []
     with _RESOURCE_LEASE_LOCK:
         for resource in _tool_resources(tools):
             resource_id = id(resource)
@@ -38,12 +37,7 @@ def release_tool_resources(tools: Iterable[LocalTool]) -> None:
             del _RESOURCE_LEASES[resource_id]
             close = getattr(resource, "close", None)
             if callable(close):
-                try:
-                    close()
-                except Exception as exc:
-                    errors.append(exc)
-    if errors:
-        raise ExceptionGroup("Failed to close tool resources", errors)
+                close()
 
 
 def _tool_resources(tools: Iterable[LocalTool]) -> list[object]:

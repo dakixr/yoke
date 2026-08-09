@@ -3,42 +3,57 @@
 from __future__ import annotations
 
 import os
-import secrets
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import ValidationError
+from pydantic import field_validator
+from pydantic import model_validator
 
-from yoke.agent.models import Message, MessagePhase, Role, ToolCall
-from yoke.ai.providers.base import (
-    Provider,
-    ProviderCancelledError,
-    ProviderError,
-    ProviderModelInfo,
-    ProviderRateLimitError,
-    ProviderServerError,
-    sleep_with_cancel,
+from yoke.agent.message_sanitizer import sanitize_json_surrogates
+from yoke.agent.models import Message
+from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import ProviderCancelledError
+from yoke.ai.providers.base import ProviderError
+from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.model_selection import cloned_model_catalog
+from yoke.ai.providers.model_selection import (
+    current_model_id_from_config,
 )
 from yoke.ai.providers.model_selection import (
-    cloned_model_catalog,
-    current_model_id_from_config,
     current_model_info_from_catalog,
+)
+from yoke.ai.providers.model_selection import (
     set_config_model_from_catalog,
 )
 from yoke.ai.providers.openai_compat.content import (
     normalize_openai_request_messages,
+)
+from yoke.ai.providers.openai_compat.content import (
     serialize_message_for_openai,
 )
+from yoke.ai.providers.openai_compat.client import LazyHttpClient
+from yoke.ai.providers.openai_compat.events import (
+    emit_recovery_event,
+)
 from yoke.ai.providers.openai_compat.helpers import (
-    error_detail,
-    retry_after_seconds,
-    should_retry_request_error,
     thinking_levels_for_reasoning_effort,
 )
+from yoke.ai.providers.openai_compat.models import (
+    OpenAICompatibleChatCompletionResponse,
+)
+from yoke.ai.providers.openai_compat.retry import OpenAICompatibleRetryMixin
 from yoke.ai.providers.usage import parse_token_usage
+
+from . import models as _compat_models
+
+OpenAICompatibleChoice = _compat_models.OpenAICompatibleChoice
+OpenAICompatibleResponseMessage = _compat_models.OpenAICompatibleResponseMessage
 
 
 class OpenAICompatibleConfig(BaseModel):
@@ -48,13 +63,15 @@ class OpenAICompatibleConfig(BaseModel):
     model: str
     base_url: str = "https://api.openai.com/v1"
     chat_completions_path: str = "/chat/completions"
-    timeout_seconds: float | None = None
+    timeout_seconds: float | None = 120.0
     headers: dict[str, str] = Field(default_factory=dict)
+    api_key_header_name: str = "Authorization"
+    api_key_header_prefix: str = "Bearer "
     max_retries: int = 8
     retry_backoff_seconds: float = 1.0
     max_retry_backoff_seconds: float = 300.0
-    max_tokens: int | None = None
     reasoning_effort: str | None = None
+    max_tokens: int | None = Field(default=None, ge=1)
     provider_name: str = "openai-compatible"
     model_catalog: tuple[ProviderModelInfo, ...] = Field(default_factory=tuple)
 
@@ -67,7 +84,6 @@ class OpenAICompatibleConfig(BaseModel):
         normalized = value.strip().lower()
         if normalized not in {
             "none",
-            "minimal",
             "low",
             "medium",
             "high",
@@ -75,8 +91,7 @@ class OpenAICompatibleConfig(BaseModel):
             "max",
         }:
             raise ValueError(
-                "reasoning_effort must be one of none, minimal, low, "
-                "medium, high, xhigh, or max"
+                "reasoning_effort must be one of none, low, medium, high, xhigh or max"
             )
         return normalized
 
@@ -89,6 +104,15 @@ class OpenAICompatibleConfig(BaseModel):
                 "requests in this provider"
             )
         return self
+
+    @field_validator("api_key_header_name")
+    @classmethod
+    def validate_api_key_header_name(cls, value: str) -> str:
+        """Validate the configured auth header name."""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("api_key_header_name must not be empty")
+        return normalized
 
     @classmethod
     def from_env(cls, **overrides: object) -> OpenAICompatibleConfig:
@@ -105,53 +129,7 @@ class OpenAICompatibleConfig(BaseModel):
         return cls(**{key: value for key, value in values.items() if value is not None})
 
 
-class OpenAICompatibleResponseMessage(BaseModel):
-    """OpenAICompatibleResponseMessage."""
-
-    role: Role
-    content: str | None = None
-    tool_calls: list[ToolCall] = Field(default_factory=list)
-    phase: MessagePhase | None = None
-    reasoning_content: str | None = None
-
-    @field_validator("phase", mode="before")
-    @classmethod
-    def normalize_phase(cls, value: object) -> MessagePhase | None:
-        """Normalize provider phase aliases when present."""
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip().lower().replace("-", "_")
-        if normalized in {"commentary", "preamble"}:
-            return "commentary"
-        if normalized in {"final_answer", "final"}:
-            return "final_answer"
-        return None
-
-    def to_message(self) -> Message:
-        """to_message."""
-        return Message(
-            role=self.role,
-            content=self.content,
-            tool_calls=self.tool_calls,
-            phase=self.phase,
-            reasoning_content=self.reasoning_content,
-        )
-
-
-class OpenAICompatibleChoice(BaseModel):
-    """OpenAICompatibleChoice."""
-
-    message: OpenAICompatibleResponseMessage
-
-
-class OpenAICompatibleChatCompletionResponse(BaseModel):
-    """OpenAICompatibleChatCompletionResponse."""
-
-    choices: list[OpenAICompatibleChoice]
-    usage: dict[str, object] | None = None
-
-
-class OpenAICompatibleProvider(Provider):
+class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
     """Provider for generic OpenAI-compatible chat-completions endpoints.
 
     Use this when the upstream service accepts bearer authentication and the
@@ -169,21 +147,30 @@ class OpenAICompatibleProvider(Provider):
     ) -> None:
         self.config = config
         self.provider_name = config.provider_name
+        if self.config.model_catalog:
+            set_config_model_from_catalog(
+                self.config,
+                self.config.model_catalog,
+                provider_name=self.provider_name,
+                model_id=self.config.model,
+                reasoning_effort=self.config.reasoning_effort,
+            )
         self._owns_client = http_client is None
         self._sleep = sleep or time.sleep
         self._headers = {
-            "Authorization": f"Bearer {config.api_key}",
+            config.api_key_header_name: (
+                f"{config.api_key_header_prefix}{config.api_key}"
+            ),
             "Content-Type": "application/json",
             **config.headers,
         }
-        self._client = http_client or self._new_client()
-
-    def _new_client(self) -> httpx.Client:
-        return httpx.Client(
-            base_url=self.config.base_url.rstrip("/"),
-            timeout=self.config.timeout_seconds,
-            headers=self._headers,
-            verify=False,  # noqa: S501
+        self._client = LazyHttpClient(
+            http_client,
+            lambda: httpx.Client(
+                base_url=config.base_url.rstrip("/"),
+                timeout=config.timeout_seconds,
+                headers=self._headers,
+            ),
         )
 
     def list_models(self) -> list[ProviderModelInfo]:
@@ -238,23 +225,10 @@ class OpenAICompatibleProvider(Provider):
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
         """Send one request and return the first completion message."""
-        return self._complete_impl(messages, tools, cancel_requested=lambda: False)
-
-    def complete_with_cancel(
-        self,
-        messages: list[Message],
-        tools: list[dict[str, object]],
-        *,
-        cancel_requested: Callable[[], bool],
-    ) -> Message:
-        """Send one request, aborting the owned HTTP client when cancelled."""
-        return self._with_request_cancellation(
-            lambda: self._complete_impl(
-                messages,
-                tools,
-                cancel_requested=cancel_requested,
-            ),
-            cancel_requested=cancel_requested,
+        return self._complete_impl(
+            messages,
+            tools,
+            cancel_requested=lambda: False,
         )
 
     def _complete_impl(
@@ -264,6 +238,7 @@ class OpenAICompatibleProvider(Provider):
         *,
         cancel_requested: Callable[[], bool],
     ) -> Message:
+        """Execute one completion with cooperative retry cancellation."""
         provider_messages = normalize_openai_request_messages(messages)
         payload: dict[str, Any] = {
             "model": self.config.model,
@@ -274,11 +249,11 @@ class OpenAICompatibleProvider(Provider):
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        if self.config.max_tokens is not None:
-            payload["max_tokens"] = self.config.max_tokens
         if self.config.reasoning_effort is not None:
             payload["reasoning_effort"] = self.config.reasoning_effort
-
+        if self.config.max_tokens is not None:
+            payload["max_tokens"] = self.config.max_tokens
+        payload = sanitize_json_surrogates(payload)
         last_error: ProviderError | None = None
         for attempt in range(self.config.max_retries + 1):
             if cancel_requested():
@@ -290,44 +265,42 @@ class OpenAICompatibleProvider(Provider):
                     headers=self._headers,
                 )
             except httpx.TimeoutException as exc:
+                if cancel_requested():
+                    raise ProviderCancelledError() from exc
                 last_error = ProviderError("Provider request timed out.")
+                if isinstance(exc, httpx.ReadTimeout):
+                    raise last_error from exc
                 if attempt < self.config.max_retries:
-                    sleep_with_cancel(
-                        self._sleep_seconds(attempt),
+                    self._retry_sleep(
+                        last_error,
+                        attempt=attempt,
                         cancel_requested=cancel_requested,
-                        sleep=self._sleep,
                     )
                     continue
                 raise last_error from exc
             except httpx.RequestError as exc:
                 if cancel_requested():
                     raise ProviderCancelledError() from exc
-                last_error = self._handle_request_error(exc, attempt=attempt)
+                last_error = self._handle_request_error(
+                    exc,
+                    attempt=attempt,
+                    cancel_requested=cancel_requested,
+                )
                 if last_error is not None:
-                    sleep_with_cancel(
-                        self._sleep_seconds(attempt),
-                        cancel_requested=cancel_requested,
-                        sleep=self._sleep,
-                    )
                     continue
                 raise ProviderError(f"Provider request failed: {exc}") from exc
 
-            last_error = self._handle_error_response(response, attempt=attempt)
+            last_error = self._handle_error_response(
+                response,
+                attempt=attempt,
+                cancel_requested=cancel_requested,
+            )
             if last_error is not None:
-                sleep_with_cancel(
-                    self._sleep_seconds(
-                        attempt,
-                        getattr(last_error, "retry_after_seconds", None),
-                    ),
-                    cancel_requested=cancel_requested,
-                    sleep=self._sleep,
-                )
                 continue
 
+            response_model = OpenAICompatibleChatCompletionResponse
             try:
-                completion = OpenAICompatibleChatCompletionResponse.model_validate(
-                    response.json()
-                )
+                completion = response_model.model_validate(response.json())
             except (ValueError, ValidationError) as exc:
                 raise ProviderError(
                     "Provider returned an invalid response payload."
@@ -341,104 +314,62 @@ class OpenAICompatibleProvider(Provider):
                 provider_name=self.provider_name,
                 model_id=self.config.model,
             )
+            emit_recovery_event(
+                provider_name=self.provider_name,
+                model_id=self.config.model,
+                attempts=attempt,
+            )
             return message
 
         if last_error is not None:
             raise last_error
         raise ProviderError("Provider request failed unexpectedly.")
 
-    def _with_request_cancellation(
+    def complete_with_cancel(
         self,
-        action: Callable[[], Message],
+        messages: list[Message],
+        tools: list[dict[str, object]],
         *,
         cancel_requested: Callable[[], bool],
     ) -> Message:
+        """Complete a request while allowing an owned client to be aborted."""
         if not self._owns_client:
-            return action()
-        finished = threading.Event()
-        client_closed = threading.Event()
+            return self._complete_impl(
+                messages,
+                tools,
+                cancel_requested=cancel_requested,
+            )
 
-        def close_on_cancel() -> None:
+        finished = threading.Event()
+
+        def abort_on_cancel() -> None:
             while not finished.wait(0.05):
                 if cancel_requested():
-                    client_closed.set()
-                    self._client.close()
-                    return
+                    self._client.abort()
 
-        watcher = threading.Thread(target=close_on_cancel, daemon=True)
-        watcher.start()
+        threading.Thread(target=abort_on_cancel, daemon=True).start()
         try:
-            message = action()
+            response = self._complete_impl(
+                messages,
+                tools,
+                cancel_requested=cancel_requested,
+            )
             if cancel_requested():
                 raise ProviderCancelledError()
-            return message
+            return response
+        except ProviderError as exc:
+            if cancel_requested():
+                raise ProviderCancelledError() from exc
+            raise
         finally:
             finished.set()
-            if client_closed.is_set():
-                self._client = self._new_client()
 
     def close(self) -> None:
         """Close the owned HTTP client, if this provider created it."""
         if self._owns_client:
             self._client.close()
 
-    def _backoff_seconds(self, attempt: int) -> float:
-        return min(
-            self.config.retry_backoff_seconds * (2**attempt),
-            self.config.max_retry_backoff_seconds,
-        )
-
-    def _sleep_seconds(
-        self, attempt: int, retry_after_seconds: float | None = None
-    ) -> float:
-        base_seconds = retry_after_seconds or self._backoff_seconds(attempt)
-        jitter = secrets.randbelow(1000) / 1000 * min(1.0, base_seconds * 0.1)
-        return min(base_seconds + jitter, self.config.max_retry_backoff_seconds)
-
     def _chat_completions_url(self) -> str:
         base_url = self.config.base_url.rstrip("/")
         path = self.config.chat_completions_path.lstrip("/")
         return f"{base_url}/{path}"
-
-    def _handle_request_error(
-        self,
-        error: httpx.RequestError,
-        *,
-        attempt: int,
-    ) -> ProviderError | None:
-        if not should_retry_request_error(error):
-            return None
-        provider_error = ProviderError(f"Provider request failed: {error}")
-        if attempt < self.config.max_retries:
-            return provider_error
-        raise provider_error from error
-
-    def _handle_error_response(
-        self,
-        response: httpx.Response,
-        *,
-        attempt: int,
-    ) -> ProviderError | None:
-        if response.status_code == 429:
-            retry_after = retry_after_seconds(response)
-            provider_error = ProviderRateLimitError(
-                f"Provider request was rate limited: {error_detail(response)}",
-                retry_after_seconds=retry_after,
-            )
-            if attempt < self.config.max_retries:
-                return provider_error
-            raise provider_error
-        if 500 <= response.status_code < 600:
-            provider_error = ProviderServerError(
-                f"Provider server error: {error_detail(response)}",
-                status_code=response.status_code,
-            )
-            if attempt < self.config.max_retries:
-                return provider_error
-            raise provider_error
-        if response.is_error:
-            raise ProviderError(
-                f"Provider request failed: {error_detail(response)}",
-                status_code=response.status_code,
-            )
-        return None

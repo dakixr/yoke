@@ -3,33 +3,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import StringIO
+import json
 from pathlib import Path
 from threading import RLock
-from typing import cast
+from typing import Never
 
-from .support import CaptureStream
-from .support import FakeAgent
-from .support import active_session_for
-from yoke.agent.compaction import CompactionPreparation
-from yoke.agent.compaction import Compactor
+from yoke.agent.budget import build_provider_context_manager
+from yoke.agent.conversation import project_conversation
+from yoke.agent.loop import INTERRUPTED_TURN_NOTICE
 from yoke.agent.loop import RuntimeAgent
-from yoke.agent.loop import MessageHistory
 from yoke.agent.models import Message
-from yoke.agent.tools import LocalTool
-from yoke.agent.tools import ToolRegistrationContext
-from yoke.agent.tools import register_write_tool
+from yoke.agent.models import TokenUsage
+from yoke.agent.state import active_branch_entries
+from yoke.agent.state import conversation_entries_from_messages
+from yoke.agent.state import transcript_messages_from_entries
 from yoke.ai.providers.base import ProviderModelInfo
-from yoke.agent.context import ContextManager
+from yoke.ai.providers.zai import ZAIProvider
 from yoke.cli.config import CLIArgs
-from yoke.agent.budget import rebind_context_manager_budget
-from yoke.cli.interactive.common import handle_slash_command
-from yoke.cli.interactive import model_commands
+from yoke.cli.interactive.prompt.cancellation import (
+    interrupted_turn_snapshot,
+)
+from yoke.cli.interactive.model_commands import _switch_model
+from yoke.cli.providers.catalog import list_all_provider_model_choices
 from yoke.cli.providers.state import set_agent_model
-from yoke.cli.providers.catalog import ProviderModelChoice
-from yoke.cli.providers.catalog import parse_provider_model_identifier
+from yoke.cli.providers.state import switch_agent_provider_model
 from yoke.cli.render import build_console
-from yoke.cli.runtime import apply_session_defaults_to_args
+from yoke.cli.runtime import persist_session_state
+from yoke.cli.runtime import ActiveSession
+from yoke.cli.session import SessionRecord
 from yoke.cli.session import SessionStore
+
+from .support import active_session_for
 
 
 @dataclass
@@ -41,7 +46,7 @@ class SwitchableConfig:
 class SwitchableProvider:
     provider_name = "demo"
     supports_image_inputs = False
-    max_images_per_message: int | None = None
+    max_images_per_message = None
 
     def __init__(self) -> None:
         self.config = SwitchableConfig()
@@ -61,15 +66,13 @@ class SwitchableProvider:
                 context_window_tokens=1000,
                 thinking_levels=("low", "medium", "high"),
                 supports_image_inputs=False,
-                system_messages=(Message.system("Use GPT A steering."),),
             ),
             ProviderModelInfo(
                 id="gpt-b",
                 display_name="GPT B",
                 context_window_tokens=2000,
                 thinking_levels=("low", "medium", "high"),
-                supports_image_inputs=True,
-                system_messages=(Message.system("Use GPT B steering."),),
+                supports_image_inputs=False,
             ),
         ]
 
@@ -88,433 +91,498 @@ class SwitchableProvider:
             self.config.reasoning_effort = reasoning_effort
 
 
+def test_model_switch_large_session_appends_only_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = SessionStore(tmp_path / "sessions")
+    record = SessionRecord(id="large", root=str(tmp_path))
+    store._write_session_record(record)
+    path = store._session_path(record.id)
+    with path.open("ab") as handle:
+        handle.write(b'{"type":"ignored","data":"')
+        handle.write(b"x" * (52 * 1024 * 1024))
+        handle.write(b'"}\n')
+    active_session = ActiveSession(record.id, tmp_path, store, record)
+    agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
+
+    def fail(*_args: object, **_kwargs: object) -> Never:
+        raise AssertionError("full session path was used")
+
+    monkeypatch.setattr("yoke.cli.interactive.model_commands.capture_agent_state", fail)
+    monkeypatch.setattr(
+        "yoke.cli.interactive.model_commands.persist_session_state",
+        fail,
+    )
+    monkeypatch.setattr(SessionStore, "load", fail)
+    before = path.stat().st_size
+
+    result = _switch_model(
+        "demo:gpt-b",
+        "low",
+        agent=agent,
+        active_session=active_session,
+        messages=[],
+        console=build_console(StringIO()),
+        args=CLIArgs(root=str(tmp_path)),
+    )
+    appended = path.stat().st_size - before
+    with path.open("rb") as handle:
+        handle.seek(-min(path.stat().st_size, 1_000), 2)
+        last_event = json.loads(handle.read().splitlines()[-1])
+    assert result == []
+    assert appended < 1_000
+    assert last_event["type"] == "metadata"
+    assert last_event["model_id"] == "gpt-b"
+
+
+def test_model_switch_survives_metadata_write_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
+    active_session = active_session_for(tmp_path)
+    output = StringIO()
+    monkeypatch.setattr(
+        "yoke.cli.interactive.model_commands.save_active_session_metadata",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    result = _switch_model(
+        "demo:gpt-b",
+        None,
+        agent=agent,
+        active_session=active_session,
+        messages=[],
+        console=build_console(output),
+        args=CLIArgs(root=str(tmp_path)),
+    )
+
+    assert result == []
+    assert isinstance(agent.provider, SwitchableProvider)
+    assert agent.provider.config.model == "gpt-b"
+    assert "metadata was not saved" in output.getvalue()
+
+
+def test_same_provider_switch_uses_target_model_default_effort() -> None:
+    class AsymmetricProvider(SwitchableProvider):
+        def list_models(self) -> list[ProviderModelInfo]:
+            return [
+                ProviderModelInfo(
+                    id="gpt-a",
+                    display_name="GPT A",
+                    context_window_tokens=1_000,
+                    thinking_levels=("low", "medium", "high"),
+                    default_thinking_level="medium",
+                ),
+                ProviderModelInfo(
+                    id="gpt-b",
+                    display_name="GPT B",
+                    context_window_tokens=2_000,
+                    thinking_levels=("none", "thinking"),
+                    default_thinking_level="thinking",
+                ),
+            ]
+
+    provider = AsymmetricProvider()
+    agent = RuntimeAgent(provider=provider, tools=[])
+
+    state = set_agent_model(agent, model_id="gpt-b", reasoning_effort="medium")
+
+    assert provider.config.model == "gpt-b"
+    assert provider.config.reasoning_effort == "thinking"
+    assert state.reasoning_effort == "thinking"
+
+
+def test_same_provider_switch_clears_effort_for_plain_model() -> None:
+    class PlainTargetProvider(SwitchableProvider):
+        def list_models(self) -> list[ProviderModelInfo]:
+            return [
+                ProviderModelInfo(
+                    id="gpt-a",
+                    display_name="GPT A",
+                    context_window_tokens=1_000,
+                    thinking_levels=("medium",),
+                    default_thinking_level="medium",
+                ),
+                ProviderModelInfo(
+                    id="gpt-b",
+                    display_name="GPT B",
+                    context_window_tokens=2_000,
+                ),
+            ]
+
+    provider = PlainTargetProvider()
+    agent = RuntimeAgent(provider=provider, tools=[])
+
+    state = set_agent_model(agent, model_id="gpt-b")
+
+    assert provider.config.reasoning_effort is None
+    assert state.reasoning_effort is None
+
+
+def test_cross_provider_switch_uses_target_model_default_effort(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ZAI_API_KEY", "test")
+    agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
+
+    state = switch_agent_provider_model(
+        agent,
+        args=CLIArgs(root=str(tmp_path)),
+        qualified_model_id="zai:glm-5.2",
+        reasoning_effort="medium",
+    )
+
+    assert isinstance(agent.provider, ZAIProvider)
+    assert agent.provider.config.reasoning_effort == "thinking"
+    assert state.reasoning_effort == "thinking"
+    agent.close()
+
+
 def test_session_store_persists_provider_state(tmp_path: Path) -> None:
     store = SessionStore(directory=tmp_path)
 
     store.save(
         "demo",
         [Message.user("hello")],
-        provider_name="codex",
-        model_id="gpt-5.4",
+        provider_name="demo",
+        model_id="gpt-test",
         reasoning_effort="high",
         context_window_tokens=400_000,
     )
 
     record = store.load("demo")
 
-    assert record.provider_name == "codex"
-    assert record.model_id == "gpt-5.4"
+    assert record.provider_name == "demo"
+    assert record.model_id == "gpt-test"
     assert record.reasoning_effort == "high"
     assert record.context_window_tokens == 400_000
 
 
-def test_set_agent_model_refreshes_provider_system_messages() -> None:
-    provider = SwitchableProvider()
-    agent = RuntimeAgent(
-        provider=provider,
-        tools=[],
-        context_manager=ContextManager(
-            instructions=[Message.system("Base instructions.")]
-        ),
-    )
-
-    set_agent_model(agent, model_id="gpt-b")
-
-    contents = [
-        message.content
-        for message in agent.context_manager.instructions
-        if message.role == "system"
-    ]
-    assert "Base instructions." in contents
-    assert "Use GPT B steering." in contents
-    assert "Use GPT A steering." not in contents
-
-
-def test_resume_defaults_provider_state_from_session(tmp_path: Path) -> None:
+def test_session_store_can_clear_stale_reasoning_effort(tmp_path: Path) -> None:
     store = SessionStore(directory=tmp_path)
-    store.save(
+    existing = store.save(
         "demo",
-        [Message.user("hello")],
-        provider_name="codex",
-        model_id="gpt-5.4",
+        [],
+        provider_name="demo",
+        model_id="thinking-model",
         reasoning_effort="high",
-        context_window_tokens=400_000,
-        root=tmp_path,
     )
-    args = CLIArgs(root=str(tmp_path))
 
-    apply_session_defaults_to_args(args, store.load("demo"))
+    updated = store.save(
+        "demo",
+        [],
+        provider_name="demo",
+        model_id="plain-model",
+        reasoning_effort=None,
+        existing_record=existing,
+    )
 
-    assert args.model == "codex:gpt-5.4"
-    assert args.reasoning_effort == "high"
+    assert updated.reasoning_effort is None
+    assert store.load("demo").reasoning_effort is None
 
 
-def test_slash_model_with_legacy_args_only_prints_interactive_usage(
+def test_model_state_save_preserves_interrupted_user_correction(
     tmp_path: Path,
 ) -> None:
-    session = active_session_for(tmp_path)
-    agent = FakeAgent()
-    agent.provider = SwitchableProvider()
-    stream = CaptureStream()
-    console = build_console(stream)
-    messages = [Message.user("hello"), Message.assistant("done")]
-
-    handled, updated_messages, updated_session = handle_slash_command(
-        "/model demo:gpt-b high",
-        agent=agent,
-        active_session=session,
-        messages=messages,
-        console=console,
+    initial_messages = [
+        Message.user("remove row grouping"),
+        Message.assistant("Row grouping removed."),
+    ]
+    initial_entries = conversation_entries_from_messages(initial_messages)
+    agent = RuntimeAgent(
+        provider=SwitchableProvider(),
+        tools=[],
+        conversation_entries=initial_entries,
+    )
+    active_session = active_session_for(tmp_path)
+    persist_session_state(
+        active_session,
+        agent,
+        initial_messages,
+        conversation_entries=initial_entries,
+    )
+    interrupted_messages, interrupted_entries = interrupted_turn_snapshot(
+        messages=initial_messages,
+        entries=initial_entries,
+        user_message=Message.user("Fix the outcome cell styling."),
+    )
+    persist_session_state(
+        active_session,
+        agent,
+        interrupted_messages,
+        conversation_entries=interrupted_entries,
     )
 
-    assert handled is True
-    assert updated_messages == messages
-    assert updated_session is session
-    assert updated_session.record.model_id is None
-    assert agent.provider.config.model == "gpt-a"
-    assert "Usage: /model" in stream.getvalue()
+    persist_session_state(active_session, agent, interrupted_messages)
 
-
-def test_same_provider_switch_rebinds_context_budget(tmp_path: Path) -> None:
-    del tmp_path
-    agent = FakeAgent()
-    agent.provider = SwitchableProvider()
-    agent.context_manager = build_context_manager()
-    rebind_context_manager_budget(
-        agent.context_manager,
-        provider=agent.provider,
+    record = active_session.store.load(active_session.id)
+    branch = active_branch_entries(
+        record.conversation_entries,
+        leaf_id=record.leaf_id,
     )
+    assert [
+        message.plain_text_content
+        for message in transcript_messages_from_entries(branch)
+    ] == [
+        "remove row grouping",
+        "Row grouping removed.",
+        "Fix the outcome cell styling.",
+        INTERRUPTED_TURN_NOTICE,
+    ]
 
-    state = set_agent_model(agent, model_id="gpt-b", reasoning_effort="high")
 
-    assert state.context_window_tokens == 2000
-    assert agent.context_manager.max_total_tokens == 2000
-    assert agent.context_manager.compactor.model == "gpt-b"
-
-
-def test_same_provider_switch_reregisters_model_aware_tools(
+def test_model_selector_catalog_includes_codex_models(
     tmp_path: Path,
 ) -> None:
-    registrations: list[str | None] = []
-
-    class ModelTool(LocalTool):
-        name = "model_tool"
-        description = "Report the model used to register and execute this tool."
-
-        registered_model: str
-
-        def execute(self) -> dict[str, object]:
-            return {
-                "ok": True,
-                "registered_model": self.registered_model,
-                "runtime_model": self.context.model_key,
-                "provider": self.context.provider,
-            }
-
-    def register_tools(context: ToolRegistrationContext):
-        registrations.append(context.model_key)
-        return [ModelTool(registered_model=context.model_key or "unknown")]
-
-    provider = SwitchableProvider()
-    agent = RuntimeAgent(
-        provider=provider,
-        tools=[],
-        tool_factory=register_tools,
-        tool_root=tmp_path,
-        tool_home=tmp_path,
-        context_manager=build_context_manager(),
+    choices = list_all_provider_model_choices(
+        args=CLIArgs(root=str(tmp_path)),
+        home=tmp_path,
     )
 
-    set_agent_model(agent, model_id="gpt-b", reasoning_effort="high")
-    result = agent.tools["model_tool"].execute()
-
-    assert registrations == ["demo:gpt-a", "demo:gpt-b"]
-    assert result == {
-        "ok": True,
-        "registered_model": "demo:gpt-b",
-        "runtime_model": "demo:gpt-b",
-        "provider": provider,
-    }
+    qualified_ids = {choice.qualified_id for choice in choices}
+    assert "codex:gpt-5.5" in qualified_ids
+    assert "codex:gpt-5.6-luna" in qualified_ids
+    assert "codex:gpt-5.6-terra" in qualified_ids
 
 
-def test_same_provider_switch_updates_attach_image_builtin(tmp_path: Path) -> None:
-    from yoke.cli.bootstrap.config import resolve_agent_config
-
-    provider = SwitchableProvider()
-
-    def register_cli_tools(context: ToolRegistrationContext):
-        resolved = resolve_agent_config(
-            root=tmp_path,
-            home=tmp_path,
-            provider=context.provider,
-        )
-        return resolved.tools
-
-    agent = RuntimeAgent(
-        provider=provider,
-        tools=[],
-        tool_factory=register_cli_tools,
-        tool_root=tmp_path,
-        tool_home=tmp_path,
-        context_manager=build_context_manager(),
+def test_model_selector_catalog_includes_open_provider_models(
+    tmp_path: Path,
+) -> None:
+    choices = list_all_provider_model_choices(
+        args=CLIArgs(root=str(tmp_path)),
+        home=tmp_path,
     )
 
-    assert "attach_image" not in agent.tools
-
-    set_agent_model(agent, model_id="gpt-b", reasoning_effort="high")
-
-    assert "attach_image" in agent.tools
-
-    set_agent_model(agent, model_id="gpt-a", reasoning_effort="high")
-
-    assert "attach_image" not in agent.tools
+    qualified_ids = {choice.qualified_id for choice in choices}
+    assert "opencode-go:gpt-5.6-luna" in qualified_ids
+    assert "opencode-go:kimi-k2.7-code" in qualified_ids
+    assert "zai:glm-5.2" in qualified_ids
 
 
-def test_model_switch_changes_builtin_write_interface(tmp_path: Path) -> None:
-    class MixedModelProvider(SwitchableProvider):
+def test_model_switch_keeps_bounded_user_epoch_for_equal_window() -> None:
+    class UsageReportingProvider(SwitchableProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.summary_calls = 0
+
         def list_models(self) -> list[ProviderModelInfo]:
             return [
                 ProviderModelInfo(
-                    id="gpt-coder",
-                    display_name="GPT Coder",
-                    context_window_tokens=2000,
-                    thinking_levels=("low", "high"),
-                ),
-                ProviderModelInfo(
-                    id="kimi-code",
-                    display_name="Kimi Code",
-                    context_window_tokens=2000,
-                    thinking_levels=("low", "high"),
-                ),
+                    id=model_id,
+                    display_name=model_id,
+                    context_window_tokens=10_000,
+                    thinking_levels=("medium",),
+                    supports_image_inputs=False,
+                )
+                for model_id in ("gpt-a", "gpt-b")
             ]
 
-    provider = MixedModelProvider()
-    provider.config.model = "gpt-coder"
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del tools
+            if "CONTEXT CHECKPOINT COMPACTION" in str(messages[-1].content):
+                self.summary_calls += 1
+                return Message.assistant("summary of older work")
+            response = Message.assistant("done")
+            response.usage = TokenUsage(
+                provider_name=self.provider_name,
+                model_id=self.config.model,
+                input_tokens=4_800,
+            )
+            return response
+
+    provider = UsageReportingProvider()
     agent = RuntimeAgent(
         provider=provider,
         tools=[],
-        tool_factory=register_write_tool,
-        tool_root=tmp_path,
-        tool_home=tmp_path,
-        context_manager=ContextManager(
-            instructions=[Message.system("base instructions")]
+        context_manager=build_provider_context_manager(
+            provider=provider,
+            instructions=[],
         ),
+        messages=[Message.user("older request " + ("alpha " * 4_000))],
     )
-    agent.load_conversation(MessageHistory([Message.user("existing conversation")]))
-
-    assert set(agent.tools) == {"apply_patch"}
-    assert "Use the `apply_patch` tool" in agent.tools["apply_patch"].description
-
-    set_agent_model(agent, model_id="kimi-code")
-
-    assert set(agent.tools) == {"edit", "write"}
-    combined = "\n".join(
-        str(message.content or "") for message in agent.context_manager.instructions
+    first_events: list[str] = []
+    agent.run(
+        "first follow-up",
+        on_event=lambda event, _payload: first_events.append(event),
     )
-    assert "base instructions" in combined
-    assert "Use the `apply_patch` tool" not in combined
-    assert "Use oldString/newString" in agent.tools["edit"].description
-    assert agent._context is not None
-    context_combined = "\n".join(
-        str(message.content or "") for message in agent._context.instructions
-    )
-    assert context_combined == combined
-    instruction_entries = [
-        entry
-        for entry in agent._context.conversation_log.entries
-        if entry.kind == "instruction"
-    ]
-    assert [entry.message for entry in instruction_entries] == (
-        agent._context.instructions
+    summary_calls_after_checkpoint = provider.summary_calls
+
+    set_agent_model(agent, model_id="gpt-b")
+    second_events: list[str] = []
+    result = agent.run(
+        "second follow-up",
+        on_event=lambda event, _payload: second_events.append(event),
     )
 
-    set_agent_model(agent, model_id="gpt-coder")
-
-    round_trip = "\n".join(
-        str(message.content or "") for message in agent.context_manager.instructions
-    )
-    assert "Use the `apply_patch` tool" not in round_trip
-    assert "Use the `apply_patch` tool" in agent.tools["apply_patch"].description
-    assert len(agent.context_manager.instructions) == 1
+    assert "context_compaction" in first_events
+    assert result.output == "done"
+    assert provider.summary_calls == summary_calls_after_checkpoint
+    assert "context_compaction" not in second_events
 
 
-def test_same_provider_switch_does_not_copy_provider(
-    tmp_path: Path, monkeypatch
-) -> None:
-    session = active_session_for(tmp_path)
+def test_model_switch_compacts_for_smaller_target() -> None:
+    class ShrinkingProvider(SwitchableProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.summary_calls = 0
+
+        def list_models(self) -> list[ProviderModelInfo]:
+            return [
+                ProviderModelInfo(
+                    id="gpt-a",
+                    display_name="GPT A",
+                    context_window_tokens=10_000,
+                ),
+                ProviderModelInfo(
+                    id="gpt-b",
+                    display_name="GPT B",
+                    context_window_tokens=1_000,
+                ),
+            ]
+
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del tools
+            assert "CONTEXT CHECKPOINT COMPACTION" in str(messages[-1].content)
+            self.summary_calls += 1
+            return Message.assistant("summary of the oversized history")
+
+    provider = ShrinkingProvider()
     agent = RuntimeAgent(
-        provider=SwitchableProvider(),
+        provider=provider,
         tools=[],
-        context_manager=build_context_manager(),
-    )
-    rebind_context_manager_budget(
-        agent.context_manager,
-        provider=agent.provider,
-    )
-    agent.load_conversation(MessageHistory([Message.user("hello")]))
-    stream = CaptureStream()
-    console = build_console(stream)
-
-    def select_second_row(rows: list[object], **_kwargs: object) -> object:
-        return rows[1]
-
-    def list_demo_choices(**_kwargs: object) -> list[ProviderModelChoice]:
-        return [
-            ProviderModelChoice(provider_name="demo", model=model)
-            for model in cast(SwitchableProvider, agent.provider).list_models()
-        ]
-
-    monkeypatch.setattr(
-        model_commands,
-        "list_all_provider_model_choices",
-        list_demo_choices,
-    )
-    monkeypatch.setattr(
-        model_commands,
-        "select_table_item_interactive",
-        select_second_row,
-    )
-
-    handled, _messages, updated_session = handle_slash_command(
-        "/model",
-        agent=agent,
-        active_session=session,
-        messages=[Message.user("hello")],
-        console=console,
-    )
-
-    assert handled is True
-    assert updated_session.record.model_id == "gpt-b"
-    assert cast(SwitchableProvider, agent.provider).config.model == "gpt-b"
-
-
-def test_slash_model_switch_preserves_compaction_handoff(
-    tmp_path: Path, monkeypatch
-) -> None:
-    session = active_session_for(tmp_path)
-    agent = RuntimeAgent(
-        provider=SwitchableProvider(),
-        tools=[],
-        context_manager=build_context_manager(),
-    )
-    agent.load_conversation(
-        MessageHistory([Message.user("older"), Message.assistant("older answer")])
-    )
-    preparation = CompactionPreparation(
-        reason="manual",
-        estimate=Compactor().estimate_tokens(
-            agent.messages,
-            reserve_tokens=0,
+        context_manager=build_provider_context_manager(
+            provider=provider,
+            instructions=[],
         ),
-        boundary="user",
-        messages_to_summarize=agent.messages,
-        kept_messages=[Message.user("recent")],
-        recent_user_messages=[Message.user("recent")],
-    )
-    assert agent._context is not None
-    agent.context_manager.apply_compaction(
-        agent._context,
-        preparation,
-        summary_text="handoff survives model switch",
-    )
-    session.record.conversation_entries = agent.conversation_entries
-    stream = CaptureStream()
-    console = build_console(stream)
-
-    def select_second_row(rows: list[object], **_kwargs: object) -> object:
-        return rows[1]
-
-    def list_demo_choices(**_kwargs: object) -> list[ProviderModelChoice]:
-        return [
-            ProviderModelChoice(provider_name="demo", model=model)
-            for model in cast(SwitchableProvider, agent.provider).list_models()
-        ]
-
-    monkeypatch.setattr(
-        model_commands,
-        "list_all_provider_model_choices",
-        list_demo_choices,
-    )
-    monkeypatch.setattr(
-        model_commands,
-        "select_table_item_interactive",
-        select_second_row,
+        messages=[
+            Message.assistant("old output " + ("alpha " * 1_000)),
+            Message.user("keep this request"),
+        ],
     )
 
-    handled, _messages, updated_session = handle_slash_command(
-        "/model",
-        agent=agent,
-        active_session=session,
-        messages=agent.messages,
-        console=console,
-    )
+    state = set_agent_model(agent, model_id="gpt-b")
 
-    assert handled is True
-    saved = updated_session.store.load(updated_session.id)
-    memory_entries = [
-        entry for entry in saved.conversation_entries if entry.kind == "memory_snapshot"
-    ]
-    assert memory_entries
-    handoff = cast(dict[str, object], memory_entries[-1].metadata["compaction_handoff"])
-    assert handoff["summary_text"] == "handoff survives model switch"
-    assert saved.model_id == "gpt-b"
+    assert state.model_id == "gpt-b"
+    assert provider.summary_calls == 1
 
 
-def test_legacy_model_args_do_not_trigger_context_budget_switch(
+def test_interactive_model_switch_adopts_and_persists_compacted_state(
     tmp_path: Path,
 ) -> None:
-    session = active_session_for(tmp_path)
-    agent = RuntimeAgent(
-        provider=SwitchableProvider(),
-        tools=[],
-        context_manager=build_context_manager(),
-    )
-    rebind_context_manager_budget(
-        agent.context_manager,
-        provider=agent.provider,
-    )
-    long_text = "alpha " * 500
-    agent.load_conversation(
-        MessageHistory(
-            [
-                Message.user(long_text),
-                Message.assistant("done"),
+    class ShrinkingProvider(SwitchableProvider):
+        def list_models(self) -> list[ProviderModelInfo]:
+            return [
+                ProviderModelInfo(
+                    id="gpt-a",
+                    display_name="GPT A",
+                    context_window_tokens=10_000,
+                ),
+                ProviderModelInfo(
+                    id="gpt-b",
+                    display_name="GPT B",
+                    context_window_tokens=1_000,
+                ),
             ]
-        )
-    )
-    stream = CaptureStream()
-    console = build_console(stream)
-    messages = [Message.user(long_text), Message.assistant("done")]
 
-    handled, updated_messages, updated_session = handle_slash_command(
-        "/model demo:gpt-a",
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del tools
+            assert "CONTEXT CHECKPOINT COMPACTION" in str(messages[-1].content)
+            return Message.assistant("persisted compacted state")
+
+    original_messages = [
+        Message.assistant("old output " + ("alpha " * 1_000)),
+        Message.user("keep this request"),
+    ]
+    provider = ShrinkingProvider()
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        context_manager=build_provider_context_manager(
+            provider=provider,
+            instructions=[],
+        ),
+        messages=original_messages,
+    )
+    active_session = active_session_for(tmp_path)
+    persist_session_state(active_session, agent, original_messages)
+
+    updated_messages = _switch_model(
+        "demo:gpt-b",
+        None,
         agent=agent,
-        active_session=session,
-        messages=messages,
-        console=console,
+        active_session=active_session,
+        messages=original_messages,
+        console=build_console(StringIO()),
+        args=CLIArgs(root=str(tmp_path)),
     )
 
-    assert handled is True
-    assert updated_messages == messages
-    assert updated_session.record.model_id is None
-    provider = cast(SwitchableProvider, agent.provider)
-    assert provider.config.model == "gpt-a"
-    assert "Usage: /model" in stream.getvalue()
-    assert "compact before switching" not in stream.getvalue()
+    record = active_session.store.load(active_session.id)
+    assert updated_messages == agent.messages
+    persisted_runtime = project_conversation(
+        record.conversation_entries,
+        leaf_id=record.leaf_id,
+    ).runtime_messages
+    assert list(persisted_runtime) == agent.messages
+    assert record.messages[:2] == original_messages
+    snapshots = [
+        entry
+        for entry in record.conversation_entries
+        if entry.kind == "memory_snapshot"
+    ]
+    assert len(snapshots) == 1
 
 
-def build_context_manager() -> ContextManager:
-    from yoke.agent.context import ContextManager
+def test_model_switch_rolls_back_context_when_auto_compaction_fails() -> None:
+    class FailingCompactionProvider(SwitchableProvider):
+        def list_models(self) -> list[ProviderModelInfo]:
+            return [
+                ProviderModelInfo(
+                    id="gpt-a",
+                    display_name="GPT A",
+                    context_window_tokens=10_000,
+                ),
+                ProviderModelInfo(
+                    id="gpt-b",
+                    display_name="GPT B",
+                    context_window_tokens=1_000,
+                ),
+            ]
 
-    return ContextManager(instructions=[])
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del messages, tools
+            return Message.assistant("")
 
-
-def test_parse_provider_model_identifier() -> None:
-    assert parse_provider_model_identifier("Codex:gpt-5.4") == (
-        "codex",
-        "gpt-5.4",
+    provider = FailingCompactionProvider()
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        context_manager=build_provider_context_manager(
+            provider=provider,
+            instructions=[],
+        ),
+        messages=[
+            Message.assistant("old output " + ("alpha " * 1_000)),
+            Message.user("keep this request"),
+        ],
     )
-    assert parse_provider_model_identifier("demo:provider.model-name") == (
-        "demo",
-        "provider.model-name",
-    )
+    original_entries = agent.conversation_entries
+
+    try:
+        set_agent_model(agent, model_id="gpt-b")
+    except ValueError as exc:
+        assert "automatic context compaction failed" in str(exc)
+    else:
+        raise AssertionError("Expected the model switch to fail")
+
+    assert provider.current_model_id() == "gpt-a"
+    assert agent.conversation_entries == original_entries
+    assert agent.context_manager.compactor.model == "gpt-a"

@@ -1,82 +1,169 @@
 ---
 name: yoke-subagents
-description: "Orchestrate Yoke SDK agents for bounded fan-out, research, discovery, implementation, durable review loops, and merge handoffs. Use when parallel viewpoints, isolated workers, provider-aware capabilities, or retained role context justify orchestration overhead."
+description: Orchestrate multi-agent task workflows with the yoke SDK: research, discovery-driven investigation, fan-out analysis, multi-file implementation, coder/reviewer loops, merge handoffs, or durable role agents.
 ---
 
 # Yoke Subagent Orchestration
 
-Create SDK `Agent` instances directly. Do not look for a subagent tool.
+Do not look for a subagent tool. The orchestration script creates SDK `Agent`
+instances directly.
 
-## Core process
+Use this skill selectively. It is an orchestration workflow for tasks where
+parallel viewpoints, durable roles, or review/merge handoffs are worth the
+overhead; it is not the default path for small single-threaded work.
 
-1. Print provider status and construct every selected
-   `provider:model:thinking-effort` before launching work. Construction validates
-   local configuration, not remote reachability. When provider behavior changed,
-   also complete one real function-tool and tool-result round trip.
-2. Choose the smallest useful shape. Keep 1-4 simple workers inline; place larger,
-   reusable, durable, or multi-phase workflows under `.agents_local/`.
-3. List the stable capability IDs the task requires, then inspect their
-   provider-resolved tools before launching work.
-4. Bound independent work with `run_many()`. Give every task a stable unique slug
-   and every attempt a fresh agent. Use a single durable agent only when later
-   turns need its accumulated judgment.
-5. Treat every boundary as typed: call `result.require_completed()`, inspect every
-   batch item status, and surface `batch.progress_errors` before trusting output.
-6. For writes, assign exclusive scopes. Default mutating tasks to one attempt;
-   enable retries only with an explicit idempotency and partial-write policy.
-7. Write raw results and the final handoff atomically under `.agents_local/`.
-   Log phase, selection, task start/finish/error, artifact path, and final status.
-8. Run a separate coverage/review pass. The main agent resolves conflicts, applies
-   final integration changes, and runs repository validation.
+## Core Process
 
-Each step is complete only when its stated evidence exists in logs or artifacts.
+1. Before writing the orchestrator, use `print_builtin_provider_status()` as a
+   local context-gathering helper, then call `build_builtin_provider(selection)`
+   for every selected provider/model/thinking string. Do not put the status
+   helper in the orchestration script; it validates local selection construction,
+   not remote service reachability.
+   When adding or changing a provider, separately probe a representative real
+   agent turn with function tools and complete the tool-result round trip.
+2. Choose the smallest orchestration shape that fits the request.
+3. Prefer public SDK `run_many()` for independent bounded fan-out. For small
+   orchestrations (1-4 subagents, no complex state), run the code
+   inline without creating a file. For larger or reusable orchestrations, write
+   an import-side-effect-free script under `.agents_local/` with an async
+   `main()` launched by `asyncio.run(main())`, guarded by
+   `if __name__ == "__main__"`.
+4. Attach a `ConsoleObserver("actions")` to every direct agent prompt or
+   `run_many()` call so the parent can see commentary, final messages, compact
+   tool-call signatures, and failures while work is active. For file-based
+   orchestrations, combine it with a `JsonlObserver("full")` under
+   `.agents_local/` for a durable structured trace. Keep orchestration phase,
+   provider, artifact, and final-status logging as a separate script log.
+5. For file-based orchestrations, run the script with `exec_command`; poll with
+   `write_stdin` until it completes. Subagent tasks can take a long time, so
+   choose a `yield_time_ms` up to 3,600,000 ms when long waits are useful,
+   while keeping progress visible.
+6. Read the final handoff and raw JSON artifacts. Verify conflicts or errors
+   before trusting the subagent results.
+7. The main agent applies final edits, resolves conflicts, runs validation, and
+   reports the final outcome.
+8. Let `run_many()` close independent one-shot agents. Use `async with agent`
+   for sequential or durable roles so provider and tool resources are released.
 
-## Progressive references
+## Completion Criteria
 
-Load only the references needed for the selected branch:
+The orchestration is not complete until all applicable criteria are satisfied:
 
-- Read [`CAPABILITIES.md`](CAPABILITIES.md) when choosing tool access or diagnosing
-  provider/model-aware availability.
-- Read [`SDK_SURFACE.md`](SDK_SURFACE.md) when using provider helpers, result
-  status, structured output, durability, batching, or artifact APIs.
-- Read [`COMMON.md`](COMMON.md) before writing a reusable file-based orchestrator.
-- Read [`patterns/audit-research.md`](patterns/audit-research.md) for quick audits
-  or code/web research.
-- Read [`patterns/pipeline.md`](patterns/pipeline.md) for
-  discovery → planning → fan-out pipelines.
-- Read [`patterns/coder-reviewer.md`](patterns/coder-reviewer.md) for mutating
-  coder/reviewer loops or durable review roles.
-- Read [`patterns/review-merge.md`](patterns/review-merge.md) for coverage review
-  and final handoffs.
-- [`PATTERNS.md`](PATTERNS.md) is a compatibility index for the branch files.
+- Provider status was gathered before authoring the script and every selected
+  provider/model/thinking string was constructed successfully with
+  `build_builtin_provider(selection)`.
+- Live subagent work used an `actions` console observer. Reusable or file-based
+  orchestration also retained a full JSONL trace under `.agents_local/`.
+- The orchestrator finished without unhandled exceptions, or every failure is
+  captured in the handoff with a clear blocker.
+- The final handoff artifact and any raw task JSON were written under
+  `.agents_local/`.
+- A review or merge pass checked coverage, conflicts, unsupported claims, and
+  task errors before the main agent acted on the results.
+- Caps were respected unless the user explicitly asked otherwise.
+- For implementation work, file ownership was non-overlapping, changed files
+  were reported, and the main agent ran final validation.
+- Async fan-out used a fresh agent factory, bounded concurrency, stable unique
+  task IDs, and inspected every per-item terminal status.
 
-## Shape selection
+## Provider Selection
 
-- **Quick audit:** 2-4 independent read-only perspectives.
-- **Research:** codebase, web, or configured-integration evidence gathering.
-- **Discovery:** one stateful role identifies concrete work items.
-- **Planning:** one role converts discoveries into bounded, non-overlapping specs.
-- **Fan-out:** isolated tasks run concurrently and preserve per-item failures.
-- **Coder/reviewer:** durable review judgment across bounded revision iterations.
-- **Review/merge:** independent coverage gate followed by a compact handoff.
+Use provider/model/thinking selections as strings:
 
-## Hard limits
+```text
+provider:model:thinking_effort
+```
+Yoke's built-ins are `codex`, `opencode-go`, and `zai`, plus global custom
+provider plugins. Prefer capability IDs in orchestration configs so each
+worker's provider/model receives only compatible concrete tools. In particular,
+`image.generate` is Codex-only, image attachment follows model metadata, and
+`web.research` uses Codex hosted search while retaining the local workflow for
+other providers.
 
-- Use at most 16 concurrent agents unless the user explicitly requests more.
-- Use at most 64 tasks per script unless the user explicitly requests more.
-- Do not add generic orchestration timeouts. Use domain deadlines only; Yoke
-  cancellation is cooperative and waits for cleanup.
-- Never derive paths from unchecked task or run IDs. Use unique filename-safe
-  slugs and run-specific artifact directories.
+See [`SDK_SURFACE.md`](SDK_SURFACE.md) for imports, provider helper behavior,
+capability IDs, durable agent state, and reusable script helpers.
 
-## Completion gate
+## Orchestration Shapes
 
-Do not finish until:
+1. **Quick audit** — ask 2-4 read-only subagents for independent perspectives
+   when full discovery/planning/merge machinery would be too heavy.
+2. **Research** — answer an open question with codebase evidence, online
+   sources, or both.
+3. **Discovery** — find concrete work items when the task boundary is unknown.
+4. **Planning** — convert discoveries into bounded, non-overlapping task specs.
+5. **Fan-out** — run independent tasks concurrently and collect structured
+   evidence, changes, validation, and risks.
+6. **Coder/reviewer pairs** — iterate scoped implementation work until a
+   reviewer returns `ok`, a max iteration cap is hit, or the main agent must
+   intervene.
+7. **Review and coverage** — check results against the request and discovery
+   outputs for missing coverage, conflicts, and unsupported claims.
+8. **Merge handoff** — synthesize a compact report for the main agent with
+   findings, changed files, risks, blockers, and next actions.
 
-- every selection passed preflight and any required real provider probe;
-- every agent result is completed or represented as a terminal error;
-- every progress callback error is surfaced;
-- every created agent is closed, including partial construction failures;
-- raw JSON, logs, review, and final handoff exist under `.agents_local/`;
-- write scopes, retries, conflicts, unsupported claims, and validation are
-  explicitly accounted for.
+See [`PATTERNS.md`](PATTERNS.md) for async code templates for every shape. Do not
+copy older `ThreadPoolExecutor` or synchronous `worker.prompt(...)` fan-out
+patterns into new orchestrators.
+
+## Durable Role Agents
+
+Use durable SDK agents when a role accumulates judgment over multiple turns,
+such as reviewer -> main agent fix -> reviewer, planner -> fan-out -> planner,
+or merge agent -> conflict resolution -> merge agent.
+
+Bind each long-lived role to its own state file under `.agents_local/`. Validate
+that task IDs are unique filename-safe slugs before deriving paths from them:
+
+```python
+# inside Agent(...)
+state_path=OUTPUT_DIR / f"{task.id}.reviewer.json",
+autosave=True,
+```
+
+Do not persist throwaway one-shot fan-out agents by default. Persistence is most
+useful for roles that preserve prior objections, accepted tradeoffs, review
+criteria, and task-specific context across crashes or later continuation.
+
+## Write Safety
+
+Subagents may perform real implementation work when the task can be partitioned
+safely and the user has not asked for a read-only audit.
+
+- Assign each implementation subagent an exclusive file or directory scope.
+- Require each implementation subagent to report changed files and validation.
+
+## Async Fan-Out
+
+Use `Agent.prompt_async()` for an asyncio-compatible call on one stateful agent.
+Concurrent calls on that agent serialize intentionally. Use `run_many()` for
+parallel independent tasks because it creates and closes one agent per task,
+isolates errors, preserves input order, and aggregates provider-reported usage.
+The factory must return a fresh agent for every task and retry attempt; reused
+instances are rejected. Every fresh agent must also own a fresh provider
+instance; shared providers are rejected because they can contain mutable
+conversation state and one owner can close another owner's resources. Factories
+may be synchronous or asynchronous;
+synchronous factories run outside the event loop. Retry-policy failures stay in
+their item result. Inspect `progress_errors` as part of the handoff when a
+progress callback is configured.
+
+Pass an observer directly to `run_many()` instead of adding ad hoc event
+callbacks to every factory-created agent. Batch observation automatically adds
+the task ID and retry attempt to each event. Use `messages` only when tool-call
+visibility is unnecessary, and use `full` for JSONL diagnostics rather than
+routine console output. Built-in renderers redact credential-like argument
+keys; prompts, proprietary content, paths, and tool results can still be
+sensitive, so treat full traces as sensitive artifacts.
+
+Do not add generic agent or batch timeouts to orchestration templates. Agents
+can legitimately run for a long time; monitor progress and cancel explicitly
+when work is genuinely stalled. If a task has a real domain deadline, remember
+that SDK timeouts are cooperative: yoke signals the synchronous runtime and waits
+for cleanup, and a non-cooperative dependency can delay return.
+
+## Caps
+
+Use caps by default:
+
+- No more than 16 concurrent subagents unless the user explicitly asks.
+- No more than 64 subagent tasks in one script unless the user explicitly asks.

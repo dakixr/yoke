@@ -1,39 +1,75 @@
-"""Agent loop exports."""
+"""Lazy public exports for the agent loop."""
 
-from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.loop.types import INTERRUPTED_TURN_NOTICE
-from yoke.agent.loop.types import AfterToolCallContext
-from yoke.agent.loop.types import AfterToolCallHook
-from yoke.agent.loop.types import AfterToolCallResult
-from yoke.agent.loop.types import AgentEventHandler
-from yoke.agent.loop.types import AgentResult
-from yoke.agent.loop.types import AgentStoppedError
-from yoke.agent.loop.types import BeforeToolCallContext
-from yoke.agent.loop.types import BeforeToolCallHook
-from yoke.agent.loop.types import BeforeToolCallResult
-from yoke.agent.loop.types import ConversationEntryHistory
-from yoke.agent.loop.types import ConversationHistory
-from yoke.agent.loop.types import MessageHistory
-from yoke.agent.loop.types import MaxIterationsExceededError
-from yoke.agent.loop.types import StopRequested
-from yoke.agent.loop.types import ToolExecutionMode
+# ruff: noqa: F401
 
-__all__ = [
-    "RuntimeAgent",
-    "BeforeToolCallContext",
-    "BeforeToolCallHook",
-    "BeforeToolCallResult",
-    "ConversationEntryHistory",
-    "ConversationHistory",
-    "MessageHistory",
+from __future__ import annotations
+
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .agent import RuntimeAgent
+    from .types import (
+        INTERRUPTED_TURN_NOTICE,
+        AfterToolCallContext,
+        AfterToolCallHook,
+        AfterToolCallResult,
+        AgentEventHandler,
+        AgentResult,
+        AgentStoppedError,
+        BeforeToolCallContext,
+        BeforeToolCallHook,
+        BeforeToolCallResult,
+        MaxIterationsExceededError,
+        StopRequested,
+        ToolExecutionMode,
+    )
+
+_TYPE_EXPORTS = (
+    "INTERRUPTED_TURN_NOTICE",
     "AfterToolCallContext",
     "AfterToolCallHook",
     "AfterToolCallResult",
     "AgentEventHandler",
     "AgentResult",
     "AgentStoppedError",
+    "BeforeToolCallContext",
+    "BeforeToolCallHook",
+    "BeforeToolCallResult",
     "MaxIterationsExceededError",
     "StopRequested",
     "ToolExecutionMode",
+)
+
+_LAZY_EXPORTS = {
+    "RuntimeAgent": ("yoke.agent.loop.agent", "RuntimeAgent"),
+    **{name: ("yoke.agent.loop.types", name) for name in _TYPE_EXPORTS},
+}
+
+__all__ = (
+    "RuntimeAgent",
     "INTERRUPTED_TURN_NOTICE",
-]
+    "AfterToolCallContext",
+    "AfterToolCallHook",
+    "AfterToolCallResult",
+    "AgentEventHandler",
+    "AgentResult",
+    "AgentStoppedError",
+    "BeforeToolCallContext",
+    "BeforeToolCallHook",
+    "BeforeToolCallResult",
+    "MaxIterationsExceededError",
+    "StopRequested",
+    "ToolExecutionMode",
+)
+
+
+def __getattr__(name: str) -> Any:  # noqa: ANN401
+    """Resolve a loop export without eagerly importing the full runtime."""
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute = target
+    value = getattr(import_module(module_name), attribute)
+    globals()[name] = value
+    return value

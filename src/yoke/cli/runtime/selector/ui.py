@@ -139,7 +139,7 @@ def select_list_item_interactive(
     app = Application(
         layout=Layout(Window(content=control, always_hide_cursor=True)),
         key_bindings=key_bindings,
-        full_screen=True,
+        full_screen=False,
         mouse_support=False,
     )
     with suppress(EOFError, KeyboardInterrupt):
@@ -156,119 +156,30 @@ def select_table_item_interactive(
     columns: SelectorTableColumns,
     render_row: Callable[[ItemT, int, bool, SelectorTableColumns], str],
     footer: str,
-    on_pin: Callable[[ItemT], None] | None = None,
+    filter_item: Callable[[ItemT, str], bool] | None = None,
+    filter_label: str = "Search",
+    action_key: str | None = None,
+    action_label: str | None = None,
+    on_action: Callable[[ItemT], None] | None = None,
 ) -> ItemT | None:
     """Render a keyboard-driven selector for rows arranged as a table."""
-    from prompt_toolkit.application import Application
-    from prompt_toolkit.formatted_text import HTML
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.layout import Layout
-    from prompt_toolkit.layout.containers import Window
-    from prompt_toolkit.layout.controls import FormattedTextControl
-
-    if not items:
-        return None
-
-    selected_index = 0
-    scroll_offset = 0
-
-    def formatted_rows() -> HTML:
-        nonlocal scroll_offset
-        terminal_columns, terminal_rows = selector_terminal_size()
-        view = build_table_selector_view(
-            items,
-            selected_index=selected_index,
-            scroll_offset=scroll_offset,
-            terminal_columns=terminal_columns,
-            terminal_rows=terminal_rows,
-            title=title,
-            subtitle=subtitle,
-            columns=columns,
-            render_row=render_row,
-            footer=footer,
-        )
-        scroll_offset = view.scroll_offset
-        rendered_lines: list[str] = []
-        for index, line in enumerate(view.lines):
-            escaped_line = escape(line)
-            if index == view.selected_line_index:
-                rendered_lines.append(f"<reverse>{escaped_line}</reverse>")
-            else:
-                rendered_lines.append(escaped_line)
-        return HTML("\n".join(rendered_lines))
-
-    key_bindings = KeyBindings()
-    app: Application[ItemT | None]
-
-    @key_bindings.add("down")
-    @key_bindings.add("j")
-    def _move_down(event) -> None:
-        nonlocal selected_index
-        selected_index = min(selected_index + 1, len(items) - 1)
-        event.app.invalidate()
-
-    @key_bindings.add("up")
-    @key_bindings.add("k")
-    def _move_up(event) -> None:
-        nonlocal selected_index
-        selected_index = max(selected_index - 1, 0)
-        event.app.invalidate()
-
-    @key_bindings.add("pagedown")
-    def _page_down(event) -> None:
-        nonlocal selected_index
-        selected_index = min(
-            selected_index + selector_page_step(),
-            len(items) - 1,
-        )
-        event.app.invalidate()
-
-    @key_bindings.add("pageup")
-    def _page_up(event) -> None:
-        nonlocal selected_index
-        selected_index = max(selected_index - selector_page_step(), 0)
-        event.app.invalidate()
-
-    @key_bindings.add("home")
-    def _move_home(event) -> None:
-        nonlocal selected_index
-        selected_index = 0
-        event.app.invalidate()
-
-    @key_bindings.add("end")
-    def _move_end(event) -> None:
-        nonlocal selected_index
-        selected_index = len(items) - 1
-        event.app.invalidate()
-
-    @key_bindings.add("enter")
-    def _accept(event) -> None:
-        event.app.exit(result=items[selected_index])
-
-    if on_pin is not None:
-
-        @key_bindings.add("p")
-        def _pin(event) -> None:
-            on_pin(items[selected_index])
-            event.app.invalidate()
-
-    @key_bindings.add("c-c")
-    @key_bindings.add("escape")
-    @key_bindings.add("q")
-    def _cancel(event) -> None:
-        event.app.exit(result=None)
-
-    control = FormattedTextControl(formatted_rows, focusable=True)
-    app = Application(
-        layout=Layout(Window(content=control, always_hide_cursor=True)),
-        key_bindings=key_bindings,
-        full_screen=True,
-        mouse_support=False,
+    from yoke.cli.runtime.selector.table_interactive import (
+        select_table_item_interactive_impl,
     )
-    with suppress(EOFError, KeyboardInterrupt):
-        with suppress_terminal_output_for_fullscreen():
-            return app.run()
-    return None
+
+    return select_table_item_interactive_impl(
+        items,
+        title=title,
+        subtitle=subtitle,
+        columns=columns,
+        render_row=render_row,
+        footer=footer,
+        filter_item=filter_item,
+        filter_label=filter_label,
+        action_key=action_key,
+        action_label=action_label,
+        on_action=on_action,
+    )
 
 
 def build_generic_selector_view(
