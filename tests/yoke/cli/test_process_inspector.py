@@ -5,13 +5,15 @@
 import os
 import shlex
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from prompt_toolkit.formatted_text import HTML
 
 from yoke.agent.loop import RuntimeAgent
+from yoke.agent.tools.command_process_manager import CommandProcessManager
 from yoke.agent.tools.command_process_types import (
     CommandProcessSnapshot,
 )
@@ -19,6 +21,13 @@ from yoke.ai.providers.base import Provider
 from yoke.cli.config import CLIArgs
 from yoke.cli.interactive.common import handle_slash_command
 from yoke.cli.interactive.process_inspector import ProcessInspectorState
+from yoke.cli.interactive.process_inspector.app import (
+    PROCESS_INSPECTOR_MIN_REDRAW_INTERVAL,
+)
+from yoke.cli.interactive.process_inspector.app import ProcessSnapshotCache
+from yoke.cli.interactive.process_inspector.app import (
+    open_live_process_inspector,
+)
 from yoke.cli.interactive.process_inspector.render import (
     render_view_html,
 )
@@ -79,6 +88,116 @@ def test_process_inspector_renders_process_metadata_and_safe_output(
     assert "OS PID" in text
     assert "␀␛[31mdone␛[0m�" in text
     assert "<ansired>literal" in text
+
+
+def test_process_snapshot_cache_coalesces_output_notifications() -> None:
+    class SnapshotManager:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def snapshots(self) -> list[CommandProcessSnapshot]:
+            self.calls += 1
+            return [_snapshot(100, output="x" * (1024 * 1024))]
+
+    manager = SnapshotManager()
+    cache = ProcessSnapshotCache(
+        cast("CommandProcessManager", manager),
+        refresh_interval=60,
+    )
+    initial = cache.snapshots()
+
+    for _ in range(256):
+        cache.mark_dirty()
+    refreshed = cache.snapshots()
+    assert cache.snapshots() is refreshed
+    assert initial is not refreshed
+    assert manager.calls == 2
+
+
+def test_process_detail_output_wrapping_is_cached(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "yoke.cli.interactive.process_inspector.render.terminal_size",
+        lambda: (120, 32),
+    )
+    from yoke.cli.interactive.process_inspector import render as process_render
+
+    wrapped_lengths: list[int] = []
+    original_wrap = process_render.textwrap.wrap
+
+    def tracking_wrap(text: str, *args, **kwargs) -> list[str]:
+        wrapped_lengths.append(len(text))
+        return original_wrap(text, *args, **kwargs)
+
+    monkeypatch.setattr(process_render.textwrap, "wrap", tracking_wrap)
+    output = "x" * 10_000
+    process = _snapshot(200, output=output)
+    state = ProcessInspectorState([process])
+
+    render_view_html(state, [process])
+    assert len(output) in wrapped_lengths
+
+    wrapped_lengths.clear()
+    elapsed_update = replace(process, elapsed_seconds=process.elapsed_seconds + 1)
+    render_view_html(state, [elapsed_update])
+    assert len(output) not in wrapped_lengths
+
+    wrapped_lengths.clear()
+    output_update = replace(
+        elapsed_update,
+        output_tail=f"{output}y",
+        original_output_bytes=process.original_output_bytes + 1,
+        retained_output_bytes=process.retained_output_bytes + 1,
+    )
+    render_view_html(state, [output_update])
+    assert len(output) + 1 in wrapped_lengths
+
+
+def test_live_process_inspector_throttles_redraws(monkeypatch) -> None:
+    import prompt_toolkit.application
+
+    application_options: dict[str, object] = {}
+    manager = None
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:
+            application_options.update(kwargs)
+
+        def invalidate(self) -> None:
+            pass
+
+        def run(self) -> None:
+            assert manager is not None
+            layout = cast(Any, application_options["layout"])
+            control = layout.container.content
+            control.text()
+            control.text()
+            assert manager.listener is not None
+            manager.listener()
+            control.text()
+            control.text()
+
+    class SnapshotManager:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.listener = None
+
+        def snapshots(self) -> list[CommandProcessSnapshot]:
+            self.calls += 1
+            return []
+
+        def subscribe(self, listener) -> object:
+            self.listener = listener
+            return lambda: None
+
+    manager = SnapshotManager()
+    monkeypatch.setattr(prompt_toolkit.application, "Application", FakeApplication)
+    open_live_process_inspector(cast("CommandProcessManager", manager))
+
+    assert (
+        application_options["min_redraw_interval"]
+        == PROCESS_INSPECTOR_MIN_REDRAW_INTERVAL
+    )
+    assert manager.calls == 2
 
 
 def test_ps_slash_command_opens_prompt_toolkit_inspector(

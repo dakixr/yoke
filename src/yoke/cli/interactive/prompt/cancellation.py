@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from threading import Event
+from threading import Event, Lock
 
 from yoke.agent.loop import INTERRUPTED_TURN_NOTICE
 from yoke.agent.models import ConversationEntry
@@ -46,6 +46,7 @@ def retire_active_turn(
 def persist_stopped_turn_if_idle(
     *,
     state: PromptCliState,
+    state_lock: Lock,
     retired_turn_id: int,
     active_session: ActiveSession,
     agent: AgentRunner,
@@ -54,8 +55,9 @@ def persist_stopped_turn_if_idle(
 ) -> None:
     """Persist an instant stop unless another generation already started."""
     with active_session.save_lock:
-        if state.active_turn_id != retired_turn_id or state.worker is not None:
-            return
+        with state_lock:
+            if state.active_turn_id != retired_turn_id or state.worker is not None:
+                return
         persist_session_state(
             active_session,
             agent,

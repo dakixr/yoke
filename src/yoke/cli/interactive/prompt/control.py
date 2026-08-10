@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from io import StringIO
 from threading import Event
 from threading import Lock
 from threading import Thread
@@ -32,13 +33,13 @@ from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.turn_renderer import (
     make_turn_scoped_renderer_factory,
 )
-from yoke.cli.render import print_scrollback_notice
-from yoke.cli.render import print_scrollback_user
 from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.render import build_console
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 from yoke.cli.interactive.prompt.turns import emit_turn_summary
 from yoke.cli.interactive.prompt.turns import handle_prompt_turn_outcome
 from yoke.cli.interactive.prompt.turns import run_prompt_turn
+from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.skill_commands import is_skill_command
 
 
@@ -60,12 +61,11 @@ def create_prompt_toolkit_control(  # noqa: C901
     agent: AgentRunner,
     active_session_ref: dict[str, ActiveSession],
     renderer: PromptToolkitLiveRenderer,
-    scrollback_console,
     state_lock: Lock,
     request_context_usage: Callable[[str], None],
     invalidate_prompt: Callable[[], None],
     update_status: Callable[[str], None],
-    run_in_scrollback: Callable[[Callable[[], None]], None],
+    scrollback: ScrollbackSink,
     retire_tool_traces: Callable[[int], None] | None = None,
 ) -> PromptToolkitControl:
     """Build the prompt-toolkit control callbacks."""
@@ -78,14 +78,18 @@ def create_prompt_toolkit_control(  # noqa: C901
     callbacks: dict[str, Callable[..., object]] = {}
 
     def request_exit() -> None:
-        state.shutdown_requested = True
-        stop_active_turn()
-        _emit_prompt_exit_notice(
-            state=state,
-            active_session=active_session_ref["active_session"],
-            scrollback_console=scrollback_console,
-            run_in_scrollback=run_in_scrollback,
-        )
+        with state_lock:
+            state.shutdown_requested = True
+        stopped = stop_active_turn()
+        with state_lock:
+            outcome_finishing = state.worker is not None
+        if stopped or not outcome_finishing:
+            _emit_prompt_exit_notice(
+                state=state,
+                state_lock=state_lock,
+                active_session=active_session_ref["active_session"],
+                scrollback=scrollback,
+            )
         update_status("Stopping")
 
     def start_turn(
@@ -110,17 +114,18 @@ def create_prompt_toolkit_control(  # noqa: C901
             state.continuation_entries = None
         if turn_entries is None:
             turn_entries = active_session_ref["active_session"].active_entries()
-        with state_lock:
-            state.active_turn_id += 1
-            turn_id = state.active_turn_id
-            state.active_stop_request = stop_event
-            state.active_user_message = active_user_message
-            if not continuation or state.turn_start_time is None:
-                state.turn_start_time = time.monotonic()
-                state.turn_tool_count = 0
-                state.turn_input_tokens = None
-                state.turn_output_tokens = None
-                state.turn_reasoning_tokens = None
+        with active_session_ref["active_session"].save_lock:
+            with state_lock:
+                state.active_turn_id += 1
+                turn_id = state.active_turn_id
+                state.active_stop_request = stop_event
+                state.active_user_message = active_user_message
+                if not continuation or state.turn_start_time is None:
+                    state.turn_start_time = time.monotonic()
+                    state.turn_tool_count = 0
+                    state.turn_input_tokens = None
+                    state.turn_output_tokens = None
+                    state.turn_reasoning_tokens = None
 
         def run_turn() -> None:
             run_prompt_turn(
@@ -143,7 +148,7 @@ def create_prompt_toolkit_control(  # noqa: C901
             state.worker = thread
         thread.start()
         request_context_usage(prompt)
-        run_in_scrollback(lambda: print_scrollback_user(scrollback_console, prompt))
+        scrollback.emit("user", prompt)
         return thread
 
     def start_pending_prompt(
@@ -154,14 +159,17 @@ def create_prompt_toolkit_control(  # noqa: C901
             start_turn(prompt)
 
         while pending is not None and is_skill_command(pending.prompt):
+            captured_output = StringIO()
             handled, updated_messages, updated_session = handle_slash_command(
                 pending.prompt,
                 agent=agent,
                 active_session=active_session_ref["active_session"],
                 messages=state.messages,
-                console=scrollback_console,
+                console=build_console(captured_output),
                 on_submit_prompt=submit_skill_prompt,
             )
+            if captured := captured_output.getvalue():
+                scrollback.emit("raw", captured)
             if not handled:
                 break
             with state_lock:
@@ -180,6 +188,12 @@ def create_prompt_toolkit_control(  # noqa: C901
             start_turn(pending.prompt, pending.user_message)
             return
         if should_finish:
+            _emit_prompt_exit_notice(
+                state=state,
+                state_lock=state_lock,
+                active_session=active_session_ref["active_session"],
+                scrollback=scrollback,
+            )
             invalidate_prompt()
             return
         update_status("")
@@ -198,8 +212,7 @@ def create_prompt_toolkit_control(  # noqa: C901
                 agent=agent,
                 active_session=active_session_ref["active_session"],
                 renderer=renderer,
-                scrollback_console=scrollback_console,
-                run_in_scrollback=run_in_scrollback,
+                scrollback=scrollback,
             )
             is None
         ):
@@ -235,6 +248,7 @@ def create_prompt_toolkit_control(  # noqa: C901
             target=persist_stopped_turn_if_idle,
             kwargs={
                 "state": state,
+                "state_lock": state_lock,
                 "retired_turn_id": retired_turn_id,
                 "active_session": active_session_ref["active_session"],
                 "agent": agent,
@@ -244,11 +258,9 @@ def create_prompt_toolkit_control(  # noqa: C901
             daemon=True,
             name="yoke-stop-checkpoint",
         ).start()
-        run_in_scrollback(
-            lambda: print_scrollback_notice(
-                scrollback_console,
-                "Stopped current turn. Send a correction to continue from here.",
-            )
+        scrollback.emit(
+            "notice",
+            "Stopped current turn. Send a correction to continue from here.",
         )
         emit_turn_summary(
             renderer,
@@ -281,9 +293,7 @@ def create_prompt_toolkit_control(  # noqa: C901
             conversation_entries_snapshot=entries,
             continuation=True,
         )
-        run_in_scrollback(
-            lambda: print_scrollback_notice(scrollback_console, "Model steered.")
-        )
+        scrollback.emit("notice", "Model steered.")
         invalidate_prompt()
         return True
 
@@ -297,8 +307,7 @@ def create_prompt_toolkit_control(  # noqa: C901
             state_lock=state_lock,
             agent=agent,
             active_session_ref=active_session_ref,
-            scrollback_console=scrollback_console,
-            run_in_scrollback=run_in_scrollback,
+            scrollback=scrollback,
             request_context_usage=request_context_usage,
             update_status=update_status,
             start_pending_prompt=start_pending_prompt,
@@ -312,16 +321,12 @@ def create_prompt_toolkit_control(  # noqa: C901
 def _emit_prompt_exit_notice(
     *,
     state: PromptCliState,
+    state_lock: Lock,
     active_session: ActiveSession,
-    scrollback_console,
-    run_in_scrollback: Callable[[Callable[[], None]], None],
+    scrollback: ScrollbackSink,
 ) -> None:
-    if state.exit_notice_emitted:
-        return
-    state.exit_notice_emitted = True
-    run_in_scrollback(
-        lambda: print_scrollback_notice(
-            scrollback_console,
-            session_resume_notice(active_session.id),
-        )
-    )
+    with state_lock:
+        if state.exit_notice_emitted:
+            return
+        state.exit_notice_emitted = True
+    scrollback.emit("notice", session_resume_notice(active_session.id))

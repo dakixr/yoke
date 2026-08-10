@@ -20,8 +20,11 @@ from yoke.cli.interactive.common import format_context_usage_text
 from yoke.cli.path_display import format_root_label
 from yoke.cli.interactive.prompt.keys import (
     cycle_prompt_thinking_effort,
+    insert_attachment_reference,
     register_prompt_toolkit_key_bindings,
 )
+from yoke.cli.interactive.prompt.clipboard import ClipboardPasteResult
+from yoke.cli.interactive.prompt.clipboard import start_clipboard_paste
 from yoke.cli.interactive.prompt.control import (
     create_prompt_toolkit_control,
 )  # noqa: E501
@@ -43,23 +46,13 @@ from yoke.cli.interactive.queue.persistence import load_prompt_queue
 from yoke.cli.interactive.prompt.rendering import (
     initialize_prompt_toolkit_session,
 )  # noqa: E501
-from yoke.cli.interactive.prompt.rendering import run_scrollback_render
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
-from yoke.cli.render import print_scrollback_agent
-from yoke.cli.render import print_scrollback_commentary
-from yoke.cli.render import print_scrollback_error
-from yoke.cli.render import print_scrollback_notice
-from yoke.cli.render import print_scrollback_tool
-from yoke.cli.render import print_scrollback_warning
-from yoke.cli.render import print_tool_response_divider
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
-from yoke.cli.runtime.terminal_output_gate import (
-    defer_until_fullscreen_exits,
-)
+from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
@@ -83,7 +76,6 @@ def run_prompt_toolkit_cli(  # noqa: C901
     """Run the prompt-toolkit interactive CLI."""
     patch_prompt_toolkit_win32_executor_shutdown()
     from prompt_toolkit import PromptSession
-    from prompt_toolkit.application.run_in_terminal import run_in_terminal
     from prompt_toolkit.key_binding import KeyBindings
 
     restored_prompts, restored_images = load_prompt_queue(active_session)
@@ -120,6 +112,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
     if on_app_created is not None:
         on_app_created(prompt_session)
     scrollback_console = build_console(cast(OutputStream, sys.stdout))
+    scrollback = BatchedScrollback(scrollback_console)
     session_ref: dict[str, ActiveSession] = {"active_session": active_session}
     root_label = format_root_label(active_session.root)
     tool_trace_store = ToolTraceStore()
@@ -128,7 +121,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
         with state_lock:
             message_snapshot = list(state.messages)
             current_session = session_ref["active_session"]
-            conversation_entries_snapshot = current_session.active_entries()
+        conversation_entries_snapshot = current_session.active_entries()
         return estimate_context_usage_text(
             agent,
             prompt,
@@ -138,9 +131,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
 
     def invalidate_prompt() -> None:
         app = prompt_session.app
-        loop = app.loop
-        if loop is not None:
-            loop.call_soon_threadsafe(app.invalidate)
+        app.invalidate()
 
     def update_status(message: str) -> None:
         with state_lock:
@@ -176,28 +167,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
         if text is None:
             return
 
-        def print_summary() -> None:
-            from rich.text import Text
-
-            scrollback_console.print(Text(text, style="dim"))
-
-        run_in_scrollback(print_summary)
-
-    def run_in_scrollback(render: Callable[[], None]) -> None:
-        if defer_until_fullscreen_exits(lambda: run_in_scrollback(render)):
-            return
-        app = prompt_session.app
-        loop = app.loop
-        if loop is None:
-            render()
-            return
-        loop.call_soon_threadsafe(
-            lambda: run_scrollback_render(
-                loop=loop,
-                render=render,
-                run_in_terminal=run_in_terminal,
-            )
-        )
+        scrollback.emit("summary", text)
 
     context_usage_worker = ContextUsageWorker(
         state=state,
@@ -208,31 +178,13 @@ def run_prompt_toolkit_cli(  # noqa: C901
     context_usage_worker.submit("")
     renderer = PromptToolkitLiveRenderer(
         begin_tool_block=lambda: None,
-        emit_tool_response_divider=lambda: run_in_scrollback(
-            lambda: print_tool_response_divider(scrollback_console)
-        ),
-        emit_tool=lambda text, failed: run_in_scrollback(
-            lambda: print_scrollback_tool(
-                scrollback_console,
-                text,
-                failed=failed,
-            )
-        ),
-        emit_agent=lambda text: run_in_scrollback(
-            lambda: print_scrollback_agent(scrollback_console, text)
-        ),
-        emit_commentary=lambda text: run_in_scrollback(
-            lambda: print_scrollback_commentary(scrollback_console, text)
-        ),
-        emit_error=lambda text: run_in_scrollback(
-            lambda: print_scrollback_error(scrollback_console, text)
-        ),
-        emit_notice=lambda text: run_in_scrollback(
-            lambda: print_scrollback_notice(scrollback_console, text)
-        ),
-        emit_warning=lambda text: run_in_scrollback(
-            lambda: print_scrollback_warning(scrollback_console, text)
-        ),
+        emit_tool_response_divider=lambda: scrollback.emit("divider"),
+        emit_tool=lambda text, failed: scrollback.emit("tool", text, failed=failed),
+        emit_agent=lambda text: scrollback.emit("agent", text),
+        emit_commentary=lambda text: scrollback.emit("commentary", text),
+        emit_error=lambda text: scrollback.emit("error", text),
+        emit_notice=lambda text: scrollback.emit("notice", text),
+        emit_warning=lambda text: scrollback.emit("warning", text),
         set_status=update_status,
         set_context_usage=update_context_usage,
         set_context_details=update_context_details,
@@ -249,8 +201,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
         state=state,
         state_lock=state_lock,
         trace_store=tool_trace_store,
-        scrollback_console=scrollback_console,
-        run_in_scrollback=run_in_scrollback,
+        scrollback=scrollback,
     )
 
     def open_model_selector(preserved_text: str) -> None:
@@ -285,17 +236,53 @@ def run_prompt_toolkit_cli(  # noqa: C901
         )
         invalidate_prompt()
 
+    def request_clipboard_paste(buffer: object, clipboard_text: str) -> None:
+        with state_lock:
+            editor_revision = state.editor_revision
+
+        def apply_result(result: ClipboardPasteResult) -> None:
+            with state_lock:
+                if state.editor_revision != editor_revision:
+                    return
+            if result.error is not None:
+                update_status(f"Could not read clipboard: {result.error}")
+                return
+            attachment = result.attachment
+            if attachment is None and result.text:
+                try:
+                    attachment = ImageAttachment(
+                        path=resolve_image_path(
+                            result.text,
+                            root=session_ref["active_session"].root,
+                        )
+                    )
+                except ValueError:
+                    getattr(buffer, "insert_text")(result.text)
+                    invalidate_prompt()
+                    return
+            if attachment is not None:
+                attach_image(attachment)
+                insert_attachment_reference(buffer, attachment)
+                invalidate_prompt()
+
+        def on_result(result: ClipboardPasteResult) -> None:
+            loop = prompt_session.app.loop
+            if loop is None or loop.is_closed():
+                return
+            loop.call_soon_threadsafe(apply_result, result)
+
+        start_clipboard_paste(clipboard_text, on_result=on_result)
+
     control = create_prompt_toolkit_control(
         state=state,
         agent=agent,
         active_session_ref=session_ref,
         renderer=renderer,
-        scrollback_console=scrollback_console,
         state_lock=state_lock,
         request_context_usage=context_usage_worker.submit,
         invalidate_prompt=invalidate_prompt,
         update_status=update_status,
-        run_in_scrollback=run_in_scrollback,
+        scrollback=scrollback,
         retire_tool_traces=tool_trace_store.retire_turn,
     )
 
@@ -321,13 +308,11 @@ def run_prompt_toolkit_cli(  # noqa: C901
         key_bindings,
         state=state,
         stop_active_turn=control.stop_active_turn,
-        attach_image=attach_image,
         remove_last_image=lambda: remove_pending_image(),
-        resolve_image_path=lambda raw: resolve_image_path(
-            raw, root=session_ref["active_session"].root
-        ),
         cycle_thinking_effort=cycle_thinking_effort,
+        request_clipboard_paste=request_clipboard_paste,
         open_tool_inspector=show_tool_inspector,
+        open_process_inspector=show_process_inspector,
         open_model_selector=open_model_selector,
         open_tree_selector=open_tree_selector,
         open_queue_manager=open_queue_selector,
@@ -366,4 +351,5 @@ def run_prompt_toolkit_cli(  # noqa: C901
         open_process_inspector=show_process_inspector,
         format_context_usage_text=format_context_usage_text,
         request_context_usage=context_usage_worker.submit,
+        scrollback=scrollback,
     )

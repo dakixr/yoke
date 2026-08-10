@@ -6,9 +6,9 @@ from collections.abc import Callable
 from threading import Lock, Thread
 
 from yoke.cli.interactive.common import PendingPrompt, PromptCliState
+from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 from yoke.cli.render import format_compaction_note
-from yoke.cli.render import print_scrollback_notice
 from yoke.cli.runtime import ActiveSession, AgentRunner
 from yoke.cli.runtime import force_compact_history
 from yoke.cli.runtime import persist_session_state
@@ -21,23 +21,17 @@ def start_prompt_compaction(
     state_lock: Lock,
     agent: AgentRunner,
     active_session_ref: dict[str, ActiveSession],
-    scrollback_console,
-    run_in_scrollback: Callable[[Callable[[], None]], None],
+    scrollback: ScrollbackSink,
     request_context_usage: Callable[[str], None],
     update_status: Callable[[str], None],
     start_pending_prompt: Callable[[PendingPrompt | None, bool], None],
 ) -> Thread:
     """Run forced compaction in the active-worker slot."""
-    run_in_scrollback(
-        lambda: print_scrollback_notice(
-            scrollback_console,
-            "Compacting conversation...",
-        )
-    )
+    scrollback.emit("notice", "Compacting conversation...")
     with state_lock:
         message_snapshot = list(state.messages)
         current_session = active_session_ref["active_session"]
-        conversation_entries_snapshot = current_session.active_entries()
+    conversation_entries_snapshot = current_session.active_entries()
 
     def run_compaction() -> None:
         with session_usage_metric_context(current_session, ""):
@@ -47,12 +41,7 @@ def start_prompt_compaction(
                 conversation_entries=conversation_entries_snapshot,
             )
         if compacted is None:
-            run_in_scrollback(
-                lambda: print_scrollback_notice(
-                    scrollback_console,
-                    "Nothing to compact right now.",
-                )
-            )
+            scrollback.emit("notice", "Nothing to compact right now.")
         else:
             _persist_prompt_compaction(
                 compacted,
@@ -60,8 +49,7 @@ def start_prompt_compaction(
                 state_lock=state_lock,
                 agent=agent,
                 active_session=active_session_ref["active_session"],
-                scrollback_console=scrollback_console,
-                run_in_scrollback=run_in_scrollback,
+                scrollback=scrollback,
             )
         pending, should_finish = finish_prompt_turn(
             state=state,
@@ -87,8 +75,7 @@ def _persist_prompt_compaction(
     state_lock: Lock,
     agent: AgentRunner,
     active_session: ActiveSession,
-    scrollback_console,
-    run_in_scrollback: Callable[[Callable[[], None]], None],
+    scrollback: ScrollbackSink,
 ) -> None:
     (
         updated_messages,
@@ -106,9 +93,4 @@ def _persist_prompt_compaction(
         updated_messages,
         conversation_entries=conversation_entries,
     )
-    run_in_scrollback(
-        lambda: print_scrollback_notice(
-            scrollback_console,
-            format_compaction_note(compaction_payload),
-        )
-    )
+    scrollback.emit("notice", format_compaction_note(compaction_payload))

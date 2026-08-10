@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import format_attachment_reference
-from yoke.cli.image_input import paste_image_from_clipboard
-from yoke.cli.image_input import paste_text_from_clipboard
 from yoke.cli.interactive.completion.menu import (
     register_completion_menu_key_bindings,
 )
@@ -30,12 +27,12 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     *,
     state: PromptCliState,
     stop_active_turn: Callable[[], bool],
-    attach_image: Callable[[ImageAttachment], None],
     remove_last_image: Callable[[], None],
-    resolve_image_path: Callable[[str], Path],
     cycle_thinking_effort: Callable[[], str | None],
     update_status: Callable[[str], None],
+    request_clipboard_paste: Callable[[object, str], None],
     open_tool_inspector: Callable[[], None] | None = None,
+    open_process_inspector: Callable[[], None] | None = None,
     open_model_selector: Callable[[str], None] | None = None,
     open_tree_selector: Callable[[str], None] | None = None,
     open_queue_manager: Callable[[str], None] | None = None,
@@ -87,42 +84,27 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     @key_bindings.add("escape", "v")
     @key_bindings.add("c-v")
     def _paste_image_or_text(event) -> None:
-        attachment = paste_image_from_clipboard()
-        if attachment is not None:
-            attach_image(attachment)
-            insert_attachment_reference(
-                event.current_buffer,
-                attachment,
-            )
-            return
         text = event.app.clipboard.get_data().text
-        if not text:
-            text = paste_text_from_clipboard()
-        if not text:
-            return
-        try:
-            attachment = ImageAttachment(path=resolve_image_path(text))
-            attach_image(attachment)
-            insert_attachment_reference(
-                event.current_buffer,
-                attachment,
-            )
-        except ValueError:
-            event.current_buffer.insert_text(text)
+        request_clipboard_paste(event.current_buffer, text)
 
     @key_bindings.add("c-u")
     def _remove_last_image(event) -> None:
         del event
         remove_last_image()
 
-    @key_bindings.add("c-x", "c-p")
-    @key_bindings.add("c-o")
+    @key_bindings.add("c-x", "o")
     def _open_tool_inspector(event) -> None:
         del event
         if open_tool_inspector is not None:
             open_tool_inspector()
 
-    @key_bindings.add("c-q")
+    @key_bindings.add("c-x", "c-p")
+    def _open_process_inspector(event) -> None:
+        del event
+        if open_process_inspector is not None:
+            open_process_inspector()
+
+    @key_bindings.add("c-x", "q")
     def _open_queue_manager(event) -> None:
         if open_queue_manager is None:
             return

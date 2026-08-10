@@ -13,17 +13,16 @@ from yoke.cli.interactive.process_commands import (
 from yoke.cli.interactive.process_inspector import (
     open_live_process_inspector,
 )
+from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.tool_inspector import ToolTraceEntry
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.interactive.tool_inspector import entries_from_messages
 from yoke.cli.interactive.tool_inspector import open_live_tool_inspector
 from yoke.cli.interactive.tool_inspector import merge_trace_entries
-from yoke.cli.render import print_scrollback_notice
 from yoke.cli.runtime import AgentRunner
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
-    from rich.console import Console
 
 
 def create_inspector_launchers(
@@ -33,8 +32,7 @@ def create_inspector_launchers(
     state: PromptCliState,
     state_lock: Lock,
     trace_store: ToolTraceStore,
-    scrollback_console: Console,
-    run_in_scrollback: Callable[[Callable[[], None]], None],
+    scrollback: ScrollbackSink,
 ) -> tuple[Callable[[], None], Callable[[], None]]:
     """Build tool and process inspector callbacks for one prompt session."""
     from prompt_toolkit.application.run_in_terminal import run_in_terminal
@@ -79,11 +77,9 @@ def create_inspector_launchers(
     def show_process_inspector() -> None:
         manager = command_process_manager(agent)
         if manager is None:
-            run_in_scrollback(
-                lambda: print_scrollback_notice(
-                    scrollback_console,
-                    "Process inspection is unavailable for this agent.",
-                )
+            scrollback.emit(
+                "notice",
+                "Process inspection is unavailable for this agent.",
             )
             return
         schedule(lambda: open_live_process_inspector(manager))

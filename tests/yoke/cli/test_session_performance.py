@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import json
 from pathlib import Path
+from threading import Lock
 from typing import Any, cast
 
 import pytest
@@ -353,6 +354,7 @@ def test_clean_prompt_exit_does_not_capture_or_save_conversation(
     try:
         persist_prompt_exit_state(
             state=state,
+            state_lock=Lock(),
             active_session=active,
             agent=agent,
         )
@@ -401,6 +403,7 @@ def test_prompt_exit_appends_only_changed_reasoning_metadata(
     try:
         persist_prompt_exit_state(
             state=state,
+            state_lock=Lock(),
             active_session=active,
             agent=agent,
         )

@@ -16,6 +16,7 @@ from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import capture_agent_state
 from yoke.cli.config import RUN_ERRORS
+from yoke.cli.image_input import ImageAttachment
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import (
@@ -30,11 +31,11 @@ from yoke.cli.interactive.common import partial_messages_from_error
 from yoke.cli.interactive.common import prompt_turn_tracking
 from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
-from yoke.cli.render import print_scrollback_notice
 from yoke.cli.runtime import ActiveSession, AgentRunner, EventRenderer
 from yoke.cli.runtime import ensure_session_title, execute_turn
 from yoke.cli.runtime import persist_session_state
 from yoke.cli.runtime import session_usage_metric_context
+from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 
 
 def run_prompt_turn(
@@ -65,22 +66,26 @@ def run_prompt_turn(
         checkpoint_messages: list[Message],
         checkpoint_entries: list[ConversationEntry],
     ) -> None:
-        with state_lock:
-            if turn_id != state.active_turn_id or stop_event.is_set():
-                return
-            if isinstance(agent, RuntimeAgent) and isinstance(turn_agent, RuntimeAgent):
-                agent.active_skills = [
-                    skill.model_copy(deep=True) for skill in turn_agent.active_skills
-                ]
+        with active_session.save_lock:
+            with state_lock:
+                if turn_id != state.active_turn_id or stop_event.is_set():
+                    return
+                if isinstance(agent, RuntimeAgent) and isinstance(
+                    turn_agent, RuntimeAgent
+                ):
+                    agent.active_skills = [
+                        skill.model_copy(deep=True)
+                        for skill in turn_agent.active_skills
+                    ]
+                state.messages = list(checkpoint_messages)
+                # The checkpoint already contains the active user message.
+                state.active_user_message = None
             persist_session_state(
                 active_session,
                 turn_agent,
                 checkpoint_messages,
                 conversation_entries=checkpoint_entries,
             )
-            state.messages = list(checkpoint_messages)
-            # The checkpoint already contains the active user message.
-            state.active_user_message = None
 
     try:
         Thread(
@@ -189,8 +194,7 @@ def handle_prompt_turn_outcome(
     agent: AgentRunner,
     active_session: ActiveSession,
     renderer: PromptToolkitLiveRenderer,
-    scrollback_console,
-    run_in_scrollback: Callable[[Callable[[], None]], None],
+    scrollback: ScrollbackSink,
 ) -> bool | None:
     """Apply a completed turn outcome to prompt-toolkit session state."""
     with state_lock:
@@ -202,6 +206,10 @@ def handle_prompt_turn_outcome(
             return None
         was_steered = turn_id in steered_turn_ids
         steered_turn_ids.discard(turn_id)
+        # Claim the completed outcome while holding the same lock used by stop/steer.
+        # A cancellation that won the race was handled above; one arriving after
+        # this point must not turn an accepted result into mixed stopped/output UI.
+        state.active_stop_request = None
         turn_start = state.turn_start_time
         turn_tools = state.turn_tool_count
         turn_in_tok = state.turn_input_tokens
@@ -249,13 +257,11 @@ def handle_prompt_turn_outcome(
                 stopped_messages,
                 conversation_entries=stopped_entries,
             )
-        run_in_scrollback(
-            lambda: print_scrollback_notice(
-                scrollback_console,
-                "Model steered."
-                if was_steered
-                else ("Stopped current turn. Send a correction to continue from here."),
-            )
+        scrollback.emit(
+            "notice",
+            "Model steered."
+            if was_steered
+            else "Stopped current turn. Send a correction to continue from here.",
         )
         emit_turn_summary(
             renderer,
@@ -282,7 +288,7 @@ def handle_prompt_turn_outcome(
         input_tokens=turn_in_tok,
         output_tokens=turn_out_tok,
     )
-    print("\a", end="", flush=True)
+    scrollback.emit("bell")
     retire_turn_agent(outcome.agent, primary_agent=agent)
     return was_steered
 
@@ -297,21 +303,23 @@ def finish_prompt_turn(
     """Clear active turn state and return next prompt/shutdown flags."""
     next_prompt: PendingPrompt | None = None
     should_finish = False
+    queue_snapshot: tuple[list[PendingPrompt], list[ImageAttachment]] | None = None
     with state_lock:
         state.worker = None
         state.active_stop_request = None
         state.active_user_message = None
-        if any(not prompt.paused for prompt in state.pending_prompts):
+        if state.shutdown_requested:
+            should_finish = True
+        elif any(not prompt.paused for prompt in state.pending_prompts):
             next_index = next_pending_prompt_index(state.pending_prompts)
             if next_index is not None:
                 next_prompt = state.pending_prompts.pop(next_index)
-                persist_prompt_queue(
-                    active_session,
+                queue_snapshot = (
                     list(state.pending_prompts),
                     list(state.pending_images),
                 )
-        else:
-            should_finish = state.shutdown_requested
+    if queue_snapshot is not None:
+        persist_prompt_queue(active_session, *queue_snapshot)
     request_context_usage("")
     return next_prompt, should_finish
 

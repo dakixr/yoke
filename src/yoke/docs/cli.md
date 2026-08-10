@@ -32,6 +32,16 @@ yoke --headless --image chart.png --image legend.png "summarize these charts"
 Interactive startup prints only the tool-loading summary and version banner.
 Run `/shortcuts` or `?` when you want the keyboard shortcut reference.
 
+Interactive mode keeps one prompt-toolkit application alive for the complete
+session. Prompt submissions are serialized away from the terminal event loop,
+and fullscreen selectors temporarily suspend and then restore the editor,
+including any text that was present before opening them. Agent, tool, and
+commentary output is queued in order, rendered in worker threads, and committed
+to native terminal scrollback in short batches. Idle sessions do not redraw on
+a timer; the spinner redraws only while a turn is active. This keeps cursor
+movement and typing responsive even when Markdown rendering, tool output, or
+session persistence is busy.
+
 ---
 
 ## Providers and models
@@ -119,12 +129,13 @@ turn.
 
 - Press `Ctrl+V` or `Alt+V` to paste text or attach an image from the
   clipboard when one is available. Use `Alt+V` when the terminal intercepts
-  `Ctrl+V`.
+  `Ctrl+V`. Clipboard image detection and PNG encoding run in the background,
+  so a large clipboard image does not freeze prompt editing.
 - Press `Ctrl+U` to remove the last pending image attachment.
 - Press `Enter` to steer/send immediately while a turn is running.
 - Press `Tab` to queue the prompt behind the current turn.
 - Press `Shift+Tab` to cycle thinking effort through the active model's supported levels.
-- Press `Ctrl+Q` or run `/queue` to open the fullscreen queue manager.
+- Press `Ctrl+X` then `Q`, or run `/queue`, to open the fullscreen queue manager.
 - In the queue manager, you can edit, delete, promote, pause, reorder, or mark queued prompts as steering prompts. While the queue manager or its item editor is open, output from an active turn is deferred until you close the manager, so tool calls and response text cannot overwrite your edit.
 - Queued prompts and pending image attachments are persisted with the session, so they survive exit/resume. Steering prompts run before normal queued prompts, and active steering requests stop the current turn first.
 - Starting a queued prompt removes it from persisted queue state immediately, so consumed prompts cannot reappear after a crash or later resume.
@@ -136,7 +147,7 @@ turn.
   prompt and interruption marker while retiring in-flight tool calls in the
   background.
 - Press `Ctrl+J` to insert a newline.
-- Press `Ctrl+O` to open the fullscreen tool inspector. It shows complete
+- Press `Ctrl+X` then `O` to open the fullscreen tool inspector. It shows complete
   tool-call arguments, validated/executed arguments when available, and full
   tool results in an alternate-buffer view without adding noise to scrollback.
   When opened during a running turn, the inspector refreshes live, supports
@@ -148,12 +159,15 @@ turn.
   are rate-limited, unchanged trace snapshots and detail layouts are reused,
   and streamed output is compacted within its bounded history so large or
   noisy tool sessions do not block navigation.
-- Run `/ps`, press `Ctrl+O`, or press `Ctrl+X` then `Ctrl+P` to open the
+- Run `/ps` or press `Ctrl+X` then `Ctrl+P` to open the
   fullscreen process inspector. It lists running and
   recently completed `exec_command` sessions for this live yoke runtime and
   shows each command's PID, working directory, timing, exit status, and bounded
   output history without consuming output needed by `write_stdin`. The view
-  refreshes while processes produce output. Process state is ephemeral and is
+  refreshes while processes produce output. Notifications are coalesced and
+  decoded/wrapped output is reused until the process bytes, terminal width, or
+  wrapping mode changes, so large retained output does not get rebuilt for
+  every small update. Process state is ephemeral and is
   not restored when a persisted conversation session is resumed. The basic CLI
   prints the same process metadata as a table instead of opening a fullscreen
   view.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from threading import Thread
 from typing import cast
@@ -15,38 +14,6 @@ from yoke.cli.interactive.renderer import format_bottom_toolbar
 from yoke.cli.render import print_session_scrollback
 from yoke.cli.render import print_scrollback_notice
 from yoke.cli.render import print_version_banner
-from yoke.cli.runtime.terminal_output_gate import (
-    defer_until_fullscreen_exits,
-)
-
-
-def run_scrollback_render(
-    *,
-    loop: object,
-    render: Callable[[], None],
-    run_in_terminal: Callable[[Callable[[], None]], object],
-) -> None:
-    """Render scrollback through prompt-toolkit only on a live asyncio loop."""
-    if defer_until_fullscreen_exits(
-        lambda: run_scrollback_render(
-            loop=loop,
-            render=render,
-            run_in_terminal=run_in_terminal,
-        )
-    ):
-        return
-    if not isinstance(loop, asyncio.AbstractEventLoop):
-        render()
-        return
-    try:
-        current_loop = asyncio.get_running_loop()
-    except RuntimeError:
-        render()
-        return
-    if current_loop is not loop:
-        render()
-        return
-    run_in_terminal(render)
 
 
 def initialize_prompt_toolkit_session(

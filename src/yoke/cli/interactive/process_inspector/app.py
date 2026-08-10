@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from contextlib import suppress
 from dataclasses import dataclass
+from dataclasses import field
+import threading
+import time
 from typing import Literal
 
 from yoke.agent.tools.command_process_manager import (
@@ -13,6 +16,7 @@ from yoke.agent.tools.command_process_types import (
     CommandProcessSnapshot,
 )
 from yoke.cli.interactive.process_inspector.render import detail_text
+from yoke.cli.interactive.process_inspector.render import DetailOutputCache
 from yoke.cli.interactive.process_inspector.render import move_selection
 from yoke.cli.interactive.process_inspector.render import page_step
 from yoke.cli.interactive.process_inspector.render import (
@@ -24,6 +28,44 @@ from yoke.cli.interactive.process_inspector.render import (
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )
+
+PROCESS_INSPECTOR_MIN_REDRAW_INTERVAL = 0.1
+PROCESS_SNAPSHOT_REFRESH_INTERVAL = 0.5
+
+
+class ProcessSnapshotCache:
+    """Coalesce process notifications and cache decoded snapshots."""
+
+    def __init__(
+        self,
+        manager: CommandProcessManager,
+        *,
+        refresh_interval: float = PROCESS_SNAPSHOT_REFRESH_INTERVAL,
+    ) -> None:
+        self._manager = manager
+        self._refresh_interval = refresh_interval
+        self._dirty = threading.Event()
+        self._processes = manager.snapshots()
+        self._refreshed_at = time.monotonic()
+
+    def mark_dirty(self) -> None:
+        """Record that the manager has newer process state."""
+        self._dirty.set()
+
+    def snapshots(self) -> list[CommandProcessSnapshot]:
+        """Refresh once per change batch or periodic elapsed-time tick."""
+        now = time.monotonic()
+        if (
+            not self._dirty.is_set()
+            and now - self._refreshed_at < self._refresh_interval
+        ):
+            return self._processes
+        # Clear before reading so a notification concurrent with snapshots()
+        # remains set for the next render instead of being lost.
+        self._dirty.clear()
+        self._processes = self._manager.snapshots()
+        self._refreshed_at = now
+        return self._processes
 
 
 @dataclass(slots=True)
@@ -37,6 +79,7 @@ class ProcessInspectorState:
     wrap: bool = True
     notice: str = ""
     active_pane: Literal["sidebar", "detail"] = "sidebar"
+    detail_output_cache: DetailOutputCache = field(default_factory=DetailOutputCache)
 
     def __post_init__(self) -> None:
         """Start with the newest retained process selected."""
@@ -54,11 +97,12 @@ def open_live_process_inspector(manager: CommandProcessManager) -> None:
     from prompt_toolkit.layout.containers import Window
     from prompt_toolkit.layout.controls import FormattedTextControl
 
-    state = ProcessInspectorState(manager.snapshots())
+    snapshot_cache = ProcessSnapshotCache(manager)
+    state = ProcessInspectorState(snapshot_cache.snapshots())
     key_bindings = KeyBindings()
 
     def current_processes() -> list[CommandProcessSnapshot]:
-        _refresh_processes(state, manager.snapshots())
+        _refresh_processes(state, snapshot_cache.snapshots())
         return state.processes
 
     def formatted_rows() -> HTML:
@@ -79,9 +123,15 @@ def open_live_process_inspector(manager: CommandProcessManager) -> None:
         key_bindings=key_bindings,
         full_screen=True,
         mouse_support=False,
-        refresh_interval=0.5,
+        min_redraw_interval=PROCESS_INSPECTOR_MIN_REDRAW_INTERVAL,
+        refresh_interval=PROCESS_SNAPSHOT_REFRESH_INTERVAL,
     )
-    unsubscribe = manager.subscribe(lambda: app.invalidate())
+
+    def process_changed() -> None:
+        snapshot_cache.mark_dirty()
+        app.invalidate()
+
+    unsubscribe = manager.subscribe(process_changed)
     with suppress(EOFError, KeyboardInterrupt):
         with suppress_terminal_output_for_fullscreen():
             try:

@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, Mapping
 from threading import Lock, Thread
 
 from yoke.agent.models import Message
 from yoke.cli.interactive.completion.menu import YokeCompletionsMenu
-from yoke.cli.interactive.completion.menu import COMPLETION_MENU_STYLE
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import handle_slash_command
+from yoke.cli.image_input import ImageAttachment
+from yoke.cli.interactive.prompt.lifecycle import PromptLifecycleConfig
+from yoke.cli.interactive.prompt.lifecycle import run_persistent_prompt_application
+from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
 from yoke.cli.interactive.prompt.submission import (
     submit_prompt_toolkit_prompt,
 )
@@ -41,19 +43,24 @@ def update_status_context_usage(
 def persist_prompt_exit_state(
     *,
     state: PromptCliState,
+    state_lock: Lock,
     active_session: ActiveSession,
     agent: AgentRunner,
 ) -> None:
     """Persist prompt-toolkit state before leaving the interactive loop."""
+    with state_lock:
+        thinking_effort = state.thinking_effort
+        pending_prompts = list(state.pending_prompts)
+        pending_images = list(state.pending_images)
     persist_active_session_metadata(
         active_session,
         agent,
-        reasoning_effort=state.thinking_effort,
+        reasoning_effort=thinking_effort,
     )
     persist_prompt_queue(
         active_session,
-        list(state.pending_prompts),
-        list(state.pending_images),
+        pending_prompts,
+        pending_images,
     )
 
 
@@ -76,11 +83,14 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     format_context_usage_text: Callable[[Mapping[str, object] | None], str | None],
     request_context_usage: Callable[[str], None] | None = None,
     on_editor_text: Callable[[str], None] | None = None,
+    submit_action: str | None = None,
 ) -> ActiveSession:
     """Process one submitted prompt-toolkit prompt."""
     active_session = active_session_ref["active_session"]
-    action = state.submit_action
-    state.submit_action = "steer"
+    with state_lock:
+        action = state.submit_action if submit_action is None else submit_action
+        if submit_action is None:
+            state.submit_action = "steer"
     if not prompt and not state.pending_images:
         return active_session
     if action == "queue" and is_skill_command(prompt):
@@ -102,6 +112,14 @@ def process_prompt_toolkit_prompt(  # noqa: C901
         request_exit()
         return active_session
     if prompt.strip().lower() == "/queue":
+
+        def persist_current_queue() -> None:
+            with state_lock:
+                prompts = list(state.pending_prompts)
+                images = list(state.pending_images)
+                session = active_session_ref["active_session"]
+            persist_prompt_queue(session, prompts, images)
+
         handled, updated_messages, updated_session = handle_slash_command(
             prompt,
             agent=agent,
@@ -110,20 +128,20 @@ def process_prompt_toolkit_prompt(  # noqa: C901
             console=scrollback_console,
             pending_images=state.pending_images,
             pending_prompts=state.pending_prompts,
-            on_queue_changed=lambda: persist_prompt_queue(
-                active_session_ref["active_session"],
-                list(state.pending_prompts),
-                list(state.pending_images),
-            ),
+            on_queue_changed=persist_current_queue,
         )
         if handled:
             next_prompt_to_start: PendingPrompt | None = None
             steering_prompt_to_start: PendingPrompt | None = None
+            queue_snapshot: tuple[list[PendingPrompt], list[ImageAttachment]] | None = (
+                None
+            )
+            clear_queue = False
             with state_lock:
                 state.messages = updated_messages
                 active_session_ref["active_session"] = updated_session
                 if not state.pending_prompts and not state.pending_images:
-                    clear_prompt_queue(updated_session)
+                    clear_queue = True
                 elif any(
                     pending.kind == "steering" and not pending.paused
                     for pending in state.pending_prompts
@@ -141,22 +159,24 @@ def process_prompt_toolkit_prompt(  # noqa: C901
                         next_index = next_pending_prompt_index(state.pending_prompts)
                         if next_index is not None:
                             next_prompt_to_start = state.pending_prompts.pop(next_index)
-                            persist_prompt_queue(
-                                updated_session,
-                                state.pending_prompts,
-                                state.pending_images,
+                            queue_snapshot = (
+                                list(state.pending_prompts),
+                                list(state.pending_images),
                             )
+            if clear_queue:
+                clear_prompt_queue(updated_session)
+            if queue_snapshot is not None:
+                persist_prompt_queue(
+                    updated_session,
+                    *queue_snapshot,
+                )
             invalidate_prompt()
             if steering_prompt_to_start is not None:
                 steer_active_turn(
                     steering_prompt_to_start.prompt,
                     steering_prompt_to_start.user_message,
                 )
-                persist_prompt_queue(
-                    updated_session,
-                    state.pending_prompts,
-                    state.pending_images,
-                )
+                persist_current_queue()
             elif next_prompt_to_start is not None:
                 if start_pending_prompt is None:
                     start_turn(
@@ -263,8 +283,9 @@ def run_prompt_toolkit_event_loop(
     open_process_inspector: Callable[[], None] | None = None,
     format_context_usage_text: Callable[[Mapping[str, object] | None], str | None],
     request_context_usage: Callable[[str], None],
+    scrollback: BatchedScrollback,
 ) -> int:
-    """Run the prompt-toolkit prompt loop."""
+    """Run one persistent prompt-toolkit application."""
     from yoke.cli.interactive.prompt.rendering import (
         build_prompt_toolbar,
     )
@@ -278,54 +299,10 @@ def run_prompt_toolkit_event_loop(
         spinner_frames=spinner_frames,
         root_label=root_label,
     )
-    while True:
-        with state_lock:
-            if state.shutdown_requested and state.worker is None:
-                active_session = active_session_ref["active_session"]
-                persist_prompt_exit_state(
-                    state=state,
-                    active_session=active_session,
-                    agent=agent,
-                )
-                return 0
-        if state.shutdown_requested:
-            time.sleep(0.05)
-            continue
-        try:
-            with state_lock:
-                default_text = state.next_editor_text or ""
-                state.next_editor_text = None
-            prompt = prompt_session.prompt(
-                "› ",
-                default=default_text,
-                bottom_toolbar=get_bottom_toolbar,
-                refresh_interval=0.2,
-                key_bindings=key_bindings,
-                completer=completer,
-                complete_while_typing=True,
-                multiline=True,
-                reserve_space_for_menu=6,
-                style=COMPLETION_MENU_STYLE,
-            )
-        except (EOFError, KeyboardInterrupt):
-            request_exit()
-            continue
-        submitted_prompt = prompt
-        if submitted_prompt.strip().lower() in {
-            "exit",
-            "quit",
-            "/compact",
-            "/shortcuts",
-            "?",
-            "/new",
-            "/pin",
-            "/info",
-            "/fork",
-            "/tree",
-        }:
-            submitted_prompt = submitted_prompt.strip()
+
+    def process_submission(prompt: str, action: str) -> None:
         process_prompt_toolkit_prompt(
-            submitted_prompt,
+            prompt,
             state=state,
             agent=agent,
             active_session_ref=active_session_ref,
@@ -346,7 +323,33 @@ def run_prompt_toolkit_event_loop(
                 "next_editor_text",
                 text,
             ),
+            submit_action=action,
         )
+
+    def persist_exit() -> None:
+        with state_lock:
+            active_session = active_session_ref["active_session"]
+        persist_prompt_exit_state(
+            state=state,
+            state_lock=state_lock,
+            active_session=active_session,
+            agent=agent,
+        )
+
+    return run_persistent_prompt_application(
+        PromptLifecycleConfig(
+            state=state,
+            state_lock=state_lock,
+            prompt_session=prompt_session,
+            completer=completer,
+            key_bindings=key_bindings,
+            bottom_toolbar=get_bottom_toolbar,
+            scrollback=scrollback,
+            process_submission=process_submission,
+            persist_exit=persist_exit,
+            request_exit=request_exit,
+        )
+    )
 
 
 def configure_prompt_session_completion_menu(prompt_session) -> None:

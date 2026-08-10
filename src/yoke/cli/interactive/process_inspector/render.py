@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import Sequence
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
 from typing import Literal
 from typing import Protocol
 
@@ -28,6 +31,41 @@ class ProcessInspectorRenderState(Protocol):
     wrap: bool
     notice: str
     active_pane: Literal["sidebar", "detail"]
+    detail_output_cache: DetailOutputCache
+
+
+@dataclass(slots=True)
+class DetailOutputCache:
+    """Cache the expensive wrapping of one selected process output tail."""
+
+    _key: tuple[int, int, datetime, int, int, bool, int] | None = None
+    _lines: list[str] = field(default_factory=list)
+
+    def lines(
+        self,
+        process: CommandProcessSnapshot,
+        *,
+        wrap: bool,
+        width: int,
+    ) -> list[str]:
+        """Return cached output lines for an unchanged process snapshot."""
+        key = (
+            process.session_id,
+            process.pid,
+            process.started_at,
+            process.original_output_bytes,
+            process.retained_output_bytes,
+            wrap,
+            width,
+        )
+        if key != self._key:
+            self._key = key
+            self._lines = _wrapped_lines(
+                process.output_tail or "(no output)",
+                wrap=wrap,
+                width=width,
+            )
+        return self._lines
 
 
 def render_view_html(
@@ -43,7 +81,12 @@ def render_view_html(
     detail_width = max(20, columns - list_width - 3)
     process = selected_process(state, items)
     left_lines = _list_lines(state, items, list_width, body_rows)
-    detail_lines = _detail_lines(process, state.wrap, detail_width)
+    detail_lines = _detail_lines(
+        process,
+        state.wrap,
+        detail_width,
+        state.detail_output_cache,
+    )
     max_scroll = max(0, len(detail_lines) - body_rows)
     state.detail_scroll = max(0, min(state.detail_scroll, max_scroll))
     detail_window = detail_lines[state.detail_scroll : state.detail_scroll + body_rows]
@@ -71,32 +114,8 @@ def render_view_html(
 
 def detail_text(process: CommandProcessSnapshot) -> str:
     """Return readable details and output for one process."""
-    exit_code = "-" if process.exit_code is None else str(process.exit_code)
-    output_note = ""
-    if process.original_output_bytes > process.retained_output_bytes:
-        output_note = f" (tail of {process.original_output_bytes:,} output bytes)"
     output = process.output_tail or "(no output)"
-    return "\n".join(
-        [
-            f"Command session {process.session_id}",
-            "",
-            "PROCESS",
-            f"status │ {process.status}",
-            f"session ID │ {process.session_id}",
-            f"OS PID │ {process.pid}",
-            f"exit code │ {exit_code}",
-            f"started │ {process.started_at.isoformat(timespec='seconds')}",
-            f"elapsed │ {format_duration(process.elapsed_seconds)}",
-            f"TTY │ {'yes' if process.tty else 'no'}",
-            f"working directory │ {process.cwd}",
-            "",
-            "COMMAND",
-            process.command,
-            "",
-            f"OUTPUT{output_note}",
-            output,
-        ]
-    )
+    return "\n".join([*_detail_metadata_lines(process), output])
 
 
 def move_selection(
@@ -179,10 +198,58 @@ def _detail_lines(
     process: CommandProcessSnapshot | None,
     wrap: bool,
     width: int,
+    output_cache: DetailOutputCache,
 ) -> list[str]:
     if process is None:
         return ["No command processes have been started in this live runtime."]
-    lines = detail_text(process).splitlines() or [""]
+    output_lines = output_cache.lines(process, wrap=wrap, width=width)
+    lines = _detail_metadata_lines(process)
+    if not wrap:
+        return [*lines, *output_lines]
+    wrapped: list[str] = []
+    for line in lines:
+        wrapped.extend(
+            textwrap.wrap(
+                line,
+                width=max(1, width),
+                replace_whitespace=False,
+                drop_whitespace=False,
+            )
+            or [""]
+        )
+    wrapped.extend(output_lines)
+    return wrapped
+
+
+def _detail_metadata_lines(process: CommandProcessSnapshot) -> list[str]:
+    """Return the small metadata prefix rendered above cached output."""
+    exit_code = "-" if process.exit_code is None else str(process.exit_code)
+    output_note = ""
+    if process.original_output_bytes > process.retained_output_bytes:
+        output_note = f" (tail of {process.original_output_bytes:,} output bytes)"
+    return [
+        f"Command session {process.session_id}",
+        "",
+        "PROCESS",
+        f"status │ {process.status}",
+        f"session ID │ {process.session_id}",
+        f"OS PID │ {process.pid}",
+        f"exit code │ {exit_code}",
+        f"started │ {process.started_at.isoformat(timespec='seconds')}",
+        f"elapsed │ {format_duration(process.elapsed_seconds)}",
+        f"TTY │ {'yes' if process.tty else 'no'}",
+        f"working directory │ {process.cwd}",
+        "",
+        "COMMAND",
+        process.command,
+        "",
+        f"OUTPUT{output_note}",
+    ]
+
+
+def _wrapped_lines(text: str, *, wrap: bool, width: int) -> list[str]:
+    """Split and optionally wrap output text."""
+    lines = text.splitlines() or [""]
     if not wrap:
         return lines
     wrapped: list[str] = []

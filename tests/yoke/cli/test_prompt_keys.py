@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
-from yoke.cli.image_input import ImageAttachment
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.prompt.keys import (
     register_prompt_toolkit_key_bindings,
@@ -31,6 +29,7 @@ class _Clipboard:
 class _Buffer:
     def __init__(self) -> None:
         self.inserted = ""
+        self.text = ""
         self.complete_state = None
         self.validation_count = 0
 
@@ -72,9 +71,11 @@ class _KeyBindings:
 def _registered_key_bindings(
     monkeypatch,
     *,
-    attach_image: Callable[[ImageAttachment], None] | None = None,
     cycle_thinking_effort: Callable[[], str | None] | None = None,
+    request_clipboard_paste: Callable[[object, str], None] | None = None,
     open_tool_inspector: Callable[[], None] | None = None,
+    open_process_inspector: Callable[[], None] | None = None,
+    open_queue_manager: Callable[[str], None] | None = None,
 ) -> _KeyBindings:
     key_bindings = _KeyBindings()
     monkeypatch.setattr(
@@ -85,29 +86,53 @@ def _registered_key_bindings(
         key_bindings,
         state=PromptCliState(messages=[], pending_prompts=[]),
         stop_active_turn=lambda: False,
-        attach_image=attach_image or (lambda _attachment: None),
         remove_last_image=lambda: None,
-        resolve_image_path=lambda _raw: (_ for _ in ()).throw(ValueError),
         cycle_thinking_effort=cycle_thinking_effort or (lambda: None),
+        request_clipboard_paste=request_clipboard_paste
+        or (lambda _buffer, _text: None),
         update_status=lambda _message: None,
         open_tool_inspector=open_tool_inspector,
+        open_process_inspector=open_process_inspector,
+        open_queue_manager=open_queue_manager,
     )
     return key_bindings
 
 
-def test_process_inspector_shortcuts_share_handler(monkeypatch) -> None:
-    """Ctrl+O and Ctrl+X Ctrl+P both open the process inspector."""
-    opened: list[None] = []
+def test_inspector_shortcuts_have_distinct_handlers(monkeypatch) -> None:
+    """Each inspector shortcut opens only its advertised inspector."""
+    opened: list[str] = []
     key_bindings = _registered_key_bindings(
         monkeypatch,
-        open_tool_inspector=lambda: opened.append(None),
+        open_tool_inspector=lambda: opened.append("tool"),
+        open_process_inspector=lambda: opened.append("process"),
     )
 
-    for key_sequence in (("c-o",), ("c-x", "c-p")):
-        key_bindings.handlers[key_sequence](_Event())
+    key_bindings.handlers[("c-x", "o")](_Event())
+    key_bindings.handlers[("c-x", "c-p")](_Event())
 
-    assert len(opened) == 2
-    assert key_bindings.handlers[("c-o",)] is key_bindings.handlers[("c-x", "c-p")]
+    assert opened == ["tool", "process"]
+    assert (
+        key_bindings.handlers[("c-x", "o")] is not key_bindings.handlers[("c-x", "c-p")]
+    )
+    assert ("c-o",) not in key_bindings.handlers
+
+
+def test_queue_manager_uses_modal_prefix(monkeypatch) -> None:
+    """Queue manager opens under Ctrl+X and leaves the legacy chord free."""
+    preserved: list[str] = []
+    key_bindings = _registered_key_bindings(
+        monkeypatch,
+        open_queue_manager=preserved.append,
+    )
+    event = _Event()
+    event.current_buffer.text = "draft"
+
+    key_bindings.handlers[("c-x", "q")](event)
+
+    assert preserved == ["draft"]
+    assert event.current_buffer.text == "/queue"
+    assert event.current_buffer.validation_count == 1
+    assert ("c-q",) not in key_bindings.handlers
 
 
 def test_shift_tab_variants_cycle_without_submitting(monkeypatch) -> None:
@@ -141,64 +166,18 @@ def test_paste_shortcuts_share_handler(monkeypatch) -> None:
         raise AssertionError
 
 
-def test_paste_shortcuts_prefer_prompt_toolkit_clipboard(monkeypatch) -> None:
-    """Paste shortcuts prefer prompt-toolkit clipboard text when available."""
-    key_bindings = _registered_key_bindings(monkeypatch)
-    monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.keys.paste_image_from_clipboard",
-        lambda: None,
+def test_paste_shortcuts_delegate_without_probing_clipboard(monkeypatch) -> None:
+    """Paste keys only capture in-memory text and delegate expensive work."""
+    requests: list[tuple[object, str]] = []
+    key_bindings = _registered_key_bindings(
+        monkeypatch,
+        request_clipboard_paste=lambda buffer, text: requests.append((buffer, text)),
     )
-    monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.keys.paste_text_from_clipboard",
-        lambda: "os clipboard",
-    )
+
     for key_sequence in PASTE_KEY_SEQUENCES:
         event = _Event("prompt clipboard")
         key_bindings.handlers[key_sequence](event)
-        if event.current_buffer.inserted != "prompt clipboard":
-            raise AssertionError
+        assert requests[-1] == (event.current_buffer, "prompt clipboard")
+        assert event.current_buffer.inserted == ""
 
-
-def test_paste_shortcuts_fall_back_to_os_clipboard(monkeypatch) -> None:
-    """Paste shortcuts fall back to OS clipboard text."""
-    key_bindings = _registered_key_bindings(monkeypatch)
-    monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.keys.paste_image_from_clipboard",
-        lambda: None,
-    )
-    monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.keys.paste_text_from_clipboard",
-        lambda: "dictated text",
-    )
-    for key_sequence in PASTE_KEY_SEQUENCES:
-        event = _Event()
-        key_bindings.handlers[key_sequence](event)
-        if event.current_buffer.inserted != "dictated text":
-            raise AssertionError
-
-
-def test_paste_shortcuts_attach_clipboard_images(monkeypatch) -> None:
-    """Both paste shortcuts attach an image from the clipboard."""
-    attachment = ImageAttachment(path=Path("clipboard.png"))
-    attached: list[ImageAttachment] = []
-    inserted: list[ImageAttachment] = []
-    key_bindings = _registered_key_bindings(
-        monkeypatch,
-        attach_image=attached.append,
-    )
-    monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.keys.paste_image_from_clipboard",
-        lambda: attachment,
-    )
-    monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.keys.insert_attachment_reference",
-        lambda _buffer, image: inserted.append(image),
-    )
-
-    for key_sequence in PASTE_KEY_SEQUENCES:
-        key_bindings.handlers[key_sequence](_Event())
-
-    if attached != [attachment, attachment]:
-        raise AssertionError
-    if inserted != [attachment, attachment]:
-        raise AssertionError
+    assert len(requests) == 2

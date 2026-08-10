@@ -37,8 +37,9 @@ SHORTCUT_LINES = (
     "Use `Left` or `Right` to move across prompt text and newlines.",
     "Press `Ctrl+V` or `Alt+V` to paste text or attach an image.",
     "Press `Ctrl+U` to remove the last pending image.",
-    "Press `Ctrl+O` or `Ctrl+X` then `Ctrl+P` to open the process inspector.",
-    "Press `Ctrl+Q` to open the queue manager.",
+    "Press `Ctrl+X` then `O` to open the tool inspector.",
+    "Press `Ctrl+X` then `Ctrl+P` to open the process inspector.",
+    "Press `Ctrl+X` then `Q` to open the queue manager.",
     "Press `Ctrl+X` then `M` to switch model.",
     "Press `Ctrl+X` then `T` to open the session tree.",
     "Use `/shortcuts` or `?` to show this list again.",
@@ -233,6 +234,7 @@ class PromptCliState:
     exit_notice_emitted: bool = False
     status_message: str = ""
     submit_action: str = "steer"
+    editor_revision: int = 0
     context_usage_text: str | None = None
     context_usage_revision: int = 0
     context_usage_percent: int | None = None

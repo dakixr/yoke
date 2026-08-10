@@ -6,7 +6,7 @@ from collections.abc import Callable
 from threading import Lock
 from threading import Thread
 
-from yoke.cli.image_input import build_user_message
+from yoke.cli.image_input import ImageAttachment, build_user_message
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.runtime import ActiveSession
@@ -25,6 +25,7 @@ def submit_prompt_toolkit_prompt(
     steer_active_turn: Callable[..., bool],
 ) -> None:
     """Submit a normal prompt without reprocessing slash commands."""
+    queue_snapshot: tuple[list[PendingPrompt], list[ImageAttachment]] | None = None
     with state_lock:
         idle = state.worker is None and not state.pending_prompts
         pending_images = [image.path for image in state.pending_images]
@@ -38,9 +39,12 @@ def submit_prompt_toolkit_prompt(
                     kind="queued",
                 )
             )
-            persist_prompt_queue(
-                active_session, state.pending_prompts, state.pending_images
+            queue_snapshot = (
+                list(state.pending_prompts),
+                list(state.pending_images),
             )
+    if queue_snapshot is not None:
+        persist_prompt_queue(active_session, *queue_snapshot)
     if idle:
         start_turn(prompt, user_message=user_message)
         return
@@ -57,7 +61,9 @@ def submit_prompt_toolkit_prompt(
                 kind="queued",
             )
         )
-        persist_prompt_queue(
-            active_session, state.pending_prompts, state.pending_images
+        queue_snapshot = (
+            list(state.pending_prompts),
+            list(state.pending_images),
         )
+    persist_prompt_queue(active_session, *queue_snapshot)
     invalidate_prompt()

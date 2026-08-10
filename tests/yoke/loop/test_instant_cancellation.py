@@ -42,6 +42,7 @@ from yoke.cli.interactive.prompt.control import (
 from yoke.cli.interactive.prompt.loop import (
     process_prompt_toolkit_prompt,
 )
+from yoke.cli.interactive.prompt.scrollback import ScrollbackKind
 from yoke.cli.interactive.prompt.cancellation import (
     interrupted_turn_snapshot,
 )
@@ -54,6 +55,17 @@ from yoke.mcp.config import McpServerConfig
 from yoke.mcp.http_client import StreamableHttpClient
 
 from ..cli.support import active_session_for
+
+
+class _DiscardScrollback:
+    def emit(
+        self,
+        kind: ScrollbackKind,
+        text: str = "",
+        *,
+        failed: bool = False,
+    ) -> None:
+        del kind, text, failed
 
 
 class SlowProcessTool(LocalTool):
@@ -132,12 +144,11 @@ def test_queued_skill_waits_for_its_fifo_position(tmp_path, monkeypatch) -> None
         agent=agent,
         active_session_ref=active_session_ref,
         renderer=_renderer(),
-        scrollback_console=console,
         state_lock=state_lock,
         request_context_usage=lambda _prompt: None,
         invalidate_prompt=lambda: None,
         update_status=lambda _status: None,
-        run_in_scrollback=lambda callback: callback(),
+        scrollback=_DiscardScrollback(),
     )
     activations: list[str] = []
 
@@ -249,12 +260,11 @@ def test_steering_starts_replacement_before_retired_turn_finishes(
         agent=agent,
         active_session_ref={"active_session": active_session},
         renderer=_renderer(),
-        scrollback_console=build_console(io.StringIO()),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
         invalidate_prompt=lambda: None,
         update_status=lambda _status: None,
-        run_in_scrollback=lambda callback: callback(),
+        scrollback=_DiscardScrollback(),
     )
 
     retired_worker = control.start_turn("first", None)
@@ -319,12 +329,11 @@ def test_instant_stop_emits_total_turn_summary(tmp_path, monkeypatch) -> None:
         agent=agent,
         active_session_ref={"active_session": active_session_for(tmp_path)},
         renderer=_renderer(emit_turn_summary=summaries.append),
-        scrollback_console=build_console(io.StringIO()),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
         invalidate_prompt=lambda: None,
         update_status=lambda _status: None,
-        run_in_scrollback=lambda callback: callback(),
+        scrollback=_DiscardScrollback(),
     )
 
     worker = control.start_turn("first", None)
@@ -440,12 +449,11 @@ def test_steering_continues_from_latest_tool_result_checkpoint(
         agent=UnusedAgent(),
         active_session_ref={"active_session": active_session},
         renderer=_renderer(),
-        scrollback_console=build_console(io.StringIO()),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
         invalidate_prompt=lambda: None,
         update_status=lambda _status: None,
-        run_in_scrollback=lambda callback: callback(),
+        scrollback=_DiscardScrollback(),
     )
 
     retired_worker = control.start_turn("first", None)
@@ -584,12 +592,11 @@ def test_stop_and_immediate_continue_retain_completed_tool_work(
         agent=UnusedAgent(),
         active_session_ref={"active_session": active_session},
         renderer=_renderer(),
-        scrollback_console=build_console(io.StringIO()),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
         invalidate_prompt=lambda: None,
         update_status=lambda _status: None,
-        run_in_scrollback=lambda callback: callback(),
+        scrollback=_DiscardScrollback(),
     )
 
     retired_worker = control.start_turn("first", None)
@@ -723,12 +730,11 @@ def test_turn_cancellation_retires_live_tool_traces(tmp_path, monkeypatch) -> No
         agent=agent,
         active_session_ref={"active_session": active_session_for(tmp_path)},
         renderer=renderer,
-        scrollback_console=build_console(io.StringIO()),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
         invalidate_prompt=lambda: None,
         update_status=lambda _status: None,
-        run_in_scrollback=lambda callback: callback(),
+        scrollback=_DiscardScrollback(),
         retire_tool_traces=store.retire_turn,
     )
 
