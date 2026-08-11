@@ -106,7 +106,7 @@ def test_codex_websockets_default_timeout_matches_codex_idle_timeout(
 
     provider = register_provider(Context())
 
-    assert provider.config.timeout_seconds == 300.0
+    assert provider.config.timeout_seconds == 900.0
 
 
 def test_websocket_response_done_builds_message_from_output_item() -> None:

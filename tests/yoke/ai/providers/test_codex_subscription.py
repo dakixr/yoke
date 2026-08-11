@@ -73,7 +73,7 @@ def test_codex_provider_default_timeout_matches_codex_idle_timeout(
 
     provider = register_provider(Context())
 
-    assert provider.config.timeout_seconds == 300.0
+    assert provider.config.timeout_seconds == 900.0
 
 
 def test_codex_catalog_includes_gpt_5_6_models() -> None:

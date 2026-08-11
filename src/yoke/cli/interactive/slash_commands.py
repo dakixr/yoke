@@ -163,7 +163,6 @@ def handle_slash_command(  # noqa: C901
             print_scrollback_notice(console, "Usage: /title <new-title>")
             return True, messages, active_session
         active_session.title = fallback_session_title(raw_title)
-        active_session.record.title = active_session.title
         persist_session_state(active_session, agent, messages)
         print_scrollback_notice(
             console,

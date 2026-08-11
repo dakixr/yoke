@@ -12,8 +12,8 @@ from pydantic import ValidationError
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.skills.models import ActiveSkill
-from yoke.cli.session.io import decode_session_record_lines
 from yoke.cli.session.index import repair_index_from_session_files
+from yoke.cli.session.load import load_existing_record
 from yoke.cli.session.maintenance import prune_index_and_sessions
 from yoke.cli.session.models import SessionIndex
 from yoke.cli.session.models import SessionIndexEntry
@@ -55,11 +55,7 @@ class SessionStore:
         path = self._session_path(session_id)
         if not path.exists():
             return SessionRecord(id=session_id)
-        try:
-            with path.open(encoding="utf-8") as handle:
-                record = decode_session_record_lines(handle)
-        except (OSError, ValidationError) as exc:
-            raise ValueError(f"Failed to load session {session_id!r}: {exc}") from exc
+        record = load_existing_record(self, session_id, path)
         if record.version != CURRENT_SESSION_SCHEMA_VERSION:
             raise ValueError(f"Unsupported session schema version: {record.version}.")
         return record

@@ -57,8 +57,8 @@ class ZAIConfig(BaseModel):
     retry_backoff_seconds: float = 1.0
     max_retry_backoff_seconds: float = 32.0
     connect_timeout_seconds: float = 10.0
-    read_idle_timeout_seconds: float = 60.0
-    total_timeout_seconds: float = 180.0
+    read_idle_timeout_seconds: float = 900.0
+    total_timeout_seconds: float = 900.0
 
 
 class ZAIResponseMessage(BaseModel):

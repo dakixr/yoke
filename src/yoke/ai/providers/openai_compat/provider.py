@@ -63,7 +63,7 @@ class OpenAICompatibleConfig(BaseModel):
     model: str
     base_url: str = "https://api.openai.com/v1"
     chat_completions_path: str = "/chat/completions"
-    timeout_seconds: float | None = 120.0
+    timeout_seconds: float | None = 900.0
     headers: dict[str, str] = Field(default_factory=dict)
     api_key_header_name: str = "Authorization"
     api_key_header_prefix: str = "Bearer "

@@ -77,6 +77,10 @@ other models. Z.ai uses the Coding Plan endpoint and exposes `glm-5.2` with
 `none` and `thinking` controls. Provider catalogs also declare context
 windows, image-input support, and model-specific system messages.
 
+Built-in provider response and stream-idle timeouts default to 15 minutes.
+Connection-establishment and WebSocket health-check timeouts remain shorter so
+unreachable services fail promptly.
+
 Use these commands to inspect or change defaults:
 
 ```bash
@@ -382,6 +386,9 @@ shown at the top of the table and are protected from normal session-retention
 cleanup. Pass `--all` to list saved sessions across every workspace root
 instead of only the current root; that view adds a root-path column before the
 session id.
+If an external index edit has newer metadata than the JSONL stream, loading the
+session appends that metadata back to the JSONL file so a manual title or pin
+state survives resume.
 Use `--fork <session-id>` to copy an existing session into a new session id and
 continue there without appending to the original; `--fork` cannot be combined
 with `--session` because one selects a source session and the other names the

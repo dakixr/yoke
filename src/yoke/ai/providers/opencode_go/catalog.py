@@ -122,7 +122,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
         OpenCodeGoConfig(
             api_key=api_key,
             model=_normalize_model_id(context.model or "kimi-k2.7-code"),
-            timeout_seconds=float(env.get("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "600"),
+            timeout_seconds=float(env.get("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "900"),
             max_retries=int(env.get("YOKE_OPENCODE_GO_MAX_RETRIES") or "5"),
             reasoning_effort=(
                 context.reasoning_effort
@@ -136,7 +136,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
 class OpenCodeGoConfig(BaseModel):
     api_key: str
     model: str = "kimi-k2.7-code"
-    timeout_seconds: float = 600.0
+    timeout_seconds: float = 900.0
     max_retries: int = 5
     retry_backoff_seconds: float = 1.0
     max_retry_backoff_seconds: float = 15.0

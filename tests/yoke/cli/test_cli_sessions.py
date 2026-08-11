@@ -187,6 +187,59 @@ def test_cli_uses_local_title_for_first_prompt(tmp_path: Path, capsys) -> None:
     assert records[0].title == "please fix the config loader bug"
 
 
+def test_session_load_reconciles_newer_index_title(tmp_path: Path, monkeypatch) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    store = SessionStore()
+    store.save(
+        "title-demo",
+        [Message.user("hello")],
+        root=tmp_path,
+        title="Generated title",
+    )
+    index = store._load_index()
+    index.sessions["title-demo"].title = "Manual title"
+    index.sessions["title-demo"].updated_at = "2999-01-01T00:00:00+00:00"
+    store._index_path().write_text(index.model_dump_json(indent=2), encoding="utf-8")
+
+    loaded = store.load("title-demo")
+    reloaded = store.load("title-demo")
+
+    assert loaded.title == "Manual title"
+    assert reloaded.title == "Manual title"
+
+
+def test_title_slash_command_persists_jsonl_title(tmp_path: Path, monkeypatch) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    store = SessionStore()
+    messages = [Message.user("hello")]
+    store.save(
+        "title-command",
+        messages,
+        root=tmp_path,
+        title="Generated title",
+    )
+    active_session = create_active_session(
+        CLIArgs(session="title-command", root=str(tmp_path)),
+        root=tmp_path,
+    )
+
+    handled, _messages, _session = handle_slash_command(
+        "/title Manual title",
+        agent=FakeAgent(),
+        active_session=active_session,
+        messages=messages,
+        console=build_console(CaptureStream()),
+    )
+    record = decode_session_record(
+        (session_dir / "title-command.jsonl").read_text(encoding="utf-8")
+    )
+
+    assert handled is True
+    assert record.title == "Manual title"
+
+
 def test_pin_slash_command_toggles_active_session(tmp_path: Path, monkeypatch) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
