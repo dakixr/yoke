@@ -14,6 +14,7 @@ from yoke.cli.render.base import format_compaction_note
 from yoke.cli.render.base import format_tool_preview
 from yoke.cli.render.base import format_tool_result_error
 from yoke.cli.render.base import print_version_banner
+from yoke.cli.render.base import print_agent_output as print_rendered_agent_output
 from yoke.cli.render.provider_events import PROVIDER_WARNING_STYLE
 from yoke.cli.render.provider_events import format_provider_event
 from yoke.cli.render.provider_events import is_provider_event
@@ -317,7 +318,7 @@ class InteractiveRenderer:
             if self._turn_has_tool_output:
                 print_tool_response_divider(self._console)
                 self._turn_has_tool_output = False
-            self._console.print(text or "(empty)")
+            print_rendered_agent_output(self._console, text)
 
     def print_commentary(self, text: str) -> None:
         """Print assistant commentary without labels or dividers."""
