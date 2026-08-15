@@ -6,6 +6,7 @@ import json
 from typing import cast
 
 import httpx
+import pytest
 
 from yoke.agent.models import Message
 from yoke.ai.providers.opencode_go import OpenCodeGoConfig
@@ -19,6 +20,7 @@ def test_opencode_go_catalog_excludes_deprecated_models() -> None:
         model_ids = set(models)
         assert "gpt-5.6-luna" in model_ids
         assert "glm-5.2" in model_ids
+        assert "glm-5.3" in model_ids
         assert "kimi-k2.7-code" in model_ids
         assert "deepseek-v4-pro" in model_ids
         assert "deepseek-v4-flash" in model_ids
@@ -44,11 +46,14 @@ def test_opencode_go_catalog_excludes_deprecated_models() -> None:
         )
         assert models["glm-5.2"].thinking_levels == ("none", "high", "max")
         assert models["glm-5.2"].default_thinking_level == "max"
+        assert models["glm-5.3"].thinking_levels == ("low", "high", "max")
+        assert models["glm-5.3"].default_thinking_level == "max"
     finally:
         provider.close()
 
 
-def test_opencode_go_glm_52_sends_selected_reasoning_effort() -> None:
+@pytest.mark.parametrize("model", ["glm-5.2", "glm-5.3"])
+def test_opencode_go_glm_sends_selected_reasoning_effort(model: str) -> None:
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -62,7 +67,7 @@ def test_opencode_go_glm_52_sends_selected_reasoning_effort() -> None:
     provider = OpenCodeGoProvider(
         OpenCodeGoConfig(
             api_key="test",
-            model="glm-5.2",
+            model=model,
             reasoning_effort="high",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
@@ -75,6 +80,7 @@ def test_opencode_go_glm_52_sends_selected_reasoning_effort() -> None:
 
     payload = cast(dict[str, object], captured["payload"])
     assert captured["url"] == "https://opencode.ai/zen/go/v1/chat/completions"
+    assert payload["model"] == model
     assert payload["reasoning_effort"] == "high"
     assert message.content == "glm-ok"
 

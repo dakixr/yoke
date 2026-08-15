@@ -73,10 +73,9 @@ The advertised catalog currently includes `gpt-5.6-sol`,
 
 OpenCode Go advertises its maintained model catalog, including its Responses
 path for `gpt-5.6-luna` and OpenAI-compatible chat-completions paths for
-other models. Z.ai uses the Coding Plan endpoint and exposes GLM-5.3 with
-`low`, `high`, and `max` reasoning efforts (default: `max`). GLM-5.2 supports
-`none`, `high`, and `max` (default: `max`) through both Z.ai and OpenCode Go.
-Provider catalogs also declare context
+other models. Both Z.ai and OpenCode Go expose GLM-5.3 with `low`, `high`, and
+`max` reasoning efforts (default: `max`). GLM-5.2 supports `none`, `high`, and
+`max` (default: `max`) through both providers. Provider catalogs also declare context
 windows, image-input support, and model-specific system messages.
 
 Built-in provider response and stream-idle timeouts default to 15 minutes.
