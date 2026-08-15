@@ -127,6 +127,20 @@ under `~/.yoke/usage-metric-logs/<provider>/`.
 
 ---
 
+## Mermaid Diagrams
+
+In terminal output, fenced `mermaid` blocks render as width-aware Unicode art.
+Yoke supports nine diagram families: flowchart, state, class, ER, sequence, pie,
+mindmap, timeline, and git graph. A malformed diagram, or one wider than the
+available terminal columns, remains readable in a framed source fallback.
+Redirected and other non-TTY output preserves the original Markdown instead of
+replacing it with terminal art, so transcripts and downstream automation keep
+the source form.
+
+Rendering happens in-process and requires no Node.js installation, browser,
+subprocess, or network access. Set `YOKE_MERMAID=0` (also `false`, `no`, or
+`off`) to show Mermaid fences as ordinary highlighted code blocks.
+
 ## Images In Interactive Mode
 
 In prompt-toolkit mode, yoke can keep pending image attachments for the next user

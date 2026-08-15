@@ -10,10 +10,10 @@ from typing import TextIO
 from typing import cast
 
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.text import Text
 
 from yoke import __version__
+from yoke.cli.render.markdown import YokeMarkdown
 
 
 def truncate_cli_text(text: str, limit: int) -> str:
@@ -215,7 +215,7 @@ def print_agent_output(console: Console, output: str) -> None:
     """Print final agent output with rich Markdown rendering."""
     sanitized = _sanitize_console_output(console, output.rstrip() or "(empty)")
     if console.is_terminal:
-        console.print(Markdown(sanitized))
+        console.print(YokeMarkdown(sanitized))
     else:
         console.print(sanitized)
 

@@ -6,7 +6,6 @@ import json
 import textwrap
 
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.text import Text
 
 from yoke.agent.models import Message
@@ -15,6 +14,7 @@ from yoke.cli.render.base import format_tool_error
 from yoke.cli.render.base import format_tool_preview
 from yoke.cli.render.base import _sanitize_console_output
 from yoke.cli.render.base import _supports_console_chrome
+from yoke.cli.render.markdown import YokeMarkdown
 
 
 def print_scrollback_divider(console: Console, label: str, *, style: str) -> None:
@@ -41,7 +41,7 @@ def print_scrollback_agent(console: Console, output: str) -> None:
     output = _sanitize_console_output(console, output.rstrip() or "(empty)")
     console.print()
     if console.is_terminal:
-        console.print(Markdown(output))
+        console.print(YokeMarkdown(output))
         console.print()
         return
     console.print(output)
@@ -61,7 +61,7 @@ def print_scrollback_commentary(console: Console, output: str) -> None:
     output = _sanitize_console_output(console, output.rstrip() or "(empty)")
     console.print()
     if console.is_terminal:
-        console.print(Markdown(output))
+        console.print(YokeMarkdown(output))
     else:
         console.print(output)
     console.print()
