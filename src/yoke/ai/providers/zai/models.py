@@ -9,13 +9,23 @@ from yoke.ai.providers.base import ProviderModelInfo
 
 PROVIDER_NAME = "zai"
 THINKING_LEVELS = ("none", "thinking")
+GLM_52_THINKING_LEVELS = ("none", "high", "max")
+GLM_53_THINKING_LEVELS = ("low", "high", "max")
 MODEL_CATALOG = (
+    ProviderModelInfo(
+        id="glm-5.3",
+        display_name="GLM-5.3",
+        context_window_tokens=1_000_000,
+        thinking_levels=GLM_53_THINKING_LEVELS,
+        default_thinking_level="max",
+        supports_image_inputs=False,
+    ),
     ProviderModelInfo(
         id="glm-5.2",
         display_name="GLM-5.2",
         context_window_tokens=1_000_000,
-        thinking_levels=THINKING_LEVELS,
-        default_thinking_level="thinking",
+        thinking_levels=GLM_52_THINKING_LEVELS,
+        default_thinking_level="max",
         supports_image_inputs=False,
     ),
 )
@@ -99,7 +109,17 @@ class ZAIChatCompletionResponse(BaseModel):
     usage: dict[str, object] | None = None
 
 
-def _thinking_config(reasoning_effort: str | None) -> dict[str, object] | None:
+def _thinking_config(
+    model: str, reasoning_effort: str | None
+) -> dict[str, object] | None:
+    if model == "glm-5.3":
+        return {"type": "enabled", "clear_thinking": True}
+    if model == "glm-5.2":
+        normalized = reasoning_effort.strip().lower() if reasoning_effort else "max"
+        return {
+            "type": "disabled" if normalized == "none" else "enabled",
+            "clear_thinking": True,
+        }
     if reasoning_effort is None:
         return None
     normalized = reasoning_effort.strip().lower()

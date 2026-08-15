@@ -21,6 +21,8 @@ from yoke.ai.providers.base import (
 )
 from yoke.ai.providers.model_selection import set_config_model_from_catalog
 from yoke.ai.providers.zai.models import (
+    GLM_52_THINKING_LEVELS,
+    GLM_53_THINKING_LEVELS,
     MODEL_CATALOG,
     PROVIDER_NAME,
     THINKING_LEVELS,
@@ -94,8 +96,16 @@ class ZAIProvider(
             id=current_model,
             display_name=current_model,
             context_window_tokens=128_000,
-            thinking_levels=THINKING_LEVELS,
-            default_thinking_level="thinking",
+            thinking_levels=(
+                GLM_53_THINKING_LEVELS
+                if current_model == "glm-5.3"
+                else GLM_52_THINKING_LEVELS
+                if current_model == "glm-5.2"
+                else THINKING_LEVELS
+            ),
+            default_thinking_level=(
+                "max" if current_model in {"glm-5.2", "glm-5.3"} else "thinking"
+            ),
             supports_image_inputs=False,
         )
 
@@ -145,9 +155,11 @@ class ZAIProvider(
             ],
             "stream": True,
         }
-        thinking = _thinking_config(self.config.reasoning_effort)
+        thinking = _thinking_config(self.config.model, self.config.reasoning_effort)
         if thinking is not None:
             payload["thinking"] = thinking
+        if self.config.model in {"glm-5.2", "glm-5.3"}:
+            payload["reasoning_effort"] = self.config.reasoning_effort
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"

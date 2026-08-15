@@ -73,12 +73,12 @@ def test_build_builtin_provider_uses_default_for_invalid_reasoning_effort(
 
     provider = cast(
         ZAIProvider,
-        build_builtin_provider("zai:glm-5.2:high"),
+        build_builtin_provider("zai:glm-5.2:thinking"),
     )
 
     try:
         assert provider.config.model == "glm-5.2"
-        assert provider.config.reasoning_effort == "thinking"
+        assert provider.config.reasoning_effort == "max"
     finally:
         provider.close()
 

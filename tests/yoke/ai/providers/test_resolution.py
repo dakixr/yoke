@@ -40,7 +40,7 @@ def test_provider_readiness_uses_explicit_env(tmp_path: Path) -> None:
     assert ready.ready is True
     assert ready.model == "glm-5.2"
     assert ready.reasoning_effort == "none"
-    assert [model.id for model in ready.models] == ["glm-5.2"]
+    assert [model.id for model in ready.models] == ["glm-5.3", "glm-5.2"]
 
 
 def test_provider_readiness_uses_credentials_saved_by_login(
@@ -81,10 +81,14 @@ def test_build_provider_constructs_zai_from_qualified_name(tmp_path: Path) -> No
         provider.close()
 
 
-@pytest.mark.parametrize("selection", ["zai", "zai:glm-5.2:medium"])
-def test_build_provider_uses_zai_model_default_thinking(
+@pytest.mark.parametrize(
+    ("selection", "expected_effort"),
+    [("zai", "max"), ("zai:glm-5.2:medium", "max")],
+)
+def test_build_provider_uses_zai_model_default_for_alias_effort(
     tmp_path: Path,
     selection: str,
+    expected_effort: str,
 ) -> None:
     provider = build_provider(
         selection,
@@ -95,7 +99,7 @@ def test_build_provider_uses_zai_model_default_thinking(
     assert isinstance(provider, ZAIProvider)
     try:
         assert provider.config.model == "glm-5.2"
-        assert provider.config.reasoning_effort == "thinking"
+        assert provider.config.reasoning_effort == expected_effort
     finally:
         provider.close()
 

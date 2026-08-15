@@ -234,8 +234,8 @@ def test_cross_provider_switch_uses_target_model_default_effort(
     )
 
     assert isinstance(agent.provider, ZAIProvider)
-    assert agent.provider.config.reasoning_effort == "thinking"
-    assert state.reasoning_effort == "thinking"
+    assert agent.provider.config.reasoning_effort == "max"
+    assert state.reasoning_effort == "max"
     agent.close()
 
 

@@ -19,7 +19,7 @@ ENV_API_KEY = "OPENCODE_API_KEY"
 OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
 
 DEEPSEEK_THINKING_LEVELS = ("high", "max")
-GLM_THINKING_LEVELS = ()
+GLM_THINKING_LEVELS = ("none", "high", "max")
 GROK_THINKING_LEVELS = ()
 KIMI_THINKING_LEVELS = ()
 LUNA_THINKING_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
@@ -47,7 +47,7 @@ MODEL_CATALOG = build_model_catalog(
         display_name="GLM-5.2",
         context_window_tokens=400_000,
         thinking_levels=GLM_THINKING_LEVELS,
-        default_thinking_level=None,
+        default_thinking_level="max",
         supports_image_inputs=False,
     ),
     ProviderModelInfo(

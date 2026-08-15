@@ -55,8 +55,10 @@ def test_zai_catalog_exposes_documented_thinking_toggle() -> None:
         provider.close()
 
     assert "glm-5.1" not in models
-    assert models["glm-5.2"].thinking_levels == ("none", "thinking")
-    assert models["glm-5.2"].default_thinking_level == "thinking"
+    assert models["glm-5.3"].thinking_levels == ("low", "high", "max")
+    assert models["glm-5.3"].default_thinking_level == "max"
+    assert models["glm-5.2"].thinking_levels == ("none", "high", "max")
+    assert models["glm-5.2"].default_thinking_level == "max"
 
 
 def test_zai_register_provider_honors_context_reasoning_effort() -> None:
@@ -83,7 +85,7 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = ZAIProvider(
-        ZAIConfig(api_key="test", reasoning_effort="thinking"),
+        ZAIConfig(api_key="test", reasoning_effort="max"),
         http_client=client,
     )
 
@@ -94,6 +96,33 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
         "messages": [{"role": "user", "content": "hello"}],
         "stream": True,
         "thinking": {"type": "enabled", "clear_thinking": True},
+        "reasoning_effort": "max",
+    }
+
+
+def test_zai_glm_53_sends_selected_reasoning_effort() -> None:
+    captured: dict[str, dict[str, object]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return _sse_response(content="done")
+
+    provider = ZAIProvider(
+        ZAIConfig(api_key="test", model="glm-5.3", reasoning_effort="high"),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    try:
+        provider.complete([Message.user("hello")], [])
+    finally:
+        provider.close()
+
+    assert captured["payload"] == {
+        "model": "glm-5.3",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": True,
+        "thinking": {"type": "enabled", "clear_thinking": True},
+        "reasoning_effort": "high",
     }
 
 
@@ -155,7 +184,11 @@ def test_zai_provider_can_disable_thinking() -> None:
 
     provider.complete([Message.user("hello")], [])
 
-    assert captured["payload"]["thinking"] == {"type": "disabled"}
+    assert captured["payload"]["thinking"] == {
+        "type": "disabled",
+        "clear_thinking": True,
+    }
+    assert captured["payload"]["reasoning_effort"] == "none"
 
 
 def test_zai_provider_normalizes_stale_reasoning_effort_on_construction() -> None:
@@ -163,7 +196,7 @@ def test_zai_provider_normalizes_stale_reasoning_effort_on_construction() -> Non
 
     try:
         assert provider.config.model == "glm-5.2"
-        assert provider.config.reasoning_effort == "thinking"
+        assert provider.config.reasoning_effort == "max"
     finally:
         provider.close()
 
@@ -177,11 +210,17 @@ def test_zai_set_model_uses_supported_effort_or_model_default() -> None:
         assert provider.config.reasoning_effort == "none"
 
         provider.set_model("glm-5.2", reasoning_effort="high")
-        assert provider.config.reasoning_effort == "thinking"
+        assert provider.config.reasoning_effort == "high"
 
         provider.config.reasoning_effort = "none"
         provider.set_model("glm-5.2")
-        assert provider.config.reasoning_effort == "thinking"
+        assert provider.config.reasoning_effort == "max"
+
+        provider.set_model("glm-5.3", reasoning_effort="high")
+        assert provider.config.reasoning_effort == "high"
+
+        provider.set_model("glm-5.3", reasoning_effort="none")
+        assert provider.config.reasoning_effort == "max"
     finally:
         provider.close()
 

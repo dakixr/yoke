@@ -58,7 +58,7 @@ def test_set_default_zai_model_persists_model_default_effort(tmp_path: Path) -> 
     config_path = tmp_path / ".yoke" / "config.json"
     updated = PiConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
     assert updated.default_model == "zai:glm-5.2"
-    assert updated.default_reasoning_effort == "thinking"
+    assert updated.default_reasoning_effort == "max"
 
 
 def test_config_accepts_provider_specific_thinking_effort() -> None:
@@ -88,7 +88,7 @@ def test_explicit_model_does_not_inherit_incompatible_config_effort(
 
     assert args.provider_name == "zai"
     assert args.model == "glm-5.2"
-    assert args.reasoning_effort == "thinking"
+    assert args.reasoning_effort == "max"
 
 
 def test_configured_model_replaces_stale_effort_with_model_default(
@@ -113,7 +113,7 @@ def test_configured_model_replaces_stale_effort_with_model_default(
 
     assert args.provider_name == "zai"
     assert args.model == "glm-5.2"
-    assert args.reasoning_effort == "thinking"
+    assert args.reasoning_effort == "max"
 
 
 def test_resumed_model_replaces_stale_effort_with_model_default(
@@ -133,4 +133,4 @@ def test_resumed_model_replaces_stale_effort_with_model_default(
 
     assert args.provider_name == "zai"
     assert args.model == "glm-5.2"
-    assert args.reasoning_effort == "thinking"
+    assert args.reasoning_effort == "max"
