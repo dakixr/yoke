@@ -24,6 +24,8 @@ def test_opencode_go_catalog_excludes_deprecated_models() -> None:
         assert "kimi-k2.7-code" in model_ids
         assert "deepseek-v4-pro" in model_ids
         assert "deepseek-v4-flash" in model_ids
+        assert "muse-spark-1.2" in model_ids
+        assert "muse-spark-1.2-contributor" in model_ids
         assert (
             not {
                 "glm-5.1",
@@ -48,6 +50,19 @@ def test_opencode_go_catalog_excludes_deprecated_models() -> None:
         assert models["glm-5.2"].default_thinking_level == "max"
         assert models["glm-5.3"].thinking_levels == ("low", "high", "max")
         assert models["glm-5.3"].default_thinking_level == "max"
+        assert models["muse-spark-1.2"].thinking_levels == (
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        )
+        assert models["muse-spark-1.2"].default_thinking_level == "medium"
+        assert models["muse-spark-1.2-contributor"].thinking_levels == (
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        )
     finally:
         provider.close()
 

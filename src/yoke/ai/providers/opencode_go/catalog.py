@@ -24,6 +24,7 @@ GLM_53_THINKING_LEVELS = ("low", "high", "max")
 GROK_THINKING_LEVELS = ()
 KIMI_THINKING_LEVELS = ()
 LUNA_THINKING_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
+MUSE_SPARK_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
 
 MODEL_PROTOCOLS = {
     "gpt-5.6-luna": "responses",
@@ -33,6 +34,8 @@ MODEL_PROTOCOLS = {
     "grok-4.5": "openai",
     "kimi-k2.7-code": "openai",
     "deepseek-v4-pro": "openai",
+    "muse-spark-1.2": "openai",
+    "muse-spark-1.2-contributor": "openai",
 }
 
 MODEL_CATALOG = build_model_catalog(
@@ -99,6 +102,22 @@ MODEL_CATALOG = build_model_catalog(
         thinking_levels=DEEPSEEK_THINKING_LEVELS,
         default_thinking_level="high",
         supports_image_inputs=False,
+    ),
+    ProviderModelInfo(
+        id="muse-spark-1.2",
+        display_name="Muse Spark 1.2",
+        context_window_tokens=1_000_000,
+        thinking_levels=MUSE_SPARK_THINKING_LEVELS,
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
+    ProviderModelInfo(
+        id="muse-spark-1.2-contributor",
+        display_name="Muse Spark 1.2 Contributor",
+        context_window_tokens=1_000_000,
+        thinking_levels=MUSE_SPARK_THINKING_LEVELS,
+        default_thinking_level="medium",
+        supports_image_inputs=True,
     ),
 )
 
