@@ -83,6 +83,17 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         max_output_tokens=args.max_output_tokens,
         allowed_hosts=tuple(args.allowed_hosts or env_hosts()),
         bearer_token=os.environ.get("YOKE_MCP_BEARER_TOKEN") or None,
+        oauth_issuer_url=os.environ.get("YOKE_MCP_OAUTH_ISSUER_URL") or None,
+        oauth_authorization_password=(
+            os.environ.get("YOKE_MCP_OAUTH_AUTHORIZATION_PASSWORD") or None
+        ),
+        oauth_state_file=(
+            Path(os.environ["YOKE_MCP_OAUTH_STATE_FILE"])
+            if os.environ.get("YOKE_MCP_OAUTH_STATE_FILE")
+            else None
+        ),
+        oauth_allowed_redirect_hosts=env_hosts("YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS")
+        or ("chatgpt.com",),
         log_tool_inputs=env_bool("YOKE_MCP_LOG_TOOL_INPUTS"),
         log_level=args.log_level,
     )

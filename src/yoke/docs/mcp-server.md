@@ -51,6 +51,28 @@ authentication is not an MCP OAuth implementation and cannot replace OAuth 2.1
 for a published ChatGPT app. A public deployment must use MCP-compliant OAuth
 or another supported private connection mechanism.
 
+For a private, single-user ChatGPT connection, enable the built-in OAuth 2.1
+authorization-code flow with PKCE and Dynamic Client Registration:
+
+```sh
+YOKE_MCP_OAUTH_ISSUER_URL=https://mcp.example.com
+YOKE_MCP_OAUTH_AUTHORIZATION_PASSWORD='use-a-long-random-secret'
+YOKE_MCP_OAUTH_STATE_FILE=~/.local/state/yoke-mcp/oauth.json
+YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS=chatgpt.com
+```
+
+The issuer URL has no `/mcp` suffix. OAuth metadata, protected-resource
+metadata, registration, authorization, token, and consent routes are mounted
+automatically. The state file persists registered clients, access tokens, and
+rotating refresh tokens across service restarts and is written with mode
+`0600`. The authorization password is never exposed to child commands. Keep it
+in the private service environment and enter it only on the server-hosted
+consent page reached during the ChatGPT OAuth flow.
+
+The OAuth provider intentionally accepts HTTPS redirect URIs only for hosts in
+`YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` (plus HTTP localhost callbacks for MCP
+Inspector testing). The default is `chatgpt.com`.
+
 ## Filesystem and command security
 
 The configured root is a default context, not a sandbox. Relative paths resolve

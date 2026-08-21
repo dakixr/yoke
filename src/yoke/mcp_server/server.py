@@ -8,11 +8,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from mcp.server.lowlevel import Server
+from mcp.server.auth.routes import build_resource_metadata_url
+from mcp.server.auth.routes import create_auth_routes
+from mcp.server.auth.routes import create_protected_resource_routes
+from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolRequestParams
 from mcp.types import CallToolResult
 from mcp.types import ListToolsResult
 from mcp.types import PaginatedRequestParams
+from pydantic import AnyHttpUrl
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -21,6 +26,7 @@ from starlette.types import ASGIApp
 from yoke._version import __version__
 from yoke.mcp_server.adapter import ToolAdapter
 from yoke.mcp_server.auth import BearerTokenMiddleware
+from yoke.mcp_server.auth import SingleUserOAuthProvider
 from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.process_runtime import ProcessRuntime
 
@@ -33,6 +39,7 @@ class MCPService:
     server: Server[ProcessRuntime]
     runtime: ProcessRuntime
     app: ASGIApp
+    oauth_provider: SingleUserOAuthProvider | None = None
 
 
 def create_service(config: MCPServerConfig) -> MCPService:
@@ -80,6 +87,47 @@ def create_service(config: MCPServerConfig) -> MCPService:
             "http://[::1]:*",
         ],
     )
+    custom_routes = [Route("/healthz", _health)]
+    oauth_provider = None
+    resource_metadata_url = None
+    if config.oauth_issuer_url and config.oauth_authorization_password:
+        if config.oauth_state_file is None:  # pragma: no cover - validated by config
+            raise RuntimeError("OAuth state file was not configured")
+        issuer_url = AnyHttpUrl(config.oauth_issuer_url)
+        resource_url = AnyHttpUrl(f"{config.oauth_issuer_url}/mcp")
+        oauth_provider = SingleUserOAuthProvider(
+            issuer_url=config.oauth_issuer_url,
+            resource_url=str(resource_url),
+            authorization_password=config.oauth_authorization_password,
+            state_file=config.oauth_state_file,
+            allowed_redirect_hosts=config.oauth_allowed_redirect_hosts,
+        )
+        custom_routes.extend(
+            create_auth_routes(
+                oauth_provider,
+                issuer_url,
+                client_registration_options=ClientRegistrationOptions(enabled=True),
+            )
+        )
+        custom_routes.extend(
+            create_protected_resource_routes(
+                resource_url,
+                [issuer_url],
+                resource_name="Yoke Mooncake",
+            )
+        )
+        custom_routes.extend(
+            [
+                Route("/oauth/consent", oauth_provider.consent_page, methods=["GET"]),
+                Route(
+                    "/oauth/consent",
+                    oauth_provider.complete_consent,
+                    methods=["POST"],
+                ),
+            ]
+        )
+        resource_metadata_url = str(build_resource_metadata_url(resource_url))
+
     starlette_app = server.streamable_http_app(
         streamable_http_path="/mcp",
         json_response=True,
@@ -87,10 +135,21 @@ def create_service(config: MCPServerConfig) -> MCPService:
         max_request_body_size=config.max_request_body_size,
         transport_security=transport_security,
         host=config.host,
-        custom_starlette_routes=[Route("/healthz", _health)],
+        custom_starlette_routes=custom_routes,
     )
-    app: ASGIApp = BearerTokenMiddleware(starlette_app, config.bearer_token)
-    return MCPService(config=config, server=server, runtime=runtime, app=app)
+    app: ASGIApp = BearerTokenMiddleware(
+        starlette_app,
+        config.bearer_token,
+        oauth_provider=oauth_provider,
+        resource_metadata_url=resource_metadata_url,
+    )
+    return MCPService(
+        config=config,
+        server=server,
+        runtime=runtime,
+        app=app,
+        oauth_provider=oauth_provider,
+    )
 
 
 async def _health(_: Request) -> JSONResponse:

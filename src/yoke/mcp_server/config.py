@@ -37,6 +37,10 @@ class MCPServerConfig:
     max_request_body_size: int = 4 * 1024 * 1024
     allowed_hosts: tuple[str, ...] = ()
     bearer_token: str | None = None
+    oauth_issuer_url: str | None = None
+    oauth_authorization_password: str | None = None
+    oauth_state_file: Path | None = None
+    oauth_allowed_redirect_hosts: tuple[str, ...] = ("chatgpt.com",)
     log_tool_inputs: bool = False
     log_level: str = "info"
 
@@ -45,6 +49,21 @@ class MCPServerConfig:
         if not root.is_dir():
             raise ValueError(f"MCP root is not a directory: {root}")
         object.__setattr__(self, "root", root)
+        if bool(self.oauth_issuer_url) != bool(self.oauth_authorization_password):
+            raise ValueError(
+                "oauth_issuer_url and oauth_authorization_password must be configured together"
+            )
+        if self.oauth_issuer_url:
+            issuer = self.oauth_issuer_url.rstrip("/")
+            if not issuer.startswith(("https://", "http://localhost")):
+                raise ValueError("oauth_issuer_url must use HTTPS")
+            object.__setattr__(self, "oauth_issuer_url", issuer)
+            state_file = self.oauth_state_file or Path(
+                "~/.local/state/yoke-mcp/oauth.json"
+            )
+            object.__setattr__(
+                self, "oauth_state_file", state_file.expanduser().resolve()
+            )
         for name in (
             "port",
             "default_yield_ms",

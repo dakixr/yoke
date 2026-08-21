@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 from pathlib import Path
+from urllib.parse import parse_qs
+from urllib.parse import urlparse
 
 import httpx2
 
@@ -50,5 +54,152 @@ def test_transport_rejects_unapproved_host_header(tmp_path: Path) -> None:
             ) as client:
                 response = await client.post("/mcp", json={})
                 assert response.status_code == 421
+
+    asyncio.run(scenario())
+
+
+def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        service = create_service(
+            MCPServerConfig(
+                root=tmp_path,
+                oauth_issuer_url="http://localhost",
+                oauth_authorization_password="authorize-me",
+                oauth_state_file=tmp_path / "oauth.json",
+            )
+        )
+        transport = httpx2.ASGITransport(app=service.app)
+        async with service.server.session_manager.run():
+            async with httpx2.AsyncClient(
+                transport=transport,
+                base_url="http://localhost",
+                headers={"Host": "localhost"},
+                follow_redirects=False,
+            ) as client:
+                metadata = await client.get("/.well-known/oauth-authorization-server")
+                resource = await client.get("/.well-known/oauth-protected-resource/mcp")
+                assert metadata.json()["registration_endpoint"].endswith("/register")
+                assert resource.json()["resource"] == "http://localhost/mcp"
+
+                registration = await client.post(
+                    "/register",
+                    json={
+                        "client_name": "ChatGPT test",
+                        "redirect_uris": ["http://localhost/callback"],
+                        "token_endpoint_auth_method": "none",
+                        "grant_types": ["authorization_code", "refresh_token"],
+                        "response_types": ["code"],
+                        "scope": "yoke",
+                    },
+                )
+                assert registration.status_code == 201
+                client_id = registration.json()["client_id"]
+
+                verifier = "v" * 64
+                challenge = (
+                    base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+                    .decode()
+                    .rstrip("=")
+                )
+                authorization = await client.get(
+                    "/authorize",
+                    params={
+                        "client_id": client_id,
+                        "redirect_uri": "http://localhost/callback",
+                        "response_type": "code",
+                        "code_challenge": challenge,
+                        "code_challenge_method": "S256",
+                        "scope": "yoke",
+                        "state": "state-value",
+                        "resource": "http://localhost/mcp",
+                    },
+                )
+                consent_url = authorization.headers["location"]
+                request_id = parse_qs(urlparse(consent_url).query)["request_id"][0]
+                consent = await client.get(consent_url)
+                assert "Authorize Yoke Mooncake" in consent.text
+
+                rejected = await client.post(
+                    "/oauth/consent",
+                    data={"request_id": request_id, "password": "wrong"},
+                )
+                assert rejected.status_code == 401
+                approved = await client.post(
+                    "/oauth/consent",
+                    data={"request_id": request_id, "password": "authorize-me"},
+                )
+                callback = approved.headers["location"]
+                callback_query = parse_qs(urlparse(callback).query)
+                assert callback_query["state"] == ["state-value"]
+
+                token = await client.post(
+                    "/token",
+                    data={
+                        "grant_type": "authorization_code",
+                        "client_id": client_id,
+                        "code": callback_query["code"][0],
+                        "code_verifier": verifier,
+                        "redirect_uri": "http://localhost/callback",
+                        "resource": "http://localhost/mcp",
+                    },
+                )
+                assert token.status_code == 200
+                tokens = token.json()
+
+                refreshed = await client.post(
+                    "/token",
+                    data={
+                        "grant_type": "refresh_token",
+                        "client_id": client_id,
+                        "refresh_token": tokens["refresh_token"],
+                        "scope": "yoke",
+                    },
+                )
+                assert refreshed.status_code == 200
+                assert refreshed.json()["access_token"] != tokens["access_token"]
+
+                denied = await client.post("/mcp", json={})
+                assert denied.status_code == 401
+                assert "resource_metadata=" in denied.headers["www-authenticate"]
+
+            async with http_client(
+                service, token=refreshed.json()["access_token"]
+            ) as mcp:
+                result = await mcp.list_tools()
+                assert len(result.tools) == 8
+
+        state_file = tmp_path / "oauth.json"
+        assert state_file.stat().st_mode & 0o777 == 0o600
+
+    asyncio.run(scenario())
+
+
+def test_oauth_registration_rejects_unapproved_redirect_host(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        service = create_service(
+            MCPServerConfig(
+                root=tmp_path,
+                oauth_issuer_url="http://localhost",
+                oauth_authorization_password="authorize-me",
+                oauth_state_file=tmp_path / "oauth.json",
+            )
+        )
+        transport = httpx2.ASGITransport(app=service.app)
+        async with service.server.session_manager.run():
+            async with httpx2.AsyncClient(
+                transport=transport,
+                base_url="http://localhost",
+                headers={"Host": "localhost"},
+            ) as client:
+                registration = await client.post(
+                    "/register",
+                    json={
+                        "client_name": "Attacker",
+                        "redirect_uris": ["https://attacker.example/callback"],
+                        "token_endpoint_auth_method": "none",
+                    },
+                )
+                assert registration.status_code == 400
+                assert registration.json()["error"] == "invalid_redirect_uri"
 
     asyncio.run(scenario())
