@@ -15,8 +15,13 @@ The service exposes:
 
 - `GET /healthz`
 - MCP Streamable HTTP at `POST /mcp`
-- exactly nine tools: `read_file`, `list_files`, `search_text`, `find_files`,
-  `skill`, `apply_patch`, `exec_command`, `exec_python`, and `process_io`
+- exactly eight tools: `read_file`, `rg`, `fd`, `skill`, `apply_patch`,
+  `exec_command`, `exec_python`, and `process_io`
+
+The `rg` and `fd` tools accept their native raw argument syntax. To keep their
+MCP annotations truthfully read-only, subprocess-launching switches (`rg
+--pre` and `fd --exec`/`--exec-batch`/`-x`/`-X`) are rejected; use
+`exec_command` when command execution is intended.
 
 The HTTP transport is stateless. One long-lived application runtime owns a
 shared `CommandProcessManager`, so commands that outlive their initial call can

@@ -15,9 +15,8 @@ from .helpers import structured
 
 EXPECTED_TOOLS = [
     "read_file",
-    "list_files",
-    "search_text",
-    "find_files",
+    "rg",
+    "fd",
     "skill",
     "apply_patch",
     "exec_command",
@@ -26,7 +25,7 @@ EXPECTED_TOOLS = [
 ]
 
 
-def test_registry_is_an_explicit_nine_tool_allowlist(tmp_path: Path) -> None:
+def test_registry_is_an_explicit_eight_tool_allowlist(tmp_path: Path) -> None:
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
         async with memory_client(service) as client:
@@ -34,8 +33,8 @@ def test_registry_is_an_explicit_nine_tool_allowlist(tmp_path: Path) -> None:
             assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
             assert set(TOOL_REGISTRY) == set(EXPECTED_TOOLS)
             read_tool = result.tools[0]
-            skill_tool = result.tools[4]
-            patch_tool = result.tools[5]
+            skill_tool = result.tools[3]
+            patch_tool = result.tools[4]
             assert read_tool.annotations is not None
             assert read_tool.annotations.read_only_hint is True
             assert skill_tool.annotations is not None
@@ -83,21 +82,42 @@ def test_file_tools_keep_yoke_path_semantics(tmp_path: Path) -> None:
             )
             search = structured(
                 await client.call_tool(
-                    "search_text", {"query": "needle", "path": str(tmp_path)}
+                    "rg", {"raw_args": "needle", "root_dir": str(tmp_path)}
                 )
             )
             found = structured(
                 await client.call_tool(
-                    "find_files", {"pattern": "*.txt", "path": str(tmp_path)}
+                    "fd", {"raw_args": "--glob '*.txt'", "root_dir": str(tmp_path)}
                 )
             )
             assert relative["content"].startswith("needle inside")
             assert outside["content"].startswith("needle outside")
             assert absolute["content"].startswith("needle outside")
             assert search["ok"] is True
-            assert search["match_count"] == 2
+            assert len(search["output"]) == 2
             assert found["ok"] is True
-            assert len(found["matches"]) == 2
+            assert len(found["output"]) == 2
+
+    asyncio.run(scenario())
+
+
+def test_rg_and_fd_reject_native_subprocess_switches(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        service = create_service(MCPServerConfig(root=tmp_path))
+        async with memory_client(service) as client:
+            rg_result = await client.call_tool(
+                "rg", {"raw_args": "--pre 'touch should-not-exist' needle"}
+            )
+            fd_result = await client.call_tool(
+                "fd", {"raw_args": "--exec touch should-not-exist"}
+            )
+            short_fd_result = await client.call_tool(
+                "fd", {"raw_args": "-x touch should-not-exist"}
+            )
+            assert rg_result.is_error is True
+            assert fd_result.is_error is True
+            assert short_fd_result.is_error is True
+            assert not (tmp_path / "should-not-exist").exists()
 
     asyncio.run(scenario())
 

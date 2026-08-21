@@ -12,9 +12,8 @@ from yoke.agent.tools.command import ExecCommandTool
 from yoke.agent.tools.command import WriteStdinTool
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.agent.tools.read import ReadTool
-from yoke.agent.tools.search import LsTool
-from yoke.mcp_server.tools import FindFilesTool
-from yoke.mcp_server.tools import SearchTextTool
+from yoke.mcp_server.search import MCPFdTool
+from yoke.mcp_server.search import MCPRipgrepTool
 from yoke.mcp_server.skills import MCPSkillTool
 
 
@@ -62,25 +61,17 @@ TOOL_REGISTRY = {
             READ_ONLY,
         ),
         ExposedTool(
-            "list_files",
-            "List files",
-            "List files and directories on the server. Relative paths resolve "
-            "from the configured default root; absolute paths are allowed.",
-            LsTool,
+            "rg",
+            "Ripgrep",
+            MCPRipgrepTool.description,
+            MCPRipgrepTool,
             READ_ONLY,
         ),
         ExposedTool(
-            "search_text",
-            "Search text",
-            SearchTextTool.description,
-            SearchTextTool,
-            READ_ONLY,
-        ),
-        ExposedTool(
-            "find_files",
+            "fd",
             "Find files",
-            FindFilesTool.description,
-            FindFilesTool,
+            MCPFdTool.description,
+            MCPFdTool,
             READ_ONLY,
         ),
         ExposedTool(
