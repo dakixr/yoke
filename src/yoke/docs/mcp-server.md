@@ -57,7 +57,10 @@ discovers `SKILL.md` files in those directories, returns the full instructions
 and absolute paths for every file in a requested skill directory, and does not
 register itself with Yoke's agent CLI. Configured directories take precedence
 over duplicate skill names; Yoke's built-in skills remain available as
-fallbacks.
+fallbacks. Discovery runs on every `skill` call, so newly installed, updated,
+renamed, or removed skills are visible without restarting the MCP service.
+Temporarily invalid `SKILL.md` files are ignored so an in-progress installation
+does not break access to the rest of the catalog.
 
 Set `YOKE_MCP_BEARER_TOKEN` to protect `/mcp` with a static bearer token during
 private deployment tests. The health endpoint remains public. Static bearer

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from pathlib import Path
 
 from yoke.mcp_server.cli import parse_config
@@ -83,6 +84,59 @@ def test_skill_tool_reports_missing_names_without_losing_loaded_skills(
             assert len(result["skills"]) == 1
 
     asyncio.run(scenario())
+
+
+def test_skill_install_update_and_removal_are_visible_without_restart(
+    tmp_path: Path,
+) -> None:
+    skill_dirs = tmp_path / "skills"
+    skill_dirs.mkdir()
+
+    async def scenario() -> None:
+        service = create_service(
+            MCPServerConfig(root=tmp_path, skill_dirs=(skill_dirs,))
+        )
+        async with memory_client(service) as client:
+            initial = structured(await client.call_tool("skill", {}))
+            assert "hot-skill" not in {item["name"] for item in initial["available"]}
+
+            skill_root = write_skill(skill_dirs / "nested", "hot-skill", "First.")
+            installed = structured(await client.call_tool("skill", {}))
+            installed_by_name = {item["name"]: item for item in installed["available"]}
+            assert installed_by_name["hot-skill"]["description"] == "First."
+
+            reference = skill_root / "reference.md"
+            reference.write_text("live reference", encoding="utf-8")
+            skill_md = skill_root / "SKILL.md"
+            skill_md.write_text(
+                "---\nname: hot-skill\ndescription: Second.\n---\n\n# Updated\n",
+                encoding="utf-8",
+            )
+            updated = structured(
+                await client.call_tool("skill", {"load": ["hot-skill"]})
+            )["skills"][0]
+            assert updated["description"] == "Second."
+            assert updated["content"].endswith("# Updated\n")
+            assert str(reference.resolve()) in updated["files"]
+
+            shutil.rmtree(skill_root)
+            removed = structured(await client.call_tool("skill", {}))
+            assert "hot-skill" not in {item["name"] for item in removed["available"]}
+
+    asyncio.run(scenario())
+
+
+def test_invalid_partial_skill_does_not_break_hot_discovery(tmp_path: Path) -> None:
+    skill_dirs = tmp_path / "skills"
+    valid_root = write_skill(skill_dirs, "valid-skill")
+    partial_root = skill_dirs / "partial-skill"
+    partial_root.mkdir()
+    (partial_root / "SKILL.md").write_text("still installing", encoding="utf-8")
+
+    registry = load_mcp_skill_registry((skill_dirs,))
+
+    assert registry.require("valid-skill").root == valid_root
+    assert registry.get("partial-skill") is None
 
 
 def test_mcp_skill_discovery_is_recursive_and_first_directory_wins(

@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 from pydantic import Field
 from pydantic import PrivateAttr
 
+from yoke.agent.skills.discovery import SkillDiscoveryError
 from yoke.agent.skills.discovery import builtin_skill_dir
 from yoke.agent.skills.discovery import load_skill
 from yoke.agent.skills.models import SkillSpec
@@ -26,7 +28,13 @@ def load_mcp_skill_registry(skill_dirs: Sequence[Path]) -> SkillRegistry:
         if not resolved_dir.is_dir():
             continue
         for skill_md_path in sorted(resolved_dir.rglob("SKILL.md")):
-            spec = load_skill(skill_md_path.parent)
+            try:
+                spec = load_skill(skill_md_path.parent)
+            except SkillDiscoveryError as exc:
+                logger.warning(
+                    "Ignoring invalid MCP skill at %s: %s", skill_md_path, exc
+                )
+                continue
             previous = discovered.get(spec.name)
             if previous is not None:
                 logger.info(
@@ -58,17 +66,20 @@ class MCPSkillTool(LocalTool):
         ),
     )
 
-    _registry: SkillRegistry = PrivateAttr()
+    _skill_dirs: tuple[Path, ...] = PrivateAttr()
 
     def _bind_context(self, **context: object) -> None:
         super()._bind_context(**context)
-        registry = context.get("skill_registry")
-        if not isinstance(registry, SkillRegistry):
-            raise ValueError("skill_registry is required for MCPSkillTool")
-        self._registry = registry
+        skill_dirs = context.get("skill_dirs")
+        if not isinstance(skill_dirs, tuple) or not all(
+            isinstance(path, Path) for path in skill_dirs
+        ):
+            raise ValueError("skill_dirs is required for MCPSkillTool")
+        self._skill_dirs = cast(tuple[Path, ...], skill_dirs)
 
     def execute(self) -> dict[str, object]:
         """Return a catalog or the requested skill payloads."""
+        registry = load_mcp_skill_registry(self._skill_dirs)
         requested = _unique_names(self.load)
         available = [
             {
@@ -76,7 +87,7 @@ class MCPSkillTool(LocalTool):
                 "description": skill.description,
                 "skill_md_path": str(skill.skill_md_path),
             }
-            for skill in sorted(self._registry.skills, key=lambda item: item.name)
+            for skill in sorted(registry.skills, key=lambda item: item.name)
         ]
         if not requested:
             return {"ok": True, "available": available}
@@ -85,11 +96,11 @@ class MCPSkillTool(LocalTool):
         missing: list[str] = []
         payloads: list[dict[str, object]] = []
         for name in requested:
-            spec = self._registry.get(name)
+            spec = registry.get(name)
             if spec is None:
                 missing.append(name)
                 continue
-            active = self._registry.activate(name)
+            active = registry.activate(name)
             loaded.append(name)
             payloads.append(
                 {
