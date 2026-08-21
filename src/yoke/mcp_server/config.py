@@ -36,6 +36,7 @@ class MCPServerConfig:
     max_concurrent_process_starts: int = 8
     max_request_body_size: int = 4 * 1024 * 1024
     allowed_hosts: tuple[str, ...] = ()
+    skill_dirs: tuple[Path, ...] = ()
     bearer_token: str | None = None
     oauth_issuer_url: str | None = None
     oauth_authorization_password: str | None = None
@@ -49,6 +50,15 @@ class MCPServerConfig:
         if not root.is_dir():
             raise ValueError(f"MCP root is not a directory: {root}")
         object.__setattr__(self, "root", root)
+        resolved_skill_dirs: list[Path] = []
+        for skill_dir in self.skill_dirs:
+            resolved_skill_dir = skill_dir.expanduser().resolve()
+            if not resolved_skill_dir.is_dir():
+                raise ValueError(
+                    f"MCP skill directory is not a directory: {resolved_skill_dir}"
+                )
+            resolved_skill_dirs.append(resolved_skill_dir)
+        object.__setattr__(self, "skill_dirs", tuple(resolved_skill_dirs))
         if bool(self.oauth_issuer_url) != bool(self.oauth_authorization_password):
             raise ValueError(
                 "oauth_issuer_url and oauth_authorization_password must be configured together"
@@ -113,6 +123,12 @@ def env_int(name: str, default: int) -> int:
 def env_hosts(name: str = "YOKE_MCP_ALLOWED_HOSTS") -> tuple[str, ...]:
     """Read comma-separated transport Host-header patterns."""
     return _split_csv(os.environ.get(name, ""))
+
+
+def env_paths(name: str) -> tuple[Path, ...]:
+    """Read platform-separated filesystem paths from an environment variable."""
+    value = os.environ.get(name, "")
+    return tuple(Path(item) for item in value.split(os.pathsep) if item.strip())
 
 
 def _split_csv(value: str) -> tuple[str, ...]:

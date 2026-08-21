@@ -15,6 +15,7 @@ from yoke.agent.tools.read import ReadTool
 from yoke.agent.tools.search import LsTool
 from yoke.mcp_server.tools import FindFilesTool
 from yoke.mcp_server.tools import SearchTextTool
+from yoke.mcp_server.skills import MCPSkillTool
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,13 @@ TOOL_REGISTRY = {
             "Find files",
             FindFilesTool.description,
             FindFilesTool,
+            READ_ONLY,
+        ),
+        ExposedTool(
+            "skill",
+            "Load skill",
+            MCPSkillTool.description,
+            MCPSkillTool,
             READ_ONLY,
         ),
         ExposedTool(

@@ -13,6 +13,7 @@ from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.config import env_bool
 from yoke.mcp_server.config import env_hosts
 from yoke.mcp_server.config import env_int
+from yoke.mcp_server.config import env_paths
 from yoke.mcp_server.server import create_service
 
 
@@ -71,6 +72,14 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         default=None,
     )
     parser.add_argument(
+        "--skill-dir",
+        action="append",
+        type=Path,
+        dest="skill_dirs",
+        default=None,
+        help="Skill directory to discover recursively; may be repeated.",
+    )
+    parser.add_argument(
         "--log-level", default=os.environ.get("YOKE_MCP_LOG_LEVEL", "info")
     )
     args = parser.parse_args(argv)
@@ -82,6 +91,7 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         python_timeout=args.python_timeout,
         max_output_tokens=args.max_output_tokens,
         allowed_hosts=tuple(args.allowed_hosts or env_hosts()),
+        skill_dirs=tuple(args.skill_dirs or env_paths("YOKE_MCP_SKILL_DIRS")),
         bearer_token=os.environ.get("YOKE_MCP_BEARER_TOKEN") or None,
         oauth_issuer_url=os.environ.get("YOKE_MCP_OAUTH_ISSUER_URL") or None,
         oauth_authorization_password=(

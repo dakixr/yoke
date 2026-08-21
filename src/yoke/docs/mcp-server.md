@@ -15,8 +15,8 @@ The service exposes:
 
 - `GET /healthz`
 - MCP Streamable HTTP at `POST /mcp`
-- exactly eight tools: `read_file`, `list_files`, `search_text`, `find_files`,
-  `apply_patch`, `exec_command`, `exec_python`, and `process_io`
+- exactly nine tools: `read_file`, `list_files`, `search_text`, `find_files`,
+  `skill`, `apply_patch`, `exec_command`, `exec_python`, and `process_io`
 
 The HTTP transport is stateless. One long-lived application runtime owns a
 shared `CommandProcessManager`, so commands that outlive their initial call can
@@ -39,11 +39,20 @@ CLI flags have environment equivalents:
 | `--python-timeout` | `YOKE_MCP_PYTHON_TIMEOUT` | `180` |
 | `--max-output-tokens` | `YOKE_MCP_MAX_OUTPUT_TOKENS` | `20000` |
 | `--allowed-host` | `YOKE_MCP_ALLOWED_HOSTS` | loopback hosts |
+| `--skill-dir` | `YOKE_MCP_SKILL_DIRS` | built-in skills only |
 | `--log-level` | `YOKE_MCP_LOG_LEVEL` | `info` |
 
 `YOKE_MCP_ALLOWED_HOSTS` is a comma-separated list of accepted HTTP Host
 headers. Add the public hostname when a reverse proxy or tunnel forwards an
 external hostname to the loopback service.
+
+`--skill-dir` may be repeated. `YOKE_MCP_SKILL_DIRS` uses the platform path
+separator (`:` on Linux and macOS). The MCP-only `skill` tool recursively
+discovers `SKILL.md` files in those directories, returns the full instructions
+and absolute paths for every file in a requested skill directory, and does not
+register itself with Yoke's agent CLI. Configured directories take precedence
+over duplicate skill names; Yoke's built-in skills remain available as
+fallbacks.
 
 Set `YOKE_MCP_BEARER_TOKEN` to protect `/mcp` with a static bearer token during
 private deployment tests. The health endpoint remains public. Static bearer

@@ -16,6 +16,7 @@ from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.process_runtime import ProcessRuntime
 from yoke.mcp_server.registry import TOOL_REGISTRY
 from yoke.mcp_server.registry import ExposedTool
+from yoke.mcp_server.skills import load_mcp_skill_registry
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class ToolAdapter:
     def __init__(self, config: MCPServerConfig, runtime: ProcessRuntime) -> None:
         self.config = config
         self.runtime = runtime
+        self.skill_registry = load_mcp_skill_registry(config.skill_dirs)
 
     def list_tools(self) -> list[Tool]:
         """Return exact Pydantic schemas with stable external tool names."""
@@ -43,6 +45,7 @@ class ToolAdapter:
         prototype = spec.tool_class.bind(
             root=self.config.root,
             command_process_manager=self.runtime.manager,
+            skill_registry=self.skill_registry,
         )
         try:
             tool = prototype.parse_arguments(parsed_arguments)

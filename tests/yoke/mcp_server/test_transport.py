@@ -37,7 +37,7 @@ def test_health_is_public_but_mcp_requires_configured_bearer(tmp_path: Path) -> 
                 assert denied.headers["www-authenticate"] == "Bearer"
             async with http_client(service, token="test-secret") as mcp:
                 result = await mcp.list_tools()
-                assert len(result.tools) == 8
+                assert len(result.tools) == 9
 
     asyncio.run(scenario())
 
@@ -166,7 +166,7 @@ def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None
                 service, token=refreshed.json()["access_token"]
             ) as mcp:
                 result = await mcp.list_tools()
-                assert len(result.tools) == 8
+                assert len(result.tools) == 9
 
         state_file = tmp_path / "oauth.json"
         assert state_file.stat().st_mode & 0o777 == 0o600
