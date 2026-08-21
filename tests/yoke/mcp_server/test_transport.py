@@ -89,10 +89,10 @@ def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None
                         "token_endpoint_auth_method": "none",
                         "grant_types": ["authorization_code", "refresh_token"],
                         "response_types": ["code"],
-                        "scope": "yoke",
                     },
                 )
                 assert registration.status_code == 201
+                assert registration.json()["scope"] == "yoke"
                 client_id = registration.json()["client_id"]
 
                 verifier = "v" * 64

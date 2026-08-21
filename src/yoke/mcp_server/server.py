@@ -106,7 +106,11 @@ def create_service(config: MCPServerConfig) -> MCPService:
             create_auth_routes(
                 oauth_provider,
                 issuer_url,
-                client_registration_options=ClientRegistrationOptions(enabled=True),
+                client_registration_options=ClientRegistrationOptions(
+                    enabled=True,
+                    valid_scopes=["yoke"],
+                    default_scopes=["yoke"],
+                ),
             )
         )
         custom_routes.extend(

@@ -75,7 +75,10 @@ class SingleUserOAuthProvider(
         self._load_state()
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self._clients.get(client_id)
+        client = self._clients.get(client_id)
+        if client is not None and client.scope is None:
+            return client.model_copy(update={"scope": "yoke"})
+        return client
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         redirect_uris = client_info.redirect_uris or []
