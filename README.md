@@ -19,6 +19,17 @@ uv sync
 uv run yoke --help
 ```
 
+To run Yoke's tool-only MCP server on loopback:
+
+```sh
+uv run yoke-mcp --root /srv/projects/my-app
+```
+
+The MCP server exposes Yoke's file, patch, shell, Python, and managed-process
+tools without instantiating an agent or persisting conversation state. See
+[`src/yoke/docs/mcp-server.md`](src/yoke/docs/mcp-server.md) for deployment and
+security details.
+
 ## CLI
 
 ```sh
