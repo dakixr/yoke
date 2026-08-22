@@ -278,3 +278,120 @@ def test_manager_allows_calls_to_different_servers_in_parallel(tmp_path: Path) -
         )
         assert first_future.result()["ok"] is True
         assert second_future.result()["ok"] is True
+
+
+class BlockingFakeClient(FakeClient):
+    def __init__(self, *, started: threading.Event, release: threading.Event) -> None:
+        super().__init__()
+        self.started = started
+        self.release = release
+
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        cancel_requested=None,
+    ) -> dict[str, Any]:
+        del name, arguments, cancel_requested
+        self.started.set()
+        assert self.release.wait(timeout=2)
+        return {}
+
+
+def test_manager_reloads_changed_config_after_in_flight_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir()
+    config_path = config_dir / "mcp.json"
+
+    def write_config(arg: str) -> None:
+        config_path.write_text(
+            json.dumps(
+                {
+                    "mcp_servers": {
+                        "sample": {
+                            "command": "unused",
+                            "args": [arg],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    write_config("one")
+    started = threading.Event()
+    release = threading.Event()
+    created: list[tuple[McpServerConfig, FakeClient]] = []
+
+    def create_client(server: McpServerConfig, *, root: Path) -> FakeClient:
+        del root
+        client: FakeClient
+        if server.args == ("one",):
+            client = BlockingFakeClient(started=started, release=release)
+        else:
+            client = FakeClient()
+        created.append((server, client))
+        return client
+
+    monkeypatch.setattr("yoke.mcp.manager.create_mcp_client", create_client)
+    manager = McpManager.from_paths(root=tmp_path, home=tmp_path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            manager.call_tool,
+            server="sample",
+            tool="sample",
+            arguments={},
+        )
+        assert started.wait(timeout=1)
+
+        write_config("two")
+        second = executor.submit(
+            manager.call_tool,
+            server="sample",
+            tool="sample",
+            arguments={},
+        )
+        time.sleep(0.05)
+        assert second.done() is False
+
+        release.set()
+        assert first.result()["ok"] is True
+        assert second.result()["ok"] is True
+
+    assert [server.args for server, _client in created] == [("one",), ("two",)]
+    assert created[0][1].closed is True
+    assert created[1][1].closed is False
+
+
+def test_manager_keeps_last_good_config_when_reload_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir()
+    config_path = config_dir / "mcp.json"
+    valid = json.dumps({"mcp_servers": {"sample": {"command": "unused"}}})
+    config_path.write_text(valid, encoding="utf-8")
+    client = FakeClient()
+    monkeypatch.setattr(
+        "yoke.mcp.manager.create_mcp_client", lambda _server, root: client
+    )
+    manager = McpManager.from_paths(root=tmp_path, home=tmp_path)
+
+    assert manager.inspect()["ok"] is True
+    config_path.write_text("{", encoding="utf-8")
+
+    invalid = manager.inspect()
+
+    assert invalid["ok"] is False
+    assert "MCP config reload failed" in str(invalid["error"])
+    assert client.closed is False
+
+    config_path.write_text(valid, encoding="utf-8")
+    recovered = manager.inspect()
+
+    assert recovered["ok"] is True
+    assert client.closed is False

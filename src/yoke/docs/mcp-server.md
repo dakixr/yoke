@@ -77,6 +77,18 @@ tools. `mcp_call` invokes one selected tool. The gateway respects each server's
 downstream server are serialized because stdio and stateful HTTP MCP sessions
 share client state. Calls to different downstream servers can run in parallel.
 
+Both gateway tools re-read the global and workspace MCP config before each
+operation. Adding, changing, disabling, or removing a server therefore takes
+effect without restarting `yoke-mcp`. Unchanged server clients stay connected.
+When a server config changes, Yoke waits for any active call to finish, closes
+that server's old client, and creates a new client on demand. Removed and
+disabled servers are closed as part of the same reconciliation.
+
+If a config file is temporarily invalid while it is being edited, the gateway
+returns a reload error and keeps the last valid config and clients intact. The
+next call retries the config load, so fixing the file recovers without a
+service restart.
+
 The outer Yoke OAuth flow authenticates ChatGPT or another remote MCP client to
 Yoke. It does not authenticate Yoke to downstream MCP servers. Downstream stdio
 servers use their configured environment, and downstream Streamable HTTP

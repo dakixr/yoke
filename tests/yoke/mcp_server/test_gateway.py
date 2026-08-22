@@ -67,9 +67,11 @@ for line in sys.stdin:
     )
 
 
-def _write_config(root: Path, server_script: Path) -> None:
+def _write_config(
+    root: Path, server_script: Path, *, enabled_tools: list[str] | None = None
+) -> None:
     config_dir = root / ".yoke"
-    config_dir.mkdir()
+    config_dir.mkdir(exist_ok=True)
     (config_dir / "mcp.json").write_text(
         json.dumps(
             {
@@ -77,7 +79,7 @@ def _write_config(root: Path, server_script: Path) -> None:
                     "fake": {
                         "command": sys.executable,
                         "args": ["-u", str(server_script)],
-                        "enabled_tools": ["echo"],
+                        "enabled_tools": enabled_tools or ["echo"],
                     }
                 }
             }
@@ -140,3 +142,61 @@ def test_gateway_inspects_and_calls_configured_stdio_mcp(
 
     process = asyncio.run(scenario())
     assert process.returncode is not None
+
+
+def test_gateway_hot_reloads_added_changed_and_removed_mcp_servers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    root = tmp_path / "root"
+    home.mkdir()
+    root.mkdir()
+    server_script = tmp_path / "fake_mcp.py"
+    _write_fake_server(server_script)
+    monkeypatch.setenv("HOME", str(home))
+
+    async def scenario() -> tuple[subprocess.Popen[str], subprocess.Popen[str]]:
+        service = create_service(MCPServerConfig(root=root))
+        manager = service.downstream_manager
+        assert manager is not None
+        async with memory_client(service) as client:
+            initial = structured(await client.call_tool("mcp_inspect", {}))
+            assert initial["ok"] is True
+            assert initial["servers"] == []
+            assert initial["config_paths"] == []
+
+            _write_config(root, server_script)
+            added = structured(await client.call_tool("mcp_inspect", {}))
+            assert added["ok"] is True
+            assert [server["name"] for server in added["servers"]] == ["fake"]
+            assert [tool["name"] for tool in added["servers"][0]["tools"]] == ["echo"]
+            first_client = manager._clients["fake"]
+            assert isinstance(first_client, StdioMcpClient)
+            first_process = first_client._process
+            assert first_process is not None
+
+            _write_config(root, server_script, enabled_tools=["blocked"])
+            changed = structured(await client.call_tool("mcp_inspect", {}))
+            assert changed["ok"] is True
+            assert [tool["name"] for tool in changed["servers"][0]["tools"]] == [
+                "blocked"
+            ]
+            assert first_process.returncode is not None
+            second_client = manager._clients["fake"]
+            assert isinstance(second_client, StdioMcpClient)
+            assert second_client is not first_client
+            second_process = second_client._process
+            assert second_process is not None
+
+            (root / ".yoke" / "mcp.json").unlink()
+            removed = structured(await client.call_tool("mcp_inspect", {}))
+            assert removed["ok"] is True
+            assert removed["servers"] == []
+            assert removed["config_paths"] == []
+            assert second_process.returncode is not None
+            assert "fake" not in manager._clients
+            return first_process, second_process
+
+    first_process, second_process = asyncio.run(scenario())
+    assert first_process.returncode is not None
+    assert second_process.returncode is not None
