@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -19,6 +20,7 @@ from yoke.agent.truncate import truncate_head
 from yoke.mcp.client import JSON
 from yoke.mcp.client import create_mcp_client
 from yoke.mcp.client import McpClient
+from yoke.mcp.client import McpClientError
 from yoke.mcp.client import McpToolInfo
 from yoke.mcp.config import McpConfig
 from yoke.mcp.config import McpServerConfig
@@ -35,6 +37,9 @@ class McpManager:
         self.config = config
         self.root = root.resolve()
         self._clients: dict[str, McpClient] = {}
+        self._clients_lock = threading.Lock()
+        self._server_locks: dict[str, threading.Lock] = {}
+        self._closed = False
 
     @classmethod
     def from_paths(
@@ -65,15 +70,18 @@ class McpManager:
 
     def close(self) -> None:
         """Close all active clients."""
-        clients = tuple(self._clients.values())
-        self._clients.clear()
+        with self._clients_lock:
+            self._closed = True
+            clients = tuple(self._clients.items())
+            self._clients.clear()
         first_error: BaseException | None = None
-        for client in clients:
-            try:
-                client.close()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
+        for server_name, client in clients:
+            with self._server_lock(server_name):
+                try:
+                    client.close()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
         if first_error is not None:
             raise first_error
 
@@ -145,12 +153,13 @@ class McpManager:
                 servers.append(entry)
                 continue
             try:
-                tools = [
-                    tool
-                    for tool in self._client(config).list_tools()
-                    if server_supports_tool(config, tool.name)
-                    and (server_matches_query or _matches_tool(tool, needle))
-                ]
+                with self._server_lock(config.name):
+                    tools = [
+                        tool
+                        for tool in self._client(config).list_tools()
+                        if server_supports_tool(config, tool.name)
+                        and (server_matches_query or _matches_tool(tool, needle))
+                    ]
                 entry.update(
                     {
                         "status": "ready",
@@ -196,17 +205,19 @@ class McpManager:
                 "error": f"MCP tool is disabled: {server}/{tool}",
             }
         try:
-            known_tools = {item.name for item in self._client(config).list_tools()}
-            if tool not in known_tools:
-                return {
-                    "ok": False,
-                    "error": f"Unknown MCP tool: {server}/{tool}",
-                }
-            result = self._client(config).call_tool(
-                tool,
-                arguments,
-                cancel_requested=cancel_requested,
-            )
+            with self._server_lock(config.name):
+                client = self._client(config)
+                known_tools = {item.name for item in client.list_tools()}
+                if tool not in known_tools:
+                    return {
+                        "ok": False,
+                        "error": f"Unknown MCP tool: {server}/{tool}",
+                    }
+                result = client.call_tool(
+                    tool,
+                    arguments,
+                    cancel_requested=cancel_requested,
+                )
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         text = _mcp_result_text(result)
@@ -232,14 +243,26 @@ class McpManager:
         """Return all tools advertised by a configured server."""
         if server.transport not in {"stdio", "streamable-http", "http"}:
             return ()
-        return tuple(self._client(server).list_tools())
+        with self._server_lock(server.name):
+            return tuple(self._client(server).list_tools())
 
     def _client(self, server: McpServerConfig) -> McpClient:
-        client = self._clients.get(server.name)
-        if client is None:
-            client = create_mcp_client(server, root=self.root)
-            self._clients[server.name] = client
-        return client
+        with self._clients_lock:
+            if self._closed:
+                raise McpClientError("MCP manager is closed")
+            client = self._clients.get(server.name)
+            if client is None:
+                client = create_mcp_client(server, root=self.root)
+                self._clients[server.name] = client
+            return client
+
+    def _server_lock(self, server_name: str) -> threading.Lock:
+        with self._clients_lock:
+            lock = self._server_locks.get(server_name)
+            if lock is None:
+                lock = threading.Lock()
+                self._server_locks[server_name] = lock
+            return lock
 
     def _server(self, name: str) -> McpServerConfig | None:
         for server in self.servers:

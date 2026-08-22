@@ -2,9 +2,12 @@ from __future__ import annotations
 
 # ruff: noqa: D100, D101, D102, D103, S101
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import sys
+import threading
+import time
 from typing import Any
 from typing import cast
 
@@ -198,3 +201,80 @@ def test_manager_preserves_small_structured_content(tmp_path: Path) -> None:
     result = manager.call_tool(server="sample", tool="sample", arguments={})
 
     assert result["structuredContent"] == structured
+
+
+class ConcurrentFakeClient(FakeClient):
+    def __init__(self, *, barrier: threading.Barrier | None = None) -> None:
+        super().__init__()
+        self.barrier = barrier
+        self.active = 0
+        self.max_active = 0
+        self._active_lock = threading.Lock()
+
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        cancel_requested=None,
+    ) -> dict[str, Any]:
+        del name, arguments, cancel_requested
+        with self._active_lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            if self.barrier is not None:
+                self.barrier.wait(timeout=1)
+            else:
+                time.sleep(0.05)
+            return {}
+        finally:
+            with self._active_lock:
+                self.active -= 1
+
+
+def test_manager_serializes_calls_to_the_same_server(tmp_path: Path) -> None:
+    client = ConcurrentFakeClient()
+    manager = _manager(tmp_path, client)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                manager.call_tool,
+                server="sample",
+                tool="sample",
+                arguments={},
+            )
+            for _ in range(2)
+        ]
+        assert all(future.result()["ok"] is True for future in futures)
+
+    assert client.max_active == 1
+
+
+def test_manager_allows_calls_to_different_servers_in_parallel(tmp_path: Path) -> None:
+    barrier = threading.Barrier(2)
+    first = ConcurrentFakeClient(barrier=barrier)
+    second = ConcurrentFakeClient(barrier=barrier)
+    servers = (
+        McpServerConfig(name="first", command="unused"),
+        McpServerConfig(name="second", command="unused"),
+    )
+    manager = McpManager(McpConfig(servers), root=tmp_path)
+    manager._clients = {"first": first, "second": second}
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            manager.call_tool,
+            server="first",
+            tool="sample",
+            arguments={},
+        )
+        second_future = executor.submit(
+            manager.call_tool,
+            server="second",
+            tool="sample",
+            arguments={},
+        )
+        assert first_future.result()["ok"] is True
+        assert second_future.result()["ok"] is True

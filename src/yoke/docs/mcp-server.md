@@ -15,8 +15,11 @@ The service exposes:
 
 - `GET /healthz`
 - MCP Streamable HTTP at `POST /mcp`
-- exactly eight tools: `read_file`, `rg`, `fd`, `skill`, `apply_patch`,
-  `exec_command`, `exec_python`, and `process_io`
+- ten tools: `read_file`, `rg`, `fd`, `skill`, `apply_patch`, `exec_command`,
+  `exec_python`, `process_io`, `mcp_inspect`, and `mcp_call`
+
+`mcp_inspect` and `mcp_call` let the authenticated remote client inspect and
+call MCP servers configured through Yoke without starting a Yoke agent.
 
 The `rg` and `fd` tools accept their native raw argument syntax. To keep their
 MCP annotations truthfully read-only, subprocess-launching switches (`rg
@@ -61,6 +64,34 @@ fallbacks. Discovery runs on every `skill` call, so newly installed, updated,
 renamed, or removed skills are visible without restarting the MCP service.
 Temporarily invalid `SKILL.md` files are ignored so an in-progress installation
 does not break access to the rest of the catalog.
+
+## Downstream MCP gateway
+
+`yoke-mcp` always loads the normal Yoke MCP configuration from
+`~/.yoke/mcp.json` and `<root>/.yoke/mcp.json`. Workspace entries override
+global entries with the same server name.
+
+`mcp_inspect` returns compact metadata for configured servers and their allowed
+tools. `mcp_call` invokes one selected tool. The gateway respects each server's
+`enabled`, `enabled_tools`, and `disabled_tools` settings. Calls to the same
+downstream server are serialized because stdio and stateful HTTP MCP sessions
+share client state. Calls to different downstream servers can run in parallel.
+
+The outer Yoke OAuth flow authenticates ChatGPT or another remote MCP client to
+Yoke. It does not authenticate Yoke to downstream MCP servers. Downstream stdio
+servers use their configured environment, and downstream Streamable HTTP
+servers can use headers configured in `.yoke/mcp.json`. Yoke does not currently
+run an interactive downstream OAuth authorization-code flow.
+
+`mcp_call` is intentionally advertised as a mutating, destructive, open-world
+tool because one generic call can reach downstream read or write actions. Use
+`enabled_tools` allowlists for services where the remote client should only
+reach a subset of actions.
+
+The gateway preserves downstream text, resource text, and bounded structured
+JSON. Large results use Yoke's existing truncation path and can include a local
+`full_output_path`. Downstream image and audio content currently becomes a text
+placeholder rather than being passed through as native multimedia content.
 
 Set `YOKE_MCP_BEARER_TOKEN` to protect `/mcp` with a static bearer token during
 private deployment tests. The health endpoint remains public. Static bearer

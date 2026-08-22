@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from anyio.to_thread import run_sync
 from mcp.server.lowlevel import Server
 from mcp.server.auth.routes import build_resource_metadata_url
 from mcp.server.auth.routes import create_auth_routes
@@ -24,6 +26,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp
 
 from yoke._version import __version__
+from yoke.mcp.manager import McpManager
 from yoke.mcp_server.adapter import ToolAdapter
 from yoke.mcp_server.auth import SingleUserOAuthProvider
 from yoke.mcp_server.bearer import BearerTokenMiddleware
@@ -39,6 +42,7 @@ class MCPService:
     server: Server[ProcessRuntime]
     runtime: ProcessRuntime
     app: ASGIApp
+    downstream_manager: McpManager
     oauth_provider: SingleUserOAuthProvider | None = None
 
 
@@ -49,13 +53,15 @@ def create_service(config: MCPServerConfig) -> MCPService:
         max_concurrent_calls=config.max_concurrent_calls,
         max_concurrent_process_starts=config.max_concurrent_process_starts,
     )
-    adapter = ToolAdapter(config, runtime)
+    downstream_manager = McpManager.from_paths(root=config.root, home=Path.home())
+    adapter = ToolAdapter(config, runtime, downstream_manager)
 
     @asynccontextmanager
     async def lifespan(_: Server[ProcessRuntime]) -> AsyncIterator[ProcessRuntime]:
         try:
             yield runtime
         finally:
+            await run_sync(downstream_manager.close)
             await runtime.close()
 
     async def list_tools(_: Any, __: PaginatedRequestParams | None) -> ListToolsResult:
@@ -70,10 +76,7 @@ def create_service(config: MCPServerConfig) -> MCPService:
         version=__version__,
         title="Yoke server harness",
         description="Tool-only remote coding and server execution harness.",
-        instructions=(
-            "Inspect before modifying. Use apply_patch for file changes and "
-            "process_io for commands that return a live session ID."
-        ),
+        instructions=_server_instructions(config),
         lifespan=lifespan,
         on_list_tools=list_tools,
         on_call_tool=call_tool,
@@ -153,8 +156,21 @@ def create_service(config: MCPServerConfig) -> MCPService:
         runtime=runtime,
         app=app,
         oauth_provider=oauth_provider,
+        downstream_manager=downstream_manager,
     )
 
 
 async def _health(_: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
+
+
+def _server_instructions(config: MCPServerConfig) -> str:
+    parts = [
+        "Inspect before modifying.",
+        "Use apply_patch for file changes and process_io for commands that return a live session ID.",
+    ]
+    parts.insert(
+        1,
+        "Use mcp_inspect before mcp_call when accessing configured downstream MCP servers.",
+    )
+    return " ".join(parts)

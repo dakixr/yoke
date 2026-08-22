@@ -14,7 +14,8 @@ from pydantic import ValidationError
 
 from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.process_runtime import ProcessRuntime
-from yoke.mcp_server.registry import TOOL_REGISTRY
+from yoke.mcp.manager import McpManager
+from yoke.mcp_server.registry import effective_tool_registry
 from yoke.mcp_server.registry import ExposedTool
 
 logger = logging.getLogger(__name__)
@@ -23,27 +24,38 @@ logger = logging.getLogger(__name__)
 class ToolAdapter:
     """Advertise and execute the fixed Yoke MCP tool surface."""
 
-    def __init__(self, config: MCPServerConfig, runtime: ProcessRuntime) -> None:
+    def __init__(
+        self,
+        config: MCPServerConfig,
+        runtime: ProcessRuntime,
+        downstream_manager: McpManager,
+    ) -> None:
         self.config = config
         self.runtime = runtime
+        self.downstream_manager = downstream_manager
+        self._registry = effective_tool_registry()
 
     def list_tools(self) -> list[Tool]:
         """Return exact Pydantic schemas with stable external tool names."""
-        return [self._mcp_tool(spec) for spec in TOOL_REGISTRY.values()]
+        return [self._mcp_tool(spec) for spec in self._registry.values()]
 
     async def call_tool(
         self, name: str, arguments: dict[str, object] | None
     ) -> CallToolResult:
         """Validate, bind, execute, and encode one tool call."""
         started = time.monotonic()
-        spec = TOOL_REGISTRY.get(name)
+        spec = self._registry.get(name)
         if spec is None:
             return self._error(f"Unknown tool: {name}")
         parsed_arguments = self._with_runtime_defaults(name, arguments or {})
+        binding: dict[str, object] = {
+            "root": self.config.root,
+            "command_process_manager": self.runtime.manager,
+            "skill_dirs": self.config.skill_dirs,
+        }
+        binding["mcp_manager"] = self.downstream_manager
         prototype = spec.tool_class.bind(
-            root=self.config.root,
-            command_process_manager=self.runtime.manager,
-            skill_dirs=self.config.skill_dirs,
+            **binding,
         )
         try:
             tool = prototype.parse_arguments(parsed_arguments)
