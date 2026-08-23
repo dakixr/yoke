@@ -151,13 +151,12 @@ that were available when `yoke-mcp` started. Variables whose names begin with
 `YOKE_MCP_` are removed before child processes start so the remote server's
 bearer token, OAuth settings, and other MCP control values are not propagated.
 
-MCP `exec_command` calls still use a non-login shell by default. If a service
-manager such as systemd does not inherit the user's normal shell environment,
-start `yoke-mcp` through the user's login shell or otherwise populate the
-service environment explicitly. A caller can request Yoke's `login=true`
-behavior for an individual command, but the normal deployment should populate
-the service environment once rather than source shell startup files for every
-tool call. Treat the selected OS account as the real permission boundary.
+On POSIX systems, `yoke-mcp` imports non-`YOKE_MCP_` variables from the user's
+login shell once at startup. This makes a service-manager launch behave like a
+normal terminal session without sourcing shell startup files for every tool
+call. MCP `exec_command` calls still use a non-login shell by default. A caller
+can request Yoke's `login=true` behavior for an individual command. Treat the
+selected OS account as the real permission boundary.
 
 The server does not use a command denylist. OS permissions, narrow sudo rules,
 network policy, authentication, and MCP action confirmations are the security
@@ -177,7 +176,7 @@ User=yoke-mcp
 Group=yoke-mcp
 WorkingDirectory=/opt/yoke
 EnvironmentFile=/etc/yoke-mcp.env
-ExecStart=/bin/bash -lc 'exec /opt/yoke/.venv/bin/yoke-mcp --root /srv/my-app'
+ExecStart=/opt/yoke/.venv/bin/yoke-mcp --root /srv/my-app
 Restart=on-failure
 NoNewPrivileges=true
 PrivateTmp=true

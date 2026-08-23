@@ -13,11 +13,13 @@ from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.config import env_hosts
 from yoke.mcp_server.config import env_int
 from yoke.mcp_server.config import env_paths
+from yoke.mcp_server.config import load_login_shell_environment
 from yoke.mcp_server.server import create_service
 
 
 def main() -> None:
     """Load configuration and run one async ASGI worker."""
+    load_login_shell_environment()
     config = parse_config()
     logging.basicConfig(
         level=config.log_level.upper(),

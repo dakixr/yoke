@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,6 +91,39 @@ class MCPServerConfig:
             for key, value in os.environ.items()
             if not key.startswith("YOKE_MCP_")
         }
+
+
+def load_login_shell_environment() -> None:
+    """Merge the user's login-shell environment into the MCP service process."""
+    if os.name != "posix":
+        return
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    marker = b"__YOKE_LOGIN_ENV_START__\0"
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [shell, "-lc", "printf '__YOKE_LOGIN_ENV_START__\\0'; env -0"],
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        return
+    if completed.returncode != 0:
+        return
+    _, separator, payload = completed.stdout.partition(marker)
+    if not separator:
+        return
+    for entry in payload.split(b"\0"):
+        if b"=" not in entry:
+            continue
+        raw_key, raw_value = entry.split(b"=", 1)
+        try:
+            key = raw_key.decode()
+            value = raw_value.decode()
+        except UnicodeDecodeError:
+            continue
+        if not key or key.startswith("YOKE_MCP_"):
+            continue
+        os.environ[key] = value
 
 
 def env_int(name: str, default: int) -> int:
