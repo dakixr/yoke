@@ -145,18 +145,19 @@ from it; absolute paths and `..` remain valid when the operating-system account
 can access them. Run the service as a dedicated account whose filesystem and
 sudo permissions match the intended operations.
 
-Child commands receive a small environment containing ordinary process
-settings such as `PATH`, `HOME`, locale, shell, and temporary-directory values.
-The MCP service's bearer token and unrelated service secrets are not inherited.
-Additional variables can be named explicitly with the comma-separated
-`YOKE_MCP_COMMAND_ENV_ALLOWLIST` variable. Keep tunnel credentials in a
-separate service regardless.
+Child commands inherit the MCP service process environment so developer tools
+see the same provider credentials, API tokens, runtime settings, and `PATH`
+that were available when `yoke-mcp` started. Variables whose names begin with
+`YOKE_MCP_` are removed before child processes start so the remote server's
+bearer token, OAuth settings, and other MCP control values are not propagated.
 
-MCP `exec_command` calls use a non-login shell by default so personal startup
-files do not silently repopulate the filtered environment. A caller can still
-request Yoke's explicit `login=true` behavior, and arbitrary commands can read
-anything the service account itself can read. Treat the selected OS account as
-the real permission boundary.
+MCP `exec_command` calls still use a non-login shell by default. If a service
+manager such as systemd does not inherit the user's normal shell environment,
+start `yoke-mcp` through the user's login shell or otherwise populate the
+service environment explicitly. A caller can request Yoke's `login=true`
+behavior for an individual command, but the normal deployment should populate
+the service environment once rather than source shell startup files for every
+tool call. Treat the selected OS account as the real permission boundary.
 
 The server does not use a command denylist. OS permissions, narrow sudo rules,
 network policy, authentication, and MCP action confirmations are the security
@@ -176,7 +177,7 @@ User=yoke-mcp
 Group=yoke-mcp
 WorkingDirectory=/opt/yoke
 EnvironmentFile=/etc/yoke-mcp.env
-ExecStart=/opt/yoke/.venv/bin/yoke-mcp --root /srv/my-app
+ExecStart=/bin/bash -lc 'exec /opt/yoke/.venv/bin/yoke-mcp --root /srv/my-app'
 Restart=on-failure
 NoNewPrivileges=true
 PrivateTmp=true

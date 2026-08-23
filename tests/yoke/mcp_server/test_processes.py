@@ -34,11 +34,14 @@ def test_quick_command_and_python_return_final_results(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_child_environment_excludes_service_secrets(
+def test_child_environment_inherits_user_env_but_excludes_mcp_settings(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("YOKE_MCP_BEARER_TOKEN", "do-not-leak")
-    monkeypatch.setenv("UNRELATED_SERVICE_SECRET", "also-do-not-leak")
+    monkeypatch.setenv("YOKE_MCP_ROOT", "/private/server/root")
+    monkeypatch.setenv("CODEX_LB_API_KEY", "load-balancer-key")
+    monkeypatch.setenv("YOKE_CODEX_API_KEY", "codex-provider-key")
+    monkeypatch.setenv("UNRELATED_USER_VALUE", "inherited")
 
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
@@ -49,12 +52,21 @@ def test_child_environment_excludes_service_secrets(
                     {
                         "code": (
                             "import os; print(os.getenv('YOKE_MCP_BEARER_TOKEN')); "
-                            "print(os.getenv('UNRELATED_SERVICE_SECRET'))"
+                            "print(os.getenv('YOKE_MCP_ROOT')); "
+                            "print(os.getenv('CODEX_LB_API_KEY')); "
+                            "print(os.getenv('YOKE_CODEX_API_KEY')); "
+                            "print(os.getenv('UNRELATED_USER_VALUE'))"
                         )
                     },
                 )
             )
-            assert result["output"].splitlines() == ["None", "None"]
+            assert result["output"].splitlines() == [
+                "None",
+                "None",
+                "load-balancer-key",
+                "codex-provider-key",
+                "inherited",
+            ]
 
     asyncio.run(scenario())
 

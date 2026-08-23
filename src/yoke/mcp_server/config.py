@@ -7,21 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_COMMAND_ENV_KEYS = (
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "LOGNAME",
-    "PATH",
-    "SHELL",
-    "TERM",
-    "TMPDIR",
-    "USER",
-    "XDG_CACHE_HOME",
-    "XDG_CONFIG_HOME",
-)
-
-
 @dataclass(frozen=True, slots=True)
 class MCPServerConfig:
     """Validated runtime settings for one MCP application process."""
@@ -99,10 +84,12 @@ class MCPServerConfig:
         return list(dict.fromkeys([*defaults, *self.allowed_hosts]))
 
     def command_environment(self) -> dict[str, str]:
-        """Build the intentionally small environment inherited by child tools."""
-        extra = _split_csv(os.environ.get("YOKE_MCP_COMMAND_ENV_ALLOWLIST", ""))
-        keys = (*DEFAULT_COMMAND_ENV_KEYS, *extra)
-        return {key: os.environ[key] for key in keys if key in os.environ}
+        """Return the service environment without Yoke MCP control variables."""
+        return {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("YOKE_MCP_")
+        }
 
 
 def env_int(name: str, default: int) -> int:
