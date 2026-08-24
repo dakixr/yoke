@@ -67,7 +67,6 @@ def build_runtime_agent(
         tools=tools,
         tool_factory=tool_factory,
         tool_root=root if tool_factory is not None else None,
-        max_iterations=config.max_iterations,
         context_manager=ContextManager(
             instructions=build_system_messages(
                 root=root,

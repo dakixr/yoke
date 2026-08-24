@@ -9,6 +9,8 @@ structured observability, and automatic usage accounting.
 - [CLI](cli.md): interactive sessions, resumable work, and headless commands.
 - [SDK](sdk.md): embedded agents, direct completions, async batches, and durable
   role agents.
+- [Tool-only MCP server](mcp-server.md): expose Yoke's coding and process tools
+  over Streamable HTTP without running a second agent.
 
 ## Design
 

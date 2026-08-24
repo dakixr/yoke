@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from yoke.agent.tools.command import ManagedCommandTool
@@ -57,7 +56,7 @@ class PythonExecTool(ManagedCommandTool):
         try:
             if self._is_cancel_requested():
                 return self._cancelled_result()
-            env = os.environ.copy()
+            env = self._manager().base_environment()
             python_executable = self._python_executable()
             prepare_python_env(env, python_executable)
             env["PYTHONIOENCODING"] = "utf-8:replace"

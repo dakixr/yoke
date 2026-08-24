@@ -177,7 +177,6 @@ class RunConfig:
     tools: Sequence[AgentTool] = ()
     skills: Sequence[Skill] = ()
     include_agents_file: bool = True
-    max_iterations: int | None = None
     compaction: CompactionPolicy | None = None
     tool_execution: ToolExecutionMode = "parallel"
     before_tool_call: BeforeToolCallHook | None = None

@@ -121,6 +121,10 @@ timeouts signal the synchronous runtime cooperatively and wait for cleanup.
 Timeout includes queue wait; provider and tool timeouts remain necessary for
 non-cooperative blocking dependencies.
 
+`RunConfig` has no agent iteration-limit setting. Use `stop_requested` for
+explicit cooperative cancellation, or the per-call `prompt_async(...,
+timeout=...)` option when a duration bound is needed.
+
 Use `run_many()` for independent fan-out. Pass input-ordered `BatchTask` values
 and a synchronous or asynchronous `agent_factory(task)` that creates a fresh
 agent. The helper bounds concurrency, closes every created agent, isolates task

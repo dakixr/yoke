@@ -87,18 +87,6 @@ class CompactionAttempt:
     preparation: CompactionPreparation | None = None
 
 
-class MaxIterationsExceededError(RuntimeError):
-    """Raised when the agent exceeds its configured maximum iteration count."""
-
-    partial_messages: list[Message] | None
-    partial_conversation_entries: list[ConversationEntry] | None
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.partial_messages = None
-        self.partial_conversation_entries = None
-
-
 class AgentStoppedError(RuntimeError):
     """Raised when the agent is stopped via the stop_requested callback."""
 

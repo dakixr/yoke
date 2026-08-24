@@ -44,6 +44,10 @@ agent = Agent(
 )
 ```
 
+Agent runs do not have an iteration-limit setting. Bound a run with a
+cooperative `stop_requested` callback, or use `prompt_async(..., timeout=...)`
+when a time limit is appropriate.
+
 Provider selections use `provider:model:thinking_effort`. Yoke's public SDK
 exposes `Agent`, `RunConfig`, `complete()`, `run_many()`, observers, durable
 state, structured outputs, and provider helpers with consistent call shapes.

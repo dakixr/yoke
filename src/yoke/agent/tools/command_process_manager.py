@@ -8,6 +8,7 @@ import subprocess
 import threading
 from collections import deque
 from collections.abc import Callable
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 
@@ -34,7 +35,7 @@ ProcessChangeListener = Callable[[], None]
 class CommandProcessManager:
     """Own and expose command processes for one live agent runtime."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, base_environment: Mapping[str, str] | None = None) -> None:
         self._lock = threading.RLock()
         self._processes: dict[int, _ManagedCommandProcess] = {}
         self._completed: deque[CommandProcessSnapshot] = deque(
@@ -43,6 +44,15 @@ class CommandProcessManager:
         self._listeners: set[ProcessChangeListener] = set()
         self._leases = 0
         self._closed = False
+        self._base_environment = (
+            dict(base_environment) if base_environment is not None else None
+        )
+
+    def base_environment(self) -> dict[str, str]:
+        """Return the explicit child environment or the current process default."""
+        if self._base_environment is None:
+            return os.environ.copy()
+        return self._base_environment.copy()
 
     def acquire(self) -> CommandProcessManager:
         """Acquire one runtime lease on this manager."""
@@ -194,7 +204,7 @@ class CommandProcessManager:
                 raise RuntimeError("Command process manager is closed")
             self._prune_if_needed()
             session_id = self._allocate_session_id()
-            process_env = env.copy() if env is not None else os.environ.copy()
+            process_env = env.copy() if env is not None else self.base_environment()
             if env is None:
                 prepare_python_env(process_env)
             process_argv = argv or build_shell_command(

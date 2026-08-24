@@ -217,7 +217,6 @@ class WebResearchTool(LocalTool):
                     tools=[
                         WebFetchTool.bind(cancel_requested=self._is_cancel_requested)
                     ],
-                    max_iterations=8,
                     sys_prompt=RESEARCH_AGENT_SYSTEM_PROMPT,
                     include_agents_file=False,
                 ),
