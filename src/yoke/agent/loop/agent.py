@@ -21,7 +21,6 @@ from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import AgentResult
 from yoke.agent.loop.types import BeforeToolCallHook
-from yoke.agent.loop.types import MaxIterationsExceededError
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.loop.types import ToolExecutionMode
 from yoke.agent.loop.types import ToolResultCheckpoint
@@ -58,7 +57,6 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         self,
         provider: Provider,
         tools: Sequence[LocalTool],
-        max_iterations: int | None = None,
         context_manager: ContextManager | None = None,
         tool_execution: ToolExecutionMode = "parallel",
         before_tool_call: BeforeToolCallHook | None = None,
@@ -89,7 +87,6 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         self._tool_provider: Provider | None = None
         self._tool_model: ModelIdentity | None = None
         self.tools: dict[str, LocalTool] = {}
-        self.max_iterations = max_iterations
         self.context_manager = context_manager or ContextManager()
         self._base_instructions = [
             message.model_copy(deep=True)
@@ -151,7 +148,6 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
             tool_root=self._tool_root,
             tool_home=self._tool_home,
             command_process_manager=self.command_process_manager,
-            max_iterations=self.max_iterations,
             context_manager=context_manager,
             tool_execution=self.tool_execution,
             before_tool_call=self.before_tool_call,
@@ -292,12 +288,7 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
                 stopped = self._stopped_result(context, iterations=0)
                 persist_run_context(self, context)
                 return stopped
-            iterations = (
-                count(1)
-                if self.max_iterations is None
-                else range(1, self.max_iterations + 1)
-            )
-            for iteration in iterations:
+            for iteration in count(1):
                 iteration_result = self._run_iteration(
                     context,
                     iteration=iteration,
@@ -310,16 +301,7 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
                 if iteration_result is not None:
                     persist_run_context(self, context)
                     return iteration_result
-            error = MaxIterationsExceededError(
-                f"Agent exceeded max_iterations={self.max_iterations}"
-            )
-            error.partial_messages = context.messages
-            error.partial_conversation_entries = [
-                entry.model_copy(deep=True)
-                for entry in context.conversation_log.entries
-            ]
-            persist_run_context(self, context)
-            raise error
+            raise AssertionError("The unbounded iteration loop terminated.")
         except ProviderError as exc:
             exc.partial_messages = context.messages
             exc.partial_conversation_entries = [

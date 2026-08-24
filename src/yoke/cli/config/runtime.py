@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from yoke.agent.loop import MaxIterationsExceededError
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.skills import ActiveSkill
 from yoke.agent.skills import SkillRegistry
@@ -36,7 +35,7 @@ DEFAULT_SYSTEM_PROMPT = (
     .replace("{global_yoke_dir}", str(Path.home() / ".yoke"))
 )
 
-RUN_ERRORS = (ProviderError, MaxIterationsExceededError)
+RUN_ERRORS = (ProviderError,)
 
 
 @dataclass(slots=True)

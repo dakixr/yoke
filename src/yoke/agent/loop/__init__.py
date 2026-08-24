@@ -20,7 +20,6 @@ if TYPE_CHECKING:
         BeforeToolCallContext,
         BeforeToolCallHook,
         BeforeToolCallResult,
-        MaxIterationsExceededError,
         StopRequested,
         ToolExecutionMode,
     )
@@ -36,7 +35,6 @@ _TYPE_EXPORTS = (
     "BeforeToolCallContext",
     "BeforeToolCallHook",
     "BeforeToolCallResult",
-    "MaxIterationsExceededError",
     "StopRequested",
     "ToolExecutionMode",
 )
@@ -58,7 +56,6 @@ __all__ = (
     "BeforeToolCallContext",
     "BeforeToolCallHook",
     "BeforeToolCallResult",
-    "MaxIterationsExceededError",
     "StopRequested",
     "ToolExecutionMode",
 )

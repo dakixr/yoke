@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 from typing import ClassVar
 
@@ -88,6 +89,10 @@ def test_complete_uses_sys_prompt_images_and_no_tools() -> None:
             label="[Image #1]",
         ),
     ]
+
+
+def test_run_config_has_no_iteration_limit_setting() -> None:
+    assert "max_iterations" not in {field.name for field in fields(RunConfig)}
 
 
 def test_complete_returns_structured_output() -> None:
