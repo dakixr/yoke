@@ -512,6 +512,12 @@ Configure global MCP servers in `~/.yoke/mcp.json` and workspace servers in
 an internal server with a self-signed certificate, set `"verify": false` on that
 server. This disables TLS certificate verification only for that MCP server.
 
+Managers created from these config paths re-read them before `mcp_inspect` and
+`mcp_call`. Existing clients are reused when their server config is unchanged.
+Changed or removed server clients are closed after any active call finishes and
+are recreated on demand. A temporarily invalid config reports a reload error
+without discarding the last valid config.
+
 ## Adding extra tools
 
 Place Python files in `.yoke/` (workspace) or `~/.yoke/` (global) and yoke will load your tools automatically alongside the built-ins. Yoke skips state and content subdirectories such as `skills/` and `sessions/`, so Python helper files bundled with skills are not imported as tool plugins.

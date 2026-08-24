@@ -22,16 +22,18 @@ EXPECTED_TOOLS = [
     "exec_command",
     "exec_python",
     "process_io",
+    "mcp_inspect",
+    "mcp_call",
 ]
 
 
-def test_registry_is_an_explicit_eight_tool_allowlist(tmp_path: Path) -> None:
+def test_registry_is_an_explicit_ten_tool_allowlist(tmp_path: Path) -> None:
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
         async with memory_client(service) as client:
             result = await client.list_tools()
             assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
-            assert set(TOOL_REGISTRY) == set(EXPECTED_TOOLS)
+            assert set(TOOL_REGISTRY) == set(EXPECTED_TOOLS[:8])
             read_tool = result.tools[0]
             skill_tool = result.tools[3]
             patch_tool = result.tools[4]
@@ -44,6 +46,23 @@ def test_registry_is_an_explicit_eight_tool_allowlist(tmp_path: Path) -> None:
             assert read_tool.input_schema == TOOL_REGISTRY[
                 "read_file"
             ].tool_class.model_json_schema(by_alias=True)
+
+    asyncio.run(scenario())
+
+
+def test_downstream_gateway_has_conservative_annotations(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        service = create_service(MCPServerConfig(root=tmp_path))
+        async with memory_client(service) as client:
+            result = await client.list_tools()
+            tools = {tool.name: tool for tool in result.tools}
+            assert list(tools) == EXPECTED_TOOLS
+            assert tools["mcp_inspect"].annotations is not None
+            assert tools["mcp_inspect"].annotations.read_only_hint is True
+            assert tools["mcp_call"].annotations is not None
+            assert tools["mcp_call"].annotations.read_only_hint is False
+            assert tools["mcp_call"].annotations.destructive_hint is True
+            assert tools["mcp_call"].annotations.open_world_hint is True
 
     asyncio.run(scenario())
 

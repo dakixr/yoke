@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 from pathlib import Path
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
@@ -12,6 +13,7 @@ from urllib.parse import urlparse
 import httpx2
 
 from yoke.mcp_server.config import MCPServerConfig
+from yoke.mcp_server.auth import SingleUserOAuthProvider
 from yoke.mcp_server.server import create_service
 
 from .helpers import http_client
@@ -37,7 +39,7 @@ def test_health_is_public_but_mcp_requires_configured_bearer(tmp_path: Path) -> 
                 assert denied.headers["www-authenticate"] == "Bearer"
             async with http_client(service, token="test-secret") as mcp:
                 result = await mcp.list_tools()
-                assert len(result.tools) == 8
+                assert len(result.tools) == 10
 
     asyncio.run(scenario())
 
@@ -56,6 +58,20 @@ def test_transport_rejects_unapproved_host_header(tmp_path: Path) -> None:
                 assert response.status_code == 421
 
     asyncio.run(scenario())
+
+
+def test_cli_disables_access_logging(tmp_path: Path, monkeypatch) -> None:
+    from yoke.mcp_server import cli
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli, "parse_config", lambda: MCPServerConfig(root=tmp_path))
+    monkeypatch.setattr(
+        cli.uvicorn, "run", lambda _app, **kwargs: captured.update(kwargs)
+    )
+
+    cli.main()
+
+    assert captured["access_log"] is False
 
 
 def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None:
@@ -117,7 +133,7 @@ def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None
                 consent_url = authorization.headers["location"]
                 request_id = parse_qs(urlparse(consent_url).query)["request_id"][0]
                 consent = await client.get(consent_url)
-                assert "Authorize Yoke Mooncake" in consent.text
+                assert "Authorize Yoke MCP" in consent.text
 
                 rejected = await client.post(
                     "/oauth/consent",
@@ -166,10 +182,17 @@ def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None
                 service, token=refreshed.json()["access_token"]
             ) as mcp:
                 result = await mcp.list_tools()
-                assert len(result.tools) == 8
+                assert len(result.tools) == 10
 
         state_file = tmp_path / "oauth.json"
         assert state_file.stat().st_mode & 0o777 == 0o600
+        state_payload = json.loads(state_file.read_text())
+        subjects = {
+            value["subject"]
+            for section in ("access_tokens", "refresh_tokens")
+            for value in state_payload[section].values()
+        }
+        assert subjects == {"yoke-mcp-user"}
 
     asyncio.run(scenario())
 
@@ -203,3 +226,37 @@ def test_oauth_registration_rejects_unapproved_redirect_host(tmp_path: Path) -> 
                 assert registration.json()["error"] == "invalid_redirect_uri"
 
     asyncio.run(scenario())
+
+
+def test_oauth_state_migrates_legacy_subjects(tmp_path: Path) -> None:
+    state_file = tmp_path / "oauth.json"
+    provider = SingleUserOAuthProvider(
+        issuer_url="http://localhost",
+        resource_url="http://localhost/mcp",
+        authorization_password="authorize-me",
+        state_file=state_file,
+    )
+    token = provider._issue_tokens("client-id", ["yoke"])
+    provider._save_state()
+
+    payload = json.loads(state_file.read_text())
+    for section in ("access_tokens", "refresh_tokens"):
+        for value in payload[section].values():
+            value["subject"] = "legacy-local-user"
+    state_file.write_text(json.dumps(payload))
+
+    SingleUserOAuthProvider(
+        issuer_url="http://localhost",
+        resource_url="http://localhost/mcp",
+        authorization_password="authorize-me",
+        state_file=state_file,
+    )
+
+    migrated = json.loads(state_file.read_text())
+    subjects = {
+        value["subject"]
+        for section in ("access_tokens", "refresh_tokens")
+        for value in migrated[section].values()
+    }
+    assert subjects == {"yoke-mcp-user"}
+    assert token.access_token in migrated["access_tokens"]

@@ -3,23 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-
-
-DEFAULT_COMMAND_ENV_KEYS = (
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "LOGNAME",
-    "PATH",
-    "SHELL",
-    "TERM",
-    "TMPDIR",
-    "USER",
-    "XDG_CACHE_HOME",
-    "XDG_CONFIG_HOME",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +28,6 @@ class MCPServerConfig:
     oauth_authorization_password: str | None = None
     oauth_state_file: Path | None = None
     oauth_allowed_redirect_hosts: tuple[str, ...] = ("chatgpt.com",)
-    log_tool_inputs: bool = False
     log_level: str = "info"
 
     def __post_init__(self) -> None:
@@ -100,18 +85,45 @@ class MCPServerConfig:
         return list(dict.fromkeys([*defaults, *self.allowed_hosts]))
 
     def command_environment(self) -> dict[str, str]:
-        """Build the intentionally small environment inherited by child tools."""
-        extra = _split_csv(os.environ.get("YOKE_MCP_COMMAND_ENV_ALLOWLIST", ""))
-        keys = (*DEFAULT_COMMAND_ENV_KEYS, *extra)
-        return {key: os.environ[key] for key in keys if key in os.environ}
+        """Return the service environment without Yoke MCP control variables."""
+        return {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("YOKE_MCP_")
+        }
 
 
-def env_bool(name: str, default: bool = False) -> bool:
-    """Read a conventional boolean environment value."""
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+def load_login_shell_environment() -> None:
+    """Merge the user's login-shell environment into the MCP service process."""
+    if os.name != "posix":
+        return
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    marker = b"__YOKE_LOGIN_ENV_START__\0"
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [shell, "-lc", "printf '__YOKE_LOGIN_ENV_START__\\0'; env -0"],
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        return
+    if completed.returncode != 0:
+        return
+    _, separator, payload = completed.stdout.partition(marker)
+    if not separator:
+        return
+    for entry in payload.split(b"\0"):
+        if b"=" not in entry:
+            continue
+        raw_key, raw_value = entry.split(b"=", 1)
+        try:
+            key = raw_key.decode()
+            value = raw_value.decode()
+        except UnicodeDecodeError:
+            continue
+        if not key or key.startswith("YOKE_MCP_"):
+            continue
+        os.environ[key] = value
 
 
 def env_int(name: str, default: int) -> int:

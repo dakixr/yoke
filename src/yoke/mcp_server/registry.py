@@ -10,6 +10,8 @@ from yoke.agent.tools.apply_patch import ApplyPatchTool
 from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.command import ExecCommandTool
 from yoke.agent.tools.command import WriteStdinTool
+from yoke.agent.tools.mcp import McpCallTool
+from yoke.agent.tools.mcp import McpInspectTool
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.agent.tools.read import ReadTool
 from yoke.mcp_server.search import MCPFdTool
@@ -118,3 +120,29 @@ TOOL_REGISTRY = {
         ),
     )
 }
+
+
+DOWNSTREAM_MCP_TOOL_REGISTRY = {
+    spec.name: spec
+    for spec in (
+        ExposedTool(
+            "mcp_inspect",
+            "Inspect downstream MCP",
+            McpInspectTool.description,
+            McpInspectTool,
+            READ_ONLY,
+        ),
+        ExposedTool(
+            "mcp_call",
+            "Call downstream MCP tool",
+            McpCallTool.description,
+            McpCallTool,
+            EXECUTION,
+        ),
+    )
+}
+
+
+def effective_tool_registry() -> dict[str, ExposedTool]:
+    """Return the exact externally callable tool registry for one service."""
+    return {**TOOL_REGISTRY, **DOWNSTREAM_MCP_TOOL_REGISTRY}

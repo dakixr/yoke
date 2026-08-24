@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 from yoke.mcp_server.config import MCPServerConfig
+from yoke.mcp_server.config import load_login_shell_environment
 from yoke.mcp_server.server import create_service
 
 from .helpers import http_client
@@ -34,11 +37,14 @@ def test_quick_command_and_python_return_final_results(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_child_environment_excludes_service_secrets(
+def test_child_environment_inherits_user_env_but_excludes_mcp_settings(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("YOKE_MCP_BEARER_TOKEN", "do-not-leak")
-    monkeypatch.setenv("UNRELATED_SERVICE_SECRET", "also-do-not-leak")
+    monkeypatch.setenv("YOKE_MCP_ROOT", "/private/server/root")
+    monkeypatch.setenv("CODEX_LB_API_KEY", "load-balancer-key")
+    monkeypatch.setenv("YOKE_CODEX_API_KEY", "codex-provider-key")
+    monkeypatch.setenv("UNRELATED_USER_VALUE", "inherited")
 
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
@@ -49,14 +55,49 @@ def test_child_environment_excludes_service_secrets(
                     {
                         "code": (
                             "import os; print(os.getenv('YOKE_MCP_BEARER_TOKEN')); "
-                            "print(os.getenv('UNRELATED_SERVICE_SECRET'))"
+                            "print(os.getenv('YOKE_MCP_ROOT')); "
+                            "print(os.getenv('CODEX_LB_API_KEY')); "
+                            "print(os.getenv('YOKE_CODEX_API_KEY')); "
+                            "print(os.getenv('UNRELATED_USER_VALUE'))"
                         )
                     },
                 )
             )
-            assert result["output"].splitlines() == ["None", "None"]
+            assert result["output"].splitlines() == [
+                "None",
+                "None",
+                "load-balancer-key",
+                "codex-provider-key",
+                "inherited",
+            ]
 
     asyncio.run(scenario())
+
+
+def test_login_shell_environment_preserves_mcp_settings(monkeypatch) -> None:
+    monkeypatch.setenv("YOKE_MCP_BEARER_TOKEN", "service-secret")
+    monkeypatch.setenv("PATH", "/service/bin")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=(
+                b"startup noise\n__YOKE_LOGIN_ENV_START__\0"
+                b"PATH=/home/test/bin:/usr/bin\0"
+                b"CODEX_LB_API_KEY=load-balancer-key\0"
+                b"YOKE_MCP_BEARER_TOKEN=must-not-override\0"
+            ),
+            stderr=b"",
+        ),
+    )
+
+    load_login_shell_environment()
+
+    assert os.environ["PATH"] == "/home/test/bin:/usr/bin"
+    assert os.environ["CODEX_LB_API_KEY"] == "load-balancer-key"
+    assert os.environ["YOKE_MCP_BEARER_TOKEN"] == "service-secret"
 
 
 def test_process_handle_works_across_http_clients(tmp_path: Path) -> None:

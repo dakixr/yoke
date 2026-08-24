@@ -15,8 +15,11 @@ The service exposes:
 
 - `GET /healthz`
 - MCP Streamable HTTP at `POST /mcp`
-- exactly eight tools: `read_file`, `rg`, `fd`, `skill`, `apply_patch`,
-  `exec_command`, `exec_python`, and `process_io`
+- ten tools: `read_file`, `rg`, `fd`, `skill`, `apply_patch`, `exec_command`,
+  `exec_python`, `process_io`, `mcp_inspect`, and `mcp_call`
+
+`mcp_inspect` and `mcp_call` let the authenticated remote client inspect and
+call MCP servers configured through Yoke without starting a Yoke agent.
 
 The `rg` and `fd` tools accept their native raw argument syntax. To keep their
 MCP annotations truthfully read-only, subprocess-launching switches (`rg
@@ -62,6 +65,46 @@ renamed, or removed skills are visible without restarting the MCP service.
 Temporarily invalid `SKILL.md` files are ignored so an in-progress installation
 does not break access to the rest of the catalog.
 
+## Downstream MCP gateway
+
+`yoke-mcp` always loads the normal Yoke MCP configuration from
+`~/.yoke/mcp.json` and `<root>/.yoke/mcp.json`. Workspace entries override
+global entries with the same server name.
+
+`mcp_inspect` returns compact metadata for configured servers and their allowed
+tools. `mcp_call` invokes one selected tool. The gateway respects each server's
+`enabled`, `enabled_tools`, and `disabled_tools` settings. Calls to the same
+downstream server are serialized because stdio and stateful HTTP MCP sessions
+share client state. Calls to different downstream servers can run in parallel.
+
+Both gateway tools re-read the global and workspace MCP config before each
+operation. Adding, changing, disabling, or removing a server therefore takes
+effect without restarting `yoke-mcp`. Unchanged server clients stay connected.
+When a server config changes, Yoke waits for any active call to finish, closes
+that server's old client, and creates a new client on demand. Removed and
+disabled servers are closed as part of the same reconciliation.
+
+If a config file is temporarily invalid while it is being edited, the gateway
+returns a reload error and keeps the last valid config and clients intact. The
+next call retries the config load, so fixing the file recovers without a
+service restart.
+
+The outer Yoke OAuth flow authenticates ChatGPT or another remote MCP client to
+Yoke. It does not authenticate Yoke to downstream MCP servers. Downstream stdio
+servers use their configured environment, and downstream Streamable HTTP
+servers can use headers configured in `.yoke/mcp.json`. Yoke does not currently
+run an interactive downstream OAuth authorization-code flow.
+
+`mcp_call` is intentionally advertised as a mutating, destructive, open-world
+tool because one generic call can reach downstream read or write actions. Use
+`enabled_tools` allowlists for services where the remote client should only
+reach a subset of actions.
+
+The gateway preserves downstream text, resource text, and bounded structured
+JSON. Large results use Yoke's existing truncation path and can include a local
+`full_output_path`. Downstream image and audio content currently becomes a text
+placeholder rather than being passed through as native multimedia content.
+
 Set `YOKE_MCP_BEARER_TOKEN` to protect `/mcp` with a static bearer token during
 private deployment tests. The health endpoint remains public. Static bearer
 authentication is not an MCP OAuth implementation and cannot replace OAuth 2.1
@@ -86,6 +129,11 @@ rotating refresh tokens across service restarts and is written with mode
 in the private service environment and enter it only on the server-hosted
 consent page reached during the ChatGPT OAuth flow.
 
+Keep the OAuth state file outside the source checkout and never commit it. It
+contains generated client identifiers and bearer credentials. Yoke uses a
+generic token subject and normalizes legacy token subjects when loading older
+state files so local account names are not retained in OAuth metadata.
+
 The OAuth provider intentionally accepts HTTPS redirect URIs only for hosts in
 `YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` (plus HTTP localhost callbacks for MCP
 Inspector testing). The default is `chatgpt.com`.
@@ -97,22 +145,26 @@ from it; absolute paths and `..` remain valid when the operating-system account
 can access them. Run the service as a dedicated account whose filesystem and
 sudo permissions match the intended operations.
 
-Child commands receive a small environment containing ordinary process
-settings such as `PATH`, `HOME`, locale, shell, and temporary-directory values.
-The MCP service's bearer token and unrelated service secrets are not inherited.
-Additional variables can be named explicitly with the comma-separated
-`YOKE_MCP_COMMAND_ENV_ALLOWLIST` variable. Keep tunnel credentials in a
-separate service regardless.
+Child commands inherit the MCP service process environment so developer tools
+see the same provider credentials, API tokens, runtime settings, and `PATH`
+that were available when `yoke-mcp` started. Variables whose names begin with
+`YOKE_MCP_` are removed before child processes start so the remote server's
+bearer token, OAuth settings, and other MCP control values are not propagated.
 
-MCP `exec_command` calls use a non-login shell by default so personal startup
-files do not silently repopulate the filtered environment. A caller can still
-request Yoke's explicit `login=true` behavior, and arbitrary commands can read
-anything the service account itself can read. Treat the selected OS account as
-the real permission boundary.
+On POSIX systems, `yoke-mcp` imports non-`YOKE_MCP_` variables from the user's
+login shell once at startup. This makes a service-manager launch behave like a
+normal terminal session without sourcing shell startup files for every tool
+call. MCP `exec_command` calls still use a non-login shell by default. A caller
+can request Yoke's `login=true` behavior for an individual command. Treat the
+selected OS account as the real permission boundary.
 
 The server does not use a command denylist. OS permissions, narrow sudo rules,
 network policy, authentication, and MCP action confirmations are the security
 boundaries.
+
+The MCP adapter logs tool name, duration, and success status only. It does not
+log tool arguments or file contents. Uvicorn access logging is disabled so
+OAuth query parameters are not copied into ordinary HTTP access logs.
 
 ## Example systemd topology
 

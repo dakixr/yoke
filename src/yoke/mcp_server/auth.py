@@ -9,8 +9,6 @@ import json
 import os
 import secrets
 import time
-from collections.abc import Awaitable
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -25,17 +23,12 @@ from mcp.shared.auth import OAuthClientInformationFull
 from mcp.shared.auth import OAuthToken
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
-from starlette.responses import JSONResponse
 from starlette.responses import RedirectResponse
-from starlette.types import ASGIApp
-from starlette.types import Message
-from starlette.types import Receive
-from starlette.types import Scope
-from starlette.types import Send
 
 
 _ACCESS_TOKEN_SECONDS = 60 * 60
 _REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
+_TOKEN_SUBJECT = "yoke-mcp-user"
 _AUTHORIZATION_CODE_SECONDS = 5 * 60
 _PENDING_AUTHORIZATION_SECONDS = 10 * 60
 
@@ -255,7 +248,7 @@ class SingleUserOAuthProvider(
                     pending.params.redirect_uri_provided_explicitly
                 ),
                 resource=pending.params.resource,
-                subject="dakixr",
+                subject=_TOKEN_SUBJECT,
             )
         query = f"code={code_value}"
         if pending.params.state is not None:
@@ -279,14 +272,14 @@ class SingleUserOAuthProvider(
             scopes=scopes,
             expires_at=now + _ACCESS_TOKEN_SECONDS,
             resource=self.resource_url,
-            subject="dakixr",
+            subject=_TOKEN_SUBJECT,
         )
         self._refresh_tokens[refresh_value] = RefreshToken(
             token=refresh_value,
             client_id=client_id,
             scopes=scopes,
             expires_at=now + _REFRESH_TOKEN_SECONDS,
-            subject="dakixr",
+            subject=_TOKEN_SUBJECT,
         )
         return OAuthToken(
             access_token=access_value,
@@ -316,14 +309,28 @@ class SingleUserOAuthProvider(
             key: OAuthClientInformationFull.model_validate(value)
             for key, value in data.get("clients", {}).items()
         }
-        self._access_tokens = {
+        access_tokens = {
             key: AccessToken.model_validate(value)
             for key, value in data.get("access_tokens", {}).items()
         }
-        self._refresh_tokens = {
+        refresh_tokens = {
             key: RefreshToken.model_validate(value)
             for key, value in data.get("refresh_tokens", {}).items()
         }
+        needs_subject_migration = any(
+            token.subject != _TOKEN_SUBJECT
+            for token in (*access_tokens.values(), *refresh_tokens.values())
+        )
+        self._access_tokens = {
+            key: token.model_copy(update={"subject": _TOKEN_SUBJECT})
+            for key, token in access_tokens.items()
+        }
+        self._refresh_tokens = {
+            key: token.model_copy(update={"subject": _TOKEN_SUBJECT})
+            for key, token in refresh_tokens.items()
+        }
+        if needs_subject_migration:
+            self._save_state()
 
     def _save_state(self) -> None:
         self.state_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -347,59 +354,6 @@ class SingleUserOAuthProvider(
         os.replace(temporary, self.state_file)
 
 
-class BearerTokenMiddleware:
-    """Require a configured static or OAuth bearer token for the MCP endpoint."""
-
-    def __init__(
-        self,
-        app: ASGIApp,
-        token: str | None,
-        *,
-        oauth_provider: SingleUserOAuthProvider | None = None,
-        resource_metadata_url: str | None = None,
-    ) -> None:
-        self.app = app
-        self.token = token
-        self.oauth_provider = oauth_provider
-        self.resource_metadata_url = resource_metadata_url
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"] != "/mcp":
-            await self.app(scope, receive, send)
-            return
-        if not self.token and self.oauth_provider is None:
-            await self.app(scope, receive, send)
-            return
-
-        authorization = _header(scope, b"authorization")
-        candidate = None
-        if authorization and authorization.lower().startswith(b"bearer "):
-            candidate = authorization[7:].decode(errors="ignore")
-        valid = bool(
-            candidate
-            and self.token
-            and hmac.compare_digest(candidate.encode(), self.token.encode())
-        )
-        if not valid and candidate and self.oauth_provider is not None:
-            valid = await self.oauth_provider.load_access_token(candidate) is not None
-        if not valid:
-            challenge = (
-                'Bearer error="invalid_token"'
-                if self.oauth_provider is not None
-                else "Bearer"
-            )
-            if self.resource_metadata_url:
-                challenge += f', resource_metadata="{self.resource_metadata_url}"'
-            response = JSONResponse(
-                {"error": "unauthorized"},
-                status_code=401,
-                headers={"WWW-Authenticate": challenge},
-            )
-            await response(scope, receive, send)
-            return
-        await self.app(scope, receive, send)
-
-
 def _consent_html(
     client_name: str,
     scopes: str,
@@ -414,22 +368,15 @@ def _consent_html(
     )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Authorize Yoke Mooncake</title><style>
+<title>Authorize Yoke MCP</title><style>
 body{{font:16px system-ui;background:#111827;color:#f9fafb;display:grid;place-items:center;min-height:100vh;margin:0}}
 main{{width:min(440px,calc(100% - 40px));background:#1f2937;padding:28px;border-radius:16px}}
 h1{{margin-top:0}} input,button{{box-sizing:border-box;width:100%;padding:12px;margin-top:12px;border-radius:8px}}
 button{{background:#f97316;color:white;border:0;font-weight:700;cursor:pointer}} .muted{{color:#9ca3af}} .error{{color:#fca5a5}}
-</style></head><body><main><h1>Authorize Yoke Mooncake</h1>
+</style></head><body><main><h1>Authorize Yoke MCP</h1>
 <p><strong>{client_name}</strong> is requesting access to <strong>{scopes}</strong>.</p>
-<p class="muted">This permits ChatGPT to read, modify, and run commands as the Mooncake service account.</p>
+<p class="muted">This permits ChatGPT to read, modify, and run commands as the Yoke MCP service account.</p>
 {error_html}<form method="post" action="/oauth/consent">
 <input type="hidden" name="request_id" value="{request_id}">
 <label>Authorization password<input type="password" name="password" required autofocus autocomplete="current-password"></label>
 <button type="submit">Authorize ChatGPT</button></form></main></body></html>"""
-
-
-def _header(scope: Scope, name: bytes) -> bytes | None:
-    return next((value for key, value in scope.get("headers", []) if key == name), None)
-
-
-ASGISend = Callable[[Message], Awaitable[None]]

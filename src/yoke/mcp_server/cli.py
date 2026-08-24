@@ -10,15 +10,16 @@ from pathlib import Path
 import uvicorn
 
 from yoke.mcp_server.config import MCPServerConfig
-from yoke.mcp_server.config import env_bool
 from yoke.mcp_server.config import env_hosts
 from yoke.mcp_server.config import env_int
 from yoke.mcp_server.config import env_paths
+from yoke.mcp_server.config import load_login_shell_environment
 from yoke.mcp_server.server import create_service
 
 
 def main() -> None:
     """Load configuration and run one async ASGI worker."""
+    load_login_shell_environment()
     config = parse_config()
     logging.basicConfig(
         level=config.log_level.upper(),
@@ -37,6 +38,7 @@ def main() -> None:
         port=config.port,
         workers=1,
         log_level=config.log_level,
+        access_log=False,
     )
 
 
@@ -104,7 +106,6 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         ),
         oauth_allowed_redirect_hosts=env_hosts("YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS")
         or ("chatgpt.com",),
-        log_tool_inputs=env_bool("YOKE_MCP_LOG_TOOL_INPUTS"),
         log_level=args.log_level,
     )
 
