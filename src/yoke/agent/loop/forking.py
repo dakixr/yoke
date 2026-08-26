@@ -36,6 +36,11 @@ def promote_runtime_fork(primary: RuntimeAgent, forked: RuntimeAgent) -> None:
     primary._context = forked._context
     primary._context_owned_for_run = False
     forked._context = None
+    primary._seen_command_completion_events.clear()
+    primary._seen_command_completion_events.update(
+        forked._seen_command_completion_events
+    )
+    primary._seen_dropped_completion_events = forked._seen_dropped_completion_events
     primary.active_skills = [
         skill.model_copy(deep=True) for skill in forked.active_skills
     ]

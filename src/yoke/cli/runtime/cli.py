@@ -155,7 +155,7 @@ def run_cli(
             build_user_message(mode.prompt, image_paths=resolved_images)
         )
         save_active_session(active_session, session_messages)
-        ensure_session_title(active_session, mode.prompt)
+        ensure_session_title(active_session, active_agent, mode.prompt)
     print_tool_discovery_message(output_stream, tool_report)
     from yoke.cli.interactive import run_interactive_cli
 
@@ -301,7 +301,7 @@ def _run_headless_mode(
     previous_yoke_headless = os.environ.get("YOKE_HEADLESS")
     os.environ["YOKE_HEADLESS"] = "1"
     try:
-        ensure_session_title(active_session, prompt)
+        ensure_session_title(active_session, active_agent, prompt)
         with session_usage_metric_context(active_session, prompt):
             result = execute_turn(
                 active_agent,

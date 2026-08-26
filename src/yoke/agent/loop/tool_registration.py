@@ -41,6 +41,7 @@ class ToolRegistrationMixin:
     _base_instructions: list[Message]
     _tool_system_messages: list[Message]
     _session_enabled_tool_names: set[str] | None
+    _seen_command_completion_events: set[str]
     command_process_manager: CommandProcessManager
     context_manager: ContextManager
 
@@ -106,6 +107,7 @@ class ToolRegistrationMixin:
             model=resolved_model,
             cancel_requested=never_cancel,
             command_process_manager=self.command_process_manager,
+            seen_command_completion_events=self._seen_command_completion_events,
         )
         for tool in tools:
             tool.bind_runtime_context(runtime_context)

@@ -334,7 +334,10 @@ checkpoint. It saves only changed provider metadata and queue content instead
 of capturing and reconciling the complete conversation again. Context-usage
 estimates run outside the prompt-critical path and coalesce pending requests so
 only one scan runs at a time. Large sessions do not delay input after a command.
-Initial prompt titles use a local fallback and do not require a provider request.
+Session titles are generated asynchronously from the first prompt. Use
+`/regenerate-title` to generate a new title from the current conversation; use
+`/title <new-title>` to set one manually. If generation fails, Yoke retains a
+local first-prompt fallback.
 OpenAI-compatible providers create their HTTP transport on the first model
 request instead of importing and initializing it during CLI startup.
 
@@ -690,7 +693,7 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke reports the fi
 
 **Built-in tool names:** `read`, `edit`, `write`, `apply_patch`, `fd`, `rg`, `find`, `grep`, `ls`, `exec_command`, `write_stdin`, `python_exec`, `web_fetch`, `web_search`, `web_research`, `extract_file_context`, `attach_image`, `image_generation`, `mcp_inspect`, `mcp_call`
 
-The `exec_command` tool runs through the platform shell, defaulting to PowerShell on Windows and Bash elsewhere. It returns output immediately when the command exits, or a `session_id` when the command is still running after `yield_time_ms`; the default wait is 30,000 ms (30 seconds). Use `write_stdin` with that `session_id` to poll for more output or send interactive input, and `/ps` to inspect all command sessions owned by the current live runtime. `write_stdin` polls can wait up to 3,600,000 ms (1 hour). Results include `exit_code`/`returncode`, `running`, `wall_time_seconds`, combined `output`, and `outputTruncationDetails`. On Windows, bash-style Python heredocs such as `python - <<'PY'` are rewritten to PowerShell pipelines while preserving stdin through yoke's `python`/`python3` shims. Native PowerShell pipelines use UTF-8 without a BOM so rewritten Python stdin starts at the first script character.
+The `exec_command` tool runs through the platform shell, defaulting to PowerShell on Windows and Bash elsewhere. It returns output immediately when the command exits, or a `session_id` when the command is still running after `yield_time_ms`; the default wait is 30,000 ms (30 seconds). Use `write_stdin` with that `session_id` to poll for more output or send interactive input, and `/ps` to inspect all command sessions owned by the current live runtime. `write_stdin` polls can wait up to 3,600,000 ms (1 hour). Results include `exit_code`/`returncode`, `running`, `wall_time_seconds`, combined `output`, and `outputTruncationDetails`. When a command previously returned a session ID and then finishes, Yoke automatically supplies the model a bounded completion notice before its next provider call; polling that session directly suppresses the duplicate notice. On Windows, bash-style Python heredocs such as `python - <<'PY'` are rewritten to PowerShell pipelines while preserving stdin through yoke's `python`/`python3` shims. Native PowerShell pipelines use UTF-8 without a BOM so rewritten Python stdin starts at the first script character.
 
 The `python_exec` tool uses yoke's current interpreter by default, preferring the parent shell's active `VIRTUAL_ENV` or `CONDA_PREFIX`. Pass `python_executable` to run a single call with a specific interpreter, for example a worktree-local `.venv` Python. Child subprocesses launched by that code inherit `YOKE_PYTHON_EXECUTABLE`; use that environment variable or `sys.executable` when a nested process must use the same interpreter. It waits 30 seconds by default, then returns a session ID for code that is still running. Use `write_stdin` with that session ID to poll incremental unbuffered output.
 

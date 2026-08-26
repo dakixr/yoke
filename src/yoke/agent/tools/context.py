@@ -89,6 +89,7 @@ class ToolRuntimeContext:
     model: ModelIdentity
     cancel_requested: Callable[[], bool] = never_cancel
     command_process_manager: object | None = None
+    seen_command_completion_events: set[str] | None = None
 
     @property
     def provider_name(self) -> str:

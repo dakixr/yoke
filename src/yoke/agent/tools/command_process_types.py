@@ -64,6 +64,11 @@ class CommandProcessSnapshot:
     retained_output_bytes: int
 
 
+def command_completion_event_id(event: CommandProcessSnapshot) -> str:
+    """Return the stable identity of one retained completion event."""
+    return f"{event.session_id}:{event.started_at.isoformat()}"
+
+
 def clamp_exec_yield_time(yield_time_ms: int) -> int:
     """Clamp an initial execution wait to supported bounds."""
     return max(MIN_YIELD_TIME_MS, min(yield_time_ms, MAX_YIELD_TIME_MS))

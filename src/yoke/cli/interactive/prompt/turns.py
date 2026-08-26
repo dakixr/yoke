@@ -90,7 +90,7 @@ def run_prompt_turn(
     try:
         Thread(
             target=ensure_session_title,
-            args=(active_session, prompt),
+            args=(active_session, agent, prompt),
             daemon=True,
             name="yoke-session-title",
         ).start()

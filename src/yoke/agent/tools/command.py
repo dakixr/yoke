@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import secrets
 from pathlib import Path
+from typing import cast
 
 from pydantic import AliasChoices
 from pydantic import Field
@@ -13,6 +14,7 @@ from yoke.agent.tools.command_process_manager import (
     CommandProcessManager,
 )
 from yoke.agent.tools.command_process_types import CommandProcessResult
+from yoke.agent.tools.command_process_types import command_completion_event_id
 from yoke.agent.tools.command_process_types import (
     DEFAULT_EXEC_YIELD_TIME_MS,
 )
@@ -39,6 +41,17 @@ class ManagedCommandTool(WorkspaceTool):
         if isinstance(manager, CommandProcessManager):
             return manager
         return _FALLBACK_COMMAND_PROCESS_MANAGER
+
+    def _mark_completion_seen(self, session_id: int) -> None:
+        seen = self._context.get("seen_command_completion_events")
+        if not isinstance(seen, set):
+            return
+        typed_seen = cast(set[str], seen)
+        typed_seen.update(
+            command_completion_event_id(event)
+            for event in self._manager().completion_events()
+            if event.session_id == session_id
+        )
 
     def _format_result(
         self,
@@ -208,6 +221,8 @@ class WriteStdinTool(ManagedCommandTool):
                 yield_time_ms=self.yield_time_ms,
                 cancel_requested=self._is_cancel_requested,
             )
+            if result.session_id is None:
+                self._mark_completion_seen(self.session_id)
             return self._format_result(
                 result,
                 max_output_tokens=self.max_output_tokens,

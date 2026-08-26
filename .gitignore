@@ -16,3 +16,6 @@ codex-cli/
 # Local temp files
 tmp/
 .yoke/
+
+# Local upstream-product boundary decisions
+UPSTREAM-GUIDE.md

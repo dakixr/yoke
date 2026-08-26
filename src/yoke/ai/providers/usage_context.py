@@ -19,6 +19,7 @@ type UsageCallKind = Literal[
     "compaction_summary",
     "branch_summary",
     "overflow_retry",
+    "session_title",
 ]
 
 

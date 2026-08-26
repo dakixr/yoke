@@ -166,7 +166,7 @@ def _start_basic_turn(
 
     def run_turn() -> None:
         try:
-            ensure_session_title(active_session, prompt)
+            ensure_session_title(active_session, agent, prompt)
             with session_usage_metric_context(active_session, prompt):
                 result = execute_turn(
                     agent,

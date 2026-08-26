@@ -41,6 +41,12 @@ class CommandProcessManager:
         self._completed: deque[CommandProcessSnapshot] = deque(
             maxlen=MAX_COMPLETED_PROCESS_COUNT
         )
+        self._background_session_ids: set[int] = set()
+        self._notified_completion_ids: set[int] = set()
+        self._completion_events: deque[CommandProcessSnapshot] = deque(
+            maxlen=MAX_COMPLETED_PROCESS_COUNT
+        )
+        self._dropped_completion_events = 0
         self._listeners: set[ProcessChangeListener] = set()
         self._leases = 0
         self._closed = False
@@ -89,6 +95,8 @@ class CommandProcessManager:
         )
         if result.session_id is None:
             self._complete(managed.session_id)
+        else:
+            self._mark_background(managed.session_id)
         return result
 
     def exec_argv(
@@ -119,6 +127,8 @@ class CommandProcessManager:
         )
         if result.session_id is None:
             self._complete(managed.session_id)
+        else:
+            self._mark_background(managed.session_id)
         return result
 
     def write_stdin(
@@ -152,6 +162,18 @@ class CommandProcessManager:
             active = [process.snapshot() for process in self._processes.values()]
         return sorted([*completed, *active], key=lambda item: item.started_at)
 
+    def completion_events(self) -> list[CommandProcessSnapshot]:
+        """Return retained background completions for runtime-local delivery."""
+        self._capture_completion_events()
+        with self._lock:
+            return list(self._completion_events)
+
+    @property
+    def dropped_completion_event_count(self) -> int:
+        """Return the cumulative number of evicted completion events."""
+        with self._lock:
+            return self._dropped_completion_events
+
     def subscribe(self, listener: ProcessChangeListener) -> Callable[[], None]:
         """Subscribe to process output and lifecycle changes."""
         with self._lock:
@@ -170,6 +192,9 @@ class CommandProcessManager:
         with self._lock:
             processes = list(self._processes.values())
             self._processes.clear()
+            session_ids = {process.session_id for process in processes}
+            self._background_session_ids.difference_update(session_ids)
+            self._notified_completion_ids.difference_update(session_ids)
         for process in processes:
             process.terminate()
         if processes:
@@ -186,6 +211,10 @@ class CommandProcessManager:
         self.terminate_all()
         with self._lock:
             self._completed.clear()
+            self._completion_events.clear()
+            self._background_session_ids.clear()
+            self._notified_completion_ids.clear()
+            self._dropped_completion_events = 0
 
     def _spawn(
         self,
@@ -245,6 +274,7 @@ class CommandProcessManager:
     def _allocate_session_id(self) -> int:
         used = set(self._processes)
         used.update(item.session_id for item in self._completed)
+        used.update(item.session_id for item in self._completion_events)
         while True:
             candidate = random.SystemRandom().randrange(1_000, 100_000)
             if candidate not in used:
@@ -257,11 +287,40 @@ class CommandProcessManager:
             raise ValueError(f"Unknown command session ID {session_id}")
         return managed
 
+    def _mark_background(self, session_id: int) -> None:
+        with self._lock:
+            if session_id in self._processes:
+                self._background_session_ids.add(session_id)
+        self._capture_completion_events()
+
+    def _capture_completion_events(self) -> None:
+        with self._lock:
+            for session_id in tuple(self._background_session_ids):
+                if session_id in self._notified_completion_ids:
+                    continue
+                managed = self._processes.get(session_id)
+                if managed is None or not managed.finished:
+                    continue
+                self._record_completion_event(managed.snapshot())
+                self._notified_completion_ids.add(session_id)
+
+    def _record_completion_event(self, event: CommandProcessSnapshot) -> None:
+        if len(self._completion_events) == MAX_COMPLETED_PROCESS_COUNT:
+            self._dropped_completion_events += 1
+        self._completion_events.append(event)
+
     def _complete(self, session_id: int) -> None:
         with self._lock:
             managed = self._processes.pop(session_id, None)
             if managed is None:
                 return
+            if (
+                session_id in self._background_session_ids
+                and session_id not in self._notified_completion_ids
+            ):
+                self._record_completion_event(managed.snapshot())
+            self._background_session_ids.discard(session_id)
+            self._notified_completion_ids.discard(session_id)
             self._completed.append(managed.snapshot())
         managed.close()
         self._notify()
@@ -273,7 +332,11 @@ class CommandProcessManager:
             self._processes.values(),
             key=lambda process: (not process.finished, process.last_used_at),
         )
+        if oldest.finished:
+            self._capture_completion_events()
         self._processes.pop(oldest.session_id, None)
+        self._background_session_ids.discard(oldest.session_id)
+        self._notified_completion_ids.discard(oldest.session_id)
         if oldest.finished:
             self._completed.append(oldest.snapshot())
             oldest.close()
@@ -281,6 +344,7 @@ class CommandProcessManager:
             oldest.terminate()
 
     def _notify(self) -> None:
+        self._capture_completion_events()
         with self._lock:
             listeners = tuple(self._listeners)
         for listener in listeners:

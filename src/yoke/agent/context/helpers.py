@@ -35,6 +35,21 @@ def append_conversation_entry(context: AgentContext, entry: ConversationEntry) -
     return branching
 
 
+def append_control_message(
+    context: AgentContext,
+    message: Message,
+    *,
+    metadata: dict[str, object],
+) -> None:
+    """Append a model-visible internal event outside the chat transcript."""
+    copied = message.model_copy(deep=True)
+    branching = append_conversation_entry(
+        context,
+        ConversationEntry(kind="control", message=copied, metadata=metadata),
+    )
+    update_message_projection(context, copied, branching=branching)
+
+
 def _append_entry_intent(tree: SessionTree, entry: ConversationEntry) -> None:
     if entry.kind == "skill_event" and entry.message is not None:
         tree.append_system_event(entry.message, metadata=entry.metadata)

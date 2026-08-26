@@ -177,6 +177,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/info", "Show active session metadata."),
     SlashCommand("/fork", "Copy this session and continue in the fork."),
     SlashCommand("/title", "Rename the active session.", "new-title"),
+    SlashCommand("/regenerate-title", "Generate a new title from this conversation."),
     SlashCommand("/tree", "Navigate the current session tree."),
     SlashCommand(
         "/model",

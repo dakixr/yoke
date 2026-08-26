@@ -32,6 +32,7 @@ from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import fork_active_session
 from yoke.cli.runtime import force_compact_history
+from yoke.cli.runtime import generate_session_title
 from yoke.cli.runtime import persist_session_state
 from yoke.cli.runtime import session_usage_metric_context
 from yoke.cli.session import fallback_session_title
@@ -168,6 +169,22 @@ def handle_slash_command(  # noqa: C901
             console,
             f"Updated session title: {active_session.title}",
         )
+        return True, messages, active_session
+    if normalized == "/regenerate-title":
+        with session_usage_metric_context(active_session, ""):
+            generated_title = generate_session_title(agent, messages)
+        if generated_title is None:
+            print_scrollback_notice(console, "Could not regenerate session title.")
+            return True, messages, active_session
+        active_session.title = generated_title
+        persist_session_state(active_session, agent, messages)
+        print_scrollback_notice(
+            console,
+            f"Updated session title: {active_session.title}",
+        )
+        return True, messages, active_session
+    if normalized.startswith("/regenerate-title "):
+        print_scrollback_notice(console, "Usage: /regenerate-title")
         return True, messages, active_session
     if normalized == "/pin":
         print_scrollback_notice(

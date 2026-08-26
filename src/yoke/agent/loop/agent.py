@@ -103,6 +103,8 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         self.tool_report: ToolLoadReport | None = None
         self._context: AgentContext | None = None
         self._context_owned_for_run = False
+        self._seen_command_completion_events: set[str] = set()
+        self._seen_dropped_completion_events = 0
         self.command_process_manager = (
             command_process_manager or CommandProcessManager()
         ).acquire()
@@ -159,6 +161,10 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         if include_state and self._context is not None:
             forked._context = self._context.model_copy(deep=True)
             forked._sync_context_instructions(forked._context)
+        forked._seen_command_completion_events.update(
+            self._seen_command_completion_events
+        )
+        forked._seen_dropped_completion_events = self._seen_dropped_completion_events
         return forked
 
     @property

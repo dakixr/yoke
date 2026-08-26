@@ -6,6 +6,9 @@ from yoke.agent.compaction import CompactionPreparation
 from yoke.agent.compaction import CompactionReason
 from yoke.agent.compaction import CompactionResult
 from yoke.agent.loop.cache_scope import conversation_cache_scope
+from yoke.agent.loop.command_notifications import (
+    append_command_completion_notices,
+)
 from yoke.agent.loop.compaction_summary import summarize_compaction
 from yoke.agent.loop.overflow import guard_newest_user_message_images
 from yoke.agent.loop.overflow import retry_with_compacted_history
@@ -37,6 +40,7 @@ def handle_pre_model_compaction(
     on_event: AgentEventHandler | None,
 ) -> bool:
     """Compact before the provider call when needed."""
+    append_command_completion_notices(agent, context)
     compaction = compact_context_for_iteration(
         agent,
         context,
@@ -65,6 +69,8 @@ def complete_iteration_model(
     stop_requested=None,
 ) -> Message:
     """Run one provider completion call."""
+    # A command can finish while pre-model compaction uses the provider.
+    append_command_completion_notices(agent, context)
     guard_newest_user_message_images(agent, context)
     provider_messages = messages_for_provider_capabilities(
         agent.context_manager.messages_for_provider(context), agent.provider

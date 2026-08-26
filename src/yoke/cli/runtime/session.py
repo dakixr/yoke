@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 from yoke.agent.models import ConversationEntry
@@ -35,8 +33,8 @@ from yoke.cli.session import SessionStore
 from yoke.cli.session import fallback_session_title
 from yoke.cli.session import new_session_id
 from yoke.cli.session.metadata import update_loaded_provider_state
-from yoke.ai.providers.usage_context import UsageMetricContext
-from yoke.ai.providers.usage_context import usage_metric_context
+from yoke.cli.runtime.title import generate_session_title
+from yoke.cli.runtime.title import session_usage_metric_context
 
 
 def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
@@ -102,33 +100,24 @@ def fork_active_session(
 
 def ensure_session_title(
     active_session: ActiveSession,
+    agent: object,
     prompt: str,
 ) -> None:
-    """Assign a title to the session when needed."""
+    """Generate and persist a title for an unnamed session."""
     if active_session.title:
         return
-    active_session.title = fallback_session_title(prompt)
+    messages = active_session.messages()
+    if not messages or messages[-1].plain_text_content != prompt:
+        messages.append(Message.user(prompt))
+    with session_usage_metric_context(active_session, prompt):
+        generated = generate_session_title(agent, messages)
+    active_session.title = generated or fallback_session_title(prompt)
     save_active_session(
         active_session,
         active_session.messages(),
         conversation_entries=active_session.active_entries(),
         leaf_id=active_session.record.leaf_id,
     )
-
-
-@contextmanager
-def session_usage_metric_context(
-    active_session: ActiveSession,
-    prompt: str,
-) -> Iterator[UsageMetricContext]:
-    """Attribute provider calls to the current CLI session."""
-    title = active_session.title or fallback_session_title(prompt)
-    with usage_metric_context(
-        surface="cli",
-        session_id=active_session.id,
-        session_title=title,
-    ) as context:
-        yield context
 
 
 def sync_agent_skill_state_to_session(

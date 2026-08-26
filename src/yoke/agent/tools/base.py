@@ -61,6 +61,10 @@ class LocalTool(BaseModel, ABC):
             self._context["command_process_manager"] = getattr(
                 runtime_context, "command_process_manager"
             )
+        if hasattr(runtime_context, "seen_command_completion_events"):
+            self._context["seen_command_completion_events"] = getattr(
+                runtime_context, "seen_command_completion_events"
+            )
 
     def _is_cancel_requested(self) -> bool:
         callback = self._context.get("cancel_requested")

@@ -87,6 +87,54 @@ def test_cli_session_json_keeps_transcript_after_compaction(
     )
 
 
+def test_regenerate_title_uses_conversation_and_persists_title(
+    tmp_path: Path,
+) -> None:
+    class TitleProvider(Provider):
+        supports_image_inputs = False
+        max_images_per_message = None
+
+        def __init__(self) -> None:
+            self.requests: list[list[Message]] = []
+
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            assert tools == []
+            self.requests.append(messages)
+            return Message.assistant('"Investigate Automatic Session Titles"')
+
+    provider = TitleProvider()
+    agent = FakeAgent(provider=provider)
+    messages = [
+        Message.user("The automatic title is stale."),
+        Message.assistant("I will inspect it."),
+    ]
+    active_session = create_active_session(CLIArgs(root=str(tmp_path)), root=tmp_path)
+    active_session.title = "Old title"
+    console_stream = CaptureStream()
+
+    handled, returned_messages, updated_session = handle_slash_command(
+        "/regenerate-title",
+        agent=agent,
+        active_session=active_session,
+        messages=messages,
+        console=build_console(console_stream),
+    )
+
+    assert handled is True
+    assert returned_messages == messages
+    assert updated_session.title == "Investigate Automatic Session Titles"
+    assert SessionStore().load(active_session.id).title == updated_session.title
+    assert [message.role for message in provider.requests[0]] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert "no more than 6 words" in (provider.requests[0][-1].plain_text_content or "")
+    assert "Updated session title" in console_stream.getvalue()
+
+
 def test_cli_auto_persists_unnamed_session_globally(tmp_path: Path, capsys) -> None:
     agent = FakeAgent()
 
