@@ -2,6 +2,8 @@ import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-pre
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
 
+const MAX_PROMPT_ATTACHMENTS = 20;
+
 export function SessionComposer({ sessionID, session, runtime, data, attentionCount = 0 }) {
   const capabilities = useStore((state) => state.capabilities);
   const connected = useStore((state) => state.connection.current);
@@ -42,7 +44,9 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     void submit(running && !canSteer ? "queue" : "steer");
   };
   const addFiles = async (files) => {
-    for (const file of files) {
+    const images = acceptedImageFiles(files, attachments.length);
+    if (!images.length) return;
+    for (const file of images) {
       try {
         const upload = await controller.upload(file, sessionID);
         setAttachments((current) => [...current, upload]);
@@ -51,11 +55,22 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
       }
     }
   };
+  const imageInput = useImageAttachmentInput({
+    enabled: Boolean(capabilities?.features?.images && connected),
+    addFiles,
+  });
 
   return html`<div class="composer-region">
     <${SelectionControls} directory=${session.location.directory} selection=${session.selection} sessionID=${sessionID} disabled=${!connected || running} />
     ${attentionCount ? html`<div class="composer-attention-note">Resolve the required ${attentionCount === 1 ? "action" : "actions"} above. You can still queue a follow-up here.</div>` : null}
-    <div class="composer-shell">
+    <div
+      class=${`composer-shell ${imageInput.dragActive ? "is-image-drag-active" : ""}`}
+      onDragEnter=${imageInput.onDragEnter}
+      onDragOver=${imageInput.onDragOver}
+      onDragLeave=${imageInput.onDragLeave}
+      onDrop=${imageInput.onDrop}
+    >
+      ${imageInput.dragActive ? html`<div class="composer-drop-hint" aria-hidden="true"><span>Drop images to attach</span></div>` : null}
       ${attachments.length ? html`<div class="composer-attachments">${attachments.map((attachment, index) => html`
         <span class="attachment-chip">▧ ${attachment.name}<button aria-label=${`Remove ${attachment.name}`} onClick=${() => setAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>
       `)}</div>` : null}
@@ -68,6 +83,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
         disabled=${!connected}
         onInput=${(event) => setText(event.currentTarget.value)}
         onKeyDown=${onKeyDown}
+        onPaste=${imageInput.onPaste}
       ></textarea>
       <div class="composer-footer">
         <div class="composer-footer__left">
@@ -103,13 +119,19 @@ export function DraftComposer({ draftID, draft }) {
     finally { setBusy(false); }
   };
   const addFiles = async (files) => {
+    const images = acceptedImageFiles(files, value.attachments?.length || 0);
+    if (!images.length) return;
     const next = [...(value.attachments || [])];
-    for (const file of files) {
+    for (const file of images) {
       try { next.push(await controller.upload(file, null)); }
       catch (error) { controller.notice(error?.message || String(error)); }
     }
     update({ attachments: next });
   };
+  const imageInput = useImageAttachmentInput({
+    enabled: Boolean(capabilities?.features?.images && connected),
+    addFiles,
+  });
   return html`<div class="draft-composer-wrap">
     <div class="draft-hero"><div class="draft-hero__eyebrow">New session</div><h1>What should Yoke work on?</h1><p>The session is created only when you send.</p></div>
     <div class="draft-location">
@@ -117,11 +139,18 @@ export function DraftComposer({ draftID, draft }) {
       <datalist id="recent-locations">${recentLocations.map((item) => html`<option value=${item.directory}></option>`)}</datalist>
     </div>
     <${SelectionControls} directory=${value.location} selection=${{ provider: value.provider, model: value.model, reasoningEffort: value.reasoningEffort }} onDraftChange=${(selection) => update(selection)} />
-    <div class="composer-shell composer-shell--draft">
+    <div
+      class=${`composer-shell composer-shell--draft ${imageInput.dragActive ? "is-image-drag-active" : ""}`}
+      onDragEnter=${imageInput.onDragEnter}
+      onDragOver=${imageInput.onDragOver}
+      onDragLeave=${imageInput.onDragLeave}
+      onDrop=${imageInput.onDrop}
+    >
+      ${imageInput.dragActive ? html`<div class="composer-drop-hint" aria-hidden="true"><span>Drop images to attach</span></div>` : null}
       ${value.attachments?.length ? html`<div class="composer-attachments">${value.attachments.map((attachment, index) => html`
         <span class="attachment-chip">▧ ${attachment.name}<button aria-label=${`Remove ${attachment.name}`} onClick=${() => update({ attachments: value.attachments.filter((_, itemIndex) => itemIndex !== index) })}>×</button></span>
       `)}</div>` : null}
-      <textarea class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" onInput=${(event) => update({ text: event.currentTarget.value })} onKeyDown=${(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit(); } }}></textarea>
+      <textarea class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" onInput=${(event) => update({ text: event.currentTarget.value })} onPaste=${imageInput.onPaste} onKeyDown=${(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit(); } }}></textarea>
       <div class="composer-footer">
         <div class="composer-footer__left">
           ${capabilities?.features?.images ? html`<button class="quiet-button" disabled=${!connected} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
@@ -132,6 +161,74 @@ export function DraftComposer({ draftID, draft }) {
       </div>
     </div>
   </div>`;
+}
+
+function useImageAttachmentInput({ enabled, addFiles }) {
+  const [dragActive, setDragActive] = useState(false);
+  const dragDepth = useRef(0);
+
+  const onPaste = (event) => {
+    const files = [...(event.clipboardData?.files || [])];
+    const images = files.filter(isImageFile);
+    if (!images.length) return;
+    event.preventDefault();
+    if (!enabled) {
+      controller.notice("Image attachments are unavailable for this daemon.");
+      return;
+    }
+    void addFiles(images);
+  };
+  const onDragEnter = (event) => {
+    if (!hasFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDragActive(true);
+  };
+  const onDragOver = (event) => {
+    if (!hasFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  };
+  const onDragLeave = (event) => {
+    if (dragDepth.current === 0) return;
+    event.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragActive(false);
+  };
+  const onDrop = (event) => {
+    if (!hasFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragActive(false);
+    const files = [...(event.dataTransfer?.files || [])];
+    if (!files.some(isImageFile)) {
+      if (files.length) controller.notice("Only image files can be attached to a prompt.");
+      return;
+    }
+    if (!enabled) {
+      controller.notice("Image attachments are unavailable for this daemon.");
+      return;
+    }
+    void addFiles(files);
+  };
+  return { dragActive, onPaste, onDragEnter, onDragOver, onDragLeave, onDrop };
+}
+
+function hasFileTransfer(dataTransfer) {
+  return [...(dataTransfer?.types || [])].includes("Files") || Boolean(dataTransfer?.files?.length);
+}
+
+function isImageFile(file) {
+  return file?.type?.startsWith("image/") || /\.(?:gif|heic|heif|jpe?g|png|webp)$/i.test(file?.name || "");
+}
+
+function acceptedImageFiles(files, existingCount) {
+  const input = [...files];
+  const images = input.filter(isImageFile);
+  if (images.length < input.length) controller.notice("Only image files can be attached to a prompt.");
+  const accepted = images.slice(0, Math.max(0, MAX_PROMPT_ATTACHMENTS - existingCount));
+  if (accepted.length < images.length) controller.notice(`A prompt can contain up to ${MAX_PROMPT_ATTACHMENTS} images.`);
+  return accepted;
 }
 
 function SelectionControls({ directory, selection, sessionID = null, onDraftChange = null, disabled = false }) {

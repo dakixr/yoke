@@ -1,4 +1,4 @@
-import { html } from "../../vendor/htm-preact.js";
+import { html, useEffect, useRef } from "../../vendor/htm-preact.js";
 import { currentRoute } from "../router/router.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
@@ -73,18 +73,7 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
     <div class="session-header__actions">
       <button class="header-action desktop-session-action" disabled=${!connected} onClick=${rename}>Rename</button>
       <button class="header-action desktop-session-action" disabled=${!connected} onClick=${() => controller.patchSession(session.id, { pinned: !session.pinned }).catch((error) => controller.notice(error?.message || String(error)))}>${session.pinned ? "Unpin" : "Pin"}</button>
-      <details class="inspect-menu">
-        <summary class=${`header-action ${inspector ? "is-active" : ""}`}>${inspector ? `Inspect · ${inspectorLabel(inspector.mode)}` : "Inspect"} ▾</summary>
-        <div class="inspect-menu__popup">
-          ${capabilities?.features?.sessionTree ? html`<button onClick=${() => closeDetailsAnd(() => controller.openInspector("tree"))}>Tree</button>` : null}
-          ${capabilities?.features?.toolInspector ? html`<button onClick=${() => closeDetailsAnd(() => controller.openInspector("tool"))}>Tool activity</button>` : null}
-          ${capabilities?.features?.processInspector ? html`<button onClick=${() => closeDetailsAnd(() => controller.openInspector("process"))}>Processes</button>` : null}
-          <button onClick=${() => closeDetailsAnd(() => controller.openInspector("tools"))}>Tools</button>
-          ${capabilities?.features?.skills ? html`<button onClick=${() => closeDetailsAnd(() => controller.openInspector("skills"))}>Skills</button>` : null}
-          ${capabilities?.features?.mcp ? html`<button onClick=${() => closeDetailsAnd(() => controller.openInspector("mcp"))}>MCP</button>` : null}
-          <button onClick=${() => closeDetailsAnd(() => controller.openInspector("context"))}>Session info</button>
-        </div>
-      </details>
+      <${InspectMenu} capabilities=${capabilities} inspector=${inspector} />
       <button class="header-action desktop-session-action" disabled=${!connected || Boolean(busy)} onClick=${() => controller.compact(session.id).catch((error) => controller.notice(error?.message || String(error)))}>Compact</button>
       ${capabilities?.features?.sessionArchive ? html`<button class="header-action desktop-session-action" disabled=${!connected || Boolean(busy)} onClick=${archive}>${session.archivedAt ? "Reopen" : "Settle"}</button>` : null}
       <details class="session-more-menu">
@@ -98,6 +87,48 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
       </details>
     </div>
   </header>`;
+}
+
+function InspectMenu({ capabilities, inspector }) {
+  const detailsRef = useRef(null);
+  useEffect(() => {
+    const closeOnOutsidePointer = (event) => {
+      const details = detailsRef.current;
+      if (!details?.open || details.contains(event.target)) return;
+      details.open = false;
+    };
+    const closeOnEscape = (event) => {
+      if (event.key !== "Escape" || !detailsRef.current?.open) return;
+      detailsRef.current.open = false;
+      detailsRef.current.querySelector("summary")?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+      document.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, []);
+
+  const inspect = (mode) => {
+    if (detailsRef.current) detailsRef.current.open = false;
+    void controller.openInspector(mode);
+  };
+  return html`<details ref=${detailsRef} class="inspect-menu">
+    <summary class=${`header-action ${inspector ? "is-active" : ""}`}>
+      <span>${inspector ? `Inspect · ${inspectorLabel(inspector.mode)}` : "Inspect"}</span>
+      <span class="menu-caret" aria-hidden="true"></span>
+    </summary>
+    <div class="inspect-menu__popup">
+      ${capabilities?.features?.sessionTree ? html`<button onClick=${() => inspect("tree")}>Tree</button>` : null}
+      ${capabilities?.features?.toolInspector ? html`<button onClick=${() => inspect("tool")}>Tool activity</button>` : null}
+      ${capabilities?.features?.processInspector ? html`<button onClick=${() => inspect("process")}>Processes</button>` : null}
+      <button onClick=${() => inspect("tools")}>Tools</button>
+      ${capabilities?.features?.skills ? html`<button onClick=${() => inspect("skills")}>Skills</button>` : null}
+      ${capabilities?.features?.mcp ? html`<button onClick=${() => inspect("mcp")}>MCP</button>` : null}
+      <button onClick=${() => inspect("context")}>Session info</button>
+    </div>
+  </details>`;
 }
 
 function inspectorLabel(mode) {

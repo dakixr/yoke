@@ -981,7 +981,7 @@ class AppController {
     if (command.action === "session.skill") return this.openInspector("skills");
     if (command.action === "session.queue") return document.querySelector(".queue-editor")?.scrollIntoView({ block: "nearest" });
     if (command.action === "session.selection") return document.querySelector(".selection-controls select")?.focus();
-    if (command.action === "upload.create") return this.notice("Use “Image” in the composer to attach an image.");
+    if (command.action === "upload.create") return this.notice("Paste or drop an image into the composer, or use the Image button.");
   }
 
   escape() {
