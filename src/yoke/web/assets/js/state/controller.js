@@ -2,6 +2,7 @@
 
 import { ApiError, api } from "../api/client.js";
 import { SseClient } from "../api/sse.js";
+import { randomUUID } from "../lib/id.js";
 import { currentRoute, draftPath, navigate, sessionPath } from "../router/router.js";
 import {
   readDone,
@@ -675,7 +676,7 @@ class AppController {
 
   createDraft({ navigate: shouldNavigate = true } = {}) {
     this.clearNotice();
-    const id = `draft_${crypto.randomUUID()}`;
+    const id = `draft_${randomUUID()}`;
     const state = store.getState();
     const recent = state.recentLocations[0]?.directory || "";
     const defaultProvider = state.providers.find((item) => item.ready && item.currentModel) || null;
@@ -715,7 +716,7 @@ class AppController {
     if (!(draft.text || "").trim() && !draft.attachments?.length) throw new Error("Write a prompt or attach an image first.");
     const location = draft.location || store.getState().recentLocations[0]?.directory;
     if (!location) throw new Error("Choose a working location first.");
-    const sessionID = `web_${crypto.randomUUID()}`;
+    const sessionID = `web_${randomUUID()}`;
     const selection = draft.provider && draft.model ? {
       provider: draft.provider,
       model: draft.model,
@@ -728,7 +729,7 @@ class AppController {
       selection,
     });
     await api.admitPrompt(sessionID, {
-      id: `inp_${crypto.randomUUID()}`,
+      id: `inp_${randomUUID()}`,
       prompt: { text: draft.text || "", attachments: promptAttachments(draft.attachments || []) },
       delivery,
       resume: true,
@@ -742,7 +743,7 @@ class AppController {
   async submitPrompt(sessionID, { text, attachments = [], delivery = "steer" }) {
     if (!text.trim() && !attachments.length) return;
     await api.admitPrompt(sessionID, {
-      id: `inp_${crypto.randomUUID()}`,
+      id: `inp_${randomUUID()}`,
       prompt: { text, attachments: promptAttachments(attachments) },
       delivery,
       resume: true,

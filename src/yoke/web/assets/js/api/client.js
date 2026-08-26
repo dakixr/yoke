@@ -1,5 +1,7 @@
 // @ts-check
 
+import { randomUUID } from "../lib/id.js";
+
 export class ApiError extends Error {
   constructor(status, code, message, details = null, requestID = null) {
     super(message);
@@ -31,7 +33,7 @@ export class YokeApi {
   }
 
   headers(extra = {}) {
-    const headers = { "X-Request-ID": crypto.randomUUID(), ...extra };
+    const headers = { "X-Request-ID": randomUUID(), ...extra };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
     return headers;
   }
