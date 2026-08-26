@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: F403,F405,S101,D100,D103,ANN401
 
+import json
 from typing import Any
 from typing import cast
 
@@ -19,6 +20,75 @@ def session_payload(path: Path) -> dict[str, Any]:
         dict[str, Any],
         decode_session_record(path.read_text(encoding="utf-8")).model_dump(mode="json"),
     )
+
+
+def test_session_store_migrates_legacy_session_stream(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    entry = ConversationEntry(kind="user", message=Message.user("legacy hello"))
+    record = SessionRecord(
+        version=4,
+        id="legacy-stream",
+        conversation_entries=[entry],
+        leaf_id=entry.id,
+        root=str(tmp_path),
+        title="Legacy stream",
+        created_at="2026-08-01T12:00:00+00:00",
+        updated_at="2026-08-01T12:01:00+00:00",
+    )
+    metadata = record.model_dump(mode="json", exclude={"conversation_entries"})
+    path = tmp_path / "legacy-stream.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_stream", "version": 1}),
+                json.dumps({"type": "session_metadata", "record": metadata}),
+                json.dumps(
+                    {
+                        "type": "conversation_entry",
+                        "entry": entry.model_dump(mode="json"),
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = store.load("legacy-stream")
+
+    assert loaded.version == 5
+    assert loaded.title == "Legacy stream"
+    assert [message.plain_text_content for message in loaded.messages] == [
+        "legacy hello"
+    ]
+    assert path.read_text(encoding="utf-8").startswith(
+        '{"type":"yoke_session","version":2}\n'
+    )
+    assert store.load("legacy-stream") == loaded
+
+
+def test_session_store_does_not_rewrite_unsupported_legacy_schema(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path)
+    path = tmp_path / "too-old.jsonl"
+    raw_text = "\n".join(
+        [
+            json.dumps({"type": "session_stream", "version": 1}),
+            json.dumps(
+                {
+                    "type": "session_metadata",
+                    "record": {"version": 3, "id": "too-old"},
+                }
+            ),
+        ]
+    ) + "\n"
+    path.write_text(raw_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Unsupported session schema version: 3"):
+        store.load("too-old")
+
+    assert path.read_text(encoding="utf-8") == raw_text
 
 
 def test_cli_session_json_keeps_transcript_after_compaction(

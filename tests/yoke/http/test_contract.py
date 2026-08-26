@@ -61,6 +61,36 @@ def _save_conversation(client: TestClient, root: Path, session_id: str) -> tuple
     return exported.entries[0].id, exported.entries[-1].id
 
 
+def _write_legacy_session_stream(path: Path, *, root: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "version": 4,
+        "id": path.stem,
+        "leaf_id": None,
+        "active_skills": [],
+        "skill_dirs": [],
+        "created_at": "2026-08-01T12:00:00+00:00",
+        "updated_at": "2026-08-01T12:01:00+00:00",
+        "root": str(root),
+        "title": "Legacy Mac session",
+        "pinned": False,
+        "provider_name": None,
+        "model_id": None,
+        "reasoning_effort": None,
+        "context_window_tokens": None,
+    }
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_stream", "version": 1}),
+                json.dumps({"type": "session_metadata", "record": metadata}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_health_is_public_and_capabilities_require_auth(tmp_path: Path) -> None:
     client = _client(tmp_path)
 
@@ -186,6 +216,54 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
         "paused": 1,
         "revision": 7,
     }
+
+
+def test_session_list_migrates_legacy_stream_without_index_entry(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    session_path = tmp_path / "sessions" / "legacy-mac.jsonl"
+    _write_legacy_session_stream(session_path, root=root)
+
+    response = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"archived": False, "order": "updatedDesc"},
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["data"]] == ["legacy-mac"]
+    assert response.json()["data"][0]["title"] == "Legacy Mac session"
+    assert session_path.read_text(encoding="utf-8").startswith(
+        '{"type":"yoke_session","version":2}\n'
+    )
+
+
+def test_session_list_skips_unreadable_session_file(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    for session_id in ("broken-session", "good-session"):
+        created = client.post(
+            "/api/v1/session",
+            headers=_auth(),
+            json={"id": session_id, "location": {"directory": str(root)}},
+        )
+        assert created.status_code == 200
+    session_dir = tmp_path / "sessions"
+    (session_dir / "broken-session.jsonl").write_text(
+        '{"not":"a recoverable session"}\n',
+        encoding="utf-8",
+    )
+
+    response = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"archived": False},
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["data"]] == ["good-session"]
 
 
 def test_session_archive_is_durable_filterable_and_reopenable(tmp_path: Path) -> None:

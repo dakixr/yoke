@@ -326,8 +326,13 @@ restored without flattening to transcript text. Yoke streams the typed JSONL
 events from disk and uses an entry-id index to replace repeated entry events.
 The streaming decoder uses Pydantic's native JSON parser. This avoids a second
 complete text copy, reduces temporary decode memory, and avoids repeated
-duplicate-entry scans at startup. Yoke reads only the current typed JSONL event
-format. It does not carry migration adapters for obsolete session formats.
+duplicate-entry scans at startup. Current sessions use the typed JSONL event
+format. Yoke also recognizes the immediately preceding `session_stream` v1 and
+snapshot JSON formats; the first successful load rewrites those files atomically
+into the current format. Other obsolete or malformed session files still fail
+with a direct load error rather than being guessed at. Session listings skip an
+unreadable file so one damaged session cannot block access to every other saved
+session.
 Metadata-only changes, including `/model`, append only changed metadata fields
 and update the loaded record in memory. They do not rebuild or reload the
 conversation. Interactive shutdown also trusts the latest accepted turn

@@ -65,6 +65,10 @@ a separate frontend server.
 A saved session is independent of an HTTP connection. Listing sessions does
 not construct model providers or live runtimes. The daemon loads a
 `SessionRuntime` only when an operation needs process-local execution state.
+Session listing also accepts the immediately preceding `session_stream` v1
+storage format and rewrites it to the current JSONL format on first load. A
+single unreadable session file is skipped rather than failing the complete
+session list.
 
 Each session has one serialized execution lane. Different sessions can execute
 at the same time, subject to the daemon-wide active-session limit. Disconnecting

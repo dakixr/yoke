@@ -55,7 +55,12 @@ class SessionStore:
         path = self._session_path(session_id)
         if not path.exists():
             return SessionRecord(id=session_id)
-        record = load_existing_record(self, session_id, path)
+        record = load_existing_record(
+            self,
+            session_id,
+            path,
+            current_schema_version=CURRENT_SESSION_SCHEMA_VERSION,
+        )
         if record.version != CURRENT_SESSION_SCHEMA_VERSION:
             raise ValueError(f"Unsupported session schema version: {record.version}.")
         return record

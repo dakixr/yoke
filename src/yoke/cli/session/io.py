@@ -29,6 +29,26 @@ def decode_session_record_lines(lines: Iterable[str]) -> SessionRecord:
     return _decode_event_stream(lines)
 
 
+def decode_legacy_session_record(raw_text: str) -> SessionRecord:
+    """Decode session formats written before the current JSONL header."""
+    stripped = raw_text.lstrip()
+    if not stripped:
+        raise ValueError("Session file is empty.")
+    if stripped.startswith('{"type":"session_stream"'):
+        return _decode_legacy_event_stream(raw_text)
+    if stripped.startswith('{"type":"session_record"'):
+        return SessionRecord.model_validate_json(_json_object_from_jsonl(raw_text))
+    if stripped.startswith("{"):
+        try:
+            return SessionRecord.model_validate_json(raw_text)
+        except ValueError:
+            return _decode_legacy_event_stream(raw_text)
+    try:
+        return SessionRecord.model_validate_json(_json_object_from_jsonl(raw_text))
+    except ValueError:
+        return _decode_legacy_event_stream(raw_text)
+
+
 def record_jsonl(record: SessionRecord) -> str:
     """Encode a session record as a canonical JSONL event stream."""
     return "".join(record_jsonl_lines(record))
@@ -163,6 +183,51 @@ def _decode_event_stream(lines: Iterable[str]) -> SessionRecord:
     return SessionRecord.model_validate(metadata)
 
 
+def _decode_legacy_event_stream(raw_text: str) -> SessionRecord:
+    metadata: dict[str, object] = {}
+    entries: list[ConversationEntry] = []
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    for index, stripped in enumerate(lines):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            if index == len(lines) - 1:
+                break
+            raise
+        if not isinstance(payload, dict):
+            continue
+        payload_type = payload.get("type")
+        if payload_type in {"session_stream", SESSION_JSONL_HEADER_TYPE}:
+            continue
+        if payload_type == "session_metadata" and isinstance(
+            payload.get("record"), dict
+        ):
+            metadata.update(payload["record"])
+            continue
+        if payload_type == SESSION_METADATA_EVENT:
+            metadata.update(
+                {key: value for key, value in payload.items() if key != "type"}
+            )
+            continue
+        if payload_type in {"conversation_entry", SESSION_ENTRY_EVENT} and isinstance(
+            payload.get("entry"), dict
+        ):
+            entries.append(ConversationEntry.model_validate(payload["entry"]))
+            continue
+        if "kind" in payload and "message" in payload:
+            entries.append(ConversationEntry.model_validate(payload))
+            continue
+        if "id" in payload:
+            metadata.update(payload)
+    if not entries and not metadata:
+        raise ValueError("No recoverable session events found.")
+    metadata["conversation_entries"] = entries
+    metadata.setdefault("id", "legacy-session")
+    if entries and not metadata.get("leaf_id"):
+        metadata["leaf_id"] = entries[-1].id
+    return SessionRecord.model_validate(metadata)
+
+
 def _metadata_event(record: SessionRecord) -> dict[str, object]:
     return {"type": SESSION_METADATA_EVENT, **_metadata_payload(record)}
 
@@ -226,6 +291,13 @@ def _first_jsonl_object(raw_text: str) -> dict[str, object]:
         if isinstance(payload, dict):
             return payload
     raise ValueError("Session file is empty.")
+
+
+def _json_object_from_jsonl(raw_text: str) -> str:
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    if not lines:
+        raise ValueError("Session file is empty.")
+    return lines[-1]
 
 
 def _jsonl_objects(lines: Iterable[str]) -> Iterable[dict[str, object]]:

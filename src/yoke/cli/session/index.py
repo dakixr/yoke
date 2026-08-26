@@ -8,7 +8,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from yoke.cli.session.io import decode_legacy_session_record
 from yoke.cli.session.io import decode_session_record_lines
+from yoke.cli.session.io import is_canonical_jsonl
 from yoke.cli.session.models import SessionIndex
 from yoke.cli.session.models import SessionIndexEntry
 from yoke.cli.session.models import SessionRecord
@@ -65,7 +67,12 @@ def _add_jsonl_sessions(
             continue
         try:
             with path.open(encoding="utf-8") as handle:
-                record = decode_session_record_lines(handle)
+                first_line = next((line for line in handle if line.strip()), "")
+            if first_line and is_canonical_jsonl(first_line):
+                with path.open(encoding="utf-8") as handle:
+                    record = decode_session_record_lines(handle)
+            else:
+                record = decode_legacy_session_record(path.read_text(encoding="utf-8"))
         except (OSError, ValidationError, ValueError):
             continue
         _upsert_index_record(index, record.model_copy(update={"id": session_id}))

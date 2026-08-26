@@ -82,7 +82,12 @@ class SessionService:
         order: SessionOrder,
         cursor: str | None,
     ) -> SessionListResponse:
-        records = [self.store.load(item.id) for item in self.store.list(root=directory)]
+        records: list[SessionRecord] = []
+        for item in self.store.list(root=directory):
+            try:
+                records.append(self.store.load(item.id))
+            except ValueError:
+                continue
         if search:
             needle = search.casefold()
             records = [
