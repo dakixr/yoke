@@ -180,7 +180,6 @@ def test_manual_compaction_is_scheduled_and_waitable(tmp_path: Path) -> None:
         )
         assert waited.status_code == 200
         assert waited.json()["data"]["state"] == "idle"
-
         history = client.get(
             "/api/v1/session/session-a/history",
             headers=_auth(),
@@ -188,3 +187,48 @@ def test_manual_compaction_is_scheduled_and_waitable(tmp_path: Path) -> None:
         event_types = [item["type"] for item in history]
         assert "session.compaction.started" in event_types
         assert "session.compaction.ended" in event_types
+
+
+def test_title_regeneration_uses_saved_conversation_and_persists(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=_factory,
+        )
+    )
+    with TestClient(app) as client:
+        _create_session(client, root)
+        store = app.state.session_service.store
+        record = store.load("session-a")
+        store.save(
+            "session-a",
+            [Message.user("Improve the sidebar menu"), Message.assistant("Done")],
+            existing_record=record,
+        )
+
+        regenerated = client.post(
+            "/api/v1/session/session-a/title/regenerate",
+            headers=_auth(),
+            json={},
+        )
+
+        assert regenerated.status_code == 200
+        assert regenerated.json()["data"]["title"] == "summary"
+        persisted = client.get(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+        ).json()["data"]
+        assert persisted["title"] == "summary"
+        history = client.get(
+            "/api/v1/session/session-a/history",
+            headers=_auth(),
+        ).json()["data"]
+        assert any(
+            item["type"] == "session.updated" and item["data"]["title"] == "summary"
+            for item in history
+        )

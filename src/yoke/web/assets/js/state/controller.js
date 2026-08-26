@@ -674,11 +674,11 @@ class AppController {
     }));
   }
 
-  createDraft({ navigate: shouldNavigate = true } = {}) {
+  createDraft({ navigate: shouldNavigate = true, location = null } = {}) {
     this.clearNotice();
     const id = `draft_${randomUUID()}`;
     const state = store.getState();
-    const recent = state.recentLocations[0]?.directory || "";
+    const recent = location || state.recentLocations[0]?.directory || "";
     const defaultProvider = state.providers.find((item) => item.ready && item.currentModel) || null;
     const draft = {
       id,
@@ -786,6 +786,13 @@ class AppController {
     const response = await api.patchSession(sessionID, patch);
     store.setState((state) => mergeSessionSummary(state, response.data));
     await this.refreshSessionLists();
+  }
+
+  async regenerateTitle(sessionID) {
+    const response = await api.regenerateTitle(sessionID);
+    store.setState((state) => mergeSessionSummary(state, response.data));
+    await this.refreshSessionLists();
+    return response.data;
   }
 
   async forkSession(sessionID) {
@@ -970,6 +977,15 @@ class AppController {
       const title = window.prompt("Session title", session?.title || "");
       if (title !== null) return this.patchSession(sessionID, { title });
       return;
+    }
+    if (command.action === "session.title.regenerate") {
+      this.notice("Regenerating title…");
+      try {
+        const updated = await this.regenerateTitle(sessionID);
+        return this.notice(`Title updated to “${updated.title}”.`);
+      } catch (error) {
+        return this.notice(error?.message || String(error));
+      }
     }
     if (command.action === "session.compact") return this.compact(sessionID);
     if (command.action === "session.get") return this.openInspector("context");

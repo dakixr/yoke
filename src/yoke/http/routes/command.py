@@ -21,6 +21,7 @@ COMMANDS = (
     CommandInfo(name="info", description="Inspect current session metadata.", action="session.get"),
     CommandInfo(name="fork", description="Fork the current session.", action="session.fork"),
     CommandInfo(name="title", description="Set the current session title.", usage="/title <title>", action="session.patch"),
+    CommandInfo(name="regenerate-title", description="Generate a new title from the current conversation.", action="session.title.regenerate"),
     CommandInfo(name="tree", description="Inspect or navigate the session tree.", action="session.tree"),
     CommandInfo(name="model", description="Select provider, model, and reasoning effort.", action="session.selection"),
     CommandInfo(name="tools", description="Inspect or change session tool enablement.", action="session.tool"),

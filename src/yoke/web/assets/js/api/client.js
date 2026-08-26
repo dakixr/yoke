@@ -88,6 +88,7 @@ export class YokeApi {
   getSession(id) { return this.request(`/api/v1/session/${encodeURIComponent(id)}`); }
   createSession(body) { return this.json("/api/v1/session", "POST", body); }
   patchSession(id, body) { return this.json(`/api/v1/session/${encodeURIComponent(id)}`, "PATCH", body); }
+  regenerateTitle(id) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/title/regenerate`, "POST", {}); }
   forkSession(id, body = {}) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/fork`, "POST", body); }
   selectModel(id, body) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/selection`, "POST", body); }
   compact(id) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/compact`, "POST", { reason: "manual" }); }

@@ -9,6 +9,7 @@ from threading import Lock
 from typing import TypeVar
 
 from yoke.http.models.session import ActiveRuntimeInfo
+from yoke.http.errors import ApiError
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.runtime import SessionRuntime
@@ -16,6 +17,7 @@ from yoke.http.services.runtime_factory import SessionAgentFactory
 from yoke.agent.provider_selection import ProviderSessionState
 from yoke.agent.skills.models import ActiveSkill
 from yoke.session import SessionStore
+from yoke.session.title import generate_session_title
 
 
 T = TypeVar("T")
@@ -129,6 +131,39 @@ class SessionRuntimeRegistry:
     async def compact(self, session_id: str) -> str:
         """Schedule manual compaction for one session."""
         return await self.get_or_start(session_id).compact()
+
+    async def regenerate_title(self, session_id: str) -> str:
+        """Generate a fresh title from the persisted conversation."""
+        record = self.store.load(session_id)
+        if not record.messages:
+            raise ApiError(
+                400,
+                "title_regeneration_unavailable",
+                "Session has no conversation to title.",
+            )
+        loop = asyncio.get_running_loop()
+        generated = await loop.run_in_executor(
+            self.executor,
+            self._regenerate_title_sync,
+            session_id,
+        )
+        if generated is None:
+            raise ApiError(
+                502,
+                "title_regeneration_failed",
+                "Could not generate a session title.",
+            )
+        return generated
+
+    def _regenerate_title_sync(self, session_id: str) -> str | None:
+        record = self.store.load(session_id)
+        agent = self.agent_factory(record)
+        try:
+            return generate_session_title(agent, record.messages)
+        finally:
+            close = getattr(agent, "close", None)
+            if callable(close):
+                close()
 
     async def activate_skill(self, session_id: str, skill_name: str) -> ActiveSkill:
         """Activate one skill through the session controller."""

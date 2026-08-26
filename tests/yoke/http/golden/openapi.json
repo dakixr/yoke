@@ -456,6 +456,11 @@
             "title": "Sessionarchive",
             "type": "boolean"
           },
+          "sessionTitleRegeneration": {
+            "default": true,
+            "title": "Sessiontitleregeneration",
+            "type": "boolean"
+          },
           "sessionTree": {
             "default": true,
             "title": "Sessiontree",
@@ -6035,6 +6040,45 @@
           }
         },
         "summary": "Activate Session Skill"
+      }
+    },
+    "/api/v1/session/{session_id}/title/regenerate": {
+      "post": {
+        "operationId": "regenerateSessionTitle",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Session Title"
       }
     },
     "/api/v1/session/{session_id}/tool": {

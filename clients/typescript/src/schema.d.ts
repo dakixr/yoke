@@ -670,6 +670,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/session/{session_id}/title/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Regenerate Session Title */
+        post: operations["regenerateSessionTitle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/session/{session_id}/tool": {
         parameters: {
             query?: never;
@@ -1075,6 +1092,11 @@ export interface components {
              * @default true
              */
             sessionArchive: boolean;
+            /**
+             * Sessiontitleregeneration
+             * @default true
+             */
+            sessionTitleRegeneration: boolean;
             /**
              * Sessiontree
              * @default true
@@ -3615,6 +3637,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillActivateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    regenerateSessionTitle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
                 };
             };
             /** @description Validation Error */

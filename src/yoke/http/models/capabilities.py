@@ -30,6 +30,7 @@ class FeatureFlags(ApiModel):
     skills: bool = True
     images: bool = True
     session_archive: bool = True
+    session_title_regeneration: bool = True
 
 
 class CapabilityLimits(ApiModel):

@@ -179,6 +179,31 @@ async def compact_session(
     )
 
 
+@router.post(
+    "/session/{session_id}/title/regenerate",
+    response_model=SessionResponse,
+    operation_id="regenerateSessionTitle",
+)
+async def regenerate_session_title(
+    request: Request,
+    session_id: str,
+) -> SessionResponse:
+    service = _service(request)
+    service.get_session(session_id)
+    title = await _runtimes(request).regenerate_title(session_id)
+    return SessionResponse(
+        data=service.patch_session(
+            session_id,
+            title_set=True,
+            title=title,
+            pinned_set=False,
+            pinned=None,
+            archived_set=False,
+            archived=None,
+        )
+    )
+
+
 @router.get(
     "/session/{session_id}/message",
     response_model=MessageListResponse,

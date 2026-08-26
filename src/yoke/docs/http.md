@@ -147,7 +147,7 @@ sequence before treating that session as caught up.
 The v1 API currently exposes typed resources for:
 
 - sessions, active runtime state, messages, context, selection, compaction,
-  fork, title, pin state, and durable archive state;
+  fork, title updates/regeneration, pin state, and durable archive state;
 - prompt admission, steering, queueing, queue editing, interruption, and wait;
 - session trees, navigation previews, navigation, and labels;
 - tool discovery, session tool enablement, live tool traces, and sequenced
@@ -181,6 +181,20 @@ GET /api/v1/session?archived=true|false
 `SessionInfo.archivedAt` is the durable archive timestamp. Archiving is user
 organization only, separate from runtime state, and reopening clears the
 timestamp without changing the conversation.
+
+## Session title regeneration
+
+The browser can request a new title from the saved conversation without
+changing the transcript:
+
+```text
+POST /api/v1/session/{sessionID}/title/regenerate
+```
+
+Yoke builds the title with the same shared title generator used by the CLI,
+using the session's configured provider/model. The resulting title is then
+persisted through the normal session patch/event path. The
+`sessionTitleRegeneration` capability flag indicates support.
 
 ## Files and uploads
 

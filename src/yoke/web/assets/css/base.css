@@ -20,6 +20,7 @@
   --danger-bg: #301d1b;
   --done: #9bc69c;
   --done-bg: #1c2a1d;
+  --working: #7fa8c4;
   --focus: #c7d2ad;
   --shadow: 0 14px 40px rgb(0 0 0 / 28%);
   --radius: 8px;
@@ -48,6 +49,7 @@
     --danger-bg: #f8e6e2;
     --done: #3f7442;
     --done-bg: #e3eee2;
+    --working: #466f89;
     --focus: #536544;
     --shadow: 0 14px 40px rgb(30 35 27 / 14%);
   }

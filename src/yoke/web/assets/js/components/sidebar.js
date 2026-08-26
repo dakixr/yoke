@@ -3,6 +3,7 @@ import { workingDuration, shortAge } from "../lib/duration.js";
 import { currentRoute, draftPath, navigate } from "../router/router.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
+import { SessionContextMenu } from "./session-context-menu.js";
 
 export function Sidebar() {
   const open = useStore((state) => state.ui.sidebarOpen);
@@ -20,8 +21,10 @@ export function Sidebar() {
   const search = useStore((state) => state.ui.search);
   const searchResults = useStore((state) => state.ui.searchResults);
   const searching = useStore((state) => state.ui.searching);
+  const capabilities = useStore((state) => state.capabilities);
   const [settledOpen, setSettledOpen] = useState(false);
   const [projectScope, setProjectScope] = useState("");
+  const [contextMenu, setContextMenu] = useState(null);
   const route = currentRoute();
   const selectedDraftID = route.name === "new" ? route.draftID : null;
 
@@ -48,6 +51,15 @@ export function Sidebar() {
   const visibleSearch = search.trim()
     ? searchResults.map((id) => sessions[id]).filter((item) => item && matchesScope(item))
     : null;
+  const openSessionMenu = (event, session) => {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu({
+      sessionID: session.id,
+      x: Number.isFinite(event.clientX) && event.clientX > 0 ? event.clientX : rect.left + 24,
+      y: Number.isFinite(event.clientY) && event.clientY > 0 ? event.clientY : rect.top + 24,
+    });
+  };
 
   return html`
     <aside class=${`sidebar ${open ? "is-open" : ""}`} aria-label="Sessions">
@@ -84,18 +96,18 @@ export function Sidebar() {
         ${visibleSearch ? html`
           <div class="inbox-list" role="list" aria-label="Search results">
             ${visibleSearch.length ? visibleSearch.map((session) => html`
-              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} />
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} onOpenMenu=${openSessionMenu} />
             `) : html`<div class="sidebar-empty">No sessions found</div>`}
           </div>
         ` : html`
           <div class="inbox-list" role="list">
             ${scopedDrafts.map((draft) => html`<${DraftRow} key=${draft.id} draft=${draft} location=${locations[draft.location]} selected=${selectedDraftID === draft.id} />`)}
             ${pinned.map((session) => html`
-              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} pinned outsideScope=${Boolean(projectScope && !matchesScope(session))} />
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} pinned outsideScope=${Boolean(projectScope && !matchesScope(session))} onOpenMenu=${openSessionMenu} />
             `)}
             ${pinned.length && inbox.length ? html`<div class="pinned-divider" aria-hidden="true"></div>` : null}
             ${inbox.map((session) => html`
-              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} outsideScope=${Boolean(projectScope && !matchesScope(session))} />
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} outsideScope=${Boolean(projectScope && !matchesScope(session))} onOpenMenu=${openSessionMenu} />
             `)}
             ${sessionCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(false)}>＋ Load older sessions</button>` : null}
             ${!scopedDrafts.length && !pinned.length && !inbox.length ? html`<div class="sidebar-empty">No sessions yet</div>` : null}
@@ -108,7 +120,7 @@ export function Sidebar() {
                 <span class=${`section-toggle__chevron ${settledOpen ? "is-open" : ""}`} aria-hidden="true">⌄</span>
               </button>
               ${settledOpen ? scopedArchived.map((session) => html`
-                <${SessionRow} key=${session.id} session=${session} selected=${selectedID === session.id} locations=${locations} settled />
+                <${SessionRow} key=${session.id} session=${session} selected=${selectedID === session.id} locations=${locations} settled onOpenMenu=${openSessionMenu} />
               `) : null}
               ${settledOpen && archivedCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(true)}>＋ Show more settled</button>` : null}
             </section>
@@ -118,21 +130,36 @@ export function Sidebar() {
       <div class="sidebar__footer">
         <button class="quiet-button" onClick=${() => controller.togglePalette(true)}>Command palette <kbd>⌘K</kbd></button>
       </div>
+      ${contextMenu && sessions[contextMenu.sessionID] ? html`
+        <${SessionContextMenu}
+          session=${sessions[contextMenu.sessionID]}
+          location=${locations[sessions[contextMenu.sessionID].location?.directory || ""]}
+          runtime=${active[contextMenu.sessionID]}
+          capabilities=${capabilities}
+          position=${contextMenu}
+          onClose=${() => setContextMenu(null)}
+        />
+      ` : null}
       <${SidebarResizeHandle} />
     </aside>
   `;
 }
 
-function SessionRow({ session, active, attention, selected, done, locations, pinned = false, settled = false, outsideScope = false }) {
+function SessionRow({ session, active, attention, selected, done, locations, pinned = false, settled = false, outsideScope = false, onOpenMenu }) {
   const directory = session.location?.directory || "";
   const location = locations[directory];
   const projectName = location?.name || compactPath(directory);
   const branch = location?.git?.branch || compactPath(directory);
   const model = session.selection?.model || session.selection?.provider || "";
   const age = shortAge(settled ? session.archivedAt : session.time?.updated);
+  const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
+  const working = active?.state === "running" && attentionCount === 0;
+  const menuKeys = (event) => {
+    if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) onOpenMenu?.(event, session);
+  };
   if (settled) {
     return html`
-      <button class=${`session-row session-row--slim is-settled ${selected ? "is-selected" : ""}`} aria-current=${selected ? "page" : undefined} onClick=${() => controller.selectSession(session.id)}>
+      <button class=${`session-row session-row--slim is-settled ${selected ? "is-selected" : ""}`} aria-current=${selected ? "page" : undefined} onClick=${() => controller.selectSession(session.id)} onContextMenu=${(event) => onOpenMenu?.(event, session)} onKeyDown=${menuKeys}>
         <span class="session-project-glyph" aria-hidden="true">▱</span>
         <span class="session-row__title">${session.title || session.id}</span>
         ${session.pinned ? html`<span class="session-pin" aria-label="Pinned" title="Pinned">PIN</span>` : null}
@@ -142,9 +169,11 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
   }
   return html`
     <button
-      class=${`session-row session-card ${selected ? "is-selected" : ""} ${outsideScope ? "is-outside-scope" : ""}`}
+      class=${`session-row session-card ${selected ? "is-selected" : ""} ${working ? "is-working" : ""} ${outsideScope ? "is-outside-scope" : ""}`}
       aria-current=${selected ? "page" : undefined}
       onClick=${() => controller.selectSession(session.id)}
+      onContextMenu=${(event) => onOpenMenu?.(event, session)}
+      onKeyDown=${menuKeys}
     >
       <span class="session-card__top">
         <span class="session-project-glyph" aria-hidden="true">▱</span>
@@ -174,7 +203,7 @@ function SessionStatus({ runtime, attention, done, queue, age }) {
   if (runtime?.state === "error") return html`<span class="status status--error">Error</span>`;
   if (done) return html`<span class="status status--done">Done</span>`;
   if (runtime?.state === "stopping") return html`<span class="status status--quiet">Stopping</span>`;
-  if (runtime?.state === "running") return html`<span class="status status--working">Working ${workingDuration(runtime.startedAt).replace("Working ", "")}</span>`;
+  if (runtime?.state === "running") return html`<span class="status status--working"><span class="working-glyph" aria-hidden="true"></span><span role="status">Working</span><span class="working-duration" aria-hidden="true">${workingDuration(runtime.startedAt).replace("Working ", "")}</span></span>`;
   if (queue?.steering && queue?.queued) return html`<span class="status status--quiet">${queue.steering} steer · ${queue.queued} queued</span>`;
   if (queue?.steering) return html`<span class="status status--quiet">${queue.steering} steer</span>`;
   if (queue?.queued) return html`<span class="status status--quiet">${queue.queued} queued</span>`;
