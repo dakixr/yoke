@@ -196,7 +196,7 @@ class TaskResult(BaseModel):
 
 async def fan_out(
     tasks: list[TaskSpec], user_request: str
-) -> list[dict[str, object]]:
+) -> dict[str, object]:
     if len(tasks) > 64:
         raise ValueError("Fan-out exceeds the 64-task cap")
     task_by_id = {task.id: task for task in tasks}
@@ -223,7 +223,7 @@ async def fan_out(
         agent_factory=worker_factory,
         max_concurrency=min(MAX_CONCURRENCY, len(batch_tasks) or 1),
         output_type=TaskResult,
-        max_attempts=2,
+        max_attempts=1,
         on_progress=log_progress,
         observer=OBSERVER,
     )
@@ -253,7 +253,10 @@ async def fan_out(
                 "output": item.result.output,
             }
         )
-    return results
+    return {
+        "items": results,
+        "progress_errors": [repr(error) for error in batch.progress_errors],
+    }
 ```
 
 ## Coder/Reviewer Pair

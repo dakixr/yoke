@@ -15,10 +15,12 @@ overhead; it is not the default path for small single-threaded work.
 ## Core Process
 
 1. Before writing the orchestrator, use `print_builtin_provider_status()` as a
-   local context-gathering helper, then call `build_builtin_provider(selection)`
-   for every selected provider/model/thinking string. Do not put the status
-   helper in the orchestration script; it validates local selection construction,
-   not remote service reachability.
+   local context-gathering helper, then validate every selected
+   provider/model/thinking string with `build_builtin_provider(selection)`.
+   Give each preflight provider to a short-lived `Agent` and close that agent so
+   provider resources are released. Do not put the status helper in the
+   orchestration script; it validates local selection construction, not remote
+   service reachability.
    When adding or changing a provider, separately probe a representative real
    agent turn with function tools and complete the tool-result round trip.
 2. Choose the smallest orchestration shape that fits the request.
@@ -35,9 +37,9 @@ overhead; it is not the default path for small single-threaded work.
    `.agents_local/` for a durable structured trace. Keep orchestration phase,
    provider, artifact, and final-status logging as a separate script log.
 5. For file-based orchestrations, run the script with `exec_command`; poll with
-   `write_stdin` until it completes. Subagent tasks can take a long time, so
-   choose a `yield_time_ms` up to 3,600,000 ms when long waits are useful,
-   while keeping progress visible.
+   `write_stdin` until it completes. `exec_command.yield_time_ms` is capped at
+   300,000 ms. `write_stdin.yield_time_ms` may be as high as 3,600,000 ms when
+   a long poll is useful. Keep progress visible.
 6. Read the final handoff and raw JSON artifacts. Verify conflicts or errors
    before trusting the subagent results.
 7. The main agent applies final edits, resolves conflicts, runs validation, and
@@ -51,7 +53,8 @@ The orchestration is not complete until all applicable criteria are satisfied:
 
 - Provider status was gathered before authoring the script and every selected
   provider/model/thinking string was constructed successfully with
-  `build_builtin_provider(selection)`.
+  `build_builtin_provider(selection)`. Every provider created only for this
+  preflight check was released by closing its short-lived owning agent.
 - Live subagent work used an `actions` console observer. Reusable or file-based
   orchestration also retained a full JSONL trace under `.agents_local/`.
 - The orchestrator finished without unhandled exceptions, or every failure is
@@ -131,6 +134,9 @@ safely and the user has not asked for a read-only audit.
 
 - Assign each implementation subagent an exclusive file or directory scope.
 - Require each implementation subagent to report changed files and validation.
+- Default write-capable `run_many()` work to `max_attempts=1`. A retry creates a
+  fresh agent but cannot undo files changed by the previous attempt. Retry
+  write-capable work only when the task is idempotent or has explicit recovery.
 
 ## Async Fan-Out
 
@@ -158,8 +164,11 @@ sensitive, so treat full traces as sensitive artifacts.
 Do not add generic agent or batch timeouts to orchestration templates. Agents
 can legitimately run for a long time; monitor progress and cancel explicitly
 when work is genuinely stalled. If a task has a real domain deadline, remember
-that SDK timeouts are cooperative: yoke signals the synchronous runtime and waits
-for cleanup, and a non-cooperative dependency can delay return.
+that SDK timeouts are cooperative. Yoke signals the synchronous runtime and
+returns the timeout or cancellation to the async caller immediately. The sync
+worker may continue in the background until it observes the signal. Closing the
+agent waits for active work, and cancelling `run_many()` waits for batch worker
+cleanup.
 
 ## Caps
 

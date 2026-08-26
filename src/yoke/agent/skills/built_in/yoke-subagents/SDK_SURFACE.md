@@ -38,11 +38,15 @@ from yoke.ai.utils import print_builtin_provider_status
 - `build_builtin_provider(selection)` builds one provider from a
   `provider:model:thinking_effort` string using environment-backed config. Call
   it for every selected string to validate local model and effort selection.
+  Providers created only for validation still own resources. Give each one to a
+  short-lived `Agent` and close the agent after validation.
 - Provider construction is not a remote health check. Provider implementation
   changes require a real probe with function tools through the full tool-call
   and tool-result cycle.
 - `available_builtin_providers(selections=...)` builds every ready requested
-  provider selection and returns a mapping usable by the orchestrator.
+  provider selection and returns a mapping usable by the orchestrator. Treat
+  those provider instances as owned resources. Hand each one to an `Agent` and
+  close its owning agent when finished.
 
 Custom providers from `~/.yoke/providers` also appear in these helpers when
 installed.
@@ -117,9 +121,11 @@ tool results, paths, and proprietary data.
 
 `await agent.prompt_async(...)` mirrors `agent.prompt(...)` and adds an optional
 `timeout`. Concurrent calls on one stateful agent serialize. Cancellation and
-timeouts signal the synchronous runtime cooperatively and wait for cleanup.
-Timeout includes queue wait; provider and tool timeouts remain necessary for
-non-cooperative blocking dependencies.
+timeouts signal the synchronous runtime cooperatively and propagate to the async
+caller immediately. The synchronous worker may continue in the background until
+it observes that signal. `Agent.close()` waits for active work before releasing
+resources. Timeout includes queue wait; provider and tool timeouts remain
+necessary for non-cooperative blocking dependencies.
 
 `RunConfig` has no agent iteration-limit setting. Use `stop_requested` for
 explicit cooperative cancellation, or the per-call `prompt_async(...,
@@ -160,11 +166,14 @@ async def fan_out(tasks: list[BatchTask]) -> None:
         agent_factory=lambda task: read_only_agent(DEFAULT_SELECTION),
         max_concurrency=8,
         max_attempts=2,
+        on_progress=log_progress,
         observer=observer,
     )
     for item in batch.items:
         if item.status != "completed":
             LOGGER.error("Task %s failed: %r", item.task.id, item.error)
+    for error in batch.progress_errors:
+        LOGGER.error("Progress callback failed: %r", error)
 ```
 
 ## Shared Helpers
@@ -240,7 +249,11 @@ def write_json(path: Path, payload: object) -> None:
 
 async def main() -> None:
     setup_logger()
-    build_builtin_provider(DEFAULT_SELECTION)
+    validation_agent = Agent(
+        provider=build_builtin_provider(DEFAULT_SELECTION),
+        config=RunConfig(root=Path.cwd(), tools=[]),
+    )
+    validation_agent.close()
     LOGGER.info("Provider selection constructed: %s", DEFAULT_SELECTION)
     # Run the selected async orchestration shape and write its handoff.
 
