@@ -277,6 +277,7 @@ class SessionStore:
                 "root": normalize_root(root) or source.root,
                 "title": normalize_title(title) or fork_session_title(source.title),
                 "pinned": False,
+                "archived_at": None,
             },
         )
         self._write_session_record(forked)
@@ -344,6 +345,33 @@ class SessionStore:
         self._update_index(record)
         return record
 
+    def set_archived(
+        self,
+        session_id: str,
+        archived: bool,
+        *,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        """Persist whether a session is archived from the active work list."""
+        record = existing_record or self.load(session_id)
+        if record.id != session_id:
+            raise ValueError("Existing session record id does not match archive id.")
+        if record.created_at is None:
+            raise ValueError(f"Session not found: {session_id}")
+        now = timestamp()
+        values: dict[str, object] = {
+            "archived_at": now if archived else None,
+            "updated_at": now,
+        }
+        record = record.model_copy(update=values)
+        path = self._session_path(session_id)
+        if path.exists():
+            append_session_metadata(path, values)
+        else:
+            self._write_session_record(record)
+        self._update_index(record)
+        return record
+
     def set_selection(
         self,
         session_id: str,
@@ -361,7 +389,7 @@ class SessionStore:
         if record.created_at is None:
             raise ValueError(f"Session not found: {session_id}")
         now = timestamp()
-        values = {
+        values: dict[str, object] = {
             "provider_name": provider_name,
             "model_id": model_id,
             "reasoning_effort": reasoning_effort,
@@ -410,6 +438,7 @@ class SessionStore:
             created_at=record.created_at,
             updated_at=record.updated_at,
             pinned=record.pinned,
+            archived_at=record.archived_at,
         )
         self._index_path().write_text(index.model_dump_json(indent=2), encoding="utf-8")
 

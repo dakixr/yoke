@@ -68,6 +68,7 @@ class SessionInfo(ApiModel):
     id: str
     title: str | None = None
     pinned: bool = False
+    archived_at: str | None = None
     location: LocationInfo
     time: SessionTime
     selection: SessionSelection
@@ -100,6 +101,7 @@ class SessionCreateRequest(ApiModel):
 class SessionPatchRequest(ApiModel):
     title: str | None = None
     pinned: bool | None = None
+    archived: bool | None = None
 
 
 class SessionForkRequest(ApiModel):

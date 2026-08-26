@@ -451,6 +451,11 @@
             "title": "Queueeditor",
             "type": "boolean"
           },
+          "sessionArchive": {
+            "default": true,
+            "title": "Sessionarchive",
+            "type": "boolean"
+          },
           "sessionTree": {
             "default": true,
             "title": "Sessiontree",
@@ -2438,6 +2443,17 @@
       "SessionInfo": {
         "additionalProperties": false,
         "properties": {
+          "archivedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivedat"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -2509,6 +2525,17 @@
       "SessionPatchRequest": {
         "additionalProperties": false,
         "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
           "pinned": {
             "anyOf": [
               {
@@ -4754,6 +4781,22 @@
                 }
               ],
               "title": "Pinned"
+            }
+          },
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Archived"
             }
           },
           {

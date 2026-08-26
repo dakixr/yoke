@@ -8,6 +8,9 @@ import pytest
 
 from yoke.http.server import is_loopback_host
 from yoke.http.server import run_server
+from yoke.http.app import HttpAppSettings
+from yoke.http.app import create_app
+from fastapi.testclient import TestClient
 
 
 def test_loopback_detection_rejects_wildcard_and_remote_hosts() -> None:
@@ -64,3 +67,38 @@ def test_run_server_reports_selected_port_and_closes_socket(
     assert f"127.0.0.1:{observed['port']}" in output
     assert "fixed-token" in output
     assert observed["socket"].fileno() == -1  # type: ignore[attr-defined]
+
+
+def test_packaged_web_app_routes_and_assets_share_api_origin(tmp_path: Path) -> None:
+    client = TestClient(
+        create_app(
+            HttpAppSettings(
+                auth_token="fixed-token",
+                session_directory=tmp_path / "sessions",
+            )
+        )
+    )
+
+    for path in ("/", "/new", "/session/example", "/settings"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["content-type"].startswith("text/html")
+        assert 'id="app"' in response.text
+        assert "/assets/js/main.js" in response.text
+
+    asset = client.get("/assets/js/main.js")
+    assert asset.status_code == 200
+    assert asset.headers["cache-control"] == "no-store"
+    assert asset.headers["content-type"].startswith("text/javascript")
+
+    missing = client.get("/assets/not-real.js")
+    assert missing.status_code == 404
+    unknown = client.get("/not-an-app-route")
+    assert unknown.status_code == 404
+
+    denied = client.get("/api/v1/capabilities")
+    assert denied.status_code == 401
+    schema = client.get("/api/v1/openapi.json").json()
+    assert "/" not in schema["paths"]
+    assert "/session/{session_id}" not in schema["paths"]

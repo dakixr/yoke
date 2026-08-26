@@ -81,4 +81,5 @@ def _upsert_index_record(index: SessionIndex, record: SessionRecord) -> None:
         created_at=record.created_at,
         updated_at=record.updated_at,
         pinned=record.pinned,
+        archived_at=record.archived_at,
     )

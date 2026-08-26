@@ -51,6 +51,7 @@ from yoke.http.services.skill_service import SkillService
 from yoke.http.services.tool_trace_service import ToolTraceService
 from yoke.http.services.tool_service import ToolService
 from yoke.http.services.upload_service import UploadService
+from yoke.http.web import install_web_routes
 from yoke.session import SessionStore
 from yoke.session.admissions import AdmissionStore
 from yoke.session.events import SessionEventJournal
@@ -166,4 +167,5 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.include_router(tool_trace.router, prefix="/api/v1")
     app.include_router(tool.router, prefix="/api/v1")
     app.include_router(upload.router, prefix="/api/v1")
+    install_web_routes(app)
     return app

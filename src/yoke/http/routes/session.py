@@ -53,16 +53,18 @@ def list_sessions(
     directory: str | None = Query(default=None),
     search: str | None = Query(default=None),
     pinned: bool | None = Query(default=None),
+    archived: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
-    order: Literal[
-        "updatedDesc", "updatedAsc", "createdDesc", "createdAsc"
-    ] = Query(default="updatedDesc"),
+    order: Literal["updatedDesc", "updatedAsc", "createdDesc", "createdAsc"] = Query(
+        default="updatedDesc"
+    ),
     cursor: str | None = Query(default=None),
 ) -> SessionListResponse:
     return _service(request).list_sessions(
         directory=directory,
         search=search,
         pinned=pinned,
+        archived=archived,
         limit=limit,
         order=order,
         cursor=cursor,
@@ -111,6 +113,8 @@ def patch_session(
             title=body.title,
             pinned_set="pinned" in fields,
             pinned=body.pinned,
+            archived_set="archived" in fields,
+            archived=body.archived,
         )
     )
 

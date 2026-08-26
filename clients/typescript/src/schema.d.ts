@@ -1071,6 +1071,11 @@ export interface components {
              */
             queueEditor: boolean;
             /**
+             * Sessionarchive
+             * @default true
+             */
+            sessionArchive: boolean;
+            /**
              * Sessiontree
              * @default true
              */
@@ -1774,6 +1779,8 @@ export interface components {
         };
         /** SessionInfo */
         SessionInfo: {
+            /** Archivedat */
+            archivedAt?: string | null;
             /** Id */
             id: string;
             location: components["schemas"]["LocationInfo"];
@@ -1797,6 +1804,8 @@ export interface components {
         };
         /** SessionPatchRequest */
         SessionPatchRequest: {
+            /** Archived */
+            archived?: boolean | null;
             /** Pinned */
             pinned?: boolean | null;
             /** Title */
@@ -2794,6 +2803,7 @@ export interface operations {
                 directory?: string | null;
                 search?: string | null;
                 pinned?: boolean | null;
+                archived?: boolean | null;
                 limit?: number;
                 order?: "updatedDesc" | "updatedAsc" | "createdDesc" | "createdAsc";
                 cursor?: string | null;

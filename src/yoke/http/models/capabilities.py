@@ -29,6 +29,7 @@ class FeatureFlags(ApiModel):
     mcp: bool = True
     skills: bool = True
     images: bool = True
+    session_archive: bool = True
 
 
 class CapabilityLimits(ApiModel):

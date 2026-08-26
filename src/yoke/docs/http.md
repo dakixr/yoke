@@ -1,9 +1,11 @@
 # HTTP harness API
 
 `yoke serve` starts one process-wide HTTP daemon for saved and active Yoke
-sessions. The daemon owns the session runtime registry, queue admission,
-execution workers, event feed, process inspector, tool inspector, and the
-shared services used by the CLI.
+sessions and serves the packaged browser application from the same origin. The
+daemon owns the session runtime registry, queue admission, execution workers,
+event feed, process inspector, tool inspector, and the shared services used by
+the CLI. The normal interactive CLI continues to call those Python/runtime
+services directly and does not route itself through HTTP.
 
 The public API is versioned under `/api/v1`. Its OpenAPI document is available
 at `/api/v1/openapi.json`. The checked-in contract used by tests is
@@ -44,10 +46,19 @@ needed. Binding to a non-loopback address requires `--allow-remote` explicitly.
 Do not expose the daemon to an untrusted network. It can read workspace files,
 run tools and processes, and use configured model providers.
 
-The health endpoint is public. Other `/api/v1` resources require bearer auth.
-The server does not install permissive CORS middleware, so a separately hosted
-browser UI must use an explicitly configured trusted origin or be served from
-the same origin in a later frontend integration.
+The health endpoint and packaged browser application are public. Other
+`/api/v1` resources require bearer auth. Browser JSON and SSE requests use the
+same bearer token printed by `yoke serve`. The web application keeps that token
+in session-scoped browser storage, not long-lived local storage. A launch URL
+may supply `?token=...`; the application consumes it and removes it from the
+visible/history URL immediately.
+
+The browser application is a no-build Preact + HTM application shipped under
+`src/yoke/web`. `GET /`, `/new`, `/session/<id>`, and `/settings` return the
+application shell, and `GET /assets/*` serves the packaged browser modules,
+CSS, vendored dependencies, and licenses. These browser routes are excluded
+from the v1 OpenAPI schema. Production does not require Node.js, npm, a CDN, or
+a separate frontend server.
 
 ## Session and execution model
 
@@ -110,7 +121,7 @@ sequence before treating that session as caught up.
 The v1 API currently exposes typed resources for:
 
 - sessions, active runtime state, messages, context, selection, compaction,
-  fork, title, and pin state;
+  fork, title, pin state, and durable archive state;
 - prompt admission, steering, queueing, queue editing, interruption, and wait;
 - session trees, navigation previews, navigation, and labels;
 - tool discovery, session tool enablement, live tool traces, and sequenced
@@ -127,6 +138,23 @@ The v1 API currently exposes typed resources for:
 The process and raw live-output inspectors are runtime-retained. Their final
 conversation results may survive restart, but PIDs and retained stdout chunks
 do not.
+
+## Session archive state
+
+The visible browser action is called `Settle`, but the HTTP/domain field is
+`archived` to avoid colliding with prompt admission's existing
+`session.prompt.settled` terminology.
+
+```text
+PATCH /api/v1/session/{sessionID}
+  { "archived": true | false }
+
+GET /api/v1/session?archived=true|false
+```
+
+`SessionInfo.archivedAt` is the durable archive timestamp. Archiving is user
+organization only, separate from runtime state, and reopening clears the
+timestamp without changing the conversation.
 
 ## Files and uploads
 

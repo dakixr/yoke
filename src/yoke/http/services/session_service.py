@@ -77,6 +77,7 @@ class SessionService:
         directory: str | None,
         search: str | None,
         pinned: bool | None,
+        archived: bool | None,
         limit: int,
         order: SessionOrder,
         cursor: str | None,
@@ -89,12 +90,22 @@ class SessionService:
                 for record in records
                 if needle in record.id.casefold()
                 or needle in (record.title or "").casefold()
+                or needle in (record.root or "").casefold()
             ]
         if pinned is not None:
             records = [record for record in records if record.pinned is pinned]
-        records.sort(key=lambda record: self._sort_key(record, order), reverse=order.endswith("Desc"))
+        if archived is not None:
+            records = [
+                record
+                for record in records
+                if (record.archived_at is not None) is archived
+            ]
+        records.sort(
+            key=lambda record: self._sort_key(record, order),
+            reverse=order.endswith("Desc"),
+        )
 
-        fingerprint = query_fingerprint((directory, search, pinned, order))
+        fingerprint = query_fingerprint((directory, search, pinned, archived, order))
         start = self._cursor_start(records, cursor, fingerprint)
         page = records[start : start + limit]
         next_cursor = None
@@ -148,8 +159,10 @@ class SessionService:
         title: str | None,
         pinned_set: bool,
         pinned: bool | None,
+        archived_set: bool,
+        archived: bool | None,
     ) -> SessionInfo:
-        if not title_set and not pinned_set:
+        if not title_set and not pinned_set and not archived_set:
             raise ApiError(400, "empty_mutation", "At least one field is required.")
         record = self._require_record(session_id)
         if title_set:
@@ -158,6 +171,12 @@ class SessionService:
             if pinned is None:
                 raise ApiError(400, "invalid_pinned", "pinned cannot be null.")
             record = self.store.set_pinned(session_id, pinned, existing_record=record)
+        if archived_set:
+            if archived is None:
+                raise ApiError(400, "invalid_archived", "archived cannot be null.")
+            record = self.store.set_archived(
+                session_id, archived, existing_record=record
+            )
         self._publish(
             record,
             "session.updated",
@@ -165,6 +184,7 @@ class SessionService:
                 "sessionID": record.id,
                 "title": record.title,
                 "pinned": record.pinned,
+                "archivedAt": record.archived_at,
             },
         )
         return self.session_info(record)
@@ -431,6 +451,7 @@ class SessionService:
             id=record.id,
             title=record.title,
             pinned=record.pinned,
+            archived_at=record.archived_at,
             location=LocationInfo(directory=record.root or ""),
             time=SessionTime(created=record.created_at, updated=record.updated_at),
             selection=SessionSelection(

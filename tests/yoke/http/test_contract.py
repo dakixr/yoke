@@ -188,6 +188,74 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
     }
 
 
+def test_session_archive_is_durable_filterable_and_reopenable(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    for session_id in ("session-a", "session-b"):
+        created = client.post(
+            "/api/v1/session",
+            headers=_auth(),
+            json={"id": session_id, "location": {"directory": str(root)}},
+        )
+        assert created.status_code == 200
+
+    archived = client.patch(
+        "/api/v1/session/session-a",
+        headers=_auth(),
+        json={"archived": True},
+    )
+    assert archived.status_code == 200
+    archived_at = archived.json()["data"]["archivedAt"]
+    assert archived_at
+
+    active_list = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"archived": False},
+    )
+    assert [item["id"] for item in active_list.json()["data"]] == ["session-b"]
+    archived_list = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"archived": True},
+    )
+    assert [item["id"] for item in archived_list.json()["data"]] == ["session-a"]
+
+    restarted = _client(tmp_path)
+    persisted = restarted.get("/api/v1/session/session-a", headers=_auth())
+    assert persisted.status_code == 200
+    assert persisted.json()["data"]["archivedAt"] == archived_at
+
+    reopened = restarted.patch(
+        "/api/v1/session/session-a",
+        headers=_auth(),
+        json={"archived": False},
+    )
+    assert reopened.status_code == 200
+    assert reopened.json()["data"]["archivedAt"] is None
+
+
+def test_session_search_matches_working_directory(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "distinct-project-name"
+    root.mkdir()
+    created = client.post(
+        "/api/v1/session",
+        headers=_auth(),
+        json={"id": "session-a", "location": {"directory": str(root)}},
+    )
+    assert created.status_code == 200
+
+    searched = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"search": "distinct-project"},
+    )
+    assert searched.status_code == 200
+    assert [item["id"] for item in searched.json()["data"]] == ["session-a"]
+
+
 def test_message_and_tree_projection_strip_provider_private_fields(tmp_path: Path) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"

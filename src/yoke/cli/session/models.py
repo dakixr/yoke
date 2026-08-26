@@ -25,6 +25,7 @@ class SessionRecord(BaseModel):
     root: str | None = None
     title: str | None = None
     pinned: bool = False
+    archived_at: str | None = None
     provider_name: str | None = None
     model_id: str | None = None
     reasoning_effort: str | None = None
@@ -48,6 +49,7 @@ class SessionIndexEntry(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     pinned: bool = False
+    archived_at: str | None = None
 
     def to_record(self) -> SessionRecord:
         """Convert the index entry into a partial session record."""
@@ -58,6 +60,7 @@ class SessionIndexEntry(BaseModel):
             created_at=self.created_at,
             updated_at=self.updated_at,
             pinned=self.pinned,
+            archived_at=self.archived_at,
         )
 
 

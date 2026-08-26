@@ -55,6 +55,7 @@ def _index_metadata_changes(
         "root": index_entry.root,
         "title": index_entry.title,
         "pinned": index_entry.pinned,
+        "archived_at": index_entry.archived_at,
         "updated_at": index_entry.updated_at,
     }
     return {
