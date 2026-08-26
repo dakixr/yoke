@@ -154,7 +154,12 @@ def register_commands(app: typer.Typer) -> None:
         ] = "127.0.0.1",
         port: Annotated[
             int,
-            typer.Option("--port", min=0, max=65535, help="HTTP port. Use 0 for an ephemeral port."),
+            typer.Option(
+                "--port",
+                min=0,
+                max=65535,
+                help="HTTP port. Use 0 for an ephemeral port.",
+            ),
         ] = 8765,
         token: Annotated[
             str | None,
@@ -171,6 +176,13 @@ def register_commands(app: typer.Typer) -> None:
                 help="Permit binding to a non-loopback host.",
             ),
         ] = False,
+        open_browser: Annotated[
+            bool,
+            typer.Option(
+                "--open",
+                help="Open the web UI with the bearer token already configured.",
+            ),
+        ] = False,
     ) -> None:
         """Run the process-wide Yoke HTTP API."""
         import click
@@ -183,6 +195,7 @@ def register_commands(app: typer.Typer) -> None:
                 port=port,
                 auth_token=token,
                 allow_remote=allow_remote,
+                open_browser=open_browser,
             )
         except (OSError, ValueError) as exc:
             click.echo(f"Error: {exc}", err=True)

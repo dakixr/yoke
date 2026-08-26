@@ -54,6 +54,23 @@ class GlobalEventBroker:
             subscription.closed = True
             subscription.loop.call_soon_threadsafe(self._close_queue, subscription)
 
+    def close(self) -> None:
+        """Close every live subscriber so server shutdown cannot wait on SSE."""
+        with self._lock:
+            subscriptions = list(self._subscriptions.values())
+            self._subscriptions.clear()
+            for subscription in subscriptions:
+                subscription.closed = True
+        for subscription in subscriptions:
+            try:
+                subscription.loop.call_soon_threadsafe(
+                    self._close_queue,
+                    subscription,
+                )
+            except RuntimeError:
+                # The owning loop may already be gone during interpreter teardown.
+                pass
+
     def publish(self, event: PublicEvent, *, ephemeral: bool = False) -> None:
         """Fan out one sanitized event without blocking the publishing thread."""
         with self._lock:
@@ -157,7 +174,9 @@ def public_event_from_session_event(event: SessionEvent) -> PublicEvent:
         time=event.time,
         session_id=event.session_id,
         location=(
-            LocationInfo(directory=event.location) if event.location is not None else None
+            LocationInfo(directory=event.location)
+            if event.location is not None
+            else None
         ),
         durable=DurableEventInfo(
             aggregate_id=event.session_id,
@@ -184,4 +203,3 @@ def live_event(
         durable=None,
         data=data,
     )
-

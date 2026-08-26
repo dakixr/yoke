@@ -1,6 +1,6 @@
 import { html, useEffect, useMemo, useState } from "../../vendor/htm-preact.js";
 import { workingDuration, shortAge } from "../lib/duration.js";
-import { draftPath, navigate } from "../router/router.js";
+import { currentRoute, draftPath, navigate } from "../router/router.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
 
@@ -21,15 +21,33 @@ export function Sidebar() {
   const searchResults = useStore((state) => state.ui.searchResults);
   const searching = useStore((state) => state.ui.searching);
   const [settledOpen, setSettledOpen] = useState(false);
+  const [projectScope, setProjectScope] = useState("");
+  const route = currentRoute();
+  const selectedDraftID = route.name === "new" ? route.draftID : null;
 
   const meaningfulDrafts = useMemo(
-    () => Object.values(drafts).filter((draft) => (draft.text || "").trim() || draft.attachments?.length),
+    () => Object.values(drafts)
+      .filter((draft) => (draft.text || "").trim() || draft.attachments?.length)
+      .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))),
     [drafts],
   );
-  const pinned = order.map((id) => sessions[id]).filter((item) => item?.pinned);
-  const unpinned = order.map((id) => sessions[id]).filter((item) => item && !item.pinned);
-  const groups = useMemo(() => groupByLocation(unpinned, locations), [unpinned, locations]);
-  const visibleSearch = search.trim() ? searchResults.map((id) => sessions[id]).filter(Boolean) : null;
+  const projects = useMemo(
+    () => projectOptions(order.map((id) => sessions[id]).filter(Boolean), meaningfulDrafts, locations),
+    [order, sessions, meaningfulDrafts, locations],
+  );
+  useEffect(() => {
+    if (projectScope && !projects.some((project) => project.directory === projectScope)) setProjectScope("");
+  }, [projectScope, projects]);
+
+  const matchesScope = (item) => !projectScope || item?.location?.directory === projectScope || item?.location === projectScope;
+  const current = order.map((id) => sessions[id]).filter((item) => item && (matchesScope(item) || item.id === selectedID));
+  const pinned = current.filter((item) => item.pinned);
+  const inbox = current.filter((item) => !item.pinned);
+  const scopedDrafts = meaningfulDrafts.filter((draft) => matchesScope(draft));
+  const scopedArchived = archivedOrder.map((id) => sessions[id]).filter((session) => session && matchesScope(session));
+  const visibleSearch = search.trim()
+    ? searchResults.map((id) => sessions[id]).filter((item) => item && matchesScope(item))
+    : null;
 
   return html`
     <aside class=${`sidebar ${open ? "is-open" : ""}`} aria-label="Sessions">
@@ -37,52 +55,62 @@ export function Sidebar() {
         <div class="brand-row">
           <button class="icon-button mobile-only" aria-label="Close sessions" onClick=${() => controller.toggleSidebar()}>×</button>
           <div class="brand">Yoke</div>
-          <span class="connection-dot" aria-hidden="true"></span>
+          <span class="brand-subtitle">Sessions</span>
+          <span class="connection-dot" aria-label="Connected" title="Connected"></span>
         </div>
-        <button class="new-session-button" onClick=${() => controller.createDraft()}>＋ New session <kbd>⌘N</kbd></button>
-        <label class="sidebar-search">
-          <span aria-hidden="true">⌕</span>
-          <input
-            type="search"
-            value=${search}
-            placeholder="Search sessions"
-            aria-label="Search sessions"
-            onInput=${(event) => controller.searchSessions(event.currentTarget.value)}
-          />
-          ${searching ? html`<span class="muted tiny">…</span>` : null}
+        <div class="sidebar-inbox-toolbar">
+          <label class="sidebar-search">
+            <span class="sidebar-search__icon" aria-hidden="true">⌕</span>
+            <input
+              type="search"
+              value=${search}
+              placeholder="Search"
+              aria-label="Search sessions"
+              onInput=${(event) => controller.searchSessions(event.currentTarget.value)}
+            />
+            ${searching ? html`<span class="muted tiny">…</span>` : null}
+          </label>
+          <button class="new-session-button" aria-label="New session" title="New session" onClick=${() => controller.createDraft()}>＋</button>
+        </div>
+        <label class="sidebar-project-filter">
+          <span aria-hidden="true">▱</span>
+          <select aria-label="Filter sessions by project" value=${projectScope} onChange=${(event) => setProjectScope(event.currentTarget.value)}>
+            <option value="">All projects</option>
+            ${projects.map((project) => html`<option value=${project.directory}>${project.name}</option>`)}
+          </select>
         </label>
       </div>
       <div class="sidebar__scroll">
         ${visibleSearch ? html`
-          <${SidebarSection} title="Search" count=${visibleSearch.length}>
-            ${visibleSearch.map((session) => html`<${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} />`)}
-          <//>
+          <div class="inbox-list" role="list" aria-label="Search results">
+            ${visibleSearch.length ? visibleSearch.map((session) => html`
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} />
+            `) : html`<div class="sidebar-empty">No sessions found</div>`}
+          </div>
         ` : html`
-          ${meaningfulDrafts.length ? html`
-            <${SidebarSection} title="Drafts" count=${meaningfulDrafts.length}>
-              ${meaningfulDrafts.map((draft) => html`<${DraftRow} key=${draft.id} draft=${draft} location=${locations[draft.location]} />`)}
-            <//>
-          ` : null}
-          ${pinned.length ? html`
-            <${SidebarSection} title="Pinned" count=${pinned.length}>
-              ${pinned.map((session) => html`<${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} pinned />`)}
-            <//>
-          ` : null}
-          ${groups.map((group) => html`
-            <${SidebarSection} key=${group.directory} title=${group.name} subtitle=${group.git?.branch || compactPath(group.directory)}>
-              ${group.sessions.map((session) => html`<${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} />`)}
-            <//>
-          `)}
-          ${sessionCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(false)}>Load older sessions</button>` : null}
-          ${archivedOrder.length ? html`
-            <section class="sidebar-section settled-section">
+          <div class="inbox-list" role="list">
+            ${scopedDrafts.map((draft) => html`<${DraftRow} key=${draft.id} draft=${draft} location=${locations[draft.location]} selected=${selectedDraftID === draft.id} />`)}
+            ${pinned.map((session) => html`
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} pinned outsideScope=${Boolean(projectScope && !matchesScope(session))} />
+            `)}
+            ${pinned.length && inbox.length ? html`<div class="pinned-divider" aria-hidden="true"></div>` : null}
+            ${inbox.map((session) => html`
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} outsideScope=${Boolean(projectScope && !matchesScope(session))} />
+            `)}
+            ${sessionCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(false)}>＋ Load older sessions</button>` : null}
+            ${!scopedDrafts.length && !pinned.length && !inbox.length ? html`<div class="sidebar-empty">No sessions yet</div>` : null}
+          </div>
+          ${scopedArchived.length ? html`
+            <section class="settled-shelf">
               <button class="section-toggle" aria-expanded=${settledOpen} onClick=${() => setSettledOpen(!settledOpen)}>
-                <span>${settledOpen ? "▾" : "▸"} Settled</span><span>${archivedOrder.length}</span>
+                <span>Settled (${scopedArchived.length})</span>
+                <span class="section-toggle__line" aria-hidden="true"></span>
+                <span class=${`section-toggle__chevron ${settledOpen ? "is-open" : ""}`} aria-hidden="true">⌄</span>
               </button>
-              ${settledOpen ? archivedOrder.map((id) => sessions[id]).filter(Boolean).map((session) => html`
-                <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} settled />
+              ${settledOpen ? scopedArchived.map((session) => html`
+                <${SessionRow} key=${session.id} session=${session} selected=${selectedID === session.id} locations=${locations} settled />
               `) : null}
-              ${settledOpen && archivedCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(true)}>Show more settled</button>` : null}
+              ${settledOpen && archivedCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(true)}>＋ Show more settled</button>` : null}
             </section>
           ` : null}
         `}
@@ -95,60 +123,78 @@ export function Sidebar() {
   `;
 }
 
-function SidebarSection({ title, subtitle = null, count = null, children }) {
-  return html`<section class="sidebar-section">
-    <div class="sidebar-section__heading"><span>${title}</span>${count !== null ? html`<span>${count}</span>` : null}</div>
-    ${subtitle ? html`<div class="sidebar-section__subtitle" title=${subtitle}>${subtitle}</div>` : null}
-    <div class="sidebar-section__rows">${children}</div>
-  </section>`;
-}
-
-function SessionRow({ session, active, attention, selected, done, settled = false }) {
+function SessionRow({ session, active, attention, selected, done, locations, pinned = false, settled = false, outsideScope = false }) {
+  const directory = session.location?.directory || "";
+  const location = locations[directory];
+  const projectName = location?.name || compactPath(directory);
+  const branch = location?.git?.branch || compactPath(directory);
+  const model = session.selection?.model || session.selection?.provider || "";
   const age = shortAge(settled ? session.archivedAt : session.time?.updated);
-  const showAge = settled || (!active?.state && !attention?.permissions && !attention?.questions && !done && age !== "now");
+  if (settled) {
+    return html`
+      <button class=${`session-row session-row--slim is-settled ${selected ? "is-selected" : ""}`} aria-current=${selected ? "page" : undefined} onClick=${() => controller.selectSession(session.id)}>
+        <span class="session-project-glyph" aria-hidden="true">▱</span>
+        <span class="session-row__title">${session.title || session.id}</span>
+        ${session.pinned ? html`<span class="session-pin" aria-label="Pinned" title="Pinned">PIN</span>` : null}
+        <span class="session-row__meta">${age}</span>
+      </button>
+    `;
+  }
   return html`
     <button
-      class=${`session-row ${selected ? "is-selected" : ""} ${settled ? "is-settled" : ""}`}
+      class=${`session-row session-card ${selected ? "is-selected" : ""} ${outsideScope ? "is-outside-scope" : ""}`}
       aria-current=${selected ? "page" : undefined}
       onClick=${() => controller.selectSession(session.id)}
     >
-      <span class="session-row__main">
-        <span class="session-row__title">${session.title || session.id}</span>
-        <${SessionStatus} runtime=${active} attention=${attention} done=${done} queue=${session.queue} settled=${settled} />
+      <span class="session-card__top">
+        <span class="session-project-glyph" aria-hidden="true">▱</span>
+        <span class="session-card__project" title=${directory}>${projectName}</span>
+        ${(pinned || session.pinned) ? html`<span class="session-pin" aria-label="Pinned" title="Pinned">PIN</span>` : null}
+        <${SessionStatus} runtime=${active} attention=${attention} done=${done} queue=${session.queue} age=${age} />
       </span>
-      <span class="session-row__meta">
-        ${showAge ? html`<span>${age}</span>` : null}
+      <span class="session-row__title">${session.title || session.id}</span>
+      <span class="session-card__bottom">
+        <span class="session-card__branch" title=${directory}>${outsideScope ? `Current · ${branch}` : branch}</span>
+        ${model ? html`<span class="session-card__model" title=${model}>${model}</span>` : null}
       </span>
     </button>
   `;
 }
 
-function SessionStatus({ runtime, attention, done, queue, settled }) {
+function SessionStatus({ runtime, attention, done, queue, age }) {
   const [, tick] = useState(0);
   useEffect(() => {
     if (runtime?.state !== "running") return;
     const id = setInterval(() => tick((value) => value + 1), 1000);
     return () => clearInterval(id);
   }, [runtime?.state, runtime?.startedAt]);
-  if (settled) return html`<span class="status status--quiet">Settled</span>`;
   const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
-  if (attentionCount) return html`<span class="status status--attention">${attentionCount === 1 ? (attention?.permissions ? "Permission required" : "Question waiting") : `${attentionCount} actions required`}</span>`;
+  if (attentionCount) return html`<span class="status status--attention">${attentionCount === 1 ? "Action required" : `${attentionCount} actions required`}</span>`;
   if (runtime?.state === "waiting_input") return html`<span class="status status--attention">Waiting for you</span>`;
   if (runtime?.state === "error") return html`<span class="status status--error">Error</span>`;
   if (done) return html`<span class="status status--done">Done</span>`;
   if (runtime?.state === "stopping") return html`<span class="status status--quiet">Stopping</span>`;
-  if (runtime?.state === "running") return html`<span class="status status--working">${workingDuration(runtime.startedAt)}</span>`;
+  if (runtime?.state === "running") return html`<span class="status status--working">Working ${workingDuration(runtime.startedAt).replace("Working ", "")}</span>`;
   if (queue?.steering && queue?.queued) return html`<span class="status status--quiet">${queue.steering} steer · ${queue.queued} queued</span>`;
-  if (queue?.steering) return html`<span class="status status--quiet">${queue.steering} steer pending</span>`;
+  if (queue?.steering) return html`<span class="status status--quiet">${queue.steering} steer</span>`;
   if (queue?.queued) return html`<span class="status status--quiet">${queue.queued} queued</span>`;
-  return html`<span class="status status--quiet">Idle</span>`;
+  return html`<span class="status status--quiet">${age || "now"}</span>`;
 }
 
-function DraftRow({ draft, location }) {
-  const preview = (draft.text || "Untitled draft").trim().replace(/\s+/g, " ").slice(0, 64);
-  return html`<button class="session-row draft-row" onClick=${() => navigate(draftPath(draft.id))}>
-    <span class="session-row__main"><span class="session-row__title">${preview}</span><span class="status status--draft">Draft · ${location?.name || compactPath(draft.location)}</span></span>
-    <span class="session-row__meta">${shortAge(draft.updatedAt)}</span>
+function DraftRow({ draft, location, selected }) {
+  const preview = (draft.text || "Untitled draft").trim().replace(/\s+/g, " ").slice(0, 72);
+  const projectName = location?.name || compactPath(draft.location);
+  return html`<button class=${`session-row session-card draft-row ${selected ? "is-selected" : ""}`} aria-current=${selected ? "page" : undefined} onClick=${() => navigate(draftPath(draft.id))}>
+    <span class="session-card__top">
+      <span class="session-project-glyph" aria-hidden="true">▱</span>
+      <span class="session-card__project">${projectName}</span>
+      <span class="status status--draft">Draft</span>
+    </span>
+    <span class="session-row__title">${preview}</span>
+    <span class="session-card__bottom">
+      <span class="session-card__branch">${draft.attachments?.length ? `${draft.attachments.length} attachment${draft.attachments.length === 1 ? "" : "s"}` : compactPath(draft.location)}</span>
+      <span class="session-row__meta">${shortAge(draft.updatedAt)}</span>
+    </span>
   </button>`;
 }
 
@@ -158,7 +204,7 @@ function SidebarResizeHandle() {
     const startX = event.clientX;
     const current = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width")) || 286;
     const move = (moveEvent) => {
-      const width = Math.max(230, Math.min(420, current + moveEvent.clientX - startX));
+      const width = Math.max(250, Math.min(430, current + moveEvent.clientX - startX));
       document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
       localStorage.setItem("yoke.web.sidebarWidth", String(width));
     };
@@ -172,25 +218,18 @@ function SidebarResizeHandle() {
   return html`<div class="sidebar-resize" role="separator" aria-orientation="vertical" onPointerDown=${onPointerDown}></div>`;
 }
 
-function groupByLocation(sessions, locations) {
-  const map = new Map();
-  for (const session of sessions) {
-    const directory = session.location?.directory || "";
-    if (!map.has(directory)) map.set(directory, []);
-    map.get(directory).push(session);
-  }
-  return [...map.entries()]
-    .map(([directory, items]) => ({
-      directory,
-      name: locations[directory]?.name || compactPath(directory),
-      git: locations[directory]?.git || null,
-      sessions: items,
-    }))
+function projectOptions(sessions, drafts, locations) {
+  const directories = new Set([
+    ...sessions.map((session) => session.location?.directory).filter(Boolean),
+    ...drafts.map((draft) => draft.location).filter(Boolean),
+  ]);
+  return [...directories]
+    .map((directory) => ({ directory, name: locations[directory]?.name || compactPath(directory) }))
     .sort((left, right) => left.name.localeCompare(right.name) || left.directory.localeCompare(right.directory));
 }
 
 function compactPath(path) {
-  if (!path) return "Unknown location";
-  const parts = path.split("/").filter(Boolean);
+  if (!path) return "Unknown project";
+  const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.at(-1) || path;
 }

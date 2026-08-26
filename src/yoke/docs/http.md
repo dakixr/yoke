@@ -32,6 +32,7 @@ and this TypeScript generation/typecheck on pushes to `main` and pull requests.
 
 ```bash
 yoke serve
+yoke serve --open
 ```
 
 The default host is loopback-only. `yoke serve` prints the selected port and a
@@ -45,6 +46,25 @@ Set `YOKE_HTTP_TOKEN` or pass the CLI token option when a stable token is
 needed. Binding to a non-loopback address requires `--allow-remote` explicitly.
 Do not expose the daemon to an untrusted network. It can read workspace files,
 run tools and processes, and use configured model providers.
+
+`yoke serve --open` launches the packaged UI in the default browser with the
+current bearer token in a URL fragment. Fragments are not sent in HTTP requests,
+so the token does not appear in access logs. The UI stores it in session-scoped
+browser storage and immediately removes it from the address/history URL. When
+the server binds to a wildcard address, the local browser launch uses
+`127.0.0.1` rather than the wildcard host. Query-string token launch URLs remain
+accepted for compatibility and are removed in the same way.
+
+For a Tailscale-only listener, bind directly to the machine's Tailscale address
+instead of `0.0.0.0`:
+
+```bash
+yoke serve --host "$(tailscale ip -4)" --allow-remote
+```
+
+This still requires bearer authentication. The host opt-in controls the bind;
+network reachability remains subject to the machine's firewall and Tailscale
+ACLs.
 
 The health endpoint and packaged browser application are public. Other
 `/api/v1` resources require bearer auth. Browser JSON and SSE requests use the

@@ -55,11 +55,14 @@ class AppController {
 
   consumeURLToken() {
     const url = new URL(window.location.href);
-    const token = url.searchParams.get("token");
+    const fragment = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+    const token = fragment.get("token") || url.searchParams.get("token");
     if (!token) return;
     writeToken(token);
+    fragment.delete("token");
     url.searchParams.delete("token");
-    history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    const hash = fragment.toString();
+    history.replaceState({}, "", `${url.pathname}${url.search}${hash ? `#${hash}` : ""}`);
   }
 
   async authenticateAndBootstrap(token = readToken()) {
