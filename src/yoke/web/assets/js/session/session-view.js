@@ -35,7 +35,7 @@ function SessionView() {
   const attentionCount = (data?.permissions?.length || 0) + (data?.questions?.length || 0);
   return html`<main class="main-view session-view">
     <${SessionHeader} session=${session} runtime=${runtime} attentionCount=${(data?.permissions?.length || 0) + (data?.questions?.length || 0)} />
-    <${Timeline} sessionID=${sessionID} data=${data} />
+    <${Timeline} sessionID=${sessionID} data=${data} runtime=${runtime} />
     <div class="session-bottom">
       <div class="session-bottom__inner">
         <${HumanInput} sessionID=${sessionID} permissions=${data?.permissions || []} questions=${data?.questions || []} />

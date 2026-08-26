@@ -57,6 +57,14 @@
 .tool-line__glyph { color: var(--faint); }
 .tool-line code, .tool-line__summary { min-width: 0; overflow: hidden; color: var(--faint); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 .tool-line--live { margin: 0 0 18px 90px; width: calc(100% - 90px); }
+.chat-working { display: flex; width: calc(100% - 90px); min-height: 36px; margin: 2px 0 18px 90px; align-items: center; gap: 8px; padding: 6px 0 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); color: var(--muted); font-size: 12.5px; }
+.chat-working__mark { width: 11px; height: 11px; flex: none; transform: rotate(45deg); border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border-strong)); border-radius: 2px; background: color-mix(in srgb, var(--accent) 20%, transparent); box-shadow: inset 0 0 0 2px var(--bg); animation: chat-working-breathe 1.45s ease-in-out infinite; }
+.chat-working__label { color: color-mix(in srgb, var(--text) 72%, var(--muted)); font-weight: 560; }
+.chat-working__duration { color: var(--faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+@keyframes chat-working-breathe {
+  0%, 100% { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 0 0 0 3px var(--bg), 0 0 0 transparent; }
+  50% { background: color-mix(in srgb, var(--accent) 72%, var(--text)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bg) 80%, transparent), 0 0 8px color-mix(in srgb, var(--accent) 24%, transparent); }
+}
 .control-line { display: flex; margin: 0 0 16px 90px; gap: 8px; color: var(--faint); font-size: 11px; }
 .timeline-error { margin: 0 0 18px 90px; padding: 7px 9px; border-left: 2px solid var(--danger); background: var(--danger-bg); color: var(--danger); font-size: 12px; }
 .jump-latest { position: absolute; right: 18px; bottom: 12px; z-index: 5; padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--panel); box-shadow: var(--shadow); color: var(--muted); font-size: 11px; }
@@ -128,7 +136,7 @@
   .turn { grid-template-columns: 1fr; gap: 5px; margin-bottom: 24px; }
   .turn__rail { display: flex; justify-content: space-between; padding: 0 2px; text-align: left; }
   .turn__activity { justify-self: auto; margin-right: auto; align-self: center; }
-  .tool-result-row, .tool-line--live, .control-line, .timeline-error { margin-left: 0; width: auto; }
+  .tool-result-row, .tool-line--live, .chat-working, .control-line, .timeline-error { margin-left: 0; width: auto; }
   .timeline__inner { width: calc(100% - 22px); padding-top: 20px; }
   .session-bottom { padding: 0 7px 7px; }
   .session-header__actions .header-action, .session-header__actions summary.header-action { min-height: 44px; padding-inline: 9px; }
@@ -146,4 +154,8 @@
   .composer-actions { flex-wrap: wrap; justify-content: flex-end; }
   .composer-actions button, .composer-footer__left .quiet-button { min-height: 44px; }
   .draft-composer-wrap { width: calc(100% - 22px); padding-top: 28px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-working__mark { animation: none; background: color-mix(in srgb, var(--accent) 42%, transparent); }
 }

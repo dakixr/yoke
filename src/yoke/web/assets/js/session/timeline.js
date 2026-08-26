@@ -1,9 +1,10 @@
 import { html, useEffect, useLayoutEffect, useRef, useState } from "../../vendor/htm-preact.js";
+import { workingDuration } from "../lib/duration.js";
 import { controller } from "../state/controller.js";
 import { getScroll, setScroll } from "../state/local-state.js";
 import { markdownHTML } from "./markdown.js";
 
-export function Timeline({ sessionID, data }) {
+export function Timeline({ sessionID, data, runtime }) {
   const viewport = useRef(null);
   const followingRef = useRef(true);
   const restore = useRef({ sessionID: null, target: 0, complete: false });
@@ -45,7 +46,7 @@ export function Timeline({ sessionID, data }) {
       node.scrollTop = node.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [sessionID, messages.length, livePrompt?.id, liveAssistant?.content, liveTool?.callID, following]);
+  }, [sessionID, messages.length, livePrompt?.id, liveAssistant?.content, liveTool?.callID, runtime?.state, runtime?.startedAt, following]);
 
   const onScroll = () => {
     const node = viewport.current;
@@ -65,7 +66,7 @@ export function Timeline({ sessionID, data }) {
               ${data.loadingOlder ? "Loading…" : "Load older turns"}
             </button>
           ` : null}
-          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} />`) : !livePrompt && !liveAssistant?.content && !liveTool ? html`
+          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} />`) : !livePrompt && !liveAssistant?.content && !liveTool && runtime?.state !== "running" ? html`
             <div class="timeline-empty">This session has no messages yet.</div>
           ` : null}
           ${livePrompt ? html`<${UserMessage} message=${livePromptMessage(livePrompt)} />` : null}
@@ -75,10 +76,27 @@ export function Timeline({ sessionID, data }) {
               <span class="tool-line__glyph">↳</span><span>Running ${humanToolName(liveTool.name)}</span><span class="muted">working</span>
             </button>
           ` : null}
+          ${runtime?.state === "running" ? html`<${WorkingIndicator} startedAt=${runtime.startedAt} />` : null}
           ${data?.lastError ? html`<div class="timeline-error" role="status">${data.lastError}</div>` : null}
         </div>
       </div>
       ${!following ? html`<button class="jump-latest" onClick=${() => { followingRef.current = true; setFollowing(true); viewport.current?.scrollTo({ top: viewport.current.scrollHeight }); }}>Jump to latest ↓</button>` : null}
+    </div>
+  `;
+}
+
+function WorkingIndicator({ startedAt }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => tick((value) => value + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [startedAt]);
+  const duration = workingDuration(startedAt).replace("Working ", "");
+  return html`
+    <div class="chat-working" role="status" aria-label="Yoke is working">
+      <span class="chat-working__mark" aria-hidden="true"></span>
+      <span class="chat-working__label">Working</span>
+      <span class="chat-working__duration" aria-hidden="true">${duration}</span>
     </div>
   `;
 }
