@@ -19,6 +19,8 @@ from yoke.agent.tools.command_process_types import (
 from yoke.agent.tools.command_process_types import MAX_PROCESS_COUNT
 from yoke.agent.tools.command_process_types import CancelRequested
 from yoke.agent.tools.command_process_types import CommandProcessResult
+from yoke.agent.tools.command_process_types import CommandProcessOutputChunk
+from yoke.agent.tools.command_process_types import CommandProcessOutputPage
 from yoke.agent.tools.command_process_types import (
     CommandProcessSnapshot,
 )
@@ -161,6 +163,72 @@ class CommandProcessManager:
             completed = list(self._completed)
             active = [process.snapshot() for process in self._processes.values()]
         return sorted([*completed, *active], key=lambda item: item.started_at)
+
+    def snapshot(self, session_id: int) -> CommandProcessSnapshot:
+        """Return one current or retained process snapshot."""
+        with self._lock:
+            managed = self._processes.get(session_id)
+            if managed is not None:
+                return managed.snapshot()
+            completed = next(
+                (item for item in self._completed if item.session_id == session_id),
+                None,
+            )
+        if completed is None:
+            raise ValueError(f"Unknown command session ID {session_id}")
+        return completed
+
+    def output_chunks(
+        self,
+        session_id: int,
+        *,
+        after_seq: int,
+        limit: int,
+    ) -> CommandProcessOutputPage:
+        """Return a non-consuming retained output page for one process."""
+        with self._lock:
+            managed = self._processes.get(session_id)
+            completed = None
+            if managed is None:
+                completed = next(
+                    (item for item in self._completed if item.session_id == session_id),
+                    None,
+                )
+        if managed is not None:
+            return managed.output_page(after_seq=after_seq, limit=limit)
+        if completed is None:
+            raise ValueError(f"Unknown command session ID {session_id}")
+        latest = completed.latest_output_seq
+        if latest == 0 or after_seq >= latest or not completed.output_tail:
+            chunks: tuple[CommandProcessOutputChunk, ...] = ()
+        else:
+            chunks = (
+                CommandProcessOutputChunk(seq=latest, text=completed.output_tail),
+            )
+        return CommandProcessOutputPage(
+            chunks=chunks,
+            latest_seq=latest,
+            truncated_before_seq=max(
+                completed.truncated_before_seq,
+                max(0, latest - 1),
+            ),
+        )
+
+    def write_input(self, session_id: int, chars: str) -> None:
+        """Write stdin without consuming process output."""
+        managed = self._get(session_id)
+        managed.write(chars)
+
+    def interrupt(self, session_id: int) -> None:
+        """Send the manager's portable interrupt signal to one live process."""
+        managed = self._get(session_id)
+        managed.interrupt()
+
+    def terminate(self, session_id: int) -> None:
+        """Terminate one live process and retain its final inspection snapshot."""
+        managed = self._get(session_id)
+        managed.terminate()
+        self._complete(session_id)
 
     def completion_events(self) -> list[CommandProcessSnapshot]:
         """Return retained background completions for runtime-local delivery."""

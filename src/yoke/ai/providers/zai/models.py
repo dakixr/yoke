@@ -13,6 +13,14 @@ GLM_52_THINKING_LEVELS = ("none", "high", "max")
 GLM_53_THINKING_LEVELS = ("low", "high", "max")
 MODEL_CATALOG = (
     ProviderModelInfo(
+        id="glm-5.3-flash",
+        display_name="GLM-5.3-Flash",
+        context_window_tokens=1_000_000,
+        thinking_levels=GLM_53_THINKING_LEVELS,
+        default_thinking_level="max",
+        supports_image_inputs=True,
+    ),
+    ProviderModelInfo(
         id="glm-5.3",
         display_name="GLM-5.3",
         context_window_tokens=1_000_000,
@@ -112,7 +120,7 @@ class ZAIChatCompletionResponse(BaseModel):
 def _thinking_config(
     model: str, reasoning_effort: str | None
 ) -> dict[str, object] | None:
-    if model == "glm-5.3":
+    if model in {"glm-5.3", "glm-5.3-flash"}:
         return {"type": "enabled", "clear_thinking": True}
     if model == "glm-5.2":
         normalized = reasoning_effort.strip().lower() if reasoning_effort else "max"

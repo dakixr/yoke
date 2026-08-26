@@ -62,6 +62,25 @@ class CommandProcessSnapshot:
     output_tail: str
     original_output_bytes: int
     retained_output_bytes: int
+    latest_output_seq: int = 0
+    truncated_before_seq: int = 0
+
+
+@dataclass(slots=True, frozen=True)
+class CommandProcessOutputChunk:
+    """One retained non-consuming command-output chunk."""
+
+    seq: int
+    text: str
+
+
+@dataclass(slots=True, frozen=True)
+class CommandProcessOutputPage:
+    """Cursor page over retained command output."""
+
+    chunks: tuple[CommandProcessOutputChunk, ...]
+    latest_seq: int
+    truncated_before_seq: int
 
 
 def command_completion_event_id(event: CommandProcessSnapshot) -> str:

@@ -309,6 +309,74 @@ class SessionStore:
         self._update_index(record)
         return record
 
+    def set_title(
+        self,
+        session_id: str,
+        title: str | None,
+        *,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        """Persist the normalized title for one existing session."""
+        record = existing_record or self.load(session_id)
+        if record.id != session_id:
+            raise ValueError("Existing session record id does not match title id.")
+        if record.created_at is None:
+            raise ValueError(f"Session not found: {session_id}")
+        normalized = normalize_title(title)
+        now = timestamp()
+        record = record.model_copy(
+            update={
+                "title": normalized,
+                "updated_at": now,
+            }
+        )
+        path = self._session_path(session_id)
+        if path.exists():
+            append_session_metadata(
+                path,
+                {
+                    "title": normalized,
+                    "updated_at": now,
+                },
+            )
+        else:
+            self._write_session_record(record)
+        self._update_index(record)
+        return record
+
+    def set_selection(
+        self,
+        session_id: str,
+        *,
+        provider_name: str | None,
+        model_id: str | None,
+        reasoning_effort: str | None,
+        context_window_tokens: int | None,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        """Persist provider and model selection without rewriting conversation state."""
+        record = existing_record or self.load(session_id)
+        if record.id != session_id:
+            raise ValueError("Existing session record id does not match selection id.")
+        if record.created_at is None:
+            raise ValueError(f"Session not found: {session_id}")
+        now = timestamp()
+        values = {
+            "provider_name": provider_name,
+            "model_id": model_id,
+            "reasoning_effort": reasoning_effort,
+            "context_window_tokens": context_window_tokens,
+            "updated_at": now,
+        }
+        record = record.model_copy(update=values)
+        path = self._session_path(session_id)
+        if path.exists():
+            append_session_metadata(path, values)
+        else:
+            self._write_session_record(record)
+        self._update_index(record)
+        return record
+
     def _session_path(self, session_id: str) -> Path:
         if not SESSION_ID_PATTERN.fullmatch(session_id):
             raise ValueError(

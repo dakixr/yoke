@@ -55,6 +55,9 @@ def test_zai_catalog_exposes_documented_thinking_toggle() -> None:
         provider.close()
 
     assert "glm-5.1" not in models
+    assert models["glm-5.3-flash"].thinking_levels == ("low", "high", "max")
+    assert models["glm-5.3-flash"].default_thinking_level == "max"
+    assert models["glm-5.3-flash"].supports_image_inputs is True
     assert models["glm-5.3"].thinking_levels == ("low", "high", "max")
     assert models["glm-5.3"].default_thinking_level == "max"
     assert models["glm-5.2"].thinking_levels == ("none", "high", "max")
@@ -100,7 +103,8 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
     }
 
 
-def test_zai_glm_53_sends_selected_reasoning_effort() -> None:
+@pytest.mark.parametrize("model", ["glm-5.3", "glm-5.3-flash"])
+def test_zai_glm_53_sends_selected_reasoning_effort(model: str) -> None:
     captured: dict[str, dict[str, object]] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -108,7 +112,7 @@ def test_zai_glm_53_sends_selected_reasoning_effort() -> None:
         return _sse_response(content="done")
 
     provider = ZAIProvider(
-        ZAIConfig(api_key="test", model="glm-5.3", reasoning_effort="high"),
+        ZAIConfig(api_key="test", model=model, reasoning_effort="high"),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -118,12 +122,66 @@ def test_zai_glm_53_sends_selected_reasoning_effort() -> None:
         provider.close()
 
     assert captured["payload"] == {
-        "model": "glm-5.3",
+        "model": model,
         "messages": [{"role": "user", "content": "hello"}],
         "stream": True,
         "thinking": {"type": "enabled", "clear_thinking": True},
         "reasoning_effort": "high",
     }
+
+
+def test_zai_glm_53_flash_serializes_image_inputs() -> None:
+    captured: dict[str, dict[str, object]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return _sse_response(content="turtle")
+
+    provider = ZAIProvider(
+        ZAIConfig(
+            api_key="test",
+            model="glm-5.3-flash",
+            reasoning_effort="low",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    try:
+        provider.complete(
+            [
+                Message.user(
+                    [
+                        {"type": "text", "text": "What animal is shown?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AAAA"},
+                            "detail": "high",
+                        },
+                    ]
+                )
+            ],
+            [],
+        )
+    finally:
+        provider.close()
+
+    assert captured["payload"]["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What animal is shown?"},
+                {"type": "text", "text": "<image>"},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,AAAA",
+                        "detail": "high",
+                    },
+                },
+                {"type": "text", "text": "</image>"},
+            ],
+        }
+    ]
 
 
 def test_zai_provider_preserves_structured_tool_history() -> None:
@@ -220,6 +278,12 @@ def test_zai_set_model_uses_supported_effort_or_model_default() -> None:
         assert provider.config.reasoning_effort == "high"
 
         provider.set_model("glm-5.3", reasoning_effort="none")
+        assert provider.config.reasoning_effort == "max"
+
+        provider.set_model("glm-5.3-flash", reasoning_effort="low")
+        assert provider.config.reasoning_effort == "low"
+
+        provider.set_model("glm-5.3-flash", reasoning_effort="none")
         assert provider.config.reasoning_effort == "max"
     finally:
         provider.close()

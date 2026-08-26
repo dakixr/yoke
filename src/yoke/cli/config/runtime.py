@@ -12,6 +12,7 @@ from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.skills import ActiveSkill
 from yoke.agent.skills import SkillRegistry
 from yoke.agent.skills import load_skill_registry
+from yoke.agent.skills.paths import default_skill_dirs
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import Provider
 from yoke.agent.tools import ToolRegistrationContext
@@ -127,9 +128,7 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
 
 def default_cli_skill_dirs(root: Path) -> list[str]:
     """default_cli_skill_dirs."""
-    home = Path.home().resolve()
-    candidates = set([root / ".yoke" / "skills", home / ".yoke" / "skills"])
-    return [str(path.resolve()) for path in candidates if path.is_dir()]
+    return default_skill_dirs(root)
 
 
 def build_tool_report(*, root: Path) -> ToolLoadReport:

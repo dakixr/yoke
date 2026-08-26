@@ -1,0 +1,6724 @@
+{
+  "components": {
+    "schemas": {
+      "ActiveRuntimeInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "state": {
+            "enum": [
+              "idle",
+              "running",
+              "stopping",
+              "waiting_input",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "turnID": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnid"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "ActiveRuntimeInfo",
+        "type": "object"
+      },
+      "AssistantProjectedMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectedContent"
+            },
+            "title": "Content",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "commentary",
+                  "final_answer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "timeCreated": {
+            "title": "Timecreated",
+            "type": "string"
+          },
+          "toolCalls": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCallSummary"
+            },
+            "title": "Toolcalls",
+            "type": "array"
+          },
+          "type": {
+            "const": "assistant",
+            "default": "assistant",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "timeCreated",
+          "kind"
+        ],
+        "title": "AssistantProjectedMessage",
+        "type": "object"
+      },
+      "Body_uploadAttachment": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_uploadAttachment",
+        "type": "object"
+      },
+      "CapabilitiesData": {
+        "additionalProperties": false,
+        "properties": {
+          "features": {
+            "$ref": "#/components/schemas/FeatureFlags"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/CapabilityLimits"
+          },
+          "protocolVersion": {
+            "default": "1",
+            "title": "Protocolversion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "features",
+          "limits"
+        ],
+        "title": "CapabilitiesData",
+        "type": "object"
+      },
+      "CapabilitiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CapabilitiesData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "CapabilitiesResponse",
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "historyPageMax": {
+            "default": 200,
+            "title": "Historypagemax",
+            "type": "integer"
+          },
+          "maxAttachmentBytes": {
+            "default": 20971520,
+            "title": "Maxattachmentbytes",
+            "type": "integer"
+          },
+          "maxPromptBytes": {
+            "default": 1048576,
+            "title": "Maxpromptbytes",
+            "type": "integer"
+          }
+        },
+        "title": "CapabilityLimits",
+        "type": "object"
+      },
+      "CommandInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "action"
+        ],
+        "title": "CommandInfo",
+        "type": "object"
+      },
+      "CommandListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/CommandInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "CommandListResponse",
+        "type": "object"
+      },
+      "ContextData": {
+        "additionalProperties": false,
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ContextMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "title": "ContextData",
+        "type": "object"
+      },
+      "ContextMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectedContent"
+            },
+            "title": "Content",
+            "type": "array"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "commentary",
+                  "final_answer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "toolCallID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toolcallid"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "ContextMessage",
+        "type": "object"
+      },
+      "ContextResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ContextData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ContextResponse",
+        "type": "object"
+      },
+      "ControlProjectedMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "control": {
+            "title": "Control",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "timeCreated": {
+            "title": "Timecreated",
+            "type": "string"
+          },
+          "type": {
+            "const": "control",
+            "default": "control",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "timeCreated",
+          "kind",
+          "control"
+        ],
+        "title": "ControlProjectedMessage",
+        "type": "object"
+      },
+      "CursorInfo": {
+        "additionalProperties": false,
+        "description": "Opaque list pagination cursors.",
+        "properties": {
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          }
+        },
+        "title": "CursorInfo",
+        "type": "object"
+      },
+      "DurableEventInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregateID": {
+            "title": "Aggregateid",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "version": {
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "aggregateID",
+          "seq"
+        ],
+        "title": "DurableEventInfo",
+        "type": "object"
+      },
+      "FeatureFlags": {
+        "additionalProperties": false,
+        "properties": {
+          "globalEvents": {
+            "default": true,
+            "title": "Globalevents",
+            "type": "boolean"
+          },
+          "images": {
+            "default": true,
+            "title": "Images",
+            "type": "boolean"
+          },
+          "mcp": {
+            "default": true,
+            "title": "Mcp",
+            "type": "boolean"
+          },
+          "permissions": {
+            "default": true,
+            "title": "Permissions",
+            "type": "boolean"
+          },
+          "processInspector": {
+            "default": true,
+            "title": "Processinspector",
+            "type": "boolean"
+          },
+          "promptAdmission": {
+            "default": true,
+            "title": "Promptadmission",
+            "type": "boolean"
+          },
+          "pty": {
+            "default": false,
+            "title": "Pty",
+            "type": "boolean"
+          },
+          "questions": {
+            "default": true,
+            "title": "Questions",
+            "type": "boolean"
+          },
+          "queueEditor": {
+            "default": true,
+            "title": "Queueeditor",
+            "type": "boolean"
+          },
+          "sessionTree": {
+            "default": true,
+            "title": "Sessiontree",
+            "type": "boolean"
+          },
+          "skills": {
+            "default": true,
+            "title": "Skills",
+            "type": "boolean"
+          },
+          "steering": {
+            "default": true,
+            "title": "Steering",
+            "type": "boolean"
+          },
+          "toolInspector": {
+            "default": true,
+            "title": "Toolinspector",
+            "type": "boolean"
+          }
+        },
+        "title": "FeatureFlags",
+        "type": "object"
+      },
+      "FileEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "type": {
+            "enum": [
+              "file",
+              "directory"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "type"
+        ],
+        "title": "FileEntry",
+        "type": "object"
+      },
+      "FileListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/FileEntry"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "title": "FileListResponse",
+        "type": "object"
+      },
+      "GitLocationInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root"
+        ],
+        "title": "GitLocationInfo",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthData": {
+        "additionalProperties": false,
+        "properties": {
+          "healthy": {
+            "title": "Healthy",
+            "type": "boolean"
+          },
+          "protocolVersion": {
+            "title": "Protocolversion",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "healthy",
+          "version",
+          "protocolVersion"
+        ],
+        "title": "HealthData",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/HealthData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "HistoryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PublicEvent"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "hasMore": {
+            "title": "Hasmore",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "hasMore"
+        ],
+        "title": "HistoryResponse",
+        "type": "object"
+      },
+      "ImageContent": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "image",
+            "default": "image",
+            "title": "Type",
+            "type": "string"
+          },
+          "uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uri"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ImageContent",
+        "type": "object"
+      },
+      "InterruptData": {
+        "additionalProperties": false,
+        "properties": {
+          "interrupted": {
+            "title": "Interrupted",
+            "type": "boolean"
+          },
+          "turnID": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnid"
+          }
+        },
+        "required": [
+          "interrupted"
+        ],
+        "title": "InterruptData",
+        "type": "object"
+      },
+      "InterruptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InterruptData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "InterruptResponse",
+        "type": "object"
+      },
+      "LocationInfo": {
+        "additionalProperties": false,
+        "description": "Resolved workspace location.",
+        "properties": {
+          "directory": {
+            "title": "Directory",
+            "type": "string"
+          }
+        },
+        "required": [
+          "directory"
+        ],
+        "title": "LocationInfo",
+        "type": "object"
+      },
+      "LocationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ResolvedLocation"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "LocationResponse",
+        "type": "object"
+      },
+      "McpListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "title": "McpListResponse",
+        "type": "object"
+      },
+      "McpServerInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "disabledTools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Disabledtools",
+            "type": "array"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "enabledTools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabledtools"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "global",
+              "repo",
+              "unknown"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "sourcePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcepath"
+          },
+          "status": {
+            "default": "configured",
+            "title": "Status",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/McpToolInfo"
+            },
+            "title": "Tools",
+            "type": "array"
+          },
+          "transport": {
+            "title": "Transport",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "transport",
+          "enabled",
+          "scope"
+        ],
+        "title": "McpServerInfo",
+        "type": "object"
+      },
+      "McpSessionPatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "disabledTools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabledtools"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "enabledTools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabledtools"
+          },
+          "scope": {
+            "default": "session",
+            "enum": [
+              "session",
+              "repo",
+              "global"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "title": "McpSessionPatchRequest",
+        "type": "object"
+      },
+      "McpSessionPatchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/McpServerInfo"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "McpSessionPatchResponse",
+        "type": "object"
+      },
+      "McpToolInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "inputSchema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputschema"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "McpToolInfo",
+        "type": "object"
+      },
+      "MessageListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/CursorInfo"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectedMessage"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ],
+        "title": "MessageListResponse",
+        "type": "object"
+      },
+      "MessageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProjectedMessage"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "MessageResponse",
+        "type": "object"
+      },
+      "ModelCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "images": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Images"
+          },
+          "tools": {
+            "default": true,
+            "title": "Tools",
+            "type": "boolean"
+          }
+        },
+        "title": "ModelCapabilities",
+        "type": "object"
+      },
+      "ModelInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/ModelCapabilities"
+          },
+          "contextWindowTokens": {
+            "title": "Contextwindowtokens",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "reasoningEfforts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasoningefforts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "name",
+          "reasoningEfforts",
+          "capabilities",
+          "contextWindowTokens"
+        ],
+        "title": "ModelInfo",
+        "type": "object"
+      },
+      "ModelListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ModelInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "title": "ModelListResponse",
+        "type": "object"
+      },
+      "PermissionListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRequestInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "PermissionListResponse",
+        "type": "object"
+      },
+      "PermissionReplyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "reply": {
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reply"
+        ],
+        "title": "PermissionReplyRequest",
+        "type": "object"
+      },
+      "PermissionReplyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PermissionResolution"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "PermissionReplyResponse",
+        "type": "object"
+      },
+      "PermissionRequestInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "permission": {
+            "title": "Permission",
+            "type": "string"
+          },
+          "sessionID": {
+            "title": "Sessionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sessionID",
+          "permission",
+          "message",
+          "createdAt"
+        ],
+        "title": "PermissionRequestInfo",
+        "type": "object"
+      },
+      "PermissionResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "reply": {
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "title": "Reply",
+            "type": "string"
+          },
+          "requestID": {
+            "title": "Requestid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestID",
+          "reply"
+        ],
+        "title": "PermissionResolution",
+        "type": "object"
+      },
+      "ProcessInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "cwd": {
+            "title": "Cwd",
+            "type": "string"
+          },
+          "elapsedMs": {
+            "title": "Elapsedms",
+            "type": "integer"
+          },
+          "exitCode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exitcode"
+          },
+          "output": {
+            "$ref": "#/components/schemas/ProcessOutputInfo"
+          },
+          "pid": {
+            "title": "Pid",
+            "type": "integer"
+          },
+          "processID": {
+            "title": "Processid",
+            "type": "string"
+          },
+          "retention": {
+            "const": "runtime",
+            "default": "runtime",
+            "title": "Retention",
+            "type": "string"
+          },
+          "runtimeSessionID": {
+            "title": "Runtimesessionid",
+            "type": "integer"
+          },
+          "sessionID": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "startedAt": {
+            "title": "Startedat",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "exited",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tty": {
+            "title": "Tty",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "processID",
+          "sessionID",
+          "runtimeSessionID",
+          "pid",
+          "command",
+          "cwd",
+          "tty",
+          "status",
+          "startedAt",
+          "elapsedMs",
+          "output"
+        ],
+        "title": "ProcessInfo",
+        "type": "object"
+      },
+      "ProcessListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ProcessInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ProcessListResponse",
+        "type": "object"
+      },
+      "ProcessOutputChunk": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stream": {
+            "const": "combined",
+            "default": "combined",
+            "title": "Stream",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "text"
+        ],
+        "title": "ProcessOutputChunk",
+        "type": "object"
+      },
+      "ProcessOutputCursor": {
+        "additionalProperties": false,
+        "properties": {
+          "next": {
+            "title": "Next",
+            "type": "integer"
+          },
+          "truncatedBefore": {
+            "title": "Truncatedbefore",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "next",
+          "truncatedBefore"
+        ],
+        "title": "ProcessOutputCursor",
+        "type": "object"
+      },
+      "ProcessOutputInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "latestSeq": {
+            "title": "Latestseq",
+            "type": "integer"
+          },
+          "originalBytes": {
+            "title": "Originalbytes",
+            "type": "integer"
+          },
+          "retainedBytes": {
+            "title": "Retainedbytes",
+            "type": "integer"
+          },
+          "tail": {
+            "title": "Tail",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tail",
+          "originalBytes",
+          "retainedBytes",
+          "truncated",
+          "latestSeq"
+        ],
+        "title": "ProcessOutputInfo",
+        "type": "object"
+      },
+      "ProcessOutputResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/ProcessOutputCursor"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ProcessOutputChunk"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ],
+        "title": "ProcessOutputResponse",
+        "type": "object"
+      },
+      "ProcessResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProcessInfo"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ProcessResponse",
+        "type": "object"
+      },
+      "ProcessSignalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "signal": {
+            "enum": [
+              "interrupt",
+              "terminate"
+            ],
+            "title": "Signal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signal"
+        ],
+        "title": "ProcessSignalRequest",
+        "type": "object"
+      },
+      "ProcessStdinRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ProcessStdinRequest",
+        "type": "object"
+      },
+      "ProjectedContent": {
+        "discriminator": {
+          "mapping": {
+            "image": "#/components/schemas/ImageContent",
+            "text": "#/components/schemas/TextContent"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/TextContent"
+          },
+          {
+            "$ref": "#/components/schemas/ImageContent"
+          }
+        ]
+      },
+      "ProjectedMessage": {
+        "discriminator": {
+          "mapping": {
+            "assistant": "#/components/schemas/AssistantProjectedMessage",
+            "control": "#/components/schemas/ControlProjectedMessage",
+            "tool": "#/components/schemas/ToolProjectedMessage",
+            "user": "#/components/schemas/UserProjectedMessage"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UserProjectedMessage"
+          },
+          {
+            "$ref": "#/components/schemas/AssistantProjectedMessage"
+          },
+          {
+            "$ref": "#/components/schemas/ToolProjectedMessage"
+          },
+          {
+            "$ref": "#/components/schemas/ControlProjectedMessage"
+          }
+        ]
+      },
+      "PromptAdmissionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "admittedSeq": {
+            "title": "Admittedseq",
+            "type": "integer"
+          },
+          "delivery": {
+            "enum": [
+              "steer",
+              "queue"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "promotedSeq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotedseq"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/PromptInput"
+          },
+          "sessionID": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "admitted",
+              "promoted",
+              "removed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "timeCreated": {
+            "title": "Timecreated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sessionID",
+          "prompt",
+          "delivery",
+          "state",
+          "admittedSeq",
+          "timeCreated"
+        ],
+        "title": "PromptAdmissionReceipt",
+        "type": "object"
+      },
+      "PromptAdmissionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "default": "steer",
+            "enum": [
+              "steer",
+              "queue"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/PromptInput"
+          },
+          "resume": {
+            "default": true,
+            "title": "Resume",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "PromptAdmissionRequest",
+        "type": "object"
+      },
+      "PromptAdmissionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PromptAdmissionReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "PromptAdmissionResponse",
+        "type": "object"
+      },
+      "PromptAttachment": {
+        "additionalProperties": false,
+        "properties": {
+          "mime": {
+            "title": "Mime",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "file",
+            "default": "file",
+            "title": "Type",
+            "type": "string"
+          },
+          "uri": {
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri",
+          "name",
+          "mime"
+        ],
+        "title": "PromptAttachment",
+        "type": "object"
+      },
+      "PromptInput": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/PromptAttachment"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "title": "PromptInput",
+        "type": "object"
+      },
+      "ProviderInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "currentModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentmodel"
+          },
+          "currentReasoningEffort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentreasoningeffort"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "id",
+          "ready"
+        ],
+        "title": "ProviderInfo",
+        "type": "object"
+      },
+      "ProviderListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "title": "ProviderListResponse",
+        "type": "object"
+      },
+      "PublicEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "durable": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DurableEventInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocationInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessionID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionid"
+          },
+          "time": {
+            "title": "Time",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "time",
+          "data"
+        ],
+        "title": "PublicEvent",
+        "type": "object"
+      },
+      "QuestionListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionRequestInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "QuestionListResponse",
+        "type": "object"
+      },
+      "QuestionReplyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Answers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "title": "QuestionReplyRequest",
+        "type": "object"
+      },
+      "QuestionReplyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/QuestionResolution"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "QuestionReplyResponse",
+        "type": "object"
+      },
+      "QuestionRequestInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "multiple": {
+            "default": false,
+            "title": "Multiple",
+            "type": "boolean"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "sessionID": {
+            "title": "Sessionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sessionID",
+          "question",
+          "createdAt"
+        ],
+        "title": "QuestionRequestInfo",
+        "type": "object"
+      },
+      "QuestionResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Answers",
+            "type": "array"
+          },
+          "rejected": {
+            "default": false,
+            "title": "Rejected",
+            "type": "boolean"
+          },
+          "requestID": {
+            "title": "Requestid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestID"
+        ],
+        "title": "QuestionResolution",
+        "type": "object"
+      },
+      "QueueData": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QueueItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "items"
+        ],
+        "title": "QueueData",
+        "type": "object"
+      },
+      "QueueDeliveryOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "enum": [
+              "steer",
+              "queue"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "op": {
+            "const": "setDelivery",
+            "title": "Op",
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "delivery"
+        ],
+        "title": "QueueDeliveryOperation",
+        "type": "object"
+      },
+      "QueueItem": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "delivery": {
+            "enum": [
+              "steer",
+              "queue"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/PromptInput"
+          },
+          "state": {
+            "const": "admitted",
+            "default": "admitted",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "prompt",
+          "delivery",
+          "paused",
+          "createdAt"
+        ],
+        "title": "QueueItem",
+        "type": "object"
+      },
+      "QueueMoveAfterOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "afterID": {
+            "title": "Afterid",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "op": {
+            "const": "moveAfter",
+            "title": "Op",
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "afterID"
+        ],
+        "title": "QueueMoveAfterOperation",
+        "type": "object"
+      },
+      "QueueMoveBeforeOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "beforeID": {
+            "title": "Beforeid",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "op": {
+            "const": "moveBefore",
+            "title": "Op",
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "beforeID"
+        ],
+        "title": "QueueMoveBeforeOperation",
+        "type": "object"
+      },
+      "QueueMoveToStartOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "op": {
+            "const": "moveToStart",
+            "title": "Op",
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id"
+        ],
+        "title": "QueueMoveToStartOperation",
+        "type": "object"
+      },
+      "QueueOperation": {
+        "discriminator": {
+          "mapping": {
+            "moveAfter": "#/components/schemas/QueueMoveAfterOperation",
+            "moveBefore": "#/components/schemas/QueueMoveBeforeOperation",
+            "moveToStart": "#/components/schemas/QueueMoveToStartOperation",
+            "remove": "#/components/schemas/QueueRemoveOperation",
+            "setDelivery": "#/components/schemas/QueueDeliveryOperation",
+            "setPaused": "#/components/schemas/QueuePausedOperation",
+            "update": "#/components/schemas/QueueUpdateOperation"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/QueueUpdateOperation"
+          },
+          {
+            "$ref": "#/components/schemas/QueueDeliveryOperation"
+          },
+          {
+            "$ref": "#/components/schemas/QueuePausedOperation"
+          },
+          {
+            "$ref": "#/components/schemas/QueueRemoveOperation"
+          },
+          {
+            "$ref": "#/components/schemas/QueueMoveBeforeOperation"
+          },
+          {
+            "$ref": "#/components/schemas/QueueMoveAfterOperation"
+          },
+          {
+            "$ref": "#/components/schemas/QueueMoveToStartOperation"
+          }
+        ]
+      },
+      "QueuePatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "minimum": 0.0,
+            "title": "Expectedrevision",
+            "type": "integer"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/QueueOperation"
+            },
+            "title": "Operations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "operations"
+        ],
+        "title": "QueuePatchRequest",
+        "type": "object"
+      },
+      "QueuePausedOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "op": {
+            "const": "setPaused",
+            "title": "Op",
+            "type": "string"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "paused"
+        ],
+        "title": "QueuePausedOperation",
+        "type": "object"
+      },
+      "QueueRemoveOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "op": {
+            "const": "remove",
+            "title": "Op",
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id"
+        ],
+        "title": "QueueRemoveOperation",
+        "type": "object"
+      },
+      "QueueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/QueueData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "QueueResponse",
+        "type": "object"
+      },
+      "QueueUpdateOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "op": {
+            "const": "update",
+            "title": "Op",
+            "type": "string"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/PromptInput"
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "prompt"
+        ],
+        "title": "QueueUpdateOperation",
+        "type": "object"
+      },
+      "RecentLocationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/LocationInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "RecentLocationsResponse",
+        "type": "object"
+      },
+      "ResolvedLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "directory": {
+            "title": "Directory",
+            "type": "string"
+          },
+          "git": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GitLocationInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "directory",
+          "name"
+        ],
+        "title": "ResolvedLocation",
+        "type": "object"
+      },
+      "SessionActiveResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ActiveRuntimeInfo"
+            },
+            "title": "Data",
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SessionActiveResponse",
+        "type": "object"
+      },
+      "SessionCompactionData": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "default": true,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "operationID": {
+            "title": "Operationid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationID"
+        ],
+        "title": "SessionCompactionData",
+        "type": "object"
+      },
+      "SessionCompactionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "const": "manual",
+            "default": "manual",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "SessionCompactionRequest",
+        "type": "object"
+      },
+      "SessionCompactionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionCompactionData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SessionCompactionResponse",
+        "type": "object"
+      },
+      "SessionCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionCreateSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "title": "SessionCreateRequest",
+        "type": "object"
+      },
+      "SessionCreateSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoningeffort"
+          }
+        },
+        "title": "SessionCreateSelection",
+        "type": "object"
+      },
+      "SessionForkRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "fromEntryID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fromentryid"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "SessionForkRequest",
+        "type": "object"
+      },
+      "SessionInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "pinned": {
+            "default": false,
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/SessionQueueSummary"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/SessionSelection"
+          },
+          "time": {
+            "$ref": "#/components/schemas/SessionTime"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "tree": {
+            "$ref": "#/components/schemas/SessionTreeSummary"
+          }
+        },
+        "required": [
+          "id",
+          "location",
+          "time",
+          "selection",
+          "tree",
+          "queue"
+        ],
+        "title": "SessionInfo",
+        "type": "object"
+      },
+      "SessionListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/CursorInfo"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SessionInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ],
+        "title": "SessionListResponse",
+        "type": "object"
+      },
+      "SessionPatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "pinned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "SessionPatchRequest",
+        "type": "object"
+      },
+      "SessionQueueSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "paused": {
+            "default": 0,
+            "title": "Paused",
+            "type": "integer"
+          },
+          "queued": {
+            "default": 0,
+            "title": "Queued",
+            "type": "integer"
+          },
+          "revision": {
+            "default": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "steering": {
+            "default": 0,
+            "title": "Steering",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "SessionQueueSummary",
+        "type": "object"
+      },
+      "SessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionInfo"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SessionResponse",
+        "type": "object"
+      },
+      "SessionSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoningeffort"
+          }
+        },
+        "title": "SessionSelection",
+        "type": "object"
+      },
+      "SessionSelectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoningeffort"
+          }
+        },
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "SessionSelectionRequest",
+        "type": "object"
+      },
+      "SessionSelectionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionSelectionResult"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SessionSelectionResponse",
+        "type": "object"
+      },
+      "SessionSelectionResult": {
+        "additionalProperties": false,
+        "properties": {
+          "applies": {
+            "const": "immediately",
+            "default": "immediately",
+            "title": "Applies",
+            "type": "string"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/SessionSelection"
+          }
+        },
+        "required": [
+          "effective"
+        ],
+        "title": "SessionSelectionResult",
+        "type": "object"
+      },
+      "SessionSkillData": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "items": {
+              "$ref": "#/components/schemas/SkillInfo"
+            },
+            "title": "Active",
+            "type": "array"
+          },
+          "available": {
+            "items": {
+              "$ref": "#/components/schemas/SkillInfo"
+            },
+            "title": "Available",
+            "type": "array"
+          }
+        },
+        "required": [
+          "active",
+          "available"
+        ],
+        "title": "SessionSkillData",
+        "type": "object"
+      },
+      "SessionSkillResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionSkillData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SessionSkillResponse",
+        "type": "object"
+      },
+      "SessionTime": {
+        "additionalProperties": false,
+        "properties": {
+          "created": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated"
+          }
+        },
+        "title": "SessionTime",
+        "type": "object"
+      },
+      "SessionTreeSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "entryCount": {
+            "default": 0,
+            "title": "Entrycount",
+            "type": "integer"
+          },
+          "leafID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leafid"
+          }
+        },
+        "title": "SessionTreeSummary",
+        "type": "object"
+      },
+      "SkillActivateData": {
+        "additionalProperties": false,
+        "properties": {
+          "activated": {
+            "$ref": "#/components/schemas/SkillInfo"
+          },
+          "promptInputID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promptinputid"
+          }
+        },
+        "required": [
+          "activated"
+        ],
+        "title": "SkillActivateData",
+        "type": "object"
+      },
+      "SkillActivateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
+          }
+        },
+        "title": "SkillActivateRequest",
+        "type": "object"
+      },
+      "SkillActivateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SkillActivateData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SkillActivateResponse",
+        "type": "object"
+      },
+      "SkillInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "default": false,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sourcePath": {
+            "title": "Sourcepath",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "sourcePath"
+        ],
+        "title": "SkillInfo",
+        "type": "object"
+      },
+      "SkillListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SkillInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "title": "SkillListResponse",
+        "type": "object"
+      },
+      "TextContent": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "text",
+            "default": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TextContent",
+        "type": "object"
+      },
+      "ToolCallInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "afterContext": {
+            "items": {
+              "$ref": "#/components/schemas/ToolTraceContextInfo"
+            },
+            "title": "Aftercontext",
+            "type": "array"
+          },
+          "arguments": {
+            "$ref": "#/components/schemas/ToolTraceArguments"
+          },
+          "context": {
+            "items": {
+              "$ref": "#/components/schemas/ToolTraceContextInfo"
+            },
+            "title": "Context",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "iteration": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iteration"
+          },
+          "output": {
+            "$ref": "#/components/schemas/ToolTraceOutputInfo"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "retention": {
+            "enum": [
+              "runtime",
+              "session"
+            ],
+            "title": "Retention",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "ok",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "time": {
+            "$ref": "#/components/schemas/ToolTraceTime"
+          },
+          "toolName": {
+            "title": "Toolname",
+            "type": "string"
+          },
+          "turnID": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnid"
+          }
+        },
+        "required": [
+          "id",
+          "toolName",
+          "status",
+          "arguments",
+          "time",
+          "output",
+          "context",
+          "afterContext",
+          "retention"
+        ],
+        "title": "ToolCallInfo",
+        "type": "object"
+      },
+      "ToolCallListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/CursorInfo"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCallInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ],
+        "title": "ToolCallListResponse",
+        "type": "object"
+      },
+      "ToolCallResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ToolCallInfo"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ToolCallResponse",
+        "type": "object"
+      },
+      "ToolCallSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "title": "Arguments",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "arguments"
+        ],
+        "title": "ToolCallSummary",
+        "type": "object"
+      },
+      "ToolInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilityID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilityid"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "inputSchema": {
+            "additionalProperties": true,
+            "title": "Inputschema",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "sourcePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcepath"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "enabled",
+          "source"
+        ],
+        "title": "ToolInfo",
+        "type": "object"
+      },
+      "ToolListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ToolInfo"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "title": "ToolListResponse",
+        "type": "object"
+      },
+      "ToolOutputChunk": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stream": {
+            "title": "Stream",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "stream",
+          "text"
+        ],
+        "title": "ToolOutputChunk",
+        "type": "object"
+      },
+      "ToolOutputCursor": {
+        "additionalProperties": false,
+        "properties": {
+          "next": {
+            "title": "Next",
+            "type": "integer"
+          },
+          "truncatedBefore": {
+            "title": "Truncatedbefore",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "next",
+          "truncatedBefore"
+        ],
+        "title": "ToolOutputCursor",
+        "type": "object"
+      },
+      "ToolOutputResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/ToolOutputCursor"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ToolOutputChunk"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data",
+          "cursor"
+        ],
+        "title": "ToolOutputResponse",
+        "type": "object"
+      },
+      "ToolPatchData": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enabled",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "ToolPatchData",
+        "type": "object"
+      },
+      "ToolPatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "disabled": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Disabled",
+            "type": "array"
+          },
+          "enabled": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enabled",
+            "type": "array"
+          }
+        },
+        "title": "ToolPatchRequest",
+        "type": "object"
+      },
+      "ToolPatchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ToolPatchData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ToolPatchResponse",
+        "type": "object"
+      },
+      "ToolProjectedMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "callID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "status": {
+            "const": "completed",
+            "default": "completed",
+            "title": "Status",
+            "type": "string"
+          },
+          "timeCreated": {
+            "title": "Timecreated",
+            "type": "string"
+          },
+          "type": {
+            "const": "tool",
+            "default": "tool",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "timeCreated",
+          "kind"
+        ],
+        "title": "ToolProjectedMessage",
+        "type": "object"
+      },
+      "ToolTraceArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "executed": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          }
+        },
+        "title": "ToolTraceArguments",
+        "type": "object"
+      },
+      "ToolTraceContextInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "text"
+        ],
+        "title": "ToolTraceContextInfo",
+        "type": "object"
+      },
+      "ToolTraceOutputInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "latestSeq": {
+            "default": 0,
+            "title": "Latestseq",
+            "type": "integer"
+          },
+          "retainedChars": {
+            "default": 0,
+            "title": "Retainedchars",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "ToolTraceOutputInfo",
+        "type": "object"
+      },
+      "ToolTraceTime": {
+        "additionalProperties": false,
+        "properties": {
+          "durationMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationms"
+          },
+          "ended": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started"
+          }
+        },
+        "title": "ToolTraceTime",
+        "type": "object"
+      },
+      "TreeData": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/TreeEntryInfo"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "leafID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leafid"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "entries"
+        ],
+        "title": "TreeData",
+        "type": "object"
+      },
+      "TreeEntryInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "default": false,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "childCount": {
+            "default": 0,
+            "title": "Childcount",
+            "type": "integer"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "current": {
+            "default": false,
+            "title": "Current",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "parentID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "createdAt"
+        ],
+        "title": "TreeEntryInfo",
+        "type": "object"
+      },
+      "TreeEntryPatchData": {
+        "additionalProperties": false,
+        "properties": {
+          "entry": {
+            "$ref": "#/components/schemas/TreeEntryInfo"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "entry"
+        ],
+        "title": "TreeEntryPatchData",
+        "type": "object"
+      },
+      "TreeEntryPatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "minimum": 0.0,
+            "title": "Expectedrevision",
+            "type": "integer"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "required": [
+          "expectedRevision"
+        ],
+        "title": "TreeEntryPatchRequest",
+        "type": "object"
+      },
+      "TreeEntryPatchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TreeEntryPatchData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "TreeEntryPatchResponse",
+        "type": "object"
+      },
+      "TreeNavigateData": {
+        "additionalProperties": false,
+        "properties": {
+          "editorText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Editortext"
+          },
+          "leafID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leafid"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "summaryAdded": {
+            "default": false,
+            "title": "Summaryadded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "TreeNavigateData",
+        "type": "object"
+      },
+      "TreeNavigateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "branchSummary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branchsummary"
+          },
+          "expectedRevision": {
+            "minimum": 0.0,
+            "title": "Expectedrevision",
+            "type": "integer"
+          },
+          "targetID": {
+            "title": "Targetid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "targetID"
+        ],
+        "title": "TreeNavigateRequest",
+        "type": "object"
+      },
+      "TreeNavigateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TreeNavigateData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "TreeNavigateResponse",
+        "type": "object"
+      },
+      "TreeNavigationAbandonedEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "TreeNavigationAbandonedEntry",
+        "type": "object"
+      },
+      "TreeNavigationPreviewData": {
+        "additionalProperties": false,
+        "properties": {
+          "abandoned": {
+            "items": {
+              "$ref": "#/components/schemas/TreeNavigationAbandonedEntry"
+            },
+            "title": "Abandoned",
+            "type": "array"
+          },
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          },
+          "editorText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Editortext"
+          },
+          "targetID": {
+            "title": "Targetid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "targetID",
+          "current"
+        ],
+        "title": "TreeNavigationPreviewData",
+        "type": "object"
+      },
+      "TreeNavigationPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TreeNavigationPreviewData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "TreeNavigationPreviewResponse",
+        "type": "object"
+      },
+      "TreeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TreeData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "TreeResponse",
+        "type": "object"
+      },
+      "UploadInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "expiresAt": {
+            "title": "Expiresat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mime": {
+            "title": "Mime",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "uri": {
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "uri",
+          "name",
+          "mime",
+          "size",
+          "expiresAt"
+        ],
+        "title": "UploadInfo",
+        "type": "object"
+      },
+      "UploadResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UploadInfo"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "UploadResponse",
+        "type": "object"
+      },
+      "UserProjectedMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectedContent"
+            },
+            "title": "Content",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "timeCreated": {
+            "title": "Timecreated",
+            "type": "string"
+          },
+          "type": {
+            "const": "user",
+            "default": "user",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "timeCreated",
+          "kind"
+        ],
+        "title": "UserProjectedMessage",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WaitResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ActiveRuntimeInfo"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "WaitResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Yoke HTTP API",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/capabilities": {
+      "get": {
+        "operationId": "capabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Capabilities"
+      }
+    },
+    "/api/v1/command": {
+      "get": {
+        "operationId": "listCommands",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Commands"
+      }
+    },
+    "/api/v1/event": {
+      "get": {
+        "operationId": "streamEvents",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stream Events"
+      }
+    },
+    "/api/v1/fs/find": {
+      "get": {
+        "operationId": "findFiles",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "default": "file",
+              "enum": [
+                "file",
+                "directory"
+              ],
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Find Files"
+      }
+    },
+    "/api/v1/fs/list": {
+      "get": {
+        "operationId": "listFiles",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Files"
+      }
+    },
+    "/api/v1/fs/read": {
+      "get": {
+        "operationId": "readFile",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read File"
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/api/v1/location": {
+      "get": {
+        "operationId": "resolveLocation",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Location"
+      }
+    },
+    "/api/v1/location/recent": {
+      "get": {
+        "operationId": "recentLocations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentLocationsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Recent Locations"
+      }
+    },
+    "/api/v1/mcp": {
+      "get": {
+        "operationId": "listMcpServers",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeTools",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Includetools",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Mcp Servers"
+      }
+    },
+    "/api/v1/model": {
+      "get": {
+        "operationId": "listModels",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Models"
+      }
+    },
+    "/api/v1/process": {
+      "get": {
+        "operationId": "listProcesses",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sessionID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sessionid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "running",
+                    "exited",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Processes"
+      }
+    },
+    "/api/v1/process/{process_id}": {
+      "get": {
+        "operationId": "getProcess",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "process_id",
+            "required": true,
+            "schema": {
+              "title": "Process Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Process"
+      }
+    },
+    "/api/v1/process/{process_id}/output": {
+      "get": {
+        "operationId": "getProcessOutput",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "process_id",
+            "required": true,
+            "schema": {
+              "title": "Process Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "afterSeq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Afterseq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessOutputResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Process Output"
+      }
+    },
+    "/api/v1/process/{process_id}/signal": {
+      "post": {
+        "operationId": "signalProcess",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "process_id",
+            "required": true,
+            "schema": {
+              "title": "Process Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcessSignalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Signal Process"
+      }
+    },
+    "/api/v1/process/{process_id}/stdin": {
+      "post": {
+        "operationId": "writeProcessStdin",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "process_id",
+            "required": true,
+            "schema": {
+              "title": "Process Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcessStdinRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Process Stdin"
+      }
+    },
+    "/api/v1/provider": {
+      "get": {
+        "operationId": "listProviders",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Providers"
+      }
+    },
+    "/api/v1/session": {
+      "get": {
+        "operationId": "listSessions",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pinned",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pinned"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "updatedDesc",
+              "enum": [
+                "updatedDesc",
+                "updatedAsc",
+                "createdDesc",
+                "createdAsc"
+              ],
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Sessions"
+      },
+      "post": {
+        "operationId": "createSession",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Session"
+      }
+    },
+    "/api/v1/session/active": {
+      "get": {
+        "operationId": "activeSessions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionActiveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Active Sessions"
+      }
+    },
+    "/api/v1/session/{session_id}": {
+      "get": {
+        "operationId": "getSession",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session"
+      },
+      "patch": {
+        "operationId": "patchSession",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Session"
+      }
+    },
+    "/api/v1/session/{session_id}/compact": {
+      "post": {
+        "operationId": "compactSession",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCompactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCompactionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compact Session"
+      }
+    },
+    "/api/v1/session/{session_id}/context": {
+      "get": {
+        "operationId": "getSessionContext",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeSystem",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Includesystem",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeToolResults",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includetoolresults",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Context"
+      }
+    },
+    "/api/v1/session/{session_id}/fork": {
+      "post": {
+        "operationId": "forkSession",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionForkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fork Session"
+      }
+    },
+    "/api/v1/session/{session_id}/history": {
+      "get": {
+        "operationId": "sessionHistory",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Session History"
+      }
+    },
+    "/api/v1/session/{session_id}/interrupt": {
+      "post": {
+        "operationId": "interruptSession",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterruptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interrupt Session"
+      }
+    },
+    "/api/v1/session/{session_id}/mcp": {
+      "get": {
+        "operationId": "listSessionMcpServers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeTools",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Includetools",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Session Mcp Servers"
+      }
+    },
+    "/api/v1/session/{session_id}/mcp/{server_name}": {
+      "patch": {
+        "operationId": "patchSessionMcpServer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "server_name",
+            "required": true,
+            "schema": {
+              "title": "Server Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpSessionPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpSessionPatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Session Mcp Server"
+      }
+    },
+    "/api/v1/session/{session_id}/message": {
+      "get": {
+        "operationId": "listSessionMessages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch",
+            "required": false,
+            "schema": {
+              "const": "active",
+              "default": "active",
+              "title": "Branch",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Messages"
+      }
+    },
+    "/api/v1/session/{session_id}/message/{message_id}": {
+      "get": {
+        "operationId": "getSessionMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Message"
+      }
+    },
+    "/api/v1/session/{session_id}/permission": {
+      "get": {
+        "operationId": "listSessionPermissions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Session Permissions"
+      }
+    },
+    "/api/v1/session/{session_id}/permission/{request_id}/reply": {
+      "post": {
+        "operationId": "replySessionPermission",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionReplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reply Session Permission"
+      }
+    },
+    "/api/v1/session/{session_id}/prompt": {
+      "post": {
+        "operationId": "admitSessionPrompt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptAdmissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptAdmissionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admit Prompt"
+      }
+    },
+    "/api/v1/session/{session_id}/question": {
+      "get": {
+        "operationId": "listSessionQuestions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Session Questions"
+      }
+    },
+    "/api/v1/session/{session_id}/question/{request_id}/reject": {
+      "post": {
+        "operationId": "rejectSessionQuestion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionReplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Session Question"
+      }
+    },
+    "/api/v1/session/{session_id}/question/{request_id}/reply": {
+      "post": {
+        "operationId": "replySessionQuestion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuestionReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionReplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reply Session Question"
+      }
+    },
+    "/api/v1/session/{session_id}/queue": {
+      "get": {
+        "operationId": "getSessionQueue",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Queue"
+      },
+      "patch": {
+        "operationId": "patchSessionQueue",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueuePatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Queue"
+      }
+    },
+    "/api/v1/session/{session_id}/selection": {
+      "post": {
+        "operationId": "selectSessionModel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionSelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSelectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Select Session Model"
+      }
+    },
+    "/api/v1/session/{session_id}/skill": {
+      "get": {
+        "operationId": "listSessionSkills",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Session Skills"
+      }
+    },
+    "/api/v1/session/{session_id}/skill/{skill_name}/activate": {
+      "post": {
+        "operationId": "activateSessionSkill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillActivateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillActivateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Session Skill"
+      }
+    },
+    "/api/v1/session/{session_id}/tool": {
+      "patch": {
+        "operationId": "patchSessionTools",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolPatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Session Tools"
+      }
+    },
+    "/api/v1/session/{session_id}/tool-call": {
+      "get": {
+        "operationId": "listSessionToolCalls",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "running",
+                    "ok",
+                    "failed",
+                    "cancelled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "turnID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Turnid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolCallListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tool Calls"
+      }
+    },
+    "/api/v1/session/{session_id}/tool-call/{call_id}": {
+      "get": {
+        "operationId": "getSessionToolCall",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "title": "Call Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolCallResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tool Call"
+      }
+    },
+    "/api/v1/session/{session_id}/tool-call/{call_id}/output": {
+      "get": {
+        "operationId": "getSessionToolCallOutput",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "afterSeq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Afterseq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolOutputResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tool Output"
+      }
+    },
+    "/api/v1/session/{session_id}/tree": {
+      "get": {
+        "operationId": "getSessionTree",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TreeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tree"
+      }
+    },
+    "/api/v1/session/{session_id}/tree/navigate": {
+      "post": {
+        "operationId": "navigateSessionTree",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TreeNavigateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TreeNavigateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Navigate Tree"
+      }
+    },
+    "/api/v1/session/{session_id}/tree/navigation-preview": {
+      "get": {
+        "operationId": "previewSessionTreeNavigation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "targetID",
+            "required": true,
+            "schema": {
+              "title": "Targetid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeAbandoned",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeabandoned",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TreeNavigationPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Tree Navigation"
+      }
+    },
+    "/api/v1/session/{session_id}/tree/{entry_id}": {
+      "patch": {
+        "operationId": "patchSessionTreeEntry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TreeEntryPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TreeEntryPatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Tree Entry"
+      }
+    },
+    "/api/v1/session/{session_id}/wait": {
+      "post": {
+        "operationId": "waitForSession",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "timeoutMs",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 300000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Timeoutms"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Wait For Session"
+      }
+    },
+    "/api/v1/skill": {
+      "get": {
+        "operationId": "listSkills",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Skills"
+      }
+    },
+    "/api/v1/tool": {
+      "get": {
+        "operationId": "listTools",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Directory"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sessionID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sessionid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tools"
+      }
+    },
+    "/api/v1/upload": {
+      "post": {
+        "operationId": "uploadAttachment",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sessionID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sessionid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "purpose",
+            "required": false,
+            "schema": {
+              "const": "promptAttachment",
+              "default": "promptAttachment",
+              "title": "Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_uploadAttachment"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Attachment"
+      }
+    }
+  }
+}

@@ -19,6 +19,8 @@ from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import McpSessionServerPolicy
 from yoke.mcp.config import load_mcp_config
 from yoke.mcp.config import server_supports_tool
+from yoke.mcp.editing import set_persisted_mcp_server_enabled
+from yoke.mcp.editing import toggle_persisted_mcp_tool
 from yoke.mcp.manager import McpManager
 
 
@@ -159,11 +161,13 @@ def _set_mcp_server_enabled(
         return
     if scope.path is None:
         return
-    base_server = _base_mcp_server(root=root, server=server)
-    payload = _load_mcp_json(scope.path)
-    entry = _ensure_server_entry(payload, base_server)
-    entry["enabled"] = enabled
-    _write_mcp_json(scope.path, payload)
+    set_persisted_mcp_server_enabled(
+        root=root,
+        home=Path.home(),
+        scope=scope.id,
+        server=server,
+        enabled=enabled,
+    )
 
 
 def _toggle_mcp_tool(
@@ -183,15 +187,13 @@ def _toggle_mcp_tool(
         return
     if scope.path is None:
         return
-    base_server = _base_mcp_server(root=root, server=server)
-    payload = _load_mcp_json(scope.path)
-    entry = _ensure_server_entry(payload, base_server)
-    _toggle_tool_entry(
-        entry,
+    toggle_persisted_mcp_tool(
+        root=root,
+        home=Path.home(),
+        scope=scope.id,
+        server=server,
         tool_name=tool_name,
-        currently_enabled=server_supports_tool(server, tool_name),
     )
-    _write_mcp_json(scope.path, payload)
 
 
 def _base_mcp_server(*, root: Path, server: McpServerConfig) -> McpServerConfig:

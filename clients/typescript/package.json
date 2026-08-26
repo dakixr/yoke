@@ -1,0 +1,18 @@
+{
+  "name": "@yoke/http-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "openapi-typescript ../../tests/yoke/http/golden/openapi.json -o src/schema.d.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run generate && git diff --exit-code -- src/schema.d.ts && npm run typecheck"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from yoke.agent.models import Message
 from yoke.ai.providers.openai_compat.content import normalize_openai_request_messages
+from yoke.ai.providers.openai_compat.content import serialize_message_for_openai
 from yoke.ai.providers.zai.models import ZAIConfig
 
 
@@ -30,7 +31,7 @@ class ZAIMessageRecoveryMixin:
         return prepared
 
     def _message_to_api_dict(self, message: Message) -> dict[str, object]:
-        payload = message.to_api_dict()
+        payload = serialize_message_for_openai(message)
         # Z.AI preserved-thinking mode requires complete, unmodified prior
         # reasoning_content. Yoke cannot guarantee that across compaction and
         # transcript transforms, so do not replay it by default.

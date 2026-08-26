@@ -52,7 +52,7 @@ Select models with `provider:model` or `provider:model:thinking_effort`:
 yoke --model codex:gpt-5.5:medium "..."
 yoke --model codex:gpt-5.6-terra:max "..."
 yoke --model opencode-go:gpt-5.6-luna:high "..."
-yoke --model zai:glm-5.3:max "..."
+yoke --model zai:glm-5.3-flash:max "..."
 ```
 
 Yoke's built-in providers are:
@@ -73,10 +73,11 @@ The advertised catalog currently includes `gpt-5.6-sol`,
 
 OpenCode Go advertises its maintained model catalog, including its Responses
 path for `gpt-5.6-luna` and OpenAI-compatible chat-completions paths for
-other models. Both Z.ai and OpenCode Go expose GLM-5.3 with `low`, `high`, and
-`max` reasoning efforts (default: `max`). GLM-5.2 supports `none`, `high`, and
-`max` (default: `max`) through both providers. OpenCode Go also serves the
-multimodal `muse-spark-1.2` and `muse-spark-1.2-contributor` coding models with
+other models. Both Z.ai and OpenCode Go expose GLM-5.3-Flash and GLM-5.3 with
+`low`, `high`, and `max` reasoning efforts (default: `max`). GLM-5.2 supports
+`none`, `high`, and `max` (default: `max`) through both providers. OpenCode Go
+also serves the multimodal `muse-spark-1.2` and `muse-spark-1.2-contributor`
+coding models with
 `low`, `medium`, `high`, and `xhigh` reasoning efforts (default: `medium`).
 Provider catalogs also declare context
 windows, image-input support, and model-specific system messages.
@@ -90,7 +91,7 @@ Use these commands to inspect or change defaults:
 ```bash
 yoke models list
 yoke models set codex:gpt-5.5 --reasoning-effort high
-yoke models set zai:glm-5.3 --reasoning-effort max
+yoke models set zai:glm-5.3-flash --reasoning-effort max
 yoke models set
 yoke models set --repo
 

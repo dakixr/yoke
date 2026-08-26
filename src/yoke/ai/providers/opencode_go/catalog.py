@@ -30,6 +30,7 @@ MODEL_PROTOCOLS = {
     "gpt-5.6-luna": "responses",
     "glm-5.2": "openai",
     "glm-5.3": "openai",
+    "glm-5.3-flash": "openai",
     "deepseek-v4-flash": "openai",
     "grok-4.5": "openai",
     "kimi-k2.7-code": "openai",
@@ -54,6 +55,14 @@ MODEL_CATALOG = build_model_catalog(
         thinking_levels=GLM_THINKING_LEVELS,
         default_thinking_level="max",
         supports_image_inputs=False,
+    ),
+    ProviderModelInfo(
+        id="glm-5.3-flash",
+        display_name="GLM-5.3-Flash",
+        context_window_tokens=400_000,
+        thinking_levels=GLM_53_THINKING_LEVELS,
+        default_thinking_level="max",
+        supports_image_inputs=True,
     ),
     ProviderModelInfo(
         id="glm-5.3",

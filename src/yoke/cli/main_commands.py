@@ -146,6 +146,49 @@ def register_commands(app: typer.Typer) -> None:
 
         providers_login(name)
 
+    @app.command()
+    def serve(
+        host: Annotated[
+            str,
+            typer.Option("--host", help="HTTP bind host. Defaults to loopback only."),
+        ] = "127.0.0.1",
+        port: Annotated[
+            int,
+            typer.Option("--port", min=0, max=65535, help="HTTP port. Use 0 for an ephemeral port."),
+        ] = 8765,
+        token: Annotated[
+            str | None,
+            typer.Option(
+                "--token",
+                envvar="YOKE_HTTP_TOKEN",
+                help="Bearer token. Generated when omitted.",
+            ),
+        ] = None,
+        allow_remote: Annotated[
+            bool,
+            typer.Option(
+                "--allow-remote",
+                help="Permit binding to a non-loopback host.",
+            ),
+        ] = False,
+    ) -> None:
+        """Run the process-wide Yoke HTTP API."""
+        import click
+
+        from yoke.http.server import run_server
+
+        try:
+            result = run_server(
+                host=host,
+                port=port,
+                auth_token=token,
+                allow_remote=allow_remote,
+            )
+        except (OSError, ValueError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        raise typer.Exit(result)
+
     _DELEGATE_CONTEXT_SETTINGS = {
         "allow_extra_args": True,
         "ignore_unknown_options": True,

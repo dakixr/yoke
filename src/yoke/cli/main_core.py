@@ -16,7 +16,17 @@ CWD = Path.cwd().absolute()
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 
 _SUBCOMMANDS = frozenset(
-    {"version", "login", "resume", "tools", "models", "providers", "skills"}
+    {
+        "version",
+        "login",
+        "serve",
+        "resume",
+        "tools",
+        "models",
+        "providers",
+        "mcp",
+        "skills",
+    }
 )
 _OPTIONS_WITH_VALUES = frozenset(
     {

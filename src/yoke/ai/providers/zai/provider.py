@@ -98,13 +98,15 @@ class ZAIProvider(
             context_window_tokens=128_000,
             thinking_levels=(
                 GLM_53_THINKING_LEVELS
-                if current_model == "glm-5.3"
+                if current_model in {"glm-5.3", "glm-5.3-flash"}
                 else GLM_52_THINKING_LEVELS
                 if current_model == "glm-5.2"
                 else THINKING_LEVELS
             ),
             default_thinking_level=(
-                "max" if current_model in {"glm-5.2", "glm-5.3"} else "thinking"
+                "max"
+                if current_model in {"glm-5.2", "glm-5.3", "glm-5.3-flash"}
+                else "thinking"
             ),
             supports_image_inputs=False,
         )
@@ -158,7 +160,7 @@ class ZAIProvider(
         thinking = _thinking_config(self.config.model, self.config.reasoning_effort)
         if thinking is not None:
             payload["thinking"] = thinking
-        if self.config.model in {"glm-5.2", "glm-5.3"}:
+        if self.config.model in {"glm-5.2", "glm-5.3", "glm-5.3-flash"}:
             payload["reasoning_effort"] = self.config.reasoning_effort
         if tools:
             payload["tools"] = tools

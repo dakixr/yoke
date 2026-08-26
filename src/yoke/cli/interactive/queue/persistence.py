@@ -3,48 +3,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
-
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import ValidationError
-
-from yoke.agent.models import Message
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.runtime import ActiveSession
-
-
-class PersistedPendingPrompt(BaseModel):
-    """One persisted queued or steering prompt."""
-
-    id: str
-    prompt: str
-    kind: Literal["queued", "steering"] = "queued"
-    created_at: str
-    paused: bool = False
-    user_message: Message | None = None
-
-
-class PersistedPromptQueue(BaseModel):
-    """Sidecar prompt queue payload."""
-
-    version: int = 1
-    prompts: list[PersistedPendingPrompt] = Field(default_factory=list)
-    pending_images: list[str] = Field(default_factory=list)
+from yoke.session.queue import PersistedPendingInput
+from yoke.session.queue import PersistedPromptQueue
+from yoke.session.queue import load_prompt_queue_snapshot
+from yoke.session.queue import prompt_queue_path as shared_prompt_queue_path
+from yoke.session.queue import write_prompt_queue_snapshot
 
 
 def load_prompt_queue(
     active_session: ActiveSession,
 ) -> tuple[list[PendingPrompt], list[ImageAttachment]]:
     """Load the persisted prompt queue sidecar for a session."""
-    path = prompt_queue_path(active_session)
-    if not path.exists():
-        return [], []
-    try:
-        payload = PersistedPromptQueue.model_validate_json(path.read_text("utf-8"))
-    except (OSError, ValidationError, ValueError):
-        return [], []
+    payload = load_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+    )
     prompts = [
         PendingPrompt(
             prompt=item.prompt,
@@ -70,22 +46,26 @@ def persist_prompt_queue(
     pending_images: list[ImageAttachment] | None = None,
 ) -> None:
     """Persist queued prompts and pending attachments for crash-safe resume."""
-    path = prompt_queue_path(active_session)
     active_prompts = [prompt for prompt in prompts if not prompt.paused]
     paused_prompts = [prompt for prompt in prompts if prompt.paused]
     ordered_prompts = active_prompts + paused_prompts
     images = pending_images or []
-    if not ordered_prompts and not images:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-        return
+    existing = load_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+    )
+    existing_by_id = {item.id: item for item in existing.prompts}
     payload = PersistedPromptQueue(
+        revision=existing.revision,
         prompts=[
-            PersistedPendingPrompt(
+            PersistedPendingInput(
                 id=prompt.id,
                 prompt=prompt.prompt,
+                attachments=(
+                    list(existing_by_id[prompt.id].attachments)
+                    if prompt.id in existing_by_id
+                    else []
+                ),
                 kind=prompt.kind,
                 created_at=prompt.created_at,
                 paused=prompt.paused,
@@ -95,14 +75,16 @@ def persist_prompt_queue(
         ],
         pending_images=[str(image.path) for image in images],
     )
-    serialized = payload.model_dump_json(indent=2)
-    try:
-        if path.read_text(encoding="utf-8") == serialized:
-            return
-    except OSError:
-        pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(serialized, encoding="utf-8")
+    if payload.model_dump(exclude={"revision"}) == existing.model_dump(
+        exclude={"revision"}
+    ):
+        return
+    payload.revision = existing.revision + 1
+    write_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+        payload,
+    )
 
 
 def clear_prompt_queue(active_session: ActiveSession) -> None:
@@ -115,4 +97,4 @@ def clear_prompt_queue(active_session: ActiveSession) -> None:
 
 def prompt_queue_path(active_session: ActiveSession) -> Path:
     """Return the sidecar path for a session prompt queue."""
-    return active_session.store.directory / "queues" / f"{active_session.id}.json"
+    return shared_prompt_queue_path(active_session.store.directory, active_session.id)

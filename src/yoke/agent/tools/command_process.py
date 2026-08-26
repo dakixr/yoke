@@ -21,6 +21,12 @@ from yoke.agent.tools.command_process_types import (
 from yoke.agent.tools.command_process_types import CancelRequested
 from yoke.agent.tools.command_process_types import CommandProcessResult
 from yoke.agent.tools.command_process_types import (
+    CommandProcessOutputChunk,
+)
+from yoke.agent.tools.command_process_types import (
+    CommandProcessOutputPage,
+)
+from yoke.agent.tools.command_process_types import (
     CommandProcessSnapshot,
 )
 from yoke.agent.tools.command_process_types import (
@@ -62,6 +68,10 @@ class _ManagedCommandProcess:
         self.pending_original_bytes = 0
         self.history: deque[bytes] = deque()
         self.history_bytes = 0
+        self.output_chunks: deque[tuple[int, bytes]] = deque()
+        self.output_chunk_bytes = 0
+        self.next_output_seq = 1
+        self.truncated_before_seq = 0
         self.original_output_bytes = 0
         self.open_readers = 0
         self.closed = False
@@ -115,6 +125,10 @@ class _ManagedCommandProcess:
             self.pending_original_bytes += len(raw)
             self.history.append(raw)
             self.history_bytes += len(raw)
+            seq = self.next_output_seq
+            self.next_output_seq += 1
+            self.output_chunks.append((seq, raw))
+            self.output_chunk_bytes += len(raw)
             self.original_output_bytes += len(raw)
             while self.pending_bytes > MAX_RETAINED_OUTPUT_BYTES:
                 dropped = self.pending.popleft()
@@ -122,6 +136,10 @@ class _ManagedCommandProcess:
             while self.history_bytes > MAX_RETAINED_OUTPUT_BYTES:
                 dropped = self.history.popleft()
                 self.history_bytes -= len(dropped)
+            while self.output_chunk_bytes > MAX_RETAINED_OUTPUT_BYTES:
+                dropped_seq, dropped = self.output_chunks.popleft()
+                self.output_chunk_bytes -= len(dropped)
+                self.truncated_before_seq = dropped_seq
             self.condition.notify_all()
         self.on_change()
 
@@ -203,6 +221,27 @@ class _ManagedCommandProcess:
                 output_tail=output.replace("\r\n", "\n").replace("\r", "\n"),
                 original_output_bytes=self.original_output_bytes,
                 retained_output_bytes=self.history_bytes,
+                latest_output_seq=self.next_output_seq - 1,
+                truncated_before_seq=self.truncated_before_seq,
+            )
+
+    def output_page(self, *, after_seq: int, limit: int) -> CommandProcessOutputPage:
+        """Return retained output chunks after an exclusive sequence cursor."""
+        with self.condition:
+            selected = [
+                CommandProcessOutputChunk(
+                    seq=seq,
+                    text=decode_command_output_chunk(raw)
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n"),
+                )
+                for seq, raw in self.output_chunks
+                if seq > after_seq
+            ][:limit]
+            return CommandProcessOutputPage(
+                chunks=tuple(selected),
+                latest_seq=self.next_output_seq - 1,
+                truncated_before_seq=self.truncated_before_seq,
             )
 
     def _status(self, finished: bool) -> Literal["running", "exited", "failed"]:

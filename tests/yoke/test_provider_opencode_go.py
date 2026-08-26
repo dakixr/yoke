@@ -21,6 +21,7 @@ def test_opencode_go_catalog_excludes_deprecated_models() -> None:
         assert "gpt-5.6-luna" in model_ids
         assert "glm-5.2" in model_ids
         assert "glm-5.3" in model_ids
+        assert "glm-5.3-flash" in model_ids
         assert "kimi-k2.7-code" in model_ids
         assert "deepseek-v4-pro" in model_ids
         assert "deepseek-v4-flash" in model_ids
@@ -50,6 +51,9 @@ def test_opencode_go_catalog_excludes_deprecated_models() -> None:
         assert models["glm-5.2"].default_thinking_level == "max"
         assert models["glm-5.3"].thinking_levels == ("low", "high", "max")
         assert models["glm-5.3"].default_thinking_level == "max"
+        assert models["glm-5.3-flash"].thinking_levels == ("low", "high", "max")
+        assert models["glm-5.3-flash"].default_thinking_level == "max"
+        assert models["glm-5.3-flash"].supports_image_inputs is True
         assert models["muse-spark-1.2"].thinking_levels == (
             "low",
             "medium",
@@ -67,7 +71,7 @@ def test_opencode_go_catalog_excludes_deprecated_models() -> None:
         provider.close()
 
 
-@pytest.mark.parametrize("model", ["glm-5.2", "glm-5.3"])
+@pytest.mark.parametrize("model", ["glm-5.2", "glm-5.3", "glm-5.3-flash"])
 def test_opencode_go_glm_sends_selected_reasoning_effort(model: str) -> None:
     captured: dict[str, object] = {}
 
