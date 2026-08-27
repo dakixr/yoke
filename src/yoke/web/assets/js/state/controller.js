@@ -550,6 +550,7 @@ class AppController {
               loaded: true,
               loading: false,
               messages: loadedMessages,
+              livePrompt: reconcileLivePrompt(current.livePrompt, loadedMessages),
               liveAssistants: reconcileLiveAssistants(current.liveAssistants || {}, loadedMessages, activeTurnID),
               liveTools: reconcileLiveTools(current.liveTools || {}, loadedMessages, activeTurnID),
               messageCursor: messages.cursor?.next || null,
@@ -625,10 +626,7 @@ class AppController {
             messages,
             liveAssistants: reconcileLiveAssistants(current.liveAssistants || {}, messages, activeTurnID),
             liveTools: reconcileLiveTools(current.liveTools || {}, messages, activeTurnID),
-            livePrompt:
-              current.lastError && livePrompt && messagesContainPrompt(messages, livePrompt)
-                ? null
-                : livePrompt || null,
+            livePrompt: reconcileLivePrompt(livePrompt, messages),
             failedPrompts: (current.failedPrompts || []).filter(
               (prompt) => !messagesContainPrompt(messages, prompt),
             ),
@@ -1417,6 +1415,7 @@ function promptAttachments(items) {
 
 function messagesContainPrompt(messages, livePrompt) {
   if (!livePrompt) return false;
+  if (livePrompt.id) return messages.some((message) => message.inputID === livePrompt.id);
   const prompt = livePrompt.prompt || {};
   const expectedText = String(prompt.text || "");
   const expectedAttachments = (prompt.attachments || [])
@@ -1444,6 +1443,10 @@ function messagesContainPrompt(messages, livePrompt) {
       JSON.stringify(attachments) === JSON.stringify(expectedAttachments)
     );
   });
+}
+
+function reconcileLivePrompt(livePrompt, messages) {
+  return livePrompt && !messagesContainPrompt(messages, livePrompt) ? livePrompt : null;
 }
 
 function liveEventCoalesceKey(event) {

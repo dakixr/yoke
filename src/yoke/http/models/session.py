@@ -165,6 +165,7 @@ class ProjectedMessageBase(ApiModel):
 
 class UserProjectedMessage(ProjectedMessageBase):
     type: Literal["user"] = "user"
+    input_id: str | None = None
     content: list[ProjectedContent] = Field(default_factory=list)
 
 

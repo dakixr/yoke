@@ -43,12 +43,11 @@ from yoke.session import SessionRecord
 from yoke.session import SessionStore
 from yoke.agent.activity import activity_status_for_event
 from yoke.session.admissions import AdmissionRecord
+from yoke.session.admissions import INPUT_ID_METADATA_KEY
 from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import McpSessionServerPolicy
 
-
-INPUT_ID_METADATA_KEY = "yoke_input_id"
 type RuntimeState = Literal["idle", "running", "stopping", "waiting_input", "error"]
 T = TypeVar("T")
 

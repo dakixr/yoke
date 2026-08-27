@@ -2292,6 +2292,8 @@ export interface components {
             content?: components["schemas"]["ProjectedContent"][];
             /** Id */
             id: string;
+            /** Inputid */
+            inputID?: string | null;
             /** Kind */
             kind: string;
             /** Timecreated */

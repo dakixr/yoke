@@ -21,6 +21,7 @@ from yoke.http.models.session import ToolCallSummary
 from yoke.http.models.session import ToolProjectedMessage
 from yoke.http.models.session import TreeEntryInfo
 from yoke.http.models.session import UserProjectedMessage
+from yoke.session.admissions import INPUT_ID_METADATA_KEY
 
 
 def project_active_messages(record_entries: list[ConversationEntry], leaf_id: str | None) -> list[ProjectedMessage]:
@@ -72,6 +73,7 @@ def project_entry(entry: ConversationEntry) -> ProjectedMessage:
             id=entry.id,
             time_created=entry.created_at,
             kind=entry.kind,
+            input_id=_entry_input_id(entry),
             content=_content(message),
         )
     if entry.kind in {"assistant", "assistant_tool_calls"}:
@@ -129,6 +131,11 @@ def project_message_content(message: Message | None) -> list[ProjectedContent]:
 
 
 _content = project_message_content
+
+
+def _entry_input_id(entry: ConversationEntry) -> str | None:
+    value = entry.metadata.get(INPUT_ID_METADATA_KEY)
+    return value if isinstance(value, str) else None
 
 
 def _entry_preview(entry: ConversationEntry) -> str | None:

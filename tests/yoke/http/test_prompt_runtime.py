@@ -364,6 +364,17 @@ def test_two_sessions_run_concurrently_and_steer_fences_old_generation(
             headers=_auth(),
             params={"order": "asc"},
         ).json()["data"]
+        correction_input_id = steered.json()["data"]["id"]
+        correction_message = next(
+            message
+            for message in messages_a
+            if message["type"] == "user"
+            and any(
+                part.get("type") == "text" and part.get("text") == "a-correction"
+                for part in message.get("content", [])
+            )
+        )
+        assert correction_message["inputID"] == correction_input_id
         texts = [
             part["text"]
             for message in messages_a

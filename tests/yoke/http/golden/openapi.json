@@ -3873,6 +3873,17 @@
             "title": "Id",
             "type": "string"
           },
+          "inputID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputid"
+          },
           "kind": {
             "title": "Kind",
             "type": "string"

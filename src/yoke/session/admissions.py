@@ -10,6 +10,9 @@ from pydantic import BaseModel
 from pydantic import Field
 
 
+INPUT_ID_METADATA_KEY = "yoke_input_id"
+
+
 class AdmissionAttachment(BaseModel):
     """Durable uploaded attachment reference attached to one admitted input."""
 
