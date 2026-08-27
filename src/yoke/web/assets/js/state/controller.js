@@ -734,6 +734,19 @@ class AppController {
     const draft = store.getState().drafts[id];
     if (!draft) throw new Error("Draft was not found.");
     if (!(draft.text || "").trim() && !draft.attachments?.length) throw new Error("Write a prompt or attach an image first.");
+    const sessionID = await this.createSessionFromDraft(id);
+    await api.admitPrompt(sessionID, {
+      id: `inp_${randomUUID()}`,
+      prompt: { text: draft.text || "", attachments: promptAttachments(draft.attachments || []) },
+      delivery,
+      resume: true,
+    });
+    await this.finishDraftSession(id, sessionID);
+  }
+
+  async createSessionFromDraft(id, { titleText = null } = {}) {
+    const draft = store.getState().drafts[id];
+    if (!draft) throw new Error("Draft was not found.");
     const location = draft.location || store.getState().recentLocations[0]?.directory;
     if (!location) throw new Error("Choose a working location first.");
     const sessionID = `web_${randomUUID()}`;
@@ -745,19 +758,156 @@ class AppController {
     await api.createSession({
       id: sessionID,
       location: { directory: location },
-      title: provisionalSessionTitle(draft.text),
+      title: provisionalSessionTitle(titleText ?? draft.text),
       selection,
     });
-    await api.admitPrompt(sessionID, {
-      id: `inp_${randomUUID()}`,
-      prompt: { text: draft.text || "", attachments: promptAttachments(draft.attachments || []) },
-      delivery,
-      resume: true,
-    });
+    return sessionID;
+  }
+
+  async finishDraftSession(id, sessionID) {
     this.deleteDraft(id);
     await this.refreshSessionLists();
     this.selectSession(sessionID);
     await this.loadSession(sessionID, { force: true });
+  }
+
+  async slashSkillCompletions(directory, search = "") {
+    const response = await api.skills({ directory, search: search || null });
+    return response.data || [];
+  }
+
+  async slashMcpCompletions(sessionID, directory, search = "") {
+    const response = sessionID
+      ? await api.sessionMcp(sessionID, false)
+      : await api.mcp({ directory, includeTools: false });
+    return (response.data || [])
+      .filter((server) => !search || String(server.name || "").toLowerCase().includes(search.toLowerCase()))
+      .map((server) => ({
+        name: server.name,
+        description: `${server.transport || "MCP"} · ${server.status || (server.enabled ? "enabled" : "disabled")}`,
+      }));
+  }
+
+  async runSlashCommand(text, { sessionID = null, draftID = null, directory = "" } = {}) {
+    const parsed = parseSlashCommand(text);
+    if (!parsed) return { handled: false };
+    const { name, args } = parsed;
+    if (name === "shortcuts" || name === "?") {
+      if (args) return slashUsage(this, name === "?" ? "?" : "/shortcuts");
+      this.showShortcutHelp();
+      return { handled: true };
+    }
+    if (name === "image") {
+      if (args) {
+        this.notice("Browser image attachments use the file picker, drag and drop, or paste. Use /image without a path.");
+        return { handled: true, clear: false };
+      }
+      return { handled: true, action: "image" };
+    }
+    if (name === "new") {
+      if (args) return slashUsage(this, "/new");
+      if (draftID) this.deleteDraft(draftID);
+      this.createDraft({ location: directory || null });
+      return { handled: true };
+    }
+    if (name === "model") {
+      if (args) return slashUsage(this, "/model");
+      requestAnimationFrame(() => this.focusModelSelector());
+      return { handled: true };
+    }
+    if (name === "skill") {
+      const [skillName, prompt] = splitFirstArgument(args);
+      if (!skillName) {
+        this.notice("Usage: /skill <name> [prompt]");
+        return { handled: true, clear: false };
+      }
+      if (sessionID) {
+        await this.activateSkill(sessionID, skillName, prompt || null);
+        await this.refreshQueue(sessionID);
+        this.notice(`Activated skill: ${skillName}`);
+        return { handled: true };
+      }
+      if (draftID) {
+        const available = await this.slashSkillCompletions(directory, skillName);
+        if (!available.some((skill) => skill.name === skillName)) {
+          this.notice(`Unknown skill: ${skillName}`);
+          return { handled: true, clear: false };
+        }
+        const createdID = await this.createSessionFromDraft(draftID, {
+          titleText: prompt || `Use ${skillName}`,
+        });
+        try {
+          await this.activateSkill(createdID, skillName, prompt || null);
+          this.notice(`Activated skill: ${skillName}`);
+        } finally {
+          await this.finishDraftSession(draftID, createdID);
+        }
+        return { handled: true };
+      }
+    }
+    if (!sessionID) {
+      this.notice(`/${name} is available after a session starts.`);
+      return { handled: true, clear: false };
+    }
+    const session = store.getState().sessions[sessionID];
+    if (name === "compact") {
+      if (args) return slashUsage(this, "/compact");
+      await this.compact(sessionID);
+      return { handled: true };
+    }
+    if (name === "pin") {
+      if (args) return slashUsage(this, "/pin");
+      await this.patchSession(sessionID, { pinned: !session?.pinned });
+      return { handled: true };
+    }
+    if (name === "info") {
+      if (args) return slashUsage(this, "/info");
+      await this.openInspector("context");
+      return { handled: true };
+    }
+    if (name === "fork") {
+      if (args) return slashUsage(this, "/fork");
+      await this.forkSession(sessionID);
+      return { handled: true };
+    }
+    if (name === "title") {
+      if (!args) return slashUsage(this, "/title <new-title>");
+      await this.patchSession(sessionID, { title: args });
+      return { handled: true };
+    }
+    if (name === "regenerate-title") {
+      if (args) return slashUsage(this, "/regenerate-title");
+      this.notice("Regenerating title…");
+      const updated = await this.regenerateTitle(sessionID);
+      this.notice(`Title updated to “${updated.title}”.`);
+      return { handled: true };
+    }
+    if (name === "tree") {
+      if (args) return slashUsage(this, "/tree");
+      await this.openInspector("tree");
+      return { handled: true };
+    }
+    if (name === "tools") {
+      if (args) return slashUsage(this, "/tools");
+      await this.openInspector("tools");
+      return { handled: true };
+    }
+    if (name === "mcp") {
+      await this.openInspector("mcp", args ? { serverName: args.split(/\s+/)[0] } : {});
+      return { handled: true };
+    }
+    if (name === "queue") {
+      if (args) return slashUsage(this, "/queue");
+      this.focusQueueEditor();
+      return { handled: true };
+    }
+    if (name === "ps") {
+      if (args) return slashUsage(this, "/ps");
+      await this.openInspector("process");
+      return { handled: true };
+    }
+    this.notice(`Unknown command: /${name}`);
+    return { handled: true, clear: false };
   }
 
   async submitPrompt(sessionID, { text, attachments = [], delivery = "steer" }) {
@@ -1229,6 +1379,32 @@ function queueSummary(queue) {
 function errorMessage(error) {
   if (error instanceof ApiError) return `${error.message}${error.requestID ? ` (${error.requestID})` : ""}`;
   return error?.message || String(error);
+}
+
+function parseSlashCommand(text) {
+  const trimmed = String(text || "").trim();
+  if (trimmed === "?") return { name: "?", args: "" };
+  if (!trimmed.startsWith("/") || trimmed.includes("\n")) return null;
+  const body = trimmed.slice(1);
+  const separator = body.search(/\s/);
+  if (separator < 0) return { name: body.toLowerCase(), args: "" };
+  return {
+    name: body.slice(0, separator).toLowerCase(),
+    args: body.slice(separator).trim(),
+  };
+}
+
+function splitFirstArgument(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return ["", ""];
+  const separator = trimmed.search(/\s/);
+  if (separator < 0) return [trimmed, ""];
+  return [trimmed.slice(0, separator), trimmed.slice(separator).trim()];
+}
+
+function slashUsage(controller, usage) {
+  controller.notice(`Usage: ${usage}`);
+  return { handled: true, clear: false };
 }
 
 function idOr(value) { return value; }

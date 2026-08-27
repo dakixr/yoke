@@ -1,16 +1,24 @@
 import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
+import {
+  applySlashCompletion,
+  handleSlashMenuKey,
+  SlashCompletionMenu,
+  useSlashCompletions,
+} from "./slash-menu.js";
 
 const MAX_PROMPT_ATTACHMENTS = 20;
 
 export function SessionComposer({ sessionID, session, runtime, data, attentionCount = 0 }) {
   const capabilities = useStore((state) => state.capabilities);
   const connected = useStore((state) => state.connection.current);
+  const overlayOpen = useStore((state) => Boolean(state.ui.inspector || state.ui.commandPaletteOpen));
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef(null);
+  const promptInput = useRef(null);
   const escapePrefixAt = useRef(0);
 
   useEffect(() => {
@@ -26,15 +34,41 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   const hasContent = Boolean(text.trim() || attachments.length);
   const running = runtime?.state === "running" || runtime?.state === "stopping" || runtime?.state === "waiting_input";
   const canSteer = Boolean(capabilities?.features?.steering);
+  const slashMenu = useSlashCompletions({
+    text,
+    enabled: !attachments.length,
+    sessionID,
+    directory: session.location.directory,
+    hasSession: true,
+  });
+  const executeSlash = async (value) => {
+    const result = await controller.runSlashCommand(value, {
+      sessionID,
+      directory: session.location.directory,
+    });
+    if (!result.handled) return false;
+    slashMenu.close();
+    if (result.action === "image") fileInput.current?.click();
+    if (result.clear !== false) setText("");
+    return true;
+  };
+  const chooseSlash = (item, { submit: shouldSubmit = false } = {}) => {
+    const completion = applySlashCompletion(text, item, {
+      appendSpace: !shouldSubmit && item.kind !== "command",
+    });
+    setText(completion.text);
+    slashMenu.close();
+    requestAnimationFrame(() => {
+      promptInput.current?.focus();
+      promptInput.current?.setSelectionRange(completion.cursor, completion.cursor);
+    });
+    if (shouldSubmit) void executeSlash(completion.text).catch((error) => controller.notice(error?.message || String(error)));
+  };
   const submit = async (delivery) => {
     if (!hasContent || busy || !connected) return;
-    if (!attachments.length && isShortcutHelpPrompt(text)) {
-      setText("");
-      controller.showShortcutHelp();
-      return;
-    }
     setBusy(true);
     try {
+      if (!attachments.length && await executeSlash(text)) return;
       await controller.submitPrompt(sessionID, { text, attachments, delivery });
       setText("");
       setAttachments([]);
@@ -46,8 +80,10 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   };
   const onKeyDown = (event) => {
     if (event.isComposing) return;
+    if (handleSlashMenuKey(event, slashMenu, chooseSlash)) return;
     const key = event.key.toLowerCase();
     if (event.key === "Escape") {
+      if (overlayOpen) return;
       escapePrefixAt.current = performance.now();
       return;
     }
@@ -103,22 +139,29 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   return html`<div class="composer-region">
     <${SelectionControls} directory=${session.location.directory} selection=${session.selection} sessionID=${sessionID} disabled=${!connected || running} />
     ${attentionCount ? html`<div class="composer-attention-note">Resolve the required ${attentionCount === 1 ? "action" : "actions"} above. You can still queue a follow-up here.</div>` : null}
-    <div
-      class=${`composer-shell ${imageInput.dragActive ? "is-image-drag-active" : ""}`}
-      onDragEnter=${imageInput.onDragEnter}
-      onDragOver=${imageInput.onDragOver}
-      onDragLeave=${imageInput.onDragLeave}
-      onDrop=${imageInput.onDrop}
-    >
+    <div class="composer-shell-wrap">
+      <${SlashCompletionMenu} items=${slashMenu.items} activeIndex=${slashMenu.activeIndex} loading=${slashMenu.loading} onChoose=${chooseSlash} />
+      <div
+        class=${`composer-shell ${imageInput.dragActive ? "is-image-drag-active" : ""}`}
+        onDragEnter=${imageInput.onDragEnter}
+        onDragOver=${imageInput.onDragOver}
+        onDragLeave=${imageInput.onDragLeave}
+        onDrop=${imageInput.onDrop}
+      >
       ${imageInput.dragActive ? html`<div class="composer-drop-hint" aria-hidden="true"><span>Drop images to attach</span></div>` : null}
       ${attachments.length ? html`<div class="composer-attachments">${attachments.map((attachment, index) => html`
         <span class="attachment-chip">▧ ${attachment.name}<button aria-label=${`Remove ${attachment.name}`} onClick=${() => setAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>
       `)}</div>` : null}
       <textarea
+        ref=${promptInput}
         class="composer-input"
         rows="3"
         value=${text}
         aria-label="Prompt"
+        aria-autocomplete="list"
+        aria-controls=${slashMenu.items.length || slashMenu.loading ? "slash-completion-menu" : undefined}
+        aria-expanded=${Boolean(slashMenu.items.length || slashMenu.loading)}
+        aria-activedescendant=${slashMenu.items[slashMenu.activeIndex] ? `slash-completion-menu-option-${slashMenu.activeIndex}` : undefined}
         placeholder=${connected ? "Ask Yoke to work…" : "Reconnect to send work"}
         disabled=${!connected}
         onInput=${(event) => setText(event.currentTarget.value)}
@@ -169,6 +212,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
         </div>
       </div>
     </div>
+    </div>
   </div>`;
 }
 
@@ -176,20 +220,49 @@ export function DraftComposer({ draftID, draft }) {
   const connected = useStore((state) => state.connection.current);
   const capabilities = useStore((state) => state.capabilities);
   const recentLocations = useStore((state) => state.recentLocations);
+  const overlayOpen = useStore((state) => Boolean(state.ui.inspector || state.ui.commandPaletteOpen));
   const [busy, setBusy] = useState(false);
   const fileInput = useRef(null);
+  const promptInput = useRef(null);
   const escapePrefixAt = useRef(0);
   const value = draft || { text: "", location: recentLocations[0]?.directory || "", attachments: [] };
   const update = (patch) => controller.updateDraft(draftID, patch);
+  const slashMenu = useSlashCompletions({
+    text: value.text || "",
+    enabled: !(value.attachments || []).length,
+    directory: value.location || "",
+    hasSession: false,
+  });
+  const executeSlash = async (text) => {
+    const result = await controller.runSlashCommand(text, {
+      draftID,
+      directory: value.location || "",
+    });
+    if (!result.handled) return false;
+    slashMenu.close();
+    if (result.action === "image") fileInput.current?.click();
+    if (result.clear !== false) update({ text: "" });
+    return true;
+  };
+  const chooseSlash = (item, { submit: shouldSubmit = false } = {}) => {
+    const completion = applySlashCompletion(value.text || "", item, {
+      appendSpace: !shouldSubmit && item.kind !== "command",
+    });
+    update({ text: completion.text });
+    slashMenu.close();
+    requestAnimationFrame(() => {
+      promptInput.current?.focus();
+      promptInput.current?.setSelectionRange(completion.cursor, completion.cursor);
+    });
+    if (shouldSubmit) void executeSlash(completion.text).catch((error) => controller.notice(error?.message || String(error)));
+  };
   const submit = async () => {
     if (busy || !connected) return;
-    if (!(value.attachments || []).length && isShortcutHelpPrompt(value.text || "")) {
-      update({ text: "" });
-      controller.showShortcutHelp();
-      return;
-    }
     setBusy(true);
-    try { await controller.submitDraft(draftID); }
+    try {
+      if (!(value.attachments || []).length && await executeSlash(value.text || "")) return;
+      await controller.submitDraft(draftID);
+    }
     catch (error) { controller.notice(error?.message || String(error)); }
     finally { setBusy(false); }
   };
@@ -214,21 +287,25 @@ export function DraftComposer({ draftID, draft }) {
       <datalist id="recent-locations">${recentLocations.map((item) => html`<option value=${item.directory}></option>`)}</datalist>
     </div>
     <${SelectionControls} directory=${value.location} selection=${{ provider: value.provider, model: value.model, reasoningEffort: value.reasoningEffort }} onDraftChange=${(selection) => update(selection)} />
-    <div
-      class=${`composer-shell composer-shell--draft ${imageInput.dragActive ? "is-image-drag-active" : ""}`}
-      onDragEnter=${imageInput.onDragEnter}
-      onDragOver=${imageInput.onDragOver}
-      onDragLeave=${imageInput.onDragLeave}
-      onDrop=${imageInput.onDrop}
-    >
+    <div class="composer-shell-wrap">
+      <${SlashCompletionMenu} items=${slashMenu.items} activeIndex=${slashMenu.activeIndex} loading=${slashMenu.loading} onChoose=${chooseSlash} />
+      <div
+        class=${`composer-shell composer-shell--draft ${imageInput.dragActive ? "is-image-drag-active" : ""}`}
+        onDragEnter=${imageInput.onDragEnter}
+        onDragOver=${imageInput.onDragOver}
+        onDragLeave=${imageInput.onDragLeave}
+        onDrop=${imageInput.onDrop}
+      >
       ${imageInput.dragActive ? html`<div class="composer-drop-hint" aria-hidden="true"><span>Drop images to attach</span></div>` : null}
       ${value.attachments?.length ? html`<div class="composer-attachments">${value.attachments.map((attachment, index) => html`
         <span class="attachment-chip">▧ ${attachment.name}<button aria-label=${`Remove ${attachment.name}`} onClick=${() => update({ attachments: value.attachments.filter((_, itemIndex) => itemIndex !== index) })}>×</button></span>
       `)}</div>` : null}
-      <textarea class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" onInput=${(event) => update({ text: event.currentTarget.value })} onPaste=${imageInput.onPaste} onKeyDown=${(event) => {
+      <textarea ref=${promptInput} class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" aria-autocomplete="list" aria-controls=${slashMenu.items.length || slashMenu.loading ? "slash-completion-menu" : undefined} aria-expanded=${Boolean(slashMenu.items.length || slashMenu.loading)} aria-activedescendant=${slashMenu.items[slashMenu.activeIndex] ? `slash-completion-menu-option-${slashMenu.activeIndex}` : undefined} onInput=${(event) => update({ text: event.currentTarget.value })} onPaste=${imageInput.onPaste} onKeyDown=${(event) => {
         if (event.isComposing) return;
+        if (handleSlashMenuKey(event, slashMenu, chooseSlash)) return;
         const key = event.key.toLowerCase();
         if (event.key === "Escape") {
+          if (overlayOpen) return;
           escapePrefixAt.current = performance.now();
           return;
         }
@@ -274,6 +351,7 @@ export function DraftComposer({ draftID, draft }) {
         ><${SendArrow} /></button>
       </div>
     </div>
+    </div>
   </div>`;
 }
 
@@ -281,11 +359,6 @@ function SendArrow() {
   return html`<svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
     <path d="M12 19V5M6.5 10.5 12 5l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"></path>
   </svg>`;
-}
-
-function isShortcutHelpPrompt(text) {
-  const normalized = String(text || "").trim().toLowerCase();
-  return normalized === "/shortcuts" || normalized === "?";
 }
 
 function insertTextareaText(textarea, insertion, apply) {

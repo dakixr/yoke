@@ -87,6 +87,13 @@ Esc then Enter insert a newline; Ctrl+U removes the last pending image. The
 Ctrl+X chords also match the CLI for tools, processes, queue, model selection,
 and the session tree. `/shortcuts` and `?` show the browser shortcut summary.
 Alt+V is terminal-specific; browser clipboard security requires Cmd+V/Ctrl+V.
+Typing `/` at the start of an empty prompt opens the browser slash-command
+completion menu using `/api/v1/command` metadata. The menu supports keyboard
+navigation and completion, and `/skill <name> [prompt]` and `/mcp <server>`
+complete their arguments from the current workspace catalogs. Supported slash
+commands execute through the corresponding HTTP operation instead of being sent
+to the model as prompt text. Commands that require a saved session are disabled
+while editing a new-session draft.
 
 ## Session and execution model
 
