@@ -196,7 +196,6 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
           class="session-quick-action"
           type="button"
           aria-label=${`Settle ${session.title || "session"}`}
-          title="Settle session"
           disabled=${!connected}
           onClick=${(event) => {
             event.stopPropagation();

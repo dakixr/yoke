@@ -46,6 +46,7 @@ def run_server(
     auth_token: str | None,
     allow_remote: bool,
     open_browser: bool = False,
+    verbose: bool = False,
 ) -> int:
     """Bind and run the Yoke HTTP daemon, including reliable port-zero reporting."""
     if not is_loopback_host(host) and not allow_remote:
@@ -67,7 +68,8 @@ def run_server(
         webbrowser.open(url, new=2, autoraise=True)
     config = uvicorn.Config(
         app,
-        log_level="info",
+        log_level="info" if verbose else "warning",
+        access_log=verbose,
         timeout_graceful_shutdown=3,
     )
     server = _YokeServer(config, app.state.event_broker)

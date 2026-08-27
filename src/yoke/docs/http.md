@@ -42,6 +42,10 @@ bearer token. Send that token on protected requests:
 Authorization: Bearer <token>
 ```
 
+Uvicorn lifecycle and access logs are quiet by default. Pass `--verbose` when
+you want request logs plus the normal Uvicorn startup and shutdown messages.
+The Yoke listening URL and bearer token are still printed in either mode.
+
 Set `YOKE_HTTP_TOKEN` or pass the CLI token option when a stable token is
 needed. Binding to a non-loopback address requires `--allow-remote` explicitly.
 Do not expose the daemon to an untrusted network. It can read workspace files,

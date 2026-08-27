@@ -74,6 +74,48 @@ def test_run_server_reports_selected_port_and_closes_socket(
     assert observed["socket"].fileno() == -1  # type: ignore[attr-defined]
 
 
+def test_run_server_is_quiet_by_default_and_verbose_enables_uvicorn_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    configs: list[object] = []
+
+    class FakeServer:
+        def __init__(self, config: object, _broker: object) -> None:
+            configs.append(config)
+
+        def run(self, *, sockets: list[object]) -> None:
+            assert sockets
+
+    monkeypatch.setattr("yoke.http.server._YokeServer", FakeServer)
+    monkeypatch.setattr(
+        "yoke.http.server.create_app",
+        lambda _settings: SimpleNamespace(state=SimpleNamespace(event_broker=object())),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    run_server(
+        host="127.0.0.1",
+        port=0,
+        auth_token="fixed-token",
+        allow_remote=False,
+    )
+    quiet = configs.pop()
+    assert getattr(quiet, "log_level") == "warning"
+    assert getattr(quiet, "access_log") is False
+
+    run_server(
+        host="127.0.0.1",
+        port=0,
+        auth_token="fixed-token",
+        allow_remote=False,
+        verbose=True,
+    )
+    verbose = configs.pop()
+    assert getattr(verbose, "log_level") == "info"
+    assert getattr(verbose, "access_log") is True
+
+
 def test_run_server_open_launches_browser_with_session_scoped_token(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

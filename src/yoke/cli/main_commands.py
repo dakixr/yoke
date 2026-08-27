@@ -183,6 +183,13 @@ def register_commands(app: typer.Typer) -> None:
                 help="Open the web UI with the bearer token already configured.",
             ),
         ] = False,
+        verbose: Annotated[
+            bool,
+            typer.Option(
+                "--verbose",
+                help="Show Uvicorn lifecycle and access logs.",
+            ),
+        ] = False,
     ) -> None:
         """Run the process-wide Yoke HTTP API."""
         import click
@@ -196,6 +203,7 @@ def register_commands(app: typer.Typer) -> None:
                 auth_token=token,
                 allow_remote=allow_remote,
                 open_browser=open_browser,
+                verbose=verbose,
             )
         except (OSError, ValueError) as exc:
             click.echo(f"Error: {exc}", err=True)
