@@ -892,6 +892,83 @@ class AppController {
     await this.refreshSessionSummary(sessionID);
   }
 
+  async cycleReasoningEffort() {
+    const state = store.getState();
+    const route = currentRoute();
+    let directory = "";
+    let provider = "";
+    let model = "";
+    let currentEffort = "";
+    let sessionID = null;
+    let draftID = null;
+    if (route.name === "session") {
+      sessionID = route.sessionID;
+      const session = state.sessions[sessionID];
+      if (!session) return false;
+      const runtime = state.active[sessionID];
+      if (runtime?.state && runtime.state !== "idle" && runtime.state !== "error") {
+        this.notice("Thinking effort can be changed when the current turn settles.");
+        return false;
+      }
+      directory = session.location?.directory || "";
+      provider = session.selection?.provider || "";
+      model = session.selection?.model || "";
+      currentEffort = session.selection?.reasoningEffort || "";
+    } else if (route.name === "new") {
+      draftID = route.draftID;
+      const draft = state.drafts[draftID];
+      if (!draft) return false;
+      directory = draft.location || "";
+      provider = draft.provider || "";
+      model = draft.model || "";
+      currentEffort = draft.reasoningEffort || "";
+    } else {
+      return false;
+    }
+    if (!directory || !provider || !model) return false;
+    const modelKey = `${directory}:${provider}:`;
+    const models = state.models[modelKey]?.length
+      ? state.models[modelKey]
+      : await this.loadModels(directory, provider);
+    const info = models.find((item) => item.id === model);
+    const values = (info?.reasoningEfforts || []).filter(Boolean);
+    if (!values.length) return false;
+    const normalized = String(currentEffort || "high").toLowerCase();
+    let index = values.findIndex((value) => String(value).toLowerCase() === normalized);
+    if (index < 0) index = values.findIndex((value) => String(value).toLowerCase() === "high");
+    const next = values[(index + 1 + values.length) % values.length];
+    if (draftID) this.updateDraft(draftID, { reasoningEffort: next });
+    if (sessionID) await this.setSelection(sessionID, provider, model, next);
+    this.notice(`Thinking effort: ${next}`);
+    return true;
+  }
+
+  focusQueueEditor() {
+    const queue = document.querySelector(".queue-editor");
+    if (!queue) {
+      this.notice("No queued messages.");
+      return false;
+    }
+    queue.scrollIntoView({ block: "nearest" });
+    queue.querySelector("textarea, button, select")?.focus();
+    return true;
+  }
+
+  focusModelSelector() {
+    const model = document.querySelector('.selection-controls select[aria-label="Model"]');
+    if (!model || model.disabled) {
+      this.notice("Model selection is available when the session is idle.");
+      return false;
+    }
+    model.focus();
+    return true;
+  }
+
+  showShortcutHelp() {
+    this.notice("Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image · Ctrl+X O tools · Ctrl+X Ctrl+P processes · Ctrl+X Q queue · Ctrl+X M model · Ctrl+X T tree");
+    return true;
+  }
+
   async openInspector(mode, payload = {}) {
     this.clearNotice();
     const sessionID = store.getState().ui.selectedSessionID;
@@ -1024,7 +1101,7 @@ class AppController {
     const sessionID = state.ui.selectedSessionID;
     this.togglePalette(false);
     if (command.action === "session.create") return this.createDraft();
-    if (command.action === "command.list") return this.notice("Primary shortcuts: ⌘K palette, ⌘N new session, ⌘B sidebar, Esc close, ⌥↑/↓ switch sessions.");
+    if (command.action === "command.list") return this.showShortcutHelp();
     if (!sessionID) return this.notice("Select a session first.");
     const session = state.sessions[sessionID];
     if (command.name === "pin") return this.patchSession(sessionID, { pinned: !session?.pinned });
@@ -1050,8 +1127,8 @@ class AppController {
     if (command.action === "session.mcp") return this.openInspector("mcp");
     if (command.action === "process.list") return this.openInspector("process");
     if (command.action === "session.skill") return this.openInspector("skills");
-    if (command.action === "session.queue") return document.querySelector(".queue-editor")?.scrollIntoView({ block: "nearest" });
-    if (command.action === "session.selection") return document.querySelector(".selection-controls select")?.focus();
+    if (command.action === "session.queue") return this.focusQueueEditor();
+    if (command.action === "session.selection") return this.focusModelSelector();
     if (command.action === "upload.create") return this.notice("Paste or drop an image into the composer, or use the Image button.");
   }
 

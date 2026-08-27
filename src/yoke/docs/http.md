@@ -81,8 +81,12 @@ from the v1 OpenAPI schema. Production does not require Node.js, npm, a CDN, or
 a separate frontend server. When image attachments are enabled, the composer
 accepts images from the file picker, drag and drop, and the browser paste event
 used by Cmd+V on macOS or Ctrl+V on other platforms. Composer keyboard behavior
-matches the interactive CLI while a turn is active: Enter steers, Tab queues,
-and Esc Esc interrupts. Shift+Enter inserts a newline in the browser composer.
+tracks the interactive CLI: Enter sends or steers, Tab queues, Shift+Tab cycles
+the model's reasoning effort, and Esc Esc interrupts. Shift+Enter, Ctrl+J, and
+Esc then Enter insert a newline; Ctrl+U removes the last pending image. The
+Ctrl+X chords also match the CLI for tools, processes, queue, model selection,
+and the session tree. `/shortcuts` and `?` show the browser shortcut summary.
+Alt+V is terminal-specific; browser clipboard security requires Cmd+V/Ctrl+V.
 
 ## Session and execution model
 

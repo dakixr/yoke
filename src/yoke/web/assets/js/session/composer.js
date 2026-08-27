@@ -11,6 +11,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   const [attachments, setAttachments] = useState([]);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef(null);
+  const escapePrefixAt = useRef(0);
 
   useEffect(() => {
     setText("");
@@ -27,6 +28,11 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   const canSteer = Boolean(capabilities?.features?.steering);
   const submit = async (delivery) => {
     if (!hasContent || busy || !connected) return;
+    if (!attachments.length && isShortcutHelpPrompt(text)) {
+      setText("");
+      controller.showShortcutHelp();
+      return;
+    }
     setBusy(true);
     try {
       await controller.submitPrompt(sessionID, { text, attachments, delivery });
@@ -40,6 +46,33 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   };
   const onKeyDown = (event) => {
     if (event.isComposing) return;
+    const key = event.key.toLowerCase();
+    if (event.key === "Escape") {
+      escapePrefixAt.current = performance.now();
+      return;
+    }
+    if (event.ctrlKey && !event.metaKey && key === "j") {
+      event.preventDefault();
+      insertTextareaText(event.currentTarget, "\n", setText);
+      return;
+    }
+    if (event.ctrlKey && !event.metaKey && key === "u") {
+      event.preventDefault();
+      if (attachments.length) setAttachments((current) => current.slice(0, -1));
+      return;
+    }
+    if (event.key === "Tab" && event.shiftKey) {
+      event.preventDefault();
+      void controller.cycleReasoningEffort();
+      return;
+    }
+    if (event.key === "Enter" && performance.now() - escapePrefixAt.current <= 650) {
+      escapePrefixAt.current = 0;
+      event.preventDefault();
+      insertTextareaText(event.currentTarget, "\n", setText);
+      return;
+    }
+    escapePrefixAt.current = 0;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void submit(running && !canSteer ? "queue" : "steer");
@@ -145,10 +178,16 @@ export function DraftComposer({ draftID, draft }) {
   const recentLocations = useStore((state) => state.recentLocations);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef(null);
+  const escapePrefixAt = useRef(0);
   const value = draft || { text: "", location: recentLocations[0]?.directory || "", attachments: [] };
   const update = (patch) => controller.updateDraft(draftID, patch);
   const submit = async () => {
     if (busy || !connected) return;
+    if (!(value.attachments || []).length && isShortcutHelpPrompt(value.text || "")) {
+      update({ text: "" });
+      controller.showShortcutHelp();
+      return;
+    }
     setBusy(true);
     try { await controller.submitDraft(draftID); }
     catch (error) { controller.notice(error?.message || String(error)); }
@@ -186,7 +225,40 @@ export function DraftComposer({ draftID, draft }) {
       ${value.attachments?.length ? html`<div class="composer-attachments">${value.attachments.map((attachment, index) => html`
         <span class="attachment-chip">▧ ${attachment.name}<button aria-label=${`Remove ${attachment.name}`} onClick=${() => update({ attachments: value.attachments.filter((_, itemIndex) => itemIndex !== index) })}>×</button></span>
       `)}</div>` : null}
-      <textarea class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" onInput=${(event) => update({ text: event.currentTarget.value })} onPaste=${imageInput.onPaste} onKeyDown=${(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); void submit(); } }}></textarea>
+      <textarea class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" onInput=${(event) => update({ text: event.currentTarget.value })} onPaste=${imageInput.onPaste} onKeyDown=${(event) => {
+        if (event.isComposing) return;
+        const key = event.key.toLowerCase();
+        if (event.key === "Escape") {
+          escapePrefixAt.current = performance.now();
+          return;
+        }
+        if (event.ctrlKey && !event.metaKey && key === "j") {
+          event.preventDefault();
+          insertTextareaText(event.currentTarget, "\n", (text) => update({ text }));
+          return;
+        }
+        if (event.ctrlKey && !event.metaKey && key === "u") {
+          event.preventDefault();
+          if (value.attachments?.length) update({ attachments: value.attachments.slice(0, -1) });
+          return;
+        }
+        if (event.key === "Tab" && event.shiftKey) {
+          event.preventDefault();
+          void controller.cycleReasoningEffort();
+          return;
+        }
+        if (event.key === "Enter" && performance.now() - escapePrefixAt.current <= 650) {
+          escapePrefixAt.current = 0;
+          event.preventDefault();
+          insertTextareaText(event.currentTarget, "\n", (text) => update({ text }));
+          return;
+        }
+        escapePrefixAt.current = 0;
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          void submit();
+        }
+      }}></textarea>
       <div class="composer-footer">
         <div class="composer-footer__left">
           ${capabilities?.features?.images ? html`<button class="quiet-button" disabled=${!connected} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
@@ -209,6 +281,23 @@ function SendArrow() {
   return html`<svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
     <path d="M12 19V5M6.5 10.5 12 5l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"></path>
   </svg>`;
+}
+
+function isShortcutHelpPrompt(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  return normalized === "/shortcuts" || normalized === "?";
+}
+
+function insertTextareaText(textarea, insertion, apply) {
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? start;
+  const next = `${textarea.value.slice(0, start)}${insertion}${textarea.value.slice(end)}`;
+  const cursor = start + insertion.length;
+  apply(next);
+  requestAnimationFrame(() => {
+    textarea.focus();
+    textarea.setSelectionRange(cursor, cursor);
+  });
 }
 
 function useImageAttachmentInput({ enabled, addFiles }) {

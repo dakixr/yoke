@@ -22,6 +22,7 @@ export function Sidebar() {
   const searchResults = useStore((state) => state.ui.searchResults);
   const searching = useStore((state) => state.ui.searching);
   const capabilities = useStore((state) => state.capabilities);
+  const connected = useStore((state) => state.connection.current);
   const [settledOpen, setSettledOpen] = useState(false);
   const [projectScope, setProjectScope] = useState("");
   const [contextMenu, setContextMenu] = useState(null);
@@ -96,18 +97,18 @@ export function Sidebar() {
         ${visibleSearch ? html`
           <div class="inbox-list" role="list" aria-label="Search results">
             ${visibleSearch.length ? visibleSearch.map((session) => html`
-              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} onOpenMenu=${openSessionMenu} />
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} settleSupported=${capabilities?.features?.sessionArchive} connected=${connected} onOpenMenu=${openSessionMenu} />
             `) : html`<div class="sidebar-empty">No sessions found</div>`}
           </div>
         ` : html`
           <div class="inbox-list" role="list">
             ${scopedDrafts.map((draft) => html`<${DraftRow} key=${draft.id} draft=${draft} location=${locations[draft.location]} selected=${selectedDraftID === draft.id} />`)}
             ${pinned.map((session) => html`
-              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} pinned outsideScope=${Boolean(projectScope && !matchesScope(session))} onOpenMenu=${openSessionMenu} />
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} pinned outsideScope=${Boolean(projectScope && !matchesScope(session))} settleSupported=${capabilities?.features?.sessionArchive} connected=${connected} onOpenMenu=${openSessionMenu} />
             `)}
             ${pinned.length && inbox.length ? html`<div class="pinned-divider" aria-hidden="true"></div>` : null}
             ${inbox.map((session) => html`
-              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} outsideScope=${Boolean(projectScope && !matchesScope(session))} onOpenMenu=${openSessionMenu} />
+              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} outsideScope=${Boolean(projectScope && !matchesScope(session))} settleSupported=${capabilities?.features?.sessionArchive} connected=${connected} onOpenMenu=${openSessionMenu} />
             `)}
             ${sessionCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(false)}>＋ Load older sessions</button>` : null}
             ${!scopedDrafts.length && !pinned.length && !inbox.length ? html`<div class="sidebar-empty">No sessions yet</div>` : null}
@@ -145,7 +146,7 @@ export function Sidebar() {
   `;
 }
 
-function SessionRow({ session, active, attention, selected, done, locations, pinned = false, settled = false, outsideScope = false, onOpenMenu }) {
+function SessionRow({ session, active, attention, selected, done, locations, pinned = false, settled = false, outsideScope = false, settleSupported = false, connected = true, onOpenMenu }) {
   const directory = session.location?.directory || "";
   const location = locations[directory];
   const projectName = location?.name || compactPath(directory);
@@ -154,6 +155,8 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
   const age = shortAge(settled ? session.archivedAt : session.time?.updated);
   const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
   const working = active?.state === "running" && attentionCount === 0;
+  const busy = active?.state && active.state !== "idle" && active.state !== "error";
+  const quickSettle = Boolean(settleSupported && !settled && !busy);
   const menuKeys = (event) => {
     if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) onOpenMenu?.(event, session);
   };
@@ -168,25 +171,43 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
     `;
   }
   return html`
-    <button
-      class=${`session-row session-card ${selected ? "is-selected" : ""} ${working ? "is-working" : ""} ${outsideScope ? "is-outside-scope" : ""}`}
-      aria-current=${selected ? "page" : undefined}
-      onClick=${() => controller.selectSession(session.id)}
-      onContextMenu=${(event) => onOpenMenu?.(event, session)}
-      onKeyDown=${menuKeys}
-    >
-      <span class="session-card__top">
-        <span class="session-project-glyph" aria-hidden="true">▱</span>
-        <span class="session-card__project" title=${directory}>${projectName}</span>
-        ${(pinned || session.pinned) ? html`<span class="session-pin" aria-label="Pinned" title="Pinned">PIN</span>` : null}
-        <${SessionStatus} runtime=${active} attention=${attention} done=${done} queue=${session.queue} age=${age} />
-      </span>
-      <span class="session-row__title">${session.title || session.id}</span>
-      <span class="session-card__bottom">
-        <span class="session-card__branch" title=${directory}>${outsideScope ? `Current · ${branch}` : branch}</span>
-        ${model ? html`<span class="session-card__model" title=${model}>${model}</span>` : null}
-      </span>
-    </button>
+    <div class=${`session-card-wrap ${quickSettle ? "has-quick-action" : ""}`} role="listitem">
+      <button
+        class=${`session-row session-card ${selected ? "is-selected" : ""} ${working ? "is-working" : ""} ${outsideScope ? "is-outside-scope" : ""}`}
+        aria-current=${selected ? "page" : undefined}
+        onClick=${() => controller.selectSession(session.id)}
+        onContextMenu=${(event) => onOpenMenu?.(event, session)}
+        onKeyDown=${menuKeys}
+      >
+        <span class="session-card__top">
+          <span class="session-project-glyph" aria-hidden="true">▱</span>
+          <span class="session-card__project" title=${directory}>${projectName}</span>
+          ${(pinned || session.pinned) ? html`<span class="session-pin" aria-label="Pinned" title="Pinned">PIN</span>` : null}
+          <span class="session-card__status-slot"><${SessionStatus} runtime=${active} attention=${attention} done=${done} queue=${session.queue} age=${age} /></span>
+        </span>
+        <span class="session-row__title">${session.title || session.id}</span>
+        <span class="session-card__bottom">
+          <span class="session-card__branch" title=${directory}>${outsideScope ? `Current · ${branch}` : branch}</span>
+          ${model ? html`<span class="session-card__model" title=${model}>${model}</span>` : null}
+        </span>
+      </button>
+      ${quickSettle ? html`
+        <button
+          class="session-quick-action"
+          type="button"
+          aria-label=${`Settle ${session.title || "session"}`}
+          title="Settle session"
+          disabled=${!connected}
+          onClick=${(event) => {
+            event.stopPropagation();
+            controller.patchSession(session.id, { archived: true }).catch((error) => controller.notice(error?.message || String(error)));
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 16 16" width="13" height="13"><path d="m3 8.2 3 3L13 4.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Settle</span>
+        </button>
+      ` : null}
+    </div>
   `;
 }
 

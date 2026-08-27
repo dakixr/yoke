@@ -24,6 +24,7 @@
 .sidebar__footer { padding: 8px 9px 10px; border-top: 1px solid var(--border); }
 .sidebar__footer .quiet-button { display: flex; width: 100%; justify-content: space-between; }
 .inbox-list { display: grid; gap: 1px; }
+.session-card-wrap { position: relative; }
 .session-row { position: relative; width: 100%; color: var(--text); text-align: left; }
 .session-card { display: grid; min-height: 78px; align-content: center; gap: 4px; padding: 8px 9px; border-radius: 7px; }
 .session-card:hover, .session-row--slim:hover { background: var(--raised); }
@@ -31,6 +32,12 @@
 .session-card.is-working:not(.is-selected) { opacity: .78; }
 .session-card.is-working:not(.is-selected) .status--working { opacity: .72; }
 .session-card__top { display: flex; min-width: 0; height: 18px; align-items: center; gap: 5px; }
+.session-card__status-slot { display: inline-flex; min-width: 0; flex: none; transition: opacity 100ms ease; }
+.session-quick-action { position: absolute; z-index: 2; top: 7px; right: 7px; display: inline-flex; height: 20px; align-items: center; gap: 4px; padding: 0 3px; border-radius: 4px; color: var(--muted); background: var(--raised); font-size: 11.5px; font-weight: 560; opacity: 0; pointer-events: none; transition: opacity 100ms ease, color 100ms ease; }
+.session-quick-action:hover, .session-quick-action:focus-visible { color: var(--text); }
+.session-card-wrap.has-quick-action:hover .session-card__status-slot { opacity: 0; }
+.session-card-wrap:has(.session-quick-action:focus-visible) .session-card__status-slot { opacity: 0; }
+.session-card-wrap.has-quick-action:hover .session-quick-action, .session-quick-action:focus-visible { opacity: 1; pointer-events: auto; }
 .session-project-glyph { flex: none; color: var(--faint); font-size: 12px; }
 .session-card__project { min-width: 0; flex: 1; overflow: hidden; color: var(--muted); font-size: 11.5px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .session-pin { flex: none; padding: 1px 3px; border: 1px solid var(--border); border-radius: 3px; color: var(--muted); font-size: 8px; font-weight: 760; letter-spacing: .04em; }
@@ -106,8 +113,13 @@
   .sidebar.is-open { transform: translateX(0); }
   .sidebar-backdrop { position: fixed; z-index: 15; inset: 0; display: block; background: rgb(0 0 0 / 35%); }
   .sidebar-resize { display: none; }
+  .session-quick-action { display: none; }
   .mobile-only { display: inline-grid; }
   .mobile-titlebar { display: flex; height: 48px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+}
+
+@media (hover: none) {
+  .session-quick-action { display: none; }
 }
 
 @media (max-width: 600px) {
