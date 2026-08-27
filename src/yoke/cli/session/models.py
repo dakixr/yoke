@@ -50,6 +50,14 @@ class SessionIndexEntry(BaseModel):
     updated_at: str | None = None
     pinned: bool = False
     archived_at: str | None = None
+    provider_name: str | None = None
+    model_id: str | None = None
+    reasoning_effort: str | None = None
+    leaf_id: str | None = None
+    entry_count: int | None = None
+    file_size: int | None = None
+    file_mtime_ns: int | None = None
+    summary_version: int = 0
 
     def to_record(self) -> SessionRecord:
         """Convert the index entry into a partial session record."""

@@ -32,10 +32,10 @@ class LocationService:
     def recent(self) -> list[LocationInfo]:
         seen: set[str] = set()
         result: list[LocationInfo] = []
-        for record in self.store.list():
-            if not record.root:
+        for entry in self.store.list_index_entries():
+            if not entry.root:
                 continue
-            root = str(Path(record.root).expanduser().resolve())
+            root = entry.root
             if root in seen:
                 continue
             seen.add(root)
@@ -67,4 +67,3 @@ class LocationService:
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             pass
         return GitLocationInfo(root=root, branch=branch)
-

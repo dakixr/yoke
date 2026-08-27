@@ -218,6 +218,115 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
     }
 
 
+def test_session_list_and_recent_locations_do_not_load_conversation_history(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    state = getattr(client.app, "state")
+    store = state.session_service.store
+    messages = [Message.user("hello"), Message.assistant("world")]
+    tree = SessionTree.from_messages(messages)
+    exported = tree.export_for_persistence()
+    store.save(
+        "indexed-session",
+        messages,
+        conversation_entries=list(exported.entries),
+        leaf_id=exported.leaf_id,
+        root=root,
+        title="Indexed session",
+        provider_name="codex",
+        model_id="gpt-test",
+        reasoning_effort="high",
+    )
+
+    def fail_load(_session_id: str):
+        raise AssertionError("session list must not load full conversation history")
+
+    monkeypatch.setattr(store, "load", fail_load)
+
+    listed = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"archived": False, "order": "updatedDesc"},
+    )
+    assert listed.status_code == 200
+    item = listed.json()["data"][0]
+    assert item["id"] == "indexed-session"
+    assert item["selection"] == {
+        "provider": "codex",
+        "model": "gpt-test",
+        "reasoningEffort": "high",
+    }
+    assert item["tree"] == {
+        "leafID": exported.leaf_id,
+        "entryCount": len(exported.entries),
+    }
+
+    recent = client.get("/api/v1/location/recent", headers=_auth())
+    assert recent.status_code == 200
+    assert recent.json()["data"] == [{"directory": str(root.resolve())}]
+
+
+def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    state = getattr(client.app, "state")
+    store = state.session_service.store
+    messages = [Message.user("hello"), Message.assistant("world")]
+    tree = SessionTree.from_messages(messages)
+    exported = tree.export_for_persistence()
+    store.save(
+        "legacy-index-session",
+        messages,
+        conversation_entries=list(exported.entries),
+        leaf_id=exported.leaf_id,
+        root=root,
+        provider_name="codex",
+        model_id="gpt-test",
+        reasoning_effort="medium",
+    )
+
+    index_path = store._index_path()
+    index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+    entry = index_payload["sessions"]["legacy-index-session"]
+    for field in (
+        "provider_name",
+        "model_id",
+        "reasoning_effort",
+        "leaf_id",
+        "entry_count",
+        "file_size",
+        "file_mtime_ns",
+        "summary_version",
+    ):
+        entry.pop(field, None)
+    index_path.write_text(json.dumps(index_payload), encoding="utf-8")
+
+    restarted = _client(tmp_path)
+    listed = restarted.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"archived": False},
+    )
+    assert listed.status_code == 200
+    item = listed.json()["data"][0]
+    assert item["selection"] == {
+        "provider": "codex",
+        "model": "gpt-test",
+        "reasoningEffort": "medium",
+    }
+    assert item["tree"] == {
+        "leafID": exported.leaf_id,
+        "entryCount": len(exported.entries),
+    }
+    repaired = json.loads(index_path.read_text(encoding="utf-8"))
+    assert repaired["sessions"]["legacy-index-session"]["summary_version"] == 1
+
+
 def test_session_list_migrates_legacy_stream_without_index_entry(tmp_path: Path) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"

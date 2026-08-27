@@ -44,6 +44,7 @@ from yoke.http.services.projectors import project_entry
 from yoke.http.services.projectors import project_tree
 from yoke.http.services.projectors import project_message_content
 from yoke.session import SessionRecord
+from yoke.cli.session.models import SessionIndexEntry
 from yoke.session import SessionStore
 from yoke.session import SessionTreeIndex
 from yoke.session import fork_session_title
@@ -82,12 +83,7 @@ class SessionService:
         order: SessionOrder,
         cursor: str | None,
     ) -> SessionListResponse:
-        records: list[SessionRecord] = []
-        for item in self.store.list(root=directory):
-            try:
-                records.append(self.store.load(item.id))
-            except ValueError:
-                continue
+        records = self.store.list_index_entries(root=directory)
         if search:
             needle = search.casefold()
             records = [
@@ -117,7 +113,7 @@ class SessionService:
         if start + limit < len(records) and page:
             next_cursor = encode_cursor(query=fingerprint, anchor_id=page[-1].id)
         return SessionListResponse(
-            data=[self.session_info(record) for record in page],
+            data=[self.session_info_from_index(record) for record in page],
             cursor=CursorInfo(previous=None, next=next_cursor),
         )
 
@@ -449,9 +445,6 @@ class SessionService:
         )
 
     def session_info(self, record: SessionRecord) -> SessionInfo:
-        queue = load_prompt_queue_snapshot(self.store.directory, record.id)
-        steering = sum(item.kind == "steering" for item in queue.prompts)
-        paused = sum(item.paused for item in queue.prompts)
         return SessionInfo(
             id=record.id,
             title=record.title,
@@ -468,13 +461,40 @@ class SessionService:
                 leaf_id=record.leaf_id,
                 entry_count=len(record.conversation_entries),
             ),
-            queue=SessionQueueSummary(
-                total=len(queue.prompts),
-                steering=steering,
-                queued=len(queue.prompts) - steering,
-                paused=paused,
-                revision=queue.revision,
+            queue=self._queue_summary(record.id),
+        )
+
+    def session_info_from_index(self, entry: SessionIndexEntry) -> SessionInfo:
+        """Build a list-card projection without loading conversation history."""
+        return SessionInfo(
+            id=entry.id,
+            title=entry.title,
+            pinned=entry.pinned,
+            archived_at=entry.archived_at,
+            location=LocationInfo(directory=entry.root or ""),
+            time=SessionTime(created=entry.created_at, updated=entry.updated_at),
+            selection=SessionSelection(
+                provider=entry.provider_name,
+                model=entry.model_id,
+                reasoning_effort=entry.reasoning_effort,
             ),
+            tree=SessionTreeSummary(
+                leaf_id=entry.leaf_id,
+                entry_count=entry.entry_count or 0,
+            ),
+            queue=self._queue_summary(entry.id),
+        )
+
+    def _queue_summary(self, session_id: str) -> SessionQueueSummary:
+        queue = load_prompt_queue_snapshot(self.store.directory, session_id)
+        steering = sum(item.kind == "steering" for item in queue.prompts)
+        paused = sum(item.paused for item in queue.prompts)
+        return SessionQueueSummary(
+            total=len(queue.prompts),
+            steering=steering,
+            queued=len(queue.prompts) - steering,
+            paused=paused,
+            revision=queue.revision,
         )
 
     def _require_record(self, session_id: str) -> SessionRecord:
@@ -509,7 +529,10 @@ class SessionService:
             )
 
     @staticmethod
-    def _sort_key(record: SessionRecord, order: SessionOrder) -> tuple[str, str]:
+    def _sort_key(
+        record: SessionRecord | SessionIndexEntry,
+        order: SessionOrder,
+    ) -> tuple[str, str]:
         value = (
             record.created_at
             if order.startswith("created")
@@ -519,7 +542,9 @@ class SessionService:
 
     @staticmethod
     def _cursor_start(
-        records: list[SessionRecord], cursor: str | None, fingerprint: str
+        records: Sequence[SessionRecord | SessionIndexEntry],
+        cursor: str | None,
+        fingerprint: str,
     ) -> int:
         if cursor is None:
             return 0

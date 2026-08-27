@@ -6,6 +6,8 @@ import builtins
 from collections.abc import Sequence
 import re
 from pathlib import Path
+from threading import Lock
+import time
 
 from pydantic import ValidationError
 
@@ -13,6 +15,7 @@ from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.cli.session.index import repair_index_from_session_files
+from yoke.cli.session.index import session_index_entry
 from yoke.cli.session.load import load_existing_record
 from yoke.cli.session.maintenance import prune_index_and_sessions
 from yoke.cli.session.models import SessionIndex
@@ -34,6 +37,7 @@ SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SESSION_INDEX_NAME = "index.json"
 SESSION_FILE_SUFFIX = ".jsonl"
 SESSION_RETENTION_DAYS = 30
+SESSION_MAINTENANCE_INTERVAL_SECONDS = 5.0
 CURRENT_SESSION_SCHEMA_VERSION = 5
 
 
@@ -49,6 +53,8 @@ class SessionStore:
 
     def __init__(self, directory: Path | None = None) -> None:
         self.directory = (directory or default_session_directory()).resolve()
+        self._maintenance_lock = Lock()
+        self._last_maintenance_at = float("-inf")
 
     def load(self, session_id: str) -> SessionRecord:
         """Load a session record."""
@@ -241,20 +247,28 @@ class SessionStore:
 
     def list(self, *, root: Path | str | None = None) -> builtins.list[SessionRecord]:
         """List session records."""
-        self._repair_index_from_session_files()
-        self._prune_index_and_sessions()
+        entries = self.list_index_entries(root=root)
+        records = [entry.to_record() for entry in entries]
+        return records
+
+    def list_index_entries(
+        self,
+        *,
+        root: Path | str | None = None,
+    ) -> builtins.list[SessionIndexEntry]:
+        """List lightweight session summaries without loading conversation history."""
+        self._maintain_index_if_due()
         root_value = normalize_root(root)
-        entries = self._load_index().sessions.values()
-        records = [
-            entry.to_record()
-            for entry in entries
+        entries = [
+            entry
+            for entry in self._load_index().sessions.values()
             if root_value is None or entry.root == root_value
         ]
         return sorted(
-            records,
-            key=lambda record: (
-                record.pinned,
-                record.updated_at or record.created_at or "",
+            entries,
+            key=lambda entry: (
+                entry.pinned,
+                entry.updated_at or entry.created_at or "",
             ),
             reverse=True,
         )
@@ -436,14 +450,9 @@ class SessionStore:
 
     def _update_index(self, record: SessionRecord) -> None:
         index = self._load_index()
-        index.sessions[record.id] = SessionIndexEntry(
-            id=record.id,
-            root=record.root,
-            title=record.title,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-            pinned=record.pinned,
-            archived_at=record.archived_at,
+        index.sessions[record.id] = session_index_entry(
+            record,
+            path=self._session_path(record.id),
         )
         self._index_path().write_text(index.model_dump_json(indent=2), encoding="utf-8")
 
@@ -454,12 +463,24 @@ class SessionStore:
             index=index,
             session_file_suffix=SESSION_FILE_SUFFIX,
             session_id_pattern=SESSION_ID_PATTERN,
-            existing_session_path=self._existing_session_path,
+            load_record=self.load,
         ):
             self.directory.mkdir(parents=True, exist_ok=True)
             self._index_path().write_text(
                 index.model_dump_json(indent=2), encoding="utf-8"
             )
+
+    def _maintain_index_if_due(self) -> None:
+        now = time.monotonic()
+        if now - self._last_maintenance_at < SESSION_MAINTENANCE_INTERVAL_SECONDS:
+            return
+        with self._maintenance_lock:
+            now = time.monotonic()
+            if now - self._last_maintenance_at < SESSION_MAINTENANCE_INTERVAL_SECONDS:
+                return
+            self._repair_index_from_session_files()
+            self._prune_index_and_sessions()
+            self._last_maintenance_at = time.monotonic()
 
     def _prune_index_and_sessions(
         self, *, exclude_session_id: str | None = None
