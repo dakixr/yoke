@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC
 import hashlib
+from typing import TYPE_CHECKING
 
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_types import CommandProcessSnapshot
 from yoke.http.errors import ApiError
 from yoke.http.models.process import ProcessInfo
 from yoke.http.models.process import ProcessListResponse
@@ -16,6 +15,10 @@ from yoke.http.models.process import ProcessOutputInfo
 from yoke.http.models.process import ProcessOutputResponse
 from yoke.http.models.process import ProcessResponse
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+
+if TYPE_CHECKING:
+    from yoke.agent.tools.command_process_manager import CommandProcessManager
+    from yoke.agent.tools.command_process_types import CommandProcessSnapshot
 
 
 class ProcessService:

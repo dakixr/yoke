@@ -249,11 +249,15 @@ def get_context(
     session_id: str,
     include_system: bool = Query(default=False, alias="includeSystem"),
     include_tool_results: bool = Query(default=True, alias="includeToolResults"),
+    limit: int = Query(default=100, ge=1, le=1000),
+    max_chars: int = Query(default=500_000, ge=1_000, le=2_000_000, alias="maxChars"),
 ) -> ContextResponse:
     return _service(request).context(
         session_id,
         include_system=include_system,
         include_tool_results=include_tool_results,
+        limit=limit,
+        max_chars=max_chars,
     )
 
 
@@ -262,8 +266,13 @@ def get_context(
     response_model=TreeResponse,
     operation_id="getSessionTree",
 )
-def get_tree(request: Request, session_id: str) -> TreeResponse:
-    return _service(request).tree(session_id)
+def get_tree(
+    request: Request,
+    session_id: str,
+    limit: int = Query(default=200, ge=1, le=2000),
+    cursor: str | None = Query(default=None),
+) -> TreeResponse:
+    return _service(request).tree(session_id, limit=limit, cursor=cursor)
 
 
 @router.get(

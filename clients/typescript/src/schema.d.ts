@@ -984,8 +984,33 @@ export interface components {
         };
         /** ContextData */
         ContextData: {
+            /**
+             * Maxchars
+             * @default 0
+             */
+            maxChars: number;
             /** Messages */
             messages: components["schemas"]["ContextMessage"][];
+            /**
+             * Retainedchars
+             * @default 0
+             */
+            retainedChars: number;
+            /**
+             * Retainedentries
+             * @default 0
+             */
+            retainedEntries: number;
+            /**
+             * Totalentries
+             * @default 0
+             */
+            totalEntries: number;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** ContextMessage */
         ContextMessage: {
@@ -1282,6 +1307,11 @@ export interface components {
             cursor: components["schemas"]["CursorInfo"];
             /** Data */
             data: components["schemas"]["ProjectedMessage"][];
+            /**
+             * Snapshotseq
+             * @default 0
+             */
+            snapshotSeq: number;
         };
         /** MessageResponse */
         MessageResponse: {
@@ -2158,12 +2188,18 @@ export interface components {
         };
         /** TreeData */
         TreeData: {
+            cursor?: components["schemas"]["CursorInfo"];
             /** Entries */
             entries: components["schemas"]["TreeEntryInfo"][];
             /** Leafid */
             leafID?: string | null;
             /** Revision */
             revision: number;
+            /**
+             * Totalentries
+             * @default 0
+             */
+            totalEntries: number;
         };
         /** TreeEntryInfo */
         TreeEntryInfo: {
@@ -2252,6 +2288,16 @@ export interface components {
         TreeNavigationPreviewData: {
             /** Abandoned */
             abandoned?: components["schemas"]["TreeNavigationAbandonedEntry"][];
+            /**
+             * Abandonedtotal
+             * @default 0
+             */
+            abandonedTotal: number;
+            /**
+             * Abandonedtruncated
+             * @default false
+             */
+            abandonedTruncated: boolean;
             /** Current */
             current: boolean;
             /** Editortext */
@@ -3019,6 +3065,8 @@ export interface operations {
             query?: {
                 includeSystem?: boolean;
                 includeToolResults?: boolean;
+                limit?: number;
+                maxChars?: number;
             };
             header?: never;
             path: {
@@ -3825,7 +3873,10 @@ export interface operations {
     };
     getSessionTree: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
             header?: never;
             path: {
                 session_id: string;

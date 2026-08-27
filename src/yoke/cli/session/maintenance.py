@@ -20,7 +20,7 @@ def prune_index_and_sessions(
     exclude_session_id: str | None,
 ) -> None:
     """Remove expired sessions and stale index entries."""
-    index = store._load_index()
+    index = store._mutable_index()
     cutoff = datetime.now(UTC) - timedelta(days=retention_days)
     changed = False
     for session_id, entry in list(index.sessions.items()):

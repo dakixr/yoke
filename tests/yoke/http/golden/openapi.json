@@ -240,12 +240,37 @@
       "ContextData": {
         "additionalProperties": false,
         "properties": {
+          "maxChars": {
+            "default": 0,
+            "title": "Maxchars",
+            "type": "integer"
+          },
           "messages": {
             "items": {
               "$ref": "#/components/schemas/ContextMessage"
             },
             "title": "Messages",
             "type": "array"
+          },
+          "retainedChars": {
+            "default": 0,
+            "title": "Retainedchars",
+            "type": "integer"
+          },
+          "retainedEntries": {
+            "default": 0,
+            "title": "Retainedentries",
+            "type": "integer"
+          },
+          "totalEntries": {
+            "default": 0,
+            "title": "Totalentries",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -983,6 +1008,11 @@
             },
             "title": "Data",
             "type": "array"
+          },
+          "snapshotSeq": {
+            "default": 0,
+            "title": "Snapshotseq",
+            "type": "integer"
           }
         },
         "required": [
@@ -3470,6 +3500,9 @@
       "TreeData": {
         "additionalProperties": false,
         "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/CursorInfo"
+          },
           "entries": {
             "items": {
               "$ref": "#/components/schemas/TreeEntryInfo"
@@ -3490,6 +3523,11 @@
           },
           "revision": {
             "title": "Revision",
+            "type": "integer"
+          },
+          "totalEntries": {
+            "default": 0,
+            "title": "Totalentries",
             "type": "integer"
           }
         },
@@ -3753,6 +3791,16 @@
             },
             "title": "Abandoned",
             "type": "array"
+          },
+          "abandonedTotal": {
+            "default": 0,
+            "title": "Abandonedtotal",
+            "type": "integer"
+          },
+          "abandonedTruncated": {
+            "default": false,
+            "title": "Abandonedtruncated",
+            "type": "boolean"
           },
           "current": {
             "title": "Current",
@@ -5117,6 +5165,30 @@
               "title": "Includetoolresults",
               "type": "boolean"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "maxChars",
+            "required": false,
+            "schema": {
+              "default": 500000,
+              "maximum": 2000000,
+              "minimum": 1000,
+              "title": "Maxchars",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -6388,6 +6460,34 @@
             "schema": {
               "title": "Session Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],

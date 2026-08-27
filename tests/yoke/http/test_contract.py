@@ -337,6 +337,7 @@ def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None
     index_path.write_text(json.dumps(index_payload), encoding="utf-8")
 
     restarted = _client(tmp_path)
+    _fastapi(restarted).state.session_service.store.maintain_index(force=True)
     listed = restarted.get(
         "/api/v1/session",
         headers=_auth(),
@@ -354,7 +355,7 @@ def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None
         "entryCount": len(exported.entries),
     }
     repaired = json.loads(index_path.read_text(encoding="utf-8"))
-    assert repaired["sessions"]["legacy-index-session"]["summary_version"] == 1
+    assert repaired["sessions"]["legacy-index-session"]["summary_version"] == 2
 
 
 def test_session_maintenance_migrates_legacy_stream_without_index_entry(

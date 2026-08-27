@@ -30,6 +30,25 @@ class AppController {
     this.refreshTimers = new Map();
     this.messageRefreshGeneration = new Map();
     this.liveToolRefreshGeneration = new Map();
+    this.optimisticSessionGeneration = new Map();
+    this.sessionMutationChains = new Map();
+    this.sessionPendingMutations = new Map();
+    this.queueMutationChains = new Map();
+    this.queueServerRevisions = new Map();
+    this.queueMutationGeneration = new Map();
+    this.queuePendingMutations = new Map();
+    this.humanInputGeneration = new Map();
+    this.selectionGeneration = new Map();
+    this.selectionMutationChains = new Map();
+    this.pendingSelections = new Map();
+    this.toolMutationChains = new Map();
+    this.toolMutationGeneration = new Map();
+    this.mcpMutationChains = new Map();
+    this.mcpMutationGeneration = new Map();
+    this.treeMutationChains = new Map();
+    this.treeMutationGeneration = new Map();
+    this.treePendingLabels = new Map();
+    this.treeServerRevisions = new Map();
     this.pendingLiveEvents = new Map();
     this.liveFrame = null;
     this.routeHandler = () => void this.applyRoute();
@@ -111,14 +130,17 @@ class AppController {
     this.eventBuffer = [];
     this.startSse();
     try {
-      const [capabilities, active, commands, recent, current, archived, providers] = await Promise.all([
+      const providerPromise = api.providers().then((providers) => {
+        store.setState((state) => ({ ...state, providers: providers.data }));
+        return providers;
+      });
+      const [capabilities, active, commands, recent, current, archived] = await Promise.all([
         api.capabilities(),
         api.activeSessions(),
         api.commands(),
         api.recentLocations(),
         api.listSessions({ archived: false, limit: 100 }),
         api.listSessions({ archived: true, limit: 30 }),
-        api.providers(),
       ]);
       store.setState((state) => {
         const sessions = { ...state.sessions };
@@ -133,7 +155,6 @@ class AppController {
           archivedCursor: archived.cursor?.next || null,
           commands: commands.data,
           recentLocations: recent.data,
-          providers: providers.data,
         };
         next = installActiveSnapshot(next, active.data);
         for (const event of this.eventBuffer) next = reducePublicEvent(next, event);
@@ -141,8 +162,9 @@ class AppController {
       });
       this.bufferEvents = false;
       this.eventBuffer = [];
-      await this.resolveVisibleLocations();
-      await this.refreshProcessLocalState();
+      void providerPromise.catch((error) => this.notice(errorMessage(error)));
+      void this.resolveVisibleLocations();
+      void this.refreshProcessLocalState();
       await this.applyRoute();
       this.persistDone();
       store.setState((state) => ({
@@ -376,7 +398,7 @@ class AppController {
     store.setState((state) => {
       const sessions = { ...state.sessions };
       for (const item of [...current.data, ...archived.data]) sessions[item.id] = item;
-      return {
+      let next = {
         ...state,
         sessions,
         sessionOrder: current.data.map((item) => item.id),
@@ -384,6 +406,26 @@ class AppController {
         sessionsCursor: current.cursor?.next || null,
         archivedCursor: archived.cursor?.next || null,
       };
+      for (const [sessionID, mutations] of this.sessionPendingMutations) {
+        if (!mutations.length) continue;
+        const base = next.sessions[sessionID] || state.sessions[sessionID];
+        if (!base) continue;
+        let visible = base;
+        for (const mutation of mutations) visible = optimisticSessionPatch(visible, mutation.patch);
+        next = installSessionSummary(next, visible, { moveToFront: true });
+      }
+      for (const [sessionID, selection] of this.pendingSelections) {
+        const session = next.sessions[sessionID];
+        if (!session) continue;
+        next = {
+          ...next,
+          sessions: {
+            ...next.sessions,
+            [sessionID]: { ...session, selection },
+          },
+        };
+      }
+      return next;
     });
     void this.resolveVisibleLocations();
   }
@@ -409,7 +451,15 @@ class AppController {
 
   async refreshSessionSummary(sessionID) {
     const response = await api.getSession(sessionID);
-    store.setState((state) => mergeSessionSummary(state, response.data));
+    store.setState((state) => {
+      let summary = response.data;
+      for (const mutation of this.sessionPendingMutations.get(sessionID) || []) {
+        summary = optimisticSessionPatch(summary, mutation.patch);
+      }
+      const selection = this.pendingSelections.get(sessionID);
+      if (selection) summary = { ...summary, selection };
+      return mergeSessionSummary(state, summary);
+    });
   }
 
   async resolveVisibleLocations() {
@@ -418,25 +468,32 @@ class AppController {
       [...state.sessionOrder, ...state.archivedOrder]
         .map((id) => state.sessions[id]?.location?.directory)
         .filter(Boolean),
-    )];
-    for (const directory of directories) {
-      if (store.getState().locations[directory]) continue;
-      try {
-        const response = await api.resolveLocation(directory);
-        store.setState((current) => ({
-          ...current,
-          locations: { ...current.locations, [directory]: response.data },
-        }));
-      } catch {
-        store.setState((current) => ({
-          ...current,
-          locations: {
-            ...current.locations,
-            [directory]: { directory, name: directory.split("/").filter(Boolean).at(-1) || directory, git: null },
-          },
-        }));
+    )].filter((directory) => !state.locations[directory]);
+    let next = 0;
+    const worker = async () => {
+      while (next < directories.length) {
+        const directory = directories[next++];
+        if (store.getState().locations[directory]) continue;
+        try {
+          const response = await api.resolveLocation(directory);
+          store.setState((current) => ({
+            ...current,
+            locations: { ...current.locations, [directory]: response.data },
+          }));
+        } catch {
+          store.setState((current) => ({
+            ...current,
+            locations: {
+              ...current.locations,
+              [directory]: { directory, name: directory.split("/").filter(Boolean).at(-1) || directory, git: null },
+            },
+          }));
+        }
       }
-    }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(8, directories.length) }, () => worker()),
+    );
   }
 
   async searchSessions(query) {
@@ -521,22 +578,34 @@ class AppController {
     const existing = store.getState().sessionData[sessionID];
     if (existing?.loading) return;
     if (existing?.loaded && !force) return;
-    this.messageRefreshGeneration.set(
-      sessionID,
-      (this.messageRefreshGeneration.get(sessionID) || 0) + 1,
-    );
+    const loadGeneration = (this.messageRefreshGeneration.get(sessionID) || 0) + 1;
+    this.messageRefreshGeneration.set(sessionID, loadGeneration);
     store.setState((state) => ({
       ...state,
       sessionData: { ...state.sessionData, [sessionID]: { ...state.sessionData[sessionID], loading: true } },
     }));
     try {
-      const [session, messages, queue, permissions, questions] = await Promise.all([
-        api.getSession(sessionID),
-        api.messages(sessionID, { limit: 100, order: "desc" }),
-        api.queue(sessionID),
+      const cachedSession = store.getState().sessions[sessionID] || null;
+      const sessionPromise = cachedSession
+        ? Promise.resolve({ data: cachedSession })
+        : api.getSession(sessionID);
+      const messagesPromise = api.messages(sessionID, { limit: 100, order: "desc" });
+      const queueGeneration = this.queueMutationGeneration.get(sessionID) || 0;
+      const queuePromise = api.queue(sessionID).then((response) => {
+        if (this.messageRefreshGeneration.get(sessionID) === loadGeneration) {
+          this.installAuthoritativeQueue(sessionID, response.data, queueGeneration);
+        }
+      }).catch(() => {});
+      const humanGeneration = this.humanInputGeneration.get(sessionID) || 0;
+      const humanInputPromise = Promise.all([
         api.permissions(sessionID),
         api.questions(sessionID),
-      ]);
+      ]).then(([permissions, questions]) => {
+        if (this.messageRefreshGeneration.get(sessionID) !== loadGeneration) return;
+        if ((this.humanInputGeneration.get(sessionID) || 0) !== humanGeneration) return;
+        this.installHumanInput(sessionID, permissions.data, questions.data);
+      }).catch(() => {});
+      const [session, messages] = await Promise.all([sessionPromise, messagesPromise]);
       store.setState((state) => {
         const current = state.sessionData[sessionID] || {};
         const loadedMessages = [...messages.data].reverse();
@@ -549,18 +618,17 @@ class AppController {
               ...current,
               loaded: true,
               loading: false,
+              latestSeq: Math.max(current.latestSeq || 0, messages.snapshotSeq || 0),
               messages: loadedMessages,
               livePrompt: reconcileLivePrompt(current.livePrompt, loadedMessages),
               liveAssistants: reconcileLiveAssistants(current.liveAssistants || {}, loadedMessages, activeTurnID),
               liveTools: reconcileLiveTools(current.liveTools || {}, loadedMessages, activeTurnID),
               messageCursor: messages.cursor?.next || null,
-              queue: queue.data,
-              permissions: permissions.data,
-              questions: questions.data,
             },
           },
         };
       });
+      void Promise.all([queuePromise, humanInputPromise]);
       await this.catchUpHistory(sessionID);
     } catch (error) {
       store.setState((state) => ({
@@ -665,23 +733,16 @@ class AppController {
 
   async refreshQueue(sessionID) {
     if (!store.getState().sessionData[sessionID]?.loaded) return;
+    const generation = this.queueMutationGeneration.get(sessionID) || 0;
     const response = await api.queue(sessionID);
-    this.installQueue(sessionID, response.data);
+    this.installAuthoritativeQueue(sessionID, response.data, generation);
   }
 
   async refreshHumanInput(sessionID) {
+    const generation = this.humanInputGeneration.get(sessionID) || 0;
     const [permissions, questions] = await Promise.all([api.permissions(sessionID), api.questions(sessionID)]);
-    store.setState((state) => ({
-      ...state,
-      attention: {
-        ...state.attention,
-        [sessionID]: { permissions: permissions.data.length, questions: questions.data.length },
-      },
-      sessionData: {
-        ...state.sessionData,
-        [sessionID]: { ...state.sessionData[sessionID], permissions: permissions.data, questions: questions.data },
-      },
-    }));
+    if ((this.humanInputGeneration.get(sessionID) || 0) !== generation) return;
+    this.installHumanInput(sessionID, permissions.data, questions.data);
   }
 
   async refreshProcessLocalState() {
@@ -711,7 +772,38 @@ class AppController {
   async refreshTree(sessionID) {
     if (!store.getState().sessionData[sessionID]?.tree && store.getState().ui.inspector?.mode !== "tree") return;
     const response = await api.tree(sessionID);
-    this.setSessionField(sessionID, "tree", response.data);
+    this.treeServerRevisions.set(sessionID, response.data.revision || 0);
+    const pending = this.treePendingLabels.get(sessionID) || [];
+    const incoming = applyPendingTreeLabels(response.data, pending);
+    const current = store.getState().sessionData[sessionID]?.tree;
+    if (!current?.entries?.length || current.entries.length <= incoming.entries.length) {
+      this.setSessionField(sessionID, "tree", incoming);
+      return;
+    }
+    const latestIDs = new Set(incoming.entries.map((entry) => entry.id));
+    const older = current.entries.filter((entry) => !latestIDs.has(entry.id));
+    this.setSessionField(sessionID, "tree", applyPendingTreeLabels({
+      ...incoming,
+      entries: [...older, ...incoming.entries],
+      cursor: current.cursor,
+    }, pending));
+  }
+
+  async loadMoreTree(sessionID) {
+    const current = store.getState().sessionData[sessionID]?.tree;
+    const cursor = current?.cursor?.next;
+    if (!cursor) return;
+    const response = await api.tree(sessionID, { cursor });
+    this.treeServerRevisions.set(sessionID, response.data.revision || 0);
+    const existingIDs = new Set(current.entries.map((entry) => entry.id));
+    const older = response.data.entries.filter((entry) => !existingIDs.has(entry.id));
+    const pending = this.treePendingLabels.get(sessionID) || [];
+    this.setSessionField(sessionID, "tree", applyPendingTreeLabels({
+      ...current,
+      ...response.data,
+      entries: [...older, ...current.entries],
+      cursor: response.data.cursor,
+    }, pending));
   }
 
   async refreshProcesses(sessionID) {
@@ -762,7 +854,8 @@ class AppController {
     }));
   }
 
-  installQueue(sessionID, queue) {
+  installQueue(sessionID, queue, { authoritative = true } = {}) {
+    if (authoritative) this.queueServerRevisions.set(sessionID, queue.revision || 0);
     store.setState((state) => ({
       ...state,
       sessions: state.sessions[sessionID]
@@ -774,6 +867,40 @@ class AppController {
       sessionData: {
         ...state.sessionData,
         [sessionID]: { ...state.sessionData[sessionID], queue },
+      },
+    }));
+  }
+
+  installAuthoritativeQueue(sessionID, queue, requestGeneration = null) {
+    const incomingRevision = queue.revision || 0;
+    const knownRevision = this.queueServerRevisions.get(sessionID) || 0;
+    if (incomingRevision < knownRevision) return;
+    this.queueServerRevisions.set(sessionID, incomingRevision);
+    const pending = this.queuePendingMutations.get(sessionID) || [];
+    let visible = queue;
+    for (const mutation of pending) visible = applyQueueOperations(visible, mutation.operations);
+    if (pending.length) {
+      visible = { ...visible, revision: (queue.revision || 0) + pending.length };
+      this.installQueue(sessionID, visible, { authoritative: false });
+      return;
+    }
+    if (
+      requestGeneration !== null &&
+      (this.queueMutationGeneration.get(sessionID) || 0) !== requestGeneration
+    ) return;
+    this.installQueue(sessionID, queue);
+  }
+
+  installHumanInput(sessionID, permissions, questions) {
+    store.setState((state) => ({
+      ...state,
+      attention: {
+        ...state.attention,
+        [sessionID]: { permissions: permissions.length, questions: questions.length },
+      },
+      sessionData: {
+        ...state.sessionData,
+        [sessionID]: { ...state.sessionData[sessionID], permissions, questions },
       },
     }));
   }
@@ -819,13 +946,18 @@ class AppController {
     if (!draft) throw new Error("Draft was not found.");
     if (!(draft.text || "").trim() && !draft.attachments?.length) throw new Error("Write a prompt or attach an image first.");
     const sessionID = await this.createSessionFromDraft(id);
-    await api.admitPrompt(sessionID, {
-      id: `inp_${randomUUID()}`,
-      prompt: { text: draft.text || "", attachments: promptAttachments(draft.attachments || []) },
-      delivery,
-      resume: true,
-    });
-    await this.finishDraftSession(id, sessionID);
+    this.selectSession(sessionID);
+    try {
+      await this.submitPrompt(sessionID, {
+        text: draft.text || "",
+        attachments: draft.attachments || [],
+        delivery,
+      });
+      this.deleteDraft(id);
+    } catch (error) {
+      if (draft.text) this.setSessionField(sessionID, "editorHandoff", draft.text);
+      throw error;
+    }
   }
 
   async createSessionFromDraft(id, { titleText = null } = {}) {
@@ -839,18 +971,41 @@ class AppController {
       model: draft.model,
       reasoningEffort: draft.reasoningEffort || null,
     } : undefined;
-    await api.createSession({
+    const response = await api.createSession({
       id: sessionID,
       location: { directory: location },
       title: provisionalSessionTitle(titleText ?? draft.text),
       selection,
     });
+    store.setState((state) => {
+      const next = installSessionSummary(state, response.data, { moveToFront: true });
+      const revision = response.data.queue?.revision || 0;
+      return {
+        ...next,
+        attention: {
+          ...next.attention,
+          [sessionID]: { permissions: 0, questions: 0 },
+        },
+        sessionData: {
+          ...next.sessionData,
+          [sessionID]: {
+            ...next.sessionData[sessionID],
+            loaded: true,
+            loading: false,
+            messages: next.sessionData[sessionID]?.messages || [],
+            queue: next.sessionData[sessionID]?.queue || { revision, items: [] },
+            permissions: next.sessionData[sessionID]?.permissions || [],
+            questions: next.sessionData[sessionID]?.questions || [],
+          },
+        },
+      };
+    });
+    this.queueServerRevisions.set(sessionID, response.data.queue?.revision || 0);
     return sessionID;
   }
 
   async finishDraftSession(id, sessionID) {
     this.deleteDraft(id);
-    await this.refreshSessionLists();
     this.selectSession(sessionID);
     await this.loadSession(sessionID, { force: true });
   }
@@ -1022,17 +1177,113 @@ class AppController {
         });
       }
     }
-    await api.admitPrompt(sessionID, {
-      id: `inp_${randomUUID()}`,
-      prompt: { text, attachments: promptAttachments(attachments) },
+    const inputID = `inp_${randomUUID()}`;
+    const prompt = { text, attachments: promptAttachments(attachments) };
+    const optimistic = {
+      id: inputID,
+      prompt,
       delivery,
-      resume: true,
-    });
-    await this.refreshQueue(sessionID);
+      timeCreated: new Date().toISOString(),
+    };
+    if (delivery === "steer") {
+      store.setState((state) => ({
+        ...state,
+        sessionData: {
+          ...state.sessionData,
+          [sessionID]: {
+            ...state.sessionData[sessionID],
+            livePrompt: optimistic,
+            lastError: null,
+          },
+        },
+      }));
+    } else {
+      const queue = store.getState().sessionData[sessionID]?.queue;
+      if (queue) {
+        this.installQueue(
+          sessionID,
+          {
+            ...queue,
+            items: [
+              ...queue.items,
+              {
+                id: inputID,
+                prompt,
+                delivery,
+                paused: false,
+                createdAt: optimistic.timeCreated,
+                state: "admitted",
+              },
+            ],
+          },
+          { authoritative: false },
+        );
+      }
+    }
+    try {
+      await api.admitPrompt(sessionID, {
+        id: inputID,
+        prompt,
+        delivery,
+        resume: true,
+      });
+      this.schedule(`queue:${sessionID}`, SUMMARY_REFRESH_MS, () => this.refreshQueue(sessionID));
+    } catch (error) {
+      const queued = store.getState().sessionData[sessionID]?.queue;
+      if (queued?.items?.some((item) => item.id === inputID)) {
+        this.installQueue(
+          sessionID,
+          { ...queued, items: queued.items.filter((item) => item.id !== inputID) },
+          { authoritative: false },
+        );
+      }
+      store.setState((state) => {
+        const current = state.sessionData[sessionID] || {};
+        return {
+          ...state,
+          sessionData: {
+            ...state.sessionData,
+            [sessionID]: {
+              ...current,
+              livePrompt: current.livePrompt?.id === inputID ? null : current.livePrompt,
+            },
+          },
+        };
+      });
+      await this.refreshQueue(sessionID).catch(() => {});
+      throw error;
+    }
   }
 
   async interrupt(sessionID) {
-    await api.interrupt(sessionID);
+    const prior = store.getState().active[sessionID] || null;
+    if (prior?.state && prior.state !== "idle") {
+      store.setState((state) => ({
+        ...state,
+        active: {
+          ...state.active,
+          [sessionID]: { ...state.active[sessionID], state: "stopping" },
+        },
+      }));
+    }
+    try {
+      const response = await api.interrupt(sessionID);
+      if (!response.data?.interrupted && prior) {
+        store.setState((state) => ({
+          ...state,
+          active: { ...state.active, [sessionID]: prior },
+        }));
+      }
+      return response.data;
+    } catch (error) {
+      if (prior) {
+        store.setState((state) => ({
+          ...state,
+          active: { ...state.active, [sessionID]: prior },
+        }));
+      }
+      throw error;
+    }
   }
 
   interruptSelectedSession() {
@@ -1045,7 +1296,33 @@ class AppController {
   }
 
   async compact(sessionID) {
-    return api.compact(sessionID);
+    const previous = store.getState().active[sessionID] || null;
+    const startedAt = new Date().toISOString();
+    store.setState((state) => ({
+      ...state,
+      active: {
+        ...state.active,
+        [sessionID]: {
+          state: "running",
+          turnID: null,
+          startedAt,
+          activity: "Compacting",
+        },
+      },
+    }));
+    try {
+      return await api.compact(sessionID);
+    } catch (error) {
+      store.setState((state) => {
+        const current = state.active[sessionID];
+        if (current?.startedAt !== startedAt || current?.activity !== "Compacting") return state;
+        const active = { ...state.active };
+        if (previous) active[sessionID] = previous;
+        else delete active[sessionID];
+        return { ...state, active };
+      });
+      throw error;
+    }
   }
 
   async upload(file, sessionID = null) {
@@ -1058,23 +1335,122 @@ class AppController {
   async patchQueue(sessionID, operations) {
     const queue = store.getState().sessionData[sessionID]?.queue;
     if (!queue) return;
-    try {
-      const response = await api.patchQueue(sessionID, { expectedRevision: queue.revision, operations });
-      this.installQueue(sessionID, response.data);
-    } catch (error) {
-      if (error instanceof ApiError && error.code === "queue_revision_conflict") {
-        await this.refreshQueue(sessionID);
-        this.notice("Queue changed elsewhere. Refreshed the current order.");
-        return;
-      }
-      throw error;
+    const generation = (this.queueMutationGeneration.get(sessionID) || 0) + 1;
+    this.queueMutationGeneration.set(sessionID, generation);
+    const pending = this.queuePendingMutations.get(sessionID) || [];
+    if (!this.queueServerRevisions.has(sessionID)) {
+      this.queueServerRevisions.set(
+        sessionID,
+        Math.max(0, (queue.revision || 0) - pending.length),
+      );
     }
+    const mutation = { generation, operations };
+    this.queuePendingMutations.set(sessionID, [...pending, mutation]);
+    this.installQueue(
+      sessionID,
+      {
+        ...applyQueueOperations(queue, operations),
+        revision: (queue.revision || 0) + 1,
+      },
+      { authoritative: false },
+    );
+
+    const prior = this.queueMutationChains.get(sessionID) || Promise.resolve();
+    const task = prior.catch(() => {}).then(async () => {
+      const expectedRevision = this.queueServerRevisions.get(sessionID) || 0;
+      try {
+        const response = await api.patchQueue(sessionID, { expectedRevision, operations });
+        const remaining = (this.queuePendingMutations.get(sessionID) || [])
+          .filter((item) => item.generation !== generation);
+        this.queuePendingMutations.set(sessionID, remaining);
+        this.installAuthoritativeQueue(sessionID, response.data);
+        return response.data;
+      } catch (error) {
+        const remaining = (this.queuePendingMutations.get(sessionID) || [])
+          .filter((item) => item.generation !== generation);
+        this.queuePendingMutations.set(sessionID, remaining);
+        try {
+          const refreshed = await api.queue(sessionID);
+          this.installAuthoritativeQueue(sessionID, refreshed.data);
+        } catch {
+          // A later SSE/resync will reconcile if the recovery read also fails.
+        }
+        if (error instanceof ApiError && error.code === "queue_revision_conflict") {
+          this.notice("Queue changed elsewhere. Refreshed the current order.");
+          return null;
+        }
+        throw error;
+      }
+    });
+    const chained = task.finally(() => {
+      if (this.queueMutationChains.get(sessionID) === chained) {
+        this.queueMutationChains.delete(sessionID);
+      }
+    });
+    this.queueMutationChains.set(sessionID, chained);
+    return chained;
   }
 
   async patchSession(sessionID, patch) {
-    const response = await api.patchSession(sessionID, patch);
-    store.setState((state) => mergeSessionSummary(state, response.data));
-    await this.refreshSessionLists();
+    const before = store.getState();
+    const previous = before.sessions[sessionID] || null;
+    const activeIndex = before.sessionOrder.indexOf(sessionID);
+    const archivedIndex = before.archivedOrder.indexOf(sessionID);
+    const generation = (this.optimisticSessionGeneration.get(sessionID) || 0) + 1;
+    this.optimisticSessionGeneration.set(sessionID, generation);
+    const mutation = { generation, patch, previous, activeIndex, archivedIndex };
+    this.sessionPendingMutations.set(
+      sessionID,
+      [...(this.sessionPendingMutations.get(sessionID) || []), mutation],
+    );
+    if (previous) {
+      const optimistic = optimisticSessionPatch(previous, patch);
+      store.setState((state) => installSessionSummary(state, optimistic, { moveToFront: true }));
+    }
+
+    const prior = this.sessionMutationChains.get(sessionID) || Promise.resolve();
+    const task = prior.catch(() => {}).then(async () => {
+      try {
+        const response = await api.patchSession(sessionID, patch);
+        const remaining = (this.sessionPendingMutations.get(sessionID) || [])
+          .filter((item) => item.generation !== generation);
+        this.sessionPendingMutations.set(sessionID, remaining);
+        let visible = response.data;
+        for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
+        const pendingSelection = this.pendingSelections.get(sessionID);
+        if (pendingSelection) visible = { ...visible, selection: pendingSelection };
+        store.setState((state) => installSessionSummary(state, visible, { moveToFront: true }));
+        return response.data;
+      } catch (error) {
+        const remaining = (this.sessionPendingMutations.get(sessionID) || [])
+          .filter((item) => item.generation !== generation);
+        this.sessionPendingMutations.set(sessionID, remaining);
+        try {
+          const response = await api.getSession(sessionID);
+          let visible = response.data;
+          for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
+          const pendingSelection = this.pendingSelections.get(sessionID);
+          if (pendingSelection) visible = { ...visible, selection: pendingSelection };
+          store.setState((state) => installSessionSummary(state, visible, { moveToFront: Boolean(remaining.length) }));
+        } catch {
+          if (previous) {
+            let visible = previous;
+            for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
+            store.setState((state) => remaining.length
+              ? installSessionSummary(state, visible, { moveToFront: true })
+              : restoreSessionSummary(state, visible, activeIndex, archivedIndex));
+          }
+        }
+        throw error;
+      }
+    });
+    const chained = task.finally(() => {
+      if (this.sessionMutationChains.get(sessionID) === chained) {
+        this.sessionMutationChains.delete(sessionID);
+      }
+    });
+    this.sessionMutationChains.set(sessionID, chained);
+    return chained;
   }
 
   async regenerateTitle(sessionID) {
@@ -1092,38 +1468,245 @@ class AppController {
   }
 
   async replyPermission(sessionID, requestID, reply, message = null) {
-    await api.replyPermission(sessionID, requestID, { reply, message: message || null });
-    await this.refreshHumanInput(sessionID);
+    this.resolveHumanInputOptimistically(sessionID, "permissions", requestID);
+    try {
+      await api.replyPermission(sessionID, requestID, { reply, message: message || null });
+    } catch (error) {
+      await this.refreshHumanInput(sessionID).catch(() => {});
+      throw error;
+    }
   }
 
   async replyQuestion(sessionID, requestID, answers) {
-    await api.replyQuestion(sessionID, requestID, answers);
-    await this.refreshHumanInput(sessionID);
+    this.resolveHumanInputOptimistically(sessionID, "questions", requestID);
+    try {
+      await api.replyQuestion(sessionID, requestID, answers);
+    } catch (error) {
+      await this.refreshHumanInput(sessionID).catch(() => {});
+      throw error;
+    }
   }
 
   async rejectQuestion(sessionID, requestID) {
-    await api.rejectQuestion(sessionID, requestID);
-    await this.refreshHumanInput(sessionID);
+    this.resolveHumanInputOptimistically(sessionID, "questions", requestID);
+    try {
+      await api.rejectQuestion(sessionID, requestID);
+    } catch (error) {
+      await this.refreshHumanInput(sessionID).catch(() => {});
+      throw error;
+    }
+  }
+
+  resolveHumanInputOptimistically(sessionID, field, requestID) {
+    this.humanInputGeneration.set(
+      sessionID,
+      (this.humanInputGeneration.get(sessionID) || 0) + 1,
+    );
+    const data = store.getState().sessionData[sessionID] || {};
+    const permissions = field === "permissions"
+      ? (data.permissions || []).filter((item) => item.id !== requestID)
+      : data.permissions || [];
+    const questions = field === "questions"
+      ? (data.questions || []).filter((item) => item.id !== requestID)
+      : data.questions || [];
+    this.installHumanInput(sessionID, permissions, questions);
   }
 
   async toggleTool(sessionID, toolName, enabled) {
-    await api.patchTools(sessionID, enabled ? { enabled: [toolName], disabled: [] } : { enabled: [], disabled: [toolName] });
-    await this.refreshTools(sessionID);
+    const current = store.getState().sessionData[sessionID]?.tools || [];
+    const key = `${sessionID}:${toolName}`;
+    const generation = (this.toolMutationGeneration.get(key) || 0) + 1;
+    this.toolMutationGeneration.set(key, generation);
+    if (current.length) {
+      this.setSessionField(
+        sessionID,
+        "tools",
+        current.map((tool) => tool.name === toolName ? { ...tool, enabled } : tool),
+      );
+    }
+    const prior = this.toolMutationChains.get(sessionID) || Promise.resolve();
+    const task = prior.catch(() => {}).then(async () => {
+      try {
+        const response = await api.patchTools(
+          sessionID,
+          enabled ? { enabled: [toolName], disabled: [] } : { enabled: [], disabled: [toolName] },
+        );
+        if (
+          this.toolMutationGeneration.get(key) === generation &&
+          Array.isArray(response.data?.enabled)
+        ) {
+          const effective = new Set(response.data.enabled);
+          const tools = store.getState().sessionData[sessionID]?.tools || [];
+          this.setSessionField(
+            sessionID,
+            "tools",
+            tools.map((tool) => tool.name === toolName
+              ? { ...tool, enabled: effective.has(toolName) }
+              : tool),
+          );
+        }
+        return response.data;
+      } catch (error) {
+        if (this.toolMutationGeneration.get(key) === generation) {
+          await this.refreshTools(sessionID).catch(() => {});
+        }
+        throw error;
+      }
+    });
+    const chained = task.finally(() => {
+      if (this.toolMutationChains.get(sessionID) === chained) {
+        this.toolMutationChains.delete(sessionID);
+      }
+    });
+    this.toolMutationChains.set(sessionID, chained);
+    return chained;
   }
 
   async activateSkill(sessionID, skillName, prompt = null) {
-    await api.activateSkill(sessionID, skillName, prompt);
-    await this.refreshSkills(sessionID);
+    const skills = store.getState().sessionData[sessionID]?.skills;
+    const candidate = skills?.available?.find((skill) => skill.name === skillName) || null;
+    if (skills && candidate && !(skills.active || []).some((skill) => skill.name === skillName)) {
+      this.setSessionField(sessionID, "skills", {
+        ...skills,
+        active: [...(skills.active || []), { ...candidate, active: true }],
+      });
+    }
+    try {
+      const response = await api.activateSkill(sessionID, skillName, prompt);
+      if (skills && response.data?.activated) {
+        const current = store.getState().sessionData[sessionID]?.skills || skills;
+        this.setSessionField(sessionID, "skills", {
+          ...current,
+          active: [
+            ...(current.active || []).filter((skill) => skill.name !== skillName),
+            response.data.activated,
+          ],
+        });
+      }
+      return response.data;
+    } catch (error) {
+      await this.refreshSkills(sessionID).catch(() => {});
+      throw error;
+    }
   }
 
   async patchMcp(sessionID, serverName, patch) {
-    await api.patchMcp(sessionID, serverName, patch);
-    await this.refreshMcp(sessionID);
+    const current = store.getState().sessionData[sessionID]?.mcp || [];
+    const key = `${sessionID}:${serverName}`;
+    const generation = (this.mcpMutationGeneration.get(key) || 0) + 1;
+    this.mcpMutationGeneration.set(key, generation);
+    if (current.length) {
+      this.setSessionField(
+        sessionID,
+        "mcp",
+        current.map((server) => server.name === serverName
+          ? {
+              ...server,
+              ...(Object.prototype.hasOwnProperty.call(patch, "enabled") ? { enabled: patch.enabled } : {}),
+              ...(Array.isArray(patch.enabledTools) ? { enabledTools: patch.enabledTools } : {}),
+              ...(Array.isArray(patch.disabledTools) ? { disabledTools: patch.disabledTools } : {}),
+            }
+          : server),
+      );
+    }
+    const prior = this.mcpMutationChains.get(key) || Promise.resolve();
+    const task = prior.catch(() => {}).then(async () => {
+      try {
+        const response = await api.patchMcp(sessionID, serverName, patch);
+        if (this.mcpMutationGeneration.get(key) === generation) {
+          this.schedule(`mcp:${sessionID}`, SUMMARY_REFRESH_MS, () => this.refreshMcp(sessionID));
+        }
+        return response.data;
+      } catch (error) {
+        if (this.mcpMutationGeneration.get(key) === generation) {
+          await this.refreshMcp(sessionID).catch(() => {});
+        }
+        throw error;
+      }
+    });
+    const chained = task.finally(() => {
+      if (this.mcpMutationChains.get(key) === chained) {
+        this.mcpMutationChains.delete(key);
+      }
+    });
+    this.mcpMutationChains.set(key, chained);
+    return chained;
   }
 
   async setSelection(sessionID, provider, model, reasoningEffort) {
-    await api.selectModel(sessionID, { provider, model, reasoningEffort: reasoningEffort || null });
-    await this.refreshSessionSummary(sessionID);
+    const previous = store.getState().sessions[sessionID]?.selection || null;
+    const generation = (this.selectionGeneration.get(sessionID) || 0) + 1;
+    this.selectionGeneration.set(sessionID, generation);
+    const desired = {
+      provider,
+      model,
+      reasoningEffort: reasoningEffort || null,
+    };
+    this.pendingSelections.set(sessionID, desired);
+    store.setState((state) => {
+      const session = state.sessions[sessionID];
+      if (!session) return state;
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [sessionID]: {
+            ...session,
+            selection: desired,
+          },
+        },
+      };
+    });
+
+    const prior = this.selectionMutationChains.get(sessionID) || Promise.resolve();
+    const task = prior.catch(() => {}).then(async () => {
+      try {
+        const response = await api.selectModel(sessionID, desired);
+        if (this.selectionGeneration.get(sessionID) === generation) {
+          this.pendingSelections.delete(sessionID);
+          const effective = response.data?.effective;
+          if (effective) {
+            store.setState((state) => {
+              const session = state.sessions[sessionID];
+              if (!session) return state;
+              return {
+                ...state,
+                sessions: {
+                  ...state.sessions,
+                  [sessionID]: { ...session, selection: effective },
+                },
+              };
+            });
+          }
+        }
+        return response.data;
+      } catch (error) {
+        if (this.selectionGeneration.get(sessionID) === generation) {
+          this.pendingSelections.delete(sessionID);
+          if (previous) {
+            store.setState((state) => {
+              const session = state.sessions[sessionID];
+              if (!session) return state;
+              return {
+                ...state,
+                sessions: {
+                  ...state.sessions,
+                  [sessionID]: { ...session, selection: previous },
+                },
+              };
+            });
+          }
+        }
+        throw error;
+      }
+    });
+    const chained = task.finally(() => {
+      if (this.selectionMutationChains.get(sessionID) === chained) {
+        this.selectionMutationChains.delete(sessionID);
+      }
+    });
+    this.selectionMutationChains.set(sessionID, chained);
+    return chained;
   }
 
   async cycleReasoningEffort() {
@@ -1276,17 +1859,68 @@ class AppController {
   async labelTreeEntry(sessionID, entryID, label) {
     const tree = store.getState().sessionData[sessionID]?.tree;
     if (!tree) return;
-    try {
-      await api.patchTreeEntry(sessionID, entryID, { expectedRevision: tree.revision, label: label || null });
-      await this.refreshTree(sessionID);
-    } catch (error) {
-      if (error instanceof ApiError && error.code === "tree_revision_conflict") {
-        await this.refreshTree(sessionID);
-        this.notice("Session tree changed elsewhere. Refreshed before labeling.");
-        return;
-      }
-      throw error;
+    const normalized = String(label || "").trim().replace(/\s+/g, " ") || null;
+    const generation = (this.treeMutationGeneration.get(sessionID) || 0) + 1;
+    this.treeMutationGeneration.set(sessionID, generation);
+    const mutation = { generation, entryID, label: normalized };
+    const pending = [...(this.treePendingLabels.get(sessionID) || []), mutation];
+    this.treePendingLabels.set(sessionID, pending);
+    if (!this.treeServerRevisions.has(sessionID)) {
+      this.treeServerRevisions.set(sessionID, tree.revision || 0);
     }
+    this.setSessionField(sessionID, "tree", applyPendingTreeLabels(tree, pending));
+
+    const prior = this.treeMutationChains.get(sessionID) || Promise.resolve();
+    const task = prior.catch(() => {}).then(async () => {
+      const expectedRevision = this.treeServerRevisions.get(sessionID) || 0;
+      try {
+        const response = await api.patchTreeEntry(sessionID, entryID, {
+          expectedRevision,
+          label: normalized,
+        });
+        this.treeServerRevisions.set(sessionID, response.data.revision || 0);
+        const remaining = (this.treePendingLabels.get(sessionID) || [])
+          .filter((item) => item.generation !== generation);
+        this.treePendingLabels.set(sessionID, remaining);
+        const current = store.getState().sessionData[sessionID]?.tree;
+        if (current) {
+          const authoritative = mergeTreeEntry(current, response.data.entry, response.data.revision);
+          this.setSessionField(
+            sessionID,
+            "tree",
+            applyPendingTreeLabels(authoritative, remaining),
+          );
+        }
+        return response.data;
+      } catch (error) {
+        const remaining = (this.treePendingLabels.get(sessionID) || [])
+          .filter((item) => item.generation !== generation);
+        this.treePendingLabels.set(sessionID, remaining);
+        try {
+          const refreshed = await api.tree(sessionID);
+          this.treeServerRevisions.set(sessionID, refreshed.data.revision || 0);
+          this.setSessionField(
+            sessionID,
+            "tree",
+            applyPendingTreeLabels(refreshed.data, remaining),
+          );
+        } catch {
+          // SSE or the next tree refresh will reconcile if recovery also fails.
+        }
+        if (error instanceof ApiError && error.code === "tree_revision_conflict") {
+          this.notice("Session tree changed elsewhere. Refreshed before labeling.");
+          return null;
+        }
+        throw error;
+      }
+    });
+    const chained = task.finally(() => {
+      if (this.treeMutationChains.get(sessionID) === chained) {
+        this.treeMutationChains.delete(sessionID);
+      }
+    });
+    this.treeMutationChains.set(sessionID, chained);
+    return chained;
   }
 
   async listToolCalls(sessionID) {
@@ -1549,6 +2183,112 @@ function mergeLiveToolSnapshot(current, calls) {
 function provisionalSessionTitle(text) {
   const title = String(text || "").trim().replace(/\s+/g, " ").slice(0, 72);
   return title || "New session";
+}
+
+function optimisticSessionPatch(session, patch) {
+  const now = new Date().toISOString();
+  const has = (key) => Object.prototype.hasOwnProperty.call(patch, key);
+  return {
+    ...session,
+    title: has("title") ? patch.title : session.title,
+    pinned: has("pinned") ? Boolean(patch.pinned) : session.pinned,
+    archivedAt: has("archived")
+      ? patch.archived ? now : null
+      : session.archivedAt,
+    time: { ...(session.time || {}), updated: now },
+  };
+}
+
+function applyPendingTreeLabels(tree, pending) {
+  if (!tree?.entries?.length || !pending?.length) return tree;
+  const labels = new Map();
+  for (const mutation of pending) labels.set(mutation.entryID, mutation.label);
+  return {
+    ...tree,
+    entries: tree.entries.map((entry) => labels.has(entry.id)
+      ? { ...entry, label: labels.get(entry.id) }
+      : entry),
+  };
+}
+
+function mergeTreeEntry(tree, entry, revision) {
+  if (!tree?.entries?.length) return tree;
+  return {
+    ...tree,
+    revision,
+    entries: tree.entries.map((item) => item.id === entry.id ? entry : item),
+  };
+}
+
+function installSessionSummary(state, session, { moveToFront = false } = {}) {
+  const sessionID = session.id;
+  let sessionOrder = state.sessionOrder.filter((id) => id !== sessionID);
+  let archivedOrder = state.archivedOrder.filter((id) => id !== sessionID);
+  const target = session.archivedAt ? archivedOrder : sessionOrder;
+  if (moveToFront || !target.includes(sessionID)) target.unshift(sessionID);
+  return {
+    ...state,
+    sessions: { ...state.sessions, [sessionID]: session },
+    sessionOrder,
+    archivedOrder,
+  };
+}
+
+function restoreSessionSummary(state, session, activeIndex, archivedIndex) {
+  const sessionID = session.id;
+  const sessionOrder = state.sessionOrder.filter((id) => id !== sessionID);
+  const archivedOrder = state.archivedOrder.filter((id) => id !== sessionID);
+  if (activeIndex >= 0) sessionOrder.splice(Math.min(activeIndex, sessionOrder.length), 0, sessionID);
+  if (archivedIndex >= 0) archivedOrder.splice(Math.min(archivedIndex, archivedOrder.length), 0, sessionID);
+  return {
+    ...state,
+    sessions: { ...state.sessions, [sessionID]: session },
+    sessionOrder,
+    archivedOrder,
+  };
+}
+
+function applyQueueOperations(queue, operations) {
+  let items = [...(queue?.items || [])];
+  for (const operation of operations || []) {
+    const index = items.findIndex((item) => item.id === operation.id);
+    if (operation.op === "remove") {
+      if (index >= 0) items.splice(index, 1);
+      continue;
+    }
+    if (index < 0) continue;
+    if (operation.op === "update") {
+      items[index] = { ...items[index], prompt: operation.prompt };
+      continue;
+    }
+    if (operation.op === "setDelivery") {
+      items[index] = { ...items[index], delivery: operation.delivery };
+      continue;
+    }
+    if (operation.op === "setPaused") {
+      items[index] = { ...items[index], paused: operation.paused };
+      continue;
+    }
+    const [item] = items.splice(index, 1);
+    if (operation.op === "moveToStart") {
+      items.unshift(item);
+      continue;
+    }
+    if (operation.op === "moveBefore") {
+      const targetID = operation.beforeID ?? operation.before_id;
+      const target = items.findIndex((candidate) => candidate.id === targetID);
+      items.splice(target >= 0 ? target : items.length, 0, item);
+      continue;
+    }
+    if (operation.op === "moveAfter") {
+      const targetID = operation.afterID ?? operation.after_id;
+      const target = items.findIndex((candidate) => candidate.id === targetID);
+      items.splice(target >= 0 ? target + 1 : items.length, 0, item);
+      continue;
+    }
+    items.splice(Math.min(index, items.length), 0, item);
+  }
+  return { ...queue, items };
 }
 
 function queueSummary(queue) {

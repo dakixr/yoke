@@ -6,21 +6,25 @@ import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
+from typing import TYPE_CHECKING
 from typing import TypeVar
 
 from yoke.http.models.session import ActiveRuntimeInfo
 from yoke.http.errors import ApiError
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
-from yoke.http.services.runtime import SessionRuntime
-from yoke.http.services.runtime_factory import SessionAgentFactory
-from yoke.agent.provider_selection import ProviderSessionState
-from yoke.agent.skills.models import ActiveSkill
+from yoke.http.services.session_read_cache import SessionReadCache
+from yoke.session import SessionRecord
 from yoke.session import SessionStore
-from yoke.session.title import generate_session_title
+
+if TYPE_CHECKING:
+    from yoke.agent.provider_selection import ProviderSessionState
+    from yoke.agent.skills.models import ActiveSkill
+    from yoke.http.services.runtime import SessionRuntime
 
 
 T = TypeVar("T")
+type SessionAgentFactory = Callable[[SessionRecord], object]
 
 
 class SessionRuntimeRegistry:
@@ -33,6 +37,7 @@ class SessionRuntimeRegistry:
         pending_inputs: PendingInputService,
         events: EventService,
         agent_factory: SessionAgentFactory,
+        read_cache: SessionReadCache | None = None,
         max_active_sessions: int = 4,
         max_worker_threads: int | None = None,
     ) -> None:
@@ -45,6 +50,7 @@ class SessionRuntimeRegistry:
         self.pending_inputs = pending_inputs
         self.events = events
         self.agent_factory = agent_factory
+        self.read_cache = read_cache or SessionReadCache(store)
         self.active_slots = asyncio.Semaphore(max_active_sessions)
         self.executor = ThreadPoolExecutor(
             max_workers=workers,
@@ -58,12 +64,15 @@ class SessionRuntimeRegistry:
         with self._lock:
             runtime = self._runtimes.get(session_id)
             if runtime is None:
+                from yoke.http.services.runtime import SessionRuntime
+
                 runtime = SessionRuntime(
                     session_id,
                     store=self.store,
                     pending_inputs=self.pending_inputs,
                     events=self.events,
                     agent_factory=self.agent_factory,
+                    read_cache=self.read_cache,
                     executor=self.executor,
                     active_slots=self.active_slots,
                 )
@@ -134,7 +143,7 @@ class SessionRuntimeRegistry:
 
     async def regenerate_title(self, session_id: str) -> str:
         """Generate a fresh title from the persisted conversation."""
-        record = self.store.load(session_id)
+        record = self.read_cache.get(session_id).record
         if not record.messages:
             raise ApiError(
                 400,
@@ -156,7 +165,9 @@ class SessionRuntimeRegistry:
         return generated
 
     def _regenerate_title_sync(self, session_id: str) -> str | None:
-        record = self.store.load(session_id)
+        from yoke.session.title import generate_session_title
+
+        record = self.read_cache.get(session_id).record
         agent = self.agent_factory(record)
         try:
             return generate_session_title(agent, record.messages)

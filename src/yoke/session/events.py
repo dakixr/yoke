@@ -33,6 +33,7 @@ class SessionEventJournal:
         self._locks_lock = Lock()
         self._locks: dict[str, Lock] = {}
         self._last_seq: dict[str, int] = {}
+        self._history_offsets: dict[str, dict[int, int]] = {}
 
     def append(
         self,
@@ -80,21 +81,38 @@ class SessionEventJournal:
         selected: list[SessionEvent] = []
         with self._lock_for(session_id):
             try:
-                lines = path.read_text(encoding="utf-8").splitlines()
+                with path.open("rb") as handle:
+                    target = after + 1
+                    start_seq, start_offset = self._history_start_locked(
+                        session_id,
+                        target,
+                    )
+                    handle.seek(start_offset)
+                    while True:
+                        offset = handle.tell()
+                        line = handle.readline()
+                        if not line:
+                            break
+                        if not line.strip():
+                            continue
+                        try:
+                            event = SessionEvent.model_validate_json(line)
+                        except ValueError:
+                            continue
+                        if event.seq < start_seq:
+                            continue
+                        self._remember_history_offset_locked(
+                            session_id,
+                            event.seq,
+                            offset,
+                        )
+                        if event.seq <= after:
+                            continue
+                        selected.append(event)
+                        if len(selected) > limit:
+                            return selected[:limit], True
             except OSError:
                 return [], False
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                event = SessionEvent.model_validate_json(line)
-            except ValueError:
-                continue
-            if event.seq <= after:
-                continue
-            selected.append(event)
-            if len(selected) > limit:
-                return selected[:limit], True
         return selected, False
 
     def latest_sequence(self, session_id: str) -> int:
@@ -107,21 +125,65 @@ class SessionEventJournal:
         if cached is not None:
             return cached
         path = self._path(session_id)
-        last = 0
-        if path.exists():
-            try:
-                for line in path.read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
-                        continue
-                    try:
-                        event = SessionEvent.model_validate_json(line)
-                    except ValueError:
-                        continue
-                    last = max(last, event.seq)
-            except OSError:
-                pass
+        last = self._tail_sequence(path)
         self._last_seq[session_id] = last
         return last
+
+    def _history_start_locked(self, session_id: str, target: int) -> tuple[int, int]:
+        offsets = self._history_offsets.get(session_id)
+        if not offsets:
+            return 1, 0
+        candidates = [seq for seq in offsets if seq <= target]
+        if not candidates:
+            return 1, 0
+        seq = max(candidates)
+        return seq, offsets[seq]
+
+    def _remember_history_offset_locked(
+        self,
+        session_id: str,
+        seq: int,
+        offset: int,
+    ) -> None:
+        offsets = self._history_offsets.setdefault(session_id, {})
+        # Sparse checkpoints bound memory for huge journals. The first event
+        # after a page cursor is also retained, which makes normal sequential
+        # browser catch-up seek directly to its next page.
+        if seq == 1 or seq % 128 == 1 or seq not in offsets and len(offsets) < 2:
+            offsets.setdefault(seq, offset)
+        if len(offsets) > 65_536:
+            sparse = {
+                checkpoint: value
+                for checkpoint, value in offsets.items()
+                if checkpoint == 1 or checkpoint % 1024 == 1
+            }
+            self._history_offsets[session_id] = sparse
+
+    @staticmethod
+    def _tail_sequence(path: Path) -> int:
+        if not path.exists():
+            return 0
+        try:
+            with path.open("rb") as handle:
+                handle.seek(0, 2)
+                size = handle.tell()
+                window = min(size, 64 * 1024)
+                while window:
+                    handle.seek(size - window)
+                    chunk = handle.read(window)
+                    for line in reversed(chunk.splitlines()):
+                        if not line.strip():
+                            continue
+                        try:
+                            return SessionEvent.model_validate_json(line).seq
+                        except ValueError:
+                            continue
+                    if window == size:
+                        break
+                    window = min(size, window * 2)
+        except OSError:
+            return 0
+        return 0
 
     def _path(self, session_id: str) -> Path:
         return self.session_directory / "events" / f"{session_id}.jsonl"
@@ -129,4 +191,3 @@ class SessionEventJournal:
     def _lock_for(self, session_id: str) -> Lock:
         with self._locks_lock:
             return self._locks.setdefault(session_id, Lock())
-

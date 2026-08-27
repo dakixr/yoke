@@ -193,7 +193,18 @@ export function reducePublicEvent(state, event) {
     const inputID = event.data?.inputID;
     const admitted = inputID ? data.pendingPrompts?.[inputID] : null;
     if (admitted) {
-      data.livePrompt = admitted;
+      const alreadyDurable = (data.messages || []).some(
+        (message) => message.type === "user" && message.inputID === inputID,
+      );
+      const currentTime = Date.parse(data.livePrompt?.timeCreated || "");
+      const admittedTime = Date.parse(admitted.timeCreated || "");
+      const currentIsNewer = Boolean(
+        data.livePrompt?.id !== inputID &&
+        Number.isFinite(currentTime) &&
+        Number.isFinite(admittedTime) &&
+        currentTime > admittedTime,
+      );
+      if (!alreadyDurable && !currentIsNewer) data.livePrompt = admitted;
       data.lastError = null;
       const pendingPrompts = { ...data.pendingPrompts };
       delete pendingPrompts[inputID];
@@ -215,7 +226,13 @@ export function reducePublicEvent(state, event) {
       },
     };
   } else if (event.type === "session.message.updated" && event.durable) {
-    data.livePrompt = null;
+    const inputID = event.data?.inputID;
+    if (!inputID || data.livePrompt?.id === inputID) data.livePrompt = null;
+    if (inputID && data.pendingPrompts?.[inputID]) {
+      const pendingPrompts = { ...data.pendingPrompts };
+      delete pendingPrompts[inputID];
+      data.pendingPrompts = pendingPrompts;
+    }
     data.lastError = null;
   } else if (event.type === "session.tool.started") {
     const callID = toolCallID(event);

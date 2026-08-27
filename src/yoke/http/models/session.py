@@ -201,6 +201,7 @@ type ProjectedMessage = Annotated[
 class MessageListResponse(ApiModel):
     data: list[ProjectedMessage]
     cursor: CursorInfo
+    snapshot_seq: int = 0
 
 
 class MessageResponse(ApiModel):
@@ -216,6 +217,11 @@ class ContextMessage(ApiModel):
 
 class ContextData(ApiModel):
     messages: list[ContextMessage]
+    total_entries: int = 0
+    retained_entries: int = 0
+    retained_chars: int = 0
+    max_chars: int = 0
+    truncated: bool = False
 
 
 class ContextResponse(ApiModel):
@@ -238,6 +244,8 @@ class TreeData(ApiModel):
     revision: int
     leaf_id: str | None = None
     entries: list[TreeEntryInfo]
+    total_entries: int = 0
+    cursor: CursorInfo = Field(default_factory=CursorInfo)
 
 
 class TreeResponse(ApiModel):
@@ -255,6 +263,8 @@ class TreeNavigationPreviewData(ApiModel):
     current: bool
     editor_text: str | None = None
     abandoned: list[TreeNavigationAbandonedEntry] = Field(default_factory=list)
+    abandoned_total: int = 0
+    abandoned_truncated: bool = False
 
 
 class TreeNavigationPreviewResponse(ApiModel):

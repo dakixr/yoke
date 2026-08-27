@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 from yoke.agent.models import ConversationEntry
 from yoke.cli.session.io import append_jsonl_lines
 from yoke.cli.session.io import decode_session_record_lines
+from yoke.cli.session.io import entry_jsonl_line
 from yoke.cli.session.io import entry_metadata_jsonl_line
 from yoke.cli.session.io import is_canonical_jsonl
 from yoke.cli.session.io import metadata_delta_jsonl_line
@@ -74,6 +76,54 @@ def append_session_entry_metadata(
         if session_changes:
             handle.write(metadata_delta_jsonl_line(session_changes))
         handle.write(entry_metadata_jsonl_line(entry_id, entry_metadata))
+
+
+def append_session_tree_delta(
+    path: Path,
+    *,
+    session_changes: dict[str, object],
+    appended_entries: tuple[ConversationEntry, ...] = (),
+) -> None:
+    """Append a leaf/metadata change and optional proven tree entries."""
+    if not session_changes and not appended_entries:
+        return
+    with path.open("a", encoding="utf-8") as handle:
+        if session_changes:
+            handle.write(metadata_delta_jsonl_line(session_changes))
+        for entry in appended_entries:
+            handle.write(entry_jsonl_line(entry))
+
+
+def clone_canonical_session(
+    source: Path,
+    target: Path,
+    *,
+    metadata_changes: dict[str, object],
+) -> bool:
+    """Clone one stable canonical session and append fork-owned metadata."""
+    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+    try:
+        before = source.stat()
+        with source.open(encoding="utf-8") as handle:
+            first_line = handle.readline()
+        if not is_canonical_jsonl(first_line):
+            return False
+        if target.exists():
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, temporary)
+        after = source.stat()
+        if after.st_size != before.st_size or after.st_mtime_ns != before.st_mtime_ns:
+            return False
+        append_session_metadata(temporary, metadata_changes)
+        if target.exists():
+            return False
+        temporary.replace(target)
+        return True
+    except OSError:
+        return False
+    finally:
+        _remove_path_if_exists(temporary)
 
 
 def _append_record_if_possible(

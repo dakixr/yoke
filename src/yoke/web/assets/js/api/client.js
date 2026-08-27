@@ -95,8 +95,8 @@ export class YokeApi {
   messages(id, { limit = 100, order = "desc", cursor } = {}) {
     return this.request(`/api/v1/session/${encodeURIComponent(id)}/message${queryString({ limit, order, cursor, branch: "active" })}`);
   }
-  context(id, { includeSystem = false, includeToolResults = true } = {}) {
-    return this.request(`/api/v1/session/${encodeURIComponent(id)}/context${queryString({ includeSystem, includeToolResults })}`);
+  context(id, { includeSystem = false, includeToolResults = true, limit = 100, maxChars = 500000 } = {}) {
+    return this.request(`/api/v1/session/${encodeURIComponent(id)}/context${queryString({ includeSystem, includeToolResults, limit, maxChars })}`);
   }
   history(id, after = 0, limit = 200) {
     return this.request(`/api/v1/session/${encodeURIComponent(id)}/history${queryString({ after, limit })}`);
@@ -105,7 +105,9 @@ export class YokeApi {
   interrupt(id) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/interrupt`, "POST", {}); }
   queue(id) { return this.request(`/api/v1/session/${encodeURIComponent(id)}/queue`); }
   patchQueue(id, body) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/queue`, "PATCH", body); }
-  tree(id) { return this.request(`/api/v1/session/${encodeURIComponent(id)}/tree`); }
+  tree(id, { limit = 200, cursor } = {}) {
+    return this.request(`/api/v1/session/${encodeURIComponent(id)}/tree${queryString({ limit, cursor })}`);
+  }
   treePreview(id, targetID) {
     return this.request(`/api/v1/session/${encodeURIComponent(id)}/tree/navigation-preview${queryString({ targetID, includeAbandoned: true })}`);
   }

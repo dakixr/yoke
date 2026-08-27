@@ -7,7 +7,8 @@ export function TreeInspector({ sessionID, data }) {
   const [summary, setSummary] = useState("");
   if (!tree) return html`<div class="inspector-loading">Loading tree…</div>`;
   return html`<div class="inspector-stack">
-    <div class="inspector-meta"><span title=${`Tree revision ${tree.revision}`}>Current tree</span><span>${tree.entries.length} nodes</span></div>
+    <div class="inspector-meta"><span title=${`Tree revision ${tree.revision}`}>Current tree</span><span>${tree.entries.length} of ${tree.totalEntries || tree.entries.length} nodes</span></div>
+    ${tree.cursor?.next ? html`<button class="secondary-action" onClick=${() => controller.loadMoreTree(sessionID)}>Load older nodes</button>` : null}
     <div class="tree-list">
       ${tree.entries.map((entry) => html`<div class=${`tree-entry ${entry.current ? "is-current" : ""} ${entry.active ? "is-active" : "is-abandoned"}`}>
         <div class="tree-entry__line"><span class="tree-state">${entry.current ? "●" : entry.active ? "○" : "×"}</span><span class="tree-kind">${entry.kind}</span>${entry.label ? html`<span class="tree-label">${entry.label}</span>` : null}</div>
@@ -21,7 +22,7 @@ export function TreeInspector({ sessionID, data }) {
     ${preview ? html`<div class="navigation-preview">
       <div class="inspector-section-title">Navigation preview</div>
       ${preview.editorText ? html`<div><span class="field-label">Restored editor text</span><pre>${preview.editorText}</pre></div>` : null}
-      ${preview.abandoned?.length ? html`<div><span class="field-label">Work that becomes abandoned</span><ul>${preview.abandoned.map((item) => html`<li><strong>${item.kind}</strong> ${item.preview || item.id}</li>`)}</ul></div>` : html`<div class="muted">No active work is abandoned.</div>`}
+      ${preview.abandoned?.length ? html`<div><span class="field-label">Work that becomes abandoned${preview.abandonedTruncated ? `, showing ${preview.abandoned.length} of ${preview.abandonedTotal}` : ""}</span><ul>${preview.abandoned.map((item) => html`<li><strong>${item.kind}</strong> ${item.preview || item.id}</li>`)}</ul></div>` : html`<div class="muted">No active work is abandoned.</div>`}
       <label class="stacked-label">Branch summary, optional<textarea rows="3" value=${summary} onInput=${(event) => setSummary(event.currentTarget.value)}></textarea></label>
       <button class="primary" disabled=${preview.current} onClick=${() => controller.navigateTree(sessionID, preview.targetID, summary || null)}>Navigate</button>
     </div>` : null}

@@ -322,6 +322,28 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
     assert last_event["entry"]["id"] == appended.id
 
 
+def test_index_metadata_updates_publish_copy_on_write_snapshot(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "sessions")
+    record = store.save(
+        "copy-on-write",
+        [Message.user("hello")],
+        root=tmp_path,
+        title="before",
+    )
+    published = store._load_index()
+    published_entry = published.sessions[record.id]
+
+    store.set_title(
+        record.id,
+        "after",
+        existing_record=store.summary_record(record.id),
+    )
+
+    assert published.sessions[record.id] is published_entry
+    assert published.sessions[record.id].title == "before"
+    assert store._load_index().sessions[record.id].title == "after"
+
+
 def test_clean_prompt_exit_does_not_capture_or_save_conversation(
     large_tree: tuple[list[ConversationEntry], str],
     tmp_path: Path,

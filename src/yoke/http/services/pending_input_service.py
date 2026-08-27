@@ -324,9 +324,10 @@ class PendingInputService:
             )
 
     def _require_session(self, session_id: str):  # noqa: ANN202
-        if not self.store.exists(session_id):
+        record = self.store.summary_record(session_id)
+        if record is None:
             raise ApiError(404, "session_not_found", "Session was not found.")
-        return self.store.load(session_id)
+        return record
 
     def _lock_for(self, session_id: str) -> Lock:
         with self._locks_lock:

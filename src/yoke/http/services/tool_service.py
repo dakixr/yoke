@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yoke.cli.bootstrap.config import resolve_agent_config
 from yoke.http.errors import ApiError
 from yoke.http.models.common import LocationInfo
 from yoke.http.models.tool import ToolInfo
@@ -30,6 +29,8 @@ class ToolService:
         directory: str | None,
         session_id: str | None,
     ) -> ToolListResponse:
+        from yoke.cli.bootstrap.config import resolve_agent_config
+
         root = self._root(directory=directory, session_id=session_id)
         report = resolve_agent_config(
             root=root,
@@ -63,6 +64,8 @@ class ToolService:
         )
 
     def discovered_names(self, session_id: str) -> tuple[set[str], set[str]]:
+        from yoke.cli.bootstrap.config import resolve_agent_config
+
         record = self._require_record(session_id)
         root = Path(record.root or Path.cwd()).resolve()
         report = resolve_agent_config(
@@ -85,6 +88,7 @@ class ToolService:
         return root
 
     def _require_record(self, session_id: str):  # noqa: ANN202
-        if not self.store.exists(session_id):
+        record = self.store.summary_record(session_id)
+        if record is None:
             raise ApiError(404, "session_not_found", "Session was not found.")
-        return self.store.load(session_id)
+        return record

@@ -121,6 +121,11 @@ def entry_metadata_jsonl_line(
     )
 
 
+def entry_jsonl_line(entry: ConversationEntry) -> str:
+    """Encode one canonical conversation-entry event as a JSONL line."""
+    return _jsonl_line(_entry_event(entry))
+
+
 def is_canonical_jsonl(raw_text: str) -> bool:
     """Return whether raw text is already the append-only JSONL format."""
     try:

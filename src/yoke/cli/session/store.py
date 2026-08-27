@@ -10,15 +10,16 @@ from threading import Lock
 from threading import RLock
 import time
 
-from pydantic import ValidationError
-
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.skills.models import ActiveSkill
+from yoke.cli.session.index import SESSION_INDEX_SUMMARY_VERSION
 from yoke.cli.session.index import repair_index_from_session_files
 from yoke.cli.session.index import session_index_entry
 from yoke.cli.session.index_cache import SessionIndexCache
 from yoke.cli.session.load import load_existing_record
+from yoke.cli.session.load import reconcile_index_owned_metadata
+from yoke.cli.session.load import scan_canonical_session_summary
 from yoke.cli.session.maintenance import prune_index_and_sessions
 from yoke.cli.session.models import SessionIndex
 from yoke.cli.session.models import SessionIndexEntry
@@ -27,6 +28,8 @@ from yoke.cli.session.tree import _resolve_saved_conversation_tree
 from yoke.cli.session.tree_index import SessionTreeIndex
 from yoke.cli.session.writer import append_session_metadata
 from yoke.cli.session.writer import append_session_entry_metadata
+from yoke.cli.session.writer import append_session_tree_delta
+from yoke.cli.session.writer import clone_canonical_session
 from yoke.cli.session.utils import default_session_directory
 from yoke.cli.session.utils import fork_session_title
 from yoke.cli.session.utils import new_unique_session_id
@@ -246,7 +249,66 @@ class SessionStore:
         else:
             self._write_session_record(record)
         tree_index.commit_entry_replacement(entries, entry)
-        self._update_index(record)
+        self._update_index_metadata(record)
+        return record
+
+    def save_indexed_tree_navigation(
+        self,
+        session_id: str,
+        *,
+        existing_record: SessionRecord,
+        leaf_id: str,
+        appended_entries: tuple[ConversationEntry, ...] = (),
+    ) -> SessionRecord:
+        """Persist a topology-proven tree checkout without loading old entries."""
+        if existing_record.id != session_id:
+            raise ValueError("Existing session record id does not match save id.")
+        path = self._session_path(session_id)
+        if not path.exists():
+            raise ValueError(f"Session not found: {session_id}")
+        now = timestamp()
+        record = existing_record.model_copy(
+            update={
+                "leaf_id": leaf_id,
+                "updated_at": now,
+            }
+        )
+        append_session_tree_delta(
+            path,
+            session_changes={"leaf_id": leaf_id, "updated_at": now},
+            appended_entries=appended_entries,
+        )
+        existing_index = self.index_entry(session_id)
+        entry_count = (
+            (existing_index.entry_count or 0) + len(appended_entries)
+            if existing_index is not None and existing_index.entry_count is not None
+            else len(existing_record.conversation_entries) + len(appended_entries)
+        )
+        self._update_index_metadata(record, entry_count=entry_count)
+        return record
+
+    def save_indexed_entry_metadata(
+        self,
+        session_id: str,
+        entry: ConversationEntry,
+        *,
+        existing_record: SessionRecord,
+    ) -> SessionRecord:
+        """Persist one proven entry metadata update without loading the tree."""
+        if existing_record.id != session_id:
+            raise ValueError("Existing session record id does not match save id.")
+        path = self._session_path(session_id)
+        if not path.exists():
+            raise ValueError(f"Session not found: {session_id}")
+        now = timestamp()
+        record = existing_record.model_copy(update={"updated_at": now})
+        append_session_entry_metadata(
+            path,
+            entry_id=entry.id,
+            entry_metadata=entry.metadata,
+            session_changes={"updated_at": now},
+        )
+        self._update_index_metadata(record)
         return record
 
     def list(self, *, root: Path | str | None = None) -> builtins.list[SessionRecord]:
@@ -279,6 +341,39 @@ class SessionStore:
             reverse=True,
         )
 
+    def index_entry(self, session_id: str) -> SessionIndexEntry | None:
+        """Return one cached session summary without loading conversation history."""
+        return self._index_cache.read().sessions.get(session_id)
+
+    def has_session_index(self) -> bool:
+        """Return whether this store already has an index snapshot on disk."""
+        return self._index_path().exists()
+
+    def summary_record(self, session_id: str) -> SessionRecord | None:
+        """Return lightweight persisted metadata for one existing session.
+
+        The normal case is index-only. A missing index entry falls back to a
+        complete load so exact-session APIs remain correct while background
+        maintenance repairs old or externally modified stores.
+        """
+        if not self.exists(session_id):
+            return None
+        entry = self.index_entry(session_id)
+        if entry is not None:
+            return entry.to_record()
+        return self.load(session_id)
+
+    def session_file_signature(self, session_id: str) -> tuple[int, int] | None:
+        """Return size and mtime for cache invalidation without reading the file."""
+        path = self._existing_session_path(session_id)
+        if path is None:
+            return None
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return stat.st_size, stat.st_mtime_ns
+
     def fork(
         self,
         source_session_id: str,
@@ -286,12 +381,63 @@ class SessionStore:
         new_session_id_value: str | None = None,
         root: Path | str | None = None,
         title: str | None = None,
+        selected_leaf_id: str | None = None,
+        materialize_result: bool = True,
     ) -> SessionRecord:
         """Create a persisted copy of an existing session under a new id."""
+        fork_id = new_session_id_value or new_unique_session_id(self.exists)
+        if self.exists(fork_id):
+            raise ValueError(f"Session already exists: {fork_id}")
+        source_index = self.index_entry(source_session_id)
+        source_signature = self.session_file_signature(source_session_id)
+        if (
+            source_index is not None
+            and source_index.summary_version == SESSION_INDEX_SUMMARY_VERSION
+            and source_index.entry_count is not None
+            and source_signature is not None
+            and source_index.file_size == source_signature[0]
+            and source_index.file_mtime_ns == source_signature[1]
+        ):
+            now = timestamp()
+            fork_root = normalize_root(root) or source_index.root
+            fork_title = normalize_title(title) or fork_session_title(source_index.title)
+            fork_leaf = (
+                selected_leaf_id
+                if selected_leaf_id is not None
+                else source_index.leaf_id
+            )
+            forked = source_index.to_record().model_copy(
+                update={
+                    "id": fork_id,
+                    "created_at": now,
+                    "updated_at": now,
+                    "root": fork_root,
+                    "title": fork_title,
+                    "pinned": False,
+                    "archived_at": None,
+                    "leaf_id": fork_leaf,
+                }
+            )
+            if clone_canonical_session(
+                self._session_path(source_session_id),
+                self._session_path(fork_id),
+                metadata_changes={
+                    "id": fork_id,
+                    "created_at": now,
+                    "updated_at": now,
+                    "root": fork_root,
+                    "title": fork_title,
+                    "pinned": False,
+                    "archived_at": None,
+                    "leaf_id": fork_leaf,
+                },
+            ):
+                self._update_index(forked, entry_count=source_index.entry_count)
+                return self.load(fork_id) if materialize_result else forked
+
         source = self.load(source_session_id)
         if source.created_at is None and not source.conversation_entries:
             raise ValueError(f"Session not found: {source_session_id}")
-        fork_id = new_session_id_value or new_unique_session_id(self.exists)
         now = timestamp()
         forked = source.model_copy(
             deep=True,
@@ -303,6 +449,11 @@ class SessionStore:
                 "title": normalize_title(title) or fork_session_title(source.title),
                 "pinned": False,
                 "archived_at": None,
+                "leaf_id": (
+                    selected_leaf_id
+                    if selected_leaf_id is not None
+                    else source.leaf_id
+                ),
             },
         )
         self._write_session_record(forked)
@@ -332,7 +483,7 @@ class SessionStore:
             append_session_metadata(path, {"pinned": pinned})
         else:
             self._write_session_record(record)
-        self._update_index(record)
+        self._update_index_metadata(record)
         return record
 
     def set_title(
@@ -367,7 +518,7 @@ class SessionStore:
             )
         else:
             self._write_session_record(record)
-        self._update_index(record)
+        self._update_index_metadata(record)
         return record
 
     def set_archived(
@@ -394,7 +545,7 @@ class SessionStore:
             append_session_metadata(path, values)
         else:
             self._write_session_record(record)
-        self._update_index(record)
+        self._update_index_metadata(record)
         return record
 
     def set_selection(
@@ -427,7 +578,7 @@ class SessionStore:
             append_session_metadata(path, values)
         else:
             self._write_session_record(record)
-        self._update_index(record)
+        self._update_index_metadata(record)
         return record
 
     def _session_path(self, session_id: str) -> Path:
@@ -446,34 +597,74 @@ class SessionStore:
         return self.directory / SESSION_INDEX_NAME
 
     def _load_index(self) -> SessionIndex:
-        path = self._index_path()
-        if not path.exists():
-            return SessionIndex()
-        try:
-            return SessionIndex.model_validate_json(path.read_text(encoding="utf-8"))
-        except (OSError, ValidationError):
-            return SessionIndex()
+        return self._index_cache.read()
 
-    def _update_index(self, record: SessionRecord) -> None:
+    def _mutable_index(self) -> SessionIndex:
+        """Return a copy-on-write index snapshot safe to mutate before publish."""
+        current = self._load_index()
+        return current.model_copy(update={"sessions": dict(current.sessions)})
+
+    def _update_index(
+        self,
+        record: SessionRecord,
+        *,
+        entry_count: int | None = None,
+    ) -> None:
         with self._index_lock:
-            index = self._load_index()
+            index = self._mutable_index()
             index.sessions[record.id] = session_index_entry(
                 record,
                 path=self._session_path(record.id),
+                entry_count=entry_count,
+            )
+            self._write_index(index)
+
+    def _update_index_metadata(
+        self,
+        record: SessionRecord,
+        *,
+        entry_count: int | None = None,
+    ) -> None:
+        """Update metadata without requiring a materialized conversation list."""
+        with self._index_lock:
+            index = self._mutable_index()
+            existing = index.sessions.get(record.id)
+            index.sessions[record.id] = session_index_entry(
+                record,
+                path=self._session_path(record.id),
+                entry_count=(
+                    entry_count
+                    if entry_count is not None
+                    else existing.entry_count
+                    if existing is not None and existing.entry_count is not None
+                    else len(record.conversation_entries)
+                ),
             )
             self._write_index(index)
 
     def _repair_index_from_session_files(self) -> None:
         with self._index_lock:
-            index = self._load_index()
+            index = self._mutable_index()
             if repair_index_from_session_files(
                 directory=self.directory,
                 index=index,
                 session_file_suffix=SESSION_FILE_SUFFIX,
                 session_id_pattern=SESSION_ID_PATTERN,
-                load_record=self.load,
+                load_summary=self._load_summary_for_index,
             ):
                 self._write_index(index)
+
+    def _load_summary_for_index(self, session_id: str) -> tuple[SessionRecord, int]:
+        path = self._session_path(session_id)
+        scanned = scan_canonical_session_summary(path, session_id)
+        if scanned is not None:
+            record, entry_count = scanned
+            return (
+                reconcile_index_owned_metadata(record, self.index_entry(session_id)),
+                entry_count,
+            )
+        record = self.load(session_id)
+        return record, len(record.conversation_entries)
 
     def maintain_index(self, *, force: bool = False) -> None:
         """Repair and prune the session index outside latency-sensitive requests."""

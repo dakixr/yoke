@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import cast
 
 from yoke.http.errors import ApiError
@@ -13,11 +14,10 @@ from yoke.http.models.mcp import McpToolInfo
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
-from yoke.mcp import McpManager
-from yoke.mcp.config import McpSessionPolicy
-from yoke.mcp.config import load_mcp_config
-from yoke.mcp.editing import patch_persisted_mcp_server
 from yoke.session import SessionStore
+
+if TYPE_CHECKING:
+    from yoke.mcp.config import McpSessionPolicy
 
 
 class McpService:
@@ -44,9 +44,13 @@ class McpService:
     ) -> McpListResponse:
         root = self._root(directory=directory, session_id=session_id)
         policy = self._policy(session_id)
+        from yoke.mcp.config import load_mcp_config
+
         config = load_mcp_config(root=root, home=self.home, session_policy=policy)
         inspected: dict[str, dict[str, object]] = {}
         if include_tools and config.enabled_servers:
+            from yoke.mcp import McpManager
+
             manager = McpManager.from_paths(
                 root=root,
                 home=self.home,
@@ -105,6 +109,9 @@ class McpService:
     ) -> McpServerInfo:
         """Persist repo/global policy using the shared MCP config editor."""
         root = self._root(directory=None, session_id=session_id)
+        from yoke.mcp.config import load_mcp_config
+        from yoke.mcp.editing import patch_persisted_mcp_server
+
         config = load_mcp_config(root=root, home=self.home)
         server = next((item for item in config.servers if item.name == server_name), None)
         if server is None:
@@ -137,9 +144,9 @@ class McpService:
 
     def _root(self, *, directory: str | None, session_id: str | None) -> Path:
         if session_id is not None:
-            if not self.store.exists(session_id):
+            record = self.store.summary_record(session_id)
+            if record is None:
                 raise ApiError(404, "session_not_found", "Session was not found.")
-            record = self.store.load(session_id)
             return Path(record.root or Path.cwd()).resolve()
         root = Path(directory or Path.cwd()).resolve()
         if not root.is_dir():

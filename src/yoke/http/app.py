@@ -45,9 +45,9 @@ from yoke.http.services.filesystem_service import FilesystemService
 from yoke.http.services.human_input_service import HumanInputService
 from yoke.http.services.path_policy import PathPolicy
 from yoke.http.services.process_service import ProcessService
-from yoke.http.services.runtime_factory import build_http_session_agent
-from yoke.http.services.runtime_factory import SessionAgentFactory
+from yoke.http.services.runtime_registry import SessionAgentFactory
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.http.services.session_service import SessionService
 from yoke.http.services.skill_service import SkillService
 from yoke.http.services.tool_trace_service import ToolTraceService
@@ -74,31 +74,39 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     """Create one process-wide Yoke API application."""
     configured = settings or HttpAppSettings(auth_token=None)
     store = SessionStore(configured.session_directory)
-    store.maintain_index(force=True)
     broker = GlobalEventBroker()
     journal = SessionEventJournal(store.directory)
     events = EventService(journal, broker)
     admissions = AdmissionStore(store.directory)
     uploads = UploadService(store)
     pending_inputs = PendingInputService(store, admissions, events, uploads)
+    read_cache = SessionReadCache(store)
+    session_service = SessionService(store, events, read_cache=read_cache)
     runtime_registry = SessionRuntimeRegistry(
         store=store,
         pending_inputs=pending_inputs,
         events=events,
-        agent_factory=configured.agent_factory or build_http_session_agent,
+        agent_factory=configured.agent_factory or _build_http_session_agent,
+        read_cache=read_cache,
         max_active_sessions=configured.max_active_sessions,
         max_worker_threads=configured.max_worker_threads,
     )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        maintenance_task = asyncio.create_task(_maintain_session_index(store))
+        maintenance_task = asyncio.create_task(
+            _maintain_session_index(
+                store,
+                initial_delay_seconds=2 if store.has_session_index() else 0,
+            )
+        )
         try:
             yield
         finally:
             maintenance_task.cancel()
             with suppress(asyncio.CancelledError):
                 await maintenance_task
+            session_service.close()
             await runtime_registry.close()
 
     app = FastAPI(
@@ -114,7 +122,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.state.event_broker = broker
     app.state.event_journal = journal
     app.state.event_service = events
-    app.state.session_service = SessionService(store, events)
+    app.state.session_service = session_service
     app.state.skill_service = SkillService(store)
     app.state.location_service = LocationService(store)
     app.state.human_input_service = HumanInputService(store, events)
@@ -125,7 +133,12 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.state.filesystem_service = FilesystemService(app.state.path_policy)
     app.state.runtime_registry = runtime_registry
     app.state.process_service = ProcessService(runtime_registry)
-    app.state.tool_trace_service = ToolTraceService(store, runtime_registry)
+    app.state.tool_trace_service = ToolTraceService(
+        store,
+        runtime_registry,
+        read_cache=read_cache,
+        message_index=session_service.message_index,
+    )
     app.state.tool_service = ToolService(store, runtime_registry)
     app.state.upload_service = uploads
 
@@ -180,8 +193,22 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     return app
 
 
-async def _maintain_session_index(store: SessionStore) -> None:
+def _build_http_session_agent(record):  # noqa: ANN001,ANN202
+    """Import the CLI/provider runtime only when a session actually needs an agent."""
+    from yoke.http.services.runtime_factory import build_http_session_agent
+
+    return build_http_session_agent(record)
+
+
+async def _maintain_session_index(
+    store: SessionStore,
+    *,
+    initial_delay_seconds: float = 0,
+) -> None:
     """Keep filesystem repair and retention work off HTTP request threads."""
+    if initial_delay_seconds:
+        await asyncio.sleep(initial_delay_seconds)
+    await asyncio.to_thread(store.maintain_index, force=True)
     while True:
         await asyncio.sleep(5)
         await asyncio.to_thread(store.maintain_index)

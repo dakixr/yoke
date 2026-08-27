@@ -10,7 +10,7 @@ from yoke.cli.session.models import SessionIndex
 from yoke.cli.session.models import SessionIndexEntry
 from yoke.cli.session.models import SessionRecord
 
-SESSION_INDEX_SUMMARY_VERSION = 1
+SESSION_INDEX_SUMMARY_VERSION = 2
 
 
 def repair_index_from_session_files(
@@ -19,7 +19,7 @@ def repair_index_from_session_files(
     index: SessionIndex,
     session_file_suffix: str,
     session_id_pattern: re.Pattern[str],
-    load_record: Callable[[str], SessionRecord],
+    load_summary: Callable[[str], tuple[SessionRecord, int]],
 ) -> bool:
     """Repair missing, stale, or invalid session index entries."""
     if not directory.exists():
@@ -40,7 +40,7 @@ def repair_index_from_session_files(
         if existing is not None and _index_entry_matches_file(existing, path):
             continue
         try:
-            record = load_record(session_id)
+            record, entry_count = load_summary(session_id)
         except (OSError, ValueError):
             if existing is not None:
                 index.sessions.pop(session_id, None)
@@ -50,12 +50,18 @@ def repair_index_from_session_files(
             index,
             record.model_copy(update={"id": session_id}),
             path=path,
+            entry_count=entry_count,
         )
         changed = True
     return changed
 
 
-def session_index_entry(record: SessionRecord, *, path: Path) -> SessionIndexEntry:
+def session_index_entry(
+    record: SessionRecord,
+    *,
+    path: Path,
+    entry_count: int | None = None,
+) -> SessionIndexEntry:
     """Build one complete lightweight session summary."""
     try:
         stat = path.stat()
@@ -75,8 +81,15 @@ def session_index_entry(record: SessionRecord, *, path: Path) -> SessionIndexEnt
         provider_name=record.provider_name,
         model_id=record.model_id,
         reasoning_effort=record.reasoning_effort,
+        context_window_tokens=record.context_window_tokens,
         leaf_id=record.leaf_id,
-        entry_count=len(record.conversation_entries),
+        active_skills=[skill.model_copy(deep=True) for skill in record.active_skills],
+        skill_dirs=list(record.skill_dirs),
+        entry_count=(
+            len(record.conversation_entries)
+            if entry_count is None
+            else entry_count
+        ),
         file_size=file_size,
         file_mtime_ns=file_mtime_ns,
         summary_version=SESSION_INDEX_SUMMARY_VERSION,
@@ -88,8 +101,13 @@ def _upsert_index_record(
     record: SessionRecord,
     *,
     path: Path,
+    entry_count: int | None = None,
 ) -> None:
-    index.sessions[record.id] = session_index_entry(record, path=path)
+    index.sessions[record.id] = session_index_entry(
+        record,
+        path=path,
+        entry_count=entry_count,
+    )
 
 
 def _index_entry_matches_file(entry: SessionIndexEntry, path: Path) -> bool:

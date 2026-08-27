@@ -108,15 +108,41 @@ Session lists and recent-location discovery are served from the lightweight
 session index rather than parsing conversation history. The index stores the
 selection and tree summary needed by list cards plus a file signature. Changed,
 missing, legacy, or unreadable session files are repaired individually. The
-daemon performs filesystem repair and retention maintenance before serving and
-then in a background maintenance task, so list requests never pay for those
-scans. Parsed index snapshots are reused until `index.json` changes. An index
-written by an older Yoke version is enriched once at daemon startup, after
-which list latency is independent of conversation-history size.
+daemon binds and can open the browser before filesystem repair and retention
+maintenance. Existing stores get a short startup grace period, then repair runs
+in a background task, so `yoke serve --open` and list requests never pay for
+those scans. Parsed index snapshots are reused until `index.json` changes. An
+index written by an older Yoke version is enriched by background maintenance;
+steady-state list latency is independent of conversation-history size.
 Session listing also accepts the immediately preceding `session_stream` v1
 storage format and rewrites it to the current JSONL format on first load. A
 single unreadable session file is skipped rather than failing the complete
 session list.
+
+Large-session reads use a separate persistent byte-offset/topology sidecar.
+The initial latest-message, Context, Tree, and nearby tree-navigation reads have
+bounded reverse-scan paths that do not wait for a complete topology build. A
+single background worker builds or catches up the full sidecar afterward.
+Normal append-only writes reconcile incrementally, so a session growing from
+hundreds of megabytes does not make each refresh reread its historical prefix.
+Queue, permission, question, skill, metadata, and process-local tool/runtime
+lookups do not load conversation history merely to prove that a session exists.
+
+`GET /session/{sessionID}/context` is intentionally bounded for inspection. It
+defaults to 100 recent active entries and a 500,000-character text budget and
+reports `totalEntries`, `retainedEntries`, `retainedChars`, `maxChars`, and
+`truncated`. Compaction checkpoints are retained when relevant. The Tree
+inspector likewise pages lightweight nodes, with 200 newest nodes on the first
+page and an opaque cursor for older nodes. Navigation previews retain at most
+100 abandoned-entry previews and report the total/truncation state. These
+bounds are HTTP-inspector behavior; they do not change the conversation used by
+the model runtime.
+
+Canonical full-session forks use a stable file clone plus a small metadata
+delta instead of decoding and reserializing every historical message. The HTTP
+path returns lightweight fork metadata and seeds the fork's read sidecar. CLI
+callers that require an immediately materialized `SessionRecord` keep that
+existing return contract.
 
 Each session has one serialized execution lane. Different sessions can execute
 at the same time, subject to the daemon-wide active-session limit. Disconnecting
@@ -223,9 +249,32 @@ POST /api/v1/session/{sessionID}/title/regenerate
 ```
 
 Yoke builds the title with the same shared title generator used by the CLI,
-using the session's configured provider/model. The resulting title is then
-persisted through the normal session patch/event path. The
+using the session's configured provider/model and the full saved conversation.
+This is intentional: title generation can reuse provider cached input even for
+large contexts, so the HTTP performance paths do not replace it with a lossy
+conversation sample. The resulting title is then persisted through the normal
+session patch/event path. The
 `sessionTitleRegeneration` capability flag indicates support.
+
+## Browser optimistic updates
+
+The packaged web client applies mutations locally when their immediate result
+is deterministic, then reconciles against the authoritative response or SSE
+state. Prompt admission paints the caller-supplied input immediately, queue
+edits retain pending local operations across stale snapshots, session title,
+pin, archive, model/effort, tool, skill, and MCP changes are local-first, and
+permission/question replies disappear immediately with rollback refreshes on
+failure. New-session submission switches into the created session and paints
+the prompt before admission completes. Compaction shows its local activity
+state immediately. Tree labels serialize revision-checked mutations while
+keeping the newest local label visible.
+
+Session bootstrap also separates core data from enrichment. Session lists and
+the selected transcript can become interactive without waiting for provider
+readiness probes or Git/location metadata. Queue and human-input snapshots load
+in parallel after the transcript rather than blocking first paint. Optimistic
+generations and mutation chains prevent older HTTP responses or durable events
+from visually undoing a newer click or resurrecting an already durable prompt.
 
 ## Files and uploads
 

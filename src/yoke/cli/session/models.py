@@ -53,7 +53,10 @@ class SessionIndexEntry(BaseModel):
     provider_name: str | None = None
     model_id: str | None = None
     reasoning_effort: str | None = None
+    context_window_tokens: int | None = None
     leaf_id: str | None = None
+    active_skills: list[ActiveSkill] = Field(default_factory=list)
+    skill_dirs: list[str] = Field(default_factory=list)
     entry_count: int | None = None
     file_size: int | None = None
     file_mtime_ns: int | None = None
@@ -69,6 +72,13 @@ class SessionIndexEntry(BaseModel):
             updated_at=self.updated_at,
             pinned=self.pinned,
             archived_at=self.archived_at,
+            provider_name=self.provider_name,
+            model_id=self.model_id,
+            reasoning_effort=self.reasoning_effort,
+            context_window_tokens=self.context_window_tokens,
+            leaf_id=self.leaf_id,
+            active_skills=[skill.model_copy(deep=True) for skill in self.active_skills],
+            skill_dirs=list(self.skill_dirs),
         )
 
 

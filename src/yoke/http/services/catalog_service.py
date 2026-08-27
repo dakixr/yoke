@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
+import time
+from typing import Any
 
 from yoke.ai.providers.resolution import available_provider_names
 from yoke.ai.providers.resolution import list_provider_models
@@ -20,9 +23,14 @@ from yoke.http.services.redaction import redact_public_value
 class CatalogService:
     """Project provider registry data into stable HTTP transport models."""
 
+    def __init__(self) -> None:
+        self._cache_lock = Lock()
+        self._readiness_cache: tuple[float, tuple[Any, ...]] | None = None
+        self._model_cache: dict[str, tuple[float, tuple[Any, ...]]] = {}
+
     def providers(self, *, directory: str | None) -> ProviderListResponse:
         location = _location(directory)
-        readiness = list_provider_readiness(home=Path.home())
+        readiness = self._provider_readiness()
         return ProviderListResponse(
             location=location,
             data=[
@@ -53,7 +61,7 @@ class CatalogService:
         data: list[ModelInfo] = []
         for provider_name in providers:
             try:
-                models = list_provider_models(provider_name, home=Path.home())
+                models = self._provider_models(provider_name)
             except Exception as exc:
                 if provider is not None:
                     raise ApiError(
@@ -87,6 +95,28 @@ class CatalogService:
             ]
         data.sort(key=lambda item: (item.provider, item.name.casefold(), item.id))
         return ModelListResponse(location=location, data=data)
+
+    def _provider_readiness(self) -> tuple[Any, ...]:
+        now = time.monotonic()
+        with self._cache_lock:
+            cached = self._readiness_cache
+            if cached is not None and now - cached[0] < 5:
+                return cached[1]
+        values = tuple(list_provider_readiness(home=Path.home()))
+        with self._cache_lock:
+            self._readiness_cache = (now, values)
+        return values
+
+    def _provider_models(self, provider_name: str) -> tuple[Any, ...]:
+        now = time.monotonic()
+        with self._cache_lock:
+            cached = self._model_cache.get(provider_name)
+            if cached is not None and now - cached[0] < 30:
+                return cached[1]
+        values = tuple(list_provider_models(provider_name, home=Path.home()) or [])
+        with self._cache_lock:
+            self._model_cache[provider_name] = (now, values)
+        return values
 
 
 def _location(directory: str | None) -> LocationInfo:

@@ -39,6 +39,7 @@ from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.runtime_factory import SessionAgentFactory
+from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
 from yoke.agent.activity import activity_status_for_event
@@ -98,6 +99,7 @@ class SessionRuntime:
         pending_inputs: PendingInputService,
         events: EventService,
         agent_factory: SessionAgentFactory,
+        read_cache: SessionReadCache,
         executor: Executor,
         active_slots: asyncio.Semaphore,
     ) -> None:
@@ -106,6 +108,9 @@ class SessionRuntime:
         self.pending_inputs = pending_inputs
         self.events = events
         self.agent_factory = agent_factory
+        self.read_cache = read_cache
+        index_entry = store.index_entry(session_id)
+        self._event_location = index_entry.root if index_entry is not None else None
         self.executor = executor
         self.active_slots = active_slots
         self._lock = asyncio.Lock()
@@ -154,6 +159,7 @@ class SessionRuntime:
 
     async def wait(self, timeout_seconds: float | None = None) -> ActiveRuntimeInfo:
         """Wait until the current logical generation settles."""
+
         async def wait_idle() -> None:
             while True:
                 async with self._lock:
@@ -162,7 +168,9 @@ class SessionRuntime:
                     task = (
                         self._active.task
                         if self._active is not None
-                        else self._operation.task if self._operation is not None else None
+                        else self._operation.task
+                        if self._operation is not None
+                        else None
                     )
                 if task is None:
                     await asyncio.sleep(0)
@@ -186,7 +194,9 @@ class SessionRuntime:
                 started_at=(
                     active.started_at
                     if active is not None
-                    else operation.started_at if operation is not None else None
+                    else operation.started_at
+                    if operation is not None
+                    else None
                 ),
                 activity=self._activity_status,
             )
@@ -243,12 +253,11 @@ class SessionRuntime:
             self._state = "running"
             self._last_error = None
             self._activity_status = "Compacting"
-            record = self.store.load(self.session_id)
             self.events.durable(
                 self.session_id,
                 "session.compaction.started",
                 {"operationID": operation.id, "reason": "manual"},
-                location=record.root,
+                location=self._event_location,
             )
             self._publish_activity(None)
             task = asyncio.create_task(
@@ -262,7 +271,7 @@ class SessionRuntime:
         """Activate one skill and append the same tree marker used by the CLI."""
         async with self._lock:
             self._require_no_work_locked()
-            record = self.store.load(self.session_id)
+            record = self._record()
             with self._agent_lock:
                 primary = self._primary_agent
                 registry = (
@@ -312,13 +321,12 @@ class SessionRuntime:
                         active_skills=activation.active_skills,
                     )
                     primary.refresh_tools(force=True)
-            current = self.store.load(self.session_id)
             activated = activation.activated_skills[-1]
             self.events.durable(
                 self.session_id,
                 "session.skill.activated",
                 {"skill": activated.name},
-                location=current.root,
+                location=self._event_location,
             )
             return activated.model_copy(deep=True)
 
@@ -375,7 +383,7 @@ class SessionRuntime:
         model_id: str,
         reasoning_effort: str | None,
     ) -> ProviderSessionState:
-        record = self.store.load(self.session_id)
+        record = self._record()
         agent = self._ensure_primary_agent(record, load_state=True)
         if not isinstance(agent, RuntimeAgent):
             raise ValueError("Model switching requires a RuntimeAgent-backed session.")
@@ -420,7 +428,7 @@ class SessionRuntime:
         return payload
 
     def _compact_sync(self) -> dict[str, object]:
-        record = self.store.load(self.session_id)
+        record = self._record()
         agent = self._ensure_primary_agent(record, load_state=True)
         if not isinstance(agent, RuntimeAgent):
             raise ValueError("Compaction requires a RuntimeAgent-backed session.")
@@ -429,8 +437,9 @@ class SessionRuntime:
             agent.messages,
             conversation_entries=agent.conversation_entries,
         )
+        payload: dict[str, object]
         if compacted is None:
-            payload: dict[str, object] = {"compacted": False}
+            payload = {"compacted": False}
         else:
             self._persist_entries(
                 compacted.conversation_entries,
@@ -439,20 +448,17 @@ class SessionRuntime:
             )
             payload = {
                 "compacted": True,
-                "summarizedMessages": len(
-                    compacted.preparation.messages_to_summarize
-                ),
+                "summarizedMessages": len(compacted.preparation.messages_to_summarize),
                 "keptMessages": len(compacted.preparation.kept_messages),
                 "messageCount": len(compacted.messages),
                 "inputTokens": compacted.preparation.estimate.input_tokens,
                 "compactedInputTokens": compacted.compacted_estimate.input_tokens,
             }
-        current = self.store.load(self.session_id)
         self.events.durable(
             self.session_id,
             "session.compaction.ended",
             payload,
-            location=current.root,
+            location=self._event_location,
         )
         return payload
 
@@ -481,12 +487,11 @@ class SessionRuntime:
             self._state = "error"
             self._last_error = str(error)
             self._activity_status = None
-            record = self.store.load(self.session_id)
             self.events.durable(
                 self.session_id,
                 f"session.{operation.kind}.failed",
                 {"operationID": operation.id, "error": self._last_error},
-                location=record.root,
+                location=self._event_location,
             )
             self._publish_activity(None)
 
@@ -521,6 +526,17 @@ class SessionRuntime:
         """Return this runtime's shared live tool trace store."""
         return self.tool_traces
 
+    def latest_turn_id(self) -> int:
+        """Return the newest process-local turn id without touching persistence."""
+        return self._turn_counter
+
+    def _record(self) -> SessionRecord:
+        """Return the shared signature-consistent record snapshot for this session."""
+        record = self.read_cache.get(self.session_id).record
+        if record.root is not None:
+            self._event_location = record.root
+        return record
+
     def session_enabled_tool_names(self) -> set[str] | None:
         """Return the process-local tool allowlist without loading an agent."""
         with self._agent_lock:
@@ -533,9 +549,7 @@ class SessionRuntime:
     def mcp_session_policy(self) -> McpSessionPolicy:
         """Return a defensive process-local MCP policy snapshot."""
         with self._agent_lock:
-            return McpSessionPolicy(
-                servers=dict(self._mcp_session_policy.servers)
-            )
+            return McpSessionPolicy(servers=dict(self._mcp_session_policy.servers))
 
     async def set_mcp_policy(
         self,
@@ -553,16 +567,26 @@ class SessionRuntime:
             with self._agent_lock:
                 existing = self._mcp_session_policy.servers.get(server_name)
                 self._mcp_session_policy.servers[server_name] = McpSessionServerPolicy(
-                    enabled=(enabled if enabled is not None else existing.enabled if existing else None),
+                    enabled=(
+                        enabled
+                        if enabled is not None
+                        else existing.enabled
+                        if existing
+                        else None
+                    ),
                     enabled_tools=(
                         enabled_tools
                         if update_enabled_tools
-                        else existing.enabled_tools if existing else None
+                        else existing.enabled_tools
+                        if existing
+                        else None
                     ),
                     disabled_tools=(
                         disabled_tools
                         if update_disabled_tools
-                        else existing.disabled_tools if existing else None
+                        else existing.disabled_tools
+                        if existing
+                        else None
                     ),
                 )
                 primary = self._primary_agent
@@ -575,12 +599,11 @@ class SessionRuntime:
                     primary.refresh_tools(force=True)
                     if primary._context is not None:
                         primary._sync_context_instructions(primary._context)
-            record = self.store.load(self.session_id)
             self.events.live(
                 "session.mcp.updated",
                 {"server": server_name},
                 session_id=self.session_id,
-                location=record.root,
+                location=self._event_location,
             )
 
     async def set_tools(
@@ -618,12 +641,11 @@ class SessionRuntime:
                     primary._install_session_filtered_tool_system_messages()
                     if primary._context is not None:
                         primary._sync_context_instructions(primary._context)
-            record = self.store.load(self.session_id)
             self.events.live(
                 "session.tool.config.changed",
                 {"enabled": sorted(next_enabled)},
                 session_id=self.session_id,
-                location=record.root,
+                location=self._event_location,
             )
             return set(next_enabled)
 
@@ -632,7 +654,7 @@ class SessionRuntime:
             promoted = self.pending_inputs.unsettled_promoted(self.session_id)
             if promoted is None:
                 return self.pending_inputs.pop_next(self.session_id, allow_queue=True)
-            record = self.store.load(self.session_id)
+            record = self._record()
             if not _input_is_persisted(record, promoted.id):
                 return promoted
             if not _input_has_terminal_assistant(record, promoted.id):
@@ -677,7 +699,6 @@ class SessionRuntime:
             execution.admission.id,
             outcome="stopped",
         )
-        record = self.store.load(self.session_id)
         self.events.durable(
             self.session_id,
             "session.interrupted",
@@ -686,7 +707,7 @@ class SessionRuntime:
                 "turnID": execution.turn_id,
                 "reason": reason,
             },
-            location=record.root,
+            location=self._event_location,
         )
         self._release_slot(execution)
         if execution.task is not None and not execution.worker_started:
@@ -719,7 +740,7 @@ class SessionRuntime:
     def _execute_sync(self, execution: TurnExecution) -> TurnOutcome:
         turn_agent: object | None = None
         try:
-            record = self.store.load(self.session_id)
+            record = self._record()
             turn_agent = self._prepare_turn_agent(record)
             user_message = self._user_message_for_admission(record, execution.admission)
 
@@ -727,6 +748,7 @@ class SessionRuntime:
                 self._on_agent_event(execution, event, payload)
 
             if isinstance(turn_agent, RuntimeAgent):
+
                 def checkpoint(context: AgentContext) -> None:
                     self._checkpoint(execution, turn_agent, context)
 
@@ -769,7 +791,7 @@ class SessionRuntime:
             if execution.retired_event.is_set() or self._active is not execution:
                 self._close_turn_agent_later(outcome.agent)
                 return
-            record = self.store.load(self.session_id)
+            record = self._record()
             if outcome.result is not None:
                 entries = outcome.result.conversation_entries or []
                 if entries:
@@ -792,7 +814,7 @@ class SessionRuntime:
                     execution.admission.id,
                     outcome=settlement,
                 )
-                record = self.store.load(self.session_id)
+                record = self._record()
                 self.events.durable(
                     self.session_id,
                     "session.message.updated",
@@ -920,7 +942,7 @@ class SessionRuntime:
 
     def _persist_interrupted_checkpoint(self, admission: AdmissionRecord) -> None:
         with self._persistence_lock:
-            record = self.store.load(self.session_id)
+            record = self._record()
             active_entries = list(
                 SessionTree.restore(record.conversation_entries, record.leaf_id)
                 .project(ConversationProjection())
@@ -981,7 +1003,7 @@ class SessionRuntime:
         input_id: str | None,
         active_skills: object | None = None,
     ) -> None:
-        current = self.store.load(self.session_id)
+        current = self._record()
         copied = [entry.model_copy(deep=True) for entry in entries]
         if input_id is not None:
             _tag_input_entry(copied, input_id)
@@ -1046,7 +1068,6 @@ class SessionRuntime:
             return
         if execution.retired_event.is_set() or self._active is not execution:
             return
-        record = self.store.load(self.session_id)
         redacted = redact_public_value(payload)
         data = dict(redacted) if isinstance(redacted, dict) else {"value": redacted}
         data["turnID"] = execution.turn_id
@@ -1055,19 +1076,16 @@ class SessionRuntime:
             event_type,
             data,
             session_id=self.session_id,
-            location=record.root,
+            location=self._event_location,
         )
 
     def _publish_activity(self, execution: TurnExecution | None) -> None:
-        if (
-            execution is not None
-            and (execution.retired_event.is_set() or self._active is not execution)
+        if execution is not None and (
+            execution.retired_event.is_set() or self._active is not execution
         ):
             return
-        record = self.store.load(self.session_id)
-        if (
-            execution is not None
-            and (execution.retired_event.is_set() or self._active is not execution)
+        if execution is not None and (
+            execution.retired_event.is_set() or self._active is not execution
         ):
             return
         self.events.live(
@@ -1080,16 +1098,15 @@ class SessionRuntime:
                 "activity": self._activity_status,
             },
             session_id=self.session_id,
-            location=record.root,
+            location=self._event_location,
         )
 
     def _on_process_change(self) -> None:
-        record = self.store.load(self.session_id)
         self.events.live(
             "session.process.updated",
             {},
             session_id=self.session_id,
-            location=record.root,
+            location=self._event_location,
         )
 
     def _release_slot(self, execution: TurnExecution) -> None:
@@ -1106,7 +1123,9 @@ class SessionRuntime:
         def close() -> None:
             turn_agent.close()
             close_provider = getattr(provider, "close", None)
-            if callable(close_provider) and provider is not getattr(primary, "provider", None):
+            if callable(close_provider) and provider is not getattr(
+                primary, "provider", None
+            ):
                 close_provider()
 
         asyncio.get_running_loop().run_in_executor(self.executor, close)
@@ -1140,9 +1159,11 @@ def _input_is_persisted(record: SessionRecord, input_id: str) -> bool:
 
 
 def _input_has_terminal_assistant(record: SessionRecord, input_id: str) -> bool:
-    active = SessionTree.restore(record.conversation_entries, record.leaf_id).project(
-        ConversationProjection()
-    ).active_entries
+    active = (
+        SessionTree.restore(record.conversation_entries, record.leaf_id)
+        .project(ConversationProjection())
+        .active_entries
+    )
     seen_input = False
     for entry in active:
         if entry.metadata.get(INPUT_ID_METADATA_KEY) == input_id:
