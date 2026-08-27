@@ -4,6 +4,23 @@ function copySessionData(state, sessionID) {
   return { ...(state.sessionData[sessionID] || {}) };
 }
 
+function nextLiveSequence(data) {
+  const next = (data.liveTimelineSequence || 0) + 1;
+  data.liveTimelineSequence = next;
+  return next;
+}
+
+function assistantEventKey(event) {
+  const turnID = event.data?.turnID ?? "turn";
+  const iteration = event.data?.iteration ?? "iteration";
+  const phase = event.data?.phase || "assistant";
+  return `${turnID}:${iteration}:${phase}`;
+}
+
+function toolCallID(event) {
+  return event.data?.tool_call_id || event.data?.toolCallID || null;
+}
+
 export function mergeSessionSummary(state, session) {
   return {
     ...state,
@@ -183,23 +200,64 @@ export function reducePublicEvent(state, event) {
       data.pendingPrompts = pendingPrompts;
     }
   } else if (event.type === "session.message.updated" && !event.durable) {
-    data.liveAssistant = {
-      phase: event.data?.phase || null,
-      content: event.data?.content || "",
-      turnID: event.data?.turnID ?? null,
+    const key = assistantEventKey(event);
+    const current = data.liveAssistants?.[key];
+    data.liveAssistants = {
+      ...(data.liveAssistants || {}),
+      [key]: {
+        id: key,
+        sequence: current?.sequence ?? nextLiveSequence(data),
+        iteration: event.data?.iteration ?? null,
+        timeCreated: current?.timeCreated || event.time || null,
+        phase: event.data?.phase || null,
+        content: event.data?.content || "",
+        turnID: event.data?.turnID ?? null,
+      },
     };
   } else if (event.type === "session.message.updated" && event.durable) {
-    data.liveAssistant = null;
     data.livePrompt = null;
     data.lastError = null;
   } else if (event.type === "session.tool.started") {
-    data.liveTool = {
-      status: "running",
-      name: event.data?.tool_name || event.data?.toolName || "tool",
-      callID: event.data?.tool_call_id || event.data?.toolCallID || null,
-    };
+    const callID = toolCallID(event);
+    if (callID) {
+      const current = data.liveTools?.[callID];
+      data.liveTools = {
+        ...(data.liveTools || {}),
+        [callID]: {
+          callID,
+          sequence: current?.sequence ?? nextLiveSequence(data),
+          status: "running",
+          name: event.data?.tool_name || event.data?.toolName || current?.name || "tool",
+          arguments: event.data?.tool_arguments || event.data?.toolArguments || current?.arguments || "",
+          iteration: event.data?.iteration ?? current?.iteration ?? null,
+          turnID: event.data?.turnID ?? current?.turnID ?? null,
+          startedAt: current?.startedAt || event.time || null,
+          endedAt: null,
+          ok: null,
+        },
+      };
+    }
   } else if (event.type === "session.tool.ended") {
-    data.liveTool = null;
+    const callID = toolCallID(event);
+    if (callID) {
+      const current = data.liveTools?.[callID];
+      const cancelled = Boolean(event.data?.result?.cancelled);
+      data.liveTools = {
+        ...(data.liveTools || {}),
+        [callID]: {
+          callID,
+          sequence: current?.sequence ?? nextLiveSequence(data),
+          status: cancelled ? "cancelled" : event.data?.ok === false ? "failed" : "completed",
+          name: event.data?.tool_name || event.data?.toolName || current?.name || "tool",
+          arguments: current?.arguments || "",
+          iteration: event.data?.iteration ?? current?.iteration ?? null,
+          turnID: event.data?.turnID ?? current?.turnID ?? null,
+          startedAt: current?.startedAt || null,
+          endedAt: event.time || null,
+          ok: event.data?.ok ?? null,
+        },
+      };
+    }
   } else if (event.type === "session.context.updated") {
     data.contextUsage = event.data;
   }

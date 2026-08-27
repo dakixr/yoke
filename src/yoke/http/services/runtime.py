@@ -123,6 +123,7 @@ class SessionRuntime:
         self._state: RuntimeState = "idle"
         self._last_error: str | None = None
         self._activity_status: str | None = None
+        self._active_tool_call_ids: dict[int, set[str]] = {}
 
     async def wake(self) -> None:
         """Start eligible work or apply a pending steer at a safe control boundary."""
@@ -656,6 +657,7 @@ class SessionRuntime:
         self._state = "running"
         self._last_error = None
         self._activity_status = "Thinking"
+        self._active_tool_call_ids = {execution.turn_id: set()}
         self._publish_activity(execution)
         execution.task = asyncio.create_task(
             self._run_execution(execution),
@@ -693,6 +695,7 @@ class SessionRuntime:
         self._active = None
         self._state = "idle"
         self._activity_status = None
+        self._active_tool_call_ids.pop(execution.turn_id, None)
         self._publish_activity(None)
 
     async def _run_execution(self, execution: TurnExecution) -> None:
@@ -828,6 +831,7 @@ class SessionRuntime:
             self._active = None
             self._state = "error" if outcome.error is not None else "idle"
             self._activity_status = None
+            self._active_tool_call_ids.pop(execution.turn_id, None)
             self._publish_activity(None)
             next_admission = self._recover_or_next_locked()
             if next_admission is not None:
@@ -1017,16 +1021,31 @@ class SessionRuntime:
         traced_payload = dict(payload)
         traced_payload["turn_id"] = execution.turn_id
         self.tool_traces.record_event(event, traced_payload)
+        if execution.retired_event.is_set() or self._active is not execution:
+            return
+        active_tool_call_ids = self._active_tool_call_ids.setdefault(
+            execution.turn_id,
+            set(),
+        )
+        call_id = payload.get("tool_call_id")
+        if event == "tool_execution_start" and isinstance(call_id, str):
+            active_tool_call_ids.add(call_id)
+        elif event == "tool_execution_end" and isinstance(call_id, str):
+            active_tool_call_ids.discard(call_id)
         next_activity = activity_status_for_event(
             event,
             payload,
             current=self._activity_status or "Thinking",
         )
+        if event == "tool_execution_end" and active_tool_call_ids:
+            next_activity = "Running tool"
         if next_activity is not None and next_activity != self._activity_status:
             self._activity_status = next_activity
             self._publish_activity(execution)
         event_type = _PUBLIC_AGENT_EVENTS.get(event)
         if event_type is None:
+            return
+        if execution.retired_event.is_set() or self._active is not execution:
             return
         record = self.store.load(self.session_id)
         redacted = redact_public_value(payload)
@@ -1041,7 +1060,17 @@ class SessionRuntime:
         )
 
     def _publish_activity(self, execution: TurnExecution | None) -> None:
+        if (
+            execution is not None
+            and (execution.retired_event.is_set() or self._active is not execution)
+        ):
+            return
         record = self.store.load(self.session_id)
+        if (
+            execution is not None
+            and (execution.retired_event.is_set() or self._active is not execution)
+        ):
+            return
         self.events.live(
             "session.active.changed",
             {

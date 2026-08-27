@@ -28,6 +28,8 @@ class AppController {
     this.bootstrapping = false;
     this.resyncing = false;
     this.refreshTimers = new Map();
+    this.messageRefreshGeneration = new Map();
+    this.liveToolRefreshGeneration = new Map();
     this.pendingLiveEvents = new Map();
     this.liveFrame = null;
     this.routeHandler = () => void this.applyRoute();
@@ -187,8 +189,8 @@ class AppController {
       this.eventBuffer.push(event);
       return;
     }
-    if (!event.durable && ["session.message.updated", "session.compaction.delta", "session.context.updated"].includes(event.type)) {
-      this.pendingLiveEvents.set(`${event.sessionID || "global"}:${event.type}`, event);
+    if (!event.durable && ["session.compaction.delta", "session.context.updated"].includes(event.type)) {
+      this.pendingLiveEvents.set(liveEventCoalesceKey(event), event);
       if (this.liveFrame === null) {
         this.liveFrame = requestAnimationFrame(() => {
           const events = [...this.pendingLiveEvents.values()];
@@ -231,6 +233,19 @@ class AppController {
       this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
     }
+    if (event.type === "session.active.changed" && event.data?.state === "running") {
+      this.schedule(`live-tools:${id}`, 100, () => this.refreshLiveToolCalls(id));
+      this.scheduleLiveReconcile(id);
+    }
+    if (event.type === "session.tool.started" || event.type === "session.tool.ended") {
+      this.schedule(`live-tools:${id}`, 80, () => this.refreshLiveToolCalls(id));
+    }
+    if (event.type === "session.tool.ended") {
+      this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
+    }
+    if (event.type === "session.interrupted") {
+      this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
+    }
     if (event.type === "session.runtime.failed") {
       this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
@@ -269,6 +284,22 @@ class AppController {
       try { await task(); } catch (error) { this.notice(errorMessage(error)); }
     }, delay);
     this.refreshTimers.set(key, timer);
+  }
+
+  scheduleLiveReconcile(sessionID) {
+    const key = `live-reconcile:${sessionID}`;
+    if (this.refreshTimers.has(key)) return;
+    this.schedule(key, 750, async () => {
+      if (store.getState().active[sessionID]?.state !== "running") return;
+      await this.refreshLiveToolCalls(sessionID);
+      const liveTools = Object.values(
+        store.getState().sessionData[sessionID]?.liveTools || {},
+      );
+      if (liveTools.some((tool) => tool.status !== "running")) {
+        await this.refreshMessages(sessionID);
+      }
+      this.scheduleLiveReconcile(sessionID);
+    });
   }
 
   async resync(broad = false) {
@@ -490,6 +521,10 @@ class AppController {
     const existing = store.getState().sessionData[sessionID];
     if (existing?.loading) return;
     if (existing?.loaded && !force) return;
+    this.messageRefreshGeneration.set(
+      sessionID,
+      (this.messageRefreshGeneration.get(sessionID) || 0) + 1,
+    );
     store.setState((state) => ({
       ...state,
       sessionData: { ...state.sessionData, [sessionID]: { ...state.sessionData[sessionID], loading: true } },
@@ -502,22 +537,29 @@ class AppController {
         api.permissions(sessionID),
         api.questions(sessionID),
       ]);
-      store.setState((state) => ({
-        ...mergeSessionSummary(state, session.data),
-        sessionData: {
-          ...state.sessionData,
-          [sessionID]: {
-            ...state.sessionData[sessionID],
-            loaded: true,
-            loading: false,
-            messages: [...messages.data].reverse(),
-            messageCursor: messages.cursor?.next || null,
-            queue: queue.data,
-            permissions: permissions.data,
-            questions: questions.data,
+      store.setState((state) => {
+        const current = state.sessionData[sessionID] || {};
+        const loadedMessages = [...messages.data].reverse();
+        const activeTurnID = state.active[sessionID]?.turnID ?? null;
+        return {
+          ...mergeSessionSummary(state, session.data),
+          sessionData: {
+            ...state.sessionData,
+            [sessionID]: {
+              ...current,
+              loaded: true,
+              loading: false,
+              messages: loadedMessages,
+              liveAssistants: reconcileLiveAssistants(current.liveAssistants || {}, loadedMessages, activeTurnID),
+              liveTools: reconcileLiveTools(current.liveTools || {}, loadedMessages, activeTurnID),
+              messageCursor: messages.cursor?.next || null,
+              queue: queue.data,
+              permissions: permissions.data,
+              questions: questions.data,
+            },
           },
-        },
-      }));
+        };
+      });
       await this.catchUpHistory(sessionID);
     } catch (error) {
       store.setState((state) => ({
@@ -543,7 +585,10 @@ class AppController {
           ...state.sessionData,
           [sessionID]: {
             ...state.sessionData[sessionID],
-            messages: [...response.data].reverse().concat(state.sessionData[sessionID]?.messages || []),
+            messages: dedupeMessages([
+              ...[...response.data].reverse(),
+              ...(state.sessionData[sessionID]?.messages || []),
+            ]),
             messageCursor: response.cursor?.next || null,
             loadingOlder: false,
           },
@@ -559,12 +604,18 @@ class AppController {
   }
 
   async refreshMessages(sessionID) {
-    if (!store.getState().sessionData[sessionID]?.loaded) return;
+    const sessionData = store.getState().sessionData[sessionID];
+    if (!sessionData?.loaded || sessionData.loading) return;
+    const generation = (this.messageRefreshGeneration.get(sessionID) || 0) + 1;
+    this.messageRefreshGeneration.set(sessionID, generation);
     const response = await api.messages(sessionID, { limit: 100, order: "desc" });
-    const messages = [...response.data].reverse();
+    if (this.messageRefreshGeneration.get(sessionID) !== generation) return;
+    const latest = [...response.data].reverse();
     store.setState((state) => {
       const current = state.sessionData[sessionID] || {};
       const livePrompt = current.livePrompt;
+      const messages = mergeLatestMessageSnapshot(current.messages || [], latest);
+      const activeTurnID = state.active[sessionID]?.turnID ?? null;
       return {
         ...state,
         sessionData: {
@@ -572,7 +623,8 @@ class AppController {
           [sessionID]: {
             ...current,
             messages,
-            liveAssistant: null,
+            liveAssistants: reconcileLiveAssistants(current.liveAssistants || {}, messages, activeTurnID),
+            liveTools: reconcileLiveTools(current.liveTools || {}, messages, activeTurnID),
             livePrompt:
               current.lastError && livePrompt && messagesContainPrompt(messages, livePrompt)
                 ? null
@@ -581,6 +633,33 @@ class AppController {
               (prompt) => !messagesContainPrompt(messages, prompt),
             ),
           },
+        },
+      };
+    });
+  }
+
+  async refreshLiveToolCalls(sessionID) {
+    const runtime = store.getState().active[sessionID];
+    if (!runtime?.turnID) return;
+    const turnID = runtime.turnID;
+    const generation = (this.liveToolRefreshGeneration.get(sessionID) || 0) + 1;
+    this.liveToolRefreshGeneration.set(sessionID, generation);
+    const response = await api.toolCalls(sessionID, { turnID, limit: 100 });
+    if (this.liveToolRefreshGeneration.get(sessionID) !== generation) return;
+    store.setState((state) => {
+      const current = state.sessionData[sessionID] || {};
+      if (state.active[sessionID]?.turnID !== turnID) return state;
+      const merged = mergeLiveToolSnapshot(current, response.data || []);
+      const liveTools = reconcileLiveTools(
+        merged.liveTools,
+        current.messages || [],
+        turnID,
+      );
+      return {
+        ...state,
+        sessionData: {
+          ...state.sessionData,
+          [sessionID]: { ...current, ...merged, liveTools },
         },
       };
     });
@@ -621,7 +700,14 @@ class AppController {
       ...inspectedIDs,
       state.ui.selectedSessionID,
     ].filter(Boolean));
-    for (const id of ids) await Promise.allSettled([this.refreshHumanInput(id), this.refreshProcesses(id)]);
+    for (const id of ids) {
+      if (state.active[id]?.state === "running") this.scheduleLiveReconcile(id);
+      await Promise.allSettled([
+        this.refreshHumanInput(id),
+        this.refreshProcesses(id),
+        this.refreshLiveToolCalls(id),
+      ]);
+    }
   }
 
   async refreshTree(sessionID) {
@@ -1358,6 +1444,103 @@ function messagesContainPrompt(messages, livePrompt) {
       JSON.stringify(attachments) === JSON.stringify(expectedAttachments)
     );
   });
+}
+
+function liveEventCoalesceKey(event) {
+  return `${event.sessionID || "global"}:${event.type}`;
+}
+
+function mergeLatestMessageSnapshot(current, latest) {
+  if (!current.length) return latest;
+  if (!latest.length) return current;
+  const latestIDs = new Set(latest.map((message) => message.id));
+  const overlap = current.findIndex((message) => latestIDs.has(message.id));
+  if (overlap < 0) return dedupeMessages([...current, ...latest]);
+  const older = current.slice(0, overlap).filter((message) => !latestIDs.has(message.id));
+  return dedupeMessages([...older, ...latest]);
+}
+
+function dedupeMessages(messages) {
+  const seen = new Set();
+  return messages.filter((message) => {
+    if (!message?.id || seen.has(message.id)) return false;
+    seen.add(message.id);
+    return true;
+  });
+}
+
+function reconcileLiveAssistants(liveAssistants, messages, activeTurnID = null) {
+  const candidates = messages
+    .filter((message) => message.type === "assistant")
+    .map((message) => ({
+      id: message.id,
+      phase: message.phase || null,
+      text: projectedMessageText(message),
+      time: Date.parse(message.timeCreated || ""),
+    }));
+  const used = new Set();
+  const next = {};
+  for (const [key, live] of Object.entries(liveAssistants)) {
+    const liveTime = Date.parse(live.timeCreated || "");
+    const match = candidates.find((candidate) => {
+      if (used.has(candidate.id)) return false;
+      if (candidate.phase !== (live.phase || null) || candidate.text !== String(live.content || "")) return false;
+      if (!Number.isFinite(liveTime) || !Number.isFinite(candidate.time)) return true;
+      return candidate.time >= liveTime - 2000;
+    });
+    if (match) {
+      used.add(match.id);
+      continue;
+    }
+    if (activeTurnID === null || (live.turnID !== null && live.turnID !== activeTurnID)) continue;
+    next[key] = live;
+  }
+  return next;
+}
+
+function reconcileLiveTools(liveTools, messages, activeTurnID = null) {
+  const persistedResults = new Set(
+    messages
+      .filter((message) => message.type === "tool" && message.callID)
+      .map((message) => message.callID),
+  );
+  const next = {};
+  for (const [callID, live] of Object.entries(liveTools)) {
+    if (persistedResults.has(callID)) continue;
+    if (activeTurnID === null || (live.turnID !== null && live.turnID !== activeTurnID)) continue;
+    next[callID] = live;
+  }
+  return next;
+}
+
+function projectedMessageText(message) {
+  return (message.content || [])
+    .filter((part) => part.type === "text")
+    .map((part) => part.text || "")
+    .join("\n");
+}
+
+function mergeLiveToolSnapshot(current, calls) {
+  const liveTools = { ...(current.liveTools || {}) };
+  let sequence = current.liveTimelineSequence || 0;
+  for (const call of calls) {
+    if (!call?.id) continue;
+    const previous = liveTools[call.id];
+    if (!previous) sequence += 1;
+    liveTools[call.id] = {
+      callID: call.id,
+      sequence: previous?.sequence ?? sequence,
+      status: ["pending", "running"].includes(call.status) ? "running" : call.status,
+      name: call.toolName || previous?.name || "tool",
+      arguments: call.arguments?.raw || previous?.arguments || "",
+      iteration: call.iteration ?? previous?.iteration ?? null,
+      turnID: call.turnID ?? previous?.turnID ?? null,
+      startedAt: call.time?.started || previous?.startedAt || null,
+      endedAt: call.time?.ended || previous?.endedAt || null,
+      ok: call.status === "ok" ? true : ["failed", "cancelled"].includes(call.status) ? false : null,
+    };
+  }
+  return { liveTools, liveTimelineSequence: sequence };
 }
 
 function provisionalSessionTitle(text) {

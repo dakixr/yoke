@@ -56,7 +56,11 @@
 .tool-line:hover { color: var(--text); background: var(--panel-2); }
 .tool-line__glyph { color: var(--faint); }
 .tool-line code, .tool-line__summary { min-width: 0; overflow: hidden; color: var(--faint); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-.tool-line--live { margin: 0 0 18px 90px; width: calc(100% - 90px); }
+.tool-line__state { flex: none; color: var(--faint); font-size: 10px; font-weight: 620; }
+.tool-line--running .tool-line__glyph, .tool-line--running .tool-line__state { color: var(--working); }
+.tool-line--failed .tool-line__glyph, .tool-line--failed .tool-line__state { color: var(--danger); }
+.tool-line--cancelled .tool-line__state { color: var(--muted); }
+.tool-line--live { width: calc(100% - 90px); margin: 0 0 2px 90px; }
 .chat-working { display: flex; width: calc(100% - 90px); min-height: 36px; margin: 2px 0 18px 90px; align-items: center; gap: 8px; padding: 6px 0 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); color: var(--muted); font-size: 12.5px; }
 .chat-working__mark { width: 11px; height: 11px; flex: none; transform: rotate(45deg); border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border-strong)); border-radius: 2px; background: color-mix(in srgb, var(--accent) 20%, transparent); box-shadow: inset 0 0 0 2px var(--bg); animation: chat-working-breathe 1.45s ease-in-out infinite; }
 .chat-working__label { color: color-mix(in srgb, var(--text) 72%, var(--muted)); font-weight: 560; }

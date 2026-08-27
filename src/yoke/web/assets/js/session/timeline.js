@@ -14,8 +14,14 @@ export function Timeline({ sessionID, data, runtime }) {
   const messages = data?.messages || [];
   const livePrompt = data?.livePrompt;
   const failedPrompts = data?.failedPrompts || [];
-  const liveAssistant = data?.liveAssistant;
-  const liveTool = data?.liveTool;
+  const liveAssistants = orderedLiveValues(data?.liveAssistants);
+  const liveTools = orderedLiveValues(data?.liveTools);
+  const liveToolsByID = Object.fromEntries(liveTools.map((tool) => [tool.callID, tool]));
+  const persistedToolCalls = persistedToolCallMap(messages);
+  const tailLiveTools = liveTools.filter((tool) => !persistedToolCalls.has(tool.callID));
+  const liveTailItems = orderedLiveTail(liveAssistants, tailLiveTools);
+  const liveAssistantSignature = liveAssistants.map((item) => `${item.id}:${item.content}`).join("|");
+  const liveToolSignature = liveTools.map((item) => `${item.callID}:${item.status}`).join("|");
 
   if (restore.current.sessionID !== sessionID) {
     restore.current = { sessionID, target: getScroll(sessionID), complete: false };
@@ -47,7 +53,7 @@ export function Timeline({ sessionID, data, runtime }) {
       node.scrollTop = node.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [sessionID, messages.length, failedPrompts.length, livePrompt?.id, liveAssistant?.content, liveTool?.callID, runtime?.state, runtime?.startedAt, runtime?.activity, following]);
+  }, [sessionID, messages.length, failedPrompts.length, livePrompt?.id, liveAssistantSignature, liveToolSignature, runtime?.state, runtime?.startedAt, runtime?.activity, following]);
 
   const onScroll = () => {
     const node = viewport.current;
@@ -67,18 +73,20 @@ export function Timeline({ sessionID, data, runtime }) {
               ${data.loadingOlder ? "Loading…" : "Load older turns"}
             </button>
           ` : null}
-          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} />`) : !failedPrompts.length && !livePrompt && !liveAssistant?.content && !liveTool && !runtime?.activity ? html`
+          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolNames=${persistedToolCalls} />`) : !failedPrompts.length && !livePrompt && !liveAssistants.length && !liveTools.length && !runtime?.activity ? html`
             <div class="timeline-empty">This session has no messages yet.</div>
           ` : null}
           ${failedPrompts.map((prompt) => html`<${UserMessage} key=${prompt.id} message=${livePromptMessage(prompt)} />`)}
           ${livePrompt ? html`<${UserMessage} message=${livePromptMessage(livePrompt)} />` : null}
-          ${liveAssistant?.content ? html`<${AssistantMessage} message=${{ phase: liveAssistant.phase, content: [{ type: "text", text: liveAssistant.content }] }} streaming />` : null}
-          ${liveTool ? html`
-            <button class="tool-line tool-line--live" onClick=${() => liveTool.callID && controller.openInspector("tool", { callID: liveTool.callID })}>
-              <span class="tool-line__glyph">↳</span><span>Running ${humanToolName(liveTool.name)}</span><span class="muted">working</span>
-            </button>
-          ` : null}
-          ${runtime?.activity ? html`<${ActivityIndicator} startedAt=${runtime.startedAt} activity=${runtime.activity} />` : null}
+          ${liveTailItems.map((item) => item.kind === "assistant"
+            ? item.value.content ? html`<${AssistantMessage} key=${item.value.id} message=${{ phase: item.value.phase, content: [{ type: "text", text: item.value.content }] }} />` : null
+            : html`<button key=${item.value.callID} class=${`tool-line tool-line--live tool-line--${item.value.status}`} onClick=${() => item.value.callID && controller.openInspector("tool", { callID: item.value.callID })}>
+                <span class="tool-line__glyph">${toolGlyph(item.value.status)}</span>
+                <span>${humanToolName(item.value.name)}</span>
+                <span class="tool-line__state">${toolStatusLabel(item.value.status)}</span>
+                ${item.value.arguments ? html`<code>${compactArguments(item.value.arguments)}</code>` : null}
+              </button>`)}
+          ${runtime?.activity && !liveTools.length ? html`<${ActivityIndicator} startedAt=${runtime.startedAt} activity=${runtime.activity} />` : null}
           ${data?.lastError ? html`<div class="timeline-error" role="status">${data.lastError}</div>` : null}
         </div>
       </div>
@@ -103,10 +111,10 @@ function ActivityIndicator({ startedAt, activity }) {
   `;
 }
 
-function TimelineMessage({ sessionID, message }) {
+function TimelineMessage({ sessionID, message, liveToolsByID, toolNames }) {
   if (message.type === "user") return html`<${UserMessage} message=${message} />`;
-  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} />`;
-  if (message.type === "tool") return html`<${ToolMessage} sessionID=${sessionID} message=${message} />`;
+  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} />`;
+  if (message.type === "tool") return html`<${ToolMessage} sessionID=${sessionID} message=${message} toolName=${toolNames.get(message.callID) || null} />`;
   return html`<div class="control-line"><span>${message.control || "Control"}</span>${message.text ? html`<span>${message.text}</span>` : null}</div>`;
 }
 
@@ -136,19 +144,20 @@ function livePromptMessage(livePrompt) {
   };
 }
 
-function AssistantMessage({ sessionID = null, message, streaming = false }) {
+function AssistantMessage({ sessionID = null, message, liveToolsByID = {} }) {
   const text = (message.content || []).filter((part) => part.type === "text").map((part) => part.text).join("\n");
   const images = (message.content || []).filter((part) => part.type === "image");
   const phase = message.phase === "commentary" ? "Commentary" : "Assistant";
   return html`<article class=${`turn turn--assistant ${message.phase === "commentary" ? "is-commentary" : ""}`}>
-    <div class="turn__rail"><span class="turn__label">${phase}</span>${streaming ? html`<span class="turn__activity">writing</span>` : null}${message.timeCreated ? html`<time>${formatTime(message.timeCreated)}</time>` : null}</div>
+    <div class="turn__rail"><span class="turn__label">${phase}</span>${message.timeCreated ? html`<time>${formatTime(message.timeCreated)}</time>` : null}</div>
     <div class="turn__body assistant-content">
       ${text ? html`<div class="markdown" dangerouslySetInnerHTML=${{ __html: markdownHTML(text) }}></div>` : null}
       ${images.map((part) => html`<span class="attachment-chip">▧ ${part.name}</span>`)}
       ${message.toolCalls?.length ? html`<div class="tool-call-list">
         ${message.toolCalls.map((call) => html`
-          <button class="tool-line" onClick=${() => sessionID && controller.openInspector("tool", { callID: call.id })}>
-            <span class="tool-line__glyph">↳</span><span>${humanToolName(call.name)}</span><code>${compactArguments(call.arguments)}</code>
+          <button key=${call.id} class=${`tool-line ${liveToolsByID[call.id] ? `tool-line--${liveToolsByID[call.id].status}` : ""}`} onClick=${() => sessionID && controller.openInspector("tool", { callID: call.id })}>
+            <span class="tool-line__glyph">${liveToolsByID[call.id] ? toolGlyph(liveToolsByID[call.id].status) : "↳"}</span><span>${humanToolName(call.name)}</span><code>${compactArguments(call.arguments)}</code>
+            ${liveToolsByID[call.id] ? html`<span class="tool-line__state">${toolStatusLabel(liveToolsByID[call.id].status)}</span>` : null}
           </button>
         `)}
       </div>` : null}
@@ -156,13 +165,56 @@ function AssistantMessage({ sessionID = null, message, streaming = false }) {
   </article>`;
 }
 
-function ToolMessage({ sessionID, message }) {
+function ToolMessage({ sessionID, message, toolName = null }) {
   const summary = compactResult(message.result);
   return html`<div class="tool-result-row">
     <button class="tool-line" onClick=${() => message.callID && controller.openInspector("tool", { callID: message.callID })}>
-      <span class="tool-line__glyph">✓</span><span>Tool completed</span>${summary ? html`<span class="tool-line__summary">${summary}</span>` : null}
+      <span class="tool-line__glyph">✓</span><span>${toolName ? humanToolName(toolName) : "Tool"} completed</span>${summary ? html`<span class="tool-line__summary">${summary}</span>` : null}
     </button>
   </div>`;
+}
+
+function orderedLiveValues(values) {
+  return Object.values(values || {}).sort((left, right) => {
+    const sequence = (left.sequence || 0) - (right.sequence || 0);
+    if (sequence) return sequence;
+    return String(left.callID || left.id || "").localeCompare(String(right.callID || right.id || ""));
+  });
+}
+
+function orderedLiveTail(assistants, tools) {
+  return [
+    ...assistants.map((value) => ({ kind: "assistant", value, time: value.timeCreated })),
+    ...tools.map((value) => ({ kind: "tool", value, time: value.startedAt })),
+  ].sort((left, right) => {
+    const leftTime = Date.parse(left.time || "");
+    const rightTime = Date.parse(right.time || "");
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) return leftTime - rightTime;
+    return (left.value.sequence || 0) - (right.value.sequence || 0);
+  });
+}
+
+function persistedToolCallMap(messages) {
+  const calls = new Map();
+  for (const message of messages) {
+    if (message.type !== "assistant") continue;
+    for (const call of message.toolCalls || []) calls.set(call.id, call.name);
+  }
+  return calls;
+}
+
+function toolStatusLabel(status) {
+  if (status === "running") return "working";
+  if (status === "failed") return "failed";
+  if (status === "cancelled") return "cancelled";
+  return "done";
+}
+
+function toolGlyph(status) {
+  if (status === "running") return "↳";
+  if (status === "failed") return "×";
+  if (status === "cancelled") return "·";
+  return "✓";
 }
 
 function compactArguments(raw) {

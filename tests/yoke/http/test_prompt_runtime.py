@@ -76,6 +76,36 @@ class FakeAgent:
         self.controller.enter(self.record.id)
         self.controller.started[prompt].set()
         try:
+            if prompt == "parallel-tools" and on_event is not None:
+                on_event(
+                    "tool_execution_start",
+                    {
+                        "iteration": 1,
+                        "tool_name": "tool.first",
+                        "tool_call_id": "call-first",
+                        "tool_arguments": "{}",
+                    },
+                )
+                on_event(
+                    "tool_execution_start",
+                    {
+                        "iteration": 1,
+                        "tool_name": "tool.second",
+                        "tool_call_id": "call-second",
+                        "tool_arguments": "{}",
+                    },
+                )
+                on_event(
+                    "tool_execution_end",
+                    {
+                        "iteration": 1,
+                        "tool_name": "tool.first",
+                        "tool_call_id": "call-first",
+                        "ok": True,
+                        "result": {"ok": True},
+                    },
+                )
+                self.controller.started["parallel-tools-midpoint"].set()
             while not self.controller.release[prompt].is_set():
                 if stop_requested is not None and stop_requested():
                     return AgentResult(
@@ -86,6 +116,17 @@ class FakeAgent:
                         conversation_entries=[],
                     )
                 time.sleep(0.005)
+            if prompt == "parallel-tools" and on_event is not None:
+                on_event(
+                    "tool_execution_end",
+                    {
+                        "iteration": 1,
+                        "tool_name": "tool.second",
+                        "tool_call_id": "call-second",
+                        "ok": True,
+                        "result": {"ok": True},
+                    },
+                )
             tree = SessionTree.restore(
                 self.record.conversation_entries,
                 self.record.leaf_id,
@@ -106,6 +147,64 @@ class FakeAgent:
             )
         finally:
             self.controller.leave(self.record.id)
+
+
+def test_parallel_tool_activity_stays_running_until_all_tools_finish(
+    tmp_path: Path,
+) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "parallel-session")
+        admitted = client.post(
+            "/api/v1/session/parallel-session/prompt",
+            headers=_auth(),
+            json={
+                "id": "parallel-input",
+                "prompt": {"text": "parallel-tools"},
+                "delivery": "steer",
+                "resume": True,
+            },
+        )
+        assert admitted.status_code == 200
+        assert controller.started["parallel-tools-midpoint"].wait(timeout=2)
+
+        active = client.get("/api/v1/session/active", headers=_auth())
+        assert active.status_code == 200
+        runtime = active.json()["data"]["parallel-session"]
+        assert runtime["state"] == "running"
+        assert runtime["activity"] == "Running tool"
+
+        calls = client.get(
+            "/api/v1/session/parallel-session/tool-call",
+            headers=_auth(),
+        )
+        assert calls.status_code == 200
+        assert [item["id"] for item in calls.json()["data"][:2]] == [
+            "call-first",
+            "call-second",
+        ]
+        assert [item["status"] for item in calls.json()["data"][:2]] == [
+            "ok",
+            "running",
+        ]
+
+        controller.release["parallel-tools"].set()
+        for _ in range(200):
+            active = client.get("/api/v1/session/active", headers=_auth())
+            if "parallel-session" not in active.json()["data"]:
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("parallel tool session did not settle")
 
 
 def _create_session(client: TestClient, root: Path, session_id: str) -> None:
