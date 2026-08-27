@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from mcp.types import ToolAnnotations
 
@@ -14,6 +15,7 @@ from yoke.agent.tools.mcp import McpCallTool
 from yoke.agent.tools.mcp import McpInspectTool
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.agent.tools.read import ReadTool
+from yoke.mcp_server.files import MCPViewImageTool
 from yoke.mcp_server.search import MCPFdTool
 from yoke.mcp_server.search import MCPRipgrepTool
 from yoke.mcp_server.skills import MCPSkillTool
@@ -28,6 +30,7 @@ class ExposedTool:
     description: str
     tool_class: type[LocalTool]
     annotations: ToolAnnotations
+    result_kind: Literal["json", "image"] = "json"
 
 
 READ_ONLY = ToolAnnotations(
@@ -61,6 +64,14 @@ TOOL_REGISTRY = {
             "and limit to continue large files.",
             ReadTool,
             READ_ONLY,
+        ),
+        ExposedTool(
+            "view_image",
+            "View image",
+            MCPViewImageTool.description,
+            MCPViewImageTool,
+            READ_ONLY,
+            "image",
         ),
         ExposedTool(
             "rg",

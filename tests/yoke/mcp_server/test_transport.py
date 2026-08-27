@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+from io import BytesIO
 import json
 from pathlib import Path
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
 import httpx2
+from mcp.types import ImageContent
+from PIL import Image
 
 from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.auth import SingleUserOAuthProvider
@@ -39,7 +42,7 @@ def test_health_is_public_but_mcp_requires_configured_bearer(tmp_path: Path) -> 
                 assert denied.headers["www-authenticate"] == "Bearer"
             async with http_client(service, token="test-secret") as mcp:
                 result = await mcp.list_tools()
-                assert len(result.tools) == 10
+                assert len(result.tools) == 11
 
     asyncio.run(scenario())
 
@@ -182,7 +185,7 @@ def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None
                 service, token=refreshed.json()["access_token"]
             ) as mcp:
                 result = await mcp.list_tools()
-                assert len(result.tools) == 10
+                assert len(result.tools) == 11
 
         state_file = tmp_path / "oauth.json"
         assert state_file.stat().st_mode & 0o777 == 0o600
@@ -193,6 +196,29 @@ def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None
             for value in state_payload[section].values()
         }
         assert subjects == {"yoke-mcp-user"}
+
+    asyncio.run(scenario())
+
+
+def test_native_image_survives_streamable_http_transport(tmp_path: Path) -> None:
+    output = BytesIO()
+    with Image.new("RGB", (2, 2), color=(10, 20, 30)) as image:
+        image.save(output, format="PNG")
+    expected = output.getvalue()
+    (tmp_path / "transport.png").write_bytes(expected)
+
+    async def scenario() -> None:
+        service = create_service(MCPServerConfig(root=tmp_path))
+        async with service.server.session_manager.run():
+            async with http_client(service) as client:
+                result = await client.call_tool("view_image", {"path": "transport.png"})
+                assert result.is_error is False
+                assert result.structured_content is None
+                assert len(result.content) == 1
+                content = result.content[0]
+                assert isinstance(content, ImageContent)
+                assert content.mime_type == "image/png"
+                assert base64.b64decode(content.data, validate=True) == expected
 
     asyncio.run(scenario())
 

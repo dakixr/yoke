@@ -15,6 +15,7 @@ from .helpers import structured
 
 EXPECTED_TOOLS = [
     "read_file",
+    "view_image",
     "rg",
     "fd",
     "skill",
@@ -27,24 +28,35 @@ EXPECTED_TOOLS = [
 ]
 
 
-def test_registry_is_an_explicit_ten_tool_allowlist(tmp_path: Path) -> None:
+def test_registry_is_an_explicit_eleven_tool_allowlist(tmp_path: Path) -> None:
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
         async with memory_client(service) as client:
             result = await client.list_tools()
             assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
-            assert set(TOOL_REGISTRY) == set(EXPECTED_TOOLS[:8])
-            read_tool = result.tools[0]
-            skill_tool = result.tools[3]
-            patch_tool = result.tools[4]
+            assert set(TOOL_REGISTRY) == set(EXPECTED_TOOLS[:9])
+            tools = {tool.name: tool for tool in result.tools}
+            read_tool = tools["read_file"]
+            image_tool = tools["view_image"]
+            skill_tool = tools["skill"]
+            patch_tool = tools["apply_patch"]
             assert read_tool.annotations is not None
             assert read_tool.annotations.read_only_hint is True
+            assert image_tool.annotations is not None
+            assert image_tool.annotations.read_only_hint is True
+            assert image_tool.annotations.destructive_hint is False
+            assert image_tool.annotations.open_world_hint is False
+            assert set(image_tool.input_schema["properties"]) == {"path"}
+            assert image_tool.input_schema["required"] == ["path"]
             assert skill_tool.annotations is not None
             assert skill_tool.annotations.read_only_hint is True
             assert patch_tool.annotations is not None
             assert patch_tool.annotations.destructive_hint is True
             assert read_tool.input_schema == TOOL_REGISTRY[
                 "read_file"
+            ].tool_class.model_json_schema(by_alias=True)
+            assert image_tool.input_schema == TOOL_REGISTRY[
+                "view_image"
             ].tool_class.model_json_schema(by_alias=True)
 
     asyncio.run(scenario())

@@ -15,8 +15,13 @@ The service exposes:
 
 - `GET /healthz`
 - MCP Streamable HTTP at `POST /mcp`
-- ten tools: `read_file`, `rg`, `fd`, `skill`, `apply_patch`, `exec_command`,
-  `exec_python`, `process_io`, `mcp_inspect`, and `mcp_call`
+- eleven tools: `read_file`, `view_image`, `rg`, `fd`, `skill`, `apply_patch`,
+  `exec_command`, `exec_python`, `process_io`, `mcp_inspect`, and `mcp_call`
+
+`view_image` accepts a local PNG, JPEG, GIF, or WebP path and returns native MCP
+image content while preserving the source bytes. Relative and absolute paths
+follow the same rules as the other file tools. Invalid, unsupported, oversized,
+or excessively large decoded images are rejected before any image is returned.
 
 `mcp_inspect` and `mcp_call` let the authenticated remote client inspect and
 call MCP servers configured through Yoke without starting a Yoke agent.

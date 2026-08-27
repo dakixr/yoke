@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import time
 from pathlib import Path
 
 from mcp.types import CallToolResult
+from mcp.types import ImageContent
 from mcp.types import TextContent
 from mcp.types import Tool
 from pydantic import ValidationError
@@ -67,9 +70,15 @@ class ToolAdapter:
         except Exception as exc:  # pragma: no cover - final adapter boundary
             logger.exception("MCP tool execution crashed", extra={"tool": name})
             result = {"ok": False, "error": str(exc)}
+        try:
+            encoded = _encode_tool_result(spec, result)
+        except (TypeError, ValueError) as exc:
+            logger.exception("MCP tool result encoding crashed", extra={"tool": name})
+            result = {"ok": False, "error": f"Invalid internal tool result: {exc}"}
+            encoded = _encode_json_result(result)
         duration_ms = round((time.monotonic() - started) * 1000)
         self._log_call(name, duration_ms, bool(result.get("ok", False)))
-        return _encode_result(result)
+        return encoded
 
     def _mcp_tool(self, spec: ExposedTool) -> Tool:
         return Tool(
@@ -103,10 +112,36 @@ class ToolAdapter:
 
     @staticmethod
     def _error(message: str) -> CallToolResult:
-        return _encode_result({"ok": False, "error": message})
+        return _encode_json_result({"ok": False, "error": message})
 
 
-def _encode_result(result: dict[str, object]) -> CallToolResult:
+def _encode_tool_result(spec: ExposedTool, result: dict[str, object]) -> CallToolResult:
+    if not bool(result.get("ok", True)) or spec.result_kind == "json":
+        return _encode_json_result(result)
+    if spec.result_kind != "image":
+        raise ValueError(f"Unsupported result kind: {spec.result_kind}")
+    data = result.get("data_base64")
+    mime_type = result.get("mime_type")
+    byte_count = result.get("bytes")
+    if not isinstance(data, str) or not data:
+        raise TypeError("image data_base64 must be a non-empty string")
+    if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
+        raise TypeError("image mime_type must be an image MIME type")
+    if not isinstance(byte_count, int) or isinstance(byte_count, bool):
+        raise TypeError("image bytes must be an integer")
+    try:
+        decoded_size = len(base64.b64decode(data, validate=True))
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("image data_base64 is invalid") from exc
+    if decoded_size != byte_count:
+        raise ValueError("image byte count does not match data_base64")
+    return CallToolResult(
+        content=[ImageContent(type="image", data=data, mime_type=mime_type)],
+        is_error=False,
+    )
+
+
+def _encode_json_result(result: dict[str, object]) -> CallToolResult:
     text = json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str)
     return CallToolResult(
         content=[TextContent(type="text", text=text)],
