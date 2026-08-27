@@ -4,6 +4,17 @@
       "ActiveRuntimeInfo": {
         "additionalProperties": false,
         "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activity"
+          },
           "startedAt": {
             "anyOf": [
               {

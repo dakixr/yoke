@@ -165,6 +165,11 @@ The process and raw live-output inspectors are runtime-retained. Their final
 conversation results may survive restart, but PIDs and retained stdout chunks
 do not.
 
+`/session/active` includes a process-local `activity` label while work is in
+flight. It uses the same status state machine as the CLI (`Thinking`,
+`Streaming`, `Running tool`, `Compacting`, provider retry states, and
+`Recovering`) so browser reconnects can restore the current activity text.
+
 ## Session archive state
 
 The visible browser action is called `Settle`, but the HTTP/domain field is

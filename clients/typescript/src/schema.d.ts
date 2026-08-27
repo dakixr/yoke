@@ -897,6 +897,8 @@ export interface components {
     schemas: {
         /** ActiveRuntimeInfo */
         ActiveRuntimeInfo: {
+            /** Activity */
+            activity?: string | null;
             /** Startedat */
             startedAt?: string | null;
             /**

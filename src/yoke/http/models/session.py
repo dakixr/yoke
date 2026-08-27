@@ -114,6 +114,7 @@ class ActiveRuntimeInfo(ApiModel):
     state: Literal["idle", "running", "stopping", "waiting_input", "error"]
     turn_id: int | None = None
     started_at: str | None = None
+    activity: str | None = None
 
 
 class SessionActiveResponse(ApiModel):

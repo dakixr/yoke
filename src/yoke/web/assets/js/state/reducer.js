@@ -61,6 +61,7 @@ export function reducePublicEvent(state, event) {
       turnID: event.data?.turnID ?? null,
       startedAt: event.data?.startedAt ?? null,
       error: event.data?.error ?? null,
+      activity: event.data?.activity ?? null,
     };
     const done = { ...next.ui.doneUnreviewed };
     if (
@@ -176,6 +177,7 @@ export function reducePublicEvent(state, event) {
     const admitted = inputID ? data.pendingPrompts?.[inputID] : null;
     if (admitted) {
       data.livePrompt = admitted;
+      data.lastError = null;
       const pendingPrompts = { ...data.pendingPrompts };
       delete pendingPrompts[inputID];
       data.pendingPrompts = pendingPrompts;

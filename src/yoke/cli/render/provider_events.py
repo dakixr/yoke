@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from yoke.cli.render.base import truncate_cli_text
+from yoke.agent.activity import activity_status_for_event
 
 PROVIDER_WARNING_STYLE = "#f0a030"
 
@@ -39,11 +40,8 @@ def format_provider_event(
 
 def provider_status_for_event(event: str) -> str:
     """Return the toolbar/status label for provider telemetry."""
-    if event == "provider_rate_limited":
-        return "Rate limited"
-    if event == "provider_recovered":
-        return "Thinking"
-    return "Retrying provider"
+    status = activity_status_for_event(event, {}, current="Thinking")
+    return status or "Thinking"
 
 
 def _retry_text(payload: dict[str, object]) -> str:

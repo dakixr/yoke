@@ -116,6 +116,8 @@
 .composer-footer { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 6px 6px 8px; }
 .composer-footer__left, .composer-actions { display: flex; align-items: center; gap: 5px; }
 .composer-runtime { color: var(--muted); font-size: 10.5px; }
+.composer-send-button { display: grid; width: 38px; height: 38px; min-height: 38px !important; flex: none; place-items: center; padding: 0 !important; border-radius: 50% !important; line-height: 1; }
+.composer-send-button svg { display: block; }
 
 .new-session-view { overflow-y: auto; }
 .draft-composer-wrap { width: min(760px, calc(100% - 32px)); margin: auto; padding: 50px 0 90px; }

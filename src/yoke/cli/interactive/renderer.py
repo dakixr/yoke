@@ -14,6 +14,7 @@ from yoke.cli.render import format_tool_result_error
 from yoke.cli.render.provider_events import format_provider_event
 from yoke.cli.render.provider_events import is_provider_event
 from yoke.cli.render.provider_events import provider_status_for_event
+from yoke.agent.activity import activity_status_for_event
 
 
 class PromptToolkitLiveRenderer:
@@ -96,7 +97,7 @@ class PromptToolkitLiveRenderer:
             self._emit_tool_output(
                 f"compact: summarizing {tokens} input tokens\u2026", False
             )
-            self._set_status_text("Compacting")
+            self._set_status_from_event(event, payload)
             return
         if event == "compaction_summary_end":
             ok = payload.get("ok", False)
@@ -112,7 +113,7 @@ class PromptToolkitLiveRenderer:
                 self._emit_tool_output(
                     f"compact: \u2717 failed after {duration}s ({error})", True
                 )
-            self._set_status_text("Thinking")
+            self._set_status_from_event(event, payload)
             return
         if event == "context_usage":
             if self._set_context_usage is not None:
@@ -123,17 +124,13 @@ class PromptToolkitLiveRenderer:
             return
         if event == "context_compaction":
             self._emit_notice(format_compaction_note(payload))
-            self._set_status_text("Thinking")
+            self._set_status_from_event(event, payload)
             return
         if event == "model_start":
-            if self._status_text not in {
-                "Rate limited",
-                "Retrying provider",
-            }:
-                self._set_status_text("Thinking")
+            self._set_status_from_event(event, payload)
             return
         if event == "model_end":
-            self._set_status_text("Streaming")
+            self._set_status_from_event(event, payload)
             return
         if event == "assistant_message":
             if payload.get("phase") == "commentary":
@@ -141,7 +138,7 @@ class PromptToolkitLiveRenderer:
                 content = payload.get("content")
                 if isinstance(content, str) and content.strip():
                     self._emit_commentary(content.strip())
-                self._set_status_text("Streaming")
+                self._set_status_from_event(event, payload)
             return
         if event == "tool_execution_start":
             self._ensure_tool_block()
@@ -152,7 +149,7 @@ class PromptToolkitLiveRenderer:
             )
             if self._increment_tool_count is not None:
                 self._increment_tool_count()
-            self._set_status_text("Running tool")
+            self._set_status_from_event(event, payload)
             return
         if event == "tool_execution_end":
             if not payload.get("ok", False):
@@ -160,9 +157,9 @@ class PromptToolkitLiveRenderer:
                     _tool_error_text(payload) or "The tool returned an error.",
                     True,
                 )
-                self._set_status_text("Recovering")
+                self._set_status_from_event(event, payload)
                 return
-            self._set_status_text("Thinking")
+            self._set_status_from_event(event, payload)
 
     def _capture_turn_tokens(self, payload: dict[str, object]) -> None:
         """Extract per-turn token counts from a usage payload."""
@@ -205,6 +202,15 @@ class PromptToolkitLiveRenderer:
     def _set_status_text(self, text: str) -> None:
         self._status_text = text
         self._set_status(text)
+
+    def _set_status_from_event(self, event: str, payload: dict[str, object]) -> None:
+        status = activity_status_for_event(
+            event,
+            payload,
+            current=self._status_text or "Thinking",
+        )
+        if status is not None:
+            self._set_status_text(status)
 
     def _record_tool_event_if_needed(
         self,

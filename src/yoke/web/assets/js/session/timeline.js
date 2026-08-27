@@ -13,6 +13,7 @@ export function Timeline({ sessionID, data, runtime }) {
   const [following, setFollowing] = useState(true);
   const messages = data?.messages || [];
   const livePrompt = data?.livePrompt;
+  const failedPrompts = data?.failedPrompts || [];
   const liveAssistant = data?.liveAssistant;
   const liveTool = data?.liveTool;
 
@@ -46,7 +47,7 @@ export function Timeline({ sessionID, data, runtime }) {
       node.scrollTop = node.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [sessionID, messages.length, livePrompt?.id, liveAssistant?.content, liveTool?.callID, runtime?.state, runtime?.startedAt, following]);
+  }, [sessionID, messages.length, failedPrompts.length, livePrompt?.id, liveAssistant?.content, liveTool?.callID, runtime?.state, runtime?.startedAt, runtime?.activity, following]);
 
   const onScroll = () => {
     const node = viewport.current;
@@ -66,9 +67,10 @@ export function Timeline({ sessionID, data, runtime }) {
               ${data.loadingOlder ? "Loading…" : "Load older turns"}
             </button>
           ` : null}
-          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} />`) : !livePrompt && !liveAssistant?.content && !liveTool && runtime?.state !== "running" ? html`
+          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} />`) : !failedPrompts.length && !livePrompt && !liveAssistant?.content && !liveTool && !runtime?.activity ? html`
             <div class="timeline-empty">This session has no messages yet.</div>
           ` : null}
+          ${failedPrompts.map((prompt) => html`<${UserMessage} key=${prompt.id} message=${livePromptMessage(prompt)} />`)}
           ${livePrompt ? html`<${UserMessage} message=${livePromptMessage(livePrompt)} />` : null}
           ${liveAssistant?.content ? html`<${AssistantMessage} message=${{ phase: liveAssistant.phase, content: [{ type: "text", text: liveAssistant.content }] }} streaming />` : null}
           ${liveTool ? html`
@@ -76,7 +78,7 @@ export function Timeline({ sessionID, data, runtime }) {
               <span class="tool-line__glyph">↳</span><span>Running ${humanToolName(liveTool.name)}</span><span class="muted">working</span>
             </button>
           ` : null}
-          ${runtime?.state === "running" ? html`<${WorkingIndicator} startedAt=${runtime.startedAt} />` : null}
+          ${runtime?.activity ? html`<${ActivityIndicator} startedAt=${runtime.startedAt} activity=${runtime.activity} />` : null}
           ${data?.lastError ? html`<div class="timeline-error" role="status">${data.lastError}</div>` : null}
         </div>
       </div>
@@ -85,7 +87,7 @@ export function Timeline({ sessionID, data, runtime }) {
   `;
 }
 
-function WorkingIndicator({ startedAt }) {
+function ActivityIndicator({ startedAt, activity }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const id = window.setInterval(() => tick((value) => value + 1), 1000);
@@ -93,9 +95,9 @@ function WorkingIndicator({ startedAt }) {
   }, [startedAt]);
   const duration = workingDuration(startedAt).replace("Working ", "");
   return html`
-    <div class="chat-working" role="status" aria-label="Yoke is working">
+    <div class="chat-working" role="status" aria-label=${`Yoke status: ${activity}`}>
       <span class="chat-working__mark" aria-hidden="true"></span>
-      <span class="chat-working__label">Working</span>
+      <span class="chat-working__label">${activity}</span>
       <span class="chat-working__duration" aria-hidden="true">${duration}</span>
     </div>
   `;

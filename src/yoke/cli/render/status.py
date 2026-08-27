@@ -24,6 +24,7 @@ from yoke.cli.render.scrollback import (
 )
 from yoke.cli.render.scrollback import print_scrollback_notice
 from yoke.cli.render.scrollback import print_tool_response_divider
+from yoke.agent.activity import activity_status_for_event
 
 
 class StatusIndicator:
@@ -69,7 +70,7 @@ class StatusIndicator:
                 style="yellow",
             )
             self._turn_has_tool_output = True
-            self._update("Compacting")
+            self._update_from_event(event, payload)
             return
         if event == "compaction_summary_end":
             ok = payload.get("ok", False)
@@ -88,7 +89,7 @@ class StatusIndicator:
                     f"\u2717 failed after {duration}s ({error})",
                     style="yellow",
                 )
-            self._update("Thinking")
+            self._update_from_event(event, payload)
             return
         if event == "context_compaction":
             self._log_event_line(
@@ -96,17 +97,13 @@ class StatusIndicator:
                 format_compaction_note(payload),
                 style="yellow",
             )
-            self._update("Thinking")
+            self._update_from_event(event, payload)
             return
         if event == "model_start":
-            if self._last_message not in {
-                "Rate limited",
-                "Retrying provider",
-            }:
-                self._update("Thinking")
+            self._update_from_event(event, payload)
             return
         if event == "model_end":
-            self._update("Streaming")
+            self._update_from_event(event, payload)
             return
         if event == "assistant_message":
             self._handle_assistant_message(payload)
@@ -121,7 +118,7 @@ class StatusIndicator:
                 style="dim",
             )
             self._turn_has_tool_output = True
-            self._update("Running tool")
+            self._update_from_event(event, payload)
             return
         if event == "tool_execution_end":
             ok = payload.get("ok", False)
@@ -130,7 +127,7 @@ class StatusIndicator:
                     _tool_error_text(payload) or "The tool returned an error.",
                     style="dim",
                 )
-            self._update("Thinking" if ok else "Recovering")
+            self._update_from_event(event, payload)
 
     def _handle_provider_event(
         self,
@@ -146,7 +143,7 @@ class StatusIndicator:
         content = payload.get("content")
         if isinstance(content, str) and content.strip():
             self._log_commentary(content.strip())
-        self._update("Streaming")
+        self._update_from_event("assistant_message", payload)
 
     def clear(self) -> None:
         """Clear the active status line."""
@@ -160,6 +157,15 @@ class StatusIndicator:
             self._last_message = message
             if self._status is not None:
                 self._status.update(f"[bold cyan]{message}[/bold cyan]")
+
+    def _update_from_event(self, event: str, payload: dict[str, object]) -> None:
+        status = activity_status_for_event(
+            event,
+            payload,
+            current=self._last_message or "Thinking",
+        )
+        if status is not None:
+            self._update(status)
 
     def _log_blank_line(self) -> None:
         with self._lock:

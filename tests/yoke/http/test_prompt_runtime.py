@@ -232,7 +232,9 @@ def test_two_sessions_run_concurrently_and_steer_fences_old_generation(
 
         active = client.get("/api/v1/session/active", headers=_auth()).json()["data"]
         assert active["session-a"]["state"] == "running"
+        assert active["session-a"]["activity"] == "Thinking"
         assert active["session-b"]["state"] == "running"
+        assert active["session-b"]["activity"] == "Thinking"
         assert controller.max_parallel_sessions >= 2
 
         steered = client.post(

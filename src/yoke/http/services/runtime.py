@@ -41,6 +41,7 @@ from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.runtime_factory import SessionAgentFactory
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
+from yoke.agent.activity import activity_status_for_event
 from yoke.session.admissions import AdmissionRecord
 from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.mcp.config import McpSessionPolicy
@@ -121,6 +122,7 @@ class SessionRuntime:
         self._turn_counter = 0
         self._state: RuntimeState = "idle"
         self._last_error: str | None = None
+        self._activity_status: str | None = None
 
     async def wake(self) -> None:
         """Start eligible work or apply a pending steer at a safe control boundary."""
@@ -186,6 +188,7 @@ class SessionRuntime:
                     if active is not None
                     else operation.started_at if operation is not None else None
                 ),
+                activity=self._activity_status,
             )
 
     async def idle_mutation(self, mutation: Callable[[], T]) -> T:
@@ -215,6 +218,7 @@ class SessionRuntime:
             self._operation = operation
             self._state = "running"
             self._last_error = None
+            self._activity_status = None
             self._publish_activity(None)
             task = asyncio.create_task(
                 self._run_selection(
@@ -238,6 +242,7 @@ class SessionRuntime:
             self._operation = operation
             self._state = "running"
             self._last_error = None
+            self._activity_status = "Compacting"
             record = self.store.load(self.session_id)
             self.events.durable(
                 self.session_id,
@@ -458,6 +463,7 @@ class SessionRuntime:
             self._operation = None
             self._state = "idle"
             self._last_error = None
+            self._activity_status = None
             self._publish_activity(None)
             next_admission = self._recover_or_next_locked()
             if next_admission is not None:
@@ -474,6 +480,7 @@ class SessionRuntime:
             self._operation = None
             self._state = "error"
             self._last_error = str(error)
+            self._activity_status = None
             record = self.store.load(self.session_id)
             self.events.durable(
                 self.session_id,
@@ -648,6 +655,7 @@ class SessionRuntime:
         self._active = execution
         self._state = "running"
         self._last_error = None
+        self._activity_status = "Thinking"
         self._publish_activity(execution)
         execution.task = asyncio.create_task(
             self._run_execution(execution),
@@ -684,6 +692,7 @@ class SessionRuntime:
             execution.task.cancel()
         self._active = None
         self._state = "idle"
+        self._activity_status = None
         self._publish_activity(None)
 
     async def _run_execution(self, execution: TurnExecution) -> None:
@@ -818,6 +827,7 @@ class SessionRuntime:
             self._close_turn_agent_later(outcome.agent)
             self._active = None
             self._state = "error" if outcome.error is not None else "idle"
+            self._activity_status = None
             self._publish_activity(None)
             next_admission = self._recover_or_next_locked()
             if next_admission is not None:
@@ -1007,6 +1017,14 @@ class SessionRuntime:
         traced_payload = dict(payload)
         traced_payload["turn_id"] = execution.turn_id
         self.tool_traces.record_event(event, traced_payload)
+        next_activity = activity_status_for_event(
+            event,
+            payload,
+            current=self._activity_status or "Thinking",
+        )
+        if next_activity is not None and next_activity != self._activity_status:
+            self._activity_status = next_activity
+            self._publish_activity(execution)
         event_type = _PUBLIC_AGENT_EVENTS.get(event)
         if event_type is None:
             return
@@ -1031,6 +1049,7 @@ class SessionRuntime:
                 "turnID": execution.turn_id if execution is not None else None,
                 "startedAt": execution.started_at if execution is not None else None,
                 "error": self._last_error,
+                "activity": self._activity_status,
             },
             session_id=self.session_id,
             location=record.root,

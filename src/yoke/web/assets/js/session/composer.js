@@ -150,14 +150,24 @@ export function DraftComposer({ draftID, draft }) {
       ${value.attachments?.length ? html`<div class="composer-attachments">${value.attachments.map((attachment, index) => html`
         <span class="attachment-chip">▧ ${attachment.name}<button aria-label=${`Remove ${attachment.name}`} onClick=${() => update({ attachments: value.attachments.filter((_, itemIndex) => itemIndex !== index) })}>×</button></span>
       `)}</div>` : null}
-      <textarea class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" onInput=${(event) => update({ text: event.currentTarget.value })} onPaste=${imageInput.onPaste} onKeyDown=${(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit(); } }}></textarea>
+      <textarea class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" onInput=${(event) => update({ text: event.currentTarget.value })} onPaste=${imageInput.onPaste} onKeyDown=${(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); void submit(); } }}></textarea>
       <div class="composer-footer">
         <div class="composer-footer__left">
           ${capabilities?.features?.images ? html`<button class="quiet-button" disabled=${!connected} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
           <input ref=${fileInput} class="visually-hidden" type="file" accept="image/*" multiple onChange=${(event) => { void addFiles([...event.currentTarget.files]); event.currentTarget.value = ""; }} />
-          <span class="muted tiny">⌘↵ send</span>
+          <span class="muted tiny">↵ send · ⇧↵ newline</span>
         </div>
-        <button class="primary" disabled=${busy || !connected || (!(value.text || "").trim() && !value.attachments?.length) || !value.location} onClick=${submit}>${busy ? "Starting…" : "Start session"}</button>
+        <button
+          class="primary composer-send-button"
+          aria-label=${busy ? "Starting session" : "Start session"}
+          title=${busy ? "Starting session" : "Start session"}
+          disabled=${busy || !connected || (!(value.text || "").trim() && !value.attachments?.length) || !value.location}
+          onClick=${submit}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
+            <path d="M12 19V5M6.5 10.5 12 5l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+        </button>
       </div>
     </div>
   </div>`;
@@ -289,5 +299,5 @@ function runtimeLabel(runtime) {
   if (runtime.state === "waiting_input") return "Waiting for input";
   if (runtime.state === "stopping") return "Stopping";
   if (runtime.state === "error") return "Error";
-  return "Working";
+  return runtime.activity || "Thinking";
 }

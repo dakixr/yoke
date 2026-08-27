@@ -231,6 +231,10 @@ class AppController {
       this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
     }
+    if (event.type === "session.runtime.failed") {
+      this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
+      this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
+    }
     if (event.type === "session.tree.updated") {
       this.schedule(`tree:${id}`, SUMMARY_REFRESH_MS, () => this.refreshTree(id));
     }
@@ -557,13 +561,29 @@ class AppController {
   async refreshMessages(sessionID) {
     if (!store.getState().sessionData[sessionID]?.loaded) return;
     const response = await api.messages(sessionID, { limit: 100, order: "desc" });
-    store.setState((state) => ({
-      ...state,
-      sessionData: {
-        ...state.sessionData,
-        [sessionID]: { ...state.sessionData[sessionID], messages: [...response.data].reverse(), liveAssistant: null },
-      },
-    }));
+    const messages = [...response.data].reverse();
+    store.setState((state) => {
+      const current = state.sessionData[sessionID] || {};
+      const livePrompt = current.livePrompt;
+      return {
+        ...state,
+        sessionData: {
+          ...state.sessionData,
+          [sessionID]: {
+            ...current,
+            messages,
+            liveAssistant: null,
+            livePrompt:
+              current.lastError && livePrompt && messagesContainPrompt(messages, livePrompt)
+                ? null
+                : livePrompt || null,
+            failedPrompts: (current.failedPrompts || []).filter(
+              (prompt) => !messagesContainPrompt(messages, prompt),
+            ),
+          },
+        },
+      };
+    });
   }
 
   async refreshQueue(sessionID) {
@@ -742,6 +762,32 @@ class AppController {
 
   async submitPrompt(sessionID, { text, attachments = [], delivery = "steer" }) {
     if (!text.trim() && !attachments.length) return;
+    const data = store.getState().sessionData[sessionID];
+    if (data?.lastError && data?.livePrompt) {
+      await this.refreshMessages(sessionID);
+      const reconciled = store.getState().sessionData[sessionID];
+      if (reconciled?.lastError && reconciled?.livePrompt) {
+        store.setState((state) => {
+          const current = state.sessionData[sessionID] || {};
+          const failedPrompts = current.failedPrompts || [];
+          const failed = current.livePrompt;
+          return {
+            ...state,
+            sessionData: {
+              ...state.sessionData,
+              [sessionID]: {
+                ...current,
+                failedPrompts:
+                  failed && !failedPrompts.some((item) => item.id === failed.id)
+                    ? [...failedPrompts, failed]
+                    : failedPrompts,
+                livePrompt: null,
+              },
+            },
+          };
+        });
+      }
+    }
     await api.admitPrompt(sessionID, {
       id: `inp_${randomUUID()}`,
       prompt: { text, attachments: promptAttachments(attachments) },
@@ -1035,6 +1081,37 @@ class AppController {
 
 function promptAttachments(items) {
   return items.map((item) => ({ type: "file", uri: item.uri, name: item.name, mime: item.mime }));
+}
+
+function messagesContainPrompt(messages, livePrompt) {
+  if (!livePrompt) return false;
+  const prompt = livePrompt.prompt || {};
+  const expectedText = String(prompt.text || "");
+  const expectedAttachments = (prompt.attachments || [])
+    .map((item) => item.name || "")
+    .sort();
+  const admittedAt = Date.parse(livePrompt.timeCreated || "");
+  return messages.some((message) => {
+    if (message.type !== "user") return false;
+    const createdAt = Date.parse(message.timeCreated || "");
+    if (
+      Number.isFinite(admittedAt) &&
+      Number.isFinite(createdAt) &&
+      createdAt < admittedAt - 2000
+    ) return false;
+    const text = (message.content || [])
+      .filter((part) => part.type === "text")
+      .map((part) => part.text || "")
+      .join("\n");
+    const attachments = (message.content || [])
+      .filter((part) => part.type === "image")
+      .map((part) => part.name || "")
+      .sort();
+    return (
+      text === expectedText &&
+      JSON.stringify(attachments) === JSON.stringify(expectedAttachments)
+    );
+  });
 }
 
 function provisionalSessionTitle(text) {
