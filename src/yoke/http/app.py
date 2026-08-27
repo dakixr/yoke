@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 import secrets
@@ -72,6 +74,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     """Create one process-wide Yoke API application."""
     configured = settings or HttpAppSettings(auth_token=None)
     store = SessionStore(configured.session_directory)
+    store.maintain_index(force=True)
     broker = GlobalEventBroker()
     journal = SessionEventJournal(store.directory)
     events = EventService(journal, broker)
@@ -89,8 +92,14 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        yield
-        await runtime_registry.close()
+        maintenance_task = asyncio.create_task(_maintain_session_index(store))
+        try:
+            yield
+        finally:
+            maintenance_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await maintenance_task
+            await runtime_registry.close()
 
     app = FastAPI(
         title="Yoke HTTP API",
@@ -169,3 +178,10 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.include_router(upload.router, prefix="/api/v1")
     install_web_routes(app)
     return app
+
+
+async def _maintain_session_index(store: SessionStore) -> None:
+    """Keep filesystem repair and retention work off HTTP request threads."""
+    while True:
+        await asyncio.sleep(5)
+        await asyncio.to_thread(store.maintain_index)

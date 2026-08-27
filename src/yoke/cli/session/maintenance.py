@@ -43,7 +43,4 @@ def prune_index_and_sessions(
         index.sessions.pop(session_id, None)
         changed = True
     if changed:
-        store.directory.mkdir(parents=True, exist_ok=True)
-        store._index_path().write_text(
-            index.model_dump_json(indent=2), encoding="utf-8"
-        )
+        store._write_index(index)

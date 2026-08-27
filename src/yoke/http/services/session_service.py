@@ -83,7 +83,7 @@ class SessionService:
         order: SessionOrder,
         cursor: str | None,
     ) -> SessionListResponse:
-        records = self.store.list_index_entries(root=directory)
+        records = self.store.list_index_entries(root=directory, maintain=False)
         if search:
             needle = search.casefold()
             records = [

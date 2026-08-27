@@ -107,10 +107,12 @@ not construct model providers or live runtimes. The daemon loads a
 Session lists and recent-location discovery are served from the lightweight
 session index rather than parsing conversation history. The index stores the
 selection and tree summary needed by list cards plus a file signature. Changed,
-missing, legacy, or unreadable session files are repaired individually, and
-filesystem repair/pruning is amortized across requests in a long-running HTTP
-process. An index written by an older Yoke version is enriched once on first
-use, after which list latency is independent of conversation-history size.
+missing, legacy, or unreadable session files are repaired individually. The
+daemon performs filesystem repair and retention maintenance before serving and
+then in a background maintenance task, so list requests never pay for those
+scans. Parsed index snapshots are reused until `index.json` changes. An index
+written by an older Yoke version is enriched once at daemon startup, after
+which list latency is independent of conversation-history size.
 Session listing also accepts the immediately preceding `session_stream` v1
 storage format and rewrites it to the current JSONL format on first load. A
 single unreadable session file is skipped rather than failing the complete

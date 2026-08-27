@@ -32,7 +32,7 @@ class LocationService:
     def recent(self) -> list[LocationInfo]:
         seen: set[str] = set()
         result: list[LocationInfo] = []
-        for entry in self.store.list_index_entries():
+        for entry in self.store.list_index_entries(maintain=False):
             if not entry.root:
                 continue
             root = entry.root

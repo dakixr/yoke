@@ -270,6 +270,36 @@ def test_session_list_and_recent_locations_do_not_load_conversation_history(
     assert recent.json()["data"] == [{"directory": str(root.resolve())}]
 
 
+def test_session_list_and_recent_locations_skip_request_path_maintenance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    state = getattr(client.app, "state")
+    store = state.session_service.store
+    store.save("cached-session", [], root=root, title="Cached session")
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("HTTP list endpoints must not run index maintenance")
+
+    monkeypatch.setattr(store, "_maintain_index_if_due", fail)
+    monkeypatch.setattr(store, "_load_index", fail)
+
+    listed = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"archived": False, "order": "updatedDesc"},
+    )
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["data"]] == ["cached-session"]
+
+    recent = client.get("/api/v1/location/recent", headers=_auth())
+    assert recent.status_code == 200
+    assert recent.json()["data"] == [{"directory": str(root.resolve())}]
+
+
 def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
@@ -327,12 +357,16 @@ def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None
     assert repaired["sessions"]["legacy-index-session"]["summary_version"] == 1
 
 
-def test_session_list_migrates_legacy_stream_without_index_entry(tmp_path: Path) -> None:
+def test_session_maintenance_migrates_legacy_stream_without_index_entry(
+    tmp_path: Path,
+) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
     session_path = tmp_path / "sessions" / "legacy-mac.jsonl"
     _write_legacy_session_stream(session_path, root=root)
+    state = getattr(client.app, "state")
+    state.session_service.store.maintain_index(force=True)
 
     response = client.get(
         "/api/v1/session",
@@ -348,7 +382,7 @@ def test_session_list_migrates_legacy_stream_without_index_entry(tmp_path: Path)
     )
 
 
-def test_session_list_skips_unreadable_session_file(tmp_path: Path) -> None:
+def test_session_maintenance_skips_unreadable_session_file(tmp_path: Path) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
@@ -364,6 +398,8 @@ def test_session_list_skips_unreadable_session_file(tmp_path: Path) -> None:
         '{"not":"a recoverable session"}\n',
         encoding="utf-8",
     )
+    state = getattr(client.app, "state")
+    state.session_service.store.maintain_index(force=True)
 
     response = client.get(
         "/api/v1/session",
