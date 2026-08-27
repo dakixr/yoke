@@ -114,10 +114,13 @@
 .composer-attachments { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 9px 0; }
 .composer-input { display: block; width: 100%; min-height: 52px; max-height: 220px; padding: 9px 12px 4px; border: 0; border-radius: 0; resize: none; background: transparent; font-size: 13.5px; line-height: 1.5; }
 .composer-footer { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 6px 6px 8px; }
-.composer-footer__left, .composer-actions { display: flex; align-items: center; gap: 5px; }
-.composer-runtime { color: var(--muted); font-size: 10.5px; }
-.composer-send-button { display: grid; width: 38px; height: 38px; min-height: 38px !important; flex: none; place-items: center; padding: 0 !important; border-radius: 50% !important; line-height: 1; }
+.composer-footer__left, .composer-actions { display: flex; align-items: center; gap: 7px; }
+.composer-icon-action { display: grid; width: 38px; height: 38px; min-height: 38px !important; flex: none; place-items: center; padding: 0 !important; border-radius: 50% !important; line-height: 1; }
 .composer-send-button svg { display: block; }
+.composer-stop-button { background: var(--danger); color: white; box-shadow: 0 1px 0 rgb(255 255 255 / 10%) inset, 0 3px 10px rgb(0 0 0 / 18%); }
+.composer-stop-button:hover { filter: brightness(1.05); }
+.composer-stop-button__glyph { width: 11px; height: 11px; border-radius: 2px; background: currentColor; }
+.composer-queue-button { min-height: 38px; padding-inline: 13px; white-space: nowrap; }
 
 .new-session-view { overflow-y: auto; }
 .draft-composer-wrap { width: min(760px, calc(100% - 32px)); margin: auto; padding: 50px 0 90px; }
@@ -155,6 +158,8 @@
   .composer-footer { align-items: flex-end; }
   .composer-actions { flex-wrap: wrap; justify-content: flex-end; }
   .composer-actions button, .composer-footer__left .quiet-button { min-height: 44px; }
+  .composer-icon-action { width: 44px; height: 44px; min-height: 44px !important; }
+  .composer-queue-button { min-height: 44px; }
   .draft-composer-wrap { width: calc(100% - 22px); padding-top: 28px; }
 }
 

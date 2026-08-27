@@ -39,9 +39,16 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     }
   };
   const onKeyDown = (event) => {
-    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
-    event.preventDefault();
-    void submit(running && !canSteer ? "queue" : "steer");
+    if (event.isComposing) return;
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void submit(running && !canSteer ? "queue" : "steer");
+      return;
+    }
+    if (event.key === "Tab" && !event.shiftKey && running && hasContent) {
+      event.preventDefault();
+      void submit("queue");
+    }
   };
   const addFiles = async (files) => {
     const images = acceptedImageFiles(files, attachments.length);
@@ -89,14 +96,43 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
         <div class="composer-footer__left">
           ${capabilities?.features?.images ? html`<button class="quiet-button" type="button" disabled=${!connected} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
           <input ref=${fileInput} class="visually-hidden" type="file" accept="image/*" multiple onChange=${(event) => { void addFiles([...event.currentTarget.files]); event.currentTarget.value = ""; }} />
-          ${runtime?.state && runtime.state !== "idle" ? html`<span class="composer-runtime">${runtimeLabel(runtime)}</span>` : null}
         </div>
         <div class="composer-actions">
           ${running ? html`
-            ${runtime?.state !== "stopping" ? html`<button class="quiet-button" disabled=${!connected} onClick=${() => controller.interrupt(sessionID).catch((error) => controller.notice(error?.message || String(error)))}>Interrupt</button>` : null}
-            ${canSteer ? html`<button class="primary" disabled=${!hasContent || busy || !connected} onClick=${() => submit("steer")}>Steer now</button>` : null}
-            <button class=${canSteer ? "secondary-action" : "primary"} disabled=${!hasContent || busy || !connected} onClick=${() => submit("queue")}>Queue next</button>
-          ` : html`<button class="primary" disabled=${!hasContent || busy || !connected} onClick=${() => submit("steer")}>${busy ? "Sending…" : "Send"}</button>`}
+            ${runtime?.state !== "stopping" ? html`
+              <button
+                class="composer-icon-action composer-stop-button"
+                aria-label="Stop current turn"
+                title="Stop current turn · Esc Esc"
+                disabled=${!connected}
+                onClick=${() => controller.interrupt(sessionID).catch((error) => controller.notice(error?.message || String(error)))}
+              ><span aria-hidden="true" class="composer-stop-button__glyph"></span></button>
+            ` : null}
+            ${canSteer ? html`
+              <button
+                class="primary composer-icon-action composer-send-button"
+                aria-label="Steer now"
+                title="Steer now · Enter"
+                disabled=${!hasContent || busy || !connected}
+                onClick=${() => submit("steer")}
+              ><${SendArrow} /></button>
+            ` : null}
+            <button
+              class=${canSteer ? "secondary-action composer-queue-button" : "primary composer-queue-button"}
+              aria-label="Queue message"
+              title="Queue message · Tab"
+              disabled=${!hasContent || busy || !connected}
+              onClick=${() => submit("queue")}
+            >Queue Msg</button>
+          ` : html`
+            <button
+              class="primary composer-icon-action composer-send-button"
+              aria-label=${busy ? "Sending message" : "Send message"}
+              title="Send · Enter"
+              disabled=${!hasContent || busy || !connected}
+              onClick=${() => submit("steer")}
+            ><${SendArrow} /></button>
+          `}
         </div>
       </div>
     </div>
@@ -158,19 +194,21 @@ export function DraftComposer({ draftID, draft }) {
           <span class="muted tiny">↵ send · ⇧↵ newline</span>
         </div>
         <button
-          class="primary composer-send-button"
+          class="primary composer-icon-action composer-send-button"
           aria-label=${busy ? "Starting session" : "Start session"}
           title=${busy ? "Starting session" : "Start session"}
           disabled=${busy || !connected || (!(value.text || "").trim() && !value.attachments?.length) || !value.location}
           onClick=${submit}
-        >
-          <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
-            <path d="M12 19V5M6.5 10.5 12 5l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"></path>
-          </svg>
-        </button>
+        ><${SendArrow} /></button>
       </div>
     </div>
   </div>`;
+}
+
+function SendArrow() {
+  return html`<svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
+    <path d="M12 19V5M6.5 10.5 12 5l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"></path>
+  </svg>`;
 }
 
 function useImageAttachmentInput({ enabled, addFiles }) {
@@ -293,11 +331,4 @@ function SelectionControls({ directory, selection, sessionID = null, onDraftChan
       <option value="">Effort</option>${(selectedModel?.reasoningEfforts || []).map((value) => html`<option value=${value}>${value}</option>`)}
     </select>
   </div>`;
-}
-
-function runtimeLabel(runtime) {
-  if (runtime.state === "waiting_input") return "Waiting for input";
-  if (runtime.state === "stopping") return "Stopping";
-  if (runtime.state === "error") return "Error";
-  return runtime.activity || "Thinking";
 }

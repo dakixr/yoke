@@ -1,13 +1,25 @@
 // @ts-check
 
 export function installKeybindings(actions) {
+  let lastEscapeAt = 0;
   const handler = (event) => {
     const command = event.metaKey || event.ctrlKey;
     const key = event.key.toLowerCase();
     if (command && key === "k") return invoke(event, actions.palette);
     if (command && key === "n") return invoke(event, actions.newSession);
     if (command && key === "b") return invoke(event, actions.toggleSidebar);
-    if (event.key === "Escape") return actions.escape?.(event);
+    if (event.key === "Escape") {
+      const now = performance.now();
+      if (now - lastEscapeAt <= 650 && actions.interrupt?.()) {
+        lastEscapeAt = 0;
+        event.preventDefault();
+        return;
+      }
+      const handled = actions.escape?.(event);
+      lastEscapeAt = handled ? 0 : now;
+      if (handled) event.preventDefault();
+      return;
+    }
     if (event.altKey && event.key === "ArrowDown") return invoke(event, () => actions.switchSession?.(1));
     if (event.altKey && event.key === "ArrowUp") return invoke(event, () => actions.switchSession?.(-1));
   };

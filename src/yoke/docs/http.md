@@ -80,7 +80,9 @@ CSS, vendored dependencies, and licenses. These browser routes are excluded
 from the v1 OpenAPI schema. Production does not require Node.js, npm, a CDN, or
 a separate frontend server. When image attachments are enabled, the composer
 accepts images from the file picker, drag and drop, and the browser paste event
-used by Cmd+V on macOS or Ctrl+V on other platforms.
+used by Cmd+V on macOS or Ctrl+V on other platforms. Composer keyboard behavior
+matches the interactive CLI while a turn is active: Enter steers, Tab queues,
+and Esc Esc interrupts. Shift+Enter inserts a newline in the browser composer.
 
 ## Session and execution model
 

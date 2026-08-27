@@ -801,6 +801,15 @@ class AppController {
     await api.interrupt(sessionID);
   }
 
+  interruptSelectedSession() {
+    const state = store.getState();
+    const sessionID = state.ui.selectedSessionID;
+    const runtime = sessionID ? state.active[sessionID] : null;
+    if (!sessionID || !runtime?.turnID || runtime.state === "stopping") return false;
+    void this.interrupt(sessionID).catch((error) => this.notice(errorMessage(error)));
+    return true;
+  }
+
   async compact(sessionID) {
     return api.compact(sessionID);
   }
@@ -1048,9 +1057,19 @@ class AppController {
 
   escape() {
     const state = store.getState();
-    if (state.ui.commandPaletteOpen) return this.togglePalette(false);
-    if (state.ui.inspector) return this.closeInspector();
-    if (window.innerWidth <= 760 && state.ui.sidebarOpen) this.toggleSidebar();
+    if (state.ui.commandPaletteOpen) {
+      this.togglePalette(false);
+      return true;
+    }
+    if (state.ui.inspector) {
+      this.closeInspector();
+      return true;
+    }
+    if (window.innerWidth <= 760 && state.ui.sidebarOpen) {
+      this.toggleSidebar();
+      return true;
+    }
+    return false;
   }
 
   notice(message) {

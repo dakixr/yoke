@@ -26,6 +26,7 @@ export function App() {
       newSession: () => controller.createDraft(),
       toggleSidebar: () => controller.toggleSidebar(),
       escape: () => controller.escape(),
+      interrupt: () => controller.interruptSelectedSession(),
       switchSession: (delta) => controller.switchSession(delta),
     });
   }, []);
