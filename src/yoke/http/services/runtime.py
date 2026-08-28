@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import Event
 from threading import Lock
 from collections.abc import Callable
+from collections.abc import Sequence
 from typing import Literal
 from typing import TypeVar
 
@@ -32,14 +33,17 @@ from yoke.agent.skills import load_skill_registry
 from yoke.agent.skills.paths import default_skill_dirs
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.session_tree import ConversationProjection
 from yoke.agent.session_tree import SessionTree
 from yoke.http.models.session import ActiveRuntimeInfo
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.runtime_factory import SessionAgentFactory
+from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
+from yoke.http.services.session_read_cache import SessionReadSnapshot
+from yoke.http.services.runtime_start import RuntimeAppendPersistence
+from yoke.http.services.runtime_start import indexed_runtime_start
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
 from yoke.agent.activity import activity_status_for_event
@@ -62,6 +66,8 @@ class TurnExecution:
     started_at: str
     stop_event: Event
     retired_event: Event
+    cold_start: bool
+    append_persistence: RuntimeAppendPersistence | None = None
     task: asyncio.Task[None] | None = None
     slot_acquired: bool = False
     slot_released: bool = False
@@ -100,6 +106,8 @@ class SessionRuntime:
         events: EventService,
         agent_factory: SessionAgentFactory,
         read_cache: SessionReadCache,
+        message_index: SessionMessageIndex | None,
+        indexed_runtime_seed: bool,
         executor: Executor,
         active_slots: asyncio.Semaphore,
     ) -> None:
@@ -109,6 +117,8 @@ class SessionRuntime:
         self.events = events
         self.agent_factory = agent_factory
         self.read_cache = read_cache
+        self.message_index = message_index
+        self.indexed_runtime_seed = indexed_runtime_seed
         index_entry = store.index_entry(session_id)
         self._event_location = index_entry.root if index_entry is not None else None
         self.executor = executor
@@ -383,8 +393,13 @@ class SessionRuntime:
         model_id: str,
         reasoning_effort: str | None,
     ) -> ProviderSessionState:
-        record = self._record()
-        agent = self._ensure_primary_agent(record, load_state=True)
+        snapshot = self._snapshot()
+        record = snapshot.record
+        agent = self._ensure_primary_agent(
+            record,
+            load_state=True,
+            active_entries=snapshot.owned_active_path(),
+        )
         if not isinstance(agent, RuntimeAgent):
             raise ValueError("Model switching requires a RuntimeAgent-backed session.")
         state = switch_agent_provider_model(
@@ -428,8 +443,13 @@ class SessionRuntime:
         return payload
 
     def _compact_sync(self) -> dict[str, object]:
-        record = self._record()
-        agent = self._ensure_primary_agent(record, load_state=True)
+        snapshot = self._snapshot()
+        record = snapshot.record
+        agent = self._ensure_primary_agent(
+            record,
+            load_state=True,
+            active_entries=snapshot.owned_active_path(),
+        )
         if not isinstance(agent, RuntimeAgent):
             raise ValueError("Compaction requires a RuntimeAgent-backed session.")
         compacted = force_compact_agent(
@@ -532,10 +552,26 @@ class SessionRuntime:
 
     def _record(self) -> SessionRecord:
         """Return the shared signature-consistent record snapshot for this session."""
-        record = self.read_cache.get(self.session_id).record
+        return self._snapshot().record
+
+    def _record_for_execution(self, execution: TurnExecution) -> SessionRecord:
+        """Return turn metadata without forcing a full parse for indexed starts."""
+        if execution.append_persistence is None:
+            return self._record()
+        record = self.store.summary_record(self.session_id)
+        if record is None:
+            raise FileNotFoundError(self.session_id)
         if record.root is not None:
             self._event_location = record.root
         return record
+
+    def _snapshot(self) -> SessionReadSnapshot:
+        """Return the shared parsed snapshot and keep event location current."""
+        snapshot = self.read_cache.get(self.session_id)
+        record = snapshot.record
+        if record.root is not None:
+            self._event_location = record.root
+        return snapshot
 
     def session_enabled_tool_names(self) -> set[str] | None:
         """Return the process-local tool allowlist without loading an agent."""
@@ -654,10 +690,14 @@ class SessionRuntime:
             promoted = self.pending_inputs.unsettled_promoted(self.session_id)
             if promoted is None:
                 return self.pending_inputs.pop_next(self.session_id, allow_queue=True)
-            record = self._record()
+            snapshot = self._snapshot()
+            record = snapshot.record
             if not _input_is_persisted(record, promoted.id):
                 return promoted
-            if not _input_has_terminal_assistant(record, promoted.id):
+            if not _input_has_terminal_assistant(
+                snapshot.active_path_entries,
+                promoted.id,
+            ):
                 self._persist_interrupted_checkpoint(promoted)
             self.pending_inputs.settle(
                 self.session_id,
@@ -667,17 +707,21 @@ class SessionRuntime:
 
     def _start_locked(self, admission: AdmissionRecord) -> None:
         self._turn_counter += 1
+        cold_start = self._primary_agent is None and not self.read_cache.is_current(
+            self.session_id
+        )
         execution = TurnExecution(
             turn_id=self._turn_counter,
             admission=admission,
             started_at=datetime.now(UTC).isoformat(),
             stop_event=Event(),
             retired_event=Event(),
+            cold_start=cold_start,
         )
         self._active = execution
         self._state = "running"
         self._last_error = None
-        self._activity_status = "Thinking"
+        self._activity_status = "Loading session" if cold_start else "Thinking"
         self._active_tool_call_ids = {execution.turn_id: set()}
         self._publish_activity(execution)
         execution.task = asyncio.create_task(
@@ -720,6 +764,10 @@ class SessionRuntime:
 
     async def _run_execution(self, execution: TurnExecution) -> None:
         try:
+            if execution.cold_start:
+                # Let the prompt-admission response flush before a cold large-session
+                # parse starts competing for CPU in the worker pool.
+                await asyncio.sleep(0.05)
             await self.active_slots.acquire()
             execution.slot_acquired = True
             if execution.retired_event.is_set():
@@ -740,8 +788,40 @@ class SessionRuntime:
     def _execute_sync(self, execution: TurnExecution) -> TurnOutcome:
         turn_agent: object | None = None
         try:
-            record = self._record()
-            turn_agent = self._prepare_turn_agent(record)
+            indexed = (
+                indexed_runtime_start(
+                    self.store,
+                    self.message_index,
+                    self.session_id,
+                    has_attachments=bool(execution.admission.attachments),
+                )
+                if self.indexed_runtime_seed
+                else None
+            )
+            snapshot: SessionReadSnapshot | None = None
+            if indexed is None:
+                snapshot = self._snapshot()
+                record = snapshot.record
+                active_entries = snapshot.runtime_active_path()
+                if record.leaf_id is not None:
+                    execution.append_persistence = RuntimeAppendPersistence(
+                        runtime_entry_count=len(active_entries),
+                        leaf_id=record.leaf_id,
+                    )
+            else:
+                record = indexed.record
+                active_entries = indexed.entries
+                execution.append_persistence = indexed.persistence
+                if record.root is not None:
+                    self._event_location = record.root
+            if self._activity_status == "Loading session":
+                self._activity_status = "Thinking"
+                self._publish_activity(execution)
+            turn_agent = self._prepare_turn_agent(
+                record,
+                active_entries=active_entries,
+                snapshot=snapshot,
+            )
             user_message = self._user_message_for_admission(record, execution.admission)
 
             def callback(event: str, payload: dict[str, object]) -> None:
@@ -791,11 +871,12 @@ class SessionRuntime:
             if execution.retired_event.is_set() or self._active is not execution:
                 self._close_turn_agent_later(outcome.agent)
                 return
-            record = self._record()
+            record = self._record_for_execution(execution)
             if outcome.result is not None:
                 entries = outcome.result.conversation_entries or []
                 if entries:
-                    self._persist_entries(
+                    self._persist_turn_entries(
+                        execution,
                         entries,
                         input_id=execution.admission.id,
                         active_skills=(
@@ -814,7 +895,7 @@ class SessionRuntime:
                     execution.admission.id,
                     outcome=settlement,
                 )
-                record = self._record()
+                record = self._record_for_execution(execution)
                 self.events.durable(
                     self.session_id,
                     "session.message.updated",
@@ -828,10 +909,12 @@ class SessionRuntime:
                 )
             else:
                 if outcome.partial_entries:
-                    self._persist_entries(
+                    self._persist_turn_entries(
+                        execution,
                         outcome.partial_entries,
                         input_id=execution.admission.id,
                     )
+                    record = self._record_for_execution(execution)
                 self.pending_inputs.settle(
                     self.session_id,
                     execution.admission.id,
@@ -858,7 +941,13 @@ class SessionRuntime:
             if next_admission is not None:
                 self._start_locked(next_admission)
 
-    def _prepare_turn_agent(self, record: SessionRecord) -> object:
+    def _prepare_turn_agent(
+        self,
+        record: SessionRecord,
+        *,
+        active_entries: list[ConversationEntry] | None,
+        snapshot: SessionReadSnapshot | None,
+    ) -> object:
         primary_or_candidate = self._ensure_primary_agent(record, load_state=False)
         if not isinstance(primary_or_candidate, RuntimeAgent):
             return primary_or_candidate
@@ -866,11 +955,9 @@ class SessionRuntime:
             primary = self._primary_agent
             assert primary is not None
             turn_agent = primary.fork(isolate_provider=True, include_state=False)
-            active_entries = list(
-                SessionTree.restore(record.conversation_entries, record.leaf_id)
-                .project(ConversationProjection())
-                .active_entries
-            )
+            if active_entries is None:
+                assert snapshot is not None
+                active_entries = snapshot.owned_active_path()
             turn_agent.load_owned_conversation(
                 active_entries,
                 available_skills=primary.available_skills,
@@ -883,6 +970,7 @@ class SessionRuntime:
         record: SessionRecord,
         *,
         load_state: bool,
+        active_entries: list[ConversationEntry] | None = None,
     ) -> object:
         with self._agent_lock:
             if self._primary_agent is None:
@@ -906,11 +994,8 @@ class SessionRuntime:
             primary = self._primary_agent
             assert primary is not None
             if load_state:
-                active_entries = list(
-                    SessionTree.restore(record.conversation_entries, record.leaf_id)
-                    .project(ConversationProjection())
-                    .active_entries
-                )
+                if active_entries is None:
+                    active_entries = self._snapshot().owned_active_path()
                 primary.load_owned_conversation(
                     active_entries,
                     available_skills=primary.available_skills,
@@ -934,7 +1019,8 @@ class SessionRuntime:
     ) -> None:
         if execution.retired_event.is_set():
             return
-        self._persist_entries(
+        self._persist_turn_entries(
+            execution,
             list(context.conversation_log.entries),
             input_id=execution.admission.id,
             active_skills=context.active_skills,
@@ -942,19 +1028,16 @@ class SessionRuntime:
 
     def _persist_interrupted_checkpoint(self, admission: AdmissionRecord) -> None:
         with self._persistence_lock:
-            record = self._record()
-            active_entries = list(
-                SessionTree.restore(record.conversation_entries, record.leaf_id)
-                .project(ConversationProjection())
-                .active_entries
-            )
+            snapshot = self._snapshot()
+            record = snapshot.record
+            active_entries = snapshot.owned_active_path()
             user_message = (
                 None
                 if _input_is_persisted(record, admission.id)
                 else self._user_message_for_admission(record, admission)
             )
             _, entries = interrupted_turn_snapshot(
-                messages=record.messages,
+                messages=(),
                 entries=active_entries,
                 user_message=user_message,
                 leaf_id=record.leaf_id,
@@ -966,6 +1049,8 @@ class SessionRuntime:
         record: SessionRecord,
         admission: AdmissionRecord,
     ) -> Message:
+        if not admission.attachments:
+            return Message.user(admission.prompt)
         paths = [
             self.pending_inputs.uploads.resolve(
                 attachment.uri,
@@ -996,6 +1081,32 @@ class SessionRuntime:
                 active_skills=active_skills,
             )
 
+    def _persist_turn_entries(
+        self,
+        execution: TurnExecution,
+        entries: list[ConversationEntry],
+        *,
+        input_id: str | None,
+        active_skills: object | None = None,
+    ) -> None:
+        persistence = execution.append_persistence
+        if persistence is None:
+            self._persist_entries(
+                entries,
+                input_id=input_id,
+                active_skills=active_skills,
+            )
+            return
+        skills = _active_skill_list(active_skills)
+        with self._persistence_lock:
+            persistence.append(
+                self.store,
+                self.session_id,
+                entries,
+                input_id=input_id,
+                active_skills=skills,
+            )
+
     def _save_entries_locked(
         self,
         entries: list[ConversationEntry],
@@ -1008,13 +1119,8 @@ class SessionRuntime:
         if input_id is not None:
             _tag_input_entry(copied, input_id)
         leaf_id = copied[-1].id if copied else current.leaf_id
-        skills: list[ActiveSkill] = current.active_skills
-        if isinstance(active_skills, list | tuple):
-            typed_skills = [
-                skill for skill in active_skills if isinstance(skill, ActiveSkill)
-            ]
-            if len(typed_skills) == len(active_skills):
-                skills = [skill.model_copy(deep=True) for skill in typed_skills]
+        resolved_skills = _active_skill_list(active_skills)
+        skills = current.active_skills if resolved_skills is None else resolved_skills
         self.store.save(
             self.session_id,
             [],
@@ -1142,6 +1248,15 @@ _PUBLIC_AGENT_EVENTS = {
 }
 
 
+def _active_skill_list(value: object | None) -> list[ActiveSkill] | None:
+    if not isinstance(value, list | tuple):
+        return None
+    typed = [skill for skill in value if isinstance(skill, ActiveSkill)]
+    if len(typed) != len(value):
+        return None
+    return [skill.model_copy(deep=True) for skill in typed]
+
+
 def _tag_input_entry(entries: list[ConversationEntry], input_id: str) -> None:
     if any(entry.metadata.get(INPUT_ID_METADATA_KEY) == input_id for entry in entries):
         return
@@ -1158,12 +1273,10 @@ def _input_is_persisted(record: SessionRecord, input_id: str) -> bool:
     )
 
 
-def _input_has_terminal_assistant(record: SessionRecord, input_id: str) -> bool:
-    active = (
-        SessionTree.restore(record.conversation_entries, record.leaf_id)
-        .project(ConversationProjection())
-        .active_entries
-    )
+def _input_has_terminal_assistant(
+    active: Sequence[ConversationEntry],
+    input_id: str,
+) -> bool:
     seen_input = False
     for entry in active:
         if entry.metadata.get(INPUT_ID_METADATA_KEY) == input_id:

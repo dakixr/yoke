@@ -1,7 +1,9 @@
 import { html, useEffect, useLayoutEffect, useRef, useState } from "../../vendor/htm-preact.js";
 import { workingDuration } from "../lib/duration.js";
+import { effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
 import { controller } from "../state/controller.js";
 import { getScroll, setScroll } from "../state/local-state.js";
+import { chatActivityForRuntime } from "./activity.js";
 import { markdownHTML } from "./markdown.js";
 
 export function Timeline({ sessionID, data, runtime }) {
@@ -18,10 +20,12 @@ export function Timeline({ sessionID, data, runtime }) {
   const liveTools = orderedLiveValues(data?.liveTools);
   const liveToolsByID = Object.fromEntries(liveTools.map((tool) => [tool.callID, tool]));
   const persistedToolCalls = persistedToolCallMap(messages);
+  const persistedToolResults = persistedToolResultMap(messages);
   const tailLiveTools = liveTools.filter((tool) => !persistedToolCalls.has(tool.callID));
   const liveTailItems = orderedLiveTail(liveAssistants, tailLiveTools);
   const liveAssistantSignature = liveAssistants.map((item) => `${item.id}:${item.content}`).join("|");
   const liveToolSignature = liveTools.map((item) => `${item.callID}:${item.status}`).join("|");
+  const chatActivity = chatActivityForRuntime(runtime);
 
   if (restore.current.sessionID !== sessionID) {
     restore.current = { sessionID, target: getScroll(sessionID), complete: false };
@@ -70,10 +74,11 @@ export function Timeline({ sessionID, data, runtime }) {
         <div class="timeline__inner">
           ${data?.messageCursor ? html`
             <button class="load-older" disabled=${data.loadingOlder} onClick=${() => controller.loadOlderMessages(sessionID)}>
-              ${data.loadingOlder ? "Loading…" : "Load older turns"}
+              ${data.loadingOlder ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
+              <span>${data.loadingOlder ? "Loading older turns" : "Load older turns"}</span>
             </button>
           ` : null}
-          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolNames=${persistedToolCalls} />`) : !failedPrompts.length && !livePrompt && !liveAssistants.length && !liveTools.length && !runtime?.activity ? html`
+          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolNames=${persistedToolCalls} toolResults=${persistedToolResults} />`) : !failedPrompts.length && !livePrompt && !liveAssistants.length && !liveTools.length && !chatActivity ? html`
             <div class="timeline-empty">This session has no messages yet.</div>
           ` : null}
           ${failedPrompts.map((prompt) => html`<${UserMessage} key=${prompt.id} message=${livePromptMessage(prompt)} />`)}
@@ -86,7 +91,7 @@ export function Timeline({ sessionID, data, runtime }) {
                 <span class="tool-line__state">${toolStatusLabel(item.value.status)}</span>
                 ${item.value.arguments ? html`<code>${compactArguments(item.value.arguments)}</code>` : null}
               </button>`)}
-          ${runtime?.activity && !liveTools.length ? html`<${ActivityIndicator} startedAt=${runtime.startedAt} activity=${runtime.activity} />` : null}
+          ${chatActivity ? html`<${ActivityIndicator} startedAt=${runtime?.startedAt} activity=${chatActivity} />` : null}
           ${data?.lastError ? html`<div class="timeline-error" role="status">${data.lastError}</div>` : null}
         </div>
       </div>
@@ -111,9 +116,10 @@ function ActivityIndicator({ startedAt, activity }) {
   `;
 }
 
-function TimelineMessage({ sessionID, message, liveToolsByID, toolNames }) {
+function TimelineMessage({ sessionID, message, liveToolsByID, toolNames, toolResults }) {
   if (message.type === "user") return html`<${UserMessage} message=${message} />`;
-  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} />`;
+  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolResults=${toolResults} />`;
+  if (message.type === "tool" && toolNames.has(message.callID)) return null;
   if (message.type === "tool") return html`<${ToolMessage} sessionID=${sessionID} message=${message} toolName=${toolNames.get(message.callID) || null} />`;
   return html`<div class="control-line"><span>${message.control || "Control"}</span>${message.text ? html`<span>${message.text}</span>` : null}</div>`;
 }
@@ -144,22 +150,32 @@ function livePromptMessage(livePrompt) {
   };
 }
 
-function AssistantMessage({ sessionID = null, message, liveToolsByID = {} }) {
-  const text = (message.content || []).filter((part) => part.type === "text").map((part) => part.text).join("\n");
+function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolResults = new Map() }) {
+  const text = projectedMessageText(message);
   const images = (message.content || []).filter((part) => part.type === "image");
-  const phase = message.phase === "commentary" ? "Commentary" : "Assistant";
-  return html`<article class=${`turn turn--assistant ${message.phase === "commentary" ? "is-commentary" : ""}`}>
+  const commentary = effectiveAssistantPhase(message) === "commentary";
+  const phase = commentary ? "Commentary" : "Assistant";
+  return html`<article class=${`turn turn--assistant ${commentary ? "is-commentary" : ""}`}>
     <div class="turn__rail"><span class="turn__label">${phase}</span>${message.timeCreated ? html`<time>${formatTime(message.timeCreated)}</time>` : null}</div>
     <div class="turn__body assistant-content">
       ${text ? html`<div class="markdown" dangerouslySetInnerHTML=${{ __html: markdownHTML(text) }}></div>` : null}
       ${images.map((part) => html`<span class="attachment-chip">▧ ${part.name}</span>`)}
       ${message.toolCalls?.length ? html`<div class="tool-call-list">
-        ${message.toolCalls.map((call) => html`
-          <button key=${call.id} class=${`tool-line ${liveToolsByID[call.id] ? `tool-line--${liveToolsByID[call.id].status}` : ""}`} onClick=${() => sessionID && controller.openInspector("tool", { callID: call.id })}>
-            <span class="tool-line__glyph">${liveToolsByID[call.id] ? toolGlyph(liveToolsByID[call.id].status) : "↳"}</span><span>${humanToolName(call.name)}</span><code>${compactArguments(call.arguments)}</code>
-            ${liveToolsByID[call.id] ? html`<span class="tool-line__state">${toolStatusLabel(liveToolsByID[call.id].status)}</span>` : null}
-          </button>
-        `)}
+        ${message.toolCalls.map((call) => {
+          const live = liveToolsByID[call.id] || null;
+          const result = toolResults.get(call.id) || null;
+          const status = live?.status || (result ? "completed" : "pending");
+          const resultSummary = result ? compactResult(result.result) : "";
+          return html`
+            <button key=${call.id} class=${`tool-line tool-line--${status}`} onClick=${() => sessionID && controller.openInspector("tool", { callID: call.id })}>
+              <span class="tool-line__glyph">${toolGlyph(status)}</span>
+              <span class="tool-line__name">${humanToolName(call.name)}</span>
+              ${call.arguments ? html`<code>${compactArguments(call.arguments)}</code>` : null}
+              <span class="tool-line__state">${toolStatusLabel(status)}</span>
+              ${resultSummary ? html`<span class="tool-line__summary">${resultSummary}</span>` : null}
+            </button>
+          `;
+        })}
       </div>` : null}
     </div>
   </article>`;
@@ -203,7 +219,16 @@ function persistedToolCallMap(messages) {
   return calls;
 }
 
+function persistedToolResultMap(messages) {
+  const results = new Map();
+  for (const message of messages) {
+    if (message.type === "tool" && message.callID) results.set(message.callID, message);
+  }
+  return results;
+}
+
 function toolStatusLabel(status) {
+  if (status === "pending") return "queued";
   if (status === "running") return "working";
   if (status === "failed") return "failed";
   if (status === "cancelled") return "cancelled";
@@ -211,7 +236,7 @@ function toolStatusLabel(status) {
 }
 
 function toolGlyph(status) {
-  if (status === "running") return "↳";
+  if (status === "pending" || status === "running") return "↳";
   if (status === "failed") return "×";
   if (status === "cancelled") return "·";
   return "✓";

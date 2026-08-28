@@ -215,3 +215,33 @@ def test_runtime_forwards_provider_events() -> None:
             "message": "transient test event",
         },
     ) in events
+
+
+def test_compaction_provider_mutation_isolated_from_agent_history() -> None:
+    class MutatingCompactionProvider(ContextRecordingProvider):
+        supports_image_inputs = True
+
+        def complete_with_context(
+            self,
+            messages: list[Message],
+            tools: list[dict[str, object]],
+            *,
+            request_context: ProviderRequestContext,
+        ) -> Message:
+            del tools, request_context
+            messages[0].content = "provider mutation"
+            return Message.assistant("safe summary")
+
+    provider = MutatingCompactionProvider()
+    original_messages = [
+        Message.user("immutable old request"),
+        Message.assistant("immutable old answer"),
+    ]
+    agent = RuntimeAgent(provider=provider, tools=[], messages=original_messages)
+
+    compacted = force_compact_agent(agent, agent.messages)
+
+    assert compacted is not None
+    assert original_messages[0].content == "immutable old request"
+    assert agent.conversation_entries[0].message is not None
+    assert agent.conversation_entries[0].message.content == "immutable old request"

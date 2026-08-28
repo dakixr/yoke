@@ -66,13 +66,26 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   };
   const submit = async (delivery) => {
     if (!hasContent || busy || !connected) return;
+    const submittedText = text;
+    const submittedAttachments = [...attachments];
     setBusy(true);
     try {
       if (!attachments.length && await executeSlash(text)) return;
-      await controller.submitPrompt(sessionID, { text, attachments, delivery });
+      // Hand ownership to the optimistic transcript before the network round
+      // trip. The composer must never show the same prompt at the same time as
+      // the optimistic user row.
       setText("");
       setAttachments([]);
+      await controller.submitPrompt(sessionID, {
+        text: submittedText,
+        attachments: submittedAttachments,
+        delivery,
+      });
     } catch (error) {
+      // The input is read-only while admission is pending, so a failed send can
+      // restore the exact draft without overwriting newer typing.
+      setText(submittedText);
+      setAttachments(submittedAttachments);
       controller.notice(error?.message || String(error));
     } finally {
       setBusy(false);
@@ -80,6 +93,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   };
   const onKeyDown = (event) => {
     if (event.isComposing) return;
+    if (busy) return;
     if (handleSlashMenuKey(event, slashMenu, chooseSlash)) return;
     const key = event.key.toLowerCase();
     if (event.key === "Escape") {
@@ -164,13 +178,15 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
         aria-activedescendant=${slashMenu.items[slashMenu.activeIndex] ? `slash-completion-menu-option-${slashMenu.activeIndex}` : undefined}
         placeholder=${connected ? "Ask Yoke to work…" : "Reconnect to send work"}
         disabled=${!connected}
+        readOnly=${busy}
+        aria-busy=${busy}
         onInput=${(event) => setText(event.currentTarget.value)}
         onKeyDown=${onKeyDown}
         onPaste=${imageInput.onPaste}
       ></textarea>
       <div class="composer-footer">
         <div class="composer-footer__left">
-          ${capabilities?.features?.images ? html`<button class="quiet-button" type="button" disabled=${!connected} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
+          ${capabilities?.features?.images ? html`<button class="quiet-button" type="button" disabled=${!connected || busy} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
           <input ref=${fileInput} class="visually-hidden" type="file" accept="image/*" multiple onChange=${(event) => { void addFiles([...event.currentTarget.files]); event.currentTarget.value = ""; }} />
         </div>
         <div class="composer-actions">
@@ -207,7 +223,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
               title="Send · Enter"
               disabled=${!hasContent || busy || !connected}
               onClick=${() => submit("steer")}
-            ><${SendArrow} /></button>
+            >${busy ? html`<span class="pending-spinner" aria-hidden="true"></span>` : html`<${SendArrow} />`}</button>
           `}
         </div>
       </div>

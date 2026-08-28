@@ -19,7 +19,7 @@
  * @property {any[]} providers
  * @property {any[]} commands
  * @property {any[]} recentLocations
- * @property {{selectedSessionID:string|null,newSession:boolean,sidebarOpen:boolean,inspector:any|null,search:string,searching:boolean,searchResults:string[],commandPaletteOpen:boolean,notice:string|null,doneUnreviewed:Object<string,boolean>}} ui
+ * @property {{selectedSessionID:string|null,newSession:boolean,sidebarOpen:boolean,inspector:any|null,search:string,searching:boolean,searchResults:string[],commandPaletteOpen:boolean,notice:string|null,noticePending:boolean,doneUnreviewed:Object<string,boolean>}} ui
  * @property {Object<string, any>} drafts
  */
 
@@ -49,6 +49,7 @@ const initialState = () => ({
     searchResults: [],
     commandPaletteOpen: false,
     notice: null,
+    noticePending: false,
     doneUnreviewed: {},
   },
   drafts: {},

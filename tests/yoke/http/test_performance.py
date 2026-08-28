@@ -15,6 +15,7 @@ from yoke.agent.observability import ToolTraceStore
 from yoke.cli.session.store import SessionStore
 from yoke.http.app import HttpAppSettings
 from yoke.http.app import create_app
+from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_service import SessionService
 from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.http.services.skill_service import SkillService
@@ -154,6 +155,15 @@ def test_read_cache_replays_in_place_store_append_exactly_once(tmp_path: Path) -
     assert len(after.record.conversation_entries) == old_count + 1
     assert after.record.messages[-1].display_text_content() == "new tail"
     assert len(after.entries_by_id) == old_count + 1
+    assert len(after.active_path_entries) == old_count + 1
+    assert after.active_path_entries[-1].message is not None
+    assert after.active_path_entries[-1].message.display_text_content() == "new tail"
+
+    owned = after.owned_active_path()
+    owned[-1].parent_id = None
+    owned[-1].metadata["owned-test"] = True
+    assert after.active_path_entries[-1].parent_id is not None
+    assert "owned-test" not in after.active_path_entries[-1].metadata
 
 
 def test_live_tool_polling_does_not_load_large_persisted_session(
@@ -322,3 +332,22 @@ def test_context_and_tree_inspectors_are_bounded_and_index_backed(
     older = service.tree("large", limit=50, cursor=tree.data.cursor.next)
     assert len(older.data.entries) == 50
     assert older.data.entries[-1].id != tree.data.entries[-1].id
+
+
+def test_runtime_seed_does_not_force_cold_topology_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = SessionStore(tmp_path / "sessions")
+    store.save("large", _messages(200, payload=1024), root=tmp_path)
+    index = SessionMessageIndex(store)
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("runtime seed must not scan or warm a cold sidecar")
+
+    monkeypatch.setattr(index, "_ensure", fail)
+    monkeypatch.setattr(index, "warm_async", fail)
+    try:
+        assert index.runtime_seed("large") is None
+    finally:
+        index.close()

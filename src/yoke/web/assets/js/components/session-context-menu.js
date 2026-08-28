@@ -50,7 +50,7 @@ export function SessionContextMenu({ session, location, runtime, capabilities, p
   };
   const regenerate = async () => {
     onClose();
-    controller.notice("Regenerating title…");
+    controller.pendingNotice("Regenerating title…");
     try {
       const updated = await controller.regenerateTitle(session.id);
       controller.notice(`Title updated to “${updated.title}”.`);

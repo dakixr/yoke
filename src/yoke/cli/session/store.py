@@ -259,6 +259,7 @@ class SessionStore:
         existing_record: SessionRecord,
         leaf_id: str,
         appended_entries: tuple[ConversationEntry, ...] = (),
+        active_skills: builtins.list[ActiveSkill] | None = None,
     ) -> SessionRecord:
         """Persist a topology-proven tree checkout without loading old entries."""
         if existing_record.id != session_id:
@@ -267,15 +268,24 @@ class SessionStore:
         if not path.exists():
             raise ValueError(f"Session not found: {session_id}")
         now = timestamp()
-        record = existing_record.model_copy(
-            update={
-                "leaf_id": leaf_id,
-                "updated_at": now,
-            }
-        )
+        updates: dict[str, object] = {
+            "leaf_id": leaf_id,
+            "updated_at": now,
+        }
+        if active_skills is not None:
+            updates["active_skills"] = list(active_skills)
+        record = existing_record.model_copy(update=updates)
+        session_changes: dict[str, object] = {
+            "leaf_id": leaf_id,
+            "updated_at": now,
+        }
+        if active_skills is not None:
+            session_changes["active_skills"] = [
+                skill.model_dump(mode="json") for skill in active_skills
+            ]
         append_session_tree_delta(
             path,
-            session_changes={"leaf_id": leaf_id, "updated_at": now},
+            session_changes=session_changes,
             appended_entries=appended_entries,
         )
         existing_index = self.index_entry(session_id)
@@ -400,7 +410,9 @@ class SessionStore:
         ):
             now = timestamp()
             fork_root = normalize_root(root) or source_index.root
-            fork_title = normalize_title(title) or fork_session_title(source_index.title)
+            fork_title = normalize_title(title) or fork_session_title(
+                source_index.title
+            )
             fork_leaf = (
                 selected_leaf_id
                 if selected_leaf_id is not None
@@ -450,9 +462,7 @@ class SessionStore:
                 "pinned": False,
                 "archived_at": None,
                 "leaf_id": (
-                    selected_leaf_id
-                    if selected_leaf_id is not None
-                    else source.leaf_id
+                    selected_leaf_id if selected_leaf_id is not None else source.leaf_id
                 ),
             },
         )

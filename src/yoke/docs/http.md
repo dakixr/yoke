@@ -133,16 +133,21 @@ defaults to 100 recent active entries and a 500,000-character text budget and
 reports `totalEntries`, `retainedEntries`, `retainedChars`, `maxChars`, and
 `truncated`. Compaction checkpoints are retained when relevant. The Tree
 inspector likewise pages lightweight nodes, with 200 newest nodes on the first
-page and an opaque cursor for older nodes. Navigation previews retain at most
-100 abandoned-entry previews and report the total/truncation state. These
-bounds are HTTP-inspector behavior; they do not change the conversation used by
-the model runtime.
+page and an opaque cursor for older nodes. The bundled web inspector requests
+80 nodes at a time to keep the sidebar DOM bounded while preserving the wider
+HTTP default for API clients. Navigation previews retain at most 100
+abandoned-entry previews and report the total/truncation state. These bounds are
+HTTP-inspector behavior; they do not change the conversation used by the model
+runtime.
 
 Canonical full-session forks use a stable file clone plus a small metadata
 delta instead of decoding and reserializing every historical message. The HTTP
-path returns lightweight fork metadata and seeds the fork's read sidecar. CLI
-callers that require an immediately materialized `SessionRecord` keep that
-existing return contract.
+path returns lightweight fork metadata and seeds the fork's read sidecar. When
+the source has a persisted read sidecar, the fork reuses that immutable snapshot
+with a hard link instead of serializing or copying the topology map again. The
+sidecar writer uses atomic replacement, so later source-index updates do not
+mutate the fork's linked snapshot. CLI callers that require an immediately
+materialized `SessionRecord` keep that existing return contract.
 
 Each session has one serialized execution lane. Different sessions can execute
 at the same time, subject to the daemon-wide active-session limit. Disconnecting
@@ -268,6 +273,67 @@ failure. New-session submission switches into the created session and paints
 the prompt before admission completes. Compaction shows its local activity
 state immediately. Tree labels serialize revision-checked mutations while
 keeping the newest local label visible.
+
+Normal prompt submission transfers the draft from the composer to the
+optimistic transcript before waiting for HTTP admission. The textarea is
+briefly locked during that admission boundary so the same prompt cannot remain
+visible in both the editor and chat. If admission fails, the browser removes
+the optimistic row and restores the exact text and attachments to the composer.
+The daemon warms the lazy HTTP runtime import in the background after first
+paint, and cold first-turn reconstruction gives the admission response a short
+grace before a large saved session begins CPU-heavy parsing. During that cold
+state the runtime reports `Loading session`, then changes to `Thinking` after
+the saved model state is ready. SessionRuntime is also the sole owner of loading
+active conversation state; the HTTP agent factory no longer restores the same
+history a second time before provider work can begin.
+
+When a current persistent topology sidecar contains a self-contained compaction
+checkpoint, cold turn startup reconstructs the compact runtime state directly
+from indexed entry offsets instead of deserializing the historical session
+prefix. The reconstructed provider-message projection and conversation cache
+scope are required to match the established full-tree projection. Prompt startup
+does not synchronously build a missing topology sidecar: a cold sidecar miss
+falls back to the normal session read rather than scanning the same large file
+twice, while transcript and Tree tail reads continue to warm sidecars in the
+background. A stale append-only sidecar is caught up incrementally.
+
+Turn checkpoints and settlement persist only the suffix created by that turn,
+grafted onto the canonical saved leaf, so the reduced runtime representation
+never rewrites historical parent links. Full-history startup owns mutable entry
+shells while borrowing historical message values; provider-bound normalization
+still creates defensive message copies. Compaction fast paths are guarded by
+differential tests against the established provider projection, including tool
+turns, images, skills, prior checkpoints, branches, response continuity, and
+conversation cache identity.
+
+Operations that must wait for an authoritative response expose pending state
+instead of pretending the result already happened. The browser shows compact
+spinners for transcript and Tree pagination, Tree navigation previews and
+checkout, manual compaction, and other blocking composer/inspector work while
+preventing duplicate submissions.
+
+While a session runtime is running, the conversation keeps a persistent status
+row at the bottom of the chat. Runtime activity such as `Thinking`, `Running
+tool`, or `Compacting` refines the label, but transiently missing activity data
+falls back to `Working`. Live tool rows do not suppress this status, and stale
+activity cannot keep it visible after the runtime returns to idle.
+
+The transcript renders each tool call as one row. Persisted tool results are
+folded into the originating call row when both are present in the loaded
+window, while an orphaned result at a pagination boundary remains visible until
+its call is loaded. User turns are right-aligned and assistant turns remain
+left-aligned, using placement rather than a separate role color. The Tree
+inspector defaults to user and assistant message nodes only. Tool, control, and
+other technical nodes stay available behind a "Show all nodes" toggle. The
+inspector uses a compact connected-node layout and keeps its browser page size
+bounded to reduce DOM work on large sessions.
+
+Checkpointed tool-calling assistant messages also reconcile with their live
+mid-turn commentary row. Providers may persist that message with a null phase
+even though Yoke emits its text live as `commentary`; the browser treats text
+plus tool calls as the same commentary message. This removes the live tail row
+as soon as the checkpointed message arrives instead of leaving a duplicate at
+the bottom until the turn settles.
 
 Session bootstrap also separates core data from enrichment. Session lists and
 the selected transcript can become interactive without waiting for provider

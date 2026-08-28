@@ -13,7 +13,6 @@ from yoke.cli.session.io import SESSION_ENTRY_EVENT
 from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
 from yoke.cli.session.io import SESSION_METADATA_EVENT
 from yoke.cli.session.models import SessionRecord
-from yoke.http.services.projectors import active_public_entries
 from yoke.session import SessionStore
 
 
@@ -23,9 +22,21 @@ class SessionReadSnapshot:
 
     signature: tuple[int, int]
     record: SessionRecord
+    active_path_entries: tuple[ConversationEntry, ...]
     active_entries: tuple[ConversationEntry, ...]
     entries_by_id: dict[str, ConversationEntry]
     entry_positions: dict[str, int]
+
+    def owned_active_path(self) -> list[ConversationEntry]:
+        """Return deep-copied active entries safe for arbitrary mutation."""
+        return [entry.model_copy(deep=True) for entry in self.active_path_entries]
+
+    def runtime_active_path(self) -> list[ConversationEntry]:
+        """Own entry shells while borrowing immutable historical message values."""
+        return [
+            entry.model_copy(update={"metadata": dict(entry.metadata)}, deep=False)
+            for entry in self.active_path_entries
+        ]
 
 
 class SessionReadCache:
@@ -53,6 +64,13 @@ class SessionReadCache:
         self._entries: OrderedDict[str, SessionReadSnapshot] = OrderedDict()
         self._source_bytes = 0
 
+    def is_current(self, session_id: str) -> bool:
+        """Return whether a signature-current parsed snapshot is already cached."""
+        signature = self.store.session_file_signature(session_id)
+        if signature is None:
+            return False
+        return self._get_cached(session_id, signature) is not None
+
     def get(self, session_id: str) -> SessionReadSnapshot:
         signature = self.store.session_file_signature(session_id)
         if signature is None:
@@ -77,16 +95,21 @@ class SessionReadCache:
                     return appended
             record = self.store.load(session_id)
             final_signature = self.store.session_file_signature(session_id) or signature
+            entries_by_id = {entry.id: entry for entry in record.conversation_entries}
+            active_path_entries = tuple(
+                _active_path_entries(entries_by_id, record.leaf_id)
+            )
             active_entries = tuple(
-                active_public_entries(record.conversation_entries, record.leaf_id)
+                entry
+                for entry in active_path_entries
+                if entry.kind not in {"instruction", "memory_snapshot"}
             )
             snapshot = SessionReadSnapshot(
                 signature=final_signature,
                 record=record,
+                active_path_entries=active_path_entries,
                 active_entries=active_entries,
-                entries_by_id={
-                    entry.id: entry for entry in record.conversation_entries
-                },
+                entries_by_id=entries_by_id,
                 entry_positions={
                     entry.id: index
                     for index, entry in enumerate(record.conversation_entries)
@@ -186,6 +209,7 @@ class SessionReadCache:
                 "conversation_entries": entries,
             }
         )
+        active_path_entries: tuple[ConversationEntry, ...]
         active_entries: tuple[ConversationEntry, ...]
         if (
             appended_entries
@@ -196,6 +220,7 @@ class SessionReadCache:
                 appended_entries,
             )
         ):
+            active_path_entries = (*prior.active_path_entries, *appended_entries)
             active_entries = (
                 *prior.active_entries,
                 *(
@@ -209,12 +234,19 @@ class SessionReadCache:
             and not replaced_topology
             and record.leaf_id == prior.record.leaf_id
         ):
+            active_path_entries = prior.active_path_entries
             active_entries = prior.active_entries
         else:
-            active_entries = tuple(active_public_entries(entries, record.leaf_id))
+            active_path_entries = tuple(_active_path_entries(by_id, record.leaf_id))
+            active_entries = tuple(
+                entry
+                for entry in active_path_entries
+                if entry.kind not in {"instruction", "memory_snapshot"}
+            )
         return SessionReadSnapshot(
             signature=signature,
             record=record,
+            active_path_entries=active_path_entries,
             active_entries=active_entries,
             entries_by_id=by_id,
             entry_positions=positions,
@@ -267,3 +299,26 @@ def _extends_active_leaf(
             return False
         parent = entry.id
     return new_leaf_id == parent
+
+
+def _active_path_entries(
+    entries_by_id: dict[str, ConversationEntry],
+    leaf_id: str | None,
+) -> list[ConversationEntry]:
+    """Return one validated root-to-leaf path from an existing id lookup."""
+    if leaf_id is None:
+        return []
+    reverse_path: list[ConversationEntry] = []
+    seen: set[str] = set()
+    current: str | None = leaf_id
+    while current is not None:
+        if current in seen:
+            raise ValueError("Session tree contains a parent cycle.")
+        seen.add(current)
+        entry = entries_by_id.get(current)
+        if entry is None:
+            break
+        reverse_path.append(entry)
+        current = entry.parent_id
+    reverse_path.reverse()
+    return reverse_path

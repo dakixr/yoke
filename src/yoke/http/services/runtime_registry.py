@@ -13,6 +13,7 @@ from yoke.http.models.session import ActiveRuntimeInfo
 from yoke.http.errors import ApiError
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
+from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
@@ -38,6 +39,8 @@ class SessionRuntimeRegistry:
         events: EventService,
         agent_factory: SessionAgentFactory,
         read_cache: SessionReadCache | None = None,
+        message_index: SessionMessageIndex | None = None,
+        indexed_runtime_seed: bool = False,
         max_active_sessions: int = 4,
         max_worker_threads: int | None = None,
     ) -> None:
@@ -51,6 +54,8 @@ class SessionRuntimeRegistry:
         self.events = events
         self.agent_factory = agent_factory
         self.read_cache = read_cache or SessionReadCache(store)
+        self.message_index = message_index
+        self.indexed_runtime_seed = indexed_runtime_seed
         self.active_slots = asyncio.Semaphore(max_active_sessions)
         self.executor = ThreadPoolExecutor(
             max_workers=workers,
@@ -73,6 +78,8 @@ class SessionRuntimeRegistry:
                     events=self.events,
                     agent_factory=self.agent_factory,
                     read_cache=self.read_cache,
+                    message_index=self.message_index,
+                    indexed_runtime_seed=self.indexed_runtime_seed,
                     executor=self.executor,
                     active_slots=self.active_slots,
                 )

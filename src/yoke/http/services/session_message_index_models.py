@@ -50,6 +50,15 @@ class ContextIndexWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeIndexSeed:
+    """Compaction-bounded active entries sufficient to rebuild model state."""
+
+    entries: list[ConversationEntry]
+    leaf_id: str
+    total_entries: int
+
+
+@dataclass(frozen=True, slots=True)
 class NavigationIndexPreview:
     target: ConversationEntry
     current: bool

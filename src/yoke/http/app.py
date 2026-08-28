@@ -88,6 +88,8 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         events=events,
         agent_factory=configured.agent_factory or _build_http_session_agent,
         read_cache=read_cache,
+        message_index=session_service.message_index,
+        indexed_runtime_seed=configured.agent_factory is None,
         max_active_sessions=configured.max_active_sessions,
         max_worker_threads=configured.max_worker_threads,
     )
@@ -100,12 +102,16 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
                 initial_delay_seconds=2 if store.has_session_index() else 0,
             )
         )
+        runtime_import_task = asyncio.create_task(
+            _warm_runtime_import(initial_delay_seconds=1.5)
+        )
         try:
             yield
         finally:
-            maintenance_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await maintenance_task
+            for task in (maintenance_task, runtime_import_task):
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
             session_service.close()
             await runtime_registry.close()
 
@@ -144,7 +150,9 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def request_identity(request: Request, call_next):  # noqa: ANN001,ANN202
-        request.state.request_id = request.headers.get("x-request-id") or f"req_{uuid4().hex}"
+        request.state.request_id = (
+            request.headers.get("x-request-id") or f"req_{uuid4().hex}"
+        )
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         return response
@@ -212,3 +220,14 @@ async def _maintain_session_index(
     while True:
         await asyncio.sleep(5)
         await asyncio.to_thread(store.maintain_index)
+
+
+async def _warm_runtime_import(*, initial_delay_seconds: float) -> None:
+    """Warm HTTP turn imports after first paint without blocking server startup."""
+    if initial_delay_seconds:
+        await asyncio.sleep(initial_delay_seconds)
+    await asyncio.to_thread(_load_runtime_module)
+
+
+def _load_runtime_module() -> None:
+    import yoke.http.services.runtime  # noqa: F401,PLC0415

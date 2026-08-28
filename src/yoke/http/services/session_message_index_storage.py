@@ -32,10 +32,17 @@ from yoke.http.services.session_message_index_models import (
     prefix_hash as calculate_prefix_hash,
 )
 from yoke.http.services.session_message_index_models import snapshot_matches
+from yoke.http.services.session_message_index_sidecar import link_sidecar
 
 
 def clone_sidecar(host: Any, source_session_id: str, target_session_id: str) -> None:
     """Seed a fork with the source topology snapshot without rescanning it."""
+    # Sidecars are replaced atomically rather than mutated in place. A hard
+    # link therefore gives the fork an immutable snapshot of the source index
+    # without serializing or copying a potentially multi-megabyte topology map.
+    # The fork's appended metadata is caught up incrementally on first use.
+    if link_sidecar(host, source_session_id, target_session_id):
+        return
     snapshot = host._current_snapshot(source_session_id)
     if snapshot is None:
         return

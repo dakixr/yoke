@@ -28,6 +28,7 @@ const { api, ApiError } = await import("../src/yoke/web/assets/js/api/client.js"
 const { controller } = await import("../src/yoke/web/assets/js/state/controller.js");
 const { reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
 const { store } = await import("../src/yoke/web/assets/js/state/store.js");
+const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
 
 function deferred() {
   let resolve;
@@ -475,6 +476,61 @@ function testLateDurableEventDoesNotClearNewerOptimisticPrompt() {
   assert.equal(reduced.sessionData[id].livePrompt.id, "new-input");
 }
 
+async function testCheckpointedToolCommentaryDoesNotStickAtTail() {
+  const id = "checkpointed-commentary";
+  installSession(id);
+  store.setState((state) => ({
+    ...state,
+    active: {
+      ...state.active,
+      [id]: {
+        state: "running",
+        turnID: "turn-1",
+        startedAt: "2026-08-27T12:00:00Z",
+        activity: "Running tool",
+      },
+    },
+  }));
+  store.setState((state) => reducePublicEvent(state, {
+    id: "live-commentary",
+    type: "session.message.updated",
+    time: "2026-08-27T12:00:01Z",
+    sessionID: id,
+    data: {
+      turnID: "turn-1",
+      iteration: 1,
+      phase: "commentary",
+      content: "I will inspect the file first.",
+    },
+  }));
+  assert.equal(Object.keys(store.getState().sessionData[id].liveAssistants).length, 1);
+
+  const restore = restoreApi({
+    messages: async () => ({
+      data: [{
+        id: "assistant-tool-call",
+        type: "assistant",
+        timeCreated: "2026-08-27T12:00:01.100Z",
+        phase: null,
+        content: [{ type: "text", text: "I will inspect the file first." }],
+        toolCalls: [{ id: "call-1", name: "read_file", arguments: '{"path":"README.md"}' }],
+      }],
+      snapshotSeq: 1,
+      cursor: { next: null },
+    }),
+  });
+  try {
+    await controller.refreshMessages(id);
+    assert.deepEqual(
+      store.getState().sessionData[id].liveAssistants,
+      {},
+      "checkpointed tool commentary must reconcile into its persisted assistant row",
+    );
+  } finally {
+    restore();
+  }
+}
+
 async function testBootstrapDoesNotWaitForProviderOrLocationEnrichment() {
   const providerGate = deferred();
   const locationGate = deferred();
@@ -516,6 +572,27 @@ async function testBootstrapDoesNotWaitForProviderOrLocationEnrichment() {
   }
 }
 
+async function testChatWorkingIndicatorTracksRuntimeState() {
+  assert.equal(
+    chatActivityForRuntime({ state: "running", activity: "Thinking" }),
+    "Thinking",
+  );
+  assert.equal(
+    chatActivityForRuntime({ state: "running", activity: null }),
+    "Working",
+    "running state must keep an in-chat indicator even if an activity event is temporarily absent",
+  );
+  assert.equal(
+    chatActivityForRuntime({ state: "stopping", activity: null }),
+    "Stopping",
+  );
+  assert.equal(
+    chatActivityForRuntime({ state: "idle", activity: "Thinking" }),
+    null,
+    "stale activity must not keep the chat indicator after the runtime is idle",
+  );
+}
+
 const tests = [
   testPromptAppearsBeforeAdmissionReturns,
   testPromptRollbackOnFailure,
@@ -527,7 +604,9 @@ const tests = [
   testCompactionShowsImmediatelyAndRollsBackFailure,
   testTreeLabelsSerializeAndKeepNewestOptimism,
   testLateDurableEventDoesNotClearNewerOptimisticPrompt,
+  testCheckpointedToolCommentaryDoesNotStickAtTail,
   testBootstrapDoesNotWaitForProviderOrLocationEnrichment,
+  testChatWorkingIndicatorTracksRuntimeState,
 ];
 
 const started = performance.now();

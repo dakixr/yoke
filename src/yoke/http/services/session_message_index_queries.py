@@ -8,11 +8,14 @@ from typing import Any
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.http.services.session_message_index_models import ContextIndexWindow
+from yoke.http.services.session_message_index_models import can_append
 from yoke.http.services.session_message_index_models import MessagePage
 from yoke.http.services.session_message_index_models import NavigationIndexPreview
 from yoke.http.services.session_message_index_models import PUBLIC_EXCLUDED_KINDS
+from yoke.http.services.session_message_index_models import RuntimeIndexSeed
 from yoke.http.services.session_message_index_models import TreeIndexPage
 from yoke.http.services.session_message_index_models import kind
+from yoke.http.services.session_message_index_models import prefix_hash
 from yoke.http.services.session_message_index_models import (
     parent_id as location_parent_id,
 )
@@ -219,6 +222,91 @@ def query_context_window(
         entries=entries,
         total_entries=len(active_ids),
         truncated=truncated,
+    )
+
+
+def query_runtime_seed(host: Any, session_id: str) -> RuntimeIndexSeed | None:
+    """Read a compacted runtime seed without forcing a cold full index scan."""
+    snapshot = host._current_snapshot(session_id)
+    if snapshot is None:
+        prior = host._cached(session_id) or host._load_sidecar(session_id)
+        if prior is None:
+            return None
+        source = host.store.directory / f"{session_id}.jsonl"
+        try:
+            stat = source.stat()
+        except OSError:
+            return None
+        source_prefix_hash = prefix_hash(source, stat.st_size)
+        if source_prefix_hash is None or not can_append(
+            prior, stat.st_size, source_prefix_hash
+        ):
+            return None
+        snapshot = host._ensure(session_id)
+    if snapshot is None:
+        return None
+    active_ids = host._active_ids(snapshot)
+    if not active_ids:
+        return None
+    checkpoint_index = next(
+        (
+            index
+            for index in range(len(active_ids) - 1, -1, -1)
+            if kind(snapshot.entries[active_ids[index]]) == "memory_snapshot"
+        ),
+        None,
+    )
+    if checkpoint_index is None:
+        return None
+
+    checkpoint_id = active_ids[checkpoint_index]
+    checkpoint_entries = host._read_entries(session_id, snapshot, [checkpoint_id])
+    if not checkpoint_entries:
+        return None
+    checkpoint = checkpoint_entries[0]
+    handoff = checkpoint.metadata.get("compaction_handoff")
+    if not isinstance(handoff, dict):
+        return None
+    retained_messages = handoff.get("retained_messages")
+    retained_user_messages = handoff.get("retained_user_messages")
+    self_contained = (
+        isinstance(retained_messages, list) and bool(retained_messages)
+    ) or retained_user_messages == 0
+    if not self_contained:
+        return None
+
+    cache_scope_id = next(
+        (
+            entry_id
+            for entry_id in active_ids[:checkpoint_index]
+            if kind(snapshot.entries[entry_id])
+            not in {"instruction", "memory_snapshot"}
+        ),
+        None,
+    )
+    prior_skill_ids = [
+        entry_id
+        for entry_id in active_ids[:checkpoint_index]
+        if kind(snapshot.entries[entry_id]) == "skill_event"
+    ]
+    continuation_ids = active_ids[checkpoint_index + 1 :]
+    prefix_ids = [
+        *([cache_scope_id] if cache_scope_id is not None else []),
+        *(entry_id for entry_id in prior_skill_ids if entry_id != cache_scope_id),
+    ]
+    selected_ids = [*prefix_ids, checkpoint_id, *continuation_ids]
+    entries = host._read_entries(session_id, snapshot, selected_ids)
+    if not entries:
+        return None
+
+    parent_id: str | None = None
+    for entry in entries:
+        entry.parent_id = parent_id
+        parent_id = entry.id
+    return RuntimeIndexSeed(
+        entries=entries,
+        leaf_id=entries[-1].id,
+        total_entries=len(active_ids),
     )
 
 

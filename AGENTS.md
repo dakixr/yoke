@@ -6,6 +6,8 @@ Prefer deep modules with clear seams over flat files sharing a prefix. New Pytho
 
 After changing the Yoke SDK, read `src/yoke/agent/skills/built_in/yoke-subagents/SKILL.md` and update it, plus `PATTERNS.md` and `SDK_SURFACE.md`, when the documented orchestration API or examples are affected.
 
+Provider-bound prompting and cache behavior are stability-critical. Performance work must not change provider message content/order, system or skill instructions, tool-call/result sequencing, image capability projection, compaction handoff semantics, response continuity, or conversation cache scope unless the task explicitly requires that behavior change. Prefer HTTP/index/persistence optimizations over agent-loop prompt-path changes. If a performance change touches provider-bound or compaction code, add differential tests against the established projection across representative tools, skills, checkpoints, images, and branches, and revert the optimization if any provider-visible behavior or cache identity diverges.
+
 Before each commit that changes Yoke, bump `src/yoke/_version.py` according to semantic versioning: patch for backward-compatible fixes/docs/defaults, minor for backward-compatible features, and major for breaking changes. Keep `pyproject.toml` and `uv.lock` synchronized with that version.
 
 Run `uv run ruff check .`, `uv run ruff format .`, `uv run ty check`, and `uv run pyright` before finishing changes.

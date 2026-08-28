@@ -16,10 +16,12 @@ from yoke.agent.context.helpers import append_conversation_entry
 from yoke.agent.context.helpers import entry_kind_for_message
 from yoke.agent.context.helpers import initialize_context_state
 from yoke.agent.context.helpers import initialize_owned_context_state
-from yoke.agent.context.helpers import next_compaction_generation
 from yoke.agent.context.helpers import normalize_instructions
-from yoke.agent.context.helpers import recent_log_messages
 from yoke.agent.context.helpers import update_message_projection
+from yoke.agent.context.compaction_projection import compacted_runtime_messages
+from yoke.agent.context.compaction_projection import (
+    next_compaction_generation_from_active_path,
+)
 from yoke.agent.context.accounting import latest_log_usage
 from yoke.agent.context.accounting import latest_message_usage
 from yoke.agent.context.accounting import message_entry_metadata
@@ -207,16 +209,14 @@ class ContextManager:
         ):
             return None
         recent_user_messages = self.compactor.collect_recent_user_messages(
-            recent_log_messages(context),
+            context.messages,
             token_budget=self.compaction_policy.recent_user_tokens,
         )
         return CompactionPreparation(
             reason=reason,
             estimate=estimate,
             boundary="user",
-            messages_to_summarize=[
-                message.model_copy(deep=True) for message in visible_messages
-            ],
+            messages_to_summarize=visible_messages,
             kept_messages=[
                 message.model_copy(deep=True) for message in recent_user_messages
             ],
@@ -258,7 +258,7 @@ class ContextManager:
     ) -> CompactionResult:
         """Apply a prepared compaction to the context using the summary text."""
         summary_text = (summary_message.plain_text_content or "").strip()
-        generation = next_compaction_generation(context)
+        generation = next_compaction_generation_from_active_path(context)
         retained_user_messages = len(preparation.kept_messages)
         handoff = CompactionHandoff(
             summary_text=summary_text,
@@ -300,7 +300,11 @@ class ContextManager:
                 metadata=snapshot.model_dump(),
             ),
         )
-        context.messages = self.transcript_messages(context)
+        context.messages = compacted_runtime_messages(
+            context,
+            kept_messages=preparation.kept_messages,
+            summary_message=summary_message,
+        )
         context.provider_epoch_reset = True
         return CompactionResult(
             messages=[message.model_copy(deep=True) for message in context.messages],

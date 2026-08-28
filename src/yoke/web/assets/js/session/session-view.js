@@ -1,4 +1,4 @@
-import { html, useEffect, useRef } from "../../vendor/htm-preact.js";
+import { html, useEffect, useRef, useState } from "../../vendor/htm-preact.js";
 import { currentRoute } from "../router/router.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
@@ -51,6 +51,7 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
   const connected = useStore((state) => state.connection.current);
   const inspector = useStore((state) => state.ui.inspector);
   const location = useStore((state) => state.locations[session.location.directory]);
+  const [compacting, setCompacting] = useState(false);
   const busy = runtime?.state && runtime.state !== "idle" && runtime.state !== "error";
   const rename = async () => {
     const title = window.prompt("Session title", session.title || "");
@@ -61,6 +62,13 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
   const archive = async () => {
     try { await controller.patchSession(session.id, { archived: !session.archivedAt }); }
     catch (error) { controller.notice(error?.message || String(error)); }
+  };
+  const compact = async () => {
+    if (compacting) return;
+    setCompacting(true);
+    try { await controller.compact(session.id); }
+    catch (error) { controller.notice(error?.message || String(error)); }
+    finally { setCompacting(false); }
   };
   return html`<header class="session-header">
     <div class="session-header__identity">
@@ -74,14 +82,16 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
       <button class="header-action desktop-session-action" disabled=${!connected} onClick=${rename}>Rename</button>
       <button class="header-action desktop-session-action" disabled=${!connected} onClick=${() => controller.patchSession(session.id, { pinned: !session.pinned }).catch((error) => controller.notice(error?.message || String(error)))}>${session.pinned ? "Unpin" : "Pin"}</button>
       <${InspectMenu} capabilities=${capabilities} inspector=${inspector} />
-      <button class="header-action desktop-session-action" disabled=${!connected || Boolean(busy)} onClick=${() => controller.compact(session.id).catch((error) => controller.notice(error?.message || String(error)))}>Compact</button>
+      <button class="header-action desktop-session-action" disabled=${!connected || Boolean(busy) || compacting} onClick=${compact}>
+        ${compacting ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}<span>${compacting ? "Compacting" : "Compact"}</span>
+      </button>
       ${capabilities?.features?.sessionArchive ? html`<button class="header-action desktop-session-action" disabled=${!connected || Boolean(busy)} onClick=${archive}>${session.archivedAt ? "Reopen" : "Settle"}</button>` : null}
       <details class="session-more-menu">
         <summary class="header-action">More ▾</summary>
         <div class="session-more-menu__popup">
           <button disabled=${!connected} onClick=${() => closeDetailsAnd(rename)}>Rename</button>
           <button disabled=${!connected} onClick=${() => closeDetailsAnd(() => controller.patchSession(session.id, { pinned: !session.pinned }).catch((error) => controller.notice(error?.message || String(error))))}>${session.pinned ? "Unpin" : "Pin"}</button>
-          <button disabled=${!connected || Boolean(busy)} onClick=${() => closeDetailsAnd(() => controller.compact(session.id).catch((error) => controller.notice(error?.message || String(error))))}>Compact</button>
+          <button disabled=${!connected || Boolean(busy) || compacting} onClick=${() => closeDetailsAnd(compact)}>${compacting ? "Compacting…" : "Compact"}</button>
           ${capabilities?.features?.sessionArchive ? html`<button disabled=${!connected || Boolean(busy)} onClick=${() => closeDetailsAnd(archive)}>${session.archivedAt ? "Reopen" : "Settle"}</button>` : null}
         </div>
       </details>

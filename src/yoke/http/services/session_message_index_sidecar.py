@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -67,5 +68,26 @@ def write_sidecar(host: Any, session_id: str, snapshot: MessageIndexSnapshot) ->
     except OSError:
         try:
             tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def link_sidecar(host: Any, source_session_id: str, target_session_id: str) -> bool:
+    """Seed a fork from an existing immutable sidecar inode in O(1)."""
+    source = host._sidecar_path(source_session_id)
+    target = host._sidecar_path(target_session_id)
+    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+    try:
+        if not source.is_file():
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.link(source, temporary)
+        temporary.replace(target)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
         except OSError:
             pass

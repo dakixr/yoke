@@ -44,13 +44,7 @@ def summarize_compaction(
     )
     target_tokens = agent.context_manager.compaction_policy.handoff_target_tokens
     instruction = Message.user(build_compaction_summary_prompt(target_tokens))
-    messages = [
-        *[
-            message.model_copy(deep=True)
-            for message in preparation.messages_to_summarize
-        ],
-        instruction.model_copy(deep=True),
-    ]
+    messages = [*preparation.messages_to_summarize, instruction]
     provider_messages = messages_for_provider_capabilities(
         messages,
         agent.provider,

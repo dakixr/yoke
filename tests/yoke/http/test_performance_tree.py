@@ -133,11 +133,22 @@ def test_fork_clones_canonical_session_without_loading_history(
     assert service.message_index._ensure("large") is not None
     target_id = source.conversation_entries[200].id
     original_load = store.load
+    source_sidecar = store.directory / "read-index" / "large.json"
+    assert source_sidecar.exists()
 
     def fail(*_args, **_kwargs):
         raise AssertionError("canonical forks must not deserialize session history")
 
     monkeypatch.setattr(store, "load", fail)
+    monkeypatch.setattr(
+        service.message_index,
+        "_write_sidecar",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError(
+                "fork should reuse the persisted sidecar without serializing it"
+            )
+        ),
+    )
     full = service.fork_session(
         "large",
         SessionForkRequest(id="full-fork", title="Full fork"),
@@ -159,6 +170,8 @@ def test_fork_clones_canonical_session_without_loading_history(
     assert branch.title == "Branch fork"
     assert branch.tree.entry_count == len(source.conversation_entries)
     assert branch.tree.leaf_id == target_id
+    assert (store.directory / "read-index" / "full-fork.json").exists()
+    assert (store.directory / "read-index" / "branch-fork.json").exists()
 
     full_record = original_load("full-fork")
     branch_record = original_load("branch-fork")

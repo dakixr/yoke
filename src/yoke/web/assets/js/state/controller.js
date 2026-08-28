@@ -4,6 +4,7 @@ import { ApiError, api } from "../api/client.js";
 import { SseClient } from "../api/sse.js";
 import { randomUUID } from "../lib/id.js";
 import { currentRoute, draftPath, navigate, sessionPath } from "../router/router.js";
+import { effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
 import {
   readDone,
   readDrafts,
@@ -19,6 +20,7 @@ import { store } from "./store.js";
 
 const MESSAGE_REFRESH_MS = 180;
 const SUMMARY_REFRESH_MS = 250;
+const TREE_PAGE_SIZE = 80;
 
 class AppController {
   constructor() {
@@ -771,7 +773,7 @@ class AppController {
 
   async refreshTree(sessionID) {
     if (!store.getState().sessionData[sessionID]?.tree && store.getState().ui.inspector?.mode !== "tree") return;
-    const response = await api.tree(sessionID);
+    const response = await api.tree(sessionID, { limit: TREE_PAGE_SIZE });
     this.treeServerRevisions.set(sessionID, response.data.revision || 0);
     const pending = this.treePendingLabels.get(sessionID) || [];
     const incoming = applyPendingTreeLabels(response.data, pending);
@@ -793,7 +795,7 @@ class AppController {
     const current = store.getState().sessionData[sessionID]?.tree;
     const cursor = current?.cursor?.next;
     if (!cursor) return;
-    const response = await api.tree(sessionID, { cursor });
+    const response = await api.tree(sessionID, { limit: TREE_PAGE_SIZE, cursor });
     this.treeServerRevisions.set(sessionID, response.data.revision || 0);
     const existingIDs = new Set(current.entries.map((entry) => entry.id));
     const older = response.data.entries.filter((entry) => !existingIDs.has(entry.id));
@@ -1116,7 +1118,7 @@ class AppController {
     }
     if (name === "regenerate-title") {
       if (args) return slashUsage(this, "/regenerate-title");
-      this.notice("Regenerating title…");
+      this.pendingNotice("Regenerating title…");
       const updated = await this.regenerateTitle(sessionID);
       this.notice(`Title updated to “${updated.title}”.`);
       return { handled: true };
@@ -1461,10 +1463,17 @@ class AppController {
   }
 
   async forkSession(sessionID) {
-    const response = await api.forkSession(sessionID, {});
-    await this.refreshSessionLists();
-    this.selectSession(response.data.id);
-    await this.loadSession(response.data.id, { force: true });
+    this.pendingNotice("Forking session…");
+    try {
+      const response = await api.forkSession(sessionID, {});
+      store.setState((state) => installSessionSummary(state, response.data, { moveToFront: true }));
+      this.selectSession(response.data.id);
+      await this.loadSession(response.data.id, { force: true });
+      void this.refreshSessionLists().catch(() => {});
+    } catch (error) {
+      this.clearNotice();
+      throw error;
+    }
   }
 
   async replyPermission(sessionID, requestID, reply, message = null) {
@@ -1979,7 +1988,7 @@ class AppController {
       return;
     }
     if (command.action === "session.title.regenerate") {
-      this.notice("Regenerating title…");
+      this.pendingNotice("Regenerating title…");
       try {
         const updated = await this.regenerateTitle(sessionID);
         return this.notice(`Title updated to “${updated.title}”.`);
@@ -2018,17 +2027,23 @@ class AppController {
   }
 
   notice(message) {
-    store.setState((state) => ({ ...state, ui: { ...state.ui, notice: message } }));
+    store.setState((state) => ({ ...state, ui: { ...state.ui, notice: message, noticePending: false } }));
     this.schedule("notice", 3200, () => {
-      store.setState((state) => ({ ...state, ui: { ...state.ui, notice: null } }));
+      store.setState((state) => ({ ...state, ui: { ...state.ui, notice: null, noticePending: false } }));
     });
+  }
+
+  pendingNotice(message) {
+    clearTimeout(this.refreshTimers.get("notice"));
+    this.refreshTimers.delete("notice");
+    store.setState((state) => ({ ...state, ui: { ...state.ui, notice: message, noticePending: true } }));
   }
 
   clearNotice() {
     clearTimeout(this.refreshTimers.get("notice"));
     this.refreshTimers.delete("notice");
     if (!store.getState().ui.notice) return;
-    store.setState((state) => ({ ...state, ui: { ...state.ui, notice: null } }));
+    store.setState((state) => ({ ...state, ui: { ...state.ui, notice: null, noticePending: false } }));
   }
 
   fail(error) {
@@ -2111,7 +2126,7 @@ function reconcileLiveAssistants(liveAssistants, messages, activeTurnID = null) 
     .filter((message) => message.type === "assistant")
     .map((message) => ({
       id: message.id,
-      phase: message.phase || null,
+      phase: effectiveAssistantPhase(message),
       text: projectedMessageText(message),
       time: Date.parse(message.timeCreated || ""),
     }));
@@ -2148,13 +2163,6 @@ function reconcileLiveTools(liveTools, messages, activeTurnID = null) {
     next[callID] = live;
   }
   return next;
-}
-
-function projectedMessageText(message) {
-  return (message.content || [])
-    .filter((part) => part.type === "text")
-    .map((part) => part.text || "")
-    .join("\n");
 }
 
 function mergeLiveToolSnapshot(current, calls) {

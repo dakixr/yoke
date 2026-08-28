@@ -13,6 +13,7 @@ from yoke.http.services.session_message_index_models import ContextIndexWindow
 from yoke.http.services.session_message_index_models import MessageIndexSnapshot
 from yoke.http.services.session_message_index_models import MessagePage
 from yoke.http.services.session_message_index_models import NavigationIndexPreview
+from yoke.http.services.session_message_index_models import RuntimeIndexSeed
 from yoke.http.services.session_message_index_models import TreeIndexPage
 from yoke.http.services.session_message_index_paths import active_ids
 from yoke.http.services.session_message_index_paths import ascending_ids
@@ -24,6 +25,7 @@ from yoke.http.services.session_message_index_queries import query_entry_tree_st
 from yoke.http.services.session_message_index_queries import query_navigation_preview
 from yoke.http.services.session_message_index_queries import query_navigation_target
 from yoke.http.services.session_message_index_queries import query_page
+from yoke.http.services.session_message_index_queries import query_runtime_seed
 from yoke.http.services.session_message_index_queries import query_tool_trace_messages
 from yoke.http.services.session_message_index_queries import query_tree_page
 from yoke.http.services.session_message_index_sidecar import load_sidecar
@@ -111,6 +113,9 @@ class SessionMessageIndex:
             limit=limit,
             include_instructions=include_instructions,
         )
+
+    def runtime_seed(self, session_id: str) -> RuntimeIndexSeed | None:
+        return query_runtime_seed(self, session_id)
 
     def navigation_preview(
         self,

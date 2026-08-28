@@ -15,6 +15,7 @@ export function App() {
   const sidebarOpen = useStore((state) => state.ui.sidebarOpen);
   const inspector = useStore((state) => state.ui.inspector);
   const notice = useStore((state) => state.ui.notice);
+  const noticePending = useStore((state) => state.ui.noticePending);
 
   useEffect(() => {
     const saved = Number(localStorage.getItem("yoke.web.sidebarWidth"));
@@ -48,6 +49,9 @@ export function App() {
       <${Inspector} />
     </div>
     <${CommandPalette} />
-    ${notice ? html`<div class="notice-toast" role="status">${notice}</div>` : null}
+    ${notice ? html`<div class="notice-toast" role="status">
+      ${noticePending ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
+      <span>${notice}</span>
+    </div>` : null}
   </div>`;
 }

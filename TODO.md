@@ -1,0 +1,39 @@
+# Yoke follow-up work
+
+- [x] Make `/fork` fast for very large sessions.
+  - Keep the lightweight HTTP fork path.
+  - Reuse persisted read-index sidecars in O(1) with a safe hard-link handoff.
+  - Avoid blocking the browser on session-list refresh after the fork response.
+  - 512 MiB benchmark on Mooncake: about 216 ms for the fork request.
+- [x] Render one chat row per tool call.
+  - Merge persisted tool completion state into the original tool-call row.
+  - Keep running, failed, cancelled, and completed states visible without duplicate rows.
+- [x] Improve Inspector Tree UI and performance.
+  - Reduce unnecessary work when loading and extending large trees.
+  - Make branch state, current node, navigation preview, and pagination easier to scan.
+  - Default to user and assistant messages, with technical/tool nodes hidden behind an opt-in toggle.
+- [x] Add progress indicators for UI operations that cannot update optimistically.
+  - Cover long-running commands and inspector actions where the UI must wait for the server.
+  - Disable duplicate submission while an operation is pending.
+  - Keep the in-chat runtime working indicator visible for the full running state, including across tool completion/reconciliation races.
+- [x] Prevent mid-turn assistant commentary from sticking to the chat tail after checkpointing.
+  - Treat persisted assistant text plus tool calls as the durable form of live commentary even when the persisted phase is null.
+  - Reconcile it immediately on message refresh and keep its persisted presentation as commentary.
+- [x] Harden large-session prompt submission.
+  - Clear the composer as soon as the optimistic transcript takes ownership so the prompt cannot appear in both places.
+  - Restore the exact draft on admission failure while blocking edits during the short admission window.
+  - Warm the lazy HTTP runtime import after first paint so the first normal send does not pay the import cost.
+  - Give the admission response a short grace before cold runtime reconstruction starts competing for CPU.
+  - Show `Loading session` during a cold first-turn reconstruction, then switch to `Thinking` once the saved model state is materialized.
+  - Remove duplicate active-conversation loading from the HTTP agent factory; SessionRuntime is the single owner of turn-state loading.
+  - Reconstruct self-contained compacted runtime state from a current byte-offset sidecar without loading the historical session prefix, while preserving the established provider projection and conversation cache scope.
+  - Never synchronously build a missing full topology sidecar on prompt startup; fall back to one full session read instead of making two large scans compete.
+  - Persist turn checkpoints and completion as an append-only suffix on the canonical leaf rather than reconciling or rewriting the historical tree.
+  - Borrow immutable historical message payloads behind owned runtime entry shells; provider-bound messages remain defensively copied.
+  - 512 MiB real-socket compacted-session runs: about 80-85 ms prompt admission and roughly 0.2-0.4 s to the cold dummy provider when a current sidecar is available; a following warm turn was about 16 ms admission and 0.10 s to provider.
+  - Fresh 512 MiB never-compacted stress run: about 70 ms admission, 8.42 s to the one-time compaction provider, 8.55 s to the normal dummy provider, and 10.82 s fully settled. This extreme path still has to decode and defensively prepare the full 512 MiB context once.
+  - Protect provider prompt/cache semantics with old-vs-new differential tests across tools, images, skills, checkpoints, branches, response continuity, and cache scope.
+- [x] Distinguish user and assistant messages by placement.
+  - Right-align user turns like a messaging app.
+  - Use spacing and indentation rather than new role colors.
+- [x] Validate the UI changes in a real browser and capture screenshots if useful.
