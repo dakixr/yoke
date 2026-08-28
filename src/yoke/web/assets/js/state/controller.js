@@ -51,6 +51,7 @@ class AppController {
     this.treeMutationGeneration = new Map();
     this.treePendingLabels = new Map();
     this.treeServerRevisions = new Map();
+    this.toolDetailGeneration = new Map();
     this.pendingLiveEvents = new Map();
     this.liveFrame = null;
     this.routeHandler = () => void this.applyRoute();
@@ -263,6 +264,13 @@ class AppController {
     }
     if (event.type === "session.tool.started" || event.type === "session.tool.ended") {
       this.schedule(`live-tools:${id}`, 80, () => this.refreshLiveToolCalls(id));
+      if (store.getState().ui.inspector?.mode === "tool") {
+        this.schedule(`tool-inspector:${id}`, 100, async () => {
+          await this.listToolCalls(id);
+          const callID = store.getState().sessionData[id]?.toolDetail?.id;
+          if (callID) await this.loadToolCall(id, callID);
+        });
+      }
     }
     if (event.type === "session.tool.ended") {
       this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
@@ -282,9 +290,11 @@ class AppController {
     }
     if (event.type === "session.process.updated") {
       this.schedule(`process:${id}`, 120, async () => {
-        await this.refreshProcesses(id);
         const processID = store.getState().sessionData[id]?.processDetail?.processID;
-        if (processID) await this.loadProcess(processID);
+        await Promise.all([
+          this.refreshProcesses(id),
+          processID ? this.refreshProcess(processID) : Promise.resolve(),
+        ]);
       });
     }
     if (event.type === "session.selection.changed") {
@@ -810,7 +820,7 @@ class AppController {
 
   async refreshProcesses(sessionID) {
     if (store.getState().ui.inspector?.mode !== "process" && !store.getState().sessionData[sessionID]?.processes) return;
-    const response = await api.processes({ sessionID });
+    const response = await api.processes({ sessionID, limit: 200 });
     this.setSessionField(sessionID, "processes", response.data);
   }
 
@@ -1818,7 +1828,7 @@ class AppController {
     store.setState((state) => ({ ...state, ui: { ...state.ui, inspector: { mode, ...payload } } }));
     if (mode === "tree") await this.refreshTree(sessionID);
     if (mode === "process") await this.refreshProcesses(sessionID);
-    if (mode === "tool" && !payload.callID) await this.listToolCalls(sessionID);
+    if (mode === "tool") await this.listToolCalls(sessionID);
     if (mode === "tools") await this.refreshTools(sessionID);
     if (mode === "skills") await this.refreshSkills(sessionID);
     if (mode === "mcp") await this.refreshMcp(sessionID);
@@ -1835,15 +1845,28 @@ class AppController {
   }
 
   async loadToolCall(sessionID, callID) {
+    const generation = (this.toolDetailGeneration.get(sessionID) || 0) + 1;
+    this.toolDetailGeneration.set(sessionID, generation);
     const [detail, output] = await Promise.all([api.toolCall(sessionID, callID), api.toolOutput(sessionID, callID)]);
+    if (this.toolDetailGeneration.get(sessionID) !== generation) return null;
     this.setSessionField(sessionID, "toolDetail", { ...detail.data, outputChunks: output.data, outputCursor: output.cursor });
+    return detail.data;
   }
 
   async loadProcess(processID) {
-    const [detail, output] = await Promise.all([api.process(processID), api.processOutput(processID)]);
+    const detail = await api.process(processID);
     const sessionID = detail.data.sessionID;
     if (!sessionID) return;
-    this.setSessionField(sessionID, "processDetail", { ...detail.data, outputChunks: output.data, outputCursor: output.cursor });
+    this.setSessionField(sessionID, "processDetail", detail.data);
+  }
+
+  async refreshProcess(processID) {
+    const detail = await api.process(processID);
+    const sessionID = detail.data.sessionID;
+    if (!sessionID) return;
+    const selectedID = store.getState().sessionData[sessionID]?.processDetail?.processID;
+    if (selectedID !== processID) return;
+    this.setSessionField(sessionID, "processDetail", detail.data);
   }
 
   async loadFile(sessionID, path) {
@@ -1859,12 +1882,17 @@ class AppController {
     return response.data;
   }
 
+  clearTreePreview(sessionID) {
+    this.setSessionField(sessionID, "treePreview", null);
+  }
+
   async navigateTree(sessionID, targetID, branchSummary = null) {
     const tree = store.getState().sessionData[sessionID]?.tree;
     if (!tree) return;
     try {
       const response = await api.navigateTree(sessionID, { expectedRevision: tree.revision, targetID, branchSummary });
       await Promise.all([this.refreshTree(sessionID), this.refreshMessages(sessionID)]);
+      this.setSessionField(sessionID, "treePreview", null);
       if (response.data.editorText) this.setSessionField(sessionID, "editorHandoff", response.data.editorText);
       return response.data;
     } catch (error) {
@@ -1951,6 +1979,7 @@ class AppController {
   async listToolCalls(sessionID) {
     const response = await api.toolCalls(sessionID, { limit: 100 });
     this.setSessionField(sessionID, "toolCalls", response.data);
+    return response.data;
   }
 
   async signalProcess(processID, signal) {

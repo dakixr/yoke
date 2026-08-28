@@ -1,49 +1,213 @@
-import { html } from "../../vendor/htm-preact.js";
+import { html, useEffect, useMemo, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 
 export function ToolInspector({ sessionID, inspector, data }) {
-  const detail = data?.toolDetail;
-  if (inspector.callID) {
-    if (!detail || detail.id !== inspector.callID) return html`<div class="inspector-loading">Loading tool call…</div>`;
-    const filePath = typeof detail.arguments?.executed?.path === "string" ? detail.arguments.executed.path : null;
-    return html`<div class="inspector-stack">
-      <div class="inspector-title-row"><div><h2>${detail.toolName}</h2><span class=${`status-pill status-pill--${detail.status}`}>${detail.status}</span></div>${filePath ? html`<button onClick=${() => controller.openInspector("file", { path: filePath })}>Open file</button>` : null}</div>
-      <dl class="detail-grid"><dt>Started</dt><dd title=${detail.time?.started || ""}>${formatDateTime(detail.time?.started)}</dd><dt>Ended</dt><dd title=${detail.time?.ended || ""}>${formatDateTime(detail.time?.ended)}</dd><dt>Duration</dt><dd>${detail.time?.durationMs != null ? `${detail.time.durationMs} ms` : "—"}</dd><dt>Retention</dt><dd>${detail.retention}</dd></dl>
-      <${JsonSection} title="Arguments" value=${detail.arguments?.raw || detail.arguments?.executed} />
-      ${detail.arguments?.executed ? html`<${JsonSection} title="Executed arguments" value=${detail.arguments.executed} />` : null}
-      <${JsonSection} title="Result" value=${detail.result} />
-      ${detail.context?.length ? html`<section><div class="inspector-section-title">Context</div>${detail.context.map((item) => html`<div class="context-line"><span>${item.role}</span><p>${item.text}</p></div>`)}</section>` : null}
-      <section><div class="inspector-section-title">Retained output <span class="muted">${detail.output?.retainedChars || 0} chars${detail.output?.truncated ? " · truncated" : ""}</span></div><pre class="output-pre">${(detail.outputChunks || []).map((chunk) => chunk.text).join("") || "No retained output."}</pre></section>
-    </div>`;
-  }
   const calls = data?.toolCalls;
+  const detail = data?.toolDetail;
+  const [search, setSearch] = useState("");
+  const [raw, setRaw] = useState(false);
+  const [wrap, setWrap] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const visible = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const sorted = [...(calls || [])].sort((left, right) => {
+      const leftTime = Date.parse(left.time?.started || "") || 0;
+      const rightTime = Date.parse(right.time?.started || "") || 0;
+      return rightTime - leftTime;
+    });
+    if (!query) return sorted;
+    return sorted.filter((call) => toolSearchText(call).includes(query));
+  }, [calls, search]);
+
+  useEffect(() => {
+    if (!calls?.length) return;
+    const requested = !search && inspector.callID && calls.some((call) => call.id === inspector.callID)
+      ? inspector.callID
+      : null;
+    if (requested && detail?.id !== requested) {
+      void controller.loadToolCall(sessionID, requested).catch((error) => controller.notice(error?.message || String(error)));
+      return;
+    }
+    if (detail && visible.some((call) => call.id === detail.id)) return;
+    const newest = visible[0] || calls[0];
+    if (newest) void controller.loadToolCall(sessionID, newest.id).catch((error) => controller.notice(error?.message || String(error)));
+  }, [sessionID, inspector.callID, calls, detail?.id, search]);
+
+  useEffect(() => {
+    if (!detail?.id || !["running", "pending"].includes(detail.status)) return;
+    const timer = window.setInterval(() => {
+      void controller.loadToolCall(sessionID, detail.id).catch(() => {});
+    }, 600);
+    return () => window.clearInterval(timer);
+  }, [sessionID, detail?.id, detail?.status]);
+
   if (!calls) return html`<div class="inspector-loading">Loading tool activity…</div>`;
-  return html`<div class="inspector-stack"><div class="inspector-meta"><span>${calls.length} recent calls</span><button onClick=${() => controller.listToolCalls(sessionID)}>Refresh</button></div><div class="activity-list">
-    ${calls.map((call) => html`<button class="activity-row" onClick=${() => controller.openInspector("tool", { callID: call.id })}><span class="activity-row__main"><strong>${call.toolName}</strong><span>${argumentSummary(call.arguments?.raw)}</span></span><span class=${`status-pill status-pill--${call.status}`}>${call.status}</span></button>`)}
-  </div></div>`;
+
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await controller.listToolCalls(sessionID);
+      if (detail?.id) await controller.loadToolCall(sessionID, detail.id);
+    } catch (error) {
+      controller.notice(error?.message || String(error));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return html`<div class="tool-inspector-split">
+    <aside class="tool-sidebar">
+      <div class="tool-sidebar__header">
+        <div>
+          <strong>Tool calls</strong>
+          <span>${calls.length} retained${visible.length !== calls.length ? ` · ${visible.length} matching` : ""}</span>
+        </div>
+        <button class="tool-refresh" disabled=${refreshing} title="Refresh tool activity" onClick=${refresh}>
+          ${refreshing ? html`<span class="pending-spinner" aria-hidden="true"></span>` : html`<span aria-hidden="true">↻</span>`}
+        </button>
+      </div>
+      <label class="tool-search">
+        <span aria-hidden="true">⌕</span>
+        <input value=${search} placeholder="Search calls" aria-label="Search tool calls" onInput=${(event) => setSearch(event.currentTarget.value)} />
+        ${search ? html`<button aria-label="Clear tool search" onClick=${() => setSearch("")}>×</button>` : null}
+      </label>
+      <div class="tool-call-sidebar-list" role="list" aria-label="Tool calls">
+        ${visible.map((call) => html`<button
+          key=${call.id}
+          role="listitem"
+          class=${`tool-sidebar-row ${detail?.id === call.id ? "is-selected" : ""}`}
+          onClick=${() => controller.loadToolCall(sessionID, call.id)}
+        >
+          <span class=${`tool-sidebar-row__glyph tool-sidebar-row__glyph--${call.status}`} aria-hidden="true">${statusGlyph(call.status)}</span>
+          <span class="tool-sidebar-row__main">
+            <span class="tool-sidebar-row__topline"><strong>${call.toolName}</strong><span>${formatDuration(call.time?.durationMs)}</span></span>
+            <span class="tool-sidebar-row__summary">${argumentSummary(call.arguments?.raw) || call.id}</span>
+          </span>
+          <span class="tool-sidebar-row__status">${statusLabel(call.status)}</span>
+        </button>`)}
+        ${!visible.length ? html`<div class="tool-sidebar-empty">${calls.length ? "No tool calls match this search." : "No tool calls yet."}</div>` : null}
+      </div>
+    </aside>
+
+    <section class="tool-detail-pane">
+      ${detail ? html`<${ToolDetail} detail=${detail} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />` : html`
+        <div class="tool-detail-empty"><div><strong>No tool call selected</strong><span>Select a call from the sidebar to inspect arguments, output, and context.</span></div></div>
+      `}
+    </section>
+  </div>`;
 }
 
-function JsonSection({ title, value }) {
+function ToolDetail({ detail, raw, wrap, setRaw, setWrap }) {
+  const filePath = typeof detail.arguments?.executed?.path === "string" ? detail.arguments.executed.path : null;
+  const outputText = (detail.outputChunks || []).map((chunk) => chunk.text).join("");
+  const running = detail.status === "running" || detail.status === "pending";
+  const context = [...(detail.context || []), ...(detail.afterContext || [])];
+  if (raw) {
+    return html`<div class="tool-detail-document">
+      <${ToolDetailHeader} detail=${detail} filePath=${filePath} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />
+      <pre class=${`tool-raw-document ${wrap ? "is-wrapped" : ""}`}>${JSON.stringify(detail, null, 2)}</pre>
+    </div>`;
+  }
+  return html`<div class="tool-detail-document">
+    <${ToolDetailHeader} detail=${detail} filePath=${filePath} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />
+
+    ${outputText || running ? html`<section class="tool-detail-output">
+      <div class="tool-detail-section-head">
+        <span>Output</span>
+        <span>${running ? html`<span class="tool-live-dot"></span>LIVE · ` : ""}${detail.output?.retainedChars || outputText.length} chars${detail.output?.truncated ? " · truncated" : ""}</span>
+      </div>
+      <pre class=${wrap ? "is-wrapped" : ""}>${outputText || "Waiting for output…"}</pre>
+    </section>` : null}
+
+    <div class="tool-detail-grid">
+      <${ToolDetailSection} title="Arguments" value=${detail.arguments?.raw || detail.arguments?.executed} wrap=${wrap} />
+      ${detail.arguments?.executed ? html`<${ToolDetailSection} title="Executed arguments" value=${detail.arguments.executed} wrap=${wrap} />` : null}
+      <${ToolDetailSection} title="Result" value=${detail.result} wrap=${wrap} />
+    </div>
+
+    ${context.length ? html`<section class="tool-context-document">
+      <div class="tool-detail-section-head"><span>Context</span><span>${context.length} messages</span></div>
+      <div class="tool-context-list">${context.map((item, index) => html`
+        <div key=${index} class="tool-context-row">
+          <span>${item.role === "assistant" ? "asst" : "usr"}</span>
+          <p>${item.text || "(empty)"}</p>
+        </div>`)}
+      </div>
+    </section>` : null}
+  </div>`;
+}
+
+function ToolDetailHeader({ detail, filePath, raw, wrap, setRaw, setWrap }) {
+  return html`<header class="tool-detail-header">
+    <div class="tool-detail-heading">
+      <span class=${`tool-detail-status-dot tool-detail-status-dot--${detail.status}`} aria-hidden="true"></span>
+      <div>
+        <span class="tool-detail-eyebrow">${detail.id}${detail.turnID != null ? ` · turn ${detail.turnID}` : ""}${detail.iteration != null ? ` · iteration ${detail.iteration}` : ""}</span>
+        <h2>${detail.toolName}</h2>
+      </div>
+    </div>
+    <div class="tool-detail-actions">
+      <span class=${`status-pill status-pill--${detail.status}`}>${statusLabel(detail.status)}</span>
+      <button class=${raw ? "is-active" : ""} aria-pressed=${raw} onClick=${() => setRaw((value) => !value)}>${raw ? "Pretty" : "Raw"}</button>
+      <button class=${wrap ? "is-active" : ""} aria-pressed=${wrap} onClick=${() => setWrap((value) => !value)}>${wrap ? "Wrap on" : "Wrap off"}</button>
+      ${filePath ? html`<button onClick=${() => controller.openInspector("file", { path: filePath })}>Open file</button>` : null}
+    </div>
+    <div class="tool-detail-meta">
+      <span><b>Started</b>${formatDateTime(detail.time?.started)}</span>
+      <span><b>Duration</b>${formatDuration(detail.time?.durationMs)}</span>
+      <span><b>Retention</b>${detail.retention || "—"}</span>
+    </div>
+  </header>`;
+}
+
+function ToolDetailSection({ title, value, wrap }) {
   if (value == null || value === "") return null;
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  return html`<section><div class="inspector-section-title">${title}</div><pre>${text}</pre></section>`;
+  return html`<section class="tool-detail-section">
+    <div class="tool-detail-section-head"><span>${title}</span></div>
+    <pre class=${wrap ? "is-wrapped" : ""}>${text}</pre>
+  </section>`;
+}
+
+function toolSearchText(call) {
+  return [call.toolName, call.id, call.status, call.arguments?.raw, call.arguments?.executed, call.result]
+    .filter((value) => value != null)
+    .map((value) => typeof value === "string" ? value : JSON.stringify(value))
+    .join(" ")
+    .toLowerCase();
+}
+
+function statusGlyph(status) {
+  if (status === "running" || status === "pending") return "…";
+  if (status === "failed" || status === "cancelled") return "×";
+  return "✓";
+}
+
+function statusLabel(status) {
+  if (status === "ok") return "completed";
+  return status || "unknown";
 }
 
 function argumentSummary(raw) {
   if (!raw) return "";
-  const one = raw.replace(/\s+/g, " ");
-  return one.length > 72 ? `${one.slice(0, 69)}…` : one;
+  const one = String(raw).replace(/\s+/g, " ").trim();
+  return one.length > 86 ? `${one.slice(0, 83)}…` : one;
+}
+
+function formatDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds)) return "—";
+  if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
+  const seconds = milliseconds / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(Math.floor(seconds % 60)).padStart(2, "0")}s`;
 }
 
 function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(date);
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
 }

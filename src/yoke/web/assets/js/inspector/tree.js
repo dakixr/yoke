@@ -11,19 +11,21 @@ export function TreeInspector({ sessionID, data }) {
   const [navigating, setNavigating] = useState(false);
   const [showTechnical, setShowTechnical] = useState(false);
   const historyRef = useRef(null);
-  const openedAtLatestRef = useRef(false);
+  const openedRef = useRef(null);
   const messageEntries = tree?.entries?.filter(isMessageEntry) || [];
   const visibleEntries = tree ? (showTechnical ? tree.entries : messageEntries) : [];
   const displayEntries = tree ? displayTreeEntries(tree.entries, visibleEntries) : [];
   const graph = treeGraphLayout(displayEntries);
   const nodeByID = new Map(graph.nodes.map((node) => [node.id, node]));
+  const entryByID = new Map(displayEntries.map((entry) => [entry.id, entry]));
+  const selectedEntry = preview ? entryByID.get(preview.targetID) || tree?.entries?.find((entry) => entry.id === preview.targetID) : null;
   const hiddenTechnicalCount = tree ? tree.entries.length - messageEntries.length : 0;
 
   useLayoutEffect(() => {
     const node = historyRef.current;
-    if (!node || openedAtLatestRef.current || !displayEntries.length) return;
-    node.scrollTop = node.scrollHeight;
-    openedAtLatestRef.current = true;
+    if (!node || !displayEntries.length || openedRef.current === sessionID) return;
+    openedRef.current = sessionID;
+    requestAnimationFrame(() => scrollToHead(node, { behavior: "auto" }));
   }, [sessionID, displayEntries.length]);
 
   if (!tree) return html`<div class="inspector-loading">Loading conversation graph…</div>`;
@@ -49,7 +51,12 @@ export function TreeInspector({ sessionID, data }) {
 
   const previewEntry = async (entryID) => {
     if (previewingID || navigating) return;
+    if (entryID === tree.leafID) {
+      controller.clearTreePreview(sessionID);
+      return;
+    }
     setPreviewingID(entryID);
+    setSummary("");
     try {
       await controller.treePreview(sessionID, entryID);
     } catch (error) {
@@ -63,8 +70,11 @@ export function TreeInspector({ sessionID, data }) {
     if (!preview || preview.current || navigating) return;
     setNavigating(true);
     try {
-      await controller.navigateTree(sessionID, preview.targetID, summary || null);
-      setSummary("");
+      const result = await controller.navigateTree(sessionID, preview.targetID, summary || null);
+      if (result) {
+        setSummary("");
+        requestAnimationFrame(() => requestAnimationFrame(() => scrollToHead(historyRef.current, { behavior: "smooth" })));
+      }
     } catch (error) {
       controller.notice(error?.message || String(error));
     } finally {
@@ -72,37 +82,38 @@ export function TreeInspector({ sessionID, data }) {
     }
   };
 
-  const toggleTechnical = () => {
+  const toggleTechnical = (next) => {
     const scroller = historyRef.current;
-    const wasNearLatest = scroller
-      ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 100
-      : true;
-    setShowTechnical((value) => !value);
-    if (wasNearLatest) requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight;
+    const head = scroller?.querySelector(".tree-entry.is-current");
+    const headOffset = head && scroller ? head.getBoundingClientRect().top - scroller.getBoundingClientRect().top : null;
+    setShowTechnical(next);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!scroller) return;
+      const nextHead = scroller.querySelector(".tree-entry.is-current");
+      if (nextHead && headOffset != null) {
+        scroller.scrollTop += nextHead.getBoundingClientRect().top - scroller.getBoundingClientRect().top - headOffset;
+      }
     }));
   };
 
   return html`<div class=${`tree-inspector ${preview ? "has-preview" : ""}`}>
     <div class="tree-toolbar">
-      <div>
-        <div class="tree-toolbar__title">Conversation history</div>
+      <div class="tree-toolbar__identity">
+        <div class="tree-toolbar__title"><span class="tree-head-dot"></span>Conversation HEAD</div>
         <div class="tree-toolbar__count" title=${`Tree revision ${tree.revision}`}>
-          ${showTechnical
-            ? `${tree.entries.length} loaded nodes`
-            : `${messageEntries.length} messages${hiddenTechnicalCount ? ` · ${hiddenTechnicalCount} technical hidden` : ""}`}
+          ${messageEntries.length} messages · ${tree.totalEntries || tree.entries.length} total nodes
         </div>
       </div>
       <div class="tree-toolbar__actions">
-        ${hiddenTechnicalCount || showTechnical ? html`
-          <button class="tree-view-toggle" disabled=${navigating} onClick=${toggleTechnical}>
-            ${showTechnical ? "Messages only" : "Show all nodes"}
-          </button>
-        ` : null}
+        <div class="tree-mode-toggle" role="group" aria-label="Tree node visibility">
+          <button class=${!showTechnical ? "is-active" : ""} aria-pressed=${!showTechnical} onClick=${() => toggleTechnical(false)}>Messages</button>
+          <button class=${showTechnical ? "is-active" : ""} aria-pressed=${showTechnical} onClick=${() => toggleTechnical(true)}>All nodes${hiddenTechnicalCount ? html` <span>${hiddenTechnicalCount}</span>` : null}</button>
+        </div>
+        <button class="tree-jump-head" onClick=${() => scrollToHead(historyRef.current, { behavior: "smooth" })}>↓ HEAD</button>
         ${tree.cursor?.next ? html`
           <button class="secondary-action tree-load-more" disabled=${loadingOlder || navigating} onClick=${loadOlder}>
             ${loadingOlder ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
-            <span>${loadingOlder ? "Loading older" : "Load older"}</span>
+            <span>${loadingOlder ? "Loading" : "Older"}</span>
           </button>
         ` : null}
       </div>
@@ -111,18 +122,19 @@ export function TreeInspector({ sessionID, data }) {
     <div class="tree-workspace">
       <section class="tree-history" ref=${historyRef} aria-label="Conversation graph">
         <div class="tree-history__columns" style=${`--tree-graph-width:${graph.graphWidth}px`}>
-          <span>Graph</span><span>Description</span><span>State</span>
+          <span>Graph</span><span>Conversation</span><span>When</span>
         </div>
         ${displayEntries.length ? html`<div class="tree-graph-rows" style=${`--tree-graph-width:${graph.graphWidth}px;--tree-row-height:${TREE_GRAPH_ROW_HEIGHT}px`}>
           <svg class="tree-graph-canvas" width=${graph.graphWidth} height=${graph.height} viewBox=${`0 0 ${graph.graphWidth} ${graph.height}`} aria-hidden="true">
             ${graph.nodes.filter((node) => node.externalParent).map((node) => html`
               <path class=${`tree-graph-edge tree-lane-color--${node.lane % 6}`} d=${`M ${node.x} ${Math.max(0, node.y - TREE_GRAPH_ROW_HEIGHT / 2)} L ${node.x} ${node.y}`} />
             `)}
-            ${graph.edges.map((edge) => html`<path key=${`${edge.parentID}:${edge.childID}`} class=${`tree-graph-edge tree-lane-color--${edge.lane % 6}`} d=${edge.path} />`)}
+            ${graph.edges.map((edge) => html`<path key=${`${edge.parentID}:${edge.childID}`} class=${`tree-graph-edge tree-lane-color--${edge.lane % 6} ${edge.active ? "is-active" : "is-abandoned"}`} d=${edge.path} />`)}
             ${graph.nodes.map((node) => html`
-              <g key=${node.id} class=${`tree-graph-node tree-lane-color--${node.lane % 6} ${node.current ? "is-current" : ""} ${node.active ? "is-active" : "is-abandoned"}`}>
-                ${node.current ? html`<circle class="tree-graph-node__halo" cx=${node.x} cy=${node.y} r="8"></circle>` : null}
-                <circle class="tree-graph-node__dot" cx=${node.x} cy=${node.y} r=${node.current ? 4.5 : 3.5}></circle>
+              <g key=${node.id} class=${`tree-graph-node tree-lane-color--${node.lane % 6} ${node.current ? "is-current" : ""} ${node.active ? "is-active" : "is-abandoned"} ${preview?.targetID === node.id ? "is-target" : ""}`}>
+                ${node.current ? html`<circle class="tree-graph-node__halo" cx=${node.x} cy=${node.y} r="9"></circle>` : null}
+                ${preview?.targetID === node.id && !node.current ? html`<circle class="tree-graph-node__target" cx=${node.x} cy=${node.y} r="8"></circle>` : null}
+                <circle class="tree-graph-node__dot" cx=${node.x} cy=${node.y} r=${node.current ? 4.8 : 3.7}></circle>
               </g>
             `)}
           </svg>
@@ -141,29 +153,23 @@ export function TreeInspector({ sessionID, data }) {
                 <button
                   class="tree-entry__summary"
                   disabled=${entry.current || Boolean(previewingID) || navigating}
-                  title=${entry.current ? "Current conversation leaf" : "Preview navigation to this node"}
+                  title=${entry.current ? "Current conversation HEAD" : "Select as a possible conversation HEAD"}
                   onClick=${() => previewEntry(entry.id)}
                 >
                   <span class="tree-entry__identity">
                     <span class="tree-kind">${kindLabel(kind)}</span>
-                    ${entry.current ? html`<span class="tree-ref tree-ref--head">HEAD</span>` : entry.active ? html`<span class="tree-ref">active</span>` : html`<span class=${`tree-ref tree-lane-color--${graphNode?.lane % 6 || 0}`}>branch</span>`}
+                    ${entry.current ? html`<span class="tree-ref tree-ref--head">HEAD</span>` : selected ? html`<span class="tree-ref tree-ref--target">TARGET</span>` : entry.active ? html`<span class="tree-ref">current path</span>` : html`<span class=${`tree-ref tree-lane-color--${graphNode?.lane % 6 || 0}`}>branch</span>`}
                     ${entry.label ? html`<span class="tree-label">${entry.label}</span>` : null}
+                    ${previewing ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
                   </span>
-                  <span class="tree-preview-text">${entry.preview || entry.id}</span>
+                  <span class="tree-preview-text">${entry.preview || technicalPreview(entry)}</span>
                 </button>
                 <div class="tree-entry__right">
                   <time title=${entry.createdAt || ""}>${formatTreeTime(entry.createdAt)}</time>
-                  <div class="tree-entry__actions">
-                    ${entry.current ? html`<span class="tree-action-unavailable">current</span>` : html`
-                      <button disabled=${Boolean(previewingID) || navigating} onClick=${() => previewEntry(entry.id)}>
-                        ${previewing ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
-                        <span>${previewing ? "Previewing" : selected ? "Previewed" : "Preview"}</span>
-                      </button>`}
-                    <button disabled=${navigating} onClick=${() => {
-                      const label = window.prompt("Node label", entry.label || "");
-                      if (label !== null) void controller.labelTreeEntry(sessionID, entry.id, label);
-                    }}>Label</button>
-                  </div>
+                  <button class="tree-label-action" title="Label this node" disabled=${navigating} onClick=${() => {
+                    const label = window.prompt("Node label", entry.label || "");
+                    if (label !== null) void controller.labelTreeEntry(sessionID, entry.id, label);
+                  }}>Label</button>
                 </div>
               </div>`;
             })}
@@ -176,23 +182,58 @@ export function TreeInspector({ sessionID, data }) {
       ${preview ? html`<aside class="navigation-preview">
         <div class="navigation-preview__head">
           <div>
-            <div class="inspector-section-title">Navigation preview</div>
-            <div class="navigation-preview__target">${preview.current ? "Already at this node" : "Review what changes before navigating"}</div>
+            <div class="inspector-section-title">Move conversation HEAD</div>
+            <div class="navigation-preview__target">Future prompts will continue from the selected node.</div>
           </div>
+          <button class="navigation-preview__close" title="Clear target" onClick=${() => controller.clearTreePreview(sessionID)}>×</button>
         </div>
-        ${preview.editorText ? html`<div><span class="field-label">Restored editor text</span><pre>${preview.editorText}</pre></div>` : null}
-        ${preview.abandoned?.length ? html`<div>
-          <span class="field-label">Work that becomes abandoned${preview.abandonedTruncated ? `, showing ${preview.abandoned.length} of ${preview.abandonedTotal}` : ""}</span>
-          <ul>${preview.abandoned.map((item) => html`<li><strong>${item.kind}</strong> ${item.preview || item.id}</li>`)}</ul>
-        </div>` : html`<div class="muted">No active work is abandoned.</div>`}
-        <label class="stacked-label">Branch summary, optional<textarea rows="4" value=${summary} disabled=${navigating} onInput=${(event) => setSummary(event.currentTarget.value)}></textarea></label>
-        <button class="primary navigation-preview__action" disabled=${preview.current || navigating} onClick=${navigateToPreview}>
-          ${navigating ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
-          <span>${navigating ? "Navigating" : "Navigate here"}</span>
-        </button>
+
+        <div class="navigation-target-card">
+          <div class="navigation-target-card__meta">
+            <span class="tree-ref tree-ref--target">TARGET</span>
+            <span>${kindLabel(selectedEntry?.kind || "node")}</span>
+            ${selectedEntry?.label ? html`<span>${selectedEntry.label}</span>` : null}
+          </div>
+          <strong>${selectedEntry?.preview || selectedEntry?.id || preview.targetID}</strong>
+        </div>
+
+        ${preview.abandonedTotal ? html`<div class="navigation-impact navigation-impact--warn">
+          <strong>${preview.abandonedTotal} active ${preview.abandonedTotal === 1 ? "node" : "nodes"} will become abandoned</strong>
+          <span>Nothing is deleted. The old path remains visible in the graph and can be checked out again later.</span>
+        </div>` : html`<div class="navigation-impact">
+          <strong>No active work will be abandoned</strong>
+          <span>HEAD moves directly to this point in the current path.</span>
+        </div>`}
+
+        ${preview.editorText ? html`<div class="navigation-restored-editor"><span class="field-label">Prompt restored to composer</span><pre>${preview.editorText}</pre></div>` : null}
+
+        ${preview.abandoned?.length ? html`<details class="navigation-abandoned">
+          <summary>Review abandoned path${preview.abandonedTruncated ? ` · showing ${preview.abandoned.length}/${preview.abandonedTotal}` : ` · ${preview.abandoned.length}`}</summary>
+          <ul>${preview.abandoned.map((item) => html`<li><strong>${kindLabel(item.kind)}</strong><span>${item.preview || item.id}</span></li>`)}</ul>
+        </details>` : null}
+
+        ${preview.abandonedTotal ? html`<label class="stacked-label navigation-summary">Handoff note for the branch you leave <span>optional</span><textarea rows="3" value=${summary} disabled=${navigating} placeholder="Preserve anything the new branch should remember…" onInput=${(event) => setSummary(event.currentTarget.value)}></textarea></label>` : null}
+
+        <div class="navigation-preview__footer">
+          <button onClick=${() => controller.clearTreePreview(sessionID)} disabled=${navigating}>Cancel</button>
+          <button class="primary navigation-preview__action" disabled=${preview.current || navigating} onClick=${navigateToPreview}>
+            ${navigating ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
+            <span>${navigating ? "Moving HEAD" : "Move HEAD here"}</span>
+          </button>
+        </div>
       </aside>` : null}
     </div>
   </div>`;
+}
+
+function scrollToHead(scroller, { behavior = "smooth" } = {}) {
+  if (!scroller) return;
+  const head = scroller.querySelector(".tree-entry.is-current");
+  if (head) {
+    head.scrollIntoView({ block: "center", behavior });
+    return;
+  }
+  scroller.scrollTo({ top: scroller.scrollHeight, behavior });
 }
 
 function isMessageEntry(entry) {
@@ -201,7 +242,14 @@ function isMessageEntry(entry) {
 }
 
 function kindLabel(kind) {
-  return String(kind || "node").replace(/^assistant_tool_calls$/, "assistant").replace(/_/g, " ");
+  const normalized = String(kind || "node").replace(/^assistant_tool_calls$/, "assistant").replace(/_/g, " ");
+  if (normalized === "user") return "You";
+  if (normalized === "assistant") return "Assistant";
+  return normalized;
+}
+
+function technicalPreview(entry) {
+  return entry.label || `${kindLabel(entry.kind)} · ${entry.id}`;
 }
 
 function formatTreeTime(value) {

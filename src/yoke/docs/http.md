@@ -221,11 +221,17 @@ The v1 API currently exposes typed resources for:
 The process and raw live-output inspectors are runtime-retained. Their final
 conversation results may survive restart, but PIDs and retained stdout chunks
 do not. The bundled web UI presents process inspection as a large split-pane
-workspace inspired by the CLI fullscreen inspector: retained processes are
-selected in a dense list pane, the newest retained process is selected by
-default, and the detail pane keeps status facts, working directory, command,
-retained output, wrapping controls, stdin, interrupt, and terminate actions in
-one view.
+workspace inspired by the CLI fullscreen inspector. The left pane uses the
+same compact status/session/elapsed/command rhythm as the CLI and defaults to
+running processes only; a Running/All switch reveals completed and failed
+retained processes without making them compete with active work. The newest
+visible process is selected automatically when the current selection falls out
+of the filter. The right pane is dominated by the selected process's retained
+output tail and refreshes from process-change events while it runs. Output
+follows the live tail until the user scrolls upward, then exposes an explicit
+"Jump to live" action instead of stealing the scroll position. Status facts,
+working directory, wrapping, stdin, interrupt, and terminate controls remain
+adjacent to that terminal surface.
 
 `/session/active` includes a process-local `activity` label while work is in
 flight. It uses the same status state machine as the CLI (`Thinking`,
@@ -356,17 +362,33 @@ small screens use the same workspace fullscreen. The layout borrows the CLI
 inspectors' dense pane hierarchy, status treatment, and shortcut footer while
 remaining native browser UI.
 
-The Tree inspector defaults to user and assistant message nodes only. Tool,
-control, and other technical nodes stay available behind a "Show all nodes"
-toggle. History renders oldest at the top and the current/latest message at the
-bottom as a git-style graph with a dedicated active lane, reusable colored
-branch lanes, circular nodes, and curved fork connectors. Hidden technical
-nodes are bridged so message-only mode preserves the real branch topology.
-Opening Tree scrolls directly to the latest/current node; loading older pages
-preserves the user's visible history position. Selecting a historical node
-opens navigation impact as a second pane without moving the graph away from the
-latest position. The browser still requests bounded tree pages to keep DOM and
-topology work controlled on large sessions.
+Tool activity uses the same split-pane model as the CLI inspector: a dense,
+searchable call list stays on the left while the selected call's detail remains
+visible on the right. The newest call is selected by default. Search selection
+and detail selection stay synchronized, even when older detail requests finish
+late. Status, turn/iteration, duration, arguments, executed arguments, retained
+output, result, and surrounding context are shown as one readable detail
+document, with raw JSON and wrapping controls available when needed.
+
+The Tree inspector is optimized around moving the current conversation HEAD.
+It defaults to user and assistant message nodes only; tool, control, and other
+technical nodes remain available behind the `All nodes` view. History renders
+oldest at the top and the current HEAD toward the bottom as a git-style graph
+with a dedicated active lane, reusable colored branch lanes, circular nodes,
+and curved fork connectors. Active-path edges remain visually dominant while
+abandoned branches recede, and hidden technical nodes are bridged so
+message-only mode preserves the real topology. Opening Tree anchors on HEAD,
+`Jump to HEAD` returns there at any time, and loading older pages preserves the
+visible history position.
+
+Clicking any non-current row selects it as a `TARGET` and opens a checkout-style
+confirmation pane. The pane states how many active nodes will become abandoned,
+makes clear that abandoned work is retained and can be checked out again,
+shows any prompt text restored to the composer, and keeps the abandoned-path
+details collapsible. An optional branch handoff note can be persisted before
+the explicit `Move HEAD here` action. After checkout the preview closes and the
+graph follows the new HEAD. The browser still requests bounded tree pages to
+keep DOM and topology work controlled on large sessions.
 
 Checkpointed tool-calling assistant messages also reconcile with their live
 mid-turn commentary row. Providers may persist that message with a null phase

@@ -74,6 +74,7 @@ export function treeGraphLayout(entries) {
       parentID: parent.id,
       childID: child.id,
       lane: child.lane,
+      active: child.active,
       path: edgePath(parent, child),
     });
   }

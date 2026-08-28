@@ -320,6 +320,62 @@ async function testSelectionAndToolTogglesKeepLatestClick() {
   }
 }
 
+async function testProcessRefreshDoesNotRestoreAnOldSelection() {
+  const id = "process-refresh-selection";
+  installSession(id, {
+    extraData: {
+      processes: [],
+      processDetail: { processID: "proc-old", sessionID: id },
+    },
+  });
+  const gate = deferred();
+  let listArgs = null;
+  const restore = restoreApi({
+    process: () => gate.promise,
+    processes: async (args) => {
+      listArgs = args;
+      return { data: [] };
+    },
+  });
+  try {
+    const refreshing = controller.refreshProcess("proc-old");
+    controller.setSessionField(id, "processDetail", {
+      processID: "proc-new",
+      sessionID: id,
+    });
+    gate.resolve({ data: { processID: "proc-old", sessionID: id } });
+    await refreshing;
+    assert.equal(store.getState().sessionData[id].processDetail.processID, "proc-new");
+
+    await controller.refreshProcesses(id);
+    assert.equal(listArgs.limit, 200);
+  } finally {
+    restore();
+  }
+}
+
+async function testToolDetailKeepsNewestSelection() {
+  const id = "tool-detail-selection";
+  installSession(id, { extraData: { toolDetail: null } });
+  const oldGate = deferred();
+  const newGate = deferred();
+  const restore = restoreApi({
+    toolCall: (_sessionID, callID) => callID === "call-old" ? oldGate.promise : newGate.promise,
+    toolOutput: async () => ({ data: [], cursor: { next: 0, truncatedBefore: 0 } }),
+  });
+  try {
+    const oldLoad = controller.loadToolCall(id, "call-old");
+    const newLoad = controller.loadToolCall(id, "call-new");
+    newGate.resolve({ data: { id: "call-new", toolName: "new", status: "ok" } });
+    await tick();
+    oldGate.resolve({ data: { id: "call-old", toolName: "old", status: "ok" } });
+    await Promise.all([oldLoad, newLoad]);
+    assert.equal(store.getState().sessionData[id].toolDetail.id, "call-new");
+  } finally {
+    restore();
+  }
+}
+
 async function testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns() {
   const draftID = "draft-optimistic-send";
   store.setState((state) => ({
@@ -667,6 +723,8 @@ async function testTreeGraphKeepsCurrentLaneAndSeparatesOverlappingBranches() {
     lanes["branch-b-leaf"],
     "branches whose connector spans overlap must not share a graph lane",
   );
+  assert.ok(graph.edges.some((edge) => edge.childID === "main-leaf" && edge.active));
+  assert.ok(graph.edges.some((edge) => edge.childID === "branch-a-leaf" && !edge.active));
 }
 
 async function testTreeGraphBridgesHiddenTechnicalNodes() {
@@ -691,6 +749,8 @@ const tests = [
   testQueueMutationsSurviveStaleRefresh,
   testHumanInputOldReadCannotResurrectResolvedRequest,
   testSelectionAndToolTogglesKeepLatestClick,
+  testProcessRefreshDoesNotRestoreAnOldSelection,
+  testToolDetailKeepsNewestSelection,
   testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns,
   testCompactionShowsImmediatelyAndRollsBackFailure,
   testTreeLabelsSerializeAndKeepNewestOptimism,
