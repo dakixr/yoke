@@ -594,10 +594,14 @@ class SessionService:
         if anchor is not None:
             try:
                 end = next(
-                    index for index, entry in enumerate(all_entries) if entry.id == anchor
+                    index
+                    for index, entry in enumerate(all_entries)
+                    if entry.id == anchor
                 )
             except StopIteration as exc:
-                raise ApiError(400, "invalid_cursor_anchor", "Cursor anchor no longer exists.") from exc
+                raise ApiError(
+                    400, "invalid_cursor_anchor", "Cursor anchor no longer exists."
+                ) from exc
         start = max(0, end - limit)
         page = all_entries[start:end]
         next_cursor = (
@@ -669,7 +673,11 @@ class SessionService:
         abandoned: list[TreeNavigationAbandonedEntry] = []
         for item in preview.abandoned:
             message = item.message.to_message() if item.message is not None else None
-            text = message.display_text_content() if message is not None else item.summary_text
+            text = (
+                message.display_text_content()
+                if message is not None
+                else item.summary_text
+            )
             abandoned.append(
                 TreeNavigationAbandonedEntry(
                     id=item.ref._entry_key(),
@@ -713,8 +721,7 @@ class SessionService:
                 )
             editor_text = (
                 indexed_target.message.display_text_content() or ""
-                if indexed_target.kind == "user"
-                and indexed_target.message is not None
+                if indexed_target.kind == "user" and indexed_target.message is not None
                 else None
             )
             selected_leaf = (
@@ -910,6 +917,9 @@ class SessionService:
                 model=record.model_id,
                 reasoning_effort=record.reasoning_effort,
             ),
+            context_usage=(
+                dict(record.context_usage) if record.context_usage is not None else None
+            ),
             tree=SessionTreeSummary(
                 leaf_id=record.leaf_id,
                 entry_count=len(record.conversation_entries),
@@ -930,6 +940,9 @@ class SessionService:
                 provider=entry.provider_name,
                 model=entry.model_id,
                 reasoning_effort=entry.reasoning_effort,
+            ),
+            context_usage=(
+                dict(entry.context_usage) if entry.context_usage is not None else None
             ),
             tree=SessionTreeSummary(
                 leaf_id=entry.leaf_id,

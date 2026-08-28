@@ -161,7 +161,10 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   });
 
   return html`<div class="composer-region">
-    <${SelectionControls} directory=${session.location.directory} selection=${session.selection} sessionID=${sessionID} disabled=${!connected || running} />
+    <div class="composer-meta-row">
+      <${SelectionControls} directory=${session.location.directory} selection=${session.selection} sessionID=${sessionID} disabled=${!connected || running} />
+      <${ContextWindowUsage} sessionID=${sessionID} directory=${session.location.directory} selection=${session.selection} usage=${data?.contextUsage ?? session.contextUsage} />
+    </div>
     ${attentionCount ? html`<div class="composer-attention-note">Resolve the required ${attentionCount === 1 ? "action" : "actions"} above. You can still queue a follow-up here.</div>` : null}
     <div class="composer-shell-wrap">
       <${SlashCompletionMenu} items=${slashMenu.items} activeIndex=${slashMenu.activeIndex} loading=${slashMenu.loading} onChoose=${chooseSlash} />
@@ -173,6 +176,18 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
         onDrop=${imageInput.onDrop}
       >
       ${imageInput.dragActive ? html`<div class="composer-drop-hint" aria-hidden="true"><span>Drop images to attach</span></div>` : null}
+      <button
+        class="composer-resize-button"
+        type="button"
+        aria-pressed=${expanded}
+        aria-label=${expanded ? "Use compact prompt editor" : "Use larger prompt editor"}
+        title=${expanded ? "Compact prompt editor" : "Expand prompt editor"}
+        onPointerDown=${(event) => event.preventDefault()}
+        onClick=${() => {
+          setExpanded((value) => !value);
+          requestAnimationFrame(() => promptInput.current?.focus());
+        }}
+      ><span aria-hidden="true">${expanded ? "↙" : "↗"}</span><span>${expanded ? "Compact" : "Expand"}</span></button>
       ${attachments.length ? html`<div class="composer-attachments">${attachments.map((attachment, index) => html`
         <span class="attachment-chip">▧ ${attachment.name}<button aria-label=${`Remove ${attachment.name}`} onClick=${() => setAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>
       `)}</div>` : null}
@@ -197,18 +212,6 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
       <div class="composer-footer">
         <div class="composer-footer__left">
           ${capabilities?.features?.images ? html`<button class="quiet-button" type="button" disabled=${!connected || busy} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
-          <button
-            class="quiet-button composer-expand-button"
-            type="button"
-            aria-pressed=${expanded}
-            aria-label=${expanded ? "Use compact prompt editor" : "Use larger prompt editor"}
-            title=${expanded ? "Compact prompt editor" : "Expand prompt editor"}
-            onPointerDown=${(event) => event.preventDefault()}
-            onClick=${() => {
-              setExpanded((value) => !value);
-              requestAnimationFrame(() => promptInput.current?.focus());
-            }}
-          ><span aria-hidden="true">${expanded ? "↙" : "↗"}</span><span>${expanded ? "Compact" : "Expand"}</span></button>
           <input ref=${fileInput} class="visually-hidden" type="file" accept="image/*" multiple onChange=${(event) => { void addFiles([...event.currentTarget.files]); event.currentTarget.value = ""; }} />
         </div>
         <div class="composer-actions">
@@ -488,6 +491,61 @@ function acceptedImageFiles(files, existingCount) {
   const accepted = images.slice(0, Math.max(0, MAX_PROMPT_ATTACHMENTS - existingCount));
   if (accepted.length < images.length) controller.notice(`A prompt can contain up to ${MAX_PROMPT_ATTACHMENTS} images.`);
   return accepted;
+}
+
+function ContextWindowUsage({ sessionID, directory, selection, usage }) {
+  const modelsMap = useStore((state) => state.models || {});
+  const modelKey = `${directory || ""}:${selection?.provider || ""}:`;
+  const selectedModel = (modelsMap[modelKey] || []).find((item) => item.id === selection?.model);
+  const inputTokens = firstInteger(usage?.input_tokens, usage?.inputTokens);
+  const maxTokens = firstInteger(
+    usage?.max_total_tokens,
+    usage?.maxTotalTokens,
+    selectedModel?.contextWindowTokens,
+  );
+  let usagePercent = firstInteger(usage?.usage_percent, usage?.usagePercent);
+  if (usagePercent == null && inputTokens != null && maxTokens) {
+    usagePercent = Math.round((inputTokens / maxTokens) * 100);
+  }
+  if (usagePercent != null) usagePercent = Math.min(100, Math.max(0, usagePercent));
+  const remainingPercent = usagePercent == null ? null : Math.max(0, 100 - usagePercent);
+  const remainingTokens = inputTokens != null && maxTokens != null ? Math.max(0, maxTokens - inputTokens) : null;
+  const className = usagePercent == null
+    ? "context-usage is-unknown"
+    : usagePercent >= 90
+      ? "context-usage is-critical"
+      : usagePercent >= 75
+        ? "context-usage is-warning"
+        : "context-usage";
+  const tooltipID = `context-usage-${sessionID}`;
+  const angle = `${(usagePercent || 0) * 3.6}deg`;
+  const measured = inputTokens != null && maxTokens != null;
+  return html`<span
+    class=${className}
+    role="img"
+    tabindex="0"
+    aria-describedby=${tooltipID}
+    aria-label=${usagePercent == null ? "Context window usage unavailable" : `Context window ${usagePercent}% used`}
+  >
+    <span class="context-usage__ring" style=${{ "--context-usage-angle": angle }} aria-hidden="true"></span>
+    <span>${usagePercent == null ? "—" : `${usagePercent}%`}</span>
+    <span id=${tooltipID} class="context-usage__tooltip" role="tooltip">
+      ${measured
+        ? html`<strong>${formatTokenCount(inputTokens)} / ${formatTokenCount(maxTokens)} tokens · ${usagePercent}% used</strong><br />${remainingPercent}% of the model context window remains (${formatTokenCount(remainingTokens)} tokens). This is the latest provider request's model-visible input, including instructions, compacted memory, conversation history, and tool context. Yoke reserves output headroom and can compact before the raw model limit is reached.`
+        : html`<strong>Context usage not measured yet.</strong><br />Yoke updates this ring after it measures or receives usage for a provider request.${maxTokens ? ` The selected model has a ${formatTokenCount(maxTokens)} token context window.` : ""}`}
+    </span>
+  </span>`;
+}
+
+function firstInteger(...values) {
+  return values.find((value) => Number.isInteger(value)) ?? null;
+}
+
+function formatTokenCount(value) {
+  if (!Number.isFinite(value)) return "—";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}k`;
+  return String(value);
 }
 
 function SelectionControls({ directory, selection, sessionID = null, onDraftChange = null, disabled = false }) {

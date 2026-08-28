@@ -157,6 +157,18 @@ export function reducePublicEvent(state, event) {
     };
   } else if (event.type === "session.runtime.failed") {
     data.lastError = event.data?.error || "Agent execution failed.";
+  } else if (event.type === "session.selection.changed") {
+    data.contextUsage = null;
+    const session = next.sessions[sessionID];
+    if (session) {
+      next = {
+        ...next,
+        sessions: {
+          ...next.sessions,
+          [sessionID]: { ...session, contextUsage: null },
+        },
+      };
+    }
   } else if (event.type === "session.prompt.admitted") {
     const inputID = event.data?.inputID;
     if (inputID) {

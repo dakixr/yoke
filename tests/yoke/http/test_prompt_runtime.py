@@ -61,7 +61,9 @@ class FakeRuntimeController:
 class FakeAgent:
     supports_user_message = True
 
-    def __init__(self, record: SessionRecord, controller: FakeRuntimeController) -> None:
+    def __init__(
+        self, record: SessionRecord, controller: FakeRuntimeController
+    ) -> None:
         self.record = record.model_copy(deep=True)
         self.controller = controller
 
@@ -135,9 +137,30 @@ class FakeAgent:
             tree.append_message(Message.assistant(f"done:{prompt}"))
             view = tree.project(ConversationProjection())
             if on_event is not None:
+                assistant_payload: dict[str, object] = {
+                    "phase": "final_answer",
+                    "content": f"done:{prompt}",
+                    "iteration": 1,
+                }
+                if prompt == "context-usage":
+                    on_event(
+                        "model_end",
+                        {
+                            "phase": "final_answer",
+                            "content": f"done:{prompt}",
+                            "iteration": 1,
+                            "tool_calls": 0,
+                            "usage": {
+                                "input_tokens": 32_000,
+                                "output_tokens": 400,
+                                "total_tokens": 32_400,
+                                "cached_input_tokens": 24_000,
+                            },
+                        },
+                    )
                 on_event(
                     "assistant_message",
-                    {"phase": "final_answer", "content": f"done:{prompt}"},
+                    assistant_payload,
                 )
             return AgentResult(
                 output=f"done:{prompt}",
@@ -205,6 +228,71 @@ def test_parallel_tool_activity_stays_running_until_all_tools_finish(
             time.sleep(0.01)
         else:
             pytest.fail("parallel tool session did not settle")
+
+
+def test_latest_context_usage_is_durable_after_turn_settlement(tmp_path: Path) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "context-session")
+        state = getattr(client.app, "state")
+        record = state.session_service.store.summary_record("context-session")
+        assert record is not None
+        state.session_service.store.set_selection(
+            "context-session",
+            provider_name=record.provider_name,
+            model_id=record.model_id,
+            reasoning_effort=record.reasoning_effort,
+            context_window_tokens=128_000,
+            existing_record=record,
+        )
+        admitted = client.post(
+            "/api/v1/session/context-session/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "context-usage"}, "delivery": "steer"},
+        )
+        assert admitted.status_code == 200
+        assert controller.started["context-usage"].wait(timeout=2)
+        controller.release["context-usage"].set()
+        waited = client.post(
+            "/api/v1/session/context-session/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        assert waited.json()["data"]["state"] == "idle"
+
+        history = client.get(
+            "/api/v1/session/context-session/history",
+            headers=_auth(),
+        ).json()["data"]
+        usage_events = [
+            event for event in history if event["type"] == "session.context.updated"
+        ]
+        assert len(usage_events) == 1
+        assert usage_events[0]["data"]["input_tokens"] == 32_000
+        assert usage_events[0]["data"]["max_total_tokens"] == 128_000
+        assert usage_events[0]["data"]["usage_percent"] == 25
+        assert usage_events[0]["data"]["reason"] == "provider_response"
+        assert usage_events[0]["data"]["cached_input_tokens"] == 24_000
+
+        session = client.get(
+            "/api/v1/session/context-session",
+            headers=_auth(),
+        )
+        assert session.status_code == 200
+        persisted_usage = session.json()["data"]["contextUsage"]
+        assert persisted_usage["input_tokens"] == 32_000
+        assert persisted_usage["max_total_tokens"] == 128_000
+        assert persisted_usage["usage_percent"] == 25
 
 
 def _create_session(client: TestClient, root: Path, session_id: str) -> None:
@@ -443,9 +531,9 @@ def test_uploaded_image_survives_admission_and_runtime_persistence(
             },
         )
         assert admitted.status_code == 200
-        assert admitted.json()["data"]["prompt"]["attachments"][0]["uri"] == upload[
-            "uri"
-        ]
+        assert (
+            admitted.json()["data"]["prompt"]["attachments"][0]["uri"] == upload["uri"]
+        )
         assert controller.started["look at this"].wait(1)
         controller.release["look at this"].set()
         waited = client.post(

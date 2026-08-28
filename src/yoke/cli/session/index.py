@@ -82,13 +82,12 @@ def session_index_entry(
         model_id=record.model_id,
         reasoning_effort=record.reasoning_effort,
         context_window_tokens=record.context_window_tokens,
+        context_usage=(dict(record.context_usage) if record.context_usage else None),
         leaf_id=record.leaf_id,
         active_skills=[skill.model_copy(deep=True) for skill in record.active_skills],
         skill_dirs=list(record.skill_dirs),
         entry_count=(
-            len(record.conversation_entries)
-            if entry_count is None
-            else entry_count
+            len(record.conversation_entries) if entry_count is None else entry_count
         ),
         file_size=file_size,
         file_mtime_ns=file_mtime_ns,

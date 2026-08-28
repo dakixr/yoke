@@ -1835,6 +1835,10 @@ export interface components {
         SessionInfo: {
             /** Archivedat */
             archivedAt?: string | null;
+            /** Contextusage */
+            contextUsage?: {
+                [key: string]: unknown;
+            } | null;
             /** Id */
             id: string;
             location: components["schemas"]["LocationInfo"];

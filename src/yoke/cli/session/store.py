@@ -193,6 +193,7 @@ class SessionStore:
             update={
                 "conversation_entries": existing_record.conversation_entries,
                 "leaf_id": leaf_id,
+                "context_usage": None,
                 "updated_at": timestamp(),
             }
         )
@@ -270,6 +271,7 @@ class SessionStore:
         now = timestamp()
         updates: dict[str, object] = {
             "leaf_id": leaf_id,
+            "context_usage": None,
             "updated_at": now,
         }
         if active_skills is not None:
@@ -277,6 +279,7 @@ class SessionStore:
         record = existing_record.model_copy(update=updates)
         session_changes: dict[str, object] = {
             "leaf_id": leaf_id,
+            "context_usage": None,
             "updated_at": now,
         }
         if active_skills is not None:
@@ -427,6 +430,7 @@ class SessionStore:
                     "title": fork_title,
                     "pinned": False,
                     "archived_at": None,
+                    "context_usage": None,
                     "leaf_id": fork_leaf,
                 }
             )
@@ -441,6 +445,7 @@ class SessionStore:
                     "title": fork_title,
                     "pinned": False,
                     "archived_at": None,
+                    "context_usage": None,
                     "leaf_id": fork_leaf,
                 },
             ):
@@ -461,6 +466,7 @@ class SessionStore:
                 "title": normalize_title(title) or fork_session_title(source.title),
                 "pinned": False,
                 "archived_at": None,
+                "context_usage": None,
                 "leaf_id": (
                     selected_leaf_id if selected_leaf_id is not None else source.leaf_id
                 ),
@@ -580,8 +586,30 @@ class SessionStore:
             "model_id": model_id,
             "reasoning_effort": reasoning_effort,
             "context_window_tokens": context_window_tokens,
+            "context_usage": None,
             "updated_at": now,
         }
+        record = record.model_copy(update=values)
+        path = self._session_path(session_id)
+        if path.exists():
+            append_session_metadata(path, values)
+        else:
+            self._write_session_record(record)
+        self._update_index_metadata(record)
+        return record
+
+    def set_context_usage(
+        self,
+        session_id: str,
+        usage: dict[str, object],
+        *,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        """Persist the latest safe context-usage snapshot without loading history."""
+        record = existing_record or self.summary_record(session_id)
+        if record is None or record.id != session_id or record.created_at is None:
+            raise ValueError(f"Session not found: {session_id}")
+        values: dict[str, object] = {"context_usage": dict(usage)}
         record = record.model_copy(update=values)
         path = self._session_path(session_id)
         if path.exists():

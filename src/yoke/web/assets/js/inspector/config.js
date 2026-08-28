@@ -3,7 +3,7 @@ import { controller } from "../state/controller.js";
 
 export function ToolsInspector({ sessionID, data }) {
   if (!data?.tools) return html`<div class="inspector-loading">Loading tools…</div>`;
-  return html`<div class="inspector-stack"><div class="inspector-meta"><span>${data.tools.length} discovered tools</span></div><div class="config-list">
+  return html`<div class="inspector-stack config-inspector"><div class="inspector-meta"><span>${data.tools.length} discovered tools</span><span>Session-local toggles</span></div><div class="config-list">
     ${data.tools.map((tool) => html`<label class="config-row"><span class="config-row__main"><strong>${tool.name}</strong><span>${tool.description}</span><code>${tool.source}${tool.capabilityID ? ` · ${tool.capabilityID}` : ""}</code></span><input type="checkbox" checked=${tool.enabled} onChange=${(event) => controller.toggleTool(sessionID, tool.name, event.currentTarget.checked)} /></label>`)}
   </div></div>`;
 }
@@ -11,14 +11,14 @@ export function ToolsInspector({ sessionID, data }) {
 export function SkillsInspector({ sessionID, data }) {
   if (!data?.skills) return html`<div class="inspector-loading">Loading skills…</div>`;
   const activeNames = new Set((data.skills.active || []).map((skill) => skill.name));
-  return html`<div class="inspector-stack"><div class="inspector-meta"><span>${activeNames.size} active · ${(data.skills.available || []).length} available</span></div><div class="config-list">
+  return html`<div class="inspector-stack config-inspector"><div class="inspector-meta"><span>${activeNames.size} active · ${(data.skills.available || []).length} available</span><span>Activate skills for this session</span></div><div class="config-list">
     ${(data.skills.available || []).map((skill) => html`<div class="config-row"><span class="config-row__main"><strong>${skill.name}</strong><span>${skill.description}</span><code>${skill.sourcePath}</code></span>${activeNames.has(skill.name) ? html`<span class="status-pill status-pill--ok">active</span>` : html`<button onClick=${() => controller.activateSkill(sessionID, skill.name)}>Activate</button>`}</div>`)}
   </div></div>`;
 }
 
 export function McpInspector({ sessionID, data }) {
   if (!data?.mcp) return html`<div class="inspector-loading">Loading MCP servers…</div>`;
-  return html`<div class="inspector-stack"><div class="inspector-meta"><span>${data.mcp.length} configured servers</span></div>${data.mcp.map((server) => html`<${McpServer} key=${server.name} sessionID=${sessionID} server=${server} />`)}</div>`;
+  return html`<div class="inspector-stack"><div class="inspector-meta"><span>${data.mcp.length} configured servers</span><span>Choose scope before persisting changes</span></div><div class="mcp-grid">${data.mcp.map((server) => html`<${McpServer} key=${server.name} sessionID=${sessionID} server=${server} />`)}</div></div>`;
 }
 
 function McpServer({ sessionID, server }) {
@@ -39,7 +39,7 @@ function McpServer({ sessionID, server }) {
 }
 
 export function ContextInspector({ session, data }) {
-  return html`<div class="inspector-stack"><section><div class="inspector-section-title">Session</div><dl class="detail-grid"><dt>ID</dt><dd><code>${session.id}</code></dd><dt>Location</dt><dd>${session.location.directory}</dd><dt>Provider</dt><dd>${session.selection?.provider || "—"}</dd><dt>Model</dt><dd>${session.selection?.model || "—"}</dd><dt>Effort</dt><dd>${session.selection?.reasoningEffort || "—"}</dd><dt>Created</dt><dd>${session.time?.created || "—"}</dd><dt>Updated</dt><dd>${session.time?.updated || "—"}</dd><dt>Archived</dt><dd>${session.archivedAt || "—"}</dd><dt>Tree</dt><dd>${session.tree?.entryCount || 0} entries</dd></dl></section>
+  return html`<div class="inspector-stack context-inspector"><section class="context-summary"><div class="inspector-section-title">Session</div><dl class="detail-grid"><dt>ID</dt><dd><code>${session.id}</code></dd><dt>Location</dt><dd>${session.location.directory}</dd><dt>Provider</dt><dd>${session.selection?.provider || "—"}</dd><dt>Model</dt><dd>${session.selection?.model || "—"}</dd><dt>Effort</dt><dd>${session.selection?.reasoningEffort || "—"}</dd><dt>Created</dt><dd>${session.time?.created || "—"}</dd><dt>Updated</dt><dd>${session.time?.updated || "—"}</dd><dt>Archived</dt><dd>${session.archivedAt || "—"}</dd><dt>Tree</dt><dd>${session.tree?.entryCount || 0} entries</dd></dl></section>
     <section><div class="inspector-section-title">Recent model-visible context</div>${data?.context?.truncated ? html`<div class="inspector-meta"><span>Bounded view</span><span>${data.context.retainedEntries} of ${data.context.totalEntries} active entries · ${Math.round((data.context.retainedChars || 0) / 1000)}k / ${Math.round((data.context.maxChars || 0) / 1000)}k chars</span></div>` : null}${data?.context?.messages?.length ? data.context.messages.map((message) => html`<div class="context-line"><span>${message.role}${message.phase ? ` · ${message.phase}` : ""}</span><p>${message.content?.filter((part) => part.type === "text").map((part) => part.text).join("\n") || "[non-text content]"}</p></div>`) : html`<div class="muted">No context loaded.</div>`}</section>
   </div>`;
 }

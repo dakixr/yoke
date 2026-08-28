@@ -220,7 +220,12 @@ The v1 API currently exposes typed resources for:
 
 The process and raw live-output inspectors are runtime-retained. Their final
 conversation results may survive restart, but PIDs and retained stdout chunks
-do not.
+do not. The bundled web UI presents process inspection as a large split-pane
+workspace inspired by the CLI fullscreen inspector: retained processes are
+selected in a dense list pane, the newest retained process is selected by
+default, and the detail pane keeps status facts, working directory, command,
+retained output, wrapping controls, stdin, interrupt, and terminate actions in
+one view.
 
 `/session/active` includes a process-local `activity` label while work is in
 flight. It uses the same status state machine as the CLI (`Thinking`,
@@ -280,8 +285,19 @@ briefly locked during that admission boundary so the same prompt cannot remain
 visible in both the editor and chat. If admission fails, the browser removes
 the optimistic row and restores the exact text and attachments to the composer.
 The regular composer grows with its text up to a compact height cap and offers
-an explicit larger editing mode for long prompts; the larger mode raises only
-the local editor height limit and does not alter draft or submission semantics.
+an explicit larger editing mode for long prompts. The expand/compact control
+lives at the top-right of the composer itself; the larger mode raises only the
+local editor height limit and does not alter draft or submission semantics.
+Above the composer, opposite the model selectors, a compact context-window ring
+shows the latest model-visible input usage as a percentage. Its tooltip includes
+the measured input/max token counts, remaining capacity, and explains that Yoke
+may compact before the model's raw limit to preserve output headroom. The latest
+safe context-usage accounting snapshot is stored in lightweight session metadata
+and journaled once when a turn settles, so the ring can recover after
+reconnect/reload without replaying old history; live context updates still
+refresh it during the turn. Changing provider/model, forking, or checking out a
+different tree branch clears the old measurement rather than displaying usage
+from a different provider context.
 The daemon warms the lazy HTTP runtime import in the background after first
 paint, and cold first-turn reconstruction gives the admission response a short
 grace before a large saved session begins CPU-heavy parsing. During that cold
@@ -324,15 +340,33 @@ activity cannot keep it visible after the runtime returns to idle.
 The transcript renders each tool call as one row. Persisted tool results are
 folded into the originating call row when both are present in the loaded
 window, while an orphaned result at a pagination boundary remains visible until
-its call is loaded. User turns are right-aligned and assistant turns remain
+its call is loaded. Consecutive tool-only assistant batches are visually joined
+into one dense run, so sequential batches no longer inherit full assistant-turn
+spacing between them; actual commentary and final text keep normal separation.
+User turns are right-aligned and assistant turns remain
 left-aligned, using placement rather than a separate role color. User messages
 always show their role/time metadata. Within each assistant turn, only the last
 assistant row containing text shows assistant role/time metadata, so intermediate
-commentary and tool-calling rows do not repeat the same rail. The Tree
-inspector defaults to user and assistant message nodes only. Tool, control, and
-other technical nodes stay available behind a "Show all nodes" toggle. The
-inspector uses a compact connected-node layout and keeps its browser page size
-bounded to reduce DOM work on large sessions.
+commentary and tool-calling rows do not repeat the same rail.
+
+Web inspectors open in a large centered modal workspace instead of consuming a
+right sidebar. A shared top switcher moves between Tree, tool activity,
+processes, tools, skills, MCP, and session info without closing the inspector;
+small screens use the same workspace fullscreen. The layout borrows the CLI
+inspectors' dense pane hierarchy, status treatment, and shortcut footer while
+remaining native browser UI.
+
+The Tree inspector defaults to user and assistant message nodes only. Tool,
+control, and other technical nodes stay available behind a "Show all nodes"
+toggle. History renders oldest at the top and the current/latest message at the
+bottom as a git-style graph with a dedicated active lane, reusable colored
+branch lanes, circular nodes, and curved fork connectors. Hidden technical
+nodes are bridged so message-only mode preserves the real branch topology.
+Opening Tree scrolls directly to the latest/current node; loading older pages
+preserves the user's visible history position. Selecting a historical node
+opens navigation impact as a second pane without moving the graph away from the
+latest position. The browser still requests bounded tree pages to keep DOM and
+topology work controlled on large sessions.
 
 Checkpointed tool-calling assistant messages also reconcile with their live
 mid-turn commentary row. Providers may persist that message with a null phase

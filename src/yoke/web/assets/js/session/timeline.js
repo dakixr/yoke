@@ -1,6 +1,6 @@
 import { html, useEffect, useLayoutEffect, useRef, useState } from "../../vendor/htm-preact.js";
 import { workingDuration } from "../lib/duration.js";
-import { assistantMetadataMessageIDs, effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
+import { assistantMetadataMessageIDs, compactToolBatchMessageIDs, effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
 import { controller } from "../state/controller.js";
 import { getScroll, setScroll } from "../state/local-state.js";
 import { chatActivityForRuntime } from "./activity.js";
@@ -21,6 +21,7 @@ export function Timeline({ sessionID, data, runtime }) {
   const liveToolsByID = Object.fromEntries(liveTools.map((tool) => [tool.callID, tool]));
   const persistedToolCalls = persistedToolCallMap(messages);
   const persistedToolResults = persistedToolResultMap(messages);
+  const compactToolBatchIDs = compactToolBatchMessageIDs(messages);
   const tailLiveTools = liveTools.filter((tool) => !persistedToolCalls.has(tool.callID));
   const liveTailItems = orderedLiveTail(liveAssistants, tailLiveTools);
   const assistantMetadataIDs = assistantMetadataMessageIDs([
@@ -87,7 +88,7 @@ export function Timeline({ sessionID, data, runtime }) {
               <span>${data.loadingOlder ? "Loading older turns" : "Load older turns"}</span>
             </button>
           ` : null}
-          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolNames=${persistedToolCalls} toolResults=${persistedToolResults} showAssistantMetadata=${assistantMetadataIDs.has(message.id)} />`) : !failedPrompts.length && !livePrompt && !liveAssistants.length && !liveTools.length && !chatActivity ? html`
+          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolNames=${persistedToolCalls} toolResults=${persistedToolResults} showAssistantMetadata=${assistantMetadataIDs.has(message.id)} compactToolBatch=${compactToolBatchIDs.has(message.id)} />`) : !failedPrompts.length && !livePrompt && !liveAssistants.length && !liveTools.length && !chatActivity ? html`
             <div class="timeline-empty">This session has no messages yet.</div>
           ` : null}
           ${failedPrompts.map((prompt) => html`<${UserMessage} key=${prompt.id} message=${livePromptMessage(prompt)} />`)}
@@ -125,9 +126,9 @@ function ActivityIndicator({ startedAt, activity }) {
   `;
 }
 
-function TimelineMessage({ sessionID, message, liveToolsByID, toolNames, toolResults, showAssistantMetadata = false }) {
+function TimelineMessage({ sessionID, message, liveToolsByID, toolNames, toolResults, showAssistantMetadata = false, compactToolBatch = false }) {
   if (message.type === "user") return html`<${UserMessage} message=${message} />`;
-  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolResults=${toolResults} showMetadata=${showAssistantMetadata} />`;
+  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolResults=${toolResults} showMetadata=${showAssistantMetadata} compactToolBatch=${compactToolBatch} />`;
   if (message.type === "tool" && toolNames.has(message.callID)) return null;
   if (message.type === "tool") return html`<${ToolMessage} sessionID=${sessionID} message=${message} toolName=${toolNames.get(message.callID) || null} />`;
   return html`<div class="control-line"><span>${message.control || "Control"}</span>${message.text ? html`<span>${message.text}</span>` : null}</div>`;
@@ -159,12 +160,13 @@ function livePromptMessage(livePrompt) {
   };
 }
 
-function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolResults = new Map(), showMetadata = false }) {
+function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolResults = new Map(), showMetadata = false, compactToolBatch = false }) {
   const text = projectedMessageText(message);
   const images = (message.content || []).filter((part) => part.type === "image");
   const commentary = effectiveAssistantPhase(message) === "commentary";
   const phase = commentary ? "Commentary" : "Assistant";
-  return html`<article class=${`turn turn--assistant ${commentary ? "is-commentary" : ""}`}>
+  const toolOnly = Boolean(message.toolCalls?.length && !text.trim() && !images.length);
+  return html`<article class=${`turn turn--assistant ${commentary ? "is-commentary" : ""} ${toolOnly ? "is-tool-only" : ""} ${compactToolBatch ? "is-tool-run-continuation" : ""}`}>
     ${showMetadata ? html`<div class="turn__rail"><span class="turn__label">${phase}</span>${message.timeCreated ? html`<time>${formatTime(message.timeCreated)}</time>` : null}</div>` : null}
     <div class="turn__body assistant-content">
       ${text ? html`<div class="markdown" dangerouslySetInnerHTML=${{ __html: markdownHTML(text) }}></div>` : null}

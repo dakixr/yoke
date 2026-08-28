@@ -27,3 +27,29 @@ export function assistantMetadataMessageIDs(messages) {
   if (lastTextAssistantID) ids.add(lastTextAssistantID);
   return ids;
 }
+
+export function compactToolBatchMessageIDs(messages) {
+  const ids = new Set();
+  const items = messages || [];
+  for (let index = 0; index < items.length; index += 1) {
+    const message = items[index];
+    if (!isToolOnlyAssistant(message)) continue;
+    for (let nextIndex = index + 1; nextIndex < items.length; nextIndex += 1) {
+      const next = items[nextIndex];
+      if (next?.type === "user") break;
+      if (next?.type !== "assistant") continue;
+      if (isToolOnlyAssistant(next) && message.id) ids.add(message.id);
+      break;
+    }
+  }
+  return ids;
+}
+
+function isToolOnlyAssistant(message) {
+  return Boolean(
+    message?.type === "assistant"
+      && message.toolCalls?.length
+      && !projectedMessageText(message).trim()
+      && !(message.content || []).some((part) => part.type === "image"),
+  );
+}

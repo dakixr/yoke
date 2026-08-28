@@ -29,7 +29,8 @@ const { controller } = await import("../src/yoke/web/assets/js/state/controller.
 const { reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
 const { store } = await import("../src/yoke/web/assets/js/state/store.js");
 const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
-const { assistantMetadataMessageIDs } = await import("../src/yoke/web/assets/js/lib/messages.js");
+const { assistantMetadataMessageIDs, compactToolBatchMessageIDs } = await import("../src/yoke/web/assets/js/lib/messages.js");
+const { displayTreeEntries, treeGraphLayout } = await import("../src/yoke/web/assets/js/inspector/tree-graph.js");
 
 function deferred() {
   let resolve;
@@ -267,7 +268,10 @@ async function testHumanInputOldReadCannotResurrectResolvedRequest() {
 async function testSelectionAndToolTogglesKeepLatestClick() {
   const id = "optimistic-config";
   installSession(id, {
-    extraData: { tools: [{ name: "alpha", enabled: true }] },
+    extraData: {
+      tools: [{ name: "alpha", enabled: true }],
+      contextUsage: { input_tokens: 50_000, max_total_tokens: 100_000, usage_percent: 50 },
+    },
   });
   const selectionCalls = [];
   const toolCalls = [];
@@ -288,6 +292,7 @@ async function testSelectionAndToolTogglesKeepLatestClick() {
     const low = controller.setSelection(id, "codex", "new-model", "low");
     const high = controller.setSelection(id, "codex", "new-model", "high");
     assert.equal(store.getState().sessions[id].selection.reasoningEffort, "high");
+    assert.equal(store.getState().sessionData[id].contextUsage, null);
     await tick();
     assert.equal(selectionCalls.length, 1);
     selectionCalls[0].gate.resolve({ data: { effective: selectionCalls[0].body } });
@@ -608,6 +613,77 @@ async function testAssistantMetadataOnlyMarksFinalTextPerTurn() {
   assert.deepEqual([...ids], ["a3", "a6"]);
 }
 
+async function testSequentialToolOnlyBatchesCompactWithoutEatingTextSpacing() {
+  const ids = compactToolBatchMessageIDs([
+    { id: "u1", type: "user", content: [{ type: "text", text: "go" }] },
+    { id: "a1", type: "assistant", content: [], toolCalls: [{ id: "t1" }, { id: "t2" }] },
+    { id: "r1", type: "tool", callID: "t1" },
+    { id: "r2", type: "tool", callID: "t2" },
+    { id: "a2", type: "assistant", content: [], toolCalls: [{ id: "t3" }] },
+    { id: "r3", type: "tool", callID: "t3" },
+    { id: "a3", type: "assistant", content: [], toolCalls: [{ id: "t4" }] },
+    { id: "a4", type: "assistant", content: [{ type: "text", text: "done" }] },
+    { id: "u2", type: "user", content: [{ type: "text", text: "next" }] },
+    { id: "a5", type: "assistant", content: [], toolCalls: [{ id: "t5" }] },
+  ]);
+  assert.deepEqual([...ids], ["a1", "a2"]);
+}
+
+async function testSelectionEventClearsRecoveredContextUsage() {
+  const id = "context-selection-reset";
+  installSession(id, {
+    extraData: {
+      contextUsage: { input_tokens: 80_000, max_total_tokens: 100_000, usage_percent: 80 },
+    },
+  });
+  const next = reducePublicEvent(store.getState(), {
+    type: "session.selection.changed",
+    sessionID: id,
+    data: { provider: "codex", model: "new-model" },
+    durable: { seq: 12 },
+  });
+  assert.equal(next.sessionData[id].contextUsage, null);
+}
+
+async function testTreeGraphKeepsCurrentLaneAndSeparatesOverlappingBranches() {
+  const entries = [
+    { id: "root", parentID: null, kind: "user", active: true },
+    { id: "shared", parentID: "root", kind: "assistant", active: true },
+    { id: "main-user", parentID: "shared", kind: "user", active: true },
+    { id: "main-leaf", parentID: "main-user", kind: "assistant", active: true, current: true },
+    { id: "branch-a-user", parentID: "shared", kind: "user", active: false },
+    { id: "branch-a-leaf", parentID: "branch-a-user", kind: "assistant", active: false },
+    { id: "branch-b-user", parentID: "root", kind: "user", active: false },
+    { id: "branch-b-leaf", parentID: "branch-b-user", kind: "assistant", active: false },
+  ];
+  const graph = treeGraphLayout(displayTreeEntries(entries, entries));
+  const lanes = Object.fromEntries(graph.nodes.map((node) => [node.id, node.lane]));
+  assert.equal(lanes.root, 0);
+  assert.equal(lanes["main-leaf"], 0);
+  assert.notEqual(lanes["branch-a-leaf"], 0);
+  assert.notEqual(lanes["branch-b-leaf"], 0);
+  assert.notEqual(
+    lanes["branch-a-leaf"],
+    lanes["branch-b-leaf"],
+    "branches whose connector spans overlap must not share a graph lane",
+  );
+}
+
+async function testTreeGraphBridgesHiddenTechnicalNodes() {
+  const entries = [
+    { id: "user", parentID: null, kind: "user", active: true },
+    { id: "tool-call", parentID: "user", kind: "assistant_tool_calls", active: true },
+    { id: "tool-result", parentID: "tool-call", kind: "tool", active: true },
+    { id: "assistant", parentID: "tool-result", kind: "assistant", active: true, current: true },
+  ];
+  const visible = displayTreeEntries(entries, [entries[0], entries[3]]);
+  assert.equal(visible[1].graphParentID, "user");
+  const graph = treeGraphLayout(visible);
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].parentID, "user");
+  assert.equal(graph.edges[0].childID, "assistant");
+}
+
 const tests = [
   testPromptAppearsBeforeAdmissionReturns,
   testPromptRollbackOnFailure,
@@ -623,6 +699,10 @@ const tests = [
   testBootstrapDoesNotWaitForProviderOrLocationEnrichment,
   testChatWorkingIndicatorTracksRuntimeState,
   testAssistantMetadataOnlyMarksFinalTextPerTurn,
+  testSequentialToolOnlyBatchesCompactWithoutEatingTextSpacing,
+  testSelectionEventClearsRecoveredContextUsage,
+  testTreeGraphKeepsCurrentLaneAndSeparatesOverlappingBranches,
+  testTreeGraphBridgesHiddenTechnicalNodes,
 ];
 
 const started = performance.now();

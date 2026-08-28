@@ -1644,6 +1644,7 @@ class AppController {
 
   async setSelection(sessionID, provider, model, reasoningEffort) {
     const previous = store.getState().sessions[sessionID]?.selection || null;
+    const previousContextUsage = store.getState().sessionData[sessionID]?.contextUsage || null;
     const generation = (this.selectionGeneration.get(sessionID) || 0) + 1;
     this.selectionGeneration.set(sessionID, generation);
     const desired = {
@@ -1662,6 +1663,14 @@ class AppController {
           [sessionID]: {
             ...session,
             selection: desired,
+            contextUsage: null,
+          },
+        },
+        sessionData: {
+          ...state.sessionData,
+          [sessionID]: {
+            ...state.sessionData[sessionID],
+            contextUsage: null,
           },
         },
       };
@@ -1682,7 +1691,7 @@ class AppController {
                 ...state,
                 sessions: {
                   ...state.sessions,
-                  [sessionID]: { ...session, selection: effective },
+                  [sessionID]: { ...session, selection: effective, contextUsage: null },
                 },
               };
             });
@@ -1700,7 +1709,14 @@ class AppController {
                 ...state,
                 sessions: {
                   ...state.sessions,
-                  [sessionID]: { ...session, selection: previous },
+                  [sessionID]: { ...session, selection: previous, contextUsage: previousContextUsage },
+                },
+                sessionData: {
+                  ...state.sessionData,
+                  [sessionID]: {
+                    ...state.sessionData[sessionID],
+                    contextUsage: previousContextUsage,
+                  },
                 },
               };
             });

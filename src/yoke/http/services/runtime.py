@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import Executor
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC
 from datetime import datetime
 import secrets
@@ -12,7 +13,6 @@ from pathlib import Path
 from threading import Event
 from threading import Lock
 from collections.abc import Callable
-from collections.abc import Sequence
 from typing import Literal
 from typing import TypeVar
 
@@ -44,11 +44,15 @@ from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.http.services.session_read_cache import SessionReadSnapshot
 from yoke.http.services.runtime_start import RuntimeAppendPersistence
 from yoke.http.services.runtime_start import indexed_runtime_start
+from yoke.http.services.runtime_context_usage import RuntimeContextUsageState
+from yoke.http.services.runtime_persistence import active_skill_list
+from yoke.http.services.runtime_persistence import input_has_terminal_assistant
+from yoke.http.services.runtime_persistence import input_is_persisted
+from yoke.http.services.runtime_persistence import tag_input_entry
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
 from yoke.agent.activity import activity_status_for_event
 from yoke.session.admissions import AdmissionRecord
-from yoke.session.admissions import INPUT_ID_METADATA_KEY
 from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import McpSessionServerPolicy
@@ -68,6 +72,9 @@ class TurnExecution:
     retired_event: Event
     cold_start: bool
     append_persistence: RuntimeAppendPersistence | None = None
+    context_usage: RuntimeContextUsageState = dataclass_field(
+        default_factory=RuntimeContextUsageState
+    )
     task: asyncio.Task[None] | None = None
     slot_acquired: bool = False
     slot_released: bool = False
@@ -692,9 +699,9 @@ class SessionRuntime:
                 return self.pending_inputs.pop_next(self.session_id, allow_queue=True)
             snapshot = self._snapshot()
             record = snapshot.record
-            if not _input_is_persisted(record, promoted.id):
+            if not input_is_persisted(record, promoted.id):
                 return promoted
-            if not _input_has_terminal_assistant(
+            if not input_has_terminal_assistant(
                 snapshot.active_path_entries,
                 promoted.id,
             ):
@@ -822,6 +829,14 @@ class SessionRuntime:
                 active_entries=active_entries,
                 snapshot=snapshot,
             )
+            execution.context_usage.configure(
+                record.context_window_tokens,
+                (
+                    turn_agent.context_manager.max_total_tokens
+                    if isinstance(turn_agent, RuntimeAgent)
+                    else None
+                ),
+            )
             user_message = self._user_message_for_admission(record, execution.admission)
 
             def callback(event: str, payload: dict[str, object]) -> None:
@@ -931,6 +946,12 @@ class SessionRuntime:
                     },
                     location=record.root,
                 )
+            record = execution.context_usage.persist(
+                store=self.store,
+                events=self.events,
+                session_id=self.session_id,
+                record=record,
+            )
             self._close_turn_agent_later(outcome.agent)
             self._active = None
             self._state = "error" if outcome.error is not None else "idle"
@@ -1033,7 +1054,7 @@ class SessionRuntime:
             active_entries = snapshot.owned_active_path()
             user_message = (
                 None
-                if _input_is_persisted(record, admission.id)
+                if input_is_persisted(record, admission.id)
                 else self._user_message_for_admission(record, admission)
             )
             _, entries = interrupted_turn_snapshot(
@@ -1097,7 +1118,7 @@ class SessionRuntime:
                 active_skills=active_skills,
             )
             return
-        skills = _active_skill_list(active_skills)
+        skills = active_skill_list(active_skills)
         with self._persistence_lock:
             persistence.append(
                 self.store,
@@ -1117,9 +1138,9 @@ class SessionRuntime:
         current = self._record()
         copied = [entry.model_copy(deep=True) for entry in entries]
         if input_id is not None:
-            _tag_input_entry(copied, input_id)
+            tag_input_entry(copied, input_id)
         leaf_id = copied[-1].id if copied else current.leaf_id
-        resolved_skills = _active_skill_list(active_skills)
+        resolved_skills = active_skill_list(active_skills)
         skills = current.active_skills if resolved_skills is None else resolved_skills
         self.store.save(
             self.session_id,
@@ -1169,15 +1190,32 @@ class SessionRuntime:
         if next_activity is not None and next_activity != self._activity_status:
             self._activity_status = next_activity
             self._publish_activity(execution)
+        usage_update = execution.context_usage.capture(
+            event,
+            payload,
+            turn_id=execution.turn_id,
+            input_id=execution.admission.id,
+        )
+        if event == "model_end" and usage_update is not None:
+            self.events.live(
+                "session.context.updated",
+                usage_update,
+                session_id=self.session_id,
+                location=self._event_location,
+            )
         event_type = _PUBLIC_AGENT_EVENTS.get(event)
         if event_type is None:
             return
         if execution.retired_event.is_set() or self._active is not execution:
             return
-        redacted = redact_public_value(payload)
-        data = dict(redacted) if isinstance(redacted, dict) else {"value": redacted}
-        data["turnID"] = execution.turn_id
-        data["inputID"] = execution.admission.id
+        if event == "context_usage":
+            data = usage_update or {}
+        else:
+            redacted = redact_public_value(payload)
+            data = dict(redacted) if isinstance(redacted, dict) else {"value": redacted}
+        if event != "context_usage":
+            data["turnID"] = execution.turn_id
+            data["inputID"] = execution.admission.id
         self.events.live(
             event_type,
             data,
@@ -1246,44 +1284,3 @@ _PUBLIC_AGENT_EVENTS = {
     "compaction_end": "session.compaction.ended",
     "context_usage": "session.context.updated",
 }
-
-
-def _active_skill_list(value: object | None) -> list[ActiveSkill] | None:
-    if not isinstance(value, list | tuple):
-        return None
-    typed = [skill for skill in value if isinstance(skill, ActiveSkill)]
-    if len(typed) != len(value):
-        return None
-    return [skill.model_copy(deep=True) for skill in typed]
-
-
-def _tag_input_entry(entries: list[ConversationEntry], input_id: str) -> None:
-    if any(entry.metadata.get(INPUT_ID_METADATA_KEY) == input_id for entry in entries):
-        return
-    for entry in reversed(entries):
-        if entry.kind == "user" and entry.message is not None:
-            entry.metadata[INPUT_ID_METADATA_KEY] = input_id
-            return
-
-
-def _input_is_persisted(record: SessionRecord, input_id: str) -> bool:
-    return any(
-        entry.metadata.get(INPUT_ID_METADATA_KEY) == input_id
-        for entry in record.conversation_entries
-    )
-
-
-def _input_has_terminal_assistant(
-    active: Sequence[ConversationEntry],
-    input_id: str,
-) -> bool:
-    seen_input = False
-    for entry in active:
-        if entry.metadata.get(INPUT_ID_METADATA_KEY) == input_id:
-            seen_input = True
-            continue
-        if not seen_input or entry.kind != "assistant" or entry.message is None:
-            continue
-        if not entry.message.tool_calls and entry.message.phase != "commentary":
-            return True
-    return False

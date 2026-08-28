@@ -30,6 +30,7 @@ class SessionRecord(BaseModel):
     model_id: str | None = None
     reasoning_effort: str | None = None
     context_window_tokens: int | None = None
+    context_usage: dict[str, object] | None = None
 
     @property
     def messages(self) -> list[Message]:
@@ -54,6 +55,7 @@ class SessionIndexEntry(BaseModel):
     model_id: str | None = None
     reasoning_effort: str | None = None
     context_window_tokens: int | None = None
+    context_usage: dict[str, object] | None = None
     leaf_id: str | None = None
     active_skills: list[ActiveSkill] = Field(default_factory=list)
     skill_dirs: list[str] = Field(default_factory=list)
@@ -76,6 +78,7 @@ class SessionIndexEntry(BaseModel):
             model_id=self.model_id,
             reasoning_effort=self.reasoning_effort,
             context_window_tokens=self.context_window_tokens,
+            context_usage=(dict(self.context_usage) if self.context_usage else None),
             leaf_id=self.leaf_id,
             active_skills=[skill.model_copy(deep=True) for skill in self.active_skills],
             skill_dirs=list(self.skill_dirs),

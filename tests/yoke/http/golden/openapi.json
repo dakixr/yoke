@@ -2500,6 +2500,18 @@
             ],
             "title": "Archivedat"
           },
+          "contextUsage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contextusage"
+          },
           "id": {
             "title": "Id",
             "type": "string"

@@ -72,17 +72,20 @@ def test_session_store_does_not_rewrite_unsupported_legacy_schema(
 ) -> None:
     store = SessionStore(tmp_path)
     path = tmp_path / "too-old.jsonl"
-    raw_text = "\n".join(
-        [
-            json.dumps({"type": "session_stream", "version": 1}),
-            json.dumps(
-                {
-                    "type": "session_metadata",
-                    "record": {"version": 3, "id": "too-old"},
-                }
-            ),
-        ]
-    ) + "\n"
+    raw_text = (
+        "\n".join(
+            [
+                json.dumps({"type": "session_stream", "version": 1}),
+                json.dumps(
+                    {
+                        "type": "session_metadata",
+                        "record": {"version": 3, "id": "too-old"},
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
     path.write_text(raw_text, encoding="utf-8")
 
     with pytest.raises(ValueError, match="Unsupported session schema version: 3"):
@@ -421,6 +424,17 @@ def test_session_store_fork_copies_session_without_pin(
         model_id="gpt-5.5",
     )
     store.set_pinned("source", True)
+    source_record = store.summary_record("source")
+    assert source_record is not None
+    store.set_context_usage(
+        "source",
+        {
+            "input_tokens": 40_000,
+            "max_total_tokens": 100_000,
+            "usage_percent": 40,
+        },
+        existing_record=source_record,
+    )
 
     forked = store.fork("source", new_session_id_value="forked")
 
@@ -430,6 +444,7 @@ def test_session_store_fork_copies_session_without_pin(
     assert forked.pinned is False
     assert forked.provider_name == "codex"
     assert forked.model_id == "gpt-5.5"
+    assert forked.context_usage is None
     assert (session_dir / "forked.jsonl").exists()
 
 

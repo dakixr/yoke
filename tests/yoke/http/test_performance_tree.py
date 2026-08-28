@@ -57,6 +57,11 @@ def test_tree_interactions_use_topology_index_without_loading_history(
         created_at="2026-08-27T00:00:00+00:00",
         updated_at="2026-08-27T00:00:01+00:00",
         leaf_id=current_assistant.id,
+        context_usage={
+            "input_tokens": 40_000,
+            "max_total_tokens": 100_000,
+            "usage_percent": 40,
+        },
         conversation_entries=[
             root,
             shared,
@@ -113,6 +118,7 @@ def test_tree_interactions_use_topology_index_without_loading_history(
 
     persisted = original_load("branch")
     assert persisted.leaf_id == navigated.data.leaf_id
+    assert persisted.context_usage is None
     by_id = {entry.id: entry for entry in persisted.conversation_entries}
     assert by_id[target_user.id].metadata["label"] == "chosen branch"
     navigated_leaf = navigated.data.leaf_id

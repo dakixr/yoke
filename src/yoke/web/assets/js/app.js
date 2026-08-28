@@ -13,7 +13,6 @@ export function App() {
   const capabilities = useStore((state) => state.capabilities);
   const connection = useStore((state) => state.connection);
   const sidebarOpen = useStore((state) => state.ui.sidebarOpen);
-  const inspector = useStore((state) => state.ui.inspector);
   const notice = useStore((state) => state.ui.notice);
   const noticePending = useStore((state) => state.ui.noticePending);
 
@@ -40,7 +39,7 @@ export function App() {
   if (authRequired) return html`<${AuthScreen} />`;
   if (!capabilities) return html`<div class="boot-screen"><div class="boot-mark">Y</div><div>Connecting to Yoke…</div>${connection.error ? html`<div class="inline-error">${connection.error}</div>` : null}</div>`;
 
-  return html`<div class=${`app-shell ${inspector ? "has-inspector" : ""}`}>
+  return html`<div class="app-shell">
     <${Sidebar} />
     ${sidebarOpen ? html`<button class="sidebar-backdrop" aria-label="Close sessions" onClick=${() => controller.toggleSidebar()}></button>` : null}
     <div class="workspace">

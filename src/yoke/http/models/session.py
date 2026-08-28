@@ -72,6 +72,7 @@ class SessionInfo(ApiModel):
     location: LocationInfo
     time: SessionTime
     selection: SessionSelection
+    context_usage: dict[str, object] | None = None
     tree: SessionTreeSummary
     queue: SessionQueueSummary
 
