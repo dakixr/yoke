@@ -1,4 +1,4 @@
-import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
+import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
 import {
@@ -17,6 +17,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const fileInput = useRef(null);
   const promptInput = useRef(null);
   const escapePrefixAt = useRef(0);
@@ -24,12 +25,21 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   useEffect(() => {
     setText("");
     setAttachments([]);
+    setExpanded(false);
   }, [sessionID]);
   useEffect(() => {
     if (!data?.editorHandoff) return;
     setText(data.editorHandoff);
     controller.clearEditorHandoff(sessionID);
   }, [data?.editorHandoff, sessionID]);
+  useLayoutEffect(() => {
+    resizeComposerInput(promptInput.current);
+  }, [text, expanded]);
+  useEffect(() => {
+    const resize = () => resizeComposerInput(promptInput.current);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
 
   const hasContent = Boolean(text.trim() || attachments.length);
   const running = runtime?.state === "running" || runtime?.state === "stopping" || runtime?.state === "waiting_input";
@@ -168,8 +178,8 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
       `)}</div>` : null}
       <textarea
         ref=${promptInput}
-        class="composer-input"
-        rows="3"
+        class=${`composer-input ${expanded ? "is-expanded" : ""}`}
+        rows="1"
         value=${text}
         aria-label="Prompt"
         aria-autocomplete="list"
@@ -187,6 +197,18 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
       <div class="composer-footer">
         <div class="composer-footer__left">
           ${capabilities?.features?.images ? html`<button class="quiet-button" type="button" disabled=${!connected || busy} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
+          <button
+            class="quiet-button composer-expand-button"
+            type="button"
+            aria-pressed=${expanded}
+            aria-label=${expanded ? "Use compact prompt editor" : "Use larger prompt editor"}
+            title=${expanded ? "Compact prompt editor" : "Expand prompt editor"}
+            onPointerDown=${(event) => event.preventDefault()}
+            onClick=${() => {
+              setExpanded((value) => !value);
+              requestAnimationFrame(() => promptInput.current?.focus());
+            }}
+          ><span aria-hidden="true">${expanded ? "↙" : "↗"}</span><span>${expanded ? "Compact" : "Expand"}</span></button>
           <input ref=${fileInput} class="visually-hidden" type="file" accept="image/*" multiple onChange=${(event) => { void addFiles([...event.currentTarget.files]); event.currentTarget.value = ""; }} />
         </div>
         <div class="composer-actions">
@@ -230,6 +252,17 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     </div>
     </div>
   </div>`;
+}
+
+function resizeComposerInput(input) {
+  if (!input) return;
+  input.style.height = "auto";
+  const styles = window.getComputedStyle(input);
+  const minHeight = Number.parseFloat(styles.minHeight) || 0;
+  const parsedMaxHeight = Number.parseFloat(styles.maxHeight);
+  const maxHeight = Number.isFinite(parsedMaxHeight) ? parsedMaxHeight : input.scrollHeight;
+  input.style.height = `${Math.ceil(Math.max(minHeight, Math.min(input.scrollHeight, maxHeight)))}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight + 1 ? "auto" : "hidden";
 }
 
 export function DraftComposer({ draftID, draft }) {

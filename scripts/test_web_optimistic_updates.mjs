@@ -29,6 +29,7 @@ const { controller } = await import("../src/yoke/web/assets/js/state/controller.
 const { reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
 const { store } = await import("../src/yoke/web/assets/js/state/store.js");
 const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
+const { assistantMetadataMessageIDs } = await import("../src/yoke/web/assets/js/lib/messages.js");
 
 function deferred() {
   let resolve;
@@ -593,6 +594,20 @@ async function testChatWorkingIndicatorTracksRuntimeState() {
   );
 }
 
+async function testAssistantMetadataOnlyMarksFinalTextPerTurn() {
+  const ids = assistantMetadataMessageIDs([
+    { id: "u1", type: "user", content: [{ type: "text", text: "first" }] },
+    { id: "a1", type: "assistant", content: [{ type: "text", text: "commentary one" }] },
+    { id: "a2", type: "assistant", content: [], toolCalls: [{ id: "tool-1" }] },
+    { id: "a3", type: "assistant", content: [{ type: "text", text: "final one" }] },
+    { id: "u2", type: "user", content: [{ type: "text", text: "second" }] },
+    { id: "a4", type: "assistant", content: [{ type: "text", text: "commentary two" }] },
+    { id: "a5", type: "assistant", content: [{ type: "image", name: "result.png" }] },
+    { id: "a6", type: "assistant", content: [{ type: "text", text: "final two" }] },
+  ]);
+  assert.deepEqual([...ids], ["a3", "a6"]);
+}
+
 const tests = [
   testPromptAppearsBeforeAdmissionReturns,
   testPromptRollbackOnFailure,
@@ -607,6 +622,7 @@ const tests = [
   testCheckpointedToolCommentaryDoesNotStickAtTail,
   testBootstrapDoesNotWaitForProviderOrLocationEnrichment,
   testChatWorkingIndicatorTracksRuntimeState,
+  testAssistantMetadataOnlyMarksFinalTextPerTurn,
 ];
 
 const started = performance.now();

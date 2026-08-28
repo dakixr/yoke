@@ -34,6 +34,7 @@
 .turn__label { color: var(--muted); font-weight: 700; }
 .turn__activity { justify-self: end; padding: 1px 4px; border: 1px solid var(--border); border-radius: 999px; color: var(--faint); font-size: 9px; line-height: 1.25; }
 .turn__body { min-width: 0; font-size: 13.5px; line-height: 1.63; }
+.turn--assistant .turn__body { grid-column: 2; }
 .turn--user { grid-template-columns: minmax(0, 1fr) 78px; padding-left: clamp(42px, 9vw, 150px); }
 .turn--user .turn__rail { grid-column: 2; grid-row: 1; text-align: left; }
 .turn--user .turn__body { grid-column: 1; grid-row: 1; width: fit-content; max-width: min(86%, 700px); justify-self: end; padding: 10px 12px; border-right: 2px solid var(--border-strong); border-radius: 6px 0 0 6px; background: var(--panel); }
@@ -122,9 +123,11 @@
 .composer-drop-hint { position: absolute; z-index: 4; inset: 5px; display: grid; place-items: center; border: 1px dashed color-mix(in srgb, var(--accent) 68%, var(--border)); border-radius: 7px; background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--text); font-size: 12px; font-weight: 700; pointer-events: none; }
 .composer-drop-hint span { padding: 5px 8px; border-radius: 5px; background: var(--raised); }
 .composer-attachments { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 9px 0; }
-.composer-input { display: block; width: 100%; min-height: 52px; max-height: 220px; padding: 9px 12px 4px; border: 0; border-radius: 0; resize: none; background: transparent; font-size: 13.5px; line-height: 1.5; }
+.composer-input { display: block; width: 100%; min-height: 52px; max-height: 220px; overflow-y: hidden; padding: 9px 12px 4px; border: 0; border-radius: 0; resize: none; background: transparent; font-size: 13.5px; line-height: 1.5; }
+.composer-input.is-expanded { min-height: clamp(180px, 32dvh, 300px); max-height: clamp(300px, 52dvh, 620px); }
 .composer-footer { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 6px 6px 8px; }
 .composer-footer__left, .composer-actions { display: flex; align-items: center; gap: 7px; }
+.composer-expand-button { gap: 5px; white-space: nowrap; }
 .composer-icon-action { display: grid; width: 36px; height: 36px; min-height: 36px !important; flex: none; place-items: center; padding: 0 !important; border-radius: 50% !important; line-height: 1; }
 .composer-send-button svg { display: block; }
 .composer-stop-button { background: var(--danger); color: white; box-shadow: 0 1px 0 rgb(255 255 255 / 10%) inset, 0 3px 10px rgb(0 0 0 / 18%); }
@@ -166,6 +169,7 @@
   .session-more-menu { display: block; }
   .turn { grid-template-columns: 1fr; gap: 5px; margin-bottom: 24px; }
   .turn__rail { display: flex; justify-content: space-between; padding: 0 2px; text-align: left; }
+  .turn--assistant .turn__body { grid-column: 1; }
   .turn--user { grid-template-columns: 1fr; padding-left: 42px; }
   .turn--user .turn__rail { grid-column: 1; grid-row: auto; justify-content: flex-end; gap: 8px; text-align: right; }
   .turn--user .turn__body { grid-column: 1; grid-row: auto; max-width: 92%; }

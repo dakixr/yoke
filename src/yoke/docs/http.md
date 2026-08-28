@@ -279,6 +279,9 @@ optimistic transcript before waiting for HTTP admission. The textarea is
 briefly locked during that admission boundary so the same prompt cannot remain
 visible in both the editor and chat. If admission fails, the browser removes
 the optimistic row and restores the exact text and attachments to the composer.
+The regular composer grows with its text up to a compact height cap and offers
+an explicit larger editing mode for long prompts; the larger mode raises only
+the local editor height limit and does not alter draft or submission semantics.
 The daemon warms the lazy HTTP runtime import in the background after first
 paint, and cold first-turn reconstruction gives the admission response a short
 grace before a large saved session begins CPU-heavy parsing. During that cold
@@ -322,7 +325,10 @@ The transcript renders each tool call as one row. Persisted tool results are
 folded into the originating call row when both are present in the loaded
 window, while an orphaned result at a pagination boundary remains visible until
 its call is loaded. User turns are right-aligned and assistant turns remain
-left-aligned, using placement rather than a separate role color. The Tree
+left-aligned, using placement rather than a separate role color. User messages
+always show their role/time metadata. Within each assistant turn, only the last
+assistant row containing text shows assistant role/time metadata, so intermediate
+commentary and tool-calling rows do not repeat the same rail. The Tree
 inspector defaults to user and assistant message nodes only. Tool, control, and
 other technical nodes stay available behind a "Show all nodes" toggle. The
 inspector uses a compact connected-node layout and keeps its browser page size

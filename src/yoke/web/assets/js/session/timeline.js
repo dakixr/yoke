@@ -1,6 +1,6 @@
 import { html, useEffect, useLayoutEffect, useRef, useState } from "../../vendor/htm-preact.js";
 import { workingDuration } from "../lib/duration.js";
-import { effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
+import { assistantMetadataMessageIDs, effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
 import { controller } from "../state/controller.js";
 import { getScroll, setScroll } from "../state/local-state.js";
 import { chatActivityForRuntime } from "./activity.js";
@@ -23,6 +23,15 @@ export function Timeline({ sessionID, data, runtime }) {
   const persistedToolResults = persistedToolResultMap(messages);
   const tailLiveTools = liveTools.filter((tool) => !persistedToolCalls.has(tool.callID));
   const liveTailItems = orderedLiveTail(liveAssistants, tailLiveTools);
+  const assistantMetadataIDs = assistantMetadataMessageIDs([
+    ...messages,
+    ...(livePrompt ? [{ id: livePrompt.id, type: "user" }] : []),
+    ...liveAssistants.map((item) => ({
+      id: item.id,
+      type: "assistant",
+      content: item.content ? [{ type: "text", text: item.content }] : [],
+    })),
+  ]);
   const liveAssistantSignature = liveAssistants.map((item) => `${item.id}:${item.content}`).join("|");
   const liveToolSignature = liveTools.map((item) => `${item.callID}:${item.status}`).join("|");
   const chatActivity = chatActivityForRuntime(runtime);
@@ -78,13 +87,13 @@ export function Timeline({ sessionID, data, runtime }) {
               <span>${data.loadingOlder ? "Loading older turns" : "Load older turns"}</span>
             </button>
           ` : null}
-          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolNames=${persistedToolCalls} toolResults=${persistedToolResults} />`) : !failedPrompts.length && !livePrompt && !liveAssistants.length && !liveTools.length && !chatActivity ? html`
+          ${messages.length ? messages.map((message) => html`<${TimelineMessage} key=${message.id} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolNames=${persistedToolCalls} toolResults=${persistedToolResults} showAssistantMetadata=${assistantMetadataIDs.has(message.id)} />`) : !failedPrompts.length && !livePrompt && !liveAssistants.length && !liveTools.length && !chatActivity ? html`
             <div class="timeline-empty">This session has no messages yet.</div>
           ` : null}
           ${failedPrompts.map((prompt) => html`<${UserMessage} key=${prompt.id} message=${livePromptMessage(prompt)} />`)}
           ${livePrompt ? html`<${UserMessage} message=${livePromptMessage(livePrompt)} />` : null}
           ${liveTailItems.map((item) => item.kind === "assistant"
-            ? item.value.content ? html`<${AssistantMessage} key=${item.value.id} message=${{ phase: item.value.phase, content: [{ type: "text", text: item.value.content }] }} />` : null
+            ? item.value.content ? html`<${AssistantMessage} key=${item.value.id} message=${{ id: item.value.id, phase: item.value.phase, timeCreated: item.value.timeCreated, content: [{ type: "text", text: item.value.content }] }} showMetadata=${assistantMetadataIDs.has(item.value.id)} />` : null
             : html`<button key=${item.value.callID} class=${`tool-line tool-line--live tool-line--${item.value.status}`} onClick=${() => item.value.callID && controller.openInspector("tool", { callID: item.value.callID })}>
                 <span class="tool-line__glyph">${toolGlyph(item.value.status)}</span>
                 <span>${humanToolName(item.value.name)}</span>
@@ -116,9 +125,9 @@ function ActivityIndicator({ startedAt, activity }) {
   `;
 }
 
-function TimelineMessage({ sessionID, message, liveToolsByID, toolNames, toolResults }) {
+function TimelineMessage({ sessionID, message, liveToolsByID, toolNames, toolResults, showAssistantMetadata = false }) {
   if (message.type === "user") return html`<${UserMessage} message=${message} />`;
-  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolResults=${toolResults} />`;
+  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolResults=${toolResults} showMetadata=${showAssistantMetadata} />`;
   if (message.type === "tool" && toolNames.has(message.callID)) return null;
   if (message.type === "tool") return html`<${ToolMessage} sessionID=${sessionID} message=${message} toolName=${toolNames.get(message.callID) || null} />`;
   return html`<div class="control-line"><span>${message.control || "Control"}</span>${message.text ? html`<span>${message.text}</span>` : null}</div>`;
@@ -150,13 +159,13 @@ function livePromptMessage(livePrompt) {
   };
 }
 
-function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolResults = new Map() }) {
+function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolResults = new Map(), showMetadata = false }) {
   const text = projectedMessageText(message);
   const images = (message.content || []).filter((part) => part.type === "image");
   const commentary = effectiveAssistantPhase(message) === "commentary";
   const phase = commentary ? "Commentary" : "Assistant";
   return html`<article class=${`turn turn--assistant ${commentary ? "is-commentary" : ""}`}>
-    <div class="turn__rail"><span class="turn__label">${phase}</span>${message.timeCreated ? html`<time>${formatTime(message.timeCreated)}</time>` : null}</div>
+    ${showMetadata ? html`<div class="turn__rail"><span class="turn__label">${phase}</span>${message.timeCreated ? html`<time>${formatTime(message.timeCreated)}</time>` : null}</div>` : null}
     <div class="turn__body assistant-content">
       ${text ? html`<div class="markdown" dangerouslySetInnerHTML=${{ __html: markdownHTML(text) }}></div>` : null}
       ${images.map((part) => html`<span class="attachment-chip">▧ ${part.name}</span>`)}
