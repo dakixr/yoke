@@ -99,6 +99,16 @@
             "title": "Toolcalls",
             "type": "array"
           },
+          "turnSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TurnSummaryInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "type": {
             "const": "assistant",
             "default": "assistant",
@@ -368,6 +378,16 @@
           "timeCreated": {
             "title": "Timecreated",
             "type": "string"
+          },
+          "turnSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TurnSummaryInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "type": {
             "const": "control",
@@ -2654,11 +2674,16 @@
             },
             "title": "Data",
             "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
           "data",
-          "cursor"
+          "cursor",
+          "total"
         ],
         "title": "SessionListResponse",
         "type": "object"
@@ -3462,6 +3487,16 @@
             "title": "Timecreated",
             "type": "string"
           },
+          "turnSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TurnSummaryInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "type": {
             "const": "tool",
             "default": "tool",
@@ -3950,6 +3985,25 @@
         "title": "TreeResponse",
         "type": "object"
       },
+      "TurnSummaryInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "durationSeconds": {
+            "title": "Durationseconds",
+            "type": "number"
+          },
+          "toolCount": {
+            "title": "Toolcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "durationSeconds",
+          "toolCount"
+        ],
+        "title": "TurnSummaryInfo",
+        "type": "object"
+      },
       "UploadInfo": {
         "additionalProperties": false,
         "properties": {
@@ -4034,6 +4088,16 @@
           "timeCreated": {
             "title": "Timecreated",
             "type": "string"
+          },
+          "turnSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TurnSummaryInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "type": {
             "const": "user",

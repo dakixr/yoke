@@ -88,11 +88,18 @@ def persist_prompt_queue(
 
 
 def clear_prompt_queue(active_session: ActiveSession) -> None:
-    """Remove persisted queue state for a session."""
-    try:
-        prompt_queue_path(active_session).unlink()
-    except FileNotFoundError:
-        pass
+    """Clear queued work while keeping the shared revision monotonic."""
+    existing = load_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+    )
+    if existing.revision == 0 and not existing.prompts and not existing.pending_images:
+        return
+    write_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+        PersistedPromptQueue(revision=existing.revision + 1),
+    )
 
 
 def prompt_queue_path(active_session: ActiveSession) -> Path:

@@ -5,6 +5,7 @@ import { controller } from "../state/controller.js";
 import { getScroll, setScroll } from "../state/local-state.js";
 import { chatActivityForRuntime } from "./activity.js";
 import { markdownHTML } from "./markdown.js";
+import { formatTurnSummary } from "./turn-summary.js";
 
 export function Timeline({ sessionID, data, runtime }) {
   const viewport = useRef(null);
@@ -127,11 +128,13 @@ function ActivityIndicator({ startedAt, activity }) {
 }
 
 function TimelineMessage({ sessionID, message, liveToolsByID, toolNames, toolResults, showAssistantMetadata = false, compactToolBatch = false }) {
-  if (message.type === "user") return html`<${UserMessage} message=${message} />`;
-  if (message.type === "assistant") return html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolResults=${toolResults} showMetadata=${showAssistantMetadata} compactToolBatch=${compactToolBatch} />`;
-  if (message.type === "tool" && toolNames.has(message.callID)) return null;
-  if (message.type === "tool") return html`<${ToolMessage} sessionID=${sessionID} message=${message} toolName=${toolNames.get(message.callID) || null} />`;
-  return html`<div class="control-line"><span>${message.control || "Control"}</span>${message.text ? html`<span>${message.text}</span>` : null}</div>`;
+  let body = null;
+  if (message.type === "user") body = html`<${UserMessage} message=${message} />`;
+  else if (message.type === "assistant") body = html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolResults=${toolResults} showMetadata=${showAssistantMetadata} compactToolBatch=${compactToolBatch} />`;
+  else if (message.type === "tool" && !toolNames.has(message.callID)) body = html`<${ToolMessage} sessionID=${sessionID} message=${message} toolName=${toolNames.get(message.callID) || null} />`;
+  else if (message.type !== "tool") body = html`<div class="control-line"><span>${message.control || "Control"}</span>${message.text ? html`<span>${message.text}</span>` : null}</div>`;
+  const summary = formatTurnSummary(message.turnSummary);
+  return html`<div class="timeline-entry">${body}${summary ? html`<div class="turn-summary"><span>${summary}</span></div>` : null}</div>`;
 }
 
 function UserMessage({ message }) {

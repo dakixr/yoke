@@ -69,6 +69,9 @@ def _append_entry_intent(tree: SessionTree, entry: ConversationEntry) -> None:
     if entry.kind == "branch_summary" and entry.message is not None:
         tree.append_branch_summary(entry.message, metadata=entry.metadata)
         return
+    if entry.kind == "tool_context" and entry.message is not None:
+        tree.append_tool_context(entry.message, metadata=entry.metadata)
+        return
     if entry.message is None:
         raise ValueError(f"Entry kind {entry.kind!r} requires a message.")
     if entry.message.role == "system":

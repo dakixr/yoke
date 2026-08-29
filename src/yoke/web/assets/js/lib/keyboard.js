@@ -18,7 +18,7 @@ export function installKeybindings(actions) {
       ctrlXAt = 0;
       if (active) {
         if (key === "o") return invoke(event, actions.toolInspector);
-        if (event.ctrlKey && key === "p") return invoke(event, actions.processInspector);
+        if (key === "p") return invoke(event, actions.processInspector);
         if (key === "q") return invoke(event, actions.queueManager);
         if (key === "m") return invoke(event, actions.modelSelector);
         if (key === "t") return invoke(event, actions.sessionTree);
@@ -27,7 +27,9 @@ export function installKeybindings(actions) {
     if (command && event.shiftKey && !event.altKey && key === "o") return invoke(event, actions.newSession);
     if (command && key === "k") return invoke(event, actions.palette);
     if (command && key === "n") return invoke(event, actions.newSession);
-    if (command && key === "b") return invoke(event, actions.toggleSidebar);
+    if (command && !event.shiftKey && !event.altKey && key === "b") {
+      return invoke(event, actions.toggleSidebar);
+    }
     if (event.key === "Escape") {
       const now = performance.now();
       if (now - lastEscapeAt <= 650 && actions.interrupt?.()) {

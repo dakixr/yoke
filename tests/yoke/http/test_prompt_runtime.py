@@ -108,6 +108,23 @@ class FakeAgent:
                     },
                 )
                 self.controller.started["parallel-tools-midpoint"].set()
+            if prompt == "context-usage-live" and on_event is not None:
+                on_event(
+                    "model_end",
+                    {
+                        "phase": "commentary",
+                        "content": "still working",
+                        "iteration": 1,
+                        "tool_calls": 1,
+                        "usage": {
+                            "input_tokens": 32_000,
+                            "output_tokens": 400,
+                            "total_tokens": 32_400,
+                            "cached_input_tokens": 24_000,
+                        },
+                    },
+                )
+                self.controller.started["context-usage-live-measured"].set()
             while not self.controller.release[prompt].is_set():
                 if stop_requested is not None and stop_requested():
                     return AgentResult(
@@ -230,6 +247,50 @@ def test_parallel_tool_activity_stays_running_until_all_tools_finish(
             pytest.fail("parallel tool session did not settle")
 
 
+def test_long_turn_summary_persists_duration_and_tool_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr("yoke.http.services.runtime.monotonic", lambda: clock[0])
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "summary-session")
+        admitted = client.post(
+            "/api/v1/session/summary-session/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "parallel-tools"}, "delivery": "steer"},
+        )
+        assert admitted.status_code == 200
+        assert controller.started["parallel-tools-midpoint"].wait(timeout=2)
+        clock[0] = 161.7
+        controller.release["parallel-tools"].set()
+        waited = client.post(
+            "/api/v1/session/summary-session/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        messages = client.get(
+            "/api/v1/session/summary-session/message",
+            headers=_auth(),
+            params={"order": "asc"},
+        ).json()["data"]
+        assert messages[-1]["turnSummary"] == {
+            "durationSeconds": pytest.approx(61.7),
+            "toolCount": 2,
+        }
+
+
 def test_latest_context_usage_is_durable_after_turn_settlement(tmp_path: Path) -> None:
     controller = FakeRuntimeController()
     app = create_app(
@@ -293,6 +354,61 @@ def test_latest_context_usage_is_durable_after_turn_settlement(tmp_path: Path) -
         assert persisted_usage["input_tokens"] == 32_000
         assert persisted_usage["max_total_tokens"] == 128_000
         assert persisted_usage["usage_percent"] == 25
+
+
+def test_context_usage_is_available_while_turn_is_still_running(tmp_path: Path) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "context-live-session")
+        state = getattr(client.app, "state")
+        record = state.session_service.store.summary_record("context-live-session")
+        assert record is not None
+        state.session_service.store.set_selection(
+            "context-live-session",
+            provider_name=record.provider_name,
+            model_id=record.model_id,
+            reasoning_effort=record.reasoning_effort,
+            context_window_tokens=128_000,
+            existing_record=record,
+        )
+        admitted = client.post(
+            "/api/v1/session/context-live-session/prompt",
+            headers=_auth(),
+            json={
+                "prompt": {"text": "context-usage-live"},
+                "delivery": "steer",
+            },
+        )
+        assert admitted.status_code == 200
+        assert controller.started["context-usage-live-measured"].wait(timeout=2)
+
+        session = client.get(
+            "/api/v1/session/context-live-session",
+            headers=_auth(),
+        )
+        assert session.status_code == 200
+        usage = session.json()["data"]["contextUsage"]
+        assert usage["input_tokens"] == 32_000
+        assert usage["max_total_tokens"] == 128_000
+        assert usage["usage_percent"] == 25
+
+        controller.release["context-usage-live"].set()
+        waited = client.post(
+            "/api/v1/session/context-live-session/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        assert waited.json()["data"]["state"] == "idle"
 
 
 def _create_session(client: TestClient, root: Path, session_id: str) -> None:
@@ -382,6 +498,63 @@ def test_prompt_admission_is_idempotent_and_queue_patch_is_revision_checked(
         assert edited.json()["data"]["items"][0]["prompt"]["text"] == "edited later"
         assert edited.json()["data"]["items"][0]["paused"] is True
         assert not controller.started["edited later"].is_set()
+
+
+def test_consuming_last_prompt_preserves_queue_revision(tmp_path: Path) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "session-a")
+        first = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={
+                "id": "inp-first",
+                "prompt": {"text": "first"},
+                "delivery": "queue",
+                "resume": False,
+            },
+        )
+        assert first.status_code == 200
+        assert (
+            client.get("/api/v1/session/session-a/queue", headers=_auth()).json()[
+                "data"
+            ]["revision"]
+            == 1
+        )
+
+        promoted = app.state.pending_input_service.pop_next(
+            "session-a",
+            allow_queue=True,
+        )
+        assert promoted is not None
+        assert promoted.id == "inp-first"
+        empty = client.get("/api/v1/session/session-a/queue", headers=_auth())
+        assert empty.status_code == 200
+        assert empty.json()["data"] == {"revision": 2, "items": []}
+
+        second = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={
+                "id": "inp-second",
+                "prompt": {"text": "second"},
+                "delivery": "queue",
+                "resume": False,
+            },
+        )
+        assert second.status_code == 200
+        queue = client.get("/api/v1/session/session-a/queue", headers=_auth())
+        assert queue.json()["data"]["revision"] == 3
+        assert [item["id"] for item in queue.json()["data"]["items"]] == ["inp-second"]
 
 
 def test_two_sessions_run_concurrently_and_steer_fences_old_generation(

@@ -231,7 +231,10 @@ class AppController {
     store.setState((state) => reducePublicEvent(state, event));
     if (event.type === "server.connected") {
       const instance = event.data?.serverInstanceID || null;
-      if (priorInstance && instance && priorInstance !== instance) void this.resync(true);
+      if (priorInstance && instance && priorInstance !== instance) {
+        this.queueServerRevisions.clear();
+        void this.resync(true);
+      }
       else if (!store.getState().connection.current) void this.resync(false);
       return;
     }
@@ -415,6 +418,7 @@ class AppController {
         sessions,
         sessionOrder: current.data.map((item) => item.id),
         archivedOrder: archived.data.map((item) => item.id),
+        archivedTotal: Number.isFinite(archived.total) ? archived.total : archived.data.length,
         sessionsCursor: current.cursor?.next || null,
         archivedCursor: archived.cursor?.next || null,
       };
@@ -455,10 +459,20 @@ class AppController {
         ...current,
         sessions,
         [key]: [...current[key], ...response.data.map((item) => item.id)],
+        ...(archived && Number.isFinite(response.total) ? { archivedTotal: response.total } : {}),
         [archived ? "archivedCursor" : "sessionsCursor"]: response.cursor?.next || null,
       };
     });
     void this.resolveVisibleLocations();
+  }
+
+  async countSessions({ directory = null, archived = false } = {}) {
+    const response = await api.listSessions({
+      directory: directory || undefined,
+      archived,
+      limit: 1,
+    });
+    return Number.isFinite(response.total) ? response.total : response.data.length;
   }
 
   async refreshSessionSummary(sessionID) {
@@ -919,7 +933,7 @@ class AppController {
     }));
   }
 
-  createDraft({ navigate: shouldNavigate = true, location = null } = {}) {
+  createDraft({ navigate: shouldNavigate = true, location = null, selection = null } = {}) {
     this.clearNotice();
     const id = `draft_${randomUUID()}`;
     const state = store.getState();
@@ -929,9 +943,9 @@ class AppController {
       id,
       text: "",
       location: recent,
-      provider: defaultProvider?.id || "",
-      model: defaultProvider?.currentModel || "",
-      reasoningEffort: defaultProvider?.currentReasoningEffort || "",
+      provider: selection?.provider || defaultProvider?.id || "",
+      model: selection?.model || defaultProvider?.currentModel || "",
+      reasoningEffort: selection?.reasoningEffort || defaultProvider?.currentReasoningEffort || "",
       attachments: [],
       updatedAt: new Date().toISOString(),
     };
@@ -955,12 +969,12 @@ class AppController {
     store.setState((state) => ({ ...state, drafts }));
   }
 
-  async submitDraft(id, { delivery = "steer" } = {}) {
+  async submitDraft(id, { delivery = "steer", background = false } = {}) {
     const draft = store.getState().drafts[id];
     if (!draft) throw new Error("Draft was not found.");
     if (!(draft.text || "").trim() && !draft.attachments?.length) throw new Error("Write a prompt or attach an image first.");
     const sessionID = await this.createSessionFromDraft(id);
-    this.selectSession(sessionID);
+    if (!background) this.selectSession(sessionID);
     try {
       await this.submitPrompt(sessionID, {
         text: draft.text || "",
@@ -968,8 +982,18 @@ class AppController {
         delivery,
       });
       this.deleteDraft(id);
+      if (background) {
+        this.createDraft({
+          location: draft.location || null,
+          selection: {
+            provider: draft.provider || "",
+            model: draft.model || "",
+            reasoningEffort: draft.reasoningEffort || "",
+          },
+        });
+      }
     } catch (error) {
-      if (draft.text) this.setSessionField(sessionID, "editorHandoff", draft.text);
+      if (!background && draft.text) this.setSessionField(sessionID, "editorHandoff", draft.text);
       throw error;
     }
   }
@@ -1821,7 +1845,7 @@ class AppController {
   }
 
   showShortcutHelp() {
-    this.notice("⇧⌘O / ⇧Ctrl+O new session · Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image · Ctrl+X O tools · Ctrl+X Ctrl+P processes · Ctrl+X Q queue · Ctrl+X M model · Ctrl+X T tree");
+    this.notice("⇧⌘O / ⇧Ctrl+O new session · ⌘B / Ctrl+B sessions · ⌘Enter / Ctrl+Enter background new session · Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image · Ctrl+X O tools · Ctrl+X P processes · Ctrl+X Q queue · Ctrl+X M model · Ctrl+X T tree");
     return true;
   }
 

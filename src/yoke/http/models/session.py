@@ -84,6 +84,7 @@ class SessionResponse(ApiModel):
 class SessionListResponse(ApiModel):
     data: list[SessionInfo]
     cursor: CursorInfo
+    total: int
 
 
 class SessionCreateSelection(ApiModel):
@@ -158,10 +159,16 @@ class ToolCallSummary(ApiModel):
     arguments: str
 
 
+class TurnSummaryInfo(ApiModel):
+    duration_seconds: float
+    tool_count: int
+
+
 class ProjectedMessageBase(ApiModel):
     id: str
     time_created: str
     kind: str
+    turn_summary: TurnSummaryInfo | None = None
 
 
 class UserProjectedMessage(ProjectedMessageBase):

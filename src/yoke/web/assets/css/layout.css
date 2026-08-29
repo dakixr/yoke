@@ -84,6 +84,10 @@
 .sidebar-edge-reveal { display: none; }
 .mobile-only, .mobile-titlebar { display: none; }
 
+@media (min-width: 901px) {
+  .sidebar:not(.is-open) { display: none; }
+}
+
 .connection-banner { position: absolute; z-index: 30; top: 7px; left: 50%; display: flex; max-width: min(620px, calc(100% - 30px)); align-items: center; gap: 7px; padding: 5px 9px; transform: translateX(-50%); border: 1px solid var(--border); border-radius: 999px; background: color-mix(in srgb, var(--panel) 93%, transparent); box-shadow: var(--shadow); color: var(--muted); font-size: 11px; }
 .connection-banner__dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--attention); }
 .notice-toast { position: fixed; z-index: 70; top: 68px; right: 18px; display: flex; max-width: 460px; align-items: center; gap: 8px; padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--raised); box-shadow: var(--shadow); color: var(--text); font-size: 12px; }

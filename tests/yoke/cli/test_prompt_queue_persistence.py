@@ -10,8 +10,10 @@ import pytest
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
+from yoke.cli.interactive.queue.persistence import clear_prompt_queue
 from yoke.cli.interactive.queue.persistence import load_prompt_queue
 from yoke.cli.interactive.queue.persistence import persist_prompt_queue
+from yoke.session.queue import load_prompt_queue_snapshot
 
 from .support import active_session_for
 
@@ -83,3 +85,30 @@ def test_unchanged_prompt_queue_is_not_rewritten(
     persist_prompt_queue(active_session, prompts)
 
     assert writes["count"] == 0
+
+
+def test_clearing_prompt_queue_preserves_monotonic_revision(tmp_path: Path) -> None:
+    active_session = active_session_for(tmp_path)
+    persist_prompt_queue(active_session, [PendingPrompt("first")])
+    before = load_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+    )
+    assert before.revision == 1
+
+    clear_prompt_queue(active_session)
+
+    cleared = load_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+    )
+    assert cleared.revision == 2
+    assert cleared.prompts == []
+
+    persist_prompt_queue(active_session, [PendingPrompt("second")])
+    restored = load_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+    )
+    assert restored.revision == 3
+    assert [item.prompt for item in restored.prompts] == ["second"]

@@ -35,6 +35,7 @@ KIND_STYLES: dict[str, str] = {
     "assistant": "ansiblue bold",
     "assistant_tool_calls": "ansimagenta bold",
     "tool_result": "ansicyan bold",
+    "tool_context": "ansibrightblack bold",
     "control": "ansiyellow bold",
     "memory_snapshot": "ansibrightmagenta bold",
     "skill_event": "ansibrightcyan bold",

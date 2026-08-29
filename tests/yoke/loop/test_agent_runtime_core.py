@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from yoke.cli.interactive.prompt.turns import retire_turn_agent
 from yoke.agent.models import ConversationEntry
+from yoke.agent.tools import AttachImageTool
 from yoke.agent.tools.command_process_manager import (
     CommandProcessManager,
 )
@@ -25,6 +26,85 @@ def test_agent_loop_runs_until_final_answer(tmp_path: Path) -> None:
         "tool",
         "assistant",
     ]
+
+
+def test_tool_injected_image_keeps_provider_role_without_becoming_user_history(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "preview.png"
+    image_path.write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+        b"\x1f\x15\xc4\x89\x00\x00\x00\rIDAT\x08\xd7c\xf8\xcf\xc0\xf0\x1f"
+        b"\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    class AttachProvider(Provider):
+        supports_image_inputs = True
+        max_images_per_message = 50
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del tools
+            self.calls += 1
+            if self.calls == 1:
+                return Message(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="attach-1",
+                            function=ToolFunction(
+                                name="attach_image",
+                                arguments=json.dumps(
+                                    {
+                                        "path": str(image_path),
+                                        "caption": "Verification image",
+                                    }
+                                ),
+                            ),
+                        )
+                    ],
+                )
+            assert [message.role for message in messages] == [
+                "user",
+                "assistant",
+                "tool",
+                "user",
+            ]
+            assert isinstance(messages[-1].content, list)
+            assert isinstance(messages[-1].content[0], MessageTextContentPart)
+            assert messages[-1].content[0].text == "Verification image"
+            return Message.assistant("done")
+
+    agent = RuntimeAgent(
+        provider=AttachProvider(),
+        tools=[AttachImageTool.bind(root=tmp_path)],
+    )
+    result = agent.run("Inspect the rendered page")
+
+    assert [message.role for message in result.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "user",
+        "assistant",
+    ]
+    assert result.conversation_entries is not None
+    assert [entry.kind for entry in result.conversation_entries] == [
+        "user",
+        "assistant_tool_calls",
+        "tool_result",
+        "tool_context",
+        "assistant",
+    ]
+    injected = result.conversation_entries[3]
+    assert injected.metadata["tool_name"] == "attach_image"
+    assert injected.metadata["tool_call_id"] == "attach-1"
 
 
 def test_runtime_command_process_managers_are_isolated_and_shared_by_forks(

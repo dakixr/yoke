@@ -89,13 +89,20 @@ tracks the interactive CLI: Enter sends or steers, Tab queues, Shift+Tab cycles
 the model's reasoning effort, and Esc Esc interrupts. Shift+Enter, Ctrl+J, and
 Esc then Enter insert a newline; Ctrl+U removes the last pending image. The
 global Shift+Cmd+O shortcut on macOS, or Shift+Ctrl+O on Windows and Linux,
-creates a new session from anywhere in the web UI. The
-Ctrl+X chords also match the CLI for tools, processes, queue, model selection,
-and the session tree. `/shortcuts` and `?` show the browser shortcut summary.
+creates a new session from anywhere in the web UI. Cmd+B on macOS, or Ctrl+B on
+Windows and Linux, toggles the sessions sidebar without stealing the browser's
+Shift-modified variant. From a new-session draft, Cmd+Enter on macOS or
+Ctrl+Enter elsewhere creates and starts that session in the background, then
+opens a fresh draft with the same location, provider, model, and reasoning
+effort instead of navigating into the running session. The
+Ctrl+X chords open tools (`Ctrl+X O`), processes (`Ctrl+X P`), queue, model
+selection, and the session tree. The process chord also accepts the CLI-style
+`Ctrl+X Ctrl+P` form. `/shortcuts` and `?` show the browser shortcut summary.
 Alt+V is terminal-specific; browser clipboard security requires Cmd+V/Ctrl+V.
 Typing `/` at the start of an empty prompt opens the browser slash-command
 completion menu using `/api/v1/command` metadata. The menu supports keyboard
-navigation and completion, and `/skill <name> [prompt]` and `/mcp <server>`
+navigation and completion; moving the active option with the keyboard keeps it
+inside the menu's own scroll viewport. `/skill <name> [prompt]` and `/mcp <server>`
 complete their arguments from the current workspace catalogs. Supported slash
 commands execute through the corresponding HTTP operation instead of being sent
 to the model as prompt text. Commands that require a saved session are disabled
@@ -110,6 +117,8 @@ Session lists and recent-location discovery are served from the lightweight
 session index rather than parsing conversation history. The index stores the
 selection and tree summary needed by list cards plus a file signature. Changed,
 missing, legacy, or unreadable session files are repaired individually. The
+session-list response includes the filtered total separately from the paged
+rows, so UI counters do not expose the current page size as product state. The
 daemon binds and can open the browser before filesystem repair and retention
 maintenance. Existing stores get a short startup grace period, then repair runs
 in a background task, so `yoke serve --open` and list requests never pay for
@@ -347,12 +356,19 @@ Above the composer, opposite the model selectors, a compact context-window ring
 shows the latest model-visible input usage as a percentage. Its tooltip includes
 the measured input/max token counts, remaining capacity, and explains that Yoke
 may compact before the model's raw limit to preserve output headroom. The latest
-safe context-usage accounting snapshot is stored in lightweight session metadata
-and journaled once when a turn settles, so the ring can recover after
-reconnect/reload without replaying old history; live context updates still
-refresh it during the turn. Changing provider/model, forking, or checking out a
-different tree branch clears the old measurement rather than displaying usage
-from a different provider context.
+safe provider-reported context-usage snapshot is stored in lightweight session
+metadata as soon as the model response arrives, then journaled when the turn
+settles. This keeps the ring current across reconnect/reload during long tool
+runs without replaying old history. Normal runtime checkpoints preserve the
+measurement; changing provider/model, forking, or checking out a different tree
+branch clears it rather than displaying usage from a different provider
+context.
+
+Turns that run for at least one minute and produce a persisted turn leaf keep the
+same compact summary used by the CLI. The web transcript renders it after the
+turn as `Worked for 1m23s · 7 tools`. Tool count follows runtime tool-start
+events, so parallel calls count individually, and the summary survives reloads
+and message pagination because it is stored on the persisted turn leaf.
 The daemon warms the lazy HTTP runtime import in the background after first
 paint, and cold first-turn reconstruction gives the admission response a short
 grace before a large saved session begins CPU-heavy parsing. During that cold
@@ -397,7 +413,17 @@ folded into the originating call row when both are present in the loaded
 window, while an orphaned result at a pagination boundary remains visible until
 its call is loaded. Consecutive tool-only assistant batches are visually joined
 into one dense run, so sequential batches no longer inherit full assistant-turn
-spacing between them; actual commentary and final text keep normal separation.
+spacing between them. Commentary that launches tools also stays joined to an
+immediately following tool-only batch, so one continuous tool run does not gain
+a blank turn gap after its introductory text. Text-only commentary and final
+text keep normal separation.
+Provider-visible messages injected by tools, such as the multimodal user-role
+message produced by `attach_image` or `image_generation`, are persisted as
+`tool_context` nodes rather than real user turns. They remain in provider/runtime
+context unchanged, but normal web and CLI chat scrollback excludes them and Tree
+shows them only as technical nodes. Older sessions that persisted these injected
+images as `user` nodes are recognized from their tool-call ancestry on read, so
+they do not reappear as false user messages after upgrade.
 User turns are right-aligned and assistant turns remain
 left-aligned, using placement rather than a separate role color. User messages
 always show their role/time metadata. Within each assistant turn, only the last
@@ -431,7 +457,9 @@ and curved fork connectors. Active-path edges remain visually dominant while
 abandoned branches recede, and hidden technical nodes are bridged so
 message-only mode preserves the real topology. Opening Tree anchors on HEAD,
 `Jump to HEAD` returns there at any time, and loading older pages preserves the
-visible history position. Tree rows use roving keyboard focus: Up/Down move
+visible history position. Opening Tree also places browser focus on HEAD so its
+keyboard navigation works immediately without first clicking a row. Tree rows
+use roving keyboard focus: Up/Down move
 chronologically, Home/End and PageUp/PageDown cover long histories, Left moves
 to the visible parent, Right moves to a visible child, and Enter/Space selects
 the focused node as a checkout target. Keyboard movement keeps the focused row

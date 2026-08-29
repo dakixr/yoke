@@ -12,6 +12,7 @@ import secrets
 from pathlib import Path
 from threading import Event
 from threading import Lock
+from time import monotonic
 from collections.abc import Callable
 from typing import Literal
 from typing import TypeVar
@@ -49,6 +50,7 @@ from yoke.http.services.runtime_persistence import active_skill_list
 from yoke.http.services.runtime_persistence import input_has_terminal_assistant
 from yoke.http.services.runtime_persistence import input_is_persisted
 from yoke.http.services.runtime_persistence import tag_input_entry
+from yoke.http.services.runtime_persistence import with_turn_summary
 from yoke.http.services.runtime_title import SessionTitleAutomation
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
@@ -69,10 +71,12 @@ class TurnExecution:
     turn_id: int
     admission: AdmissionRecord
     started_at: str
+    started_monotonic: float
     stop_event: Event
     retired_event: Event
     cold_start: bool
     automatic_title: bool
+    tool_count: int = 0
     append_persistence: RuntimeAppendPersistence | None = None
     context_usage: RuntimeContextUsageState = dataclass_field(
         default_factory=RuntimeContextUsageState
@@ -738,6 +742,7 @@ class SessionRuntime:
             turn_id=self._turn_counter,
             admission=admission,
             started_at=datetime.now(UTC).isoformat(),
+            started_monotonic=monotonic(),
             stop_event=Event(),
             retired_event=Event(),
             cold_start=cold_start,
@@ -762,7 +767,11 @@ class SessionRuntime:
         execution.stop_event.set()
         execution.retired_event.set()
         self.tool_traces.retire_turn(execution.turn_id)
-        self._persist_interrupted_checkpoint(execution.admission)
+        self._persist_interrupted_checkpoint(
+            execution.admission,
+            duration_seconds=monotonic() - execution.started_monotonic,
+            tool_count=execution.tool_count,
+        )
         self.pending_inputs.settle(
             self.session_id,
             execution.admission.id,
@@ -916,7 +925,11 @@ class SessionRuntime:
                 return
             record = self._record_for_execution(execution)
             if outcome.result is not None:
-                entries = outcome.result.conversation_entries or []
+                entries = with_turn_summary(
+                    outcome.result.conversation_entries or [],
+                    duration_seconds=monotonic() - execution.started_monotonic,
+                    tool_count=execution.tool_count,
+                )
                 if entries:
                     self._persist_turn_entries(
                         execution,
@@ -952,9 +965,14 @@ class SessionRuntime:
                 )
             else:
                 if outcome.partial_entries:
+                    partial_entries = with_turn_summary(
+                        outcome.partial_entries,
+                        duration_seconds=monotonic() - execution.started_monotonic,
+                        tool_count=execution.tool_count,
+                    )
                     self._persist_turn_entries(
                         execution,
-                        outcome.partial_entries,
+                        partial_entries,
                         input_id=execution.admission.id,
                     )
                     record = self._record_for_execution(execution)
@@ -1075,7 +1093,13 @@ class SessionRuntime:
             active_skills=context.active_skills,
         )
 
-    def _persist_interrupted_checkpoint(self, admission: AdmissionRecord) -> None:
+    def _persist_interrupted_checkpoint(
+        self,
+        admission: AdmissionRecord,
+        *,
+        duration_seconds: float | None = None,
+        tool_count: int = 0,
+    ) -> None:
         with self._persistence_lock:
             snapshot = self._snapshot()
             record = snapshot.record
@@ -1091,6 +1115,12 @@ class SessionRuntime:
                 user_message=user_message,
                 leaf_id=record.leaf_id,
             )
+            if duration_seconds is not None:
+                entries = with_turn_summary(
+                    entries,
+                    duration_seconds=duration_seconds,
+                    tool_count=tool_count,
+                )
             self._save_entries_locked(entries, input_id=admission.id)
 
     def _user_message_for_admission(
@@ -1204,8 +1234,10 @@ class SessionRuntime:
             set(),
         )
         call_id = payload.get("tool_call_id")
-        if event == "tool_execution_start" and isinstance(call_id, str):
-            active_tool_call_ids.add(call_id)
+        if event == "tool_execution_start":
+            execution.tool_count += 1
+            if isinstance(call_id, str):
+                active_tool_call_ids.add(call_id)
         elif event == "tool_execution_end" and isinstance(call_id, str):
             active_tool_call_ids.discard(call_id)
         next_activity = activity_status_for_event(
@@ -1225,6 +1257,11 @@ class SessionRuntime:
             input_id=execution.admission.id,
         )
         if event == "model_end" and usage_update is not None:
+            with self._persistence_lock:
+                execution.context_usage.persist_latest(
+                    store=self.store,
+                    session_id=self.session_id,
+                )
             self.events.live(
                 "session.context.updated",
                 usage_update,

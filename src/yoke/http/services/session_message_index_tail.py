@@ -8,6 +8,7 @@ from typing import Any
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
+from yoke.agent.tool_context import normalize_legacy_tool_context_entries
 from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
 from yoke.cli.session.io import SESSION_METADATA_EVENT
 from yoke.http.services.session_message_index_models import ContextIndexWindow
@@ -148,6 +149,7 @@ def tail_tree_page(
     entries = host._read_entries(session_id, snapshot, selected_ids)
     if entries is None:
         return None
+    normalize_legacy_tool_context_entries(entries)
 
     active_ids: set[str] = set()
     current = leaf_id

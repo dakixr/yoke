@@ -20,6 +20,9 @@ from yoke.http.services.session_message_index_models import can_append
 from yoke.http.services.session_message_index_models import (
     entry_topology as parse_entry_topology,
 )
+from yoke.http.services.session_message_index_legacy import (
+    mark_legacy_tool_context_locations,
+)
 from yoke.http.services.session_message_index_models import length as location_length
 from yoke.http.services.session_message_index_models import metadata_length
 from yoke.http.services.session_message_index_models import metadata_offset
@@ -284,6 +287,8 @@ def scan(
         return None
     if not saw_header:
         return None
+    if prior is None:
+        mark_legacy_tool_context_locations(source, entries)
     return MessageIndexSnapshot(
         source_size=source_size,
         source_mtime_ns=source_mtime_ns,
@@ -316,6 +321,9 @@ def read_entries(
                 if not isinstance(raw_entry, dict):
                     return None
                 entry = ConversationEntry.model_validate(raw_entry)
+                indexed_kind = location_kind(location)
+                if indexed_kind == "tool_context" and entry.kind != "tool_context":
+                    entry.kind = "tool_context"
                 entry_metadata_offset = metadata_offset(location)
                 entry_metadata_length = metadata_length(location)
                 if (

@@ -33,7 +33,14 @@ export function TreeInspector({ sessionID, data }) {
     const node = historyRef.current;
     if (!node || !displayEntries.length || openedRef.current === sessionID) return;
     openedRef.current = sessionID;
-    requestAnimationFrame(() => scrollToHead(node, { behavior: "auto" }));
+    const focusID = displayEntries.find((entry) => entry.current)?.id || displayEntries.at(-1)?.id || null;
+    requestAnimationFrame(() => {
+      scrollToHead(node, { behavior: "auto" });
+      const button = focusID ? entryButtonRefs.current.get(focusID) : null;
+      if (!button) return;
+      button.focus({ preventScroll: true });
+      keepTreeEntryVisible(node, button);
+    });
   }, [sessionID, displayEntries.length]);
 
   useLayoutEffect(() => {

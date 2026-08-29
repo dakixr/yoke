@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import Message
+from yoke.agent.tool_context import normalize_legacy_tool_context_entries
 
 from .errors import InvalidCheckpointError
 from ._memory import parse_memory_message
@@ -29,6 +30,7 @@ _NON_CHAT_KINDS = {
     "compaction_summary",
     "skill_event",
     "control",
+    "tool_context",
 }
 _RUNTIME_HIDDEN_KINDS = {
     "instruction",
@@ -193,6 +195,7 @@ def take_runtime_context(
     entries: list[ConversationEntry], leaf_id: str | None
 ) -> RuntimeContextSeed:
     """Take validated active-path values into one mutable runtime context."""
+    normalize_legacy_tool_context_entries(entries)
     selected = leaf_id or (entries[-1].id if entries else None)
     instruction_parents: dict[str, str | None] = {}
     runtime_entries: list[ConversationEntry] = []
@@ -305,7 +308,7 @@ def _provider_messages(
         else [
             _message_value(entry.message, defensive=defensive)
             for entry in path[:checkpoint_index]
-            if entry.kind == "user"
+            if entry.kind in {"user", "tool_context"}
             and entry.message is not None
             and parse_memory_message(entry.message.plain_text_content or "") is None
         ]

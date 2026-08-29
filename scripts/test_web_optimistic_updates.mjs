@@ -34,6 +34,8 @@ const { displayTreeEntries, treeGraphLayout } = await import("../src/yoke/web/as
 const { treeKeyboardTarget } = await import("../src/yoke/web/assets/js/inspector/tree-keyboard.js");
 const { createLocationBrowseCoordinator, isLocationBrowseQuery } = await import("../src/yoke/web/assets/js/session/location-picker-logic.js");
 const { filterModelChoices, groupModelChoices, modelNavigationIndex, resolveModelEffort } = await import("../src/yoke/web/assets/js/session/model-picker-logic.js");
+const { slashMenuScrollDelta } = await import("../src/yoke/web/assets/js/session/slash-menu-logic.js");
+const { formatTurnSummary } = await import("../src/yoke/web/assets/js/session/turn-summary.js");
 const { installKeybindings } = await import("../src/yoke/web/assets/js/lib/keyboard.js");
 
 function deferred() {
@@ -239,6 +241,47 @@ async function testQueueMutationsSurviveStaleRefresh() {
     assert.equal(visible.items[1].paused, true);
     assert.equal(visible.revision, 12);
   } finally {
+    restore();
+  }
+}
+
+async function testServerRestartLetsEmptyQueueReplaceStaleUi() {
+  const id = "queue-revision-reset";
+  const stale = {
+    revision: 7,
+    items: [
+      { id: "sent", prompt: { text: "already sent", attachments: [] }, delivery: "queue", paused: false, createdAt: "a", state: "admitted" },
+    ],
+  };
+  installSession(id, { queue: stale });
+  controller.installQueue(id, stale);
+  controller.bufferEvents = false;
+  store.setState((state) => ({
+    ...state,
+    connection: { ...state.connection, current: true, serverInstanceID: "old-server" },
+  }));
+  const originalResync = controller.resync;
+  controller.resync = async () => {};
+  const restore = restoreApi({
+    queue: async () => ({ data: { revision: 0, items: [] } }),
+  });
+  try {
+    await controller.refreshQueue(id);
+    assert.equal(
+      store.getState().sessionData[id].queue.items.length,
+      1,
+      "a lower revision from the same server must not erase newer queue state",
+    );
+
+    controller.receiveEvent({
+      type: "server.connected",
+      data: { serverInstanceID: "new-server" },
+      durable: null,
+    });
+    await controller.refreshQueue(id);
+    assert.deepEqual(store.getState().sessionData[id].queue, { revision: 0, items: [] });
+  } finally {
+    controller.resync = originalResync;
     restore();
   }
 }
@@ -467,6 +510,62 @@ async function testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns() {
   } finally {
     restore();
   }
+}
+
+async function testBackgroundDraftSubmitKeepsUserOnFreshDraft() {
+  const draftID = "draft-background-send";
+  store.setState((state) => ({
+    ...state,
+    ui: { ...state.ui, selectedSessionID: null, newSession: true },
+    drafts: {
+      ...state.drafts,
+      [draftID]: {
+        id: draftID,
+        text: "run this in background",
+        location: "/tmp/background-repo",
+        provider: "zai",
+        model: "glm-test",
+        reasoningEffort: "high",
+        attachments: [],
+      },
+    },
+  }));
+  const admission = deferred();
+  let createdID = null;
+  const restore = restoreApi({
+    createSession: async (body) => {
+      createdID = body.id;
+      return { data: sessionSummary(body.id, { location: body.location, selection: body.selection }) };
+    },
+    admitPrompt: () => admission.promise,
+    queue: async () => ({ data: { revision: 0, items: [] } }),
+  });
+  try {
+    const pending = controller.submitDraft(draftID, { background: true });
+    await tick();
+    assert.ok(createdID);
+    assert.equal(store.getState().ui.selectedSessionID, null);
+    admission.resolve({ data: { id: store.getState().sessionData[createdID].livePrompt.id } });
+    await pending;
+    const state = store.getState();
+    assert.equal(state.ui.selectedSessionID, null);
+    assert.equal(state.drafts[draftID], undefined);
+    const fresh = Object.values(state.drafts).find((draft) => draft.id !== draftID && draft.location === "/tmp/background-repo");
+    assert.ok(fresh);
+    assert.equal(fresh.text, "");
+    assert.equal(fresh.provider, "zai");
+    assert.equal(fresh.model, "glm-test");
+    assert.equal(fresh.reasoningEffort, "high");
+  } finally {
+    restore();
+  }
+}
+
+async function testTurnSummaryMatchesCliFormatting() {
+  assert.equal(formatTurnSummary({ durationSeconds: 59.9, toolCount: 4 }), "");
+  assert.equal(formatTurnSummary({ durationSeconds: 60, toolCount: 0 }), "Worked for 1m00s");
+  assert.equal(formatTurnSummary({ durationSeconds: 83.9, toolCount: 1 }), "Worked for 1m23s · 1 tool");
+  assert.equal(formatTurnSummary({ durationSeconds: 3_661, toolCount: 7 }), "Worked for 1h01m · 7 tools");
 }
 
 async function testLoadSessionHydratesOptimisticEmptySession() {
@@ -749,6 +848,8 @@ async function testAssistantMetadataOnlyMarksFinalTextPerTurn() {
 async function testSequentialToolOnlyBatchesCompactWithoutEatingTextSpacing() {
   const ids = compactToolBatchMessageIDs([
     { id: "u1", type: "user", content: [{ type: "text", text: "go" }] },
+    { id: "a0", type: "assistant", content: [{ type: "text", text: "I will check." }], toolCalls: [{ id: "t0" }] },
+    { id: "r0", type: "tool", callID: "t0" },
     { id: "a1", type: "assistant", content: [], toolCalls: [{ id: "t1" }, { id: "t2" }] },
     { id: "r1", type: "tool", callID: "t1" },
     { id: "r2", type: "tool", callID: "t2" },
@@ -759,7 +860,7 @@ async function testSequentialToolOnlyBatchesCompactWithoutEatingTextSpacing() {
     { id: "u2", type: "user", content: [{ type: "text", text: "next" }] },
     { id: "a5", type: "assistant", content: [], toolCalls: [{ id: "t5" }] },
   ]);
-  assert.deepEqual([...ids], ["a1", "a2"]);
+  assert.deepEqual([...ids], ["a0", "a1", "a2"]);
 }
 
 async function testSelectionEventClearsRecoveredContextUsage() {
@@ -860,6 +961,12 @@ async function testCombinedModelPickerFiltersAcrossProviders() {
   assert.equal(modelNavigationIndex(6, 8, "PageUp"), 1);
 }
 
+async function testSlashMenuKeepsKeyboardSelectionInsideViewport() {
+  assert.equal(slashMenuScrollDelta({ viewportTop: 100, viewportBottom: 300, itemTop: 140, itemBottom: 182 }), 0);
+  assert.equal(slashMenuScrollDelta({ viewportTop: 100, viewportBottom: 300, itemTop: 58, itemBottom: 100 }), -42);
+  assert.equal(slashMenuScrollDelta({ viewportTop: 100, viewportBottom: 300, itemTop: 300, itemBottom: 342 }), 42);
+}
+
 async function testTreeKeyboardNavigationFollowsVisibleTopology() {
   const rows = [
     { id: "root", graphParentID: null, active: true },
@@ -917,17 +1024,126 @@ async function testNewSessionGlobalShortcutSupportsMacAndWindows() {
   }
 }
 
+async function testSidebarGlobalShortcutSupportsMacAndWindows() {
+  let handler = null;
+  const originalAdd = document.addEventListener;
+  const originalRemove = document.removeEventListener;
+  document.addEventListener = (type, callback) => {
+    if (type === "keydown") handler = callback;
+  };
+  document.removeEventListener = (type, callback) => {
+    if (type === "keydown" && handler === callback) handler = null;
+  };
+  let toggled = 0;
+  const uninstall = installKeybindings({ toggleSidebar: () => { toggled += 1; } });
+  const fire = (overrides) => {
+    let prevented = false;
+    handler?.({
+      key: "b",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      preventDefault() { prevented = true; },
+      ...overrides,
+    });
+    return prevented;
+  };
+  try {
+    assert.equal(fire({ metaKey: true }), true);
+    assert.equal(toggled, 1);
+    assert.equal(fire({ ctrlKey: true }), true);
+    assert.equal(toggled, 2);
+    assert.equal(fire({ metaKey: true, shiftKey: true }), false);
+    assert.equal(fire({ ctrlKey: true, altKey: true }), false);
+    assert.equal(toggled, 2);
+  } finally {
+    uninstall();
+    document.addEventListener = originalAdd;
+    document.removeEventListener = originalRemove;
+  }
+}
+
+async function testProcessInspectorChordAcceptsPlainAndControlP() {
+  let handler = null;
+  const originalAdd = document.addEventListener;
+  const originalRemove = document.removeEventListener;
+  document.addEventListener = (type, callback) => {
+    if (type === "keydown") handler = callback;
+  };
+  document.removeEventListener = (type, callback) => {
+    if (type === "keydown" && handler === callback) handler = null;
+  };
+  let opened = 0;
+  const uninstall = installKeybindings({ processInspector: () => { opened += 1; } });
+  const fire = (overrides) => {
+    let prevented = false;
+    handler?.({
+      key: "",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      preventDefault() { prevented = true; },
+      ...overrides,
+    });
+    return prevented;
+  };
+  try {
+    assert.equal(fire({ key: "x", ctrlKey: true }), true);
+    assert.equal(fire({ key: "p" }), true);
+    assert.equal(opened, 1);
+
+    assert.equal(fire({ key: "x", ctrlKey: true }), true);
+    assert.equal(fire({ key: "p", ctrlKey: true }), true);
+    assert.equal(opened, 2);
+  } finally {
+    uninstall();
+    document.addEventListener = originalAdd;
+    document.removeEventListener = originalRemove;
+  }
+}
+
+async function testSettledTotalDoesNotDependOnLoadedPage() {
+  const archivedPageOne = Array.from({ length: 30 }, (_, index) =>
+    sessionSummary(`archived-${index}`, { archivedAt: "2026-08-29T00:00:00Z" }));
+  const archivedPageTwo = Array.from({ length: 30 }, (_, index) =>
+    sessionSummary(`archived-${index + 30}`, { archivedAt: "2026-08-28T00:00:00Z" }));
+  let archivedReads = 0;
+  const restore = restoreApi({
+    listSessions: async ({ archived, cursor }) => {
+      if (!archived) return { data: [], total: 0, cursor: { next: null } };
+      archivedReads += 1;
+      if (!cursor) return { data: archivedPageOne, total: 73, cursor: { next: "page-2" } };
+      return { data: archivedPageTwo, total: 73, cursor: { next: "page-3" } };
+    },
+  });
+  try {
+    await controller.refreshSessionLists();
+    assert.equal(store.getState().archivedOrder.length, 30);
+    assert.equal(store.getState().archivedTotal, 73);
+    await controller.loadMoreSessions(true);
+    assert.equal(store.getState().archivedOrder.length, 60);
+    assert.equal(store.getState().archivedTotal, 73);
+    assert.equal(archivedReads, 2);
+  } finally {
+    restore();
+  }
+}
+
 const tests = [
   testPromptAppearsBeforeAdmissionReturns,
   testPromptRollbackOnFailure,
   testSessionPatchesSerializeAndKeepNewestOptimism,
   testQueueMutationsSurviveStaleRefresh,
+  testServerRestartLetsEmptyQueueReplaceStaleUi,
   testHumanInputOldReadCannotResurrectResolvedRequest,
   testSelectionAndToolTogglesKeepLatestClick,
   testProcessRefreshDoesNotRestoreAnOldSelection,
   testToolDetailKeepsNewestSelection,
   testToolTimelineDeepLinkDoesNotLockInspectorSelection,
   testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns,
+  testBackgroundDraftSubmitKeepsUserOnFreshDraft,
   testLoadSessionHydratesOptimisticEmptySession,
   testCompactionShowsImmediatelyAndRollsBackFailure,
   testTreeLabelsSerializeAndKeepNewestOptimism,
@@ -942,8 +1158,13 @@ const tests = [
   testTreeGraphBridgesHiddenTechnicalNodes,
   testLocationBrowseKeepsNewestNavigation,
   testCombinedModelPickerFiltersAcrossProviders,
+  testSlashMenuKeepsKeyboardSelectionInsideViewport,
   testTreeKeyboardNavigationFollowsVisibleTopology,
   testNewSessionGlobalShortcutSupportsMacAndWindows,
+  testSidebarGlobalShortcutSupportsMacAndWindows,
+  testProcessInspectorChordAcceptsPlainAndControlP,
+  testSettledTotalDoesNotDependOnLoadedPage,
+  testTurnSummaryMatchesCliFormatting,
 ];
 
 const started = performance.now();

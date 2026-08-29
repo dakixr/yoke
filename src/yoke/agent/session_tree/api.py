@@ -38,6 +38,7 @@ from ._projection import take_runtime_context
 from ._projection import scrollback_view
 from ._topology import active_path
 from ._topology import copy_and_validate
+from yoke.agent.tool_context import normalize_legacy_tool_context_entries
 from ._topology import filter_imported_transcript
 from ._topology import repair_legacy
 
@@ -69,6 +70,7 @@ class SessionTree(SessionTreeNavigation, SessionTreeMutations):
         copied, current = copy_and_validate(
             entries, leaf_id, assume_linear=assume_linear
         )
+        normalize_legacy_tool_context_entries(copied)
         return cls(copied, current)
 
     @classmethod

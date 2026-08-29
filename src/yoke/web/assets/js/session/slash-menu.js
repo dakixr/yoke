@@ -1,6 +1,7 @@
-import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
+import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
+import { slashMenuScrollDelta } from "./slash-menu-logic.js";
 
 const MAX_ARGUMENT_ITEMS = 9;
 
@@ -173,6 +174,21 @@ export function SlashCompletionMenu({ items, activeIndex, loading = false, onCho
     const frame = requestAnimationFrame(refreshScrollState);
     return () => cancelAnimationFrame(frame);
   }, [items.length, loading]);
+  useLayoutEffect(() => {
+    const element = itemsRef.current;
+    const active = element?.querySelector(".slash-menu__item.is-active");
+    if (!element || !active) return;
+    const viewport = element.getBoundingClientRect();
+    const item = active.getBoundingClientRect();
+    const delta = slashMenuScrollDelta({
+      viewportTop: viewport.top,
+      viewportBottom: viewport.bottom,
+      itemTop: item.top,
+      itemBottom: item.bottom,
+    });
+    if (delta) element.scrollTop += delta;
+    refreshScrollState();
+  }, [activeIndex, items.length]);
   if (!items.length && !loading) return null;
   return html`<div id=${id} class="slash-menu" role="listbox" aria-label="Slash command completions">
     <div class="slash-menu__header">

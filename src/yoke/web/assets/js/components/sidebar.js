@@ -10,6 +10,7 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
   const sessions = useStore((state) => state.sessions);
   const order = useStore((state) => state.sessionOrder);
   const archivedOrder = useStore((state) => state.archivedOrder);
+  const archivedTotal = useStore((state) => state.archivedTotal);
   const archivedCursor = useStore((state) => state.archivedCursor);
   const sessionCursor = useStore((state) => state.sessionsCursor);
   const active = useStore((state) => state.active);
@@ -25,6 +26,7 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
   const connected = useStore((state) => state.connection.current);
   const [settledOpen, setSettledOpen] = useState(false);
   const [projectScope, setProjectScope] = useState("");
+  const [scopedSettledTotal, setScopedSettledTotal] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const route = currentRoute();
   const selectedDraftID = route.name === "new" ? route.draftID : null;
@@ -42,13 +44,29 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
   useEffect(() => {
     if (projectScope && !projects.some((project) => project.directory === projectScope)) setProjectScope("");
   }, [projectScope, projects]);
-
   const matchesScope = (item) => !projectScope || item?.location?.directory === projectScope || item?.location === projectScope;
   const current = order.map((id) => sessions[id]).filter((item) => item && (matchesScope(item) || item.id === selectedID));
   const pinned = current.filter((item) => item.pinned);
   const inbox = current.filter((item) => !item.pinned);
   const scopedDrafts = meaningfulDrafts.filter((draft) => matchesScope(draft));
   const scopedArchived = archivedOrder.map((id) => sessions[id]).filter((session) => session && matchesScope(session));
+  const settledTotal = projectScope ? (scopedSettledTotal ?? scopedArchived.length) : archivedTotal;
+  useEffect(() => {
+    if (!projectScope) {
+      setScopedSettledTotal(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setScopedSettledTotal(null);
+    void controller.countSessions({ directory: projectScope, archived: true })
+      .then((total) => {
+        if (!cancelled) setScopedSettledTotal(total);
+      })
+      .catch(() => {
+        if (!cancelled) setScopedSettledTotal(scopedArchived.length);
+      });
+    return () => { cancelled = true; };
+  }, [projectScope, archivedTotal]);
   const visibleSearch = search.trim()
     ? searchResults.map((id) => sessions[id]).filter((item) => item && matchesScope(item))
     : null;
@@ -118,10 +136,10 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
             ${sessionCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(false)}>＋ Load older sessions</button>` : null}
             ${!scopedDrafts.length && !pinned.length && !inbox.length ? html`<div class="sidebar-empty">No sessions yet</div>` : null}
           </div>
-          ${scopedArchived.length ? html`
+          ${settledTotal > 0 ? html`
             <section class="settled-shelf">
               <button class="section-toggle" aria-expanded=${settledOpen} onClick=${() => setSettledOpen(!settledOpen)}>
-                <span>Settled (${scopedArchived.length})</span>
+                <span>Settled (${settledTotal})</span>
                 <span class="section-toggle__line" aria-hidden="true"></span>
                 <span class=${`section-toggle__chevron ${settledOpen ? "is-open" : ""}`} aria-hidden="true">⌄</span>
               </button>

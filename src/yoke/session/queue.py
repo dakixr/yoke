@@ -57,9 +57,9 @@ def write_prompt_queue_snapshot(
     session_id: str,
     snapshot: PersistedPromptQueue,
 ) -> None:
-    """Atomically write or remove one queue sidecar snapshot."""
+    """Atomically persist one queue snapshot without resetting its revision."""
     path = prompt_queue_path(session_directory, session_id)
-    if not snapshot.prompts and not snapshot.pending_images:
+    if snapshot.revision == 0 and not snapshot.prompts and not snapshot.pending_images:
         try:
             path.unlink()
         except FileNotFoundError:

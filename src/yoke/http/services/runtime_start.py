@@ -58,6 +58,7 @@ class RuntimeAppendPersistence:
                 existing_record=summary,
                 leaf_id=self.leaf_id,
                 active_skills=active_skills,
+                clear_context_usage=False,
             )
         if suffix[0].parent_id != self.leaf_id:
             raise ValueError("Indexed runtime suffix does not extend the saved leaf.")
@@ -73,6 +74,7 @@ class RuntimeAppendPersistence:
             leaf_id=suffix[-1].id,
             appended_entries=tuple(suffix),
             active_skills=active_skills,
+            clear_context_usage=False,
         )
         self.runtime_entry_count = len(entries)
         self.leaf_id = suffix[-1].id

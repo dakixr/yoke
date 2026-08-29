@@ -128,6 +128,7 @@ class SessionService:
         return SessionListResponse(
             data=[self.session_info_from_index(record) for record in page],
             cursor=CursorInfo(previous=None, next=next_cursor),
+            total=len(records),
         )
 
     def get_session(self, session_id: str) -> SessionInfo:
@@ -376,7 +377,11 @@ class SessionService:
             return MessageResponse(data=project_entry(indexed))
         snapshot = self._require_snapshot(session_id)
         entry = snapshot.entries_by_id.get(message_id)
-        if entry is not None and entry.kind not in {"instruction", "memory_snapshot"}:
+        if entry is not None and entry.kind not in {
+            "instruction",
+            "memory_snapshot",
+            "tool_context",
+        }:
             return MessageResponse(data=project_entry(entry))
         raise ApiError(404, "message_not_found", "Message was not found.")
 

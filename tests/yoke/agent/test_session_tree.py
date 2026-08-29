@@ -11,6 +11,9 @@ from yoke.agent.models import CompactionHandoff
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import Message
+from yoke.agent.models import MessageImageURL
+from yoke.agent.models import MessageImageURLContentPart
+from yoke.agent.models import MessageTextContentPart
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
 from yoke.agent.skills.models import ActiveSkill
@@ -138,6 +141,70 @@ def test_system_control_and_checkpoint_appends_assign_topology() -> None:
     assert runtime_text[3] == "continue"
     assert _texts(provider.messages) == runtime_text
     assert _texts(scrollback.messages) == ["large history", "continue"]
+
+
+def test_tool_context_is_provider_visible_but_not_user_scrollback() -> None:
+    call = ToolCall(
+        id="attach-1",
+        function=ToolFunction(name="attach_image", arguments="{}"),
+    )
+    tree = SessionTree.from_messages([Message.user("inspect")])
+    tree.append_message(Message(role="assistant", content=None, tool_calls=[call]))
+    tree.append_message(Message.tool("attach-1", '{"ok":true}'))
+    tree.append_tool_context(
+        Message.user("Verification image"),
+        metadata={"tool_name": "attach_image", "tool_call_id": "attach-1"},
+    )
+
+    provider = tree.project(ProviderProjection())
+    scrollback = tree.project(ScrollbackProjection())
+    audit = tree.project(AuditProjection())
+
+    assert [item.to_message().role for item in provider.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "user",
+    ]
+    assert _texts(scrollback.messages) == ["inspect", None, '{"ok":true}']
+    assert audit.items[-1].kind == "tool_context"
+
+
+def test_restore_reclassifies_legacy_attach_image_user_entry() -> None:
+    call = ToolCall(
+        id="attach-legacy",
+        function=ToolFunction(name="attach_image", arguments="{}"),
+    )
+    tree = SessionTree.from_messages([Message.user("inspect")])
+    tree.append_message(Message(role="assistant", content=None, tool_calls=[call]))
+    tree.append_message(Message.tool("attach-legacy", '{"ok":true}'))
+    tree.append_message(
+        Message(
+            role="user",
+            content=[
+                MessageTextContentPart(type="text", text="Verification image"),
+                MessageImageURLContentPart(
+                    type="image_url",
+                    image_url=MessageImageURL(url="data:image/png;base64,AA=="),
+                ),
+            ],
+        )
+    )
+    exported = tree.export_for_persistence()
+
+    restored = SessionTree.restore(exported.entries, exported.leaf_id)
+    audit = restored.project(AuditProjection())
+    provider = restored.project(ProviderProjection())
+    scrollback = restored.project(ScrollbackProjection())
+
+    assert audit.items[-1].kind == "tool_context"
+    assert [item.to_message().role for item in provider.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "user",
+    ]
+    assert _texts(scrollback.messages) == ["inspect", None, '{"ok":true}']
 
 
 def test_legacy_checkpoint_without_retained_payload_keeps_prior_users() -> None:

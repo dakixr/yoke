@@ -10,6 +10,7 @@
  * @property {Object<string, any>} sessions
  * @property {string[]} sessionOrder
  * @property {string[]} archivedOrder
+ * @property {number} archivedTotal
  * @property {string|null} sessionsCursor
  * @property {string|null} archivedCursor
  * @property {Object<string, any>} active
@@ -30,6 +31,7 @@ const initialState = () => ({
   sessions: {},
   sessionOrder: [],
   archivedOrder: [],
+  archivedTotal: 0,
   sessionsCursor: null,
   archivedCursor: null,
   active: {},

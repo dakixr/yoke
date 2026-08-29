@@ -38,6 +38,7 @@ class RuntimeContextUsageState:
 
     max_total_tokens: int | None = None
     latest: dict[str, object] | None = None
+    persisted: dict[str, object] | None = None
 
     def configure(
         self,
@@ -74,6 +75,28 @@ class RuntimeContextUsageState:
         self.latest = dict(usage)
         return usage
 
+    def persist_latest(
+        self,
+        *,
+        store: SessionStore,
+        session_id: str,
+    ) -> SessionRecord | None:
+        """Persist the newest provider measurement for reloads during a live turn."""
+        if self.latest is None:
+            return store.summary_record(session_id)
+        summary = store.summary_record(session_id)
+        if summary is None:
+            return None
+        if self.persisted == self.latest and summary.context_usage == self.latest:
+            return summary
+        updated = store.set_context_usage(
+            session_id,
+            self.latest,
+            existing_record=summary,
+        )
+        self.persisted = dict(self.latest)
+        return updated
+
     def persist(
         self,
         *,
@@ -85,11 +108,14 @@ class RuntimeContextUsageState:
         """Persist and journal the latest usage snapshot, if any."""
         if self.latest is None:
             return record
-        updated = store.set_context_usage(
-            session_id,
-            self.latest,
-            existing_record=record,
-        )
+        updated = record
+        if self.persisted != self.latest or record.context_usage != self.latest:
+            updated = store.set_context_usage(
+                session_id,
+                self.latest,
+                existing_record=record,
+            )
+            self.persisted = dict(self.latest)
         events.durable(
             session_id,
             "session.context.updated",

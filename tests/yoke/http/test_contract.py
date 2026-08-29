@@ -10,6 +10,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from yoke.agent.models import Message
+from yoke.agent.models import MessageImageURL
+from yoke.agent.models import MessageImageURLContentPart
+from yoke.agent.models import MessageTextContentPart
+from yoke.agent.models import ToolCall
+from yoke.agent.models import ToolFunction
 from yoke.agent.session_tree import SessionTree
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.resolution import ProviderReadiness
@@ -194,6 +199,7 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
     )
     assert first.status_code == 200
     assert len(first.json()["data"]) == 2
+    assert first.json()["total"] == 3
     cursor = first.json()["cursor"]["next"]
     assert cursor
 
@@ -209,6 +215,7 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
     )
     assert second.status_code == 200
     assert len(second.json()["data"]) == 1
+    assert second.json()["total"] == 3
 
     session_b = client.get("/api/v1/session/session-b", headers=_auth()).json()["data"]
     assert session_b["queue"] == {
@@ -590,6 +597,122 @@ def test_message_and_tree_projection_strip_provider_private_fields(
     assert tree.json()["data"]["leafID"] == assistant_id
     assert tree.json()["data"]["entries"][-1]["current"] is True
     assert tree.json()["data"]["entries"][-1]["active"] is True
+
+
+def test_tool_context_is_hidden_from_chat_but_kept_in_model_context(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    user = Message.user("inspect")
+    injected = Message.user("Verification image")
+    assistant = Message.assistant("done")
+    tree = SessionTree.from_messages([user])
+    tree.append_tool_context(
+        injected,
+        metadata={"tool_name": "attach_image", "tool_call_id": "attach-1"},
+    )
+    tree.append_message(assistant)
+    exported = tree.export_for_persistence()
+    _fastapi(client).state.session_service.store.save(
+        "tool-context-session",
+        [user, injected, assistant],
+        conversation_entries=list(exported.entries),
+        leaf_id=exported.leaf_id,
+        root=root,
+    )
+
+    messages = client.get(
+        "/api/v1/session/tool-context-session/message",
+        headers=_auth(),
+        params={"order": "asc"},
+    )
+    assert messages.status_code == 200
+    assert [item["type"] for item in messages.json()["data"]] == [
+        "user",
+        "assistant",
+    ]
+    assert "Verification image" not in messages.text
+
+    context = client.get(
+        "/api/v1/session/tool-context-session/context",
+        headers=_auth(),
+    )
+    assert context.status_code == 200
+    assert "Verification image" in context.text
+
+    tree_response = client.get(
+        "/api/v1/session/tool-context-session/tree",
+        headers=_auth(),
+        params={"limit": 20},
+    )
+    assert tree_response.status_code == 200
+    assert [item["kind"] for item in tree_response.json()["data"]["entries"]] == [
+        "user",
+        "tool_context",
+        "assistant",
+    ]
+
+
+def test_legacy_attach_image_user_entry_is_hidden_by_cold_message_index(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    call = ToolCall(
+        id="attach-legacy",
+        function=ToolFunction(name="attach_image", arguments="{}"),
+    )
+    tree = SessionTree.from_messages([Message.user("inspect")])
+    tree.append_message(Message(role="assistant", content=None, tool_calls=[call]))
+    tree.append_message(Message.tool("attach-legacy", '{"ok":true}'))
+    tree.append_message(
+        Message(
+            role="user",
+            content=[
+                MessageTextContentPart(type="text", text="Legacy verification"),
+                MessageImageURLContentPart(
+                    type="image_url",
+                    image_url=MessageImageURL(url="data:image/png;base64,AA=="),
+                ),
+            ],
+        )
+    )
+    tree.append_message(Message.assistant("done"))
+    exported = tree.export_for_persistence()
+    _fastapi(client).state.session_service.store.save(
+        "legacy-tool-context-session",
+        [item.message for item in exported.entries if item.message is not None],
+        conversation_entries=list(exported.entries),
+        leaf_id=exported.leaf_id,
+        root=root,
+    )
+
+    messages = client.get(
+        "/api/v1/session/legacy-tool-context-session/message",
+        headers=_auth(),
+        params={"order": "desc", "limit": 100},
+    )
+    assert messages.status_code == 200
+    assert "Legacy verification" not in messages.text
+    assert [item["type"] for item in messages.json()["data"]] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+
+    tree_response = client.get(
+        "/api/v1/session/legacy-tool-context-session/tree",
+        headers=_auth(),
+        params={"limit": 20},
+    )
+    assert tree_response.status_code == 200
+    assert "tool_context" in [
+        item["kind"] for item in tree_response.json()["data"]["entries"]
+    ]
 
 
 def test_fork_from_entry_selects_requested_branch_without_mutating_source(

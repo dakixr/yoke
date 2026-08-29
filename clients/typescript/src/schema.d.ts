@@ -940,6 +940,7 @@ export interface components {
             timeCreated: string;
             /** Toolcalls */
             toolCalls?: components["schemas"]["ToolCallSummary"][];
+            turnSummary?: components["schemas"]["TurnSummaryInfo"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1056,6 +1057,7 @@ export interface components {
             text?: string | null;
             /** Timecreated */
             timeCreated: string;
+            turnSummary?: components["schemas"]["TurnSummaryInfo"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1900,6 +1902,8 @@ export interface components {
             cursor: components["schemas"]["CursorInfo"];
             /** Data */
             data: components["schemas"]["SessionInfo"][];
+            /** Total */
+            total: number;
         };
         /** SessionPatchRequest */
         SessionPatchRequest: {
@@ -2179,6 +2183,7 @@ export interface components {
             status: "completed";
             /** Timecreated */
             timeCreated: string;
+            turnSummary?: components["schemas"]["TurnSummaryInfo"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2358,6 +2363,13 @@ export interface components {
         TreeResponse: {
             data: components["schemas"]["TreeData"];
         };
+        /** TurnSummaryInfo */
+        TurnSummaryInfo: {
+            /** Durationseconds */
+            durationSeconds: number;
+            /** Toolcount */
+            toolCount: number;
+        };
         /** UploadInfo */
         UploadInfo: {
             /** Expiresat */
@@ -2389,6 +2401,7 @@ export interface components {
             kind: string;
             /** Timecreated */
             timeCreated: string;
+            turnSummary?: components["schemas"]["TurnSummaryInfo"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

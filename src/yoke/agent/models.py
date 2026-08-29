@@ -24,6 +24,7 @@ MessagePhase = Literal["commentary", "final_answer"]
 ConversationEntryKind = Literal[
     "instruction",
     "user",
+    "tool_context",
     "assistant",
     "assistant_tool_calls",
     "tool_result",

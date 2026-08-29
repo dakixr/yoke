@@ -310,12 +310,12 @@ export function DraftComposer({ draftID, draft }) {
     });
     if (shouldSubmit) void executeSlash(completion.text).catch((error) => controller.notice(error?.message || String(error)));
   };
-  const submit = async () => {
+  const submit = async ({ background = false } = {}) => {
     if (busy || !connected) return;
     setBusy(true);
     try {
       if (!(value.attachments || []).length && await executeSlash(value.text || "")) return;
-      await controller.submitDraft(draftID);
+      await controller.submitDraft(draftID, { background });
     }
     catch (error) { controller.notice(error?.message || String(error)); }
     finally { setBusy(false); }
@@ -384,14 +384,15 @@ export function DraftComposer({ draftID, draft }) {
         escapePrefixAt.current = 0;
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
-          void submit();
+          const background = (event.metaKey || event.ctrlKey) && !event.altKey;
+          void submit({ background });
         }
       }}></textarea>
       <div class="composer-footer">
         <div class="composer-footer__left">
           ${capabilities?.features?.images ? html`<button class="quiet-button" disabled=${!connected} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
           <input ref=${fileInput} class="visually-hidden" type="file" accept="image/*" multiple onChange=${(event) => { void addFiles([...event.currentTarget.files]); event.currentTarget.value = ""; }} />
-          <span class="muted tiny">↵ send · ⇧↵ newline</span>
+          <span class="muted tiny">↵ send · ⌘/Ctrl+↵ background · ⇧↵ newline</span>
         </div>
         <button
           class="primary composer-icon-action composer-send-button"

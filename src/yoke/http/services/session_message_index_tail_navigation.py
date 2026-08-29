@@ -8,6 +8,7 @@ from typing import Any
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
+from yoke.agent.tool_context import normalize_legacy_tool_context_entries
 from yoke.http.services.session_message_index_models import MessageIndexSnapshot
 from yoke.http.services.session_message_index_models import MessagePage
 from yoke.http.services.session_message_index_models import NavigationIndexPreview
@@ -270,6 +271,8 @@ def tail_page(
                 entries.append(ConversationEntry.model_validate(raw_entry))
     except (OSError, ValueError):
         return None
+    normalize_legacy_tool_context_entries(entries)
+    entries = [entry for entry in entries if entry.kind not in PUBLIC_EXCLUDED_KINDS]
     return MessagePage(entries=entries, has_more=len(selected) > limit)
 
 

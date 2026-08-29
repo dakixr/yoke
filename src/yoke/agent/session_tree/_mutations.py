@@ -42,6 +42,28 @@ class SessionTreeMutations:
             metadata=_message_metadata(message),
         )
 
+    def append_tool_context(
+        self,
+        message: Message,
+        *,
+        metadata: dict[str, object] | None = None,
+    ) -> EntryRef:
+        """Append a provider-visible message injected by a tool."""
+        if not isinstance(message, Message):
+            raise TypeError("append_tool_context requires a Message value.")
+        if message.role == "system":
+            raise InvalidMessageError("Tool context cannot use role='system'.")
+        _validate_role_tool_fields(message)
+        self._validate_tool_sequence(message)
+        merged_metadata = _message_metadata(message)
+        if metadata:
+            merged_metadata.update(metadata)
+        return self._append_entry(
+            "tool_context",
+            message=message,
+            metadata=merged_metadata,
+        )
+
     def _append_imported_message(self, message: Message) -> EntryRef:
         return self._append_entry(
             _kind_for_message(message),

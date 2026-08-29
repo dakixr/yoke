@@ -11,8 +11,8 @@ from pydantic_core import from_json
 from yoke.agent.models import ConversationEntry
 
 
-INDEX_VERSION = 2
-PUBLIC_EXCLUDED_KINDS = {"instruction", "memory_snapshot"}
+INDEX_VERSION = 3
+PUBLIC_EXCLUDED_KINDS = {"instruction", "memory_snapshot", "tool_context"}
 UNSET = object()
 
 

@@ -151,6 +151,7 @@ class RuntimeAgentIterationMixin:
             self._append_tool_context_messages(
                 context,
                 tool_name=tool_call.function.name,
+                tool_call_id=tool_call.id,
                 arguments=arguments,
                 result=result,
             )
@@ -165,6 +166,7 @@ class RuntimeAgentIterationMixin:
         context: AgentContext,
         *,
         tool_name: str,
+        tool_call_id: str,
         arguments: dict[str, object],
         result: dict[str, object],
     ) -> None:
@@ -180,7 +182,12 @@ class RuntimeAgentIterationMixin:
             if message.role == "system":
                 self.context_manager.append_skill_message(context, message)
             else:
-                self.context_manager.append_message(context, message)
+                self.context_manager.append_tool_context_message(
+                    context,
+                    message,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
 
     def _append_cancelled_context_tool_results(
         self,

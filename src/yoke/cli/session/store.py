@@ -261,6 +261,7 @@ class SessionStore:
         leaf_id: str,
         appended_entries: tuple[ConversationEntry, ...] = (),
         active_skills: builtins.list[ActiveSkill] | None = None,
+        clear_context_usage: bool = True,
     ) -> SessionRecord:
         """Persist a topology-proven tree checkout without loading old entries."""
         if existing_record.id != session_id:
@@ -271,17 +272,19 @@ class SessionStore:
         now = timestamp()
         updates: dict[str, object] = {
             "leaf_id": leaf_id,
-            "context_usage": None,
             "updated_at": now,
         }
+        if clear_context_usage:
+            updates["context_usage"] = None
         if active_skills is not None:
             updates["active_skills"] = list(active_skills)
         record = existing_record.model_copy(update=updates)
         session_changes: dict[str, object] = {
             "leaf_id": leaf_id,
-            "context_usage": None,
             "updated_at": now,
         }
+        if clear_context_usage:
+            session_changes["context_usage"] = None
         if active_skills is not None:
             session_changes["active_skills"] = [
                 skill.model_dump(mode="json") for skill in active_skills

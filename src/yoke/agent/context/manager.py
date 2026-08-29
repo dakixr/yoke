@@ -134,6 +134,33 @@ class ContextManager:
         )
         update_message_projection(context, copied, branching=branching)
 
+    def append_tool_context_message(
+        self,
+        context: AgentContext,
+        message: Message,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+    ) -> None:
+        """Append provider-visible context injected by a completed tool call."""
+        copied = message.model_copy(deep=True)
+        metadata = message_entry_metadata(copied)
+        metadata.update(
+            {
+                "tool_name": tool_name,
+                "tool_call_id": tool_call_id,
+            }
+        )
+        branching = append_conversation_entry(
+            context,
+            ConversationEntry(
+                kind="tool_context",
+                message=copied,
+                metadata=metadata,
+            ),
+        )
+        update_message_projection(context, copied, branching=branching)
+
     def append_skill_message(self, context: AgentContext, message: Message) -> None:
         """Append activated skill instructions to the context log."""
         copied = message.model_copy(deep=True)
