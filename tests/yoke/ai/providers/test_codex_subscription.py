@@ -73,14 +73,18 @@ def test_codex_provider_default_timeout_matches_codex_idle_timeout(
 
     provider = register_provider(Context())
 
-    assert provider.config.timeout_seconds == 900.0
+    try:
+        assert provider.config.timeout_seconds == 900.0
+        assert provider.config.model == "gpt-5.6-sol"
+        assert provider.config.reasoning_effort == "medium"
+    finally:
+        provider.close()
 
 
 def test_codex_catalog_includes_gpt_5_6_models() -> None:
     models = {model.id: model for model in list_provider_models(None)}
 
-    assert {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} <= set(models)
-    assert "gpt-5.6" not in models
+    assert set(models) == {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
     assert models["gpt-5.6-sol"].context_window_tokens == 400_000
     assert models["gpt-5.6-terra"].context_window_tokens == 400_000
     assert models["gpt-5.6-luna"].context_window_tokens == 400_000
@@ -140,7 +144,7 @@ def test_codex_gpt_5_6_accepts_max_reasoning_effort(tmp_path: Path) -> None:
 def test_codex_reasoning_clamp_preserves_gpt_5_6_controls() -> None:
     assert clamp_reasoning_effort("gpt-5.6-sol", "none") == "none"
     assert clamp_reasoning_effort("gpt-5.6-terra", "max") == "max"
-    assert clamp_reasoning_effort("gpt-5.5", "max") == "xhigh"
+    assert clamp_reasoning_effort("gpt-5.6-luna", "max") == "max"
 
 
 def test_convert_messages_drops_orphan_tool_outputs() -> None:
@@ -279,7 +283,7 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
             accounts_dir=accounts_dir,
             auths_path=tmp_path / ".yoke" / "providers" / "codex-auth" / "auths.json",
             selection_path=selection_path,
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
             max_retries=1,
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
@@ -335,7 +339,7 @@ def test_codex_subscription_cancellation_closes_client_before_stream_enters(
             / "providers"
             / "codex-auth"
             / "selection.json",
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
         )
     )
     monkeypatch.setattr(provider, "_client", cast(httpx.Client, BlockingClient()))
@@ -377,7 +381,7 @@ def test_codex_provider_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:
             accounts_dir=tmp_path / "accounts",
             auths_path=tmp_path / "auths.json",
             selection_path=tmp_path / "selection.json",
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
@@ -429,7 +433,7 @@ def test_codex_provider_captures_and_replays_turn_state(tmp_path: Path) -> None:
             accounts_dir=tmp_path / "accounts",
             auths_path=tmp_path / "auths.json",
             selection_path=tmp_path / "selection.json",
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )

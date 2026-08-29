@@ -19,18 +19,18 @@ from yoke.ai.providers.zai import ZAIProvider
 
 
 def test_parse_provider_ref_accepts_model_and_thinking() -> None:
-    provider_ref = parse_provider_ref("ZAI:glm-5.2:none")
+    provider_ref = parse_provider_ref("ZAI:glm-5.3-flash:max")
 
     assert provider_ref.provider_name == "zai"
-    assert provider_ref.model == "glm-5.2"
-    assert provider_ref.reasoning_effort == "none"
-    assert provider_ref.qualified_name == "zai:glm-5.2:none"
+    assert provider_ref.model == "glm-5.3-flash"
+    assert provider_ref.reasoning_effort == "max"
+    assert provider_ref.qualified_name == "zai:glm-5.3-flash:max"
 
 
 def test_provider_readiness_uses_explicit_env(tmp_path: Path) -> None:
-    missing = provider_status("zai:glm-5.2:none", env={}, home=tmp_path)
+    missing = provider_status("zai:glm-5.3-flash:max", env={}, home=tmp_path)
     ready = provider_status(
-        "zai:glm-5.2:none",
+        "zai:glm-5.3-flash:max",
         env={"ZAI_API_KEY": "test"},
         home=tmp_path,
     )
@@ -38,13 +38,9 @@ def test_provider_readiness_uses_explicit_env(tmp_path: Path) -> None:
     assert missing.ready is False
     assert missing.reason == "zai provider requires ZAI_API_KEY."
     assert ready.ready is True
-    assert ready.model == "glm-5.2"
-    assert ready.reasoning_effort == "none"
-    assert [model.id for model in ready.models] == [
-        "glm-5.3-flash",
-        "glm-5.3",
-        "glm-5.2",
-    ]
+    assert ready.model == "glm-5.3-flash"
+    assert ready.reasoning_effort == "max"
+    assert [model.id for model in ready.models] == ["glm-5.3-flash"]
 
 
 def test_provider_readiness_uses_credentials_saved_by_login(
@@ -53,7 +49,7 @@ def test_provider_readiness_uses_credentials_saved_by_login(
     monkeypatch.delenv("ZAI_API_KEY", raising=False)
     save_provider_credential(home=tmp_path, name="ZAI_API_KEY", value="saved")
 
-    ready = provider_status("zai:glm-5.2:none", home=tmp_path)
+    ready = provider_status("zai:glm-5.3-flash:max", home=tmp_path)
 
     assert ready.ready is True
 
@@ -65,29 +61,29 @@ def test_codex_readiness_recognizes_account_vault_credentials(
     account_auth.parent.mkdir(parents=True)
     account_auth.write_text("{}", encoding="utf-8")
 
-    ready = provider_status("codex:gpt-5.5", env={}, home=tmp_path)
+    ready = provider_status("codex:gpt-5.6-sol", env={}, home=tmp_path)
 
     assert ready.ready is True
 
 
 def test_build_provider_constructs_zai_from_qualified_name(tmp_path: Path) -> None:
     provider = build_provider(
-        "zai:glm-5.2:none",
+        "zai:glm-5.3-flash:max",
         env={"ZAI_API_KEY": "test"},
         home=tmp_path,
     )
 
     assert isinstance(provider, ZAIProvider)
     try:
-        assert provider.config.model == "glm-5.2"
-        assert provider.config.reasoning_effort == "none"
+        assert provider.config.model == "glm-5.3-flash"
+        assert provider.config.reasoning_effort == "max"
     finally:
         provider.close()
 
 
 @pytest.mark.parametrize(
     ("selection", "expected_effort"),
-    [("zai", "max"), ("zai:glm-5.2:medium", "max")],
+    [("zai", "max"), ("zai:glm-5.3-flash:medium", "max")],
 )
 def test_build_provider_uses_zai_model_default_for_alias_effort(
     tmp_path: Path,
@@ -102,7 +98,7 @@ def test_build_provider_uses_zai_model_default_for_alias_effort(
 
     assert isinstance(provider, ZAIProvider)
     try:
-        assert provider.config.model == "glm-5.2"
+        assert provider.config.model == "glm-5.3-flash"
         assert provider.config.reasoning_effort == expected_effort
     finally:
         provider.close()
@@ -112,7 +108,7 @@ def test_build_provider_constructs_opencode_go_from_explicit_env(
     tmp_path: Path,
 ) -> None:
     provider = build_provider(
-        "opencode-go:kimi-k2.7-code",
+        "opencode-go:glm-5.3-flash",
         env={"OPENCODE_API_KEY": "test"},
         home=tmp_path,
     )
@@ -120,7 +116,8 @@ def test_build_provider_constructs_opencode_go_from_explicit_env(
     assert isinstance(provider, OpenCodeGoProvider)
     try:
         assert provider.config.api_key == "test"
-        assert provider.config.model == "kimi-k2.7-code"
+        assert provider.config.model == "glm-5.3-flash"
+        assert provider.config.reasoning_effort == "max"
     finally:
         provider.close()
 
@@ -205,7 +202,9 @@ def test_provider_status_reports_model_catalog_failure(
         fail_to_list_models,
     )
 
-    status = provider_status("zai:glm-5.2", env={"ZAI_API_KEY": "test"}, home=tmp_path)
+    status = provider_status(
+        "zai:glm-5.3-flash", env={"ZAI_API_KEY": "test"}, home=tmp_path
+    )
 
     assert status.ready is False
     assert status.reason == (
@@ -217,7 +216,7 @@ def test_provider_status_reports_close_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class ProviderWithBrokenClose:
-        config = SimpleNamespace(model="glm-5.2", reasoning_effort="high")
+        config = SimpleNamespace(model="glm-5.3-flash", reasoning_effort="high")
 
         def complete(self, messages: object, tools: object) -> None:
             del messages, tools
@@ -230,9 +229,11 @@ def test_provider_status_reports_close_failure(
         lambda *args, **kwargs: ProviderWithBrokenClose(),
     )
 
-    status = provider_status("zai:glm-5.2", env={"ZAI_API_KEY": "test"}, home=tmp_path)
+    status = provider_status(
+        "zai:glm-5.3-flash", env={"ZAI_API_KEY": "test"}, home=tmp_path
+    )
 
     assert status.ready is False
     assert status.reason == "Could not close provider `zai`: close failed"
-    assert status.model == "glm-5.2"
+    assert status.model == "glm-5.3-flash"
     assert status.reasoning_effort == "high"

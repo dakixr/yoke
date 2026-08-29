@@ -21,7 +21,7 @@ class CodexSubscriptionConfig(BaseModel):
     auths_path: Path
     selection_path: Path
     selection_ttl_seconds: int = 1800
-    model: str = "gpt-5.5"
+    model: str = "gpt-5.6-sol"
     prompt_cache_key: str | None = None
     base_url: str = DEFAULT_BASE_URL
     originator: str = "yoke"

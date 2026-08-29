@@ -6,31 +6,29 @@ import json
 from typing import cast
 
 import httpx
-import pytest
 
 from yoke.agent.models import Message
 from yoke.ai.providers.opencode_go import OpenCodeGoConfig
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 
 
-def test_opencode_go_catalog_excludes_deprecated_models() -> None:
+def test_opencode_go_catalog_has_supported_models_and_default() -> None:
     provider = OpenCodeGoProvider(OpenCodeGoConfig(api_key="test"))
     try:
         models = {model.id: model for model in provider.list_models()}
         model_ids = set(models)
         assert "gpt-5.6-luna" in model_ids
-        assert "glm-5.2" in model_ids
-        assert "glm-5.3" in model_ids
         assert "glm-5.3-flash" in model_ids
         assert "kimi-k2.7-code" in model_ids
         assert "deepseek-v4-pro" in model_ids
         assert "deepseek-v4-flash" in model_ids
-        assert "muse-spark-1.2" in model_ids
-        assert "muse-spark-1.2-contributor" in model_ids
         assert (
             not {
+                "glm-5.2",
+                "glm-5.3",
                 "glm-5.1",
                 "glm-5",
+                "grok-4.5",
                 "kimi-k2.6",
                 "kimi-k2.5",
                 "mimo-v2.5",
@@ -44,35 +42,21 @@ def test_opencode_go_catalog_excludes_deprecated_models() -> None:
                 "qwen3.7-plus",
                 "qwen3.6-plus",
                 "qwen3.5-plus",
+                "muse-spark-1.2",
+                "muse-spark-1.2-contributor",
             }
             & model_ids
         )
-        assert models["glm-5.2"].thinking_levels == ("none", "high", "max")
-        assert models["glm-5.2"].default_thinking_level == "max"
-        assert models["glm-5.3"].thinking_levels == ("low", "high", "max")
-        assert models["glm-5.3"].default_thinking_level == "max"
         assert models["glm-5.3-flash"].thinking_levels == ("low", "high", "max")
         assert models["glm-5.3-flash"].default_thinking_level == "max"
         assert models["glm-5.3-flash"].supports_image_inputs is True
-        assert models["muse-spark-1.2"].thinking_levels == (
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-        )
-        assert models["muse-spark-1.2"].default_thinking_level == "medium"
-        assert models["muse-spark-1.2-contributor"].thinking_levels == (
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-        )
+        assert provider.config.model == "glm-5.3-flash"
+        assert provider.config.reasoning_effort == "max"
     finally:
         provider.close()
 
 
-@pytest.mark.parametrize("model", ["glm-5.2", "glm-5.3", "glm-5.3-flash"])
-def test_opencode_go_glm_sends_selected_reasoning_effort(model: str) -> None:
+def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -86,7 +70,7 @@ def test_opencode_go_glm_sends_selected_reasoning_effort(model: str) -> None:
     provider = OpenCodeGoProvider(
         OpenCodeGoConfig(
             api_key="test",
-            model=model,
+            model="glm-5.3-flash",
             reasoning_effort="high",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
@@ -99,7 +83,7 @@ def test_opencode_go_glm_sends_selected_reasoning_effort(model: str) -> None:
 
     payload = cast(dict[str, object], captured["payload"])
     assert captured["url"] == "https://opencode.ai/zen/go/v1/chat/completions"
-    assert payload["model"] == model
+    assert payload["model"] == "glm-5.3-flash"
     assert payload["reasoning_effort"] == "high"
     assert message.content == "glm-ok"
 

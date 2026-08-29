@@ -61,7 +61,7 @@ def test_shell_capability_controls_shell_and_python_tools(
 
 def test_gpt_models_use_apply_patch_for_file_write(tmp_path: Path) -> None:
     class Config:
-        model = "gpt-5.5"
+        model = "gpt-5.6-sol"
 
     class GptProvider(StaticProvider):
         provider_name = "test"

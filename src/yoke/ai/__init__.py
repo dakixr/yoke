@@ -5,7 +5,7 @@ Typical usage:
 ```python
 from yoke.ai import Agent, build_builtin_provider
 
-provider = build_builtin_provider("codex:gpt-5.5:medium")
+provider = build_builtin_provider("codex:gpt-5.6-sol:medium")
 
 agent = Agent(provider=provider)
 

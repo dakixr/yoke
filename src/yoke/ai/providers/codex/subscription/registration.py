@@ -44,7 +44,7 @@ def register_provider(context: Any) -> CodexSubscriptionProvider:
             selection_ttl_seconds=int(
                 env.get("YOKE_CODEX_SELECTION_TTL_SECONDS") or "1800"
             ),
-            model=(context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.5"),
+            model=(context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.6-sol"),
             prompt_cache_key=getattr(context, "session_id", None),
             base_url=(env.get("YOKE_CODEX_BASE_URL") or DEFAULT_BASE_URL),
             originator=env.get("YOKE_CODEX_ORIGINATOR") or DEFAULT_YOKE_ORIGINATOR,
@@ -57,7 +57,7 @@ def register_provider(context: Any) -> CodexSubscriptionProvider:
                 context.reasoning_effort
                 or env.get("YOKE_CODEX_REASONING_EFFORT")
                 or default_reasoning_effort_for_model_id(
-                    context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.5"
+                    context.model or env.get("YOKE_CODEX_MODEL") or "gpt-5.6-sol"
                 )
             ),
             text_verbosity=(env.get("YOKE_CODEX_TEXT_VERBOSITY") or "medium"),

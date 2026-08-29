@@ -179,7 +179,7 @@ async def fan_out(tasks: list[BatchTask]) -> None:
 ## Shared Helpers
 
 ```python
-DEFAULT_SELECTION = "codex:gpt-5.5:medium"  # Select for the task/user guidance.
+DEFAULT_SELECTION = "codex:gpt-5.6-sol:medium"  # Select for the task/user guidance.
 MAX_CONCURRENCY = 8  # Pool size; the skill's 16-agent cap is the ceiling.
 OUTPUT_DIR = Path(".agents_local")
 LOG_PATH = OUTPUT_DIR / "yoke_subagents.log"

@@ -16,7 +16,7 @@ from yoke.ai.providers.codex.websockets import register_provider
 
 class ProviderContext:
     env: dict[str, str] = {}
-    model = "gpt-5.5"
+    model = "gpt-5.6-sol"
     reasoning_effort = None
     session_id = "session-123"
 

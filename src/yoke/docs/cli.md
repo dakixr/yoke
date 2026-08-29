@@ -49,9 +49,9 @@ session persistence is busy.
 Select models with `provider:model` or `provider:model:thinking_effort`:
 
 ```bash
-yoke --model codex:gpt-5.5:medium "..."
+yoke --model codex:gpt-5.6-sol:medium "..."
 yoke --model codex:gpt-5.6-terra:max "..."
-yoke --model opencode-go:gpt-5.6-luna:high "..."
+yoke --model opencode-go:glm-5.3-flash:max "..."
 yoke --model zai:glm-5.3-flash:max "..."
 ```
 
@@ -63,24 +63,26 @@ Yoke's built-in providers are:
 | `opencode-go` | `OPENCODE_API_KEY` or `yoke login opencode-go` |
 | `zai` | `ZAI_API_KEY` or `yoke login zai` |
 
+Provider selections without a model use these defaults:
+
+| Provider | Default selection |
+| --- | --- |
+| `codex` | `codex:gpt-5.6-sol:medium` |
+| `opencode-go` | `opencode-go:glm-5.3-flash:max` |
+| `zai` | `zai:glm-5.3-flash:max` |
+
 Codex uses a persistent Responses WebSocket transport and keeps response
 continuity, encrypted replay state, prompt-cache affinity, and routing metadata
 in memory. Session IDs provide stable cache scope across provider
 reconstruction and resume. New and forked sessions receive distinct scopes.
 The advertised catalog currently includes `gpt-5.6-sol`,
-`gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, and
-`gpt-5.4-mini`.
+`gpt-5.6-terra`, and `gpt-5.6-luna`.
 
 OpenCode Go advertises its maintained model catalog, including its Responses
 path for `gpt-5.6-luna` and OpenAI-compatible chat-completions paths for
-other models. Both Z.ai and OpenCode Go expose GLM-5.3-Flash and GLM-5.3 with
-`low`, `high`, and `max` reasoning efforts (default: `max`). GLM-5.2 supports
-`none`, `high`, and `max` (default: `max`) through both providers. OpenCode Go
-also serves the multimodal `muse-spark-1.2` and `muse-spark-1.2-contributor`
-coding models with
-`low`, `medium`, `high`, and `xhigh` reasoning efforts (default: `medium`).
-Provider catalogs also declare context
-windows, image-input support, and model-specific system messages.
+other models. Both Z.ai and OpenCode Go expose GLM-5.3-Flash with `low`,
+`high`, and `max` reasoning efforts (default: `max`). Provider catalogs also
+declare context windows, image-input support, and model-specific system messages.
 
 Built-in provider response and stream-idle timeouts default to 15 minutes.
 Connection-establishment and WebSocket health-check timeouts remain shorter so
@@ -90,7 +92,8 @@ Use these commands to inspect or change defaults:
 
 ```bash
 yoke models list
-yoke models set codex:gpt-5.5 --reasoning-effort high
+yoke models set codex:gpt-5.6-sol --reasoning-effort medium
+yoke models set opencode-go:glm-5.3-flash --reasoning-effort max
 yoke models set zai:glm-5.3-flash --reasoning-effort max
 yoke models set
 yoke models set --repo

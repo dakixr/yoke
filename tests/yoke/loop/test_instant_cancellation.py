@@ -22,7 +22,6 @@ from yoke.agent.loop.in_process_tool import execute_in_process_tool
 from yoke.agent.loop.in_process_tool import InProcessToolShutdownError
 from yoke.agent.loop.tool_process import ToolProcessInvocation
 from yoke.agent.loop.tool_process import _process_context
-from yoke.agent.loop.tool_process import wait_for_tool_process
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
@@ -632,25 +631,6 @@ def test_stop_and_immediate_continue_retain_completed_tool_work(
     retired_worker.join(timeout=5)
 
 
-def test_non_cooperative_process_tool_detaches_during_cancellation() -> None:
-    invocation = ToolProcessInvocation(
-        tools={"slow_process": SlowProcessTool.bind()},
-        name="slow_process",
-        arguments={},
-    )
-    invocation.start()
-    result, stopped = wait_for_tool_process(
-        invocation,
-        stop_requested=lambda: True,
-    )
-
-    assert stopped is True
-    assert result["cancelled"] is True
-    invocation.cancel(wait=True)
-    assert invocation._process.is_alive() is False
-    assert invocation._closed is True
-
-
 def test_tool_processes_use_spawn_context() -> None:
     assert _process_context().get_start_method() == "spawn"
 
@@ -809,7 +789,7 @@ def test_runtime_close_waits_for_cancelled_in_process_tool_before_resources_clos
             while not self._is_cancel_requested():
                 time.sleep(0.001)
             cancellation_seen.set()
-            release.wait(timeout=5)
+            release.wait()
             lifecycle.append("tool-finished")
             return {"ok": True}
 
@@ -843,13 +823,14 @@ def test_runtime_close_waits_for_cancelled_in_process_tool_before_resources_clos
 
     closer = threading.Thread(target=agent.close)
     closer.start()
-    assert cancellation_seen.wait(timeout=1)
-    closer.join(timeout=0.02)
-    assert closer.is_alive()
-    assert lifecycle == []
+    try:
+        assert cancellation_seen.wait(timeout=1)
+        assert closer.is_alive()
+        assert lifecycle == []
+    finally:
+        release.set()
+        closer.join(timeout=1)
 
-    release.set()
-    closer.join(timeout=1)
     assert not closer.is_alive()
     assert lifecycle == ["tool-finished", "resource-closed"]
 

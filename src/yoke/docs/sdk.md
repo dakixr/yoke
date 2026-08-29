@@ -13,7 +13,7 @@ Embed yoke in Python with a small top-level surface and explicit submodules:
 ```python
 from yoke.ai import Agent, build_builtin_provider
 
-provider = build_builtin_provider("codex:gpt-5.5:medium")
+provider = build_builtin_provider("codex:gpt-5.6-sol:medium")
 agent = Agent(provider=provider)
 
 result = agent.prompt("Add type annotations to src/utils.py")
@@ -57,10 +57,10 @@ from yoke.ai import build_builtin_provider
 from yoke.ai.utils import print_builtin_provider_status
 
 print_builtin_provider_status()
-provider = build_builtin_provider("codex:gpt-5.5:medium")
+provider = build_builtin_provider("codex:gpt-5.6-sol:medium")
 ```
 
-The default SDK selection is `codex:gpt-5.5:medium`. Built-in providers are
+The default SDK selection is `codex:gpt-5.6-sol:medium`. Built-in providers are
 `codex`, `opencode-go`, and `zai`. The same helper also resolves global
 custom provider plugins under `~/.yoke/providers/`. Provider status includes
 credential readiness, model catalogs, context windows, thinking controls, and
@@ -90,7 +90,7 @@ from yoke.ai import Agent, build_builtin_provider
 
 async def main() -> None:
     agent = Agent(
-        provider=build_builtin_provider("codex:gpt-5.4-mini:low")
+        provider=build_builtin_provider("codex:gpt-5.6-sol:medium")
     )
     async with agent:
         result = await agent.prompt_async(
@@ -218,7 +218,7 @@ from yoke.ai import build_builtin_provider, run_many
 
 def make_agent(task: BatchTask) -> Agent:
     return Agent(
-        provider=build_builtin_provider("codex:gpt-5.4-mini:low"),
+        provider=build_builtin_provider("codex:gpt-5.6-sol:medium"),
         config=RunConfig(root=".", tools=[]),
     )
 
@@ -290,7 +290,7 @@ journals replay the reduced projection with the same logical cache scope.
 ```python
 from yoke.ai import Agent, RunConfig, build_builtin_provider
 
-provider = build_builtin_provider("codex:gpt-5.5:medium")
+provider = build_builtin_provider("codex:gpt-5.6-sol:medium")
 config = RunConfig(root=".")
 
 agent = Agent(provider=provider, config=config)

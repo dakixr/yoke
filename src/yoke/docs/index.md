@@ -87,7 +87,7 @@ yoke --headless "Add type annotations to src/utils.py"
 from yoke.ai import Agent, build_builtin_provider
 
 agent = Agent(
-    provider=build_builtin_provider("codex:gpt-5.5:medium"),
+    provider=build_builtin_provider("codex:gpt-5.6-sol:medium"),
 )
 
 result = agent.prompt("Add type annotations to src/utils.py")

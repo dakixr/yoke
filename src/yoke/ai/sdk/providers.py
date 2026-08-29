@@ -15,7 +15,7 @@ from yoke.ai.providers.resolution import list_provider_models
 from yoke.ai.providers.resolution import parse_provider_ref
 from yoke.ai.providers.resolution import provider_status
 
-DEFAULT_BUILTIN_PROVIDER_SELECTION = "codex:gpt-5.5:medium"
+DEFAULT_BUILTIN_PROVIDER_SELECTION = "codex:gpt-5.6-sol:medium"
 
 
 @dataclass(frozen=True, slots=True)

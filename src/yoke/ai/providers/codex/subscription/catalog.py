@@ -57,22 +57,6 @@ MODEL_CATALOG = (
         default_thinking_level="medium",
         supports_image_inputs=True,
     ),
-    ProviderModelInfo(
-        id="gpt-5.5",
-        display_name="GPT-5.5",
-        context_window_tokens=300_000,
-        thinking_levels=("low", "medium", "high", "xhigh"),
-        default_thinking_level="low",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="gpt-5.4-mini",
-        display_name="GPT-5.4 Mini",
-        context_window_tokens=300_000,
-        thinking_levels=("low", "medium", "high", "xhigh"),
-        default_thinking_level="xhigh",
-        supports_image_inputs=True,
-    ),
 )
 
 

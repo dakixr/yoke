@@ -36,8 +36,8 @@ def test_default_reasoning_effort_for_model_prefers_model_default() -> None:
 
 def test_compatible_reasoning_effort_falls_back_to_model_default() -> None:
     model = ProviderModelInfo(
-        id="glm-5.2",
-        display_name="GLM-5.2",
+        id="test-reasoning-model",
+        display_name="Test reasoning model",
         context_window_tokens=1_000_000,
         thinking_levels=("none", "thinking"),
         default_thinking_level="thinking",
@@ -63,15 +63,15 @@ def test_set_config_model_applies_model_default_reasoning() -> None:
     config = _Config()
     models = (
         ProviderModelInfo(
-            id="gpt-5.4-mini",
-            display_name="GPT-5.4 Mini",
+            id="model-xhigh",
+            display_name="Model XHigh",
             context_window_tokens=400_000,
             thinking_levels=("none", "low", "medium", "high", "xhigh"),
             default_thinking_level="xhigh",
         ),
         ProviderModelInfo(
-            id="gpt-5.5",
-            display_name="GPT-5.5",
+            id="model-low",
+            display_name="Model Low",
             context_window_tokens=400_000,
             thinking_levels=("none", "low", "medium", "high", "xhigh"),
             default_thinking_level="low",
@@ -82,26 +82,26 @@ def test_set_config_model_applies_model_default_reasoning() -> None:
         config,
         models,
         provider_name="codex",
-        model_id="gpt-5.4-mini",
+        model_id="model-xhigh",
     )
-    assert config.model == "gpt-5.4-mini"
+    assert config.model == "model-xhigh"
     assert config.reasoning_effort == "xhigh"
 
     set_config_model_from_catalog(
         config,
         models,
         provider_name="codex",
-        model_id="gpt-5.5",
+        model_id="model-low",
     )
-    assert config.model == "gpt-5.5"
+    assert config.model == "model-low"
     assert config.reasoning_effort == "low"
 
     set_config_model_from_catalog(
         config,
         models,
         provider_name="codex",
-        model_id="gpt-5.4-mini",
+        model_id="model-xhigh",
         reasoning_effort="max",
     )
-    assert config.model == "gpt-5.4-mini"
+    assert config.model == "model-xhigh"
     assert config.reasoning_effort == "xhigh"

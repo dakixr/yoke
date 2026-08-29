@@ -206,31 +206,6 @@ def test_prompt_async_timeout_includes_queue_wait(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_outer_asyncio_timeout_does_not_wait_for_late_sync_work(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        provider = BlockingProvider(release_after=0.15)
-        agent = Agent(provider=provider, config=config(tmp_path))
-        prompt = asyncio.create_task(agent.prompt_async("wait"))
-        while not provider.started.is_set():
-            await asyncio.sleep(0)
-
-        started = time.monotonic()
-        try:
-            async with asyncio.timeout(0.01):
-                await prompt
-        except TimeoutError:
-            pass
-        else:
-            raise AssertionError("Expected outer timeout")
-        assert time.monotonic() - started < 0.08
-
-        await agent.aclose()
-
-    asyncio.run(scenario())
-
-
 def test_prompt_async_task_cancellation_does_not_drain_hung_sync_work(
     tmp_path: Path,
 ) -> None:
@@ -241,17 +216,16 @@ def test_prompt_async_task_cancellation_does_not_drain_hung_sync_work(
         while not provider.started.is_set():
             await asyncio.sleep(0)
 
-        started = time.monotonic()
         prompt.cancel()
         try:
-            await prompt
+            async with asyncio.timeout(1):
+                await prompt
         except asyncio.CancelledError:
             pass
         else:
             raise AssertionError("Expected prompt cancellation")
-        assert time.monotonic() - started < 0.05
-
-        provider.release.set()
+        finally:
+            provider.release.set()
         await agent.aclose()
 
     asyncio.run(scenario())

@@ -19,43 +19,19 @@ ENV_API_KEY = "OPENCODE_API_KEY"
 OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
 
 DEEPSEEK_THINKING_LEVELS = ("high", "max")
-GLM_THINKING_LEVELS = ("none", "high", "max")
 GLM_53_THINKING_LEVELS = ("low", "high", "max")
-GROK_THINKING_LEVELS = ()
 KIMI_THINKING_LEVELS = ()
 LUNA_THINKING_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
-MUSE_SPARK_THINKING_LEVELS = ("low", "medium", "high", "xhigh")
 
 MODEL_PROTOCOLS = {
     "gpt-5.6-luna": "responses",
-    "glm-5.2": "openai",
-    "glm-5.3": "openai",
     "glm-5.3-flash": "openai",
     "deepseek-v4-flash": "openai",
-    "grok-4.5": "openai",
     "kimi-k2.7-code": "openai",
     "deepseek-v4-pro": "openai",
-    "muse-spark-1.2": "openai",
-    "muse-spark-1.2-contributor": "openai",
 }
 
 MODEL_CATALOG = build_model_catalog(
-    ProviderModelInfo(
-        id="gpt-5.6-luna",
-        display_name="GPT-5.6 Luna",
-        context_window_tokens=400_000,
-        thinking_levels=LUNA_THINKING_LEVELS,
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="glm-5.2",
-        display_name="GLM-5.2",
-        context_window_tokens=400_000,
-        thinking_levels=GLM_THINKING_LEVELS,
-        default_thinking_level="max",
-        supports_image_inputs=False,
-    ),
     ProviderModelInfo(
         id="glm-5.3-flash",
         display_name="GLM-5.3-Flash",
@@ -65,19 +41,11 @@ MODEL_CATALOG = build_model_catalog(
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
-        id="glm-5.3",
-        display_name="GLM-5.3",
+        id="gpt-5.6-luna",
+        display_name="GPT-5.6 Luna",
         context_window_tokens=400_000,
-        thinking_levels=GLM_53_THINKING_LEVELS,
-        default_thinking_level="max",
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
-        id="grok-4.5",
-        display_name="Grok 4.5",
-        context_window_tokens=400_000,
-        thinking_levels=GROK_THINKING_LEVELS,
-        default_thinking_level=None,
+        thinking_levels=LUNA_THINKING_LEVELS,
+        default_thinking_level="medium",
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -112,22 +80,6 @@ MODEL_CATALOG = build_model_catalog(
         default_thinking_level="high",
         supports_image_inputs=False,
     ),
-    ProviderModelInfo(
-        id="muse-spark-1.2",
-        display_name="Muse Spark 1.2",
-        context_window_tokens=1_000_000,
-        thinking_levels=MUSE_SPARK_THINKING_LEVELS,
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="muse-spark-1.2-contributor",
-        display_name="Muse Spark 1.2 Contributor",
-        context_window_tokens=1_000_000,
-        thinking_levels=MUSE_SPARK_THINKING_LEVELS,
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
 )
 
 OPENCODE_GO_REASONING_EFFORTS = (
@@ -159,7 +111,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
     return OpenCodeGoProvider(
         OpenCodeGoConfig(
             api_key=api_key,
-            model=_normalize_model_id(context.model or "kimi-k2.7-code"),
+            model=_normalize_model_id(context.model or "glm-5.3-flash"),
             timeout_seconds=float(env.get("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "900"),
             max_retries=int(env.get("YOKE_OPENCODE_GO_MAX_RETRIES") or "5"),
             reasoning_effort=(
@@ -173,7 +125,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
 
 class OpenCodeGoConfig(BaseModel):
     api_key: str
-    model: str = "kimi-k2.7-code"
+    model: str = "glm-5.3-flash"
     timeout_seconds: float = 900.0
     max_retries: int = 5
     retry_backoff_seconds: float = 1.0

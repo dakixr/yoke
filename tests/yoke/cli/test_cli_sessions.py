@@ -421,7 +421,7 @@ def test_session_store_fork_copies_session_without_pin(
         root=tmp_path,
         title="Source title",
         provider_name="codex",
-        model_id="gpt-5.5",
+        model_id="gpt-5.6-sol",
     )
     store.set_pinned("source", True)
     source_record = store.summary_record("source")
@@ -443,7 +443,7 @@ def test_session_store_fork_copies_session_without_pin(
     assert forked.title == "Source title (fork)"
     assert forked.pinned is False
     assert forked.provider_name == "codex"
-    assert forked.model_id == "gpt-5.5"
+    assert forked.model_id == "gpt-5.6-sol"
     assert forked.context_usage is None
     assert (session_dir / "forked.jsonl").exists()
 
@@ -494,7 +494,7 @@ def test_cli_fork_starts_from_source_session(
         root=tmp_path,
         title="CLI title",
         provider_name="codex",
-        model_id="gpt-5.5",
+        model_id="gpt-5.6-sol",
     )
 
     exit_code = run_cli(
@@ -541,9 +541,9 @@ def test_info_slash_command_prints_active_session_metadata(
         root=tmp_path,
         title="Info demo",
         provider_name="codex",
-        model_id="gpt-5.5",
-        reasoning_effort="low",
-        context_window_tokens=300_000,
+        model_id="gpt-5.6-sol",
+        reasoning_effort="medium",
+        context_window_tokens=400_000,
     )
     active_session = create_active_session(
         CLIArgs(session="info-demo", root=str(tmp_path)),
@@ -567,8 +567,8 @@ def test_info_slash_command_prints_active_session_metadata(
     assert "Pinned: no" in output
     assert f"Path: {session_dir / 'info-demo.jsonl'}" in output
     assert "Provider: codex" in output
-    assert "Model: gpt-5.5" in output
+    assert "Model: gpt-5.6-sol" in output
     assert "Messages: 2" in output
     assert "Conversation entries: 2" in output
-    assert "Reasoning effort: low" in output
-    assert "Context window: 300000 tokens" in output
+    assert "Reasoning effort: medium" in output
+    assert "Context window: 400000 tokens" in output

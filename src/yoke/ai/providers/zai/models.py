@@ -9,7 +9,6 @@ from yoke.ai.providers.base import ProviderModelInfo
 
 PROVIDER_NAME = "zai"
 THINKING_LEVELS = ("none", "thinking")
-GLM_52_THINKING_LEVELS = ("none", "high", "max")
 GLM_53_THINKING_LEVELS = ("low", "high", "max")
 MODEL_CATALOG = (
     ProviderModelInfo(
@@ -19,22 +18,6 @@ MODEL_CATALOG = (
         thinking_levels=GLM_53_THINKING_LEVELS,
         default_thinking_level="max",
         supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="glm-5.3",
-        display_name="GLM-5.3",
-        context_window_tokens=1_000_000,
-        thinking_levels=GLM_53_THINKING_LEVELS,
-        default_thinking_level="max",
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
-        id="glm-5.2",
-        display_name="GLM-5.2",
-        context_window_tokens=1_000_000,
-        thinking_levels=GLM_52_THINKING_LEVELS,
-        default_thinking_level="max",
-        supports_image_inputs=False,
     ),
 )
 
@@ -54,7 +37,7 @@ def register_provider(context):
     return ZAIProvider(
         ZAIConfig(
             api_key=api_key,
-            model=context.model or "glm-5.2",
+            model=context.model or "glm-5.3-flash",
             reasoning_effort=context.reasoning_effort,
             debug_log_path=env.get("ZAI_DEBUG_LOG_PATH") or None,
         )
@@ -65,7 +48,7 @@ class ZAIConfig(BaseModel):
     """Configuration for the native Z.AI coding provider."""
 
     api_key: str
-    model: str = "glm-5.2"
+    model: str = "glm-5.3-flash"
     # This key is for the Z.AI Coding Plan; the regular paas endpoint can
     # reject it even when the token is valid for coding-plan traffic.
     base_url: str = "https://api.z.ai/api/coding/paas/v4"
@@ -120,14 +103,8 @@ class ZAIChatCompletionResponse(BaseModel):
 def _thinking_config(
     model: str, reasoning_effort: str | None
 ) -> dict[str, object] | None:
-    if model in {"glm-5.3", "glm-5.3-flash"}:
+    if model == "glm-5.3-flash":
         return {"type": "enabled", "clear_thinking": True}
-    if model == "glm-5.2":
-        normalized = reasoning_effort.strip().lower() if reasoning_effort else "max"
-        return {
-            "type": "disabled" if normalized == "none" else "enabled",
-            "clear_thinking": True,
-        }
     if reasoning_effort is None:
         return None
     normalized = reasoning_effort.strip().lower()

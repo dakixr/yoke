@@ -229,7 +229,7 @@ def test_cross_provider_switch_uses_target_model_default_effort(
     state = switch_agent_provider_model(
         agent,
         args=CLIArgs(root=str(tmp_path)),
-        qualified_model_id="zai:glm-5.2",
+        qualified_model_id="zai:glm-5.3-flash",
         reasoning_effort="medium",
     )
 
@@ -341,7 +341,7 @@ def test_model_selector_catalog_includes_codex_models(
     )
 
     qualified_ids = {choice.qualified_id for choice in choices}
-    assert "codex:gpt-5.5" in qualified_ids
+    assert "codex:gpt-5.6-sol" in qualified_ids
     assert "codex:gpt-5.6-luna" in qualified_ids
     assert "codex:gpt-5.6-terra" in qualified_ids
 
@@ -356,8 +356,8 @@ def test_model_selector_catalog_includes_open_provider_models(
 
     qualified_ids = {choice.qualified_id for choice in choices}
     assert "opencode-go:gpt-5.6-luna" in qualified_ids
-    assert "opencode-go:kimi-k2.7-code" in qualified_ids
-    assert "zai:glm-5.2" in qualified_ids
+    assert "opencode-go:glm-5.3-flash" in qualified_ids
+    assert "zai:glm-5.3-flash" in qualified_ids
 
 
 def test_model_switch_keeps_bounded_user_epoch_for_equal_window() -> None:
