@@ -1,6 +1,8 @@
 import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
+import { LocationPicker } from "./location-picker.js";
+import { ModelSelectionControl } from "./model-picker.js";
 import {
   applySlashCompletion,
   handleSlashMenuKey,
@@ -162,7 +164,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
 
   return html`<div class="composer-region">
     <div class="composer-meta-row">
-      <${SelectionControls} directory=${session.location.directory} selection=${session.selection} sessionID=${sessionID} disabled=${!connected || running} />
+      <${ModelSelectionControl} directory=${session.location.directory} selection=${session.selection} sessionID=${sessionID} disabled=${!connected || running} />
       <${ContextWindowUsage} sessionID=${sessionID} directory=${session.location.directory} selection=${session.selection} usage=${data?.contextUsage ?? session.contextUsage} />
     </div>
     ${attentionCount ? html`<div class="composer-attention-note">Resolve the required ${attentionCount === 1 ? "action" : "actions"} above. You can still queue a follow-up here.</div>` : null}
@@ -334,11 +336,8 @@ export function DraftComposer({ draftID, draft }) {
   });
   return html`<div class="draft-composer-wrap">
     <div class="draft-hero"><div class="draft-hero__eyebrow">New session</div><h1>What should Yoke work on?</h1><p>The session is created only when you send.</p></div>
-    <div class="draft-location">
-      <label>Working location<input list="recent-locations" value=${value.location || ""} placeholder="/path/to/project" onInput=${(event) => update({ location: event.currentTarget.value })} /></label>
-      <datalist id="recent-locations">${recentLocations.map((item) => html`<option value=${item.directory}></option>`)}</datalist>
-    </div>
-    <${SelectionControls} directory=${value.location} selection=${{ provider: value.provider, model: value.model, reasoningEffort: value.reasoningEffort }} onDraftChange=${(selection) => update(selection)} />
+    <div class="draft-location"><${LocationPicker} value=${value.location || ""} recentLocations=${recentLocations} onChange=${(location) => update({ location })} /></div>
+    <${ModelSelectionControl} directory=${value.location} selection=${{ provider: value.provider, model: value.model, reasoningEffort: value.reasoningEffort }} onDraftChange=${(selection) => update(selection)} />
     <div class="composer-shell-wrap">
       <${SlashCompletionMenu} items=${slashMenu.items} activeIndex=${slashMenu.activeIndex} loading=${slashMenu.loading} onChoose=${chooseSlash} />
       <div
@@ -546,58 +545,4 @@ function formatTokenCount(value) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}k`;
   return String(value);
-}
-
-function SelectionControls({ directory, selection, sessionID = null, onDraftChange = null, disabled = false }) {
-  const bootstrapProviders = useStore((state) => state.providers);
-  const providerCatalog = useStore((state) => state.providerCatalogs?.[directory || ""] || null);
-  const modelsMap = useStore((state) => state.models || {});
-  const [provider, setProvider] = useState(selection?.provider || "");
-  const [model, setModel] = useState(selection?.model || "");
-  const [effort, setEffort] = useState(selection?.reasoningEffort || "");
-  const providers = providerCatalog || bootstrapProviders;
-  const modelKey = `${directory || ""}:${provider || ""}:`;
-  const models = modelsMap[modelKey] || [];
-  const selectedModel = models.find((item) => item.id === model);
-
-  useEffect(() => {
-    setProvider(selection?.provider || "");
-    setModel(selection?.model || "");
-    setEffort(selection?.reasoningEffort || "");
-  }, [selection?.provider, selection?.model, selection?.reasoningEffort, sessionID]);
-  useEffect(() => { if (directory) void controller.loadProviders(directory); }, [directory]);
-  useEffect(() => { if (directory && provider) void controller.loadModels(directory, provider); }, [directory, provider]);
-
-  const applyDraft = (next) => onDraftChange?.({ provider: next.provider, model: next.model, reasoningEffort: next.effort });
-  const selectProvider = (nextProvider) => {
-    const info = providers.find((item) => item.id === nextProvider);
-    const nextModel = info?.currentModel || "";
-    const nextEffort = info?.currentReasoningEffort || "";
-    setProvider(nextProvider); setModel(nextModel); setEffort(nextEffort);
-    if (sessionID && nextProvider && nextModel) void controller.setSelection(sessionID, nextProvider, nextModel, nextEffort);
-    else applyDraft({ provider: nextProvider, model: nextModel, effort: nextEffort });
-  };
-  const selectModel = (nextModel) => {
-    const info = models.find((item) => item.id === nextModel);
-    const nextEffort = info?.reasoningEfforts?.includes(effort) ? effort : info?.reasoningEfforts?.[0] || "";
-    setModel(nextModel); setEffort(nextEffort);
-    if (sessionID && provider && nextModel) void controller.setSelection(sessionID, provider, nextModel, nextEffort);
-    else applyDraft({ provider, model: nextModel, effort: nextEffort });
-  };
-  const selectEffort = (nextEffort) => {
-    setEffort(nextEffort);
-    if (sessionID && provider && model) void controller.setSelection(sessionID, provider, model, nextEffort);
-    else applyDraft({ provider, model, effort: nextEffort });
-  };
-  return html`<div class="selection-controls" aria-label="Model selection">
-    <select value=${provider} disabled=${disabled} aria-label="Provider" onChange=${(event) => selectProvider(event.currentTarget.value)}>
-      <option value="">Provider</option>${providers.map((item) => html`<option value=${item.id} disabled=${!item.ready}>${item.id}${item.ready ? "" : " · unavailable"}</option>`)}
-    </select>
-    <select value=${model} disabled=${disabled || !provider} aria-label="Model" onChange=${(event) => selectModel(event.currentTarget.value)}>
-      <option value="">Model</option>${models.map((item) => html`<option value=${item.id}>${item.name || item.id}</option>`)}
-    </select>
-    <select value=${effort} disabled=${disabled || !selectedModel?.reasoningEfforts?.length} aria-label="Reasoning effort" onChange=${(event) => selectEffort(event.currentTarget.value)}>
-      <option value="">Effort</option>${(selectedModel?.reasoningEfforts || []).map((value) => html`<option value=${value}>${value}</option>`)}
-    </select>
-  </div>`;
 }

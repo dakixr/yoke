@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from threading import RLock
+import time
+from typing import cast
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from yoke.agent.loop import RuntimeAgent
@@ -84,6 +88,27 @@ class SwitchableProvider:
             self.config.reasoning_effort = reasoning_effort
 
 
+class DelayedTitleProvider(SwitchableProvider):
+    def __init__(self, title_started: Event, title_release: Event) -> None:
+        super().__init__()
+        self.title_started = title_started
+        self.title_release = title_release
+
+    def complete(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+    ) -> Message:
+        del tools
+        last = (messages[-1].plain_text_content or "") if messages else ""
+        if last.startswith("Create a concise title"):
+            self.title_started.set()
+            if not self.title_release.wait(2):
+                raise TimeoutError("title test gate was not released")
+            return Message.assistant("generated title")
+        return Message.assistant("turn response")
+
+
 def _factory(_record: SessionRecord) -> RuntimeAgent:
     return RuntimeAgent(provider=SwitchableProvider(), tools=[])
 
@@ -117,11 +142,23 @@ def _create_session(client: TestClient, root: Path) -> None:
     assert response.status_code == 200
 
 
-def test_selection_switches_runtime_and_persists_metadata(tmp_path: Path) -> None:
+def test_selection_switches_runtime_and_persists_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     with _client(tmp_path) as client:
         _create_session(client, root)
+        event_service = cast(FastAPI, client.app).state.event_service
+        original_live = event_service.live
+        live_events: list[tuple[str, dict[str, object]]] = []
+
+        def capture_live(event_type, data, **kwargs):
+            live_events.append((event_type, data))
+            return original_live(event_type, data, **kwargs)
+
+        monkeypatch.setattr(event_service, "live", capture_live)
 
         selected = client.post(
             "/api/v1/session/session-a/selection",
@@ -156,6 +193,10 @@ def test_selection_switches_runtime_and_persists_metadata(tmp_path: Path) -> Non
             headers=_auth(),
         ).json()["data"]
         assert "session.selection.changed" in [item["type"] for item in history]
+        assert not any(
+            event_type == "session.active.changed" and data.get("state") == "running"
+            for event_type, data in live_events
+        )
 
 
 def test_manual_compaction_is_scheduled_and_waitable(tmp_path: Path) -> None:
@@ -232,3 +273,133 @@ def test_title_regeneration_uses_saved_conversation_and_persists(
             item["type"] == "session.updated" and item["data"]["title"] == "summary"
             for item in history
         )
+
+
+def test_first_prompt_automatically_generates_title(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    with _client(tmp_path) as client:
+        _create_session(client, root)
+
+        admitted = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "Improve the sidebar menu"}},
+        )
+        assert admitted.status_code == 200
+        waited = client.post(
+            "/api/v1/session/session-a/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+
+        deadline = time.monotonic() + 2
+        title = None
+        while time.monotonic() < deadline:
+            title = client.get(
+                "/api/v1/session/session-a",
+                headers=_auth(),
+            ).json()["data"]["title"]
+            if title is not None:
+                break
+            time.sleep(0.01)
+
+        assert title == "summary"
+        history = client.get(
+            "/api/v1/session/session-a/history",
+            headers=_auth(),
+        ).json()["data"]
+        assert any(
+            item["type"] == "session.updated" and item["data"]["title"] == "summary"
+            for item in history
+        )
+
+
+def test_first_prompt_does_not_replace_explicit_title(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    with _client(tmp_path) as client:
+        created = client.post(
+            "/api/v1/session",
+            headers=_auth(),
+            json={
+                "id": "session-a",
+                "location": {"directory": str(root)},
+                "title": "Keep this title",
+                "selection": {
+                    "provider": "demo",
+                    "model": "gpt-a",
+                    "reasoningEffort": "medium",
+                },
+            },
+        )
+        assert created.status_code == 200
+        admitted = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "Improve the sidebar menu"}},
+        )
+        assert admitted.status_code == 200
+        waited = client.post(
+            "/api/v1/session/session-a/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        session = client.get(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+        ).json()["data"]
+        assert session["title"] == "Keep this title"
+
+
+def test_manual_title_cancels_inflight_automatic_title(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    title_started = Event()
+    title_release = Event()
+
+    def factory(_record: SessionRecord) -> RuntimeAgent:
+        return RuntimeAgent(
+            provider=DelayedTitleProvider(title_started, title_release),
+            tools=[],
+        )
+
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=factory,
+        )
+    )
+    with TestClient(app) as client:
+        _create_session(client, root)
+        admitted = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "Improve the sidebar menu"}},
+        )
+        assert admitted.status_code == 200
+        assert title_started.wait(1)
+
+        renamed = client.patch(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+            json={"title": "Manual title"},
+        )
+        assert renamed.status_code == 200
+        title_release.set()
+        waited = client.post(
+            "/api/v1/session/session-a/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        time.sleep(0.05)
+
+        session = client.get(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+        ).json()["data"]
+        assert session["title"] == "Manual title"

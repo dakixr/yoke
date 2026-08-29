@@ -42,7 +42,9 @@ def _fastapi(client: TestClient) -> FastAPI:
     return cast(FastAPI, client.app)
 
 
-def _save_conversation(client: TestClient, root: Path, session_id: str) -> tuple[str, str]:
+def _save_conversation(
+    client: TestClient, root: Path, session_id: str
+) -> tuple[str, str]:
     assistant = Message.assistant("world")
     assistant.reasoning_content = "private reasoning"
     assistant.reasoning_signature = "private signature"
@@ -300,6 +302,87 @@ def test_session_list_and_recent_locations_skip_request_path_maintenance(
     assert recent.json()["data"] == [{"directory": str(root.resolve())}]
 
 
+def test_location_browse_autocompletes_real_directories(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    alpha = root / "alpha"
+    alpine = root / "alpine"
+    hidden = root / ".secret"
+    alpha.mkdir()
+    alpine.mkdir()
+    hidden.mkdir()
+    (root / "also-a-file.txt").write_text("not a directory\n", encoding="utf-8")
+
+    partial = client.get(
+        "/api/v1/location/browse",
+        headers=_auth(),
+        params={"path": str(root / "al")},
+    )
+    assert partial.status_code == 200
+    partial_data = partial.json()["data"]
+    assert partial_data["browseDirectory"] == str(root.resolve())
+    assert partial_data["selectableDirectory"] is None
+    assert [item["name"] for item in partial_data["entries"]] == ["alpha", "alpine"]
+
+    exact = client.get(
+        "/api/v1/location/browse",
+        headers=_auth(),
+        params={"path": str(alpha)},
+    )
+    assert exact.status_code == 200
+    assert exact.json()["data"]["selectableDirectory"] == str(alpha.resolve())
+
+    children = client.get(
+        "/api/v1/location/browse",
+        headers=_auth(),
+        params={"path": f"{root}/"},
+    )
+    assert children.status_code == 200
+    assert ".secret" not in [
+        item["name"] for item in children.json()["data"]["entries"]
+    ]
+
+    hidden_prefix = client.get(
+        "/api/v1/location/browse",
+        headers=_auth(),
+        params={"path": f"{root}/."},
+    )
+    assert hidden_prefix.status_code == 200
+    assert [item["name"] for item in hidden_prefix.json()["data"]["entries"]] == [
+        ".secret"
+    ]
+
+
+def test_location_browse_expands_home_and_rejects_relative_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = _client(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "dev").mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    browsed = client.get(
+        "/api/v1/location/browse",
+        headers=_auth(),
+        params={"path": "~/d"},
+    )
+    assert browsed.status_code == 200
+    assert browsed.json()["data"]["entries"] == [
+        {"name": "dev", "directory": str((home / "dev").resolve())}
+    ]
+
+    relative = client.get(
+        "/api/v1/location/browse",
+        headers=_auth(),
+        params={"path": "./dev"},
+    )
+    assert relative.status_code == 400
+    assert relative.json()["error"]["code"] == "location_path_not_absolute"
+
+
 def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
@@ -480,7 +563,9 @@ def test_session_search_matches_working_directory(tmp_path: Path) -> None:
     assert [item["id"] for item in searched.json()["data"]] == ["session-a"]
 
 
-def test_message_and_tree_projection_strip_provider_private_fields(tmp_path: Path) -> None:
+def test_message_and_tree_projection_strip_provider_private_fields(
+    tmp_path: Path,
+) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
@@ -507,7 +592,9 @@ def test_message_and_tree_projection_strip_provider_private_fields(tmp_path: Pat
     assert tree.json()["data"]["entries"][-1]["active"] is True
 
 
-def test_fork_from_entry_selects_requested_branch_without_mutating_source(tmp_path: Path) -> None:
+def test_fork_from_entry_selects_requested_branch_without_mutating_source(
+    tmp_path: Path,
+) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
@@ -723,9 +810,12 @@ def test_skill_catalog_and_activation_persist_tree_state(tmp_path: Path) -> None
         headers=_auth(),
     ).json()["data"]
     assert [item["name"] for item in session_skills["active"]] == ["reviewer"]
-    assert next(
-        item for item in session_skills["available"] if item["name"] == "reviewer"
-    )["active"] is True
+    assert (
+        next(
+            item for item in session_skills["available"] if item["name"] == "reviewer"
+        )["active"]
+        is True
+    )
 
     tree = client.get(
         "/api/v1/session/skill-session/tree",
@@ -908,10 +998,13 @@ def test_permission_and_question_routes_resolve_worker_waits(tmp_path: Path) -> 
     permission_resolution = service.wait_permission(permission.id, 0.1)
     assert permission_resolution.reply == "allow"
     assert permission_resolution.message == "approved in browser"
-    assert client.get(
-        "/api/v1/session/human-input-session/permission",
-        headers=_auth(),
-    ).json()["data"] == []
+    assert (
+        client.get(
+            "/api/v1/session/human-input-session/permission",
+            headers=_auth(),
+        ).json()["data"]
+        == []
+    )
 
     question = service.create_question(
         "human-input-session",
@@ -942,7 +1035,9 @@ def test_permission_and_question_routes_resolve_worker_waits(tmp_path: Path) -> 
     assert question_resolution.rejected is False
 
 
-def test_mcp_session_policy_is_typed_and_does_not_expose_secrets(tmp_path: Path) -> None:
+def test_mcp_session_policy_is_typed_and_does_not_expose_secrets(
+    tmp_path: Path,
+) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
     config_dir = root / ".yoke"
@@ -1176,6 +1271,4 @@ def test_tool_trace_http_redacts_secrets_and_uses_output_sequence_cursor(
         params={"afterSeq": 1},
     )
     assert output.status_code == 200
-    assert output.json()["data"] == [
-        {"seq": 2, "stream": "stdout", "text": "two"}
-    ]
+    assert output.json()["data"] == [{"seq": 2, "stream": "stdout", "text": "two"}]

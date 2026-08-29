@@ -76,6 +76,9 @@ export class YokeApi {
   resolveLocation(directory) {
     return this.request(`/api/v1/location${queryString({ directory })}`);
   }
+  browseLocations(path, limit = 80) {
+    return this.request(`/api/v1/location/browse${queryString({ path, limit })}`);
+  }
   providers(directory) {
     return this.request(`/api/v1/provider${queryString({ directory })}`);
   }

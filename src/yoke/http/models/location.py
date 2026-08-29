@@ -24,3 +24,19 @@ class LocationResponse(ApiModel):
 class RecentLocationsResponse(ApiModel):
     data: list[LocationInfo]
 
+
+class LocationBrowseEntry(ApiModel):
+    name: str
+    directory: str
+
+
+class LocationBrowseResult(ApiModel):
+    browse_directory: str
+    parent_directory: str | None
+    selectable_directory: str | None
+    separator: str
+    entries: list[LocationBrowseEntry]
+
+
+class LocationBrowseResponse(ApiModel):
+    data: LocationBrowseResult

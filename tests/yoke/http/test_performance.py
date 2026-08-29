@@ -135,6 +135,29 @@ def test_message_offset_index_catches_up_append_without_full_record_load(
     assert _projected_text(refreshed.data[0]) == "new tail"
 
 
+def test_message_offset_index_keeps_leaf_across_unrelated_metadata(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "sessions")
+    record = store.save("session", _messages(20, payload=256), root=tmp_path)
+    service = SessionService(store)
+    initial = service.message_index._ensure("session")
+    assert initial is not None
+    assert initial.leaf_id == record.leaf_id
+
+    summary = store.summary_record("session")
+    assert summary is not None
+    store.set_title("session", "Renamed", existing_record=summary)
+
+    refreshed = service.message_index._ensure("session")
+    assert refreshed is not None
+    assert refreshed.leaf_id == record.leaf_id
+    page = service.messages("session", limit=10, order="desc", cursor=None)
+    assert len(page.data) == 10
+    tree = service.tree("session", limit=100, cursor=None)
+    assert tree.data.leaf_id == record.leaf_id
+
+
 def test_read_cache_replays_in_place_store_append_exactly_once(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "sessions")
     original = _messages(200, payload=1024)
@@ -164,6 +187,44 @@ def test_read_cache_replays_in_place_store_append_exactly_once(tmp_path: Path) -
     owned[-1].metadata["owned-test"] = True
     assert after.active_path_entries[-1].parent_id is not None
     assert "owned-test" not in after.active_path_entries[-1].metadata
+
+
+def test_read_cache_rehydrates_active_skills_from_append_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = SessionStore(tmp_path / "sessions")
+    original = _messages(20, payload=256)
+    store.save("large", original, root=tmp_path)
+    cache = SessionReadCache(store)
+    before = cache.get("large")
+    skill = ActiveSkill(
+        name="demo",
+        activation_id="activation-1",
+        description="Demo skill",
+        source_path="<inline>",
+        content="# Demo",
+    )
+
+    store.save(
+        "large",
+        [*before.record.messages, Message.user("new tail")],
+        root=tmp_path,
+        active_skills=[skill],
+        existing_record=before.record,
+    )
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("append refresh must not deserialize the old session")
+
+    monkeypatch.setattr(store, "load", fail)
+    after = cache.get("large")
+
+    assert [item.name for item in after.record.active_skills] == ["demo"]
+    assert all(isinstance(item, ActiveSkill) for item in after.record.active_skills)
+    assert [item.model_copy(deep=True).name for item in after.record.active_skills] == [
+        "demo"
+    ]
 
 
 def test_live_tool_polling_does_not_load_large_persisted_session(

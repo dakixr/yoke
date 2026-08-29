@@ -248,9 +248,10 @@ def scan(
                         return None
                     saw_header = True
                 elif payload_type == SESSION_METADATA_EVENT:
-                    value = payload.get("leaf_id")
-                    if value is None or isinstance(value, str):
-                        leaf_id = value
+                    if "leaf_id" in payload:
+                        value = payload.get("leaf_id")
+                        if value is None or isinstance(value, str):
+                            leaf_id = value
                 elif payload_type == SESSION_ENTRY_METADATA_EVENT:
                     entry_id = payload.get("entry_id")
                     if isinstance(entry_id, str) and entry_id in entries:

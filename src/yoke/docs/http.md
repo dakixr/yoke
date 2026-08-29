@@ -88,6 +88,8 @@ used by Cmd+V on macOS or Ctrl+V on other platforms. Composer keyboard behavior
 tracks the interactive CLI: Enter sends or steers, Tab queues, Shift+Tab cycles
 the model's reasoning effort, and Esc Esc interrupts. Shift+Enter, Ctrl+J, and
 Esc then Enter insert a newline; Ctrl+U removes the last pending image. The
+global Shift+Cmd+O shortcut on macOS, or Shift+Ctrl+O on Windows and Linux,
+creates a new session from anywhere in the web UI. The
 Ctrl+X chords also match the CLI for tools, processes, queue, model selection,
 and the session tree. `/shortcuts` and `?` show the browser shortcut summary.
 Alt+V is terminal-specific; browser clipboard security requires Cmd+V/Ctrl+V.
@@ -212,7 +214,8 @@ The v1 API currently exposes typed resources for:
 - managed process snapshots, output, stdin, interrupt, and terminate;
 - providers, models, reasoning effort metadata, skills, and skill activation;
 - MCP inspection and session-local MCP policy;
-- contained filesystem list, find, and read operations;
+- working-location browsing with real directory completion, plus contained
+  filesystem list, find, and read operations;
 - image uploads and durable prompt attachments;
 - process-local permission and question requests for future human-in-the-loop
   tools and providers;
@@ -232,6 +235,18 @@ follows the live tail until the user scrolls upward, then exposes an explicit
 "Jump to live" action instead of stealing the scroll position. Status facts,
 working directory, wrapping, stdin, interrupt, and terminate controls remain
 adjacent to that terminal surface.
+
+The new-session working-location control uses `GET /api/v1/location/browse`
+instead of a browser-native datalist. The endpoint accepts an absolute path or
+a path beginning with `~`, lists real child directories on the Yoke host, and
+returns the exact directory when the typed path is selectable. The web picker
+keeps recent session roots as a separate convenience list, supports keyboard
+navigation and explicit parent-folder traversal, hides dot-directories until
+the typed leaf begins with `.`, and discards stale browse responses when the
+user moves to another path before an older request finishes. A draft changes
+its actual working location only when the user chooses a recent root or uses
+an existing browsed folder, so partial path typing does not trigger provider
+catalog requests against invalid directories.
 
 `/session/active` includes a process-local `activity` label while work is in
 flight. It uses the same status state machine as the CLI (`Thinking`,
@@ -272,6 +287,16 @@ conversation sample. The resulting title is then persisted through the normal
 session patch/event path. The
 `sessionTitleRegeneration` capability flag indicates support.
 
+Untitled sessions use that same shared title generator automatically when the
+first prompt starts. Title generation runs alongside the turn, so prompt
+admission and model execution do not wait for it. The generator sees the saved
+conversation plus the newly promoted user message and uses the session's
+configured provider/model. Yoke publishes the result through the normal
+`session.updated` event. If generation returns no usable title, Yoke falls back
+to the first prompt text, matching the CLI behavior. A title supplied when the
+session is created, or one set manually before generation finishes, is left
+unchanged.
+
 ## Browser optimistic updates
 
 The packaged web client applies mutations locally when their immediate result
@@ -285,15 +310,39 @@ the prompt before admission completes. Compaction shows its local activity
 state immediately. Tree labels serialize revision-checked mutations while
 keeping the newest local label visible.
 
+Provider/model and reasoning-effort changes are serialized against prompt
+turns, but they are configuration mutations rather than agent activity. They do
+not publish a transient `running` session state, so changing effort does not
+replace the composer send controls or mark the session as Working.
+
 Normal prompt submission transfers the draft from the composer to the
 optimistic transcript before waiting for HTTP admission. The textarea is
 briefly locked during that admission boundary so the same prompt cannot remain
 visible in both the editor and chat. If admission fails, the browser removes
 the optimistic row and restores the exact text and attachments to the composer.
+Newly created sessions track message-snapshot hydration separately from local
+session metadata. Returning to a session that was created optimistically but
+never received an authoritative message page therefore reloads its transcript
+instead of treating an empty local message array as final.
 The regular composer grows with its text up to a compact height cap and offers
 an explicit larger editing mode for long prompts. The expand/compact control
 lives at the top-right of the composer itself; the larger mode raises only the
 local editor height limit and does not alter draft or submission semantics.
+Provider and model selection uses one searchable web picker rather than native
+browser selects. The picker loads the model catalog across providers, groups
+rows by provider, marks the current model, and shows context-window and
+thinking metadata in the same choice list. Arrow keys, Home/End, and
+PageUp/PageDown move the active model while keeping that row visible in the
+scrolling results list; Escape closes the picker and returns focus to its
+trigger. Reasoning effort remains adjacent
+as compact web buttons, so the entire model control uses one consistent custom
+interaction on desktop and mobile.
+When the responsive layout collapses the session sidebar, fine-pointer devices
+also expose it from the extreme left screen edge. The edge reveal is transient,
+uses a short hover delay to avoid accidental activation, stays open while the
+pointer is inside the sidebar, and closes after a brief leave grace period. The
+hamburger button still controls the normal persistent open state, and touch-only
+devices do not receive an invisible edge target.
 Above the composer, opposite the model selectors, a compact context-window ring
 shows the latest model-visible input usage as a percentage. Its tooltip includes
 the measured input/max token counts, remaining capacity, and explains that Yoke
@@ -364,11 +413,14 @@ remaining native browser UI.
 
 Tool activity uses the same split-pane model as the CLI inspector: a dense,
 searchable call list stays on the left while the selected call's detail remains
-visible on the right. The newest call is selected by default. Search selection
-and detail selection stay synchronized, even when older detail requests finish
-late. Status, turn/iteration, duration, arguments, executed arguments, retained
-output, result, and surrounding context are shown as one readable detail
-document, with raw JSON and wrapping controls available when needed.
+visible on the right. The newest call is selected by default. A call opened from
+the chat timeline is only the initial selection; choosing another retained call
+consumes that deep-link hint and leaves the rest of the call list explorable.
+Search selection and detail selection stay synchronized, even when older detail
+requests finish late. Status, turn/iteration, duration, arguments, executed
+arguments, retained output, result, and surrounding context are shown as one
+readable detail document, with raw JSON and wrapping controls available when
+needed.
 
 The Tree inspector is optimized around moving the current conversation HEAD.
 It defaults to user and assistant message nodes only; tool, control, and other
@@ -379,7 +431,11 @@ and curved fork connectors. Active-path edges remain visually dominant while
 abandoned branches recede, and hidden technical nodes are bridged so
 message-only mode preserves the real topology. Opening Tree anchors on HEAD,
 `Jump to HEAD` returns there at any time, and loading older pages preserves the
-visible history position.
+visible history position. Tree rows use roving keyboard focus: Up/Down move
+chronologically, Home/End and PageUp/PageDown cover long histories, Left moves
+to the visible parent, Right moves to a visible child, and Enter/Space selects
+the focused node as a checkout target. Keyboard movement keeps the focused row
+inside the scroll viewport.
 
 Clicking any non-current row selects it as a `TARGET` and opens a checkout-style
 confirmation pane. The pane states how many active nodes will become abandoned,

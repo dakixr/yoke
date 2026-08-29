@@ -8,6 +8,7 @@ from fastapi import Query
 from fastapi import Request
 
 from yoke.http.auth import require_auth
+from yoke.http.models.location import LocationBrowseResponse
 from yoke.http.models.location import LocationResponse
 from yoke.http.models.location import RecentLocationsResponse
 from yoke.http.services.location_service import LocationService
@@ -20,7 +21,9 @@ def _service(request: Request) -> LocationService:
     return request.app.state.location_service
 
 
-@router.get("/location", response_model=LocationResponse, operation_id="resolveLocation")
+@router.get(
+    "/location", response_model=LocationResponse, operation_id="resolveLocation"
+)
 def resolve_location(
     request: Request,
     directory: str | None = Query(default=None),
@@ -36,3 +39,15 @@ def resolve_location(
 def recent_locations(request: Request) -> RecentLocationsResponse:
     return RecentLocationsResponse(data=_service(request).recent())
 
+
+@router.get(
+    "/location/browse",
+    response_model=LocationBrowseResponse,
+    operation_id="browseLocations",
+)
+def browse_locations(
+    request: Request,
+    path: str = Query(min_length=1, max_length=4096),
+    limit: int = Query(default=80, ge=1, le=200),
+) -> LocationBrowseResponse:
+    return LocationBrowseResponse(data=_service(request).browse(path, limit=limit))

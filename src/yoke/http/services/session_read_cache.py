@@ -6,9 +6,11 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Lock
 
+from pydantic import ValidationError
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
+from yoke.agent.skills.models import ActiveSkill
 from yoke.cli.session.io import SESSION_ENTRY_EVENT
 from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
 from yoke.cli.session.io import SESSION_METADATA_EVENT
@@ -202,6 +204,20 @@ class SessionReadCache:
                 replaced_topology = True
                 continue
             return None
+
+        # Metadata deltas are decoded from JSON, while model_copy(update=...)
+        # deliberately skips validation. Rehydrate nested models before the
+        # fast append path installs the delta into a typed SessionRecord.
+        if "active_skills" in changes:
+            raw_active_skills = changes["active_skills"]
+            if not isinstance(raw_active_skills, list):
+                return None
+            try:
+                changes["active_skills"] = [
+                    ActiveSkill.model_validate(skill) for skill in raw_active_skills
+                ]
+            except ValidationError:
+                return None
 
         record = prior.record.model_copy(
             update={

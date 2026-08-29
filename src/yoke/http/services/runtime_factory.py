@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Sequence
 from pathlib import Path
 
 from yoke.agent.loop.agent import RuntimeAgent
+from yoke.agent.models import Message
 from yoke.cli.config import CLIArgs
 from yoke.cli.config.runtime import build_cli_agent_from_args
 from yoke.cli.runtime.session import apply_session_defaults_to_args
@@ -13,6 +15,23 @@ from yoke.session import SessionRecord
 
 
 type SessionAgentFactory = Callable[[SessionRecord], object]
+
+
+def generate_http_session_title(
+    agent_factory: SessionAgentFactory,
+    record: SessionRecord,
+    messages: Sequence[Message],
+) -> str | None:
+    """Generate a title with the session's HTTP agent configuration."""
+    from yoke.session.title import generate_session_title
+
+    agent = agent_factory(record)
+    try:
+        return generate_session_title(agent, messages)
+    finally:
+        close = getattr(agent, "close", None)
+        if callable(close):
+            close()
 
 
 def build_http_session_agent(record: SessionRecord) -> RuntimeAgent:

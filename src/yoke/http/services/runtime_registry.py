@@ -13,6 +13,7 @@ from yoke.http.models.session import ActiveRuntimeInfo
 from yoke.http.errors import ApiError
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
+from yoke.http.services.runtime_factory import generate_http_session_title
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.session import SessionRecord
@@ -99,6 +100,12 @@ class SessionRuntimeRegistry:
     async def wake(self, session_id: str) -> None:
         await self.get_or_start(session_id).wake()
 
+    def cancel_automatic_title(self, session_id: str) -> None:
+        """Cancel automatic naming before an explicit title mutation."""
+        runtime = self.get_if_loaded(session_id)
+        if runtime is not None:
+            runtime.cancel_automatic_title()
+
     async def interrupt(self, session_id: str) -> tuple[bool, int | None]:
         runtime = self.get_if_loaded(session_id)
         if runtime is None:
@@ -172,16 +179,12 @@ class SessionRuntimeRegistry:
         return generated
 
     def _regenerate_title_sync(self, session_id: str) -> str | None:
-        from yoke.session.title import generate_session_title
-
         record = self.read_cache.get(session_id).record
-        agent = self.agent_factory(record)
-        try:
-            return generate_session_title(agent, record.messages)
-        finally:
-            close = getattr(agent, "close", None)
-            if callable(close):
-                close()
+        return generate_http_session_title(
+            self.agent_factory,
+            record,
+            record.messages,
+        )
 
     async def activate_skill(self, session_id: str, skill_name: str) -> ActiveSkill:
         """Activate one skill through the session controller."""

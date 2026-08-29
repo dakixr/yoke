@@ -31,6 +31,10 @@ const { store } = await import("../src/yoke/web/assets/js/state/store.js");
 const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
 const { assistantMetadataMessageIDs, compactToolBatchMessageIDs } = await import("../src/yoke/web/assets/js/lib/messages.js");
 const { displayTreeEntries, treeGraphLayout } = await import("../src/yoke/web/assets/js/inspector/tree-graph.js");
+const { treeKeyboardTarget } = await import("../src/yoke/web/assets/js/inspector/tree-keyboard.js");
+const { createLocationBrowseCoordinator, isLocationBrowseQuery } = await import("../src/yoke/web/assets/js/session/location-picker-logic.js");
+const { filterModelChoices, groupModelChoices, modelNavigationIndex, resolveModelEffort } = await import("../src/yoke/web/assets/js/session/model-picker-logic.js");
+const { installKeybindings } = await import("../src/yoke/web/assets/js/lib/keyboard.js");
 
 function deferred() {
   let resolve;
@@ -75,6 +79,7 @@ function installSession(id, { queue = null, permissions = [], questions = [], ex
       ...state.sessionData,
       [id]: {
         loaded: true,
+        messageSnapshotLoaded: true,
         messages: [],
         queue,
         permissions,
@@ -376,6 +381,43 @@ async function testToolDetailKeepsNewestSelection() {
   }
 }
 
+async function testToolTimelineDeepLinkDoesNotLockInspectorSelection() {
+  const id = "tool-deep-link-selection";
+  installSession(id, { extraData: { toolDetail: null } });
+  store.setState((state) => ({
+    ...state,
+    ui: {
+      ...state.ui,
+      selectedSessionID: id,
+      inspector: { mode: "tool", callID: "call-from-chat" },
+    },
+  }));
+  const oldGate = deferred();
+  const newGate = deferred();
+  const restore = restoreApi({
+    toolCall: (_sessionID, callID) => callID === "call-from-chat" ? oldGate.promise : newGate.promise,
+    toolOutput: async (_sessionID, callID) => ({
+      data: [{ text: `${callID} output` }],
+      cursor: { next: 0, truncatedBefore: 0 },
+    }),
+  });
+  try {
+    const initial = controller.loadToolCall(id, "call-from-chat");
+    const selected = controller.selectToolCall(id, "call-other");
+    assert.equal(store.getState().ui.inspector.callID, undefined);
+
+    newGate.resolve({ data: { id: "call-other", toolName: "other", status: "ok" } });
+    await selected;
+    oldGate.resolve({ data: { id: "call-from-chat", toolName: "original", status: "ok" } });
+    await initial;
+
+    assert.equal(store.getState().sessionData[id].toolDetail.id, "call-other");
+    assert.equal(store.getState().ui.inspector.callID, undefined);
+  } finally {
+    restore();
+  }
+}
+
 async function testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns() {
   const draftID = "draft-optimistic-send";
   store.setState((state) => ({
@@ -415,12 +457,47 @@ async function testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns() {
     assert.ok(createdID);
     const state = store.getState();
     assert.equal(state.ui.selectedSessionID, createdID);
-    assert.equal(state.sessions[createdID].title, "start immediately");
+    assert.equal(state.sessions[createdID].title, null);
+    assert.equal(state.sessionData[createdID].messageSnapshotLoaded, false);
     assert.equal(state.sessionData[createdID].livePrompt.prompt.text, "start immediately");
     assert.ok(state.drafts[draftID], "draft should survive until admission succeeds");
     admission.resolve({ data: { id: state.sessionData[createdID].livePrompt.id } });
     await pending;
     assert.equal(store.getState().drafts[draftID], undefined);
+  } finally {
+    restore();
+  }
+}
+
+async function testLoadSessionHydratesOptimisticEmptySession() {
+  const id = "optimistic-unhydrated-session";
+  installSession(id, { extraData: { messageSnapshotLoaded: false } });
+  let messageCalls = 0;
+  const restore = restoreApi({
+    messages: async () => {
+      messageCalls += 1;
+      return {
+        data: [{
+          id: "persisted-user",
+          type: "user",
+          content: [{ type: "text", text: "persisted history" }],
+          timeCreated: "2026-08-29T00:00:00Z",
+        }],
+        cursor: { previous: null, next: null },
+        snapshotSeq: 4,
+      };
+    },
+    queue: async () => ({ data: { revision: 0, items: [] } }),
+    permissions: async () => ({ data: [] }),
+    questions: async () => ({ data: [] }),
+    history: async () => ({ data: [], hasMore: false }),
+  });
+  try {
+    await controller.loadSession(id);
+    const data = store.getState().sessionData[id];
+    assert.equal(messageCalls, 1);
+    assert.equal(data.messageSnapshotLoaded, true);
+    assert.equal(data.messages[0].id, "persisted-user");
   } finally {
     restore();
   }
@@ -742,6 +819,104 @@ async function testTreeGraphBridgesHiddenTechnicalNodes() {
   assert.equal(graph.edges[0].childID, "assistant");
 }
 
+async function testLocationBrowseKeepsNewestNavigation() {
+  const coordinator = createLocationBrowseCoordinator();
+  const first = deferred();
+  const second = deferred();
+  const commits = [];
+  const firstRun = coordinator.run(() => first.promise, (value) => commits.push(value), () => {});
+  const secondRun = coordinator.run(() => second.promise, (value) => commits.push(value), () => {});
+  second.resolve("second");
+  assert.equal(await secondRun, true);
+  first.resolve("first");
+  assert.equal(await firstRun, false);
+  assert.deepEqual(commits, ["second"]);
+  assert.equal(isLocationBrowseQuery("~/dev/yo"), true);
+  assert.equal(isLocationBrowseQuery("/home/dakixr/dev"), true);
+  assert.equal(isLocationBrowseQuery("project-name"), false);
+}
+
+async function testCombinedModelPickerFiltersAcrossProviders() {
+  const providers = [
+    { id: "codex", ready: true },
+    { id: "zai", ready: false },
+  ];
+  const models = [
+    { provider: "codex", id: "gpt-5", name: "GPT 5", reasoningEfforts: ["low", "high"] },
+    { provider: "codex", id: "gpt-5-mini", name: "GPT 5 Mini", reasoningEfforts: ["low"] },
+    { provider: "zai", id: "glm", name: "GLM", reasoningEfforts: ["medium"] },
+  ];
+  const filtered = filterModelChoices(models, "gpt", providers);
+  assert.deepEqual(filtered.map((item) => item.id), ["gpt-5", "gpt-5-mini"]);
+  assert.deepEqual(groupModelChoices(filterModelChoices(models, "", providers)).map((group) => group.provider), ["codex", "zai"]);
+  assert.equal(filterModelChoices(models, "glm", providers)[0].providerReady, false);
+  assert.equal(resolveModelEffort(models[0], "high", "low"), "high");
+  assert.equal(resolveModelEffort(models[1], "high", "low"), "low");
+  assert.equal(modelNavigationIndex(0, 8, "ArrowUp"), 7);
+  assert.equal(modelNavigationIndex(7, 8, "ArrowDown"), 0);
+  assert.equal(modelNavigationIndex(3, 8, "Home"), 0);
+  assert.equal(modelNavigationIndex(3, 8, "End"), 7);
+  assert.equal(modelNavigationIndex(1, 8, "PageDown"), 6);
+  assert.equal(modelNavigationIndex(6, 8, "PageUp"), 1);
+}
+
+async function testTreeKeyboardNavigationFollowsVisibleTopology() {
+  const rows = [
+    { id: "root", graphParentID: null, active: true },
+    { id: "branch", graphParentID: "root", active: false },
+    { id: "current", graphParentID: "root", active: true, current: true },
+    { id: "tail", graphParentID: "current", active: true },
+  ];
+  assert.equal(treeKeyboardTarget(rows, "current", "ArrowUp"), "branch");
+  assert.equal(treeKeyboardTarget(rows, "current", "ArrowDown"), "tail");
+  assert.equal(treeKeyboardTarget(rows, "current", "ArrowLeft"), "root");
+  assert.equal(treeKeyboardTarget(rows, "root", "ArrowRight"), "current");
+  assert.equal(treeKeyboardTarget(rows, "branch", "Home"), "root");
+  assert.equal(treeKeyboardTarget(rows, "root", "End"), "tail");
+  assert.equal(treeKeyboardTarget(rows, "tail", "PageUp", { pageSize: 2 }), "branch");
+  assert.equal(treeKeyboardTarget(rows, "root", "PageDown", { pageSize: 2 }), "current");
+}
+
+async function testNewSessionGlobalShortcutSupportsMacAndWindows() {
+  let handler = null;
+  const originalAdd = document.addEventListener;
+  const originalRemove = document.removeEventListener;
+  document.addEventListener = (type, callback) => {
+    if (type === "keydown") handler = callback;
+  };
+  document.removeEventListener = (type, callback) => {
+    if (type === "keydown" && handler === callback) handler = null;
+  };
+  let created = 0;
+  const uninstall = installKeybindings({ newSession: () => { created += 1; } });
+  const fire = (overrides) => {
+    let prevented = false;
+    handler?.({
+      key: "o",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      preventDefault() { prevented = true; },
+      ...overrides,
+    });
+    return prevented;
+  };
+  try {
+    assert.equal(fire({ metaKey: true, shiftKey: true }), true);
+    assert.equal(created, 1);
+    assert.equal(fire({ ctrlKey: true, shiftKey: true }), true);
+    assert.equal(created, 2);
+    assert.equal(fire({ metaKey: true }), false);
+    assert.equal(fire({ ctrlKey: true, shiftKey: true, altKey: true }), false);
+    assert.equal(created, 2);
+  } finally {
+    uninstall();
+    document.addEventListener = originalAdd;
+    document.removeEventListener = originalRemove;
+  }
+}
+
 const tests = [
   testPromptAppearsBeforeAdmissionReturns,
   testPromptRollbackOnFailure,
@@ -751,7 +926,9 @@ const tests = [
   testSelectionAndToolTogglesKeepLatestClick,
   testProcessRefreshDoesNotRestoreAnOldSelection,
   testToolDetailKeepsNewestSelection,
+  testToolTimelineDeepLinkDoesNotLockInspectorSelection,
   testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns,
+  testLoadSessionHydratesOptimisticEmptySession,
   testCompactionShowsImmediatelyAndRollsBackFailure,
   testTreeLabelsSerializeAndKeepNewestOptimism,
   testLateDurableEventDoesNotClearNewerOptimisticPrompt,
@@ -763,6 +940,10 @@ const tests = [
   testSelectionEventClearsRecoveredContextUsage,
   testTreeGraphKeepsCurrentLaneAndSeparatesOverlappingBranches,
   testTreeGraphBridgesHiddenTechnicalNodes,
+  testLocationBrowseKeepsNewestNavigation,
+  testCombinedModelPickerFiltersAcrossProviders,
+  testTreeKeyboardNavigationFollowsVisibleTopology,
+  testNewSessionGlobalShortcutSupportsMacAndWindows,
 ];
 
 const started = performance.now();

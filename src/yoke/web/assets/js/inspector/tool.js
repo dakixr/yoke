@@ -31,7 +31,7 @@ export function ToolInspector({ sessionID, inspector, data }) {
     }
     if (detail && visible.some((call) => call.id === detail.id)) return;
     const newest = visible[0] || calls[0];
-    if (newest) void controller.loadToolCall(sessionID, newest.id).catch((error) => controller.notice(error?.message || String(error)));
+    if (newest) void controller.selectToolCall(sessionID, newest.id).catch((error) => controller.notice(error?.message || String(error)));
   }, [sessionID, inspector.callID, calls, detail?.id, search]);
 
   useEffect(() => {
@@ -78,7 +78,7 @@ export function ToolInspector({ sessionID, inspector, data }) {
           key=${call.id}
           role="listitem"
           class=${`tool-sidebar-row ${detail?.id === call.id ? "is-selected" : ""}`}
-          onClick=${() => controller.loadToolCall(sessionID, call.id)}
+          onClick=${() => controller.selectToolCall(sessionID, call.id)}
         >
           <span class=${`tool-sidebar-row__glyph tool-sidebar-row__glyph--${call.status}`} aria-hidden="true">${statusGlyph(call.status)}</span>
           <span class="tool-sidebar-row__main">

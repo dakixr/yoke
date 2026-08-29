@@ -49,6 +49,7 @@ from yoke.http.services.runtime_persistence import active_skill_list
 from yoke.http.services.runtime_persistence import input_has_terminal_assistant
 from yoke.http.services.runtime_persistence import input_is_persisted
 from yoke.http.services.runtime_persistence import tag_input_entry
+from yoke.http.services.runtime_title import SessionTitleAutomation
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
 from yoke.agent.activity import activity_status_for_event
@@ -71,6 +72,7 @@ class TurnExecution:
     stop_event: Event
     retired_event: Event
     cold_start: bool
+    automatic_title: bool
     append_persistence: RuntimeAppendPersistence | None = None
     context_usage: RuntimeContextUsageState = dataclass_field(
         default_factory=RuntimeContextUsageState
@@ -140,6 +142,16 @@ class SessionRuntime:
         self.tool_traces = ToolTraceStore()
         self._active: TurnExecution | None = None
         self._operation: SessionOperation | None = None
+        self._automatic_title = SessionTitleAutomation(
+            session_id,
+            store=store,
+            events=events,
+            read_cache=read_cache,
+            agent_factory=agent_factory,
+            executor=executor,
+            persistence_lock=self._persistence_lock,
+            user_message_factory=self._user_message_for_admission,
+        )
         self._turn_counter = 0
         self._state: RuntimeState = "idle"
         self._last_error: str | None = None
@@ -243,10 +255,6 @@ class SessionRuntime:
             self._require_no_work_locked()
             operation = self._new_operation("selection")
             self._operation = operation
-            self._state = "running"
-            self._last_error = None
-            self._activity_status = None
-            self._publish_activity(None)
             task = asyncio.create_task(
                 self._run_selection(
                     operation,
@@ -357,6 +365,7 @@ class SessionRuntime:
             )
         if operation_task is not None:
             await asyncio.shield(operation_task)
+        await self._automatic_title.close()
         async with self._lock:
             primary = self._primary_agent
             self._primary_agent = None
@@ -557,6 +566,10 @@ class SessionRuntime:
         """Return the newest process-local turn id without touching persistence."""
         return self._turn_counter
 
+    def cancel_automatic_title(self) -> None:
+        """Prevent an in-flight automatic title from replacing an explicit edit."""
+        self._automatic_title.cancel()
+
     def _record(self) -> SessionRecord:
         """Return the shared signature-consistent record snapshot for this session."""
         return self._snapshot().record
@@ -717,6 +730,10 @@ class SessionRuntime:
         cold_start = self._primary_agent is None and not self.read_cache.is_current(
             self.session_id
         )
+        summary = self.store.summary_record(self.session_id)
+        automatic_title = bool(
+            summary is not None and not summary.title and summary.leaf_id is None
+        )
         execution = TurnExecution(
             turn_id=self._turn_counter,
             admission=admission,
@@ -724,6 +741,7 @@ class SessionRuntime:
             stop_event=Event(),
             retired_event=Event(),
             cold_start=cold_start,
+            automatic_title=automatic_title,
         )
         self._active = execution
         self._state = "running"
@@ -786,13 +804,18 @@ class SessionRuntime:
                 self.executor,
                 self._execute_sync,
                 execution,
+                loop,
             )
             await self._finish_execution(execution, outcome)
         except asyncio.CancelledError:
             self._release_slot(execution)
             raise
 
-    def _execute_sync(self, execution: TurnExecution) -> TurnOutcome:
+    def _execute_sync(
+        self,
+        execution: TurnExecution,
+        loop: asyncio.AbstractEventLoop,
+    ) -> TurnOutcome:
         turn_agent: object | None = None
         try:
             indexed = (
@@ -821,6 +844,11 @@ class SessionRuntime:
                 execution.append_persistence = indexed.persistence
                 if record.root is not None:
                     self._event_location = record.root
+            if execution.automatic_title and not execution.retired_event.is_set():
+                loop.call_soon_threadsafe(
+                    self._automatic_title.start,
+                    execution.admission,
+                )
             if self._activity_status == "Loading session":
                 self._activity_status = "Thinking"
                 self._publish_activity(execution)

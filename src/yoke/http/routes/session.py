@@ -100,12 +100,14 @@ def get_session(request: Request, session_id: str) -> SessionResponse:
     response_model=SessionResponse,
     operation_id="patchSession",
 )
-def patch_session(
+async def patch_session(
     request: Request,
     session_id: str,
     body: SessionPatchRequest,
 ) -> SessionResponse:
     fields = body.model_fields_set
+    if "title" in fields:
+        _runtimes(request).cancel_automatic_title(session_id)
     return SessionResponse(
         data=_service(request).patch_session(
             session_id,
@@ -190,7 +192,9 @@ async def regenerate_session_title(
 ) -> SessionResponse:
     service = _service(request)
     service.get_session(session_id)
-    title = await _runtimes(request).regenerate_title(session_id)
+    runtimes = _runtimes(request)
+    runtimes.cancel_automatic_title(session_id)
+    title = await runtimes.regenerate_title(session_id)
     return SessionResponse(
         data=service.patch_session(
             session_id,

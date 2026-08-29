@@ -140,6 +140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/location/browse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse Locations */
+        get: operations["browseLocations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/location/recent": {
         parameters: {
             query?: never;
@@ -1219,6 +1236,30 @@ export interface components {
         /** InterruptResponse */
         InterruptResponse: {
             data: components["schemas"]["InterruptData"];
+        };
+        /** LocationBrowseEntry */
+        LocationBrowseEntry: {
+            /** Directory */
+            directory: string;
+            /** Name */
+            name: string;
+        };
+        /** LocationBrowseResponse */
+        LocationBrowseResponse: {
+            data: components["schemas"]["LocationBrowseResult"];
+        };
+        /** LocationBrowseResult */
+        LocationBrowseResult: {
+            /** Browsedirectory */
+            browseDirectory: string;
+            /** Entries */
+            entries: components["schemas"]["LocationBrowseEntry"][];
+            /** Parentdirectory */
+            parentDirectory: string | null;
+            /** Selectabledirectory */
+            selectableDirectory: string | null;
+            /** Separator */
+            separator: string;
         };
         /**
          * LocationInfo
@@ -2576,6 +2617,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LocationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browseLocations: {
+        parameters: {
+            query: {
+                path: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationBrowseResponse"];
                 };
             };
             /** @description Validation Error */

@@ -5,7 +5,7 @@ import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
 import { SessionContextMenu } from "./session-context-menu.js";
 
-export function Sidebar() {
+export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave = null, onTransientClose = null }) {
   const open = useStore((state) => state.ui.sidebarOpen);
   const sessions = useStore((state) => state.sessions);
   const order = useStore((state) => state.sessionOrder);
@@ -63,10 +63,15 @@ export function Sidebar() {
   };
 
   return html`
-    <aside class=${`sidebar ${open ? "is-open" : ""}`} aria-label="Sessions">
+    <aside
+      class=${`sidebar ${open ? "is-open" : ""} ${peeking ? "is-peeking" : ""}`}
+      aria-label="Sessions"
+      onPointerEnter=${onPointerEnter}
+      onPointerLeave=${onPointerLeave}
+    >
       <div class="sidebar__top">
         <div class="brand-row">
-          <button class="icon-button mobile-only" aria-label="Close sessions" onClick=${() => controller.toggleSidebar()}>×</button>
+          <button class="icon-button mobile-only" aria-label="Close sessions" onClick=${() => peeking ? onTransientClose?.() : controller.toggleSidebar()}>×</button>
           <div class="brand">Yoke</div>
           <span class="brand-subtitle">Sessions</span>
           <span class="connection-dot" aria-label="Connected" title="Connected"></span>

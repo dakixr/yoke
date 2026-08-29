@@ -589,7 +589,7 @@ class AppController {
   async loadSession(sessionID, { force = false } = {}) {
     const existing = store.getState().sessionData[sessionID];
     if (existing?.loading) return;
-    if (existing?.loaded && !force) return;
+    if (existing?.loaded && existing?.messageSnapshotLoaded && !force) return;
     const loadGeneration = (this.messageRefreshGeneration.get(sessionID) || 0) + 1;
     this.messageRefreshGeneration.set(sessionID, loadGeneration);
     store.setState((state) => ({
@@ -630,6 +630,7 @@ class AppController {
               ...current,
               loaded: true,
               loading: false,
+              messageSnapshotLoaded: true,
               latestSeq: Math.max(current.latestSeq || 0, messages.snapshotSeq || 0),
               messages: loadedMessages,
               livePrompt: reconcileLivePrompt(current.livePrompt, loadedMessages),
@@ -703,6 +704,7 @@ class AppController {
           ...state.sessionData,
           [sessionID]: {
             ...current,
+            messageSnapshotLoaded: true,
             messages,
             liveAssistants: reconcileLiveAssistants(current.liveAssistants || {}, messages, activeTurnID),
             liveTools: reconcileLiveTools(current.liveTools || {}, messages, activeTurnID),
@@ -986,7 +988,7 @@ class AppController {
     const response = await api.createSession({
       id: sessionID,
       location: { directory: location },
-      title: provisionalSessionTitle(titleText ?? draft.text),
+      title: titleText === null ? null : provisionalSessionTitle(titleText),
       selection,
     });
     store.setState((state) => {
@@ -1004,6 +1006,7 @@ class AppController {
             ...next.sessionData[sessionID],
             loaded: true,
             loading: false,
+            messageSnapshotLoaded: false,
             messages: next.sessionData[sessionID]?.messages || [],
             queue: next.sessionData[sessionID]?.queue || { revision, items: [] },
             permissions: next.sessionData[sessionID]?.permissions || [],
@@ -1807,17 +1810,18 @@ class AppController {
   }
 
   focusModelSelector() {
-    const model = document.querySelector('.selection-controls select[aria-label="Model"]');
+    const model = document.querySelector(".model-picker__trigger");
     if (!model || model.disabled) {
       this.notice("Model selection is available when the session is idle.");
       return false;
     }
     model.focus();
+    model.click();
     return true;
   }
 
   showShortcutHelp() {
-    this.notice("Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image · Ctrl+X O tools · Ctrl+X Ctrl+P processes · Ctrl+X Q queue · Ctrl+X M model · Ctrl+X T tree");
+    this.notice("⇧⌘O / ⇧Ctrl+O new session · Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image · Ctrl+X O tools · Ctrl+X Ctrl+P processes · Ctrl+X Q queue · Ctrl+X M model · Ctrl+X T tree");
     return true;
   }
 
@@ -1851,6 +1855,20 @@ class AppController {
     if (this.toolDetailGeneration.get(sessionID) !== generation) return null;
     this.setSessionField(sessionID, "toolDetail", { ...detail.data, outputChunks: output.data, outputCursor: output.cursor });
     return detail.data;
+  }
+
+  async selectToolCall(sessionID, callID) {
+    // The callID attached to a Tool inspector opened from the timeline is only
+    // an initial focus hint. Consume it before an explicit inspector selection
+    // so later detail renders cannot snap back to the timeline call.
+    store.setState((state) => {
+      const inspector = state.ui.inspector;
+      if (inspector?.mode !== "tool" || !inspector.callID) return state;
+      const nextInspector = { ...inspector };
+      delete nextInspector.callID;
+      return { ...state, ui: { ...state.ui, inspector: nextInspector } };
+    });
+    return this.loadToolCall(sessionID, callID);
   }
 
   async loadProcess(processID) {

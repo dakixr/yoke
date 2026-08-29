@@ -1,6 +1,7 @@
 import { html, useLayoutEffect, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { displayTreeEntries, TREE_GRAPH_ROW_HEIGHT, treeGraphLayout } from "./tree-graph.js";
+import { isTreeNavigationKey, treeKeyboardTarget } from "./tree-keyboard.js";
 
 export function TreeInspector({ sessionID, data }) {
   const tree = data?.tree;
@@ -10,7 +11,9 @@ export function TreeInspector({ sessionID, data }) {
   const [previewingID, setPreviewingID] = useState(null);
   const [navigating, setNavigating] = useState(false);
   const [showTechnical, setShowTechnical] = useState(false);
+  const [focusedEntryID, setFocusedEntryID] = useState(null);
   const historyRef = useRef(null);
+  const entryButtonRefs = useRef(new Map());
   const openedRef = useRef(null);
   const messageEntries = tree?.entries?.filter(isMessageEntry) || [];
   const visibleEntries = tree ? (showTechnical ? tree.entries : messageEntries) : [];
@@ -20,6 +23,11 @@ export function TreeInspector({ sessionID, data }) {
   const entryByID = new Map(displayEntries.map((entry) => [entry.id, entry]));
   const selectedEntry = preview ? entryByID.get(preview.targetID) || tree?.entries?.find((entry) => entry.id === preview.targetID) : null;
   const hiddenTechnicalCount = tree ? tree.entries.length - messageEntries.length : 0;
+  const effectiveFocusID = focusedEntryID && entryByID.has(focusedEntryID)
+    ? focusedEntryID
+    : preview?.targetID && entryByID.has(preview.targetID)
+      ? preview.targetID
+      : displayEntries.find((entry) => entry.current)?.id || displayEntries.at(-1)?.id || null;
 
   useLayoutEffect(() => {
     const node = historyRef.current;
@@ -27,6 +35,15 @@ export function TreeInspector({ sessionID, data }) {
     openedRef.current = sessionID;
     requestAnimationFrame(() => scrollToHead(node, { behavior: "auto" }));
   }, [sessionID, displayEntries.length]);
+
+  useLayoutEffect(() => {
+    if (!preview?.targetID || !effectiveFocusID) return;
+    const frame = requestAnimationFrame(() => {
+      const button = entryButtonRefs.current.get(effectiveFocusID);
+      if (button) keepTreeEntryVisible(historyRef.current, button);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [preview?.targetID, effectiveFocusID]);
 
   if (!tree) return html`<div class="inspector-loading">Loading conversation graph…</div>`;
 
@@ -96,6 +113,35 @@ export function TreeInspector({ sessionID, data }) {
     }));
   };
 
+  const focusTreeEntry = (entryID) => {
+    if (!entryID) return;
+    setFocusedEntryID(entryID);
+    requestAnimationFrame(() => {
+      const button = entryButtonRefs.current.get(entryID);
+      if (!button) return;
+      button.focus({ preventScroll: true });
+      keepTreeEntryVisible(historyRef.current, button);
+    });
+  };
+
+  const onEntryKeyDown = (event, entry) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      void previewEntry(entry.id);
+      return;
+    }
+    if (event.key === "Escape" && preview) {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.clearTreePreview(sessionID);
+      return;
+    }
+    if (!isTreeNavigationKey(event.key)) return;
+    event.preventDefault();
+    const targetID = treeKeyboardTarget(displayEntries, entry.id, event.key);
+    if (targetID) focusTreeEntry(targetID);
+  };
+
   return html`<div class=${`tree-inspector ${preview ? "has-preview" : ""}`}>
     <div class="tree-toolbar">
       <div class="tree-toolbar__identity">
@@ -105,6 +151,7 @@ export function TreeInspector({ sessionID, data }) {
         </div>
       </div>
       <div class="tree-toolbar__actions">
+        <span class="tree-keyboard-hint"><kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>←</kbd> parent · <kbd>→</kbd> child · <kbd>Enter</kbd> target</span>
         <div class="tree-mode-toggle" role="group" aria-label="Tree node visibility">
           <button class=${!showTechnical ? "is-active" : ""} aria-pressed=${!showTechnical} onClick=${() => toggleTechnical(false)}>Messages</button>
           <button class=${showTechnical ? "is-active" : ""} aria-pressed=${showTechnical} onClick=${() => toggleTechnical(true)}>All nodes${hiddenTechnicalCount ? html` <span>${hiddenTechnicalCount}</span>` : null}</button>
@@ -147,13 +194,23 @@ export function TreeInspector({ sessionID, data }) {
               return html`<div
                 key=${entry.id}
                 role="listitem"
-                class=${`tree-entry ${entry.current ? "is-current" : ""} ${entry.active ? "is-active" : "is-abandoned"} ${selected ? "is-selected" : ""}`}
+                class=${`tree-entry ${entry.current ? "is-current" : ""} ${entry.active ? "is-active" : "is-abandoned"} ${selected ? "is-selected" : ""} ${effectiveFocusID === entry.id ? "is-keyboard-focus" : ""}`}
               >
                 <div class="tree-entry__graph-cell" aria-hidden="true"></div>
                 <button
+                  ref=${(node) => {
+                    if (node) entryButtonRefs.current.set(entry.id, node);
+                    else entryButtonRefs.current.delete(entry.id);
+                  }}
                   class="tree-entry__summary"
-                  disabled=${entry.current || Boolean(previewingID) || navigating}
+                  disabled=${navigating}
+                  aria-busy=${previewing ? "true" : null}
+                  tabindex=${effectiveFocusID === entry.id ? 0 : -1}
+                  aria-current=${entry.current ? "true" : null}
+                  aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Enter Space Escape"
                   title=${entry.current ? "Current conversation HEAD" : "Select as a possible conversation HEAD"}
+                  onFocus=${() => setFocusedEntryID(entry.id)}
+                  onKeyDown=${(event) => onEntryKeyDown(event, entry)}
                   onClick=${() => previewEntry(entry.id)}
                 >
                   <span class="tree-entry__identity">
@@ -234,6 +291,18 @@ function scrollToHead(scroller, { behavior = "smooth" } = {}) {
     return;
   }
   scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+}
+
+function keepTreeEntryVisible(scroller, button) {
+  if (!scroller || !button) return;
+  const row = button.closest(".tree-entry") || button;
+  const scrollerRect = scroller.getBoundingClientRect();
+  const columnsBottom = scroller.querySelector(".tree-history__columns")?.getBoundingClientRect().bottom || scrollerRect.top;
+  const rowRect = row.getBoundingClientRect();
+  const visibleTop = Math.max(scrollerRect.top, columnsBottom);
+  const visibleBottom = scrollerRect.bottom;
+  if (rowRect.top < visibleTop) scroller.scrollTop -= visibleTop - rowRect.top;
+  else if (rowRect.bottom > visibleBottom) scroller.scrollTop += rowRect.bottom - visibleBottom;
 }
 
 function isMessageEntry(entry) {

@@ -747,6 +747,89 @@
         "title": "InterruptResponse",
         "type": "object"
       },
+      "LocationBrowseEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "directory": {
+            "title": "Directory",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "directory"
+        ],
+        "title": "LocationBrowseEntry",
+        "type": "object"
+      },
+      "LocationBrowseResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LocationBrowseResult"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "LocationBrowseResponse",
+        "type": "object"
+      },
+      "LocationBrowseResult": {
+        "additionalProperties": false,
+        "properties": {
+          "browseDirectory": {
+            "title": "Browsedirectory",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/LocationBrowseEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "parentDirectory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentdirectory"
+          },
+          "selectableDirectory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selectabledirectory"
+          },
+          "separator": {
+            "title": "Separator",
+            "type": "string"
+          }
+        },
+        "required": [
+          "browseDirectory",
+          "parentDirectory",
+          "selectableDirectory",
+          "separator",
+          "entries"
+        ],
+        "title": "LocationBrowseResult",
+        "type": "object"
+      },
       "LocationInfo": {
         "additionalProperties": false,
         "description": "Resolved workspace location.",
@@ -4340,6 +4423,59 @@
           }
         },
         "summary": "Resolve Location"
+      }
+    },
+    "/api/v1/location/browse": {
+      "get": {
+        "operationId": "browseLocations",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 80,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationBrowseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Browse Locations"
       }
     },
     "/api/v1/location/recent": {

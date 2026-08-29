@@ -24,6 +24,7 @@ export function installKeybindings(actions) {
         if (key === "t") return invoke(event, actions.sessionTree);
       }
     }
+    if (command && event.shiftKey && !event.altKey && key === "o") return invoke(event, actions.newSession);
     if (command && key === "k") return invoke(event, actions.palette);
     if (command && key === "n") return invoke(event, actions.newSession);
     if (command && key === "b") return invoke(event, actions.toggleSidebar);
