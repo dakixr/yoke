@@ -85,6 +85,10 @@ class WebResearchTool(LocalTool):
 
     question: str = Field(min_length=1)
 
+    def _supports_parallel_in_process(self) -> bool:
+        """Allow concurrent requests only for provider-isolated hosted search."""
+        return supports_hosted_web_search(self._context.get("provider"))
+
     def execute(self) -> dict[str, object]:
         """Execute a compact search+fetch research workflow."""
         provider = self._context.get("provider")

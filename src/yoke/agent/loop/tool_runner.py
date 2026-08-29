@@ -7,6 +7,7 @@ import time
 from yoke.agent.loop.tool_core import cancelled_tool_result
 from yoke.agent.loop.tool_core import finalize_tool_result
 from yoke.agent.loop.tool_core import is_stopped
+from yoke.agent.loop.in_process_tool import InProcessToolInvocation
 from yoke.agent.loop.in_process_tool import execute_in_process_tool
 from yoke.agent.loop.tool_process import ToolProcessInvocation
 from yoke.agent.loop.tool_process import TOOL_POLL_SECONDS
@@ -97,14 +98,7 @@ def execute_tool_calls(
     if (
         tool_execution == "sequential"
         or len(runnable) < 2
-        or any(
-            tools.get(item.tool_call.function.name) is not None
-            and (
-                tools[item.tool_call.function.name].execute_in_process
-                or not is_tool_spawnable(tools[item.tool_call.function.name])
-            )
-            for item in runnable
-        )
+        or any(_requires_sequential_execution(tools, item) for item in runnable)
     ):
         return _execute_sequential(
             tools=tools,
@@ -249,14 +243,12 @@ def _execute_parallel(
     stop_requested: StopRequested | None,
     after_tool_call: AfterToolCallHook | None,
 ) -> tuple[list[tuple[ToolCall, dict[str, object], dict[str, object]]], bool]:
-    invocation_pairs: list[tuple[ToolProcessInvocation, PreparedToolCall]] = []
+    invocation_pairs: list[
+        tuple[ToolProcessInvocation | InProcessToolInvocation, PreparedToolCall]
+    ] = []
     try:
         for prepared in runnable:
-            invocation = ToolProcessInvocation(
-                tools=tools,
-                name=prepared.tool_call.function.name,
-                arguments=prepared.arguments,
-            )
+            invocation = _parallel_invocation(tools, prepared)
             invocation_pairs.append((invocation, prepared))
             invocation.start()
         pending = dict(invocation_pairs)
@@ -299,3 +291,34 @@ def _execute_parallel(
         for invocation, _ in invocation_pairs:
             invocation.cancel()
     return order_results(prepared_calls, results), False
+
+
+def _requires_sequential_execution(
+    tools: dict[str, LocalTool],
+    prepared: PreparedToolCall,
+) -> bool:
+    tool = tools.get(prepared.tool_call.function.name)
+    if tool is None:
+        return False
+    if not tool.execute_in_process and is_tool_spawnable(tool):
+        return False
+    return not tool._supports_parallel_in_process()
+
+
+def _parallel_invocation(
+    tools: dict[str, LocalTool],
+    prepared: PreparedToolCall,
+) -> ToolProcessInvocation | InProcessToolInvocation:
+    name = prepared.tool_call.function.name
+    tool = tools.get(name)
+    if tool is not None and (tool.execute_in_process or not is_tool_spawnable(tool)):
+        return InProcessToolInvocation(
+            tools=tools,
+            name=name,
+            arguments=prepared.arguments,
+        )
+    return ToolProcessInvocation(
+        tools=tools,
+        name=name,
+        arguments=prepared.arguments,
+    )

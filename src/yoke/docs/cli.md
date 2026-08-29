@@ -123,8 +123,10 @@ and model metadata.
 Image attachment is available only when the selected provider/model accepts
 image input. Codex additionally exposes provider-hosted image generation.
 Codex web research uses hosted Responses web search with external access and a
-high search-context budget. Other providers retain Yoke's local keyless search,
-fetch, and multi-source synthesis workflow.
+high search-context budget. Multiple Codex-hosted web research calls emitted in
+one model response run concurrently, while their tool results still return to
+the provider in the original call order. Other providers retain Yoke's local
+keyless search, fetch, and multi-source synthesis workflow.
 
 Provider retries, rate limits, connection recovery, and stale-continuity
 fallbacks appear as visible warning events in interactive and observed SDK

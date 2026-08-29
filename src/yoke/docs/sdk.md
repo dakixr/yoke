@@ -408,9 +408,11 @@ Built-in `file.write` exposes `apply_patch` for GPT-family models and
 `edit` plus `write` for other models. Image attachment is omitted when a
 model is known not to support image input, and `image.generate` resolves only
 for a compatible Codex provider. `web_research` uses Codex hosted Responses
-web search when available; other providers use bounded local search, fetch, and
-provider synthesis. The local workflow applies a shared fetched-source
-character budget so many large pages cannot grow context without a bound.
+web search when available. Multiple hosted research calls from one model
+response run concurrently and keep provider tool-result order stable. Other
+providers use bounded local search, fetch, and provider synthesis. The local
+workflow applies a shared fetched-source character budget so many large pages
+cannot grow context without a bound.
 SDK-bound tool classes receive provider context when they are resolved through
 a capability or agent runtime.
 

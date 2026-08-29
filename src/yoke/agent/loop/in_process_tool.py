@@ -22,6 +22,103 @@ class InProcessToolShutdownError(RuntimeError):
     """Raised when an in-process tool outlives its bounded shutdown period."""
 
 
+class InProcessToolInvocation:
+    """One parent-process tool invocation with cooperative cancellation."""
+
+    def __init__(
+        self,
+        *,
+        tools: dict[str, LocalTool],
+        name: str,
+        arguments: dict[str, object],
+    ) -> None:
+        self._tools = tools
+        self._name = name
+        self._arguments = arguments
+        self._result_queue: queue.Queue[dict[str, object]] = queue.Queue(maxsize=1)
+        self._cancel_event = threading.Event()
+        self._result: dict[str, object] | None = None
+        self._started = False
+        self._worker = threading.Thread(
+            target=self._run,
+            daemon=True,
+            name=f"yoke-tool-{name}",
+        )
+
+    def start(self) -> None:
+        """Start the worker thread."""
+        with _WORKERS_LOCK:
+            if id(self._tools) in _SHUTTING_DOWN_TOOL_SETS:
+                raise InProcessToolShutdownError(
+                    "Cannot start an in-process tool while its runtime is closing."
+                )
+            _ACTIVE_WORKERS.setdefault(id(self._tools), {})[self._worker] = (
+                self._cancel_event
+            )
+        try:
+            self._worker.start()
+        except BaseException:
+            with _WORKERS_LOCK:
+                workers = _ACTIVE_WORKERS.get(id(self._tools))
+                if workers is not None:
+                    workers.pop(self._worker, None)
+                    if not workers:
+                        _ACTIVE_WORKERS.pop(id(self._tools), None)
+            raise
+        self._started = True
+
+    def done(self) -> bool:
+        """Return whether the worker produced a final result."""
+        if self._result is not None:
+            return True
+        try:
+            self._result = self._result_queue.get_nowait()
+            return True
+        except queue.Empty:
+            pass
+        if not self._started or self._worker.is_alive():
+            return False
+        try:
+            self._result = self._result_queue.get_nowait()
+        except queue.Empty:
+            self._result = {
+                "ok": False,
+                "error": "In-process tool finished without returning a result",
+            }
+        return True
+
+    def result(self) -> dict[str, object]:
+        """Return the final result, blocking until it is available."""
+        while not self.done():
+            time.sleep(IN_PROCESS_TOOL_POLL_SECONDS)
+        assert self._result is not None
+        return self._result
+
+    def cancel(self) -> None:
+        """Latch cooperative cancellation for the worker."""
+        self._cancel_event.set()
+
+    def _run(self) -> None:
+        try:
+            result = execute_tool(
+                self._tools,
+                self._name,
+                self._arguments,
+                cancel_requested=self._cancel_event.is_set,
+            )
+            try:
+                self._result_queue.put_nowait(result)
+            except queue.Full:
+                pass
+        finally:
+            with _WORKERS_LOCK:
+                workers = _ACTIVE_WORKERS.get(id(self._tools))
+                if workers is not None:
+                    workers.pop(threading.current_thread(), None)
+                    if not workers:
+                        _ACTIVE_WORKERS.pop(id(self._tools), None)
+
+
 def execute_in_process_tool(
     *,
     tools: dict[str, LocalTool],
@@ -30,51 +127,21 @@ def execute_in_process_tool(
     stop_requested: StopRequested | None,
 ) -> tuple[dict[str, object], bool]:
     """Run a parent-process tool and supervise cooperative cancellation."""
-    result_queue: queue.Queue[dict[str, object]] = queue.Queue(maxsize=1)
-    cancel_event = threading.Event()
-
-    def cancellation_requested() -> bool:
-        return cancel_event.is_set() or (
-            stop_requested is not None and stop_requested()
-        )
-
-    def run() -> None:
-        try:
-            result = execute_tool(
-                tools,
-                name,
-                arguments,
-                cancel_requested=cancellation_requested,
-            )
-            try:
-                result_queue.put_nowait(result)
-            except queue.Full:
-                pass
-        finally:
-            with _WORKERS_LOCK:
-                workers = _ACTIVE_WORKERS.get(id(tools))
-                if workers is not None:
-                    workers.pop(threading.current_thread(), None)
-                    if not workers:
-                        _ACTIVE_WORKERS.pop(id(tools), None)
-
-    worker = threading.Thread(target=run, daemon=True, name=f"yoke-tool-{name}")
-    with _WORKERS_LOCK:
-        if id(tools) in _SHUTTING_DOWN_TOOL_SETS:
-            raise InProcessToolShutdownError(
-                "Cannot start an in-process tool while its runtime is closing."
-            )
-        _ACTIVE_WORKERS.setdefault(id(tools), {})[worker] = cancel_event
-    worker.start()
+    invocation = InProcessToolInvocation(
+        tools=tools,
+        name=name,
+        arguments=arguments,
+    )
+    invocation.start()
     while True:
-        try:
-            return result_queue.get(timeout=IN_PROCESS_TOOL_POLL_SECONDS), False
-        except queue.Empty:
-            if stop_requested is not None and stop_requested():
-                # Latch cancellation for the worker. The caller's callback may be
-                # transient, while the invocation must remain cancelled forever.
-                cancel_event.set()
-                return cancelled_tool_result(), True
+        if invocation.done():
+            return invocation.result(), False
+        if stop_requested is not None and stop_requested():
+            # Latch cancellation for the worker. The caller's callback may be
+            # transient, while the invocation must remain cancelled forever.
+            invocation.cancel()
+            return cancelled_tool_result(), True
+        time.sleep(IN_PROCESS_TOOL_POLL_SECONDS)
 
 
 def shutdown_in_process_tools(

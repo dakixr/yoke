@@ -2,12 +2,15 @@ from __future__ import annotations
 
 # ruff: noqa: D100, D103, F403, F405, S101
 
+import threading
+
 from yoke.cli.interactive.prompt.turns import retire_turn_agent
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tools import AttachImageTool
 from yoke.agent.tools.command_process_manager import (
     CommandProcessManager,
 )
+from yoke.agent.tools.web import WebResearchTool
 
 from .support import *  # noqa: F403
 
@@ -26,6 +29,104 @@ def test_agent_loop_runs_until_final_answer(tmp_path: Path) -> None:
         "tool",
         "assistant",
     ]
+
+
+def test_codex_hosted_web_research_calls_run_in_parallel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ResearchProvider(Provider):
+        provider_name = "codex"
+        supports_image_inputs = False
+        max_images_per_message = None
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            del tools
+            self.calls += 1
+            if self.calls == 1:
+                return Message(
+                    role="assistant",
+                    tool_calls=[
+                        ToolCall(
+                            id="research-a",
+                            function=ToolFunction(
+                                name="web_research",
+                                arguments=json.dumps({"question": "first"}),
+                            ),
+                        ),
+                        ToolCall(
+                            id="research-b",
+                            function=ToolFunction(
+                                name="web_research",
+                                arguments=json.dumps({"question": "second"}),
+                            ),
+                        ),
+                    ],
+                )
+            assert [message.tool_call_id for message in messages[-2:]] == [
+                "research-a",
+                "research-b",
+            ]
+            return Message.assistant("done")
+
+        def complete_with_cancel(
+            self,
+            messages: list[Message],
+            tools: list[dict[str, object]],
+            *,
+            cancel_requested,
+        ) -> Message:
+            assert cancel_requested() is False
+            return self.complete(messages, tools)
+
+    lock = threading.Lock()
+    barrier = threading.Barrier(2)
+    active = 0
+    max_active = 0
+
+    def fake_hosted_research(
+        question: str,
+        *,
+        provider: Provider,
+        cancel_requested,
+    ) -> dict[str, object]:
+        del provider, cancel_requested
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            try:
+                barrier.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            return {"ok": True, "answer": question, "sources": [], "notes": []}
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(
+        "yoke.agent.tools.web.research.hosted_web_research",
+        fake_hosted_research,
+    )
+    provider = ResearchProvider()
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[WebResearchTool.bind(provider=provider)],
+        tool_root=tmp_path,
+    )
+    try:
+        result = agent.run("research both")
+    finally:
+        agent.close()
+
+    assert result.output == "done"
+    assert max_active == 2
 
 
 def test_tool_injected_image_keeps_provider_role_without_becoming_user_history(

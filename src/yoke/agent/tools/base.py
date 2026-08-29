@@ -73,6 +73,10 @@ class LocalTool(BaseModel, ABC):
         callback_fn = cast(Callable[[], object], callback)
         return bool(callback_fn())
 
+    def _supports_parallel_in_process(self) -> bool:
+        """Return whether this parent-process tool is safe to run concurrently."""
+        return False
+
     @property
     def context(self) -> ToolRuntimeContext:
         """Return the provider-aware runtime context bound by the agent."""
