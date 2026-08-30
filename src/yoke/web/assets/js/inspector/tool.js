@@ -21,18 +21,18 @@ export function ToolInspector({ sessionID, inspector, data }) {
   }, [calls, search]);
 
   useEffect(() => {
-    if (!calls?.length) return;
-    const requested = !search && inspector.callID && calls.some((call) => call.id === inspector.callID)
-      ? inspector.callID
-      : null;
-    if (requested && detail?.id !== requested) {
-      void controller.loadToolCall(sessionID, requested).catch((error) => controller.notice(error?.message || String(error)));
+    const requested = inspector.callID || null;
+    if (requested) {
+      if (detail?.id !== requested) {
+        void controller.loadToolCall(sessionID, requested).catch((error) => controller.notice(error?.message || String(error)));
+      }
       return;
     }
-    if (detail && visible.some((call) => call.id === detail.id)) return;
+    if (detail) return;
+    if (!calls?.length) return;
     const newest = visible[0] || calls[0];
     if (newest) void controller.selectToolCall(sessionID, newest.id).catch((error) => controller.notice(error?.message || String(error)));
-  }, [sessionID, inspector.callID, calls, detail?.id, search]);
+  }, [sessionID, inspector.callID, calls, detail?.id]);
 
   useEffect(() => {
     if (!detail?.id || !["running", "pending"].includes(detail.status)) return;
@@ -77,7 +77,7 @@ export function ToolInspector({ sessionID, inspector, data }) {
         ${visible.map((call) => html`<button
           key=${call.id}
           role="listitem"
-          class=${`tool-sidebar-row ${detail?.id === call.id ? "is-selected" : ""}`}
+          class=${`tool-sidebar-row ${inspector.callID === call.id ? "is-selected" : ""}`}
           onClick=${() => controller.selectToolCall(sessionID, call.id)}
         >
           <span class=${`tool-sidebar-row__glyph tool-sidebar-row__glyph--${call.status}`} aria-hidden="true">${statusGlyph(call.status)}</span>
@@ -92,7 +92,9 @@ export function ToolInspector({ sessionID, inspector, data }) {
     </aside>
 
     <section class="tool-detail-pane">
-      ${detail ? html`<${ToolDetail} detail=${detail} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />` : html`
+      ${detail ? html`<${ToolDetail} detail=${detail} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />` : inspector.callID ? html`
+        <div class="tool-detail-empty"><div><strong>Loading tool call…</strong><span>${inspector.callID}</span></div></div>
+      ` : html`
         <div class="tool-detail-empty"><div><strong>No tool call selected</strong><span>Select a call from the sidebar to inspect arguments, output, and context.</span></div></div>
       `}
     </section>

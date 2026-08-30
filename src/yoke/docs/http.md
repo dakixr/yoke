@@ -239,11 +239,16 @@ running processes only; a Running/All switch reveals completed and failed
 retained processes without making them compete with active work. The newest
 visible process is selected automatically when the current selection falls out
 of the filter. The right pane is dominated by the selected process's retained
-output tail and refreshes from process-change events while it runs. Output
-follows the live tail until the user scrolls upward, then exposes an explicit
-"Jump to live" action instead of stealing the scroll position. Status facts,
-working directory, wrapping, stdin, interrupt, and terminate controls remain
-adjacent to that terminal surface.
+output tail. While it runs, the browser consumes `/process/{id}/output` with an
+exclusive sequence cursor and appends only new chunks. Process-change events
+trigger low-latency reads, with a short polling fallback so a continuously
+chatty process cannot starve its own updates. Full process metadata refreshes
+at a slower cadence and restores the authoritative retained tail if the output
+cursor falls behind truncation. Output follows the live tail until the user
+scrolls upward, then exposes an explicit "Jump to live" action instead of
+stealing the scroll position. Status facts, working directory, wrapping,
+stdin, interrupt, and terminate controls remain adjacent to that terminal
+surface.
 
 The new-session working-location control uses `GET /api/v1/location/browse`
 instead of a browser-native datalist. The endpoint accepts an absolute path or
@@ -402,6 +407,14 @@ spinners for transcript and Tree pagination, Tree navigation previews and
 checkout, manual compaction, and other blocking composer/inspector work while
 preventing duplicate submissions.
 
+Transcript pagination treats the server cursor as recoverable browser state.
+If a reconnect or branch change leaves an old cursor anchor invalid, the web UI
+rebases from the current newest message page and retries the older-page read.
+If a rewound cursor returns only entries that are already loaded, the client
+advances through duplicate-only pages until it reaches genuinely older history
+or the beginning of the conversation. Pagination failures are shown as notices
+instead of leaving the "Load older turns" button looking like a no-op.
+
 While a session runtime is running, the conversation keeps a persistent status
 row at the bottom of the chat. Runtime activity such as `Thinking`, `Running
 tool`, or `Compacting` refines the label, but transiently missing activity data
@@ -424,6 +437,14 @@ context unchanged, but normal web and CLI chat scrollback excludes them and Tree
 shows them only as technical nodes. Older sessions that persisted these injected
 images as `user` nodes are recognized from their tool-call ancestry on read, so
 they do not reappear as false user messages after upgrade.
+When one assistant response contains several tool calls, Yoke persists every
+matching tool result before appending any provider-visible `tool_context`
+messages. This keeps the provider tool-call batch valid for parallel image
+attachments and other tools that inject follow-up context. If a previous build
+or an interrupted process left an incomplete tool batch at the active leaf,
+runtime resume appends explicit cancelled results for the unfinished calls before
+accepting another user message. User interruption checkpoints apply the same
+closure rule.
 User turns are right-aligned and assistant turns remain
 left-aligned, using placement rather than a separate role color. User messages
 always show their role/time metadata. Within each assistant turn, only the last
@@ -440,13 +461,15 @@ remaining native browser UI.
 Tool activity uses the same split-pane model as the CLI inspector: a dense,
 searchable call list stays on the left while the selected call's detail remains
 visible on the right. The newest call is selected by default. A call opened from
-the chat timeline is only the initial selection; choosing another retained call
-consumes that deep-link hint and leaves the rest of the call list explorable.
-Search selection and detail selection stay synchronized, even when older detail
-requests finish late. Status, turn/iteration, duration, arguments, executed
-arguments, retained output, result, and surrounding context are shown as one
-readable detail document, with raw JSON and wrapping controls available when
-needed.
+the chat timeline becomes the inspector's explicit selection, even when that
+historical call is older than the newest retained sidebar page. Choosing another
+call replaces that selection. Detail requests are race-safe, so a slower response
+from an earlier chat or sidebar click cannot replace the latest selection.
+Background tool refreshes follow the selected call ID rather than whichever
+detail happened to finish last. Status, turn/iteration, duration, arguments,
+executed arguments, retained output, result, and surrounding context are shown
+as one readable detail document, with raw JSON and wrapping controls available
+when needed.
 
 The Tree inspector is optimized around moving the current conversation HEAD.
 It defaults to user and assistant message nodes only; tool, control, and other

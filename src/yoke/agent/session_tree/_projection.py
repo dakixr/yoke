@@ -23,6 +23,8 @@ from .values import EntryRef
 from .values import MessageView
 from ._handoff import reconnect_detached_handoff
 from ._topology import active_path
+from ._tool_sequence import recovered_tool_result_entries
+from ._tool_sequence import tail_open_tool_call_ids
 
 _NON_CHAT_KINDS = {
     "instruction",
@@ -209,6 +211,16 @@ def take_runtime_context(
             entry.parent_id = instruction_parents[entry.parent_id]
         runtime_entries.append(entry)
     path = active_path(runtime_entries, selected)
+    dangling_call_ids = tail_open_tool_call_ids(path)
+    if dangling_call_ids:
+        recovered = recovered_tool_result_entries(
+            dangling_call_ids,
+            parent_id=selected,
+            error="Tool call was incomplete when the session resumed.",
+        )
+        runtime_entries.extend(recovered)
+        selected = recovered[-1].id
+        path = active_path(runtime_entries, selected)
     checkpoint = _resolve_checkpoint(runtime_entries, path)
     return RuntimeContextSeed(
         entries=runtime_entries,

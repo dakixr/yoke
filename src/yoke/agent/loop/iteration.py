@@ -142,12 +142,25 @@ class RuntimeAgentIterationMixin:
             stop_requested=stop_requested,
             after_tool_call=after_tool_call,
         )
+        # Provider tool-call batches must be closed by every matching tool result
+        # before any non-tool provider message can be appended. Tool-injected
+        # context such as attach_image uses a user-role message, so interleaving
+        # it after the first result of a multi-call batch leaves the remaining
+        # calls open and violates the provider/tool sequence.
         for tool_call, arguments, result in tool_results:
             self.context_manager.append_tool_result(
                 context,
                 tool_call_id=tool_call.id,
                 result=result,
             )
+
+        # Persist the valid, fully-closed tool batch before constructing any
+        # additional provider-visible context. This also leaves a resumable
+        # checkpoint if tool-context construction itself fails.
+        if tool_results and after_tool_result_appended is not None:
+            after_tool_result_appended(context)
+
+        for tool_call, arguments, result in tool_results:
             self._append_tool_context_messages(
                 context,
                 tool_name=tool_call.function.name,
@@ -155,8 +168,11 @@ class RuntimeAgentIterationMixin:
                 arguments=arguments,
                 result=result,
             )
-            if after_tool_result_appended is not None:
-                after_tool_result_appended(context)
+
+        # Keep injected context durable too. The callback name is historical;
+        # the checkpoint represents the complete post-tool batch boundary.
+        if tool_results and after_tool_result_appended is not None:
+            after_tool_result_appended(context)
         if tool_results:
             handle_post_tool_results(self, context, iteration, on_event)
         return stopped

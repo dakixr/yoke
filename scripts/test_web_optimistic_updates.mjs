@@ -402,6 +402,181 @@ async function testProcessRefreshDoesNotRestoreAnOldSelection() {
   }
 }
 
+async function testLoadOlderMessagesSkipsDuplicateOnlyPages() {
+  const id = "message-pagination-duplicates";
+  const message = (messageID) => ({
+    id: messageID,
+    type: "assistant",
+    content: [{ type: "text", text: messageID }],
+  });
+  installSession(id, {
+    extraData: {
+      messages: [message("m2"), message("m1")],
+      messageCursor: "cursor-1",
+    },
+  });
+  const cursors = [];
+  const restore = restoreApi({
+    messages: async (_sessionID, options) => {
+      cursors.push(options.cursor || null);
+      if (options.cursor === "cursor-1") {
+        return { data: [message("m2")], cursor: { next: "cursor-2" } };
+      }
+      assert.equal(options.cursor, "cursor-2");
+      return { data: [message("m3")], cursor: { next: null } };
+    },
+  });
+  try {
+    const result = await controller.loadOlderMessages(id);
+    assert.deepEqual(cursors, ["cursor-1", "cursor-2"]);
+    assert.equal(result.addedCount, 1);
+    assert.equal(result.skippedDuplicatePages, 1);
+    assert.deepEqual(
+      store.getState().sessionData[id].messages.map((item) => item.id),
+      ["m3", "m2", "m1"],
+    );
+    assert.equal(store.getState().sessionData[id].messageCursor, null);
+    assert.equal(store.getState().sessionData[id].loadingOlder, false);
+  } finally {
+    restore();
+  }
+}
+
+async function testLoadOlderMessagesRecoversInvalidCursor() {
+  const id = "message-pagination-stale-cursor";
+  const message = (messageID) => ({
+    id: messageID,
+    type: "assistant",
+    content: [{ type: "text", text: messageID }],
+  });
+  installSession(id, {
+    extraData: {
+      messages: [message("stale-old"), message("stale-latest")],
+      messageCursor: "stale-cursor",
+    },
+  });
+  const cursors = [];
+  const restore = restoreApi({
+    messages: async (_sessionID, options) => {
+      cursors.push(options.cursor || null);
+      if (options.cursor === "stale-cursor") {
+        throw new ApiError(400, "invalid_cursor_anchor", "Cursor anchor no longer exists.");
+      }
+      if (!options.cursor) {
+        return {
+          data: [message("fresh-latest"), message("fresh-middle")],
+          cursor: { next: "fresh-cursor" },
+        };
+      }
+      assert.equal(options.cursor, "fresh-cursor");
+      return { data: [message("fresh-old")], cursor: { next: null } };
+    },
+  });
+  try {
+    const result = await controller.loadOlderMessages(id);
+    assert.deepEqual(cursors, ["stale-cursor", null, "fresh-cursor"]);
+    assert.equal(result.addedCount, 1);
+    assert.equal(result.recoveredCursor, true);
+    assert.deepEqual(
+      store.getState().sessionData[id].messages.map((item) => item.id),
+      ["fresh-old", "fresh-middle", "fresh-latest"],
+    );
+    assert.equal(store.getState().sessionData[id].messageCursor, null);
+    assert.equal(store.getState().sessionData[id].loadingOlder, false);
+  } finally {
+    restore();
+  }
+}
+
+async function testProcessOutputRefreshAppendsIncrementallyWithoutDuplication() {
+  const id = "process-output-stream";
+  installSession(id, {
+    extraData: {
+      processes: [],
+      processDetail: {
+        processID: "proc-live",
+        sessionID: id,
+        status: "running",
+        output: { tail: "one\n", latestSeq: 1, retainedBytes: 4 },
+      },
+    },
+  });
+  const first = deferred();
+  const second = deferred();
+  let outputCalls = 0;
+  const restore = restoreApi({
+    processOutput: (_processID, afterSeq) => {
+      outputCalls += 1;
+      assert.equal(afterSeq, outputCalls === 1 ? 1 : 2);
+      return outputCalls === 1 ? first.promise : second.promise;
+    },
+  });
+  try {
+    const refreshA = controller.refreshProcessOutput("proc-live");
+    const refreshB = controller.refreshProcessOutput("proc-live");
+    assert.equal(outputCalls, 1);
+    first.resolve({
+      data: [{ seq: 2, stream: "combined", text: "two\n" }],
+      cursor: { next: 2, truncatedBefore: 0 },
+    });
+    await Promise.all([refreshA, refreshB]);
+    let detail = store.getState().sessionData[id].processDetail;
+    assert.equal(detail.output.tail, "one\ntwo\n");
+    assert.equal(detail.output.latestSeq, 2);
+
+    const refreshC = controller.refreshProcessOutput("proc-live");
+    controller.setSessionField(id, "processDetail", {
+      ...detail,
+      output: { ...detail.output, tail: "one\ntwo\nthree\n", latestSeq: 3 },
+    });
+    second.resolve({
+      data: [{ seq: 3, stream: "combined", text: "three\n" }],
+      cursor: { next: 3, truncatedBefore: 0 },
+    });
+    await refreshC;
+    detail = store.getState().sessionData[id].processDetail;
+    assert.equal(detail.output.tail, "one\ntwo\nthree\n");
+    assert.equal(detail.output.latestSeq, 3);
+  } finally {
+    restore();
+  }
+}
+
+async function testProcessMetadataRefreshCannotMoveOutputBackward() {
+  const id = "process-output-metadata-race";
+  installSession(id, {
+    extraData: {
+      processDetail: {
+        processID: "proc-live",
+        sessionID: id,
+        status: "running",
+        elapsedMs: 100,
+        output: { tail: "one\ntwo\n", latestSeq: 2, retainedBytes: 8 },
+      },
+    },
+  });
+  const restore = restoreApi({
+    process: async () => ({
+      data: {
+        processID: "proc-live",
+        sessionID: id,
+        status: "running",
+        elapsedMs: 200,
+        output: { tail: "one\n", latestSeq: 1, retainedBytes: 4 },
+      },
+    }),
+  });
+  try {
+    await controller.refreshProcess("proc-live");
+    const detail = store.getState().sessionData[id].processDetail;
+    assert.equal(detail.elapsedMs, 200);
+    assert.equal(detail.output.tail, "one\ntwo\n");
+    assert.equal(detail.output.latestSeq, 2);
+  } finally {
+    restore();
+  }
+}
+
 async function testToolDetailKeepsNewestSelection() {
   const id = "tool-detail-selection";
   installSession(id, { extraData: { toolDetail: null } });
@@ -447,7 +622,7 @@ async function testToolTimelineDeepLinkDoesNotLockInspectorSelection() {
   try {
     const initial = controller.loadToolCall(id, "call-from-chat");
     const selected = controller.selectToolCall(id, "call-other");
-    assert.equal(store.getState().ui.inspector.callID, undefined);
+    assert.equal(store.getState().ui.inspector.callID, "call-other");
 
     newGate.resolve({ data: { id: "call-other", toolName: "other", status: "ok" } });
     await selected;
@@ -455,7 +630,72 @@ async function testToolTimelineDeepLinkDoesNotLockInspectorSelection() {
     await initial;
 
     assert.equal(store.getState().sessionData[id].toolDetail.id, "call-other");
-    assert.equal(store.getState().ui.inspector.callID, undefined);
+    assert.equal(store.getState().ui.inspector.callID, "call-other");
+  } finally {
+    restore();
+  }
+}
+
+async function testTimelineToolOpenKeepsNewestClickAcrossListRace() {
+  const id = "tool-open-click-race";
+  installSession(id, { extraData: { toolDetail: null, toolCalls: null } });
+  store.setState((state) => ({
+    ...state,
+    ui: { ...state.ui, selectedSessionID: id },
+  }));
+  const firstList = deferred();
+  const oldDetail = deferred();
+  const newDetail = deferred();
+  let listReads = 0;
+  const restore = restoreApi({
+    toolCalls: async () => {
+      listReads += 1;
+      if (listReads === 1) return firstList.promise;
+      return { data: [{ id: "call-new", toolName: "new", status: "ok" }], cursor: { next: null } };
+    },
+    toolCall: (_sessionID, callID) => callID === "call-old" ? oldDetail.promise : newDetail.promise,
+    toolOutput: async () => ({ data: [], cursor: { next: 0, truncatedBefore: 0 } }),
+  });
+  try {
+    const oldOpen = controller.openInspector("tool", { callID: "call-old" });
+    const newOpen = controller.openInspector("tool", { callID: "call-new" });
+
+    newDetail.resolve({ data: { id: "call-new", toolName: "new", status: "ok" } });
+    await tick();
+    firstList.resolve({ data: [{ id: "call-old", toolName: "old", status: "ok" }], cursor: { next: null } });
+    oldDetail.resolve({ data: { id: "call-old", toolName: "old", status: "ok" } });
+    await Promise.all([oldOpen, newOpen]);
+
+    assert.equal(store.getState().ui.inspector.callID, "call-new");
+    assert.equal(store.getState().sessionData[id].toolDetail.id, "call-new");
+  } finally {
+    restore();
+  }
+}
+
+async function testTimelineToolOpenLoadsCallOutsideSidebarPage() {
+  const id = "tool-open-outside-sidebar";
+  installSession(id, { extraData: { toolDetail: null, toolCalls: null } });
+  store.setState((state) => ({
+    ...state,
+    ui: { ...state.ui, selectedSessionID: id },
+  }));
+  const restore = restoreApi({
+    toolCalls: async () => ({
+      data: [{ id: "call-newest", toolName: "newest", status: "ok" }],
+      cursor: { next: "older-page" },
+    }),
+    toolCall: async (_sessionID, callID) => ({
+      data: { id: callID, toolName: "historical", status: "ok" },
+    }),
+    toolOutput: async () => ({ data: [], cursor: { next: 0, truncatedBefore: 0 } }),
+  });
+  try {
+    await controller.openInspector("tool", { callID: "call-from-old-history" });
+
+    assert.deepEqual(store.getState().sessionData[id].toolCalls.map((call) => call.id), ["call-newest"]);
+    assert.equal(store.getState().ui.inspector.callID, "call-from-old-history");
+    assert.equal(store.getState().sessionData[id].toolDetail.id, "call-from-old-history");
   } finally {
     restore();
   }
@@ -1140,8 +1380,14 @@ const tests = [
   testHumanInputOldReadCannotResurrectResolvedRequest,
   testSelectionAndToolTogglesKeepLatestClick,
   testProcessRefreshDoesNotRestoreAnOldSelection,
+  testLoadOlderMessagesSkipsDuplicateOnlyPages,
+  testLoadOlderMessagesRecoversInvalidCursor,
+  testProcessOutputRefreshAppendsIncrementallyWithoutDuplication,
+  testProcessMetadataRefreshCannotMoveOutputBackward,
   testToolDetailKeepsNewestSelection,
   testToolTimelineDeepLinkDoesNotLockInspectorSelection,
+  testTimelineToolOpenKeepsNewestClickAcrossListRace,
+  testTimelineToolOpenLoadsCallOutsideSidebarPage,
   testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns,
   testBackgroundDraftSubmitKeepsUserOnFreshDraft,
   testLoadSessionHydratesOptimisticEmptySession,

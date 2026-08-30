@@ -42,6 +42,21 @@ export function ProcessInspector({ sessionID, data, capabilities }) {
     node.scrollTop = node.scrollHeight;
   }, [selectedDetail?.processID, outputText.length]);
 
+  useEffect(() => {
+    const processID = selectedDetail?.processID;
+    if (!processID || selectedDetail.status !== "running") return undefined;
+    const outputTimer = window.setInterval(() => {
+      void controller.refreshProcessOutput(processID).catch((error) => controller.notice(error?.message || String(error)));
+    }, 180);
+    const metadataTimer = window.setInterval(() => {
+      void controller.refreshProcess(processID).catch((error) => controller.notice(error?.message || String(error)));
+    }, 1000);
+    return () => {
+      window.clearInterval(outputTimer);
+      window.clearInterval(metadataTimer);
+    };
+  }, [sessionID, selectedDetail?.processID, selectedDetail?.status]);
+
   if (!processes) return html`<div class="inspector-loading">Loading managed processes…</div>`;
 
   const refresh = async () => {

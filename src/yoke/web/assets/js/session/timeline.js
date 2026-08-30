@@ -84,7 +84,7 @@ export function Timeline({ sessionID, data, runtime }) {
       <div class="timeline" ref=${viewport} onScroll=${onScroll} aria-label="Conversation timeline">
         <div class="timeline__inner">
           ${data?.messageCursor ? html`
-            <button class="load-older" disabled=${data.loadingOlder} onClick=${() => controller.loadOlderMessages(sessionID)}>
+            <button class="load-older" disabled=${data.loadingOlder} onClick=${() => controller.loadOlderMessages(sessionID).catch((error) => controller.notice(error?.message || String(error)))}>
               ${data.loadingOlder ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
               <span>${data.loadingOlder ? "Loading older turns" : "Load older turns"}</span>
             </button>
@@ -96,7 +96,7 @@ export function Timeline({ sessionID, data, runtime }) {
           ${livePrompt ? html`<${UserMessage} message=${livePromptMessage(livePrompt)} />` : null}
           ${liveTailItems.map((item) => item.kind === "assistant"
             ? item.value.content ? html`<${AssistantMessage} key=${item.value.id} message=${{ id: item.value.id, phase: item.value.phase, timeCreated: item.value.timeCreated, content: [{ type: "text", text: item.value.content }] }} showMetadata=${assistantMetadataIDs.has(item.value.id)} />` : null
-            : html`<button key=${item.value.callID} class=${`tool-line tool-line--live tool-line--${item.value.status}`} onClick=${() => item.value.callID && controller.openInspector("tool", { callID: item.value.callID })}>
+            : html`<button key=${item.value.callID} data-tool-call-id=${item.value.callID} class=${`tool-line tool-line--live tool-line--${item.value.status}`} onClick=${() => item.value.callID && controller.openInspector("tool", { callID: item.value.callID })}>
                 <span class="tool-line__glyph">${toolGlyph(item.value.status)}</span>
                 <span>${humanToolName(item.value.name)}</span>
                 <span class="tool-line__state">${toolStatusLabel(item.value.status)}</span>
@@ -181,7 +181,7 @@ function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolR
           const status = live?.status || (result ? "completed" : "pending");
           const resultSummary = result ? compactResult(result.result) : "";
           return html`
-            <button key=${call.id} class=${`tool-line tool-line--${status}`} onClick=${() => sessionID && controller.openInspector("tool", { callID: call.id })}>
+            <button key=${call.id} data-tool-call-id=${call.id} class=${`tool-line tool-line--${status}`} onClick=${() => sessionID && controller.openInspector("tool", { callID: call.id })}>
               <span class="tool-line__glyph">${toolGlyph(status)}</span>
               <span class="tool-line__name">${humanToolName(call.name)}</span>
               ${call.arguments ? html`<code>${compactArguments(call.arguments)}</code>` : null}
@@ -198,7 +198,7 @@ function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolR
 function ToolMessage({ sessionID, message, toolName = null }) {
   const summary = compactResult(message.result);
   return html`<div class="tool-result-row">
-    <button class="tool-line" onClick=${() => message.callID && controller.openInspector("tool", { callID: message.callID })}>
+    <button class="tool-line" data-tool-call-id=${message.callID} onClick=${() => message.callID && controller.openInspector("tool", { callID: message.callID })}>
       <span class="tool-line__glyph">✓</span><span>${toolName ? humanToolName(toolName) : "Tool"} completed</span>${summary ? html`<span class="tool-line__summary">${summary}</span>` : null}
     </button>
   </div>`;

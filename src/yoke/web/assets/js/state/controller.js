@@ -15,6 +15,7 @@ import {
   writeReviewed,
   writeToken,
 } from "./local-state.js";
+import { fetchOlderMessagePage } from "./message-pagination.js";
 import { installActiveSnapshot, mergeSessionSummary, reducePublicEvent } from "./reducer.js";
 import { store } from "./store.js";
 
@@ -52,6 +53,7 @@ class AppController {
     this.treePendingLabels = new Map();
     this.treeServerRevisions = new Map();
     this.toolDetailGeneration = new Map();
+    this.processOutputRequests = new Map();
     this.pendingLiveEvents = new Map();
     this.liveFrame = null;
     this.routeHandler = () => void this.applyRoute();
@@ -270,7 +272,8 @@ class AppController {
       if (store.getState().ui.inspector?.mode === "tool") {
         this.schedule(`tool-inspector:${id}`, 100, async () => {
           await this.listToolCalls(id);
-          const callID = store.getState().sessionData[id]?.toolDetail?.id;
+          const inspector = store.getState().ui.inspector;
+          const callID = inspector?.mode === "tool" ? inspector.callID : null;
           if (callID) await this.loadToolCall(id, callID);
         });
       }
@@ -292,13 +295,9 @@ class AppController {
       this.schedule(`human:${id}`, 80, () => this.refreshHumanInput(id));
     }
     if (event.type === "session.process.updated") {
-      this.schedule(`process:${id}`, 120, async () => {
-        const processID = store.getState().sessionData[id]?.processDetail?.processID;
-        await Promise.all([
-          this.refreshProcesses(id),
-          processID ? this.refreshProcess(processID) : Promise.resolve(),
-        ]);
-      });
+      const processID = store.getState().sessionData[id]?.processDetail?.processID;
+      if (processID) void this.refreshProcessOutput(processID).catch((error) => this.notice(errorMessage(error)));
+      this.throttle(`process-list:${id}`, 750, () => this.refreshProcesses(id));
     }
     if (event.type === "session.selection.changed") {
       this.schedule(`summary:${id}`, 120, () => this.refreshSessionSummary(id));
@@ -316,6 +315,15 @@ class AppController {
 
   schedule(key, delay, task) {
     clearTimeout(this.refreshTimers.get(key));
+    const timer = setTimeout(async () => {
+      this.refreshTimers.delete(key);
+      try { await task(); } catch (error) { this.notice(errorMessage(error)); }
+    }, delay);
+    this.refreshTimers.set(key, timer);
+  }
+
+  throttle(key, delay, task) {
+    if (this.refreshTimers.has(key)) return;
     const timer = setTimeout(async () => {
       this.refreshTimers.delete(key);
       try { await task(); } catch (error) { this.notice(errorMessage(error)); }
@@ -669,27 +677,67 @@ class AppController {
   async loadOlderMessages(sessionID) {
     const data = store.getState().sessionData[sessionID];
     if (!data?.messageCursor || data.loadingOlder) return;
+    const startingCursor = data.messageCursor;
     store.setState((state) => ({
       ...state,
       sessionData: { ...state.sessionData, [sessionID]: { ...state.sessionData[sessionID], loadingOlder: true } },
     }));
     try {
-      const response = await api.messages(sessionID, { limit: 100, order: "desc", cursor: data.messageCursor });
+      const page = await fetchOlderMessagePage({
+        cursor: startingCursor,
+        messages: data.messages || [],
+        fetchPage: (cursor) => api.messages(sessionID, { limit: 100, order: "desc", cursor }),
+        fetchLatest: () => api.messages(sessionID, { limit: 100, order: "desc" }),
+      });
+      const currentBeforeApply = store.getState().sessionData[sessionID];
+      if (!page.replacementMessages && currentBeforeApply?.messageCursor !== startingCursor) {
+        store.setState((state) => ({
+          ...state,
+          sessionData: { ...state.sessionData, [sessionID]: { ...state.sessionData[sessionID], loadingOlder: false } },
+        }));
+        return this.loadOlderMessages(sessionID);
+      }
+      let addedCount = 0;
       store.setState((state) => ({
         ...state,
-        sessionData: {
-          ...state.sessionData,
-          [sessionID]: {
-            ...state.sessionData[sessionID],
-            messages: dedupeMessages([
-              ...[...response.data].reverse(),
-              ...(state.sessionData[sessionID]?.messages || []),
-            ]),
-            messageCursor: response.cursor?.next || null,
-            loadingOlder: false,
-          },
-        },
+        sessionData: (() => {
+          const current = state.sessionData[sessionID] || {};
+          const base = page.replacementMessages || current.messages || [];
+          const baseIDs = new Set(base.map((message) => message?.id).filter(Boolean));
+          const uniqueOlder = page.olderMessages.filter((message) => !baseIDs.has(message.id));
+          addedCount = uniqueOlder.length;
+          const messages = dedupeMessages([...uniqueOlder, ...base]);
+          const activeTurnID = state.active[sessionID]?.turnID ?? null;
+          const rebased = Boolean(page.replacementMessages);
+          return {
+            ...state.sessionData,
+            [sessionID]: {
+              ...current,
+              latestSeq: rebased
+                ? Math.max(current.latestSeq || 0, page.replacementSnapshotSeq || 0)
+                : current.latestSeq,
+              messages,
+              livePrompt: rebased ? reconcileLivePrompt(current.livePrompt, messages) : current.livePrompt,
+              liveAssistants: rebased
+                ? reconcileLiveAssistants(current.liveAssistants || {}, messages, activeTurnID)
+                : current.liveAssistants,
+              liveTools: rebased
+                ? reconcileLiveTools(current.liveTools || {}, messages, activeTurnID)
+                : current.liveTools,
+              failedPrompts: rebased
+                ? (current.failedPrompts || []).filter((prompt) => !messagesContainPrompt(messages, prompt))
+                : current.failedPrompts,
+              messageCursor: page.nextCursor,
+              loadingOlder: false,
+            },
+          };
+        })(),
       }));
+      return {
+        addedCount,
+        recoveredCursor: page.recoveredCursor,
+        skippedDuplicatePages: page.duplicatePages,
+      };
     } catch (error) {
       store.setState((state) => ({
         ...state,
@@ -1853,10 +1901,27 @@ class AppController {
     this.clearNotice();
     const sessionID = store.getState().ui.selectedSessionID;
     if (!sessionID) return;
-    store.setState((state) => ({ ...state, ui: { ...state.ui, inspector: { mode, ...payload } } }));
+    store.setState((state) => {
+      const next = { ...state, ui: { ...state.ui, inspector: { mode, ...payload } } };
+      if (mode !== "tool" || !payload.callID) return next;
+      const current = state.sessionData[sessionID] || {};
+      if (current.toolDetail?.id === payload.callID) return next;
+      return {
+        ...next,
+        sessionData: {
+          ...state.sessionData,
+          [sessionID]: { ...current, toolDetail: null },
+        },
+      };
+    });
     if (mode === "tree") await this.refreshTree(sessionID);
     if (mode === "process") await this.refreshProcesses(sessionID);
-    if (mode === "tool") await this.listToolCalls(sessionID);
+    if (mode === "tool") {
+      const detail = payload.callID
+        ? this.loadToolCall(sessionID, payload.callID)
+        : Promise.resolve(null);
+      await Promise.all([this.listToolCalls(sessionID), detail]);
+    }
     if (mode === "tools") await this.refreshTools(sessionID);
     if (mode === "skills") await this.refreshSkills(sessionID);
     if (mode === "mcp") await this.refreshMcp(sessionID);
@@ -1864,7 +1929,6 @@ class AppController {
       const response = await api.context(sessionID);
       this.setSessionField(sessionID, "context", response.data);
     }
-    if (mode === "tool" && payload.callID) await this.loadToolCall(sessionID, payload.callID);
     if (mode === "file" && payload.path) await this.loadFile(sessionID, payload.path);
   }
 
@@ -1877,20 +1941,27 @@ class AppController {
     this.toolDetailGeneration.set(sessionID, generation);
     const [detail, output] = await Promise.all([api.toolCall(sessionID, callID), api.toolOutput(sessionID, callID)]);
     if (this.toolDetailGeneration.get(sessionID) !== generation) return null;
+    const inspector = store.getState().ui.inspector;
+    if (inspector?.mode === "tool" && inspector.callID && inspector.callID !== callID) return null;
     this.setSessionField(sessionID, "toolDetail", { ...detail.data, outputChunks: output.data, outputCursor: output.cursor });
     return detail.data;
   }
 
   async selectToolCall(sessionID, callID) {
-    // The callID attached to a Tool inspector opened from the timeline is only
-    // an initial focus hint. Consume it before an explicit inspector selection
-    // so later detail renders cannot snap back to the timeline call.
     store.setState((state) => {
       const inspector = state.ui.inspector;
-      if (inspector?.mode !== "tool" || !inspector.callID) return state;
-      const nextInspector = { ...inspector };
-      delete nextInspector.callID;
-      return { ...state, ui: { ...state.ui, inspector: nextInspector } };
+      if (inspector?.mode !== "tool") return state;
+      const current = state.sessionData[sessionID] || {};
+      return {
+        ...state,
+        ui: { ...state.ui, inspector: { ...inspector, callID } },
+        sessionData: {
+          ...state.sessionData,
+          [sessionID]: current.toolDetail?.id === callID
+            ? current
+            : { ...current, toolDetail: null },
+        },
+      };
     });
     return this.loadToolCall(sessionID, callID);
   }
@@ -1902,13 +1973,62 @@ class AppController {
     this.setSessionField(sessionID, "processDetail", detail.data);
   }
 
+  async refreshProcessOutput(processID) {
+    const existingRequest = this.processOutputRequests.get(processID);
+    if (existingRequest) return existingRequest;
+    const request = (async () => {
+      const located = this.findProcessDetail(processID);
+      if (!located) return;
+      const { sessionID, detail } = located;
+      const afterSeq = detail.output?.latestSeq || 0;
+      const response = await api.processOutput(processID, afterSeq, 500);
+      const current = store.getState().sessionData[sessionID]?.processDetail;
+      if (current?.processID !== processID) return;
+      const currentSeq = current.output?.latestSeq || 0;
+      if (response.cursor.truncatedBefore > currentSeq) {
+        await this.refreshProcess(processID);
+        return;
+      }
+      const chunks = response.data.filter((chunk) => chunk.seq > currentSeq);
+      if (!chunks.length && response.cursor.next <= currentSeq) return;
+      const appended = chunks.map((chunk) => chunk.text).join("");
+      this.setSessionField(sessionID, "processDetail", {
+        ...current,
+        output: {
+          ...current.output,
+          tail: `${current.output?.tail || ""}${appended}`,
+          latestSeq: Math.max(currentSeq, response.cursor.next || 0),
+        },
+      });
+    })().finally(() => {
+      if (this.processOutputRequests.get(processID) === request) {
+        this.processOutputRequests.delete(processID);
+      }
+    });
+    this.processOutputRequests.set(processID, request);
+    return request;
+  }
+
+  findProcessDetail(processID) {
+    for (const [sessionID, data] of Object.entries(store.getState().sessionData)) {
+      if (data?.processDetail?.processID === processID) {
+        return { sessionID, detail: data.processDetail };
+      }
+    }
+    return null;
+  }
+
   async refreshProcess(processID) {
     const detail = await api.process(processID);
     const sessionID = detail.data.sessionID;
     if (!sessionID) return;
-    const selectedID = store.getState().sessionData[sessionID]?.processDetail?.processID;
-    if (selectedID !== processID) return;
-    this.setSessionField(sessionID, "processDetail", detail.data);
+    const current = store.getState().sessionData[sessionID]?.processDetail;
+    if (current?.processID !== processID) return;
+    const currentSeq = current.output?.latestSeq || 0;
+    const incomingSeq = detail.data.output?.latestSeq || 0;
+    this.setSessionField(sessionID, "processDetail", incomingSeq < currentSeq
+      ? { ...detail.data, output: current.output }
+      : detail.data);
   }
 
   async loadFile(sessionID, path) {

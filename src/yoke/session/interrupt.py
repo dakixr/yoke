@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from yoke.agent.loop import INTERRUPTED_TURN_NOTICE
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
+from yoke.agent.session_tree._tool_sequence import recovered_tool_result_entries
+from yoke.agent.session_tree._tool_sequence import tail_open_tool_call_ids
 from yoke.session import SessionTreeIndex
 
 
@@ -22,6 +24,18 @@ def interrupted_turn_snapshot(
     snapshot_messages = list(messages)
     snapshot_entries = list(active)
     parent_id = active[-1].id if active else None
+    dangling_call_ids = tail_open_tool_call_ids(active)
+    if dangling_call_ids:
+        recovered = recovered_tool_result_entries(
+            dangling_call_ids,
+            parent_id=parent_id,
+            error="Tool call cancelled because the turn was interrupted.",
+        )
+        snapshot_entries.extend(recovered)
+        snapshot_messages.extend(
+            entry.message for entry in recovered if entry.message is not None
+        )
+        parent_id = recovered[-1].id
     if user_message is not None:
         copied_user = user_message.model_copy(deep=True)
         user_entry = ConversationEntry(

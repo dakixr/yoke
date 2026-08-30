@@ -17,6 +17,7 @@ from yoke.agent.skills.models import ActiveSkill
 from .errors import InvalidCheckpointError
 from .errors import InvalidMessageError
 from .errors import InvalidToolSequenceError
+from ._tool_sequence import open_tool_call_ids
 from .values import EntryRef
 from ._topology import active_path
 
@@ -235,15 +236,7 @@ class SessionTreeMutations:
         return active_path(self._entries, self._leaf_id)
 
     def _validate_tool_sequence(self, message: Message) -> None:
-        open_calls: set[str] = set()
-        for entry in self._active_entries():
-            current = entry.message
-            if current is None:
-                continue
-            if current.role == "assistant" and current.tool_calls:
-                open_calls = {call.id for call in current.tool_calls}
-            elif current.role == "tool" and current.tool_call_id in open_calls:
-                open_calls.remove(current.tool_call_id)
+        open_calls = set(open_tool_call_ids(self._active_entries()))
         if message.role == "tool":
             if not message.tool_call_id or message.tool_call_id not in open_calls:
                 raise InvalidToolSequenceError(

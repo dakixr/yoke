@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: D100, D103, S101
 
 import inspect
+import json
 from typing import cast
 
 import pytest
@@ -168,6 +169,45 @@ def test_tool_context_is_provider_visible_but_not_user_scrollback() -> None:
     ]
     assert _texts(scrollback.messages) == ["inspect", None, '{"ok":true}']
     assert audit.items[-1].kind == "tool_context"
+
+
+def test_runtime_seed_closes_incomplete_tool_batch_at_persisted_leaf() -> None:
+    calls = [
+        ToolCall(
+            id="attach-1",
+            function=ToolFunction(name="attach_image", arguments="{}"),
+        ),
+        ToolCall(
+            id="attach-2",
+            function=ToolFunction(name="attach_image", arguments="{}"),
+        ),
+    ]
+    tree = SessionTree.from_messages([Message.user("inspect")])
+    tree.append_message(Message(role="assistant", content=None, tool_calls=calls))
+    tree.append_message(Message.tool("attach-1", '{"ok":true}'))
+    exported = tree.export_for_persistence()
+
+    seed = SessionTree.take_validated_runtime(
+        [entry.model_copy(deep=True) for entry in exported.entries],
+        exported.leaf_id,
+    )
+
+    assert [message.role for message in seed.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+    ]
+    recovered = seed.entries[-1]
+    assert recovered.kind == "tool_result"
+    assert recovered.parent_id == exported.leaf_id
+    assert recovered.metadata["recovered_incomplete_tool_call"] is True
+    assert recovered.message is not None
+    assert recovered.message.tool_call_id == "attach-2"
+    payload = json.loads(recovered.message.text_content() or "{}")
+    assert payload["cancelled"] is True
+    assert payload["error"] == "Tool call was incomplete when the session resumed."
+    assert seed.leaf_id == recovered.id
 
 
 def test_restore_reclassifies_legacy_attach_image_user_entry() -> None:

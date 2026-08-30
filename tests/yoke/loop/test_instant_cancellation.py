@@ -933,6 +933,48 @@ def test_runtime_fork_rebinds_tool_provider_to_isolated_provider() -> None:
     forked.close()
 
 
+def test_interruption_closes_incomplete_tool_batch_before_continuation() -> None:
+    messages = [
+        Message.user("work"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    function=ToolFunction(name="probe", arguments="{}"),
+                ),
+                ToolCall(
+                    id="call-2",
+                    function=ToolFunction(name="probe", arguments="{}"),
+                ),
+            ],
+        ),
+        Message.tool("call-1", '{"ok":true}'),
+    ]
+    entries = conversation_entries_from_messages(messages)
+
+    snapshot_messages, snapshot_entries = interrupted_turn_snapshot(
+        messages=messages,
+        entries=entries,
+        user_message=Message.user("continue"),
+        leaf_id=entries[-1].id,
+    )
+
+    assert [message.role for message in snapshot_messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "user",
+        "assistant",
+    ]
+    assert snapshot_messages[3].tool_call_id == "call-2"
+    assert "cancelled" in (snapshot_messages[3].text_content() or "")
+    assert snapshot_entries[3].metadata["recovered_incomplete_tool_call"] is True
+    assert snapshot_entries[4].parent_id == snapshot_entries[3].id
+
+
 def test_large_interruption_checkpoint_reuses_immutable_history() -> None:
     entries: list[ConversationEntry] = []
     messages: list[Message] = []
