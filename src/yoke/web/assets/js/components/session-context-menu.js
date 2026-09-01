@@ -1,11 +1,13 @@
 import { html, useEffect, useRef } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
+import { hasPendingQueue } from "./sidebar-status.js";
 
 const MENU_WIDTH = 208;
 
 export function SessionContextMenu({ session, location, runtime, capabilities, position, onClose }) {
   const menuRef = useRef(null);
   const busy = runtime?.state && runtime.state !== "idle" && runtime.state !== "error";
+  const pending = hasPendingQueue(session.queue);
   const directory = session.location?.directory || "";
   const branch = location?.git?.branch || null;
   const left = Math.max(8, Math.min(position.x, window.innerWidth - MENU_WIDTH - 8));
@@ -79,7 +81,7 @@ export function SessionContextMenu({ session, location, runtime, capabilities, p
         <span>${session.pinned ? "Unpin session" : "Pin session"}</span>
       </button>
       ${capabilities?.features?.sessionArchive ? html`
-        <button role="menuitem" disabled=${Boolean(busy)} onClick=${() => void run(() => controller.patchSession(session.id, { archived: !session.archivedAt }))}>
+        <button role="menuitem" disabled=${Boolean(busy || (!session.archivedAt && pending))} onClick=${() => void run(() => controller.patchSession(session.id, { archived: !session.archivedAt }))}>
           <span>${session.archivedAt ? "Reopen session" : "Settle session"}</span>
         </button>
       ` : null}

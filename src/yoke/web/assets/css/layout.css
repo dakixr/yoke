@@ -9,7 +9,10 @@
 .brand-row { display: flex; min-height: 28px; align-items: center; gap: 7px; padding: 0 4px; }
 .brand { font-size: 13px; font-weight: 760; letter-spacing: -.02em; }
 .brand-subtitle { color: var(--sidebar-muted); font-size: 10.5px; }
-.connection-dot { width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--done); }
+.connection-dot { width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--sidebar-muted); }
+.connection-dot.is-connected { background: var(--done); }
+.connection-dot.is-syncing { background: var(--attention); }
+.connection-dot.is-disconnected { background: var(--danger); }
 .sidebar-inbox-toolbar { display: flex; align-items: center; gap: 4px; }
 .new-session-button { display: grid; width: 34px; height: 34px; flex: none; place-items: center; border-radius: 6px; color: var(--sidebar-muted); font-size: 20px; font-weight: 430; line-height: 1; }
 .new-session-button:hover { background: var(--sidebar-hover); color: var(--sidebar-text); }

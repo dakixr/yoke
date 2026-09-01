@@ -3731,6 +3731,21 @@
             ],
             "title": "Parentid"
           },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "commentary",
+                  "final_answer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
           "preview": {
             "anyOf": [
               {

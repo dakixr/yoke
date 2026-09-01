@@ -26,12 +26,18 @@ globalThis.cancelAnimationFrame = (timer) => clearTimeout(timer);
 
 const { api, ApiError } = await import("../src/yoke/web/assets/js/api/client.js");
 const { controller } = await import("../src/yoke/web/assets/js/state/controller.js");
-const { reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
+const { installActiveSnapshot, mergeSessionInfo, reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
 const { store } = await import("../src/yoke/web/assets/js/state/store.js");
 const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
 const { assistantMetadataMessageIDs, compactToolBatchMessageIDs } = await import("../src/yoke/web/assets/js/lib/messages.js");
-const { displayTreeEntries, treeGraphLayout } = await import("../src/yoke/web/assets/js/inspector/tree-graph.js");
+const { defaultTreeEntries, displayTreeEntries, treeGraphLayout } = await import("../src/yoke/web/assets/js/inspector/tree-graph.js");
 const { sortToolCallsChronologically } = await import("../src/yoke/web/assets/js/inspector/tool-logic.js");
+const {
+  connectionStatusDescriptor,
+  hasPendingQueue,
+  queueStatusLabel,
+  sessionStatusDescriptor,
+} = await import("../src/yoke/web/assets/js/components/sidebar-status.js");
 const { treeKeyboardTarget } = await import("../src/yoke/web/assets/js/inspector/tree-keyboard.js");
 const { createLocationBrowseCoordinator, isLocationBrowseQuery } = await import("../src/yoke/web/assets/js/session/location-picker-logic.js");
 const { filterModelChoices, groupModelChoices, modelNavigationIndex, modelSelectionErrorMessage, resolveModelEffort } = await import("../src/yoke/web/assets/js/session/model-picker-logic.js");
@@ -404,6 +410,15 @@ async function testServerRestartLetsEmptyQueueReplaceStaleUi() {
   controller.resync = async () => {};
   const restore = restoreApi({
     queue: async () => ({ data: { revision: 0, items: [] } }),
+    listSessions: async ({ archived }) => archived
+      ? { data: [], total: 0, cursor: { next: null } }
+      : {
+          data: [sessionSummary(id, {
+            queue: { total: 0, steering: 0, queued: 0, paused: 0, revision: 0 },
+          })],
+          total: 1,
+          cursor: { next: null },
+        },
   });
   try {
     await controller.refreshQueue(id);
@@ -417,6 +432,14 @@ async function testServerRestartLetsEmptyQueueReplaceStaleUi() {
       type: "server.connected",
       data: { serverInstanceID: "new-server" },
       durable: null,
+    });
+    await controller.refreshSessionLists();
+    assert.deepEqual(store.getState().sessions[id].queue, {
+      total: 0,
+      steering: 0,
+      queued: 0,
+      paused: 0,
+      revision: 0,
     });
     await controller.refreshQueue(id);
     assert.deepEqual(store.getState().sessionData[id].queue, { revision: 0, items: [] });
@@ -1372,6 +1395,24 @@ async function testTreeGraphBridgesHiddenTechnicalNodes() {
   assert.equal(graph.edges[0].childID, "assistant");
 }
 
+async function testTreeDefaultViewKeepsUsersAndFinalAssistants() {
+  const entries = [
+    { id: "user-1", parentID: null, kind: "user" },
+    { id: "commentary", parentID: "user-1", kind: "assistant", phase: "commentary" },
+    { id: "tool-call", parentID: "commentary", kind: "assistant_tool_calls" },
+    { id: "tool-result", parentID: "tool-call", kind: "tool" },
+    { id: "final", parentID: "tool-result", kind: "assistant", phase: "final_answer" },
+    { id: "user-2", parentID: "final", kind: "user" },
+    { id: "legacy-final", parentID: "user-2", kind: "assistant", phase: null },
+  ];
+  assert.deepEqual(
+    defaultTreeEntries(entries).map((entry) => entry.id),
+    ["user-1", "final", "user-2", "legacy-final"],
+  );
+  const visible = displayTreeEntries(entries, defaultTreeEntries(entries));
+  assert.equal(visible[1].graphParentID, "user-1");
+}
+
 async function testLocationBrowseKeepsNewestNavigation() {
   const coordinator = createLocationBrowseCoordinator();
   const first = deferred();
@@ -1583,6 +1624,221 @@ async function testSettledTotalDoesNotDependOnLoadedPage() {
   }
 }
 
+async function testDoneTracksCompletedTurnsOnly() {
+  const id = "done-state";
+  installSession(id);
+  store.setState((state) => ({
+    ...state,
+    active: { ...state.active, [id]: { state: "running", turnID: 1 } },
+    ui: { ...state.ui, selectedSessionID: null, doneUnreviewed: { [id]: false } },
+  }));
+
+  let next = reducePublicEvent(store.getState(), {
+    type: "session.active.changed",
+    sessionID: id,
+    data: { state: "idle" },
+  });
+  assert.equal(next.ui.doneUnreviewed[id], false, "idle alone must not mean an unseen completion");
+
+  next = reducePublicEvent(next, {
+    type: "session.message.updated",
+    sessionID: id,
+    data: { inputID: "inp-done", turnID: 1, status: "completed" },
+    durable: { seq: 1 },
+  });
+  assert.equal(next.ui.doneUnreviewed[id], true);
+
+  next = reducePublicEvent(next, {
+    type: "session.active.changed",
+    sessionID: id,
+    data: { state: "running", turnID: 2, startedAt: "2026-09-01T12:00:00Z" },
+  });
+  assert.equal(next.ui.doneUnreviewed[id], false, "new work must clear an older Done badge");
+
+  next = {
+    ...next,
+    ui: { ...next.ui, doneUnreviewed: { ...next.ui.doneUnreviewed, [id]: true } },
+  };
+  next = installActiveSnapshot(next, {
+    [id]: { state: "running", turnID: 2, startedAt: "2026-09-01T12:00:00Z" },
+  });
+  assert.equal(next.ui.doneUnreviewed[id], false, "reload must clear persisted Done for active work");
+}
+
+async function testResyncReplaysCompletionForPreviouslyActiveSession() {
+  const id = "resync-completed-background";
+  const summary = sessionSummary(id);
+  store.setState((state) => ({
+    ...state,
+    sessions: { ...state.sessions, [id]: summary },
+    sessionOrder: [id],
+    active: { [id]: { state: "running", turnID: 1 } },
+    sessionData: {},
+    ui: { ...state.ui, selectedSessionID: null, doneUnreviewed: { [id]: false } },
+    connection: { ...state.connection, current: true, status: "connected" },
+  }));
+  let historyReads = 0;
+  const restore = restoreApi({
+    activeSessions: async () => ({ data: {} }),
+    listSessions: async ({ archived }) => archived
+      ? { data: [], total: 0, cursor: { next: null } }
+      : { data: [summary], total: 1, cursor: { next: null } },
+    history: async (sessionID) => {
+      assert.equal(sessionID, id);
+      historyReads += 1;
+      return {
+        data: [{
+          type: "session.message.updated",
+          sessionID: id,
+          data: { inputID: "inp-finished", turnID: 1, status: "completed" },
+          durable: { seq: 1 },
+        }],
+        hasMore: false,
+      };
+    },
+  });
+  const originalResolveLocations = controller.resolveVisibleLocations;
+  controller.resolveVisibleLocations = async () => {};
+  try {
+    await controller.resync(false);
+    assert.equal(historyReads, 1);
+    assert.equal(store.getState().ui.doneUnreviewed[id], true);
+  } finally {
+    controller.resolveVisibleLocations = originalResolveLocations;
+    restore();
+  }
+}
+
+async function testSidebarStatusPrioritizesCurrentWork() {
+  assert.deepEqual(
+    sessionStatusDescriptor({
+      runtime: { state: "running" },
+      attention: null,
+      done: true,
+      queue: { total: 2, steering: 0, queued: 1, paused: 1 },
+      age: "2m",
+    }),
+    { kind: "working", label: "Working" },
+  );
+  assert.deepEqual(
+    sessionStatusDescriptor({
+      runtime: { state: "idle" },
+      attention: null,
+      done: true,
+      queue: { total: 2, steering: 0, queued: 1, paused: 1 },
+      age: "2m",
+    }),
+    { kind: "quiet", label: "1 queued · 1 paused" },
+  );
+  assert.equal(queueStatusLabel({ steering: 1, queued: 0, paused: 2 }), "1 steer · 2 paused");
+  assert.equal(hasPendingQueue({ total: 1 }), true);
+  assert.equal(hasPendingQueue({ total: 0 }), false);
+}
+
+async function testSessionSummaryKeepsNewestQueueRevision() {
+  const id = "queue-summary-race";
+  const current = sessionSummary(id, {
+    queue: { total: 0, steering: 0, queued: 0, paused: 0, revision: 6 },
+  });
+  const stale = sessionSummary(id, {
+    title: "Fresh title, stale queue",
+    queue: { total: 1, steering: 0, queued: 1, paused: 0, revision: 5 },
+  });
+  const merged = mergeSessionInfo(current, stale, { preserveQueue: true });
+  assert.equal(merged.title, "Fresh title, stale queue");
+  assert.deepEqual(merged.queue, current.queue);
+
+  const newer = sessionSummary(id, {
+    queue: { total: 1, steering: 1, queued: 0, paused: 0, revision: 7 },
+  });
+  assert.deepEqual(mergeSessionInfo(current, newer, { preserveQueue: true }).queue, newer.queue);
+
+  controller.queueServerRevisions.delete(id);
+  installSession(id);
+  const restore = restoreApi({
+    listSessions: async ({ archived }) => archived
+      ? { data: [], total: 0, cursor: { next: null } }
+      : { data: [current], total: 1, cursor: { next: null } },
+    getSession: async () => ({ data: stale }),
+  });
+  const originalResolveLocations = controller.resolveVisibleLocations;
+  controller.resolveVisibleLocations = async () => {};
+  try {
+    await controller.refreshSessionLists();
+    assert.equal(controller.queueServerRevisions.get(id), 6);
+    await controller.refreshSessionSummary(id);
+    assert.equal(store.getState().sessions[id].title, "Fresh title, stale queue");
+    assert.deepEqual(store.getState().sessions[id].queue, current.queue);
+  } finally {
+    controller.resolveVisibleLocations = originalResolveLocations;
+    restore();
+  }
+}
+
+async function testQueueSummarySeparatesPausedWork() {
+  const id = "paused-queue-summary";
+  installSession(id);
+  controller.installQueue(id, {
+    revision: 4,
+    items: [
+      { id: "steer-paused", delivery: "steer", paused: true },
+      { id: "queue-paused", delivery: "queue", paused: true },
+      { id: "queue-ready", delivery: "queue", paused: false },
+    ],
+  });
+  assert.deepEqual(store.getState().sessions[id].queue, {
+    total: 3,
+    steering: 0,
+    queued: 1,
+    paused: 2,
+    revision: 4,
+  });
+}
+
+async function testSummaryGuardKeepsAuthoritativeQueueRevision() {
+  const id = "queue-summary-optimistic-revision";
+  installSession(id);
+  controller.queueServerRevisions.set(id, 10);
+  controller.installQueue(id, {
+    revision: 11,
+    items: [{ id: "local-edit", delivery: "queue", paused: false }],
+  }, { authoritative: false });
+  const restore = restoreApi({
+    getSession: async () => ({
+      data: sessionSummary(id, {
+        title: "Summary response",
+        queue: { total: 0, steering: 0, queued: 0, paused: 0, revision: 10 },
+      }),
+    }),
+  });
+  try {
+    await controller.refreshSessionSummary(id);
+    assert.equal(controller.queueServerRevisions.get(id), 10);
+    assert.equal(store.getState().sessions[id].queue.revision, 11);
+  } finally {
+    restore();
+  }
+}
+
+async function testConnectionIndicatorTracksStreamState() {
+  assert.deepEqual(
+    connectionStatusDescriptor({ current: true, status: "connected" }),
+    { kind: "connected", label: "Connected" },
+  );
+  assert.deepEqual(
+    connectionStatusDescriptor({ current: false, status: "resyncing" }),
+    { kind: "syncing", label: "Synchronizing" },
+  );
+  assert.deepEqual(
+    connectionStatusDescriptor({ current: false, status: "connected" }),
+    { kind: "syncing", label: "Synchronizing" },
+  );
+  assert.deepEqual(
+    connectionStatusDescriptor({ current: false, status: "disconnected" }),
+    { kind: "disconnected", label: "Disconnected" },
+  );
+}
+
 async function testToolCallsSortChronologically() {
   const calls = [
     { id: "new", time: { started: "2026-09-01T10:00:03Z" } },
@@ -1648,6 +1904,7 @@ const tests = [
   testSelectionEventClearsRecoveredContextUsage,
   testTreeGraphKeepsCurrentLaneAndSeparatesOverlappingBranches,
   testTreeGraphBridgesHiddenTechnicalNodes,
+  testTreeDefaultViewKeepsUsersAndFinalAssistants,
   testLocationBrowseKeepsNewestNavigation,
   testCombinedModelPickerFiltersAcrossProviders,
   testSlashMenuKeepsKeyboardSelectionInsideViewport,
@@ -1656,6 +1913,13 @@ const tests = [
   testSidebarGlobalShortcutSupportsMacAndWindows,
   testProcessInspectorChordAcceptsPlainAndControlP,
   testSettledTotalDoesNotDependOnLoadedPage,
+  testDoneTracksCompletedTurnsOnly,
+  testResyncReplaysCompletionForPreviouslyActiveSession,
+  testSidebarStatusPrioritizesCurrentWork,
+  testSessionSummaryKeepsNewestQueueRevision,
+  testQueueSummarySeparatesPausedWork,
+  testSummaryGuardKeepsAuthoritativeQueueRevision,
+  testConnectionIndicatorTracksStreamState,
   testToolCallsSortChronologically,
   testModelSelectionContextErrorStaysSpecific,
   testTurnSummaryMatchesCliFormatting,

@@ -21,6 +21,7 @@ from yoke.http.models.session import SessionCompactionData
 from yoke.http.models.session import SessionCompactionRequest
 from yoke.http.models.session import SessionCompactionResponse
 from yoke.http.models.session import SessionForkRequest
+from yoke.http.models.session import SessionInfo
 from yoke.http.models.session import SessionListResponse
 from yoke.http.models.session import SessionPatchRequest
 from yoke.http.models.session import SessionResponse
@@ -115,8 +116,9 @@ async def patch_session(
     fields = body.model_fields_set
     if "title" in fields:
         _runtimes(request).cancel_automatic_title(session_id)
-    return SessionResponse(
-        data=_service(request).patch_session(
+
+    def mutate() -> SessionInfo:
+        return _service(request).patch_session(
             session_id,
             title_set="title" in fields,
             title=body.title,
@@ -125,7 +127,13 @@ async def patch_session(
             archived_set="archived" in fields,
             archived=body.archived,
         )
+
+    data = (
+        await _runtimes(request).idle_mutation(session_id, mutate)
+        if body.archived is True
+        else mutate()
     )
+    return SessionResponse(data=data)
 
 
 @router.post(

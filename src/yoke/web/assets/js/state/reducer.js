@@ -21,24 +21,28 @@ function toolCallID(event) {
   return event.data?.tool_call_id || event.data?.toolCallID || null;
 }
 
-export function mergeSessionSummary(state, session) {
+export function mergeSessionInfo(current, incoming, { preserveQueue = false } = {}) {
+  if (!current) return incoming;
+  const currentQueueRevision = Number(current.queue?.revision ?? -1);
+  const incomingQueueRevision = Number(incoming.queue?.revision ?? -1);
+  if (preserveQueue && currentQueueRevision > incomingQueueRevision) {
+    return { ...incoming, queue: current.queue };
+  }
+  return incoming;
+}
+
+export function mergeSessionSummary(state, session, options = {}) {
+  const merged = mergeSessionInfo(state.sessions[session.id], session, options);
   return {
     ...state,
-    sessions: { ...state.sessions, [session.id]: session },
+    sessions: { ...state.sessions, [session.id]: merged },
   };
 }
 
 export function installActiveSnapshot(state, active) {
   const done = { ...state.ui.doneUnreviewed };
-  for (const [sessionID, previous] of Object.entries(state.active)) {
-    const current = active[sessionID];
-    if (
-      previous?.state && previous.state !== "idle" &&
-      (!current || current.state === "idle") &&
-      state.ui.selectedSessionID !== sessionID
-    ) {
-      done[sessionID] = true;
-    }
+  for (const [sessionID, current] of Object.entries(active)) {
+    if (current?.state && current.state !== "idle") done[sessionID] = false;
   }
   return {
     ...state,
@@ -72,7 +76,6 @@ export function reducePublicEvent(state, event) {
   if (!sessionID) return next;
 
   if (event.type === "session.active.changed") {
-    const previous = next.active[sessionID];
     const current = {
       state: event.data?.state || "idle",
       turnID: event.data?.turnID ?? null,
@@ -81,12 +84,7 @@ export function reducePublicEvent(state, event) {
       activity: event.data?.activity ?? null,
     };
     const done = { ...next.ui.doneUnreviewed };
-    if (
-      previous?.state && previous.state !== "idle" && current.state === "idle" &&
-      next.ui.selectedSessionID !== sessionID
-    ) {
-      done[sessionID] = true;
-    }
+    if (current.state !== "idle") done[sessionID] = false;
     return {
       ...next,
       active: { ...next.active, [sessionID]: current },
@@ -157,6 +155,13 @@ export function reducePublicEvent(state, event) {
     };
   } else if (event.type === "session.runtime.failed") {
     data.lastError = event.data?.error || "Agent execution failed.";
+    next = {
+      ...next,
+      ui: {
+        ...next.ui,
+        doneUnreviewed: { ...next.ui.doneUnreviewed, [sessionID]: false },
+      },
+    };
   } else if (event.type === "session.selection.changed") {
     data.contextUsage = null;
     const session = next.sessions[sessionID];
@@ -253,6 +258,18 @@ export function reducePublicEvent(state, event) {
       data.pendingPrompts = pendingPrompts;
     }
     data.lastError = null;
+    if (
+      event.data?.status === "completed" &&
+      next.ui.selectedSessionID !== sessionID
+    ) {
+      next = {
+        ...next,
+        ui: {
+          ...next.ui,
+          doneUnreviewed: { ...next.ui.doneUnreviewed, [sessionID]: true },
+        },
+      };
+    }
   } else if (event.type === "session.tool.started") {
     const callID = toolCallID(event);
     if (callID) {

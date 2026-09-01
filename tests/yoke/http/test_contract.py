@@ -228,7 +228,7 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
     assert session_b["queue"] == {
         "total": 2,
         "steering": 1,
-        "queued": 1,
+        "queued": 0,
         "paused": 1,
         "revision": 7,
     }
@@ -664,6 +664,53 @@ def test_session_archive_is_durable_filterable_and_reopenable(tmp_path: Path) ->
     assert reopened.json()["data"]["archivedAt"] is None
 
 
+def test_session_archive_rejects_pending_queue(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    created = client.post(
+        "/api/v1/session",
+        headers=_auth(),
+        json={"id": "session-a", "location": {"directory": str(root)}},
+    )
+    assert created.status_code == 200
+    store = getattr(client.app, "state").session_service.store
+    write_prompt_queue_snapshot(
+        store.directory,
+        "session-a",
+        PersistedPromptQueue(
+            revision=1,
+            prompts=[
+                PersistedPendingInput(
+                    id="inp-paused",
+                    prompt="later",
+                    kind="queued",
+                    created_at="2026-09-01T12:00:00+00:00",
+                    paused=True,
+                )
+            ],
+        ),
+    )
+
+    archived = client.patch(
+        "/api/v1/session/session-a",
+        headers=_auth(),
+        json={"archived": True},
+    )
+    assert archived.status_code == 409
+    assert archived.json()["error"]["code"] == "session_has_pending_work"
+    current = client.get("/api/v1/session/session-a", headers=_auth())
+    assert current.status_code == 200
+    assert current.json()["data"]["archivedAt"] is None
+    assert current.json()["data"]["queue"] == {
+        "total": 1,
+        "steering": 0,
+        "queued": 0,
+        "paused": 1,
+        "revision": 1,
+    }
+
+
 def test_session_search_matches_working_directory(tmp_path: Path) -> None:
     client = _client(tmp_path)
     root = tmp_path / "distinct-project-name"
@@ -711,6 +758,39 @@ def test_message_and_tree_projection_strip_provider_private_fields(
     assert tree.json()["data"]["leafID"] == assistant_id
     assert tree.json()["data"]["entries"][-1]["current"] is True
     assert tree.json()["data"]["entries"][-1]["active"] is True
+
+
+def test_tree_entries_expose_assistant_phase(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages = [
+        Message.user("inspect"),
+        Message.commentary("Checking the repository."),
+        Message.assistant("Done.", phase="final_answer"),
+    ]
+    tree = SessionTree.from_messages(messages)
+    exported = tree.export_for_persistence()
+    _fastapi(client).state.session_service.store.save(
+        "tree-phase-session",
+        messages,
+        conversation_entries=list(exported.entries),
+        leaf_id=exported.leaf_id,
+        root=root,
+    )
+
+    response = client.get(
+        "/api/v1/session/tree-phase-session/tree",
+        headers=_auth(),
+        params={"limit": 20},
+    )
+    assert response.status_code == 200
+    entries = response.json()["data"]["entries"]
+    assert [(item["kind"], item["phase"]) for item in entries] == [
+        ("user", None),
+        ("assistant", "commentary"),
+        ("assistant", "final_answer"),
+    ]
 
 
 def test_tool_context_is_hidden_from_chat_but_kept_in_model_context(

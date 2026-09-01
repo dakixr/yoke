@@ -16,7 +16,7 @@ import {
   writeToken,
 } from "./local-state.js";
 import { fetchOlderMessagePage } from "./message-pagination.js";
-import { installActiveSnapshot, mergeSessionSummary, reducePublicEvent } from "./reducer.js";
+import { installActiveSnapshot, mergeSessionInfo, mergeSessionSummary, reducePublicEvent } from "./reducer.js";
 import { store } from "./store.js";
 
 const MESSAGE_REFRESH_MS = 180;
@@ -150,7 +150,13 @@ class AppController {
       ]);
       store.setState((state) => {
         const sessions = { ...state.sessions };
-        for (const session of [...current.data, ...archived.data]) sessions[session.id] = session;
+        for (const session of [...current.data, ...archived.data]) {
+          sessions[session.id] = mergeServerSessionSummary(
+            sessions[session.id],
+            session,
+            this.queueServerRevisions,
+          );
+        }
         let next = {
           ...state,
           capabilities: capabilities.data,
@@ -362,10 +368,12 @@ class AppController {
       connection: { ...state.connection, current: false, status: "resyncing" },
     }));
     try {
+      const previouslyActive = Object.keys(store.getState().active);
       const [active] = await Promise.all([api.activeSessions(), this.refreshSessionLists()]);
       store.setState((state) => installActiveSnapshot(state, active.data));
       const relevant = new Set([
         ...Object.keys(store.getState().sessionData),
+        ...previouslyActive,
         ...Object.keys(active.data),
       ]);
       const selected = store.getState().ui.selectedSessionID;
@@ -428,7 +436,13 @@ class AppController {
     ]);
     store.setState((state) => {
       const sessions = { ...state.sessions };
-      for (const item of [...current.data, ...archived.data]) sessions[item.id] = item;
+      for (const item of [...current.data, ...archived.data]) {
+        sessions[item.id] = mergeServerSessionSummary(
+          sessions[item.id],
+          item,
+          this.queueServerRevisions,
+        );
+      }
       let next = {
         ...state,
         sessions,
@@ -474,7 +488,13 @@ class AppController {
     });
     store.setState((current) => {
       const sessions = { ...current.sessions };
-      for (const item of response.data) sessions[item.id] = item;
+      for (const item of response.data) {
+        sessions[item.id] = mergeServerSessionSummary(
+          sessions[item.id],
+          item,
+          this.queueServerRevisions,
+        );
+      }
       const key = archived ? "archivedOrder" : "sessionOrder";
       return {
         ...current,
@@ -519,6 +539,11 @@ class AppController {
       }
       const selection = this.pendingSelections.get(sessionID);
       if (selection) summary = { ...summary, selection };
+      summary = mergeServerSessionSummary(
+        state.sessions[sessionID],
+        summary,
+        this.queueServerRevisions,
+      );
       return mergeSessionSummary(state, summary);
     });
   }
@@ -567,7 +592,13 @@ class AppController {
     const response = await api.listSessions({ search: value, limit: 100, order: "lastUserDesc" });
     store.setState((state) => {
       const sessions = { ...state.sessions };
-      for (const item of response.data) sessions[item.id] = item;
+      for (const item of response.data) {
+        sessions[item.id] = mergeServerSessionSummary(
+          sessions[item.id],
+          item,
+          this.queueServerRevisions,
+        );
+      }
       return {
         ...state,
         sessions,
@@ -671,8 +702,13 @@ class AppController {
         const current = state.sessionData[sessionID] || {};
         const loadedMessages = [...messages.data].reverse();
         const activeTurnID = state.active[sessionID]?.turnID ?? null;
+        const mergedSession = mergeServerSessionSummary(
+          state.sessions[sessionID],
+          session.data,
+          this.queueServerRevisions,
+        );
         return {
-          ...mergeSessionSummary(state, session.data),
+          ...mergeSessionSummary(state, mergedSession),
           sessionData: {
             ...state.sessionData,
             [sessionID]: {
@@ -1580,7 +1616,14 @@ class AppController {
 
   async regenerateTitle(sessionID) {
     const response = await api.regenerateTitle(sessionID);
-    store.setState((state) => mergeSessionSummary(state, response.data));
+    store.setState((state) => mergeSessionSummary(
+      state,
+      mergeServerSessionSummary(
+        state.sessions[sessionID],
+        response.data,
+        this.queueServerRevisions,
+      ),
+    ));
     await this.refreshSessionLists();
     return response.data;
   }
@@ -2497,15 +2540,32 @@ function mergeTreeEntry(tree, entry, revision) {
   };
 }
 
+function mergeServerSessionSummary(current, incoming, queueRevisions) {
+  const knownRevision = queueRevisions.get(incoming.id);
+  const preserveQueue = knownRevision !== undefined;
+  const merged = mergeSessionInfo(current, incoming, { preserveQueue });
+  const incomingRevision = Number(incoming.queue?.revision);
+  if (Number.isFinite(incomingRevision)) {
+    queueRevisions.set(
+      incoming.id,
+      knownRevision === undefined
+        ? incomingRevision
+        : Math.max(knownRevision, incomingRevision),
+    );
+  }
+  return merged;
+}
+
 function installSessionSummary(state, session, { moveToFront = false } = {}) {
   const sessionID = session.id;
+  const merged = mergeSessionInfo(state.sessions[sessionID], session, { preserveQueue: true });
   let sessionOrder = state.sessionOrder.filter((id) => id !== sessionID);
   let archivedOrder = state.archivedOrder.filter((id) => id !== sessionID);
-  const target = session.archivedAt ? archivedOrder : sessionOrder;
+  const target = merged.archivedAt ? archivedOrder : sessionOrder;
   if (moveToFront || !target.includes(sessionID)) target.unshift(sessionID);
   return {
     ...state,
-    sessions: { ...state.sessions, [sessionID]: session },
+    sessions: { ...state.sessions, [sessionID]: merged },
     sessionOrder,
     archivedOrder,
   };
@@ -2513,13 +2573,14 @@ function installSessionSummary(state, session, { moveToFront = false } = {}) {
 
 function restoreSessionSummary(state, session, activeIndex, archivedIndex) {
   const sessionID = session.id;
+  const merged = mergeSessionInfo(state.sessions[sessionID], session, { preserveQueue: true });
   const sessionOrder = state.sessionOrder.filter((id) => id !== sessionID);
   const archivedOrder = state.archivedOrder.filter((id) => id !== sessionID);
   if (activeIndex >= 0) sessionOrder.splice(Math.min(activeIndex, sessionOrder.length), 0, sessionID);
   if (archivedIndex >= 0) archivedOrder.splice(Math.min(archivedIndex, archivedOrder.length), 0, sessionID);
   return {
     ...state,
-    sessions: { ...state.sessions, [sessionID]: session },
+    sessions: { ...state.sessions, [sessionID]: merged },
     sessionOrder,
     archivedOrder,
   };
@@ -2572,8 +2633,8 @@ function queueSummary(queue) {
   const items = queue?.items || [];
   return {
     total: items.length,
-    steering: items.filter((item) => item.delivery === "steer").length,
-    queued: items.filter((item) => item.delivery === "queue").length,
+    steering: items.filter((item) => item.delivery === "steer" && !item.paused).length,
+    queued: items.filter((item) => item.delivery === "queue" && !item.paused).length,
     paused: items.filter((item) => item.paused).length,
     revision: queue?.revision || 0,
   };

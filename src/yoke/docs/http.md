@@ -145,6 +145,15 @@ The browser requests `lastUserDesc` ordering for its session sidebar, so agent
 completion, tool activity, title edits, and model changes do not move a session
 ahead of one the user interacted with more recently. Sessions without a user
 message fall back to their creation time.
+Sidebar status uses current work before historical completion state. `Done`
+means an unreviewed successfully completed turn, and a later running, stopping,
+attention, error, or pending-queue state replaces it immediately. Queue counts
+separate runnable steer/queued prompts from paused prompts. Session-list and
+single-session refreshes keep a newer locally known queue revision instead of
+letting an older summary overwrite the sidebar card. Settling is rejected while
+the runtime is busy or any queued prompt remains, including paused prompts.
+The sidebar connection dot also follows the event-stream state rather than
+remaining green during reconnect or resynchronization.
 Session listing also accepts the immediately preceding `session_stream` v1
 storage format and rewrites it to the current JSONL format on first load. A
 single unreadable session file is skipped rather than failing the complete
@@ -505,8 +514,11 @@ are shown as one readable detail document, with raw JSON and wrapping controls
 available when needed.
 
 The Tree inspector is optimized around moving the current conversation HEAD.
-It defaults to user and assistant message nodes only; tool, control, and other
-technical nodes remain available behind the `All nodes` view. History renders
+It defaults to user messages and final assistant messages. Mid-turn assistant
+commentary, tool, control, and other technical nodes remain available behind
+the `All nodes` view. Legacy assistant rows without an explicit phase are
+treated as final messages. Tree API rows expose assistant `phase` so the browser
+does not infer commentary from text or topology. History renders
 oldest at the top and the current HEAD toward the bottom as a git-style graph
 with a dedicated active lane, reusable colored branch lanes, circular nodes,
 and curved fork connectors. Active-path edges remain visually dominant while

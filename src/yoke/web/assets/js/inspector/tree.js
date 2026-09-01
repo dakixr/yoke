@@ -1,6 +1,6 @@
 import { html, useLayoutEffect, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
-import { displayTreeEntries, TREE_GRAPH_ROW_HEIGHT, treeGraphLayout } from "./tree-graph.js";
+import { defaultTreeEntries, displayTreeEntries, TREE_GRAPH_ROW_HEIGHT, treeGraphLayout } from "./tree-graph.js";
 import { isTreeNavigationKey, treeKeyboardTarget } from "./tree-keyboard.js";
 
 export function TreeInspector({ sessionID, data }) {
@@ -15,7 +15,7 @@ export function TreeInspector({ sessionID, data }) {
   const historyRef = useRef(null);
   const entryButtonRefs = useRef(new Map());
   const openedRef = useRef(null);
-  const messageEntries = tree?.entries?.filter(isMessageEntry) || [];
+  const messageEntries = defaultTreeEntries(tree?.entries);
   const visibleEntries = tree ? (showTechnical ? tree.entries : messageEntries) : [];
   const displayEntries = tree ? displayTreeEntries(tree.entries, visibleEntries) : [];
   const graph = treeGraphLayout(displayEntries);
@@ -310,11 +310,6 @@ function keepTreeEntryVisible(scroller, button) {
   const visibleBottom = scrollerRect.bottom;
   if (rowRect.top < visibleTop) scroller.scrollTop -= visibleTop - rowRect.top;
   else if (rowRect.bottom > visibleBottom) scroller.scrollTop += rowRect.bottom - visibleBottom;
-}
-
-function isMessageEntry(entry) {
-  if (entry.kind === "user" || entry.kind === "assistant") return true;
-  return entry.kind === "assistant_tool_calls" && Boolean(entry.preview);
 }
 
 function kindLabel(kind) {

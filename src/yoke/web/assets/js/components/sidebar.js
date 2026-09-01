@@ -4,6 +4,7 @@ import { currentRoute, draftPath, navigate } from "../router/router.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
 import { SessionContextMenu } from "./session-context-menu.js";
+import { connectionStatusDescriptor, hasPendingQueue, sessionStatusDescriptor } from "./sidebar-status.js";
 
 export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave = null, onTransientClose = null }) {
   const open = useStore((state) => state.ui.sidebarOpen);
@@ -23,13 +24,15 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
   const searchResults = useStore((state) => state.ui.searchResults);
   const searching = useStore((state) => state.ui.searching);
   const capabilities = useStore((state) => state.capabilities);
-  const connected = useStore((state) => state.connection.current);
+  const connection = useStore((state) => state.connection);
   const [settledOpen, setSettledOpen] = useState(false);
   const [projectScope, setProjectScope] = useState("");
   const [scopedSettledTotal, setScopedSettledTotal] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const route = currentRoute();
   const selectedDraftID = route.name === "new" ? route.draftID : null;
+  const connectionStatus = connectionStatusDescriptor(connection);
+  const connected = connection.current;
 
   const meaningfulDrafts = useMemo(
     () => Object.values(drafts)
@@ -92,7 +95,7 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
           <button class="icon-button mobile-only" aria-label="Close sessions" onClick=${() => peeking ? onTransientClose?.() : controller.toggleSidebar()}>×</button>
           <div class="brand">Yoke</div>
           <span class="brand-subtitle">Sessions</span>
-          <span class="connection-dot" aria-label="Connected" title="Connected"></span>
+          <span class=${`connection-dot is-${connectionStatus.kind}`} aria-label=${connectionStatus.label} title=${connectionStatus.label}></span>
         </div>
         <div class="sidebar-inbox-toolbar">
           <label class="sidebar-search">
@@ -144,7 +147,7 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
                 <span class=${`section-toggle__chevron ${settledOpen ? "is-open" : ""}`} aria-hidden="true">⌄</span>
               </button>
               ${settledOpen ? scopedArchived.map((session) => html`
-                <${SessionRow} key=${session.id} session=${session} selected=${selectedID === session.id} locations=${locations} settled onOpenMenu=${openSessionMenu} />
+                <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} settled onOpenMenu=${openSessionMenu} />
               `) : null}
               ${settledOpen && archivedCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(true)}>＋ Show more settled</button>` : null}
             </section>
@@ -183,17 +186,18 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
   const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
   const working = active?.state === "running" && attentionCount === 0;
   const busy = active?.state && active.state !== "idle" && active.state !== "error";
-  const quickSettle = Boolean(settleSupported && !settled && !busy);
+  const quickSettle = Boolean(settleSupported && !settled && !busy && !hasPendingQueue(session.queue));
   const menuKeys = (event) => {
     if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) onOpenMenu?.(event, session);
   };
   if (settled) {
+    const status = sessionStatusDescriptor({ runtime: active, attention, done, queue: session.queue, age });
     return html`
       <button class=${`session-row session-row--slim is-settled ${selected ? "is-selected" : ""}`} aria-current=${selected ? "page" : undefined} onClick=${() => controller.selectSession(session.id)} onContextMenu=${(event) => onOpenMenu?.(event, session)} onKeyDown=${menuKeys}>
         <span class="session-project-glyph" aria-hidden="true">▱</span>
         <span class="session-row__title">${session.title || session.id}</span>
         ${session.pinned ? html`<span class="session-pin" aria-label="Pinned" title="Pinned">PIN</span>` : null}
-        <span class="session-row__meta">${age}</span>
+        <span class=${`session-row__meta status--${status.kind}`}>${status.label}</span>
       </button>
     `;
   }
@@ -244,17 +248,11 @@ function SessionStatus({ runtime, attention, done, queue, age }) {
     const id = setInterval(() => tick((value) => value + 1), 1000);
     return () => clearInterval(id);
   }, [runtime?.state, runtime?.startedAt]);
-  const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
-  if (attentionCount) return html`<span class="status status--attention">${attentionCount === 1 ? "Action required" : `${attentionCount} actions required`}</span>`;
-  if (runtime?.state === "waiting_input") return html`<span class="status status--attention">Waiting for you</span>`;
-  if (runtime?.state === "error") return html`<span class="status status--error">Error</span>`;
-  if (done) return html`<span class="status status--done">Done</span>`;
-  if (runtime?.state === "stopping") return html`<span class="status status--quiet">Stopping</span>`;
-  if (runtime?.state === "running") return html`<span class="status status--working"><span class="working-glyph" aria-hidden="true"></span><span role="status">Working</span><span class="working-duration" aria-hidden="true">${workingDuration(runtime.startedAt).replace("Working ", "")}</span></span>`;
-  if (queue?.steering && queue?.queued) return html`<span class="status status--quiet">${queue.steering} steer · ${queue.queued} queued</span>`;
-  if (queue?.steering) return html`<span class="status status--quiet">${queue.steering} steer</span>`;
-  if (queue?.queued) return html`<span class="status status--quiet">${queue.queued} queued</span>`;
-  return html`<span class="status status--quiet">${age || "now"}</span>`;
+  const status = sessionStatusDescriptor({ runtime, attention, done, queue, age });
+  if (status.kind === "working") {
+    return html`<span class="status status--working"><span class="working-glyph" aria-hidden="true"></span><span role="status">Working</span><span class="working-duration" aria-hidden="true">${workingDuration(runtime.startedAt).replace("Working ", "")}</span></span>`;
+  }
+  return html`<span class=${`status status--${status.kind}`}>${status.label}</span>`;
 }
 
 function DraftRow({ draft, location, selected }) {

@@ -205,6 +205,14 @@ class SessionService:
         if archived_set:
             if archived is None:
                 raise ApiError(400, "invalid_archived", "archived cannot be null.")
+            if archived:
+                queue = load_prompt_queue_snapshot(self.store.directory, session_id)
+                if queue.prompts:
+                    raise ApiError(
+                        409,
+                        "session_has_pending_work",
+                        "Session has pending queued prompts. Remove, resume, or let them finish before settling.",
+                    )
             record = self.store.set_archived(
                 session_id, archived, existing_record=record
             )
@@ -968,12 +976,17 @@ class SessionService:
 
     def _queue_summary(self, session_id: str) -> SessionQueueSummary:
         queue = load_prompt_queue_snapshot(self.store.directory, session_id)
-        steering = sum(item.kind == "steering" for item in queue.prompts)
+        steering = sum(
+            item.kind == "steering" and not item.paused for item in queue.prompts
+        )
+        queued = sum(
+            item.kind == "queued" and not item.paused for item in queue.prompts
+        )
         paused = sum(item.paused for item in queue.prompts)
         return SessionQueueSummary(
             total=len(queue.prompts),
             steering=steering,
-            queued=len(queue.prompts) - steering,
+            queued=queued,
             paused=paused,
             revision=queue.revision,
         )

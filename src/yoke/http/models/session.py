@@ -241,6 +241,7 @@ class TreeEntryInfo(ApiModel):
     id: str
     parent_id: str | None = None
     kind: str
+    phase: Literal["commentary", "final_answer"] | None = None
     created_at: str
     label: str | None = None
     active: bool = False

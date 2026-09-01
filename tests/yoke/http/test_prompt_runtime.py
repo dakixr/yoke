@@ -420,6 +420,109 @@ def _create_session(client: TestClient, root: Path, session_id: str) -> None:
     assert response.status_code == 200
 
 
+def test_session_archive_rejects_running_runtime(tmp_path: Path) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "session-a")
+        admitted = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "busy"}, "delivery": "steer"},
+        )
+        assert admitted.status_code == 200
+        assert controller.started["busy"].wait(1)
+
+        archived = client.patch(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+            json={"archived": True},
+        )
+        assert archived.status_code == 409
+        assert archived.json()["error"]["code"] == "session_busy"
+
+        controller.release["busy"].set()
+        waited = client.post(
+            "/api/v1/session/session-a/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        assert waited.json()["data"]["state"] == "idle"
+
+
+def test_queued_turn_promotion_does_not_publish_idle_between_turns(
+    tmp_path: Path,
+) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        active_events: list[dict[str, object]] = []
+        original_live = app.state.event_service.live
+
+        def capture_live(event_type: str, data: dict[str, object], **kwargs):
+            if (
+                event_type == "session.active.changed"
+                and kwargs.get("session_id") == "session-a"
+            ):
+                active_events.append(dict(data))
+            return original_live(event_type, data, **kwargs)
+
+        app.state.event_service.live = capture_live
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "session-a")
+        first = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "first"}, "delivery": "steer"},
+        )
+        assert first.status_code == 200
+        assert controller.started["first"].wait(1)
+        second = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "second"}, "delivery": "queue"},
+        )
+        assert second.status_code == 200
+
+        controller.release["first"].set()
+        assert controller.started["second"].wait(1)
+        second_running_index = next(
+            index
+            for index, event in enumerate(active_events)
+            if event.get("state") == "running" and event.get("turnID") == 2
+        )
+        assert all(
+            event.get("state") != "idle"
+            for event in active_events[:second_running_index]
+        )
+
+        controller.release["second"].set()
+        waited = client.post(
+            "/api/v1/session/session-a/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        assert waited.json()["data"]["state"] == "idle"
+        assert active_events[-1]["state"] == "idle"
+
+
 def test_prompt_admission_is_idempotent_and_queue_patch_is_revision_checked(
     tmp_path: Path,
 ) -> None:

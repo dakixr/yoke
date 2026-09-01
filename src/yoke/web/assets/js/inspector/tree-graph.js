@@ -1,5 +1,12 @@
 export const TREE_GRAPH_ROW_HEIGHT = 58;
 
+export function defaultTreeEntries(entries) {
+  return (entries || []).filter((entry) => (
+    entry.kind === "user" ||
+    (entry.kind === "assistant" && entry.phase !== "commentary")
+  ));
+}
+
 export function displayTreeEntries(allEntries, visibleEntries) {
   const allByID = new Map((allEntries || []).map((entry) => [entry.id, entry]));
   const visibleIDs = new Set((visibleEntries || []).map((entry) => entry.id));

@@ -507,13 +507,14 @@ class SessionRuntime:
             if self._operation is not operation:
                 return
             self._operation = None
-            self._state = "idle"
             self._last_error = None
             self._activity_status = None
-            self._publish_activity(None)
             next_admission = self._recover_or_next_locked()
             if next_admission is not None:
                 self._start_locked(next_admission)
+            else:
+                self._state = "idle"
+                self._publish_activity(None)
 
     async def _finish_operation_error(
         self,
@@ -1000,13 +1001,14 @@ class SessionRuntime:
             )
             self._close_turn_agent_later(outcome.agent)
             self._active = None
-            self._state = "error" if outcome.error is not None else "idle"
             self._activity_status = None
             self._active_tool_call_ids.pop(execution.turn_id, None)
-            self._publish_activity(None)
             next_admission = self._recover_or_next_locked()
             if next_admission is not None:
                 self._start_locked(next_admission)
+            else:
+                self._state = "error" if outcome.error is not None else "idle"
+                self._publish_activity(None)
 
     def _prepare_turn_agent(
         self,
@@ -1289,10 +1291,6 @@ class SessionRuntime:
         )
 
     def _publish_activity(self, execution: TurnExecution | None) -> None:
-        if execution is not None and (
-            execution.retired_event.is_set() or self._active is not execution
-        ):
-            return
         if execution is not None and (
             execution.retired_event.is_set() or self._active is not execution
         ):

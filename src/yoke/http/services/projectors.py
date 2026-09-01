@@ -106,6 +106,7 @@ def project_tree_entry(
         id=entry.id,
         parent_id=entry.parent_id,
         kind=kind_override or entry.kind,
+        phase=entry.message.phase if entry.message is not None else None,
         created_at=entry.created_at,
         label=_entry_label(entry),
         active=active,

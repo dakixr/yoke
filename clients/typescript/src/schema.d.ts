@@ -1993,6 +1993,8 @@ export interface components {
         SessionTime: {
             /** Created */
             created?: string | null;
+            /** Lastusermessage */
+            lastUserMessage?: string | null;
             /** Updated */
             updated?: string | null;
         };
@@ -2278,6 +2280,8 @@ export interface components {
             label?: string | null;
             /** Parentid */
             parentID?: string | null;
+            /** Phase */
+            phase?: ("commentary" | "final_answer") | null;
             /** Preview */
             preview?: string | null;
         };
@@ -2967,7 +2971,7 @@ export interface operations {
                 pinned?: boolean | null;
                 archived?: boolean | null;
                 limit?: number;
-                order?: "updatedDesc" | "updatedAsc" | "createdDesc" | "createdAsc";
+                order?: "updatedDesc" | "updatedAsc" | "createdDesc" | "createdAsc" | "lastUserDesc" | "lastUserAsc";
                 cursor?: string | null;
             };
             header?: never;
