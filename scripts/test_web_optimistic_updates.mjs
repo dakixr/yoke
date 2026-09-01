@@ -1570,6 +1570,8 @@ async function testNewSessionGlobalShortcutSupportsMacAndWindows() {
     assert.equal(fire({ ctrlKey: true, shiftKey: true }), true);
     assert.equal(created, 2);
     assert.equal(fire({ metaKey: true }), false);
+    assert.equal(fire({ key: "n", metaKey: true }), false);
+    assert.equal(fire({ key: "n", ctrlKey: true }), false);
     assert.equal(fire({ ctrlKey: true, shiftKey: true, altKey: true }), false);
     assert.equal(created, 2);
   } finally {
@@ -1619,7 +1621,7 @@ async function testSidebarGlobalShortcutSupportsMacAndWindows() {
   }
 }
 
-async function testProcessInspectorChordAcceptsPlainAndControlP() {
+async function testRemovedCtrlXChordFallsThrough() {
   let handler = null;
   const originalAdd = document.addEventListener;
   const originalRemove = document.removeEventListener;
@@ -1645,13 +1647,10 @@ async function testProcessInspectorChordAcceptsPlainAndControlP() {
     return prevented;
   };
   try {
-    assert.equal(fire({ key: "x", ctrlKey: true }), true);
-    assert.equal(fire({ key: "p" }), true);
-    assert.equal(opened, 1);
-
-    assert.equal(fire({ key: "x", ctrlKey: true }), true);
-    assert.equal(fire({ key: "p", ctrlKey: true }), true);
-    assert.equal(opened, 2);
+    assert.equal(fire({ key: "x", ctrlKey: true }), false);
+    assert.equal(fire({ key: "p" }), false);
+    assert.equal(fire({ key: "p", ctrlKey: true }), false);
+    assert.equal(opened, 0);
   } finally {
     uninstall();
     document.addEventListener = originalAdd;
@@ -1975,7 +1974,7 @@ const tests = [
   testTreeKeyboardNavigationFollowsVisibleTopology,
   testNewSessionGlobalShortcutSupportsMacAndWindows,
   testSidebarGlobalShortcutSupportsMacAndWindows,
-  testProcessInspectorChordAcceptsPlainAndControlP,
+  testRemovedCtrlXChordFallsThrough,
   testSettledTotalDoesNotDependOnLoadedPage,
   testDoneTracksCompletedTurnsOnly,
   testResyncReplaysCompletionForPreviouslyActiveSession,

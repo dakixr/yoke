@@ -55,7 +55,7 @@ export function Inspector() {
         ${inspector.mode === "context" ? html`<${ContextInspector} session=${session} data=${data} />` : null}
         ${inspector.mode === "file" ? html`<${FileInspector} data=${data} />` : null}
       </div>
-      <footer class="inspector__footer"><span>Esc close</span><span>Ctrl+X T tree</span><span>Ctrl+X Ctrl+P processes</span></footer>
+      <footer class="inspector__footer"><span>Esc close</span><span>⌘K / Ctrl+K commands</span></footer>
     </section>
   </div>`;
 }

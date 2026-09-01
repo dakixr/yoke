@@ -2,31 +2,12 @@
 
 export function installKeybindings(actions) {
   let lastEscapeAt = 0;
-  let ctrlXAt = 0;
   const handler = (event) => {
     const command = event.metaKey || event.ctrlKey;
     const key = event.key.toLowerCase();
     if (event.key !== "Escape") lastEscapeAt = 0;
-    if (event.ctrlKey && !event.metaKey && key === "x") {
-      ctrlXAt = performance.now();
-      event.preventDefault();
-      return;
-    }
-    if (ctrlXAt && ["control", "shift", "alt", "meta"].includes(key)) return;
-    if (ctrlXAt) {
-      const active = performance.now() - ctrlXAt <= 1200;
-      ctrlXAt = 0;
-      if (active) {
-        if (key === "o") return invoke(event, actions.toolInspector);
-        if (key === "p") return invoke(event, actions.processInspector);
-        if (key === "q") return invoke(event, actions.queueManager);
-        if (key === "m") return invoke(event, actions.modelSelector);
-        if (key === "t") return invoke(event, actions.sessionTree);
-      }
-    }
     if (command && event.shiftKey && !event.altKey && key === "o") return invoke(event, actions.newSession);
     if (command && key === "k") return invoke(event, actions.palette);
-    if (command && key === "n") return invoke(event, actions.newSession);
     if (command && !event.shiftKey && !event.altKey && key === "b") {
       return invoke(event, actions.toggleSidebar);
     }

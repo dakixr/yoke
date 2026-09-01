@@ -33,11 +33,6 @@ export function App() {
       toggleSidebar: () => controller.toggleSidebar(),
       escape: () => controller.escape(),
       interrupt: () => controller.interruptSelectedSession(),
-      toolInspector: () => controller.openInspector("tools"),
-      processInspector: () => controller.openInspector("process"),
-      queueManager: () => controller.focusQueueEditor(),
-      modelSelector: () => controller.focusModelSelector(),
-      sessionTree: () => controller.openInspector("tree"),
       switchSession: (delta) => controller.switchSession(delta),
     });
   }, []);

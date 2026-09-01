@@ -1985,7 +1985,7 @@ class AppController {
   }
 
   showShortcutHelp() {
-    this.notice("⇧⌘O / ⇧Ctrl+O new session · ⌘B / Ctrl+B sessions · ⌘Enter / Ctrl+Enter background new session · Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image · Ctrl+X O tools · Ctrl+X P processes · Ctrl+X Q queue · Ctrl+X M model · Ctrl+X T tree");
+    this.notice("⌘K / Ctrl+K commands · ⇧⌘O / ⇧Ctrl+O new session · ⌘B / Ctrl+B sessions · Alt+↑/↓ switch session · ⌘Enter / Ctrl+Enter background new session · Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image");
     return true;
   }
 
