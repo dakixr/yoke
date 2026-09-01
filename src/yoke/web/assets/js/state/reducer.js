@@ -239,7 +239,14 @@ export function reducePublicEvent(state, event) {
     };
   } else if (event.type === "session.message.updated" && event.durable) {
     const inputID = event.data?.inputID;
-    if (!inputID || data.livePrompt?.id === inputID) data.livePrompt = null;
+    const promptIsDurable = Boolean(
+      inputID &&
+      data.livePrompt?.id === inputID &&
+      (data.messages || []).some(
+        (message) => message.type === "user" && message.inputID === inputID,
+      ),
+    );
+    if (promptIsDurable) data.livePrompt = null;
     if (inputID && data.pendingPrompts?.[inputID]) {
       const pendingPrompts = { ...data.pendingPrompts };
       delete pendingPrompts[inputID];

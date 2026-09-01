@@ -30,8 +30,8 @@ function SessionView() {
   const runtime = useStore((state) => sessionID ? state.active[sessionID] : null);
   const data = useStore((state) => sessionID ? state.sessionData[sessionID] : null);
   if (!sessionID) return html`<main class="main-view"><div class="content-loading">Choose a session.</div></main>`;
-  if (!session || data?.loading) return html`<main class="main-view"><div class="content-loading">Loading session…</div></main>`;
-  if (data?.loadError) return html`<main class="main-view"><div class="content-error">${data.loadError}</div></main>`;
+  if (!session || (data?.loading && !data?.loaded)) return html`<main class="main-view"><div class="content-loading">Loading session…</div></main>`;
+  if (data?.loadError && !data?.loaded) return html`<main class="main-view"><div class="content-error">${data.loadError}</div></main>`;
   const attentionCount = (data?.permissions?.length || 0) + (data?.questions?.length || 0);
   return html`<main class="main-view session-view">
     <${SessionHeader} session=${session} runtime=${runtime} attentionCount=${(data?.permissions?.length || 0) + (data?.questions?.length || 0)} />

@@ -1,6 +1,6 @@
-import { html, useEffect, useLayoutEffect, useRef, useState } from "../../vendor/htm-preact.js";
+import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { workingDuration } from "../lib/duration.js";
-import { assistantMetadataMessageIDs, compactToolBatchMessageIDs, effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
+import { assistantMetadataMessageIDs, compactToolBatchMessageIDs, projectedMessageText } from "../lib/messages.js";
 import { controller } from "../state/controller.js";
 import { getScroll, setScroll } from "../state/local-state.js";
 import { chatActivityForRuntime } from "./activity.js";
@@ -17,25 +17,49 @@ export function Timeline({ sessionID, data, runtime }) {
   const messages = data?.messages || [];
   const livePrompt = data?.livePrompt;
   const failedPrompts = data?.failedPrompts || [];
-  const liveAssistants = orderedLiveValues(data?.liveAssistants);
-  const liveTools = orderedLiveValues(data?.liveTools);
-  const liveToolsByID = Object.fromEntries(liveTools.map((tool) => [tool.callID, tool]));
-  const persistedToolCalls = persistedToolCallMap(messages);
-  const persistedToolResults = persistedToolResultMap(messages);
-  const compactToolBatchIDs = compactToolBatchMessageIDs(messages);
-  const tailLiveTools = liveTools.filter((tool) => !persistedToolCalls.has(tool.callID));
-  const liveTailItems = orderedLiveTail(liveAssistants, tailLiveTools);
-  const assistantMetadataIDs = assistantMetadataMessageIDs([
-    ...messages,
-    ...(livePrompt ? [{ id: livePrompt.id, type: "user" }] : []),
-    ...liveAssistants.map((item) => ({
-      id: item.id,
-      type: "assistant",
-      content: item.content ? [{ type: "text", text: item.content }] : [],
-    })),
-  ]);
-  const liveAssistantSignature = liveAssistants.map((item) => `${item.id}:${item.content}`).join("|");
-  const liveToolSignature = liveTools.map((item) => `${item.callID}:${item.status}`).join("|");
+  const liveAssistants = useMemo(
+    () => orderedLiveValues(data?.liveAssistants),
+    [data?.liveAssistants],
+  );
+  const liveTools = useMemo(
+    () => orderedLiveValues(data?.liveTools),
+    [data?.liveTools],
+  );
+  const liveToolsByID = useMemo(
+    () => Object.fromEntries(liveTools.map((tool) => [tool.callID, tool])),
+    [liveTools],
+  );
+  const persistedToolCalls = useMemo(() => persistedToolCallMap(messages), [messages]);
+  const persistedToolResults = useMemo(() => persistedToolResultMap(messages), [messages]);
+  const compactToolBatchIDs = useMemo(() => compactToolBatchMessageIDs(messages), [messages]);
+  const tailLiveTools = useMemo(
+    () => liveTools.filter((tool) => !persistedToolCalls.has(tool.callID)),
+    [liveTools, persistedToolCalls],
+  );
+  const liveTailItems = useMemo(
+    () => orderedLiveTail(liveAssistants, tailLiveTools),
+    [liveAssistants, tailLiveTools],
+  );
+  const assistantMetadataIDs = useMemo(
+    () => assistantMetadataMessageIDs([
+      ...messages,
+      ...(livePrompt ? [{ id: livePrompt.id, type: "user" }] : []),
+      ...liveAssistants.map((item) => ({
+        id: item.id,
+        type: "assistant",
+        content: item.content ? [{ type: "text", text: item.content }] : [],
+      })),
+    ]),
+    [messages, livePrompt?.id, liveAssistants],
+  );
+  const liveAssistantSignature = useMemo(
+    () => liveAssistants.map((item) => `${item.id}:${item.content}`).join("|"),
+    [liveAssistants],
+  );
+  const liveToolSignature = useMemo(
+    () => liveTools.map((item) => `${item.callID}:${item.status}`).join("|"),
+    [liveTools],
+  );
   const chatActivity = chatActivityForRuntime(runtime);
 
   if (restore.current.sessionID !== sessionID) {
@@ -164,15 +188,19 @@ function livePromptMessage(livePrompt) {
 }
 
 function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolResults = new Map(), showMetadata = false, compactToolBatch = false }) {
-  const text = projectedMessageText(message);
-  const images = (message.content || []).filter((part) => part.type === "image");
-  const commentary = effectiveAssistantPhase(message) === "commentary";
+  const text = useMemo(() => projectedMessageText(message), [message]);
+  const renderedText = useMemo(() => text ? markdownHTML(text) : "", [text]);
+  const images = useMemo(
+    () => (message.content || []).filter((part) => part.type === "image"),
+    [message],
+  );
+  const commentary = message.phase === "commentary" || Boolean(!message.phase && message.toolCalls?.length && text);
   const phase = commentary ? "Commentary" : "Assistant";
   const toolOnly = Boolean(message.toolCalls?.length && !text.trim() && !images.length);
   return html`<article class=${`turn turn--assistant ${commentary ? "is-commentary" : ""} ${toolOnly ? "is-tool-only" : ""} ${compactToolBatch ? "is-tool-run-continuation" : ""}`}>
     ${showMetadata ? html`<div class="turn__rail"><span class="turn__label">${phase}</span>${message.timeCreated ? html`<time>${formatTime(message.timeCreated)}</time>` : null}</div>` : null}
     <div class="turn__body assistant-content">
-      ${text ? html`<div class="markdown" dangerouslySetInnerHTML=${{ __html: markdownHTML(text) }}></div>` : null}
+      ${text ? html`<div class="markdown" dangerouslySetInnerHTML=${{ __html: renderedText }}></div>` : null}
       ${images.map((part) => html`<span class="attachment-chip">▧ ${part.name}</span>`)}
       ${message.toolCalls?.length ? html`<div class="tool-call-list">
         ${message.toolCalls.map((call) => {

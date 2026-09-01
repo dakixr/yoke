@@ -169,6 +169,99 @@ async function testPromptAppearsBeforeAdmissionReturns() {
   }
 }
 
+async function testFailedTurnDoesNotDelayNextOptimisticPrompt() {
+  const id = "optimistic-prompt-after-failure";
+  installSession(id, {
+    queue: { revision: 0, items: [] },
+    extraData: {
+      lastError: "provider failed",
+      livePrompt: {
+        id: "inp_failed",
+        prompt: { text: "failed prompt", attachments: [] },
+        delivery: "steer",
+        timeCreated: "2026-08-27T12:00:00Z",
+      },
+    },
+  });
+  const admission = deferred();
+  let admitBody = null;
+  let messageReads = 0;
+  const restore = restoreApi({
+    admitPrompt: (_sessionID, body) => {
+      admitBody = body;
+      return admission.promise;
+    },
+    messages: async () => {
+      messageReads += 1;
+      return { data: [], cursor: { next: null }, snapshotSeq: 0 };
+    },
+    queue: async () => ({ data: { revision: 0, items: [] } }),
+  });
+  try {
+    const pending = controller.submitPrompt(id, { text: "new prompt", delivery: "steer" });
+    const data = store.getState().sessionData[id];
+    assert.equal(data.livePrompt.prompt.text, "new prompt");
+    assert.equal(data.failedPrompts.length, 1);
+    assert.equal(data.failedPrompts[0].prompt.text, "failed prompt");
+    assert.equal(admitBody.prompt.text, "new prompt");
+    assert.equal(messageReads, 0, "next optimistic prompt must not wait for history recovery");
+    admission.resolve({ data: { id: data.livePrompt.id } });
+    await pending;
+  } finally {
+    restore();
+  }
+}
+
+async function testDurableMessageKeepsOptimisticPromptUntilSnapshot() {
+  const id = "optimistic-prompt-durable-handoff";
+  const inputID = "inp_handoff";
+  installSession(id, {
+    extraData: {
+      livePrompt: {
+        id: inputID,
+        prompt: { text: "stay visible", attachments: [] },
+        delivery: "steer",
+        timeCreated: "2026-08-27T12:00:00Z",
+      },
+    },
+  });
+  store.setState((state) => reducePublicEvent(state, {
+    id: "durable-handoff",
+    type: "session.message.updated",
+    time: "2026-08-27T12:00:01Z",
+    sessionID: id,
+    durable: { seq: 2 },
+    data: { inputID },
+  }));
+  assert.equal(
+    store.getState().sessionData[id].livePrompt.id,
+    inputID,
+    "terminal event must not create an empty gap before the persisted row arrives",
+  );
+
+  const persisted = {
+    id: "msg_user_handoff",
+    type: "user",
+    inputID,
+    timeCreated: "2026-08-27T12:00:00Z",
+    content: [{ type: "text", text: "stay visible" }],
+  };
+  const restore = restoreApi({
+    messages: async () => ({
+      data: [persisted],
+      cursor: { next: null },
+      snapshotSeq: 2,
+    }),
+  });
+  try {
+    await controller.refreshMessages(id);
+    assert.equal(store.getState().sessionData[id].livePrompt, null);
+    assert.equal(store.getState().sessionData[id].messages.at(-1).inputID, inputID);
+  } finally {
+    restore();
+  }
+}
+
 async function testPromptRollbackOnFailure() {
   const id = "optimistic-prompt-failure";
   const previous = installSession(id, { queue: { revision: 0, items: [] } });
@@ -923,7 +1016,12 @@ async function testTurnSummaryMatchesCliFormatting() {
 
 async function testLoadSessionHydratesOptimisticEmptySession() {
   const id = "optimistic-unhydrated-session";
-  installSession(id, { extraData: { messageSnapshotLoaded: false } });
+  installSession(id, {
+    extraData: {
+      messageSnapshotLoaded: false,
+      loadError: "stale refresh failure",
+    },
+  });
   let messageCalls = 0;
   const restore = restoreApi({
     messages: async () => {
@@ -949,6 +1047,7 @@ async function testLoadSessionHydratesOptimisticEmptySession() {
     const data = store.getState().sessionData[id];
     assert.equal(messageCalls, 1);
     assert.equal(data.messageSnapshotLoaded, true);
+    assert.equal(data.loadError, null);
     assert.equal(data.messages[0].id, "persisted-user");
   } finally {
     restore();
@@ -1516,6 +1615,8 @@ async function testModelSelectionContextErrorStaysSpecific() {
 const tests = [
   testSessionComposerDraftsStayScopedAndPersisted,
   testPromptAppearsBeforeAdmissionReturns,
+  testFailedTurnDoesNotDelayNextOptimisticPrompt,
+  testDurableMessageKeepsOptimisticPromptUntilSnapshot,
   testPromptRollbackOnFailure,
   testSessionPatchesSerializeAndKeepNewestOptimism,
   testQueueMutationsSurviveStaleRefresh,

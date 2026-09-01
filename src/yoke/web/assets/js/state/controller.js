@@ -261,7 +261,11 @@ class AppController {
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
     }
     if (event.type === "session.message.updated") {
-      this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
+      this.schedule(
+        `messages:${id}`,
+        event.durable ? 0 : MESSAGE_REFRESH_MS,
+        () => this.refreshMessages(id),
+      );
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
     }
     if (event.type === "session.active.changed" && event.data?.state === "running") {
@@ -366,8 +370,11 @@ class AppController {
       ]);
       const selected = store.getState().ui.selectedSessionID;
       if (selected) relevant.add(selected);
-      for (const id of relevant) await this.catchUpHistory(id);
       if (selected) await this.loadSession(idOr(selected), { force: true });
+      for (const id of relevant) {
+        if (id === selected) continue;
+        await this.catchUpHistory(id);
+      }
       await this.refreshProcessLocalState();
       if (broad) {
         for (const id of relevant) {
@@ -672,6 +679,7 @@ class AppController {
               ...current,
               loaded: true,
               loading: false,
+              loadError: null,
               messageSnapshotLoaded: true,
               latestSeq: Math.max(current.latestSeq || 0, messages.snapshotSeq || 0),
               messages: loadedMessages,
@@ -1262,32 +1270,6 @@ class AppController {
     const previousSession = before.sessions[sessionID] || null;
     const previousActiveIndex = before.sessionOrder.indexOf(sessionID);
     const previousArchivedIndex = before.archivedOrder.indexOf(sessionID);
-    const data = store.getState().sessionData[sessionID];
-    if (data?.lastError && data?.livePrompt) {
-      await this.refreshMessages(sessionID);
-      const reconciled = store.getState().sessionData[sessionID];
-      if (reconciled?.lastError && reconciled?.livePrompt) {
-        store.setState((state) => {
-          const current = state.sessionData[sessionID] || {};
-          const failedPrompts = current.failedPrompts || [];
-          const failed = current.livePrompt;
-          return {
-            ...state,
-            sessionData: {
-              ...state.sessionData,
-              [sessionID]: {
-                ...current,
-                failedPrompts:
-                  failed && !failedPrompts.some((item) => item.id === failed.id)
-                    ? [...failedPrompts, failed]
-                    : failedPrompts,
-                livePrompt: null,
-              },
-            },
-          };
-        });
-      }
-    }
     const inputID = `inp_${randomUUID()}`;
     const prompt = { text, attachments: promptAttachments(attachments) };
     const optimistic = {
@@ -1310,12 +1292,21 @@ class AppController {
             { moveToFront: true },
           );
         }
+        const current = next.sessionData[sessionID] || {};
+        const failedPrompts = current.failedPrompts || [];
+        const failed = current.lastError && current.livePrompt
+          ? current.livePrompt
+          : null;
         return {
           ...next,
           sessionData: {
             ...next.sessionData,
             [sessionID]: {
-              ...next.sessionData[sessionID],
+              ...current,
+              failedPrompts:
+                failed && !failedPrompts.some((item) => item.id === failed.id)
+                  ? [...failedPrompts, failed]
+                  : failedPrompts,
               livePrompt: optimistic,
               lastError: null,
             },
