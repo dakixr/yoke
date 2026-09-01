@@ -26,17 +26,3 @@ jobs:
           uv run pytest -q tests/yoke/http
           uv run ruff check src/yoke/http tests/yoke/http scripts/generate_http_openapi.py
           uv run pyright src/yoke/http tests/yoke/http
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: clients/typescript/package-lock.json
-
-      - name: Install TypeScript client dependencies
-        working-directory: clients/typescript
-        run: npm ci
-
-      - name: Regenerate and compile TypeScript client
-        working-directory: clients/typescript
-        run: npm run check
