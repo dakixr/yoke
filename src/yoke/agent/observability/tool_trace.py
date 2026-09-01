@@ -186,7 +186,10 @@ class ToolTraceStore:
         with self._lock:
             self._retired_turn_ids.add(turn_id)
             for entry in self._entries.values():
-                if entry.turn_id != turn_id or entry.status not in {"pending", "running"}:
+                if entry.turn_id != turn_id or entry.status not in {
+                    "pending",
+                    "running",
+                }:
                     continue
                 entry.ended_at = ended_at
                 entry.ended_wall_at = ended_wall_at
@@ -308,7 +311,10 @@ def _copy_entry(entry: ToolTraceEntry) -> ToolTraceEntry:
             list(entry.after_context) if entry.after_context is not None else None
         ),
         output_chunks=(
-            [ToolTraceOutputChunk(chunk.stream, chunk.text, chunk.seq) for chunk in entry.output_chunks]
+            [
+                ToolTraceOutputChunk(chunk.stream, chunk.text, chunk.seq)
+                for chunk in entry.output_chunks
+            ]
             if entry.output_chunks is not None
             else None
         ),

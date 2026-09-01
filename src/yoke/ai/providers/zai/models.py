@@ -14,7 +14,7 @@ MODEL_CATALOG = (
     ProviderModelInfo(
         id="glm-5.3-flash",
         display_name="GLM-5.3-Flash",
-        context_window_tokens=1_000_000,
+        context_window_tokens=400_000,
         thinking_levels=GLM_53_THINKING_LEVELS,
         default_thinking_level="max",
         supports_image_inputs=True,

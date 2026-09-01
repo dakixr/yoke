@@ -121,9 +121,7 @@ class ProcessService:
 
 
 def _process_id(session_id: str, snapshot: CommandProcessSnapshot) -> str:
-    identity = (
-        f"{session_id}\0{snapshot.session_id}\0{snapshot.started_at.isoformat()}".encode()
-    )
+    identity = f"{session_id}\0{snapshot.session_id}\0{snapshot.started_at.isoformat()}".encode()
     return "proc_" + hashlib.sha256(identity).hexdigest()[:24]
 
 

@@ -28,11 +28,18 @@ class FilesystemService:
         root = self.policy.root(directory)
         target = self.policy.contained(root, path)
         if not target.is_dir():
-            raise ApiError(400, "not_a_directory", "Filesystem path is not a directory.")
+            raise ApiError(
+                400, "not_a_directory", "Filesystem path is not a directory."
+            )
         try:
-            children = sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.casefold()))
+            children = sorted(
+                target.iterdir(),
+                key=lambda item: (not item.is_dir(), item.name.casefold()),
+            )
         except OSError as exc:
-            raise ApiError(403, "path_unreadable", "Filesystem path cannot be read.") from exc
+            raise ApiError(
+                403, "path_unreadable", "Filesystem path cannot be read."
+            ) from exc
         data: list[FileEntry] = []
         for child in children:
             try:

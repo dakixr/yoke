@@ -49,6 +49,7 @@ class SessionCompactionResponse(ApiModel):
 class SessionTime(ApiModel):
     created: str | None = None
     updated: str | None = None
+    last_user_message: str | None = None
 
 
 class SessionTreeSummary(ApiModel):

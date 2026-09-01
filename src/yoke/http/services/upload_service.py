@@ -52,7 +52,11 @@ class UploadService:
             raise ApiError(404, "session_not_found", "Session was not found.")
         name = Path(upload.filename or "attachment").name
         suffix = Path(name).suffix.lower()
-        mime = upload.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
+        mime = (
+            upload.content_type
+            or mimetypes.guess_type(name)[0]
+            or "application/octet-stream"
+        )
         if not mime.startswith("image/") or suffix not in IMAGE_EXTENSIONS:
             raise ApiError(
                 400,

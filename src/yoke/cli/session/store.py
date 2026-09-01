@@ -35,6 +35,7 @@ from yoke.cli.session.utils import fork_session_title
 from yoke.cli.session.utils import new_unique_session_id
 from yoke.cli.session.utils import normalize_root
 from yoke.cli.session.utils import normalize_title
+from yoke.cli.session.utils import parse_timestamp
 from yoke.cli.session.utils import timestamp
 from yoke.cli.session.writer import write_session_record
 
@@ -44,6 +45,24 @@ SESSION_FILE_SUFFIX = ".jsonl"
 SESSION_RETENTION_DAYS = 30
 SESSION_MAINTENANCE_INTERVAL_SECONDS = 5.0
 CURRENT_SESSION_SCHEMA_VERSION = 5
+
+
+def _last_user_message_at(
+    current: str | None,
+    entries: Sequence[ConversationEntry],
+) -> str | None:
+    latest = current
+    latest_at = parse_timestamp(current)
+    for entry in entries:
+        if entry.kind != "user":
+            continue
+        created_at = parse_timestamp(entry.created_at)
+        if created_at is None:
+            continue
+        if latest_at is None or created_at > latest_at:
+            latest = entry.created_at
+            latest_at = created_at
+    return latest
 
 
 class _UnsetReasoningEffort:
@@ -130,6 +149,14 @@ class SessionStore:
                 ),
                 "created_at": existing.created_at or now,
                 "updated_at": now,
+                "last_user_message_at": _last_user_message_at(
+                    existing.last_user_message_at,
+                    (
+                        resolved.appended_entries
+                        if resolved.appended_entries is not None
+                        else resolved.entries
+                    ),
+                ),
                 "root": normalize_root(root) or existing.root,
                 "title": normalize_title(title) or existing.title,
                 "pinned": existing.pinned,
@@ -195,6 +222,10 @@ class SessionStore:
                 "leaf_id": leaf_id,
                 "context_usage": None,
                 "updated_at": timestamp(),
+                "last_user_message_at": _last_user_message_at(
+                    existing_record.last_user_message_at,
+                    proven,
+                ),
             }
         )
         self._write_session_record(
@@ -273,6 +304,10 @@ class SessionStore:
         updates: dict[str, object] = {
             "leaf_id": leaf_id,
             "updated_at": now,
+            "last_user_message_at": _last_user_message_at(
+                existing_record.last_user_message_at,
+                appended_entries,
+            ),
         }
         if clear_context_usage:
             updates["context_usage"] = None
@@ -282,6 +317,7 @@ class SessionStore:
         session_changes: dict[str, object] = {
             "leaf_id": leaf_id,
             "updated_at": now,
+            "last_user_message_at": record.last_user_message_at,
         }
         if clear_context_usage:
             session_changes["context_usage"] = None

@@ -1,6 +1,12 @@
 import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
+import {
+  clearSessionComposerDraft,
+  getSessionComposerDraft,
+  subscribeSessionComposerDrafts,
+  updateSessionComposerDraft,
+} from "../state/session-composer-drafts.js";
 import { LocationPicker } from "./location-picker.js";
 import { ModelSelectionControl } from "./model-picker.js";
 import {
@@ -16,22 +22,28 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   const capabilities = useStore((state) => state.capabilities);
   const connected = useStore((state) => state.connection.current);
   const overlayOpen = useStore((state) => Boolean(state.ui.inspector || state.ui.commandPaletteOpen));
-  const [text, setText] = useState("");
-  const [attachments, setAttachments] = useState([]);
+  const draft = useSessionComposerDraft(sessionID);
+  const text = draft.text || "";
+  const attachments = draft.attachments || [];
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const fileInput = useRef(null);
   const promptInput = useRef(null);
   const escapePrefixAt = useRef(0);
 
+  const setText = (value) => updateSessionComposerDraft(sessionID, { text: value });
+  const setAttachments = (value) => updateSessionComposerDraft(sessionID, (current) => ({
+    attachments: typeof value === "function" ? value(current.attachments || []) : value,
+  }));
   useEffect(() => {
-    setText("");
-    setAttachments([]);
+    setBusy(false);
     setExpanded(false);
   }, [sessionID]);
   useEffect(() => {
     if (!data?.editorHandoff) return;
-    setText(data.editorHandoff);
+    updateSessionComposerDraft(sessionID, (current) => ({
+      text: current.text?.length ? current.text : data.editorHandoff,
+    }));
     controller.clearEditorHandoff(sessionID);
   }, [data?.editorHandoff, sessionID]);
   useLayoutEffect(() => {
@@ -61,7 +73,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     if (!result.handled) return false;
     slashMenu.close();
     if (result.action === "image") fileInput.current?.click();
-    if (result.clear !== false) setText("");
+    if (result.clear !== false) clearSessionComposerDraft(sessionID);
     return true;
   };
   const chooseSlash = (item, { submit: shouldSubmit = false } = {}) => {
@@ -86,18 +98,18 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
       // Hand ownership to the optimistic transcript before the network round
       // trip. The composer must never show the same prompt at the same time as
       // the optimistic user row.
-      setText("");
-      setAttachments([]);
+      clearSessionComposerDraft(sessionID);
       await controller.submitPrompt(sessionID, {
         text: submittedText,
         attachments: submittedAttachments,
         delivery,
       });
     } catch (error) {
-      // The input is read-only while admission is pending, so a failed send can
-      // restore the exact draft without overwriting newer typing.
-      setText(submittedText);
-      setAttachments(submittedAttachments);
+      updateSessionComposerDraft(sessionID, (current) => mergeRecoveredDraft(
+        current,
+        submittedText,
+        submittedAttachments,
+      ));
       controller.notice(error?.message || String(error));
     } finally {
       setBusy(false);
@@ -257,6 +269,33 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     </div>
     </div>
   </div>`;
+}
+
+function mergeRecoveredDraft(current, submittedText, submittedAttachments) {
+  const currentText = current.text || "";
+  const currentAttachments = current.attachments || [];
+  if (!currentText.length && !currentAttachments.length) {
+    return { text: submittedText, attachments: submittedAttachments };
+  }
+  const text = submittedText && currentText
+    ? `${submittedText}\n\n${currentText}`
+    : submittedText || currentText;
+  const seen = new Set();
+  const attachments = [...submittedAttachments, ...currentAttachments].filter((attachment) => {
+    const key = attachment.uri || attachment.id || `${attachment.name || ""}:${attachment.size || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { text, attachments };
+}
+
+function useSessionComposerDraft(sessionID) {
+  const [, rerender] = useState(0);
+  useEffect(() => subscribeSessionComposerDrafts(
+    () => rerender((value) => value + 1),
+  ), []);
+  return getSessionComposerDraft(sessionID);
 }
 
 function resizeComposerInput(input) {

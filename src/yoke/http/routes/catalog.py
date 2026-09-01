@@ -20,7 +20,9 @@ def _service(request: Request) -> CatalogService:
     return request.app.state.catalog_service
 
 
-@router.get("/provider", response_model=ProviderListResponse, operation_id="listProviders")
+@router.get(
+    "/provider", response_model=ProviderListResponse, operation_id="listProviders"
+)
 def list_providers(
     request: Request,
     directory: str | None = Query(default=None),

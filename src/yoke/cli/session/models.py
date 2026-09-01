@@ -22,6 +22,7 @@ class SessionRecord(BaseModel):
     skill_dirs: list[str] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None
+    last_user_message_at: str | None = None
     root: str | None = None
     title: str | None = None
     pinned: bool = False
@@ -49,6 +50,7 @@ class SessionIndexEntry(BaseModel):
     title: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    last_user_message_at: str | None = None
     pinned: bool = False
     archived_at: str | None = None
     provider_name: str | None = None
@@ -72,6 +74,7 @@ class SessionIndexEntry(BaseModel):
             title=self.title,
             created_at=self.created_at,
             updated_at=self.updated_at,
+            last_user_message_at=self.last_user_message_at,
             pinned=self.pinned,
             archived_at=self.archived_at,
             provider_name=self.provider_name,

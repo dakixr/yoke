@@ -25,4 +25,3 @@ class PublicEvent(ApiModel):
 class HistoryResponse(ApiModel):
     data: list[PublicEvent]
     has_more: bool
-

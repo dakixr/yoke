@@ -51,7 +51,9 @@ class ToolService:
                 description=item.tool.description,
                 enabled=item.tool.name in enabled_names,
                 source=item.source_kind,
-                source_path=(str(item.source_path) if item.source_path is not None else None),
+                source_path=(
+                    str(item.source_path) if item.source_path is not None else None
+                ),
                 capability_id=item.capability_id,
                 input_schema=item.tool.__class__.model_json_schema(by_alias=True),
             )
@@ -84,7 +86,9 @@ class ToolService:
             return Path(record.root or Path.cwd()).resolve()
         root = Path(directory or Path.cwd()).resolve()
         if not root.is_dir():
-            raise ApiError(404, "location_not_found", "Location directory was not found.")
+            raise ApiError(
+                404, "location_not_found", "Location directory was not found."
+            )
         return root
 
     def _require_record(self, session_id: str):  # noqa: ANN202

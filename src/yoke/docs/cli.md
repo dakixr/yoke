@@ -71,6 +71,11 @@ Provider selections without a model use these defaults:
 | `opencode-go` | `opencode-go:glm-5.3-flash:max` |
 | `zai` | `zai:glm-5.3-flash:max` |
 
+Yoke caps `glm-5.3-flash` at a 400,000-token context window for both
+`opencode-go` and `zai`, even when the upstream provider advertises a larger
+window. The catalog, runtime token budget, compaction policy, and context-usage
+display all use that capped value.
+
 Codex uses a persistent Responses WebSocket transport and keeps response
 continuity, encrypted replay state, prompt-cache affinity, and routing metadata
 in memory. Session IDs provide stable cache scope across provider
@@ -321,7 +326,24 @@ yoke resume 20240421-143022-abc1
 
 # Start directly from a forked session
 yoke --fork 20240421-143022-abc1
+
+# Print portable context for another agent
+yoke session-handoff 20240421-143022-abc1
 ```
+
+`yoke session-handoff <session-id>` reads the persisted active branch directly;
+it does not contact `yoke serve` or require HTTP authentication. The default
+Markdown output includes the session title and working directory, saved model
+selection, active skills, compaction-aware conversation state, tool
+calls/results, and image labels or local paths where useful. Historical context
+that Yoke already compacted is represented by the persisted handoff instead of
+replaying superseded messages. Large tool results and the overall output are
+bounded so one historical command cannot dominate the continuation context.
+
+Use `--max-chars <n>` to change the output bound, or `--format json` when a
+structured consumer needs the same portable handoff. The built-in
+`yoke-session-resume` skill uses the Markdown form when a user asks an agent to
+continue or resume a Yoke session by id.
 
 Sessions are stored under `~/.yoke/sessions/` as append-only `.jsonl` files and
 auto-expire after 30 days. The CLI owns session files, indexes, ids, and resume

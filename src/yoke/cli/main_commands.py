@@ -277,6 +277,49 @@ def register_commands(app: typer.Typer) -> None:
             )
         )
 
+    @app.command("session-handoff")
+    def session_handoff(
+        session_id: Annotated[
+            str,
+            typer.Argument(help="Persisted Yoke session id to hand off."),
+        ],
+        output_format: Annotated[
+            str,
+            typer.Option(
+                "--format",
+                help="Output format: markdown or json.",
+            ),
+        ] = "markdown",
+        max_chars: Annotated[
+            int,
+            typer.Option(
+                "--max-chars",
+                min=10_000,
+                max=2_000_000,
+                help="Maximum approximate handoff size in characters.",
+            ),
+        ] = 240_000,
+    ) -> None:
+        """Print portable active-branch context for another agent."""
+        import click
+
+        from yoke.session.handoff import build_session_handoff
+        from yoke.session.handoff import render_session_handoff_markdown
+
+        normalized_format = output_format.strip().casefold()
+        if normalized_format not in {"markdown", "json"}:
+            click.echo("Error: --format must be markdown or json.", err=True)
+            raise typer.Exit(2)
+        try:
+            handoff = build_session_handoff(session_id, max_chars=max_chars)
+        except (OSError, ValueError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        if normalized_format == "json":
+            click.echo(handoff.model_dump_json(indent=2))
+            return
+        click.echo(render_session_handoff_markdown(handoff), nl=False)
+
     @app.command(
         context_settings=_DELEGATE_CONTEXT_SETTINGS,
         help="Manage dynamically loaded tools.",

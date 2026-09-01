@@ -10,10 +10,7 @@ import pytest
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 from yoke.ai.providers.credentials import save_provider_credential
 from yoke.ai.providers.resolution import build_provider
-from yoke.ai.providers.resolution import is_provider_ready
-from yoke.ai.providers.resolution import list_provider_readiness
 from yoke.ai.providers.resolution import parse_provider_ref
-from yoke.ai.providers.resolution import provider_readiness
 from yoke.ai.providers.resolution import provider_status
 from yoke.ai.providers.zai import ZAIProvider
 
@@ -172,22 +169,6 @@ def list_provider_models(context):
     custom_provider = cast(Any, provider)
     assert custom_provider.config.model == "demo-model"
     assert custom_provider.config.reasoning_effort == "thinking"
-
-
-def test_provider_readiness_reports_known_providers(tmp_path: Path) -> None:
-    readiness = {
-        item.provider_name: item for item in provider_readiness(env={}, home=tmp_path)
-    }
-
-    assert {"codex", "opencode-go", "zai"} <= set(readiness)
-    assert readiness["zai"].ready is False
-    assert is_provider_ready("zai", env={}, home=tmp_path) is False
-
-
-def test_list_provider_readiness_aliases_provider_readiness(tmp_path: Path) -> None:
-    assert list_provider_readiness(env={}, home=tmp_path) == provider_readiness(
-        env={}, home=tmp_path
-    )
 
 
 def test_provider_status_reports_model_catalog_failure(

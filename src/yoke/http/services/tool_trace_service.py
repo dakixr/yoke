@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
+from threading import Lock
 from typing import cast
 from typing import Literal
 from typing import Protocol
+from weakref import WeakValueDictionary
 
 from yoke.agent.observability import ToolTraceEntry
 from yoke.agent.observability import ToolTraceStore
@@ -30,6 +33,9 @@ from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.session import SessionStore
+
+
+MAX_PERSISTED_TRACE_CACHE_SESSIONS = 1
 
 
 class ToolTraceRuntime(Protocol):
@@ -60,6 +66,18 @@ class ToolTraceService:
         self.registry = registry
         self.read_cache = read_cache or SessionReadCache(store)
         self.message_index = message_index or SessionMessageIndex(store)
+        self._persisted_cache_lock = Lock()
+        self._persisted_cache: OrderedDict[
+            str,
+            tuple[
+                tuple[int, int, int],
+                tuple[ToolTraceEntry, ...],
+                dict[str, ToolTraceEntry],
+            ],
+        ] = OrderedDict()
+        self._persisted_cache_session_locks: WeakValueDictionary[str, Lock] = (
+            WeakValueDictionary()
+        )
 
     def list_calls(
         self,
@@ -109,13 +127,10 @@ class ToolTraceService:
             live = runtime.tool_trace_store().get(call_id)
             if live is not None:
                 return ToolCallResponse(data=self._project(session_id, live, True))
-        entries, live_ids = self._entries(session_id)
-        entry = next((item for item in entries if item.tool_call_id == call_id), None)
+        entry = self._persisted_entry(session_id, call_id)
         if entry is None:
             raise ApiError(404, "tool_call_not_found", "Tool call was not found.")
-        return ToolCallResponse(
-            data=self._project(session_id, entry, call_id in live_ids)
-        )
+        return ToolCallResponse(data=self._project(session_id, entry, False))
 
     def output(
         self,
@@ -131,8 +146,7 @@ class ToolTraceService:
             return _empty_output()
         store = runtime.tool_trace_store()
         if store.get(call_id) is None:
-            completed = self._persisted_entries(session_id)
-            if any(entry.tool_call_id == call_id for entry in completed):
+            if self._persisted_entry(session_id, call_id) is not None:
                 return _empty_output()
             raise ApiError(404, "tool_call_not_found", "Tool call was not found.")
         page = store.output_page(call_id, after_seq=after_seq, limit=limit)
@@ -169,10 +183,74 @@ class ToolTraceService:
         }
 
     def _persisted_entries(self, session_id: str) -> list[ToolTraceEntry]:
-        messages = self.message_index.tool_trace_messages(session_id)
-        if messages is not None:
-            return entries_from_messages(messages)
-        return entries_from_messages(self._require_session(session_id).messages)
+        entries, _by_id = self._persisted_trace_snapshot(session_id)
+        return list(entries)
+
+    def _persisted_entry(
+        self,
+        session_id: str,
+        call_id: str,
+    ) -> ToolTraceEntry | None:
+        _entries, by_id = self._persisted_trace_snapshot(session_id)
+        return by_id.get(call_id)
+
+    def _persisted_trace_snapshot(
+        self,
+        session_id: str,
+    ) -> tuple[tuple[ToolTraceEntry, ...], dict[str, ToolTraceEntry]]:
+        fingerprint = self._session_fingerprint(session_id)
+        cached = self._cached_persisted_trace(session_id, fingerprint)
+        if cached is not None:
+            return cached
+
+        session_lock = self._persisted_cache_session_lock(session_id)
+        with session_lock:
+            fingerprint = self._session_fingerprint(session_id)
+            cached = self._cached_persisted_trace(session_id, fingerprint)
+            if cached is not None:
+                return cached
+
+            messages = self.message_index.tool_trace_messages(session_id)
+            parsed = entries_from_messages(
+                messages
+                if messages is not None
+                else self._require_session(session_id).messages
+            )
+            entries = tuple(parsed)
+            by_id = {entry.tool_call_id: entry for entry in entries}
+            if fingerprint == self._session_fingerprint(session_id):
+                with self._persisted_cache_lock:
+                    self._persisted_cache[session_id] = (fingerprint, entries, by_id)
+                    self._persisted_cache.move_to_end(session_id)
+                    while (
+                        len(self._persisted_cache) > MAX_PERSISTED_TRACE_CACHE_SESSIONS
+                    ):
+                        self._persisted_cache.popitem(last=False)
+            return entries, by_id
+
+    def _cached_persisted_trace(
+        self,
+        session_id: str,
+        fingerprint: tuple[int, int, int],
+    ) -> tuple[tuple[ToolTraceEntry, ...], dict[str, ToolTraceEntry]] | None:
+        with self._persisted_cache_lock:
+            cached = self._persisted_cache.get(session_id)
+            if cached is None or cached[0] != fingerprint:
+                return None
+            self._persisted_cache.move_to_end(session_id)
+            return cached[1], cached[2]
+
+    def _persisted_cache_session_lock(self, session_id: str) -> Lock:
+        with self._persisted_cache_lock:
+            return self._persisted_cache_session_locks.setdefault(session_id, Lock())
+
+    def _session_fingerprint(self, session_id: str) -> tuple[int, int, int]:
+        path = self.store.directory / f"{session_id}.jsonl"
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise ApiError(404, "session_not_found", "Session was not found.") from exc
+        return stat.st_ino, stat.st_size, stat.st_mtime_ns
 
     def _project(
         self,

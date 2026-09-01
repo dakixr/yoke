@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: D100,D103,S101
 
 from pathlib import Path
+import socket
 from types import SimpleNamespace
 import asyncio
 from urllib.parse import parse_qs
@@ -48,10 +49,10 @@ def test_run_server_reports_selected_port_and_closes_socket(
         def __init__(self, _config: object, _broker: object) -> None:
             pass
 
-        def run(self, *, sockets: list[object]) -> None:
+        def run(self, *, sockets: list[socket.socket]) -> None:
             sock = sockets[0]
             observed["socket"] = sock
-            observed["port"] = sock.getsockname()[1]  # type: ignore[attr-defined]
+            observed["port"] = sock.getsockname()[1]
 
     monkeypatch.setattr("yoke.http.server._YokeServer", FakeServer)
     monkeypatch.setattr(
@@ -71,7 +72,9 @@ def test_run_server_reports_selected_port_and_closes_socket(
     output = capsys.readouterr().out
     assert f"127.0.0.1:{observed['port']}" in output
     assert "fixed-token" in output
-    assert observed["socket"].fileno() == -1  # type: ignore[attr-defined]
+    observed_socket = observed["socket"]
+    assert isinstance(observed_socket, socket.socket)
+    assert observed_socket.fileno() == -1
 
 
 def test_run_server_is_quiet_by_default_and_verbose_enables_uvicorn_logs(

@@ -40,4 +40,3 @@ def decode_cursor(value: str, *, expected_query: str) -> str:
             "Cursor does not match this query.",
         )
     return anchor_id
-

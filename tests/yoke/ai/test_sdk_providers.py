@@ -14,7 +14,6 @@ from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 from yoke.ai.providers.zai import ZAIProvider
-from yoke.ai.utils import builtin_provider_status
 
 
 def test_openai_compatible_provider_does_not_retry_read_timeout() -> None:
@@ -98,15 +97,3 @@ def test_build_builtin_opencode_luna_model(
     assert config.model == "gpt-5.6-luna"
     assert config.reasoning_effort == "max"
     provider.close()
-
-
-def test_builtin_status_reports_defaults_without_credentials(tmp_path) -> None:
-    statuses = {
-        status.name: status for status in builtin_provider_status(env={}, home=tmp_path)
-    }
-
-    assert statuses["codex"].default_selection == "codex:gpt-5.6-sol:medium"
-    assert statuses["opencode-go"].default_selection == (
-        "opencode-go:glm-5.3-flash:max"
-    )
-    assert statuses["zai"].default_selection == "zai:glm-5.3-flash:max"

@@ -113,6 +113,8 @@ async def wait_for_session(
     except TimeoutError:
         runtime = registry.get_if_loaded(session_id)
         status = (
-            await runtime.status() if runtime is not None else await registry.wait(session_id, 0)
+            await runtime.status()
+            if runtime is not None
+            else await registry.wait(session_id, 0)
         )
     return WaitResponse(data=status)

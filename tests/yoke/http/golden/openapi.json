@@ -2929,6 +2929,17 @@
             ],
             "title": "Created"
           },
+          "lastUserMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastusermessage"
+          },
           "updated": {
             "anyOf": [
               {
@@ -5108,7 +5119,9 @@
                 "updatedDesc",
                 "updatedAsc",
                 "createdDesc",
-                "createdAsc"
+                "createdAsc",
+                "lastUserDesc",
+                "lastUserAsc"
               ],
               "title": "Order",
               "type": "string"

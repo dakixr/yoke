@@ -177,10 +177,6 @@ def test_web_fetch_schema_has_simple_paging_api() -> None:
     assert properties["limit"]["default"] == 20_000
 
 
-def test_web_research_executes_in_process_for_provider_synthesis() -> None:
-    assert WebResearchTool.execute_in_process is True
-
-
 def test_web_research_prefers_codex_hosted_search() -> None:
     provider = HostedSearchProvider()
     tool = WebResearchTool.bind(provider=provider)

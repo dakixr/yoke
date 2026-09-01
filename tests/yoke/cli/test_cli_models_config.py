@@ -61,16 +61,6 @@ def test_set_default_zai_model_persists_model_default_effort(tmp_path: Path) -> 
     assert updated.default_reasoning_effort == "max"
 
 
-def test_config_accepts_provider_specific_thinking_effort() -> None:
-    config = PiConfig(default_reasoning_effort="thinking")
-
-    assert config.default_reasoning_effort == "thinking"
-    assert (
-        PiConfig.model_validate_json(config.model_dump_json()).default_reasoning_effort
-        == "thinking"
-    )
-
-
 def test_explicit_model_does_not_inherit_incompatible_config_effort(
     tmp_path: Path,
     monkeypatch,

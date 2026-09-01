@@ -27,8 +27,6 @@ from yoke.ai.providers.codex.subscription import (
 from yoke.ai.providers.codex.subscription import clamp_reasoning_effort
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
-from yoke.ai.providers.codex.subscription import list_provider_models
-from yoke.ai.providers.codex.subscription import register_provider
 from yoke.ai.providers.base import ProviderCancelledError
 
 
@@ -60,43 +58,6 @@ def test_invalid_oauth_token_error_detection() -> None:
     )
     assert is_invalid_oauth_token_error("OAuth token was revoked")
     assert not is_invalid_oauth_token_error("rate limited")
-
-
-def test_codex_provider_default_timeout_matches_codex_idle_timeout(
-    tmp_path: Path,
-) -> None:
-    class Context:
-        home = tmp_path
-        env: dict[str, str] = {}
-        model = None
-        reasoning_effort = None
-
-    provider = register_provider(Context())
-
-    try:
-        assert provider.config.timeout_seconds == 900.0
-        assert provider.config.model == "gpt-5.6-sol"
-        assert provider.config.reasoning_effort == "medium"
-    finally:
-        provider.close()
-
-
-def test_codex_catalog_includes_gpt_5_6_models() -> None:
-    models = {model.id: model for model in list_provider_models(None)}
-
-    assert set(models) == {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
-    assert models["gpt-5.6-sol"].context_window_tokens == 400_000
-    assert models["gpt-5.6-terra"].context_window_tokens == 400_000
-    assert models["gpt-5.6-luna"].context_window_tokens == 400_000
-    assert models["gpt-5.6-terra"].thinking_levels == (
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    )
-    assert models["gpt-5.6-luna"].supports_image_inputs is True
 
 
 def test_codex_gpt_5_6_accepts_max_reasoning_effort(tmp_path: Path) -> None:

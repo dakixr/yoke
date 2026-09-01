@@ -31,12 +31,19 @@ const { store } = await import("../src/yoke/web/assets/js/state/store.js");
 const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
 const { assistantMetadataMessageIDs, compactToolBatchMessageIDs } = await import("../src/yoke/web/assets/js/lib/messages.js");
 const { displayTreeEntries, treeGraphLayout } = await import("../src/yoke/web/assets/js/inspector/tree-graph.js");
+const { sortToolCallsChronologically } = await import("../src/yoke/web/assets/js/inspector/tool-logic.js");
 const { treeKeyboardTarget } = await import("../src/yoke/web/assets/js/inspector/tree-keyboard.js");
 const { createLocationBrowseCoordinator, isLocationBrowseQuery } = await import("../src/yoke/web/assets/js/session/location-picker-logic.js");
-const { filterModelChoices, groupModelChoices, modelNavigationIndex, resolveModelEffort } = await import("../src/yoke/web/assets/js/session/model-picker-logic.js");
+const { filterModelChoices, groupModelChoices, modelNavigationIndex, modelSelectionErrorMessage, resolveModelEffort } = await import("../src/yoke/web/assets/js/session/model-picker-logic.js");
 const { slashMenuScrollDelta } = await import("../src/yoke/web/assets/js/session/slash-menu-logic.js");
 const { formatTurnSummary } = await import("../src/yoke/web/assets/js/session/turn-summary.js");
 const { installKeybindings } = await import("../src/yoke/web/assets/js/lib/keyboard.js");
+const { readSessionComposerDrafts } = await import("../src/yoke/web/assets/js/state/local-state.js");
+const {
+  clearSessionComposerDraft,
+  getSessionComposerDraft,
+  updateSessionComposerDraft,
+} = await import("../src/yoke/web/assets/js/state/session-composer-drafts.js");
 
 function deferred() {
   let resolve;
@@ -97,6 +104,37 @@ function installSession(id, { queue = null, permissions = [], questions = [], ex
   return session;
 }
 
+async function testSessionComposerDraftsStayScopedAndPersisted() {
+  const firstID = "composer-draft-first";
+  const secondID = "composer-draft-second";
+  const image = {
+    id: "upl_draft",
+    uri: "yoke-upload://upl_draft",
+    name: "sketch.png",
+    mime: "image/png",
+    size: 123,
+  };
+  updateSessionComposerDraft(firstID, {
+    text: "half-written prompt",
+    attachments: [image],
+  });
+  updateSessionComposerDraft(secondID, { text: "another session draft" });
+
+  assert.equal(getSessionComposerDraft(firstID).text, "half-written prompt");
+  assert.deepEqual(getSessionComposerDraft(firstID).attachments, [image]);
+  assert.equal(getSessionComposerDraft(secondID).text, "another session draft");
+
+  const persisted = readSessionComposerDrafts();
+  assert.equal(persisted[firstID].text, "half-written prompt");
+  assert.deepEqual(persisted[firstID].attachments, [image]);
+  assert.equal(persisted[secondID].text, "another session draft");
+
+  clearSessionComposerDraft(firstID);
+  assert.equal(getSessionComposerDraft(firstID).text, "");
+  assert.equal(readSessionComposerDrafts()[firstID], undefined);
+  clearSessionComposerDraft(secondID);
+}
+
 function restoreApi(overrides) {
   const originals = new Map();
   for (const [name, value] of Object.entries(overrides)) {
@@ -111,6 +149,7 @@ function restoreApi(overrides) {
 async function testPromptAppearsBeforeAdmissionReturns() {
   const id = "optimistic-prompt";
   installSession(id, { queue: { revision: 0, items: [] } });
+  installSession("optimistic-prompt-older");
   const gate = deferred();
   const restore = restoreApi({
     admitPrompt: () => gate.promise,
@@ -121,6 +160,8 @@ async function testPromptAppearsBeforeAdmissionReturns() {
     const live = store.getState().sessionData[id].livePrompt;
     assert.equal(live.prompt.text, "instant user row");
     assert.match(live.id, /^inp_/);
+    assert.equal(store.getState().sessionOrder[0], id);
+    assert.equal(store.getState().sessions[id].time.lastUserMessage, live.timeCreated);
     gate.resolve({ data: { id: live.id } });
     await pending;
   } finally {
@@ -130,7 +171,10 @@ async function testPromptAppearsBeforeAdmissionReturns() {
 
 async function testPromptRollbackOnFailure() {
   const id = "optimistic-prompt-failure";
-  installSession(id, { queue: { revision: 0, items: [] } });
+  const previous = installSession(id, { queue: { revision: 0, items: [] } });
+  const otherID = "optimistic-prompt-failure-other";
+  installSession(otherID);
+  const previousOrder = [...store.getState().sessionOrder];
   const gate = deferred();
   const restore = restoreApi({
     admitPrompt: () => gate.promise,
@@ -139,9 +183,12 @@ async function testPromptRollbackOnFailure() {
   try {
     const pending = controller.submitPrompt(id, { text: "will fail", delivery: "steer" });
     assert.equal(store.getState().sessionData[id].livePrompt.prompt.text, "will fail");
+    assert.equal(store.getState().sessionOrder[0], id);
     gate.reject(new ApiError(500, "fixture_failure", "fixture failure"));
     await assert.rejects(pending, /fixture failure/);
     assert.equal(store.getState().sessionData[id].livePrompt, null);
+    assert.deepEqual(store.getState().sessionOrder, previousOrder);
+    assert.deepEqual(store.getState().sessions[id].time, previous.time);
   } finally {
     restore();
   }
@@ -594,6 +641,72 @@ async function testToolDetailKeepsNewestSelection() {
     oldGate.resolve({ data: { id: "call-old", toolName: "old", status: "ok" } });
     await Promise.all([oldLoad, newLoad]);
     assert.equal(store.getState().sessionData[id].toolDetail.id, "call-new");
+  } finally {
+    restore();
+  }
+}
+
+async function testPersistedToolDetailSkipsOutputRequest() {
+  const id = "tool-persisted-detail";
+  installSession(id, {
+    extraData: {
+      toolCalls: [{ id: "call-session", toolName: "read", status: "ok", retention: "session" }],
+      toolDetail: null,
+    },
+  });
+  let outputReads = 0;
+  const restore = restoreApi({
+    toolCall: async () => ({
+      data: { id: "call-session", toolName: "read", status: "ok", retention: "session" },
+    }),
+    toolOutput: async () => {
+      outputReads += 1;
+      return { data: [], cursor: { next: 0, truncatedBefore: 0 } };
+    },
+  });
+  try {
+    await controller.loadToolCall(id, "call-session");
+    assert.equal(outputReads, 0);
+    assert.deepEqual(store.getState().sessionData[id].toolDetail.outputChunks, []);
+  } finally {
+    restore();
+  }
+}
+
+async function testToolDetailCoalescesSameCallRequest() {
+  const id = "tool-detail-coalescing";
+  installSession(id, {
+    extraData: {
+      toolCalls: [{ id: "call-live", toolName: "exec", status: "running", retention: "runtime" }],
+      toolDetail: null,
+    },
+  });
+  const detailGate = deferred();
+  const outputGate = deferred();
+  let detailReads = 0;
+  let outputReads = 0;
+  const restore = restoreApi({
+    toolCall: async () => {
+      detailReads += 1;
+      return detailGate.promise;
+    },
+    toolOutput: async () => {
+      outputReads += 1;
+      return outputGate.promise;
+    },
+  });
+  try {
+    const first = controller.loadToolCall(id, "call-live");
+    const second = controller.loadToolCall(id, "call-live");
+    assert.equal(detailReads, 1);
+    assert.equal(outputReads, 1);
+    detailGate.resolve({
+      data: { id: "call-live", toolName: "exec", status: "running", retention: "runtime" },
+    });
+    outputGate.resolve({ data: [{ seq: 1, stream: "output", text: "hi" }], cursor: { next: 1, truncatedBefore: 0 } });
+    await Promise.all([first, second]);
+    assert.equal(store.getState().sessionData[id].toolDetail.id, "call-live");
+    assert.equal(store.getState().sessionData[id].toolDetail.outputChunks.length, 1);
   } finally {
     restore();
   }
@@ -1371,7 +1484,37 @@ async function testSettledTotalDoesNotDependOnLoadedPage() {
   }
 }
 
+async function testToolCallsSortChronologically() {
+  const calls = [
+    { id: "new", time: { started: "2026-09-01T10:00:03Z" } },
+    { id: "same-b", time: { started: "2026-09-01T10:00:02Z" } },
+    { id: "old", time: { started: "2026-09-01T10:00:01Z" } },
+    { id: "same-a", time: { started: "2026-09-01T10:00:02Z" } },
+  ];
+  assert.deepEqual(
+    sortToolCallsChronologically(calls).map((call) => call.id),
+    ["old", "same-a", "same-b", "new"],
+  );
+}
+
+async function testModelSelectionContextErrorStaysSpecific() {
+  const contextError = new ApiError(
+    409,
+    "model_context_too_small",
+    "Cannot switch to small-model. The current model was not changed.",
+  );
+  assert.equal(
+    modelSelectionErrorMessage(contextError),
+    contextError.message,
+  );
+  assert.equal(
+    modelSelectionErrorMessage(new ApiError(500, "fixture", "Server failed.")),
+    "Could not change the model. Server failed.",
+  );
+}
+
 const tests = [
+  testSessionComposerDraftsStayScopedAndPersisted,
   testPromptAppearsBeforeAdmissionReturns,
   testPromptRollbackOnFailure,
   testSessionPatchesSerializeAndKeepNewestOptimism,
@@ -1385,6 +1528,8 @@ const tests = [
   testProcessOutputRefreshAppendsIncrementallyWithoutDuplication,
   testProcessMetadataRefreshCannotMoveOutputBackward,
   testToolDetailKeepsNewestSelection,
+  testPersistedToolDetailSkipsOutputRequest,
+  testToolDetailCoalescesSameCallRequest,
   testToolTimelineDeepLinkDoesNotLockInspectorSelection,
   testTimelineToolOpenKeepsNewestClickAcrossListRace,
   testTimelineToolOpenLoadsCallOutsideSidebarPage,
@@ -1410,6 +1555,8 @@ const tests = [
   testSidebarGlobalShortcutSupportsMacAndWindows,
   testProcessInspectorChordAcceptsPlainAndControlP,
   testSettledTotalDoesNotDependOnLoadedPage,
+  testToolCallsSortChronologically,
+  testModelSelectionContextErrorStaysSpecific,
   testTurnSummaryMatchesCliFormatting,
 ];
 

@@ -1,5 +1,6 @@
-import { html, useEffect, useMemo, useState } from "../../vendor/htm-preact.js";
+import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
+import { sortToolCallsChronologically } from "./tool-logic.js";
 
 export function ToolInspector({ sessionID, inspector, data }) {
   const calls = data?.toolCalls;
@@ -8,17 +9,33 @@ export function ToolInspector({ sessionID, inspector, data }) {
   const [raw, setRaw] = useState(false);
   const [wrap, setWrap] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const listRef = useRef(null);
+  const followingRef = useRef(true);
+  const initializedScrollRef = useRef(false);
 
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const sorted = [...(calls || [])].sort((left, right) => {
-      const leftTime = Date.parse(left.time?.started || "") || 0;
-      const rightTime = Date.parse(right.time?.started || "") || 0;
-      return rightTime - leftTime;
-    });
+    const sorted = sortToolCallsChronologically(calls);
     if (!query) return sorted;
     return sorted.filter((call) => toolSearchText(call).includes(query));
   }, [calls, search]);
+
+  useEffect(() => {
+    followingRef.current = true;
+    initializedScrollRef.current = false;
+  }, [sessionID, search]);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !visible.length) return undefined;
+    const frame = requestAnimationFrame(() => {
+      if (!initializedScrollRef.current || followingRef.current) {
+        list.scrollTop = list.scrollHeight;
+      }
+      initializedScrollRef.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [sessionID, visible.length, search]);
 
   useEffect(() => {
     const requested = inspector.callID || null;
@@ -30,7 +47,7 @@ export function ToolInspector({ sessionID, inspector, data }) {
     }
     if (detail) return;
     if (!calls?.length) return;
-    const newest = visible[0] || calls[0];
+    const newest = visible.at(-1) || sortToolCallsChronologically(calls).at(-1);
     if (newest) void controller.selectToolCall(sessionID, newest.id).catch((error) => controller.notice(error?.message || String(error)));
   }, [sessionID, inspector.callID, calls, detail?.id]);
 
@@ -73,7 +90,17 @@ export function ToolInspector({ sessionID, inspector, data }) {
         <input value=${search} placeholder="Search calls" aria-label="Search tool calls" onInput=${(event) => setSearch(event.currentTarget.value)} />
         ${search ? html`<button aria-label="Clear tool search" onClick=${() => setSearch("")}>×</button>` : null}
       </label>
-      <div class="tool-call-sidebar-list" role="list" aria-label="Tool calls">
+      <div
+        class="tool-call-sidebar-list"
+        role="list"
+        aria-label="Tool calls"
+        ref=${listRef}
+        onScroll=${(event) => {
+          const list = event.currentTarget;
+          const remaining = list.scrollHeight - list.clientHeight - list.scrollTop;
+          followingRef.current = remaining <= 36;
+        }}
+      >
         ${visible.map((call) => html`<button
           key=${call.id}
           role="listitem"

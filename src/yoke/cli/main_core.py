@@ -21,6 +21,7 @@ _SUBCOMMANDS = frozenset(
         "login",
         "serve",
         "resume",
+        "session-handoff",
         "tools",
         "models",
         "providers",

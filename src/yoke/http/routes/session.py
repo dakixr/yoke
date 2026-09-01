@@ -9,7 +9,9 @@ from fastapi import Depends
 from fastapi import Query
 from fastapi import Request
 
+from yoke.agent.provider_transition import ContextWindowTooSmallError
 from yoke.http.auth import require_auth
+from yoke.http.errors import ApiError
 from yoke.http.models.session import MessageListResponse
 from yoke.http.models.session import MessageResponse
 from yoke.http.models.session import ContextResponse
@@ -55,9 +57,14 @@ def list_sessions(
     pinned: bool | None = Query(default=None),
     archived: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
-    order: Literal["updatedDesc", "updatedAsc", "createdDesc", "createdAsc"] = Query(
-        default="updatedDesc"
-    ),
+    order: Literal[
+        "updatedDesc",
+        "updatedAsc",
+        "createdDesc",
+        "createdAsc",
+        "lastUserDesc",
+        "lastUserAsc",
+    ] = Query(default="updatedDesc"),
     cursor: str | None = Query(default=None),
 ) -> SessionListResponse:
     return _service(request).list_sessions(
@@ -145,12 +152,32 @@ async def select_session_model(
     body: SessionSelectionRequest,
 ) -> SessionSelectionResponse:
     _service(request).get_session(session_id)
-    state = await _runtimes(request).select_model(
-        session_id,
-        provider_name=body.provider,
-        model_id=body.model,
-        reasoning_effort=body.reasoning_effort,
-    )
+    try:
+        state = await _runtimes(request).select_model(
+            session_id,
+            provider_name=body.provider,
+            model_id=body.model,
+            reasoning_effort=body.reasoning_effort,
+        )
+    except ContextWindowTooSmallError as exc:
+        raise ApiError(
+            409,
+            "model_context_too_small",
+            (
+                f"Cannot switch to {body.model}. This session still needs about "
+                f"{exc.input_tokens:,} input tokens after automatic compaction, "
+                f"but the model allows about {exc.max_input_tokens:,} input tokens "
+                f"within its {exc.context_window_tokens:,}-token context window. "
+                "The current model was not changed."
+            ),
+            {
+                "provider": body.provider,
+                "model": body.model,
+                "inputTokens": exc.input_tokens,
+                "maxInputTokens": exc.max_input_tokens,
+                "contextWindowTokens": exc.context_window_tokens,
+            },
+        ) from exc
     return SessionSelectionResponse(
         data=SessionSelectionResult(
             effective=SessionSelection(

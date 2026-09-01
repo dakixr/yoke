@@ -331,6 +331,85 @@ def test_historical_tool_list_reads_only_tool_turns_from_topology_index(
     assert page.data[0].status == "ok"
 
 
+def test_historical_tool_trace_cache_reuses_and_invalidates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = SessionStore(tmp_path / "sessions")
+    first = ToolCall(
+        id="call-first",
+        function=ToolFunction(name="read", arguments='{"path":"README.md"}'),
+    )
+    messages = [
+        Message.user("inspect"),
+        Message(role="assistant", tool_calls=[first]),
+        Message(role="tool", tool_call_id=first.id, content='{"ok":true}'),
+    ]
+    store.save("large", messages, root=tmp_path)
+    session_service = SessionService(store)
+    assert session_service.message_index._ensure("large") is not None
+
+    class Runtime:
+        def __init__(self) -> None:
+            self.traces = ToolTraceStore()
+
+        def latest_turn_id(self) -> int:
+            return 1
+
+        def tool_trace_store(self) -> ToolTraceStore:
+            return self.traces
+
+    class Registry:
+        runtime: Runtime | None = None
+
+        def get_if_loaded(self, session_id: str):  # noqa: ANN202
+            assert session_id == "large"
+            return self.runtime
+
+    import yoke.http.services.tool_trace_service as tool_trace_module
+
+    original = tool_trace_module.entries_from_messages
+    parse_count = 0
+
+    def counted(messages):  # noqa: ANN202
+        nonlocal parse_count
+        parse_count += 1
+        return original(messages)
+
+    monkeypatch.setattr(tool_trace_module, "entries_from_messages", counted)
+    registry = Registry()
+    service = ToolTraceService(
+        store,
+        registry,  # type: ignore[arg-type]
+        message_index=session_service.message_index,
+    )
+
+    assert service.call("large", first.id).data.id == first.id
+    assert service.call("large", first.id).data.id == first.id
+    assert parse_count == 1
+
+    registry.runtime = Runtime()
+    assert service.output("large", first.id, after_seq=0, limit=100).data == []
+    assert parse_count == 1
+
+    second = ToolCall(
+        id="call-second",
+        function=ToolFunction(name="rg", arguments='{"pattern":"cache"}'),
+    )
+    store.save(
+        "large",
+        [
+            *messages,
+            Message.user("search"),
+            Message(role="assistant", tool_calls=[second]),
+            Message(role="tool", tool_call_id=second.id, content='{"ok":true}'),
+        ],
+        root=tmp_path,
+    )
+    assert service.call("large", second.id).data.id == second.id
+    assert parse_count == 2
+
+
 def test_session_skills_use_index_metadata_without_loading_history(
     tmp_path: Path,
     monkeypatch,

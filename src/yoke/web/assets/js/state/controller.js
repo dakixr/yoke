@@ -53,6 +53,7 @@ class AppController {
     this.treePendingLabels = new Map();
     this.treeServerRevisions = new Map();
     this.toolDetailGeneration = new Map();
+    this.toolDetailRequests = new Map();
     this.processOutputRequests = new Map();
     this.pendingLiveEvents = new Map();
     this.liveFrame = null;
@@ -144,8 +145,8 @@ class AppController {
         api.activeSessions(),
         api.commands(),
         api.recentLocations(),
-        api.listSessions({ archived: false, limit: 100 }),
-        api.listSessions({ archived: true, limit: 30 }),
+        api.listSessions({ archived: false, limit: 100, order: "lastUserDesc" }),
+        api.listSessions({ archived: true, limit: 30, order: "lastUserDesc" }),
       ]);
       store.setState((state) => {
         const sessions = { ...state.sessions };
@@ -415,8 +416,8 @@ class AppController {
 
   async refreshSessionLists() {
     const [current, archived] = await Promise.all([
-      api.listSessions({ archived: false, limit: 100 }),
-      api.listSessions({ archived: true, limit: 30 }),
+      api.listSessions({ archived: false, limit: 100, order: "lastUserDesc" }),
+      api.listSessions({ archived: true, limit: 30, order: "lastUserDesc" }),
     ]);
     store.setState((state) => {
       const sessions = { ...state.sessions };
@@ -458,7 +459,12 @@ class AppController {
     const state = store.getState();
     const cursor = archived ? state.archivedCursor : state.sessionsCursor;
     if (!cursor) return;
-    const response = await api.listSessions({ archived, limit: archived ? 30 : 100, cursor });
+    const response = await api.listSessions({
+      archived,
+      limit: archived ? 30 : 100,
+      order: "lastUserDesc",
+      cursor,
+    });
     store.setState((current) => {
       const sessions = { ...current.sessions };
       for (const item of response.data) sessions[item.id] = item;
@@ -479,6 +485,7 @@ class AppController {
       directory: directory || undefined,
       archived,
       limit: 1,
+      order: "lastUserDesc",
     });
     return Number.isFinite(response.total) ? response.total : response.data.length;
   }
@@ -487,6 +494,19 @@ class AppController {
     const response = await api.getSession(sessionID);
     store.setState((state) => {
       let summary = response.data;
+      const localLastUserMessage = state.sessions[sessionID]?.time?.lastUserMessage || null;
+      const serverLastUserMessage = summary.time?.lastUserMessage || null;
+      const localLastUserTime = Date.parse(localLastUserMessage || "");
+      const serverLastUserTime = Date.parse(serverLastUserMessage || "");
+      if (
+        localLastUserMessage && Number.isFinite(localLastUserTime) &&
+        (!Number.isFinite(serverLastUserTime) || localLastUserTime > serverLastUserTime)
+      ) {
+        summary = {
+          ...summary,
+          time: { ...summary.time, lastUserMessage: localLastUserMessage },
+        };
+      }
       for (const mutation of this.sessionPendingMutations.get(sessionID) || []) {
         summary = optimisticSessionPatch(summary, mutation.patch);
       }
@@ -537,7 +557,7 @@ class AppController {
       store.setState((state) => ({ ...state, ui: { ...state.ui, searchResults: [], searching: false } }));
       return;
     }
-    const response = await api.listSessions({ search: value, limit: 100 });
+    const response = await api.listSessions({ search: value, limit: 100, order: "lastUserDesc" });
     store.setState((state) => {
       const sessions = { ...state.sessions };
       for (const item of response.data) sessions[item.id] = item;
@@ -1238,6 +1258,10 @@ class AppController {
 
   async submitPrompt(sessionID, { text, attachments = [], delivery = "steer" }) {
     if (!text.trim() && !attachments.length) return;
+    const before = store.getState();
+    const previousSession = before.sessions[sessionID] || null;
+    const previousActiveIndex = before.sessionOrder.indexOf(sessionID);
+    const previousArchivedIndex = before.archivedOrder.indexOf(sessionID);
     const data = store.getState().sessionData[sessionID];
     if (data?.lastError && data?.livePrompt) {
       await this.refreshMessages(sessionID);
@@ -1273,17 +1297,31 @@ class AppController {
       timeCreated: new Date().toISOString(),
     };
     if (delivery === "steer") {
-      store.setState((state) => ({
-        ...state,
-        sessionData: {
-          ...state.sessionData,
-          [sessionID]: {
-            ...state.sessionData[sessionID],
-            livePrompt: optimistic,
-            lastError: null,
+      store.setState((state) => {
+        let next = state;
+        const session = state.sessions[sessionID];
+        if (session) {
+          next = installSessionSummary(
+            state,
+            {
+              ...session,
+              time: { ...session.time, lastUserMessage: optimistic.timeCreated },
+            },
+            { moveToFront: true },
+          );
+        }
+        return {
+          ...next,
+          sessionData: {
+            ...next.sessionData,
+            [sessionID]: {
+              ...next.sessionData[sessionID],
+              livePrompt: optimistic,
+              lastError: null,
+            },
           },
-        },
-      }));
+        };
+      });
     } else {
       const queue = store.getState().sessionData[sessionID]?.queue;
       if (queue) {
@@ -1326,7 +1364,7 @@ class AppController {
       }
       store.setState((state) => {
         const current = state.sessionData[sessionID] || {};
-        return {
+        let next = {
           ...state,
           sessionData: {
             ...state.sessionData,
@@ -1336,6 +1374,15 @@ class AppController {
             },
           },
         };
+        if (delivery === "steer" && previousSession) {
+          next = restoreSessionSummary(
+            next,
+            previousSession,
+            previousActiveIndex,
+            previousArchivedIndex,
+          );
+        }
+        return next;
       });
       await this.refreshQueue(sessionID).catch(() => {});
       throw error;
@@ -1939,7 +1986,31 @@ class AppController {
   async loadToolCall(sessionID, callID) {
     const generation = (this.toolDetailGeneration.get(sessionID) || 0) + 1;
     this.toolDetailGeneration.set(sessionID, generation);
-    const [detail, output] = await Promise.all([api.toolCall(sessionID, callID), api.toolOutput(sessionID, callID)]);
+    const requestKey = `${sessionID}\u0000${callID}`;
+    let request = this.toolDetailRequests.get(requestKey);
+    if (!request) {
+      request = (async () => {
+        const known = store.getState().sessionData[sessionID]?.toolCalls?.find((call) => call.id === callID);
+        if (known?.retention === "runtime") {
+          const [detail, output] = await Promise.all([
+            api.toolCall(sessionID, callID),
+            api.toolOutput(sessionID, callID),
+          ]);
+          return { detail, output };
+        }
+        const detail = await api.toolCall(sessionID, callID);
+        if (detail.data?.retention === "session") {
+          return { detail, output: { data: [], cursor: { next: 0, truncatedBefore: 0 } } };
+        }
+        const output = await api.toolOutput(sessionID, callID);
+        return { detail, output };
+      })();
+      this.toolDetailRequests.set(requestKey, request);
+      void request.finally(() => {
+        if (this.toolDetailRequests.get(requestKey) === request) this.toolDetailRequests.delete(requestKey);
+      }).catch(() => {});
+    }
+    const { detail, output } = await request;
     if (this.toolDetailGeneration.get(sessionID) !== generation) return null;
     const inspector = store.getState().ui.inspector;
     if (inspector?.mode === "tool" && inspector.callID && inspector.callID !== callID) return null;

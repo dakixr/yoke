@@ -112,7 +112,11 @@ def messages_for_provider_capabilities(
     """Adapt provider-bound messages to the active provider capabilities."""
     if _provider_supports_image_inputs(provider) is False:
         return omit_image_inputs_for_text_model(messages)
-    return [message.model_copy(deep=True) for message in messages]
+    projected = [message.model_copy(deep=True) for message in messages]
+    max_images = _provider_max_images_per_request(provider)
+    if max_images is None:
+        return projected
+    return _limit_request_images(projected, max_images=max_images)
 
 
 def provider_supports_image_inputs(provider: object) -> bool | None:
@@ -127,6 +131,51 @@ def provider_supports_image_inputs(provider: object) -> bool | None:
 
 
 _provider_supports_image_inputs = provider_supports_image_inputs
+
+
+def provider_max_images_per_request(provider: object) -> int | None:
+    """Return the active provider's request-wide image limit, when known."""
+    value = getattr(provider, "max_images_per_request", None)
+    if callable(value):
+        value = value()
+    return value if isinstance(value, int) and value >= 0 else None
+
+
+_provider_max_images_per_request = provider_max_images_per_request
+
+
+def _limit_request_images(
+    messages: list[Message],
+    *,
+    max_images: int,
+) -> list[Message]:
+    """Keep the newest request-wide images and replace older ones with notes."""
+    remaining = max_images
+    for message in reversed(messages):
+        if not isinstance(message.content, list):
+            continue
+        content: list[MessageContentPart] = []
+        for part in reversed(message.content):
+            if isinstance(
+                part,
+                MessageImageURLContentPart | MessageLocalImageContentPart,
+            ):
+                if remaining > 0:
+                    remaining -= 1
+                    content.append(part)
+                else:
+                    content.append(
+                        MessageTextContentPart(
+                            text=_image_request_limit_placeholder(
+                                part.display_label,
+                                max_images=max_images,
+                            )
+                        )
+                    )
+                continue
+            content.append(part)
+        message.content = list(reversed(content))
+    return messages
 
 
 def _omit_image_inputs_from_message(message: Message) -> Message:
@@ -161,6 +210,13 @@ def _image_omission_placeholder(label: str) -> str:
     return (
         f"[Image omitted: {label} was attached in the original "
         "conversation, but the active model does not support image inputs.]"
+    )
+
+
+def _image_request_limit_placeholder(label: str, *, max_images: int) -> str:
+    return (
+        f"[Image omitted: {label} was attached earlier in the conversation, "
+        f"but the active provider accepts at most {max_images} images per request.]"
     )
 
 

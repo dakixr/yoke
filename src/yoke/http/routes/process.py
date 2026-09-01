@@ -25,7 +25,9 @@ def _service(request: Request) -> ProcessService:
     return request.app.state.process_service
 
 
-@router.get("/process", response_model=ProcessListResponse, operation_id="listProcesses")
+@router.get(
+    "/process", response_model=ProcessListResponse, operation_id="listProcesses"
+)
 def list_processes(
     request: Request,
     session_id: str | None = Query(default=None, alias="sessionID"),

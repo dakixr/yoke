@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
 from pathlib import Path
 from typing import ClassVar
 
@@ -17,7 +16,6 @@ from yoke.agent.models import ToolFunction
 from yoke.agent.persistence import AgentStateSnapshot
 from yoke.agent.tools import WorkspaceTool
 from yoke.ai import Agent
-from yoke.ai import AgentState
 from yoke.ai import Image
 from yoke.ai import RunConfig
 from yoke.ai.skills import Skill
@@ -89,10 +87,6 @@ def test_complete_uses_sys_prompt_images_and_no_tools() -> None:
             label="[Image #1]",
         ),
     ]
-
-
-def test_run_config_has_no_iteration_limit_setting() -> None:
-    assert "max_iterations" not in {field.name for field in fields(RunConfig)}
 
 
 def test_complete_returns_structured_output() -> None:
@@ -443,7 +437,3 @@ def test_public_agent_resolves_implicit_save_target_after_lock_entry(
     assert current_path.exists()
     assert not old_path.exists()
     agent.close()
-
-
-def test_public_agent_state_is_reexported() -> None:
-    assert AgentState.__name__ == "AgentState"

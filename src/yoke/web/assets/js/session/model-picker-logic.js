@@ -34,6 +34,12 @@ export function resolveModelEffort(model, currentEffort = "", providerEffort = "
   return values[0];
 }
 
+export function modelSelectionErrorMessage(error) {
+  const message = error?.message || String(error);
+  if (error?.code === "model_context_too_small") return message;
+  return `Could not change the model. ${message}`;
+}
+
 export function modelNavigationIndex(index, count, key, pageSize = 5) {
   if (!count) return 0;
   const current = Math.max(0, Math.min(index, count - 1));

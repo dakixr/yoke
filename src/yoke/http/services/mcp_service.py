@@ -63,10 +63,11 @@ class McpService:
             servers = payload.get("servers") if isinstance(payload, dict) else None
             if isinstance(servers, list):
                 for item in servers:
-                    if isinstance(item, dict) and isinstance(item.get("name"), str):
-                        inspected[cast(str, item["name"])] = cast(
-                            dict[str, object], item
-                        )
+                    if not isinstance(item, dict):
+                        continue
+                    name = item.get("name")
+                    if isinstance(name, str):
+                        inspected[name] = cast(dict[str, object], item)
         data = [
             self._server_info(
                 server,
@@ -113,7 +114,9 @@ class McpService:
         from yoke.mcp.editing import patch_persisted_mcp_server
 
         config = load_mcp_config(root=root, home=self.home)
-        server = next((item for item in config.servers if item.name == server_name), None)
+        server = next(
+            (item for item in config.servers if item.name == server_name), None
+        )
         if server is None:
             raise ApiError(404, "mcp_server_not_found", "MCP server was not found.")
         try:
@@ -150,7 +153,9 @@ class McpService:
             return Path(record.root or Path.cwd()).resolve()
         root = Path(directory or Path.cwd()).resolve()
         if not root.is_dir():
-            raise ApiError(404, "location_not_found", "Location directory was not found.")
+            raise ApiError(
+                404, "location_not_found", "Location directory was not found."
+            )
         return root
 
     def _policy(self, session_id: str | None) -> McpSessionPolicy | None:
@@ -182,7 +187,9 @@ class McpService:
             tool_values = inspection.get("tools")
             if isinstance(tool_values, list):
                 for tool in tool_values:
-                    if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+                    if not isinstance(tool, dict) or not isinstance(
+                        tool.get("name"), str
+                    ):
                         continue
                     schema = redact_public_value(tool.get("input_schema"))
                     tools.append(
@@ -209,7 +216,9 @@ class McpService:
             source_path=str(source_path) if source_path is not None else None,
             status=status,
             error=error,
-            enabled_tools=(list(server.enabled_tools) if server.enabled_tools is not None else None),
+            enabled_tools=(
+                list(server.enabled_tools) if server.enabled_tools is not None else None
+            ),
             disabled_tools=list(server.disabled_tools),
             tools=tools,
             truncated=truncated,

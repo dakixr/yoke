@@ -117,4 +117,3 @@ type QueueOperation = Annotated[
 class QueuePatchRequest(ApiModel):
     expected_revision: int = Field(ge=0)
     operations: list[QueueOperation]
-

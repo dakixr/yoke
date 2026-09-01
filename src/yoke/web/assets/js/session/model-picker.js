@@ -5,6 +5,7 @@ import {
   filterModelChoices,
   formatContextWindow,
   groupModelChoices,
+  modelSelectionErrorMessage,
   modelNavigationIndex,
   resolveModelEffort,
 } from "./model-picker-logic.js";
@@ -21,10 +22,12 @@ export function ModelSelectionControl({ directory, selection, sessionID = null, 
   const [activeIndex, setActiveIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [selectionError, setSelectionError] = useState("");
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
   const searchRef = useRef(null);
   const resultsRef = useRef(null);
+  const selectionGenerationRef = useRef(0);
 
   const providers = providerCatalog || bootstrapProviders;
   const selectedKey = `${directory || ""}:${provider || ""}:`;
@@ -46,6 +49,11 @@ export function ModelSelectionControl({ directory, selection, sessionID = null, 
     setModel(selection?.model || "");
     setEffort(selection?.reasoningEffort || "");
   }, [selection?.provider, selection?.model, selection?.reasoningEffort, sessionID]);
+
+  useEffect(() => {
+    selectionGenerationRef.current += 1;
+    setSelectionError("");
+  }, [sessionID]);
 
   useEffect(() => {
     if (!directory) return;
@@ -138,21 +146,40 @@ export function ModelSelectionControl({ directory, selection, sessionID = null, 
     setProvider(choice.provider);
     setModel(choice.id);
     setEffort(nextEffort);
-    setOpen(false);
-    setQuery("");
+    setSelectionError("");
     if (sessionID) {
+      const generation = selectionGenerationRef.current + 1;
+      selectionGenerationRef.current = generation;
       void controller.setSelection(sessionID, choice.provider, choice.id, nextEffort)
-        .catch((selectionError) => controller.notice(selectionError?.message || String(selectionError)));
+        .then(() => {
+          if (selectionGenerationRef.current !== generation) return;
+          setOpen(false);
+          setQuery("");
+        })
+        .catch((selectionFailure) => {
+          if (selectionGenerationRef.current !== generation) return;
+          setSelectionError(modelSelectionErrorMessage(selectionFailure));
+          setOpen(true);
+        });
     } else {
       applyDraft({ provider: choice.provider, model: choice.id, effort: nextEffort });
+      setOpen(false);
+      setQuery("");
     }
   };
 
   const commitEffort = (nextEffort) => {
     setEffort(nextEffort);
+    setSelectionError("");
     if (sessionID && provider && model) {
+      const generation = selectionGenerationRef.current + 1;
+      selectionGenerationRef.current = generation;
       void controller.setSelection(sessionID, provider, model, nextEffort)
-        .catch((selectionError) => controller.notice(selectionError?.message || String(selectionError)));
+        .catch((selectionFailure) => {
+          if (selectionGenerationRef.current !== generation) return;
+          setSelectionError(modelSelectionErrorMessage(selectionFailure));
+          setOpen(true);
+        });
     } else {
       applyDraft({ provider, model, effort: nextEffort });
     }
@@ -193,6 +220,7 @@ export function ModelSelectionControl({ directory, selection, sessionID = null, 
           setOpen((value) => !value);
           setQuery("");
           setError("");
+          setSelectionError("");
         }}
         onKeyDown=${(event) => {
           if (open || !["ArrowDown", "ArrowUp"].includes(event.key)) return;
@@ -200,6 +228,7 @@ export function ModelSelectionControl({ directory, selection, sessionID = null, 
           setOpen(true);
           setQuery("");
           setError("");
+          setSelectionError("");
         }}
       >
         <span class="model-picker__trigger-mark" aria-hidden="true">M</span>
@@ -230,6 +259,10 @@ export function ModelSelectionControl({ directory, selection, sessionID = null, 
           <span>Models on this machine</span>
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>Enter</kbd> choose</span>
         </div>
+        ${selectionError ? html`<div class="model-picker__selection-error" role="alert">
+          <strong>Model unchanged</strong>
+          <span>${selectionError}</span>
+        </div>` : null}
         <div class="model-picker__results" role="listbox" ref=${resultsRef}>
           ${loading && !allModels.length ? html`<div class="model-picker__state"><span class="pending-spinner"></span> Loading models…</div>` : null}
           ${error ? html`<div class="model-picker__state model-picker__state--error">${error}</div>` : null}

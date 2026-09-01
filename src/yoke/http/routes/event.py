@@ -78,4 +78,3 @@ def session_history(
 def _sse(event) -> str:  # noqa: ANN001
     data = event.model_dump_json(by_alias=True)
     return f"id: {event.id}\nevent: {event.type}\ndata: {data}\n\n"
-

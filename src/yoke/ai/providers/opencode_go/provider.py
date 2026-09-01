@@ -34,7 +34,16 @@ from yoke.ai.providers.opencode_go.catalog import (
 class OpenCodeGoProvider(Provider):
     provider_name = PROVIDER_NAME
     supports_image_inputs = True
-    max_images_per_message = 50
+
+    @property
+    def max_images_per_message(self) -> int:
+        """Return the active model's per-message image admission limit."""
+        return 8 if self.config.model == "glm-5.3-flash" else 50
+
+    @property
+    def max_images_per_request(self) -> int | None:
+        """Return the active model's request-wide image budget."""
+        return 8 if self.config.model == "glm-5.3-flash" else None
 
     def __init__(
         self,

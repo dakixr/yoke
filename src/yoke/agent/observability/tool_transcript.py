@@ -46,7 +46,9 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
                     status="pending",
                     context=(
                         _message_context(
-                            user_text=(recent_user_text if pending_user_context else None)
+                            user_text=(
+                                recent_user_text if pending_user_context else None
+                            )
                         )
                         if index == 0
                         else None

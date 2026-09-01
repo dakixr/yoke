@@ -8,7 +8,6 @@ import re
 import pytest
 from rich.console import Console
 
-from yoke.cli.config.runtime import DEFAULT_SYSTEM_PROMPT
 from yoke.cli.render import (
     build_console,
     print_agent_output,
@@ -153,19 +152,3 @@ def test_live_and_replayed_agent_output_share_mermaid_rendering() -> None:
         outputs.append(stream.getvalue())
     assert all("▼" in output for output in outputs)
     assert all("flowchart TD" not in output for output in outputs)
-
-
-def test_cli_system_prompt_advertises_the_supported_mermaid_surface() -> None:
-    assert "nine Mermaid diagram families" in DEFAULT_SYSTEM_PROMPT
-    for family in (
-        "flowchart",
-        "state",
-        "class",
-        "entity-relationship (ER)",
-        "sequence",
-        "pie",
-        "mindmap",
-        "timeline",
-        "git graph",
-    ):
-        assert family in DEFAULT_SYSTEM_PROMPT

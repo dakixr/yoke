@@ -175,7 +175,11 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
   const projectName = location?.name || compactPath(directory);
   const branch = location?.git?.branch || compactPath(directory);
   const model = session.selection?.model || session.selection?.provider || "";
-  const age = shortAge(settled ? session.archivedAt : session.time?.updated);
+  const age = shortAge(
+    settled
+      ? session.archivedAt
+      : session.time?.lastUserMessage || session.time?.created || session.time?.updated,
+  );
   const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
   const working = active?.state === "running" && attentionCount === 0;
   const busy = active?.state && active.state !== "idle" && active.state !== "error";

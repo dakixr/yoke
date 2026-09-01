@@ -12,6 +12,31 @@ from yoke.agent.models import AgentContext
 from yoke.ai.providers.base import ModelCatalogProvider
 
 
+class ContextWindowTooSmallError(ValueError):
+    """The target model cannot fit the active context even after compaction."""
+
+    def __init__(
+        self,
+        *,
+        provider_name: str,
+        model_id: str,
+        context_window_tokens: int,
+        max_input_tokens: int,
+        input_tokens: int,
+    ) -> None:
+        self.provider_name = provider_name
+        self.model_id = model_id
+        self.context_window_tokens = context_window_tokens
+        self.max_input_tokens = max_input_tokens
+        self.input_tokens = input_tokens
+        super().__init__(
+            "model switch cancelled: automatic context compaction failed "
+            f"(the session still needs about {input_tokens} input tokens, but "
+            f"{model_id} allows about {max_input_tokens} input tokens within its "
+            f"{context_window_tokens}-token context window)"
+        )
+
+
 @dataclass(slots=True)
 class PreparedContextTransition:
     """Rollback handle for a target-budget context preparation."""
@@ -39,7 +64,7 @@ def prepare_context_for_provider(
         return None
     if _target_context_is_not_smaller(agent.provider, target_provider):
         return None
-    if _context_fits(agent, target_provider):
+    if _context_fit(agent, target_provider)[0]:
         return None
 
     transition = PreparedContextTransition(
@@ -57,27 +82,38 @@ def prepare_context_for_provider(
             agent.messages,
             conversation_entries=agent.conversation_entries,
         )
-        if compacted is None or not _context_fits(agent, target_provider):
-            raise ValueError("automatic compaction could not make the context fit")
+        fits, budget, input_tokens = _context_fit(agent, target_provider)
     except Exception as exc:
         transition.rollback()
         raise ValueError(
             f"model switch cancelled: automatic context compaction failed ({exc})"
         ) from exc
+    if compacted is None or not fits:
+        transition.rollback()
+        max_input_tokens = max(
+            0,
+            budget.policy.max_total_tokens - budget.policy.reserved_output_tokens,
+        )
+        raise ContextWindowTooSmallError(
+            provider_name=budget.provider_name,
+            model_id=budget.model_id,
+            context_window_tokens=budget.context_window_tokens,
+            max_input_tokens=max_input_tokens,
+            input_tokens=input_tokens,
+        )
     return transition
 
 
-def _context_fits(agent: RuntimeAgent, provider: object) -> bool:
+def _context_fit(agent: RuntimeAgent, provider: object):  # noqa: ANN202
     context = agent._context
     if context is None:
-        return True
+        raise ValueError("Runtime context is unavailable for model transition.")
     provider_messages = agent.context_manager.messages_for_provider(context)
-    fits, _budget, _input_tokens = current_context_fits_provider_budget(
+    return current_context_fits_provider_budget(
         agent.context_manager,
         provider_messages,
         provider=provider,
     )
-    return fits
 
 
 def _target_context_is_not_smaller(

@@ -3,12 +3,16 @@ from __future__ import annotations
 # ruff: noqa: D100,D103,S101
 
 import json
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.models import MessageImageURL
 from yoke.agent.models import MessageImageURLContentPart
@@ -18,6 +22,7 @@ from yoke.agent.models import ToolFunction
 from yoke.agent.session_tree import SessionTree
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.resolution import ProviderReadiness
+from yoke.agent.provider_transition import ContextWindowTooSmallError
 from yoke.http.app import HttpAppSettings
 from yoke.http.app import create_app
 from yoke.session.queue import PersistedPendingInput
@@ -70,14 +75,16 @@ def _save_conversation(
 
 def _write_legacy_session_stream(path: Path, *, root: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    updated_at = datetime.now(UTC) - timedelta(minutes=1)
+    created_at = updated_at - timedelta(minutes=1)
     metadata = {
         "version": 4,
         "id": path.stem,
         "leaf_id": None,
         "active_skills": [],
         "skill_dirs": [],
-        "created_at": "2026-08-01T12:00:00+00:00",
-        "updated_at": "2026-08-01T12:01:00+00:00",
+        "created_at": created_at.isoformat(),
+        "updated_at": updated_at.isoformat(),
         "root": str(root),
         "title": "Legacy Mac session",
         "pinned": False,
@@ -224,6 +231,104 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
         "queued": 1,
         "paused": 1,
         "revision": 7,
+    }
+
+
+def test_session_list_can_order_by_last_user_message(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    store = getattr(client.app, "state").session_service.store
+
+    later_user = ConversationEntry(
+        kind="user",
+        message=Message.user("later user activity"),
+        id="user-later",
+        created_at="2026-08-26T13:00:00+00:00",
+    )
+    store.save(
+        "session-later-user",
+        [later_user.message],
+        conversation_entries=[later_user],
+        leaf_id=later_user.id,
+        root=root,
+    )
+
+    earlier_user = ConversationEntry(
+        kind="user",
+        message=Message.user("earlier user activity"),
+        id="user-earlier",
+        created_at="2026-08-26T12:00:00+00:00",
+    )
+    # Save this session second so its generic updated timestamp is newer. The
+    # last-user ordering must still put the other session first.
+    store.save(
+        "session-earlier-user",
+        [earlier_user.message],
+        conversation_entries=[earlier_user],
+        leaf_id=earlier_user.id,
+        root=root,
+    )
+
+    response = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"directory": str(root), "order": "lastUserDesc"},
+    )
+
+    assert response.status_code == 200
+    items = response.json()["data"]
+    assert [item["id"] for item in items] == [
+        "session-later-user",
+        "session-earlier-user",
+    ]
+    assert items[0]["time"]["lastUserMessage"] == "2026-08-26T13:00:00+00:00"
+    assert items[1]["time"]["lastUserMessage"] == "2026-08-26T12:00:00+00:00"
+
+
+def test_model_selection_context_failure_is_structured(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    created = client.post(
+        "/api/v1/session",
+        headers=_auth(),
+        json={"id": "context-switch", "location": {"directory": str(root)}},
+    )
+    assert created.status_code == 200
+
+    async def reject_selection(*args, **kwargs):  # noqa: ANN002,ANN003,ANN202
+        del args, kwargs
+        raise ContextWindowTooSmallError(
+            provider_name="zai",
+            model_id="glm-small",
+            context_window_tokens=100_000,
+            max_input_tokens=84_000,
+            input_tokens=91_500,
+        )
+
+    registry = getattr(client.app, "state").runtime_registry
+    monkeypatch.setattr(registry, "select_model", reject_selection)
+
+    response = client.post(
+        "/api/v1/session/context-switch/selection",
+        headers=_auth(),
+        json={"provider": "zai", "model": "glm-small"},
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "model_context_too_small"
+    assert "current model was not changed" in error["message"].lower()
+    assert error["details"] == {
+        "provider": "zai",
+        "model": "glm-small",
+        "inputTokens": 91_500,
+        "maxInputTokens": 84_000,
+        "contextWindowTokens": 100_000,
     }
 
 
@@ -417,6 +522,7 @@ def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None
         "provider_name",
         "model_id",
         "reasoning_effort",
+        "last_user_message_at",
         "leaf_id",
         "entry_count",
         "file_size",
@@ -425,6 +531,13 @@ def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None
     ):
         entry.pop(field, None)
     index_path.write_text(json.dumps(index_payload), encoding="utf-8")
+
+    session_path = store._session_path("legacy-index-session")
+    lines = session_path.read_text(encoding="utf-8").splitlines()
+    metadata = json.loads(lines[1])
+    metadata.pop("last_user_message_at", None)
+    lines[1] = json.dumps(metadata, separators=(",", ":"))
+    session_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     restarted = _client(tmp_path)
     _fastapi(restarted).state.session_service.store.maintain_index(force=True)
@@ -444,8 +557,9 @@ def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None
         "leafID": exported.leaf_id,
         "entryCount": len(exported.entries),
     }
+    assert item["time"]["lastUserMessage"] == exported.entries[0].created_at
     repaired = json.loads(index_path.read_text(encoding="utf-8"))
-    assert repaired["sessions"]["legacy-index-session"]["summary_version"] == 2
+    assert repaired["sessions"]["legacy-index-session"]["summary_version"] == 3
 
 
 def test_session_maintenance_migrates_legacy_stream_without_index_entry(

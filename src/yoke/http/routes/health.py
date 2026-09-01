@@ -38,4 +38,3 @@ def capabilities() -> CapabilitiesResponse:
             limits=CapabilityLimits(),
         )
     )
-

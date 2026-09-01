@@ -26,4 +26,3 @@ def require_auth(request: Request) -> None:
             detail="Invalid or missing bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-

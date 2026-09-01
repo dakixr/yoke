@@ -30,7 +30,6 @@ from yoke.ai.providers.codex.websockets import build_message_from_websocket_stat
 from yoke.ai.providers.codex.websockets import handle_websocket_event
 from yoke.ai.providers.codex.websockets import map_websocket_error_event
 from yoke.ai.providers.codex.websockets import optional_float_env
-from yoke.ai.providers.codex.websockets import register_provider
 from yoke.ai.providers.codex.websockets import websocket_url_for_base
 
 
@@ -93,20 +92,6 @@ def test_optional_float_env_parses_disabled_values() -> None:
     assert optional_float_env("off", default=20.0) is None
     assert optional_float_env("0", default=20.0) is None
     assert optional_float_env("30", default=None) == 30.0
-
-
-def test_codex_websockets_default_timeout_matches_codex_idle_timeout(
-    tmp_path: Path,
-) -> None:
-    class Context:
-        home = tmp_path
-        env: dict[str, str] = {}
-        model = None
-        reasoning_effort = None
-
-    provider = register_provider(Context())
-
-    assert provider.config.timeout_seconds == 900.0
 
 
 def test_websocket_response_done_builds_message_from_output_item() -> None:

@@ -10,7 +10,7 @@ from yoke.cli.session.models import SessionIndex
 from yoke.cli.session.models import SessionIndexEntry
 from yoke.cli.session.models import SessionRecord
 
-SESSION_INDEX_SUMMARY_VERSION = 2
+SESSION_INDEX_SUMMARY_VERSION = 3
 
 
 def repair_index_from_session_files(
@@ -76,6 +76,7 @@ def session_index_entry(
         title=record.title,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        last_user_message_at=record.last_user_message_at,
         pinned=record.pinned,
         archived_at=record.archived_at,
         provider_name=record.provider_name,

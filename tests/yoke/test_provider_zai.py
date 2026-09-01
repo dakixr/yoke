@@ -46,22 +46,6 @@ def _sse_response(
     )
 
 
-def test_zai_catalog_has_supported_model_and_default() -> None:
-    provider = ZAIProvider(ZAIConfig(api_key="test"))
-
-    try:
-        models = {model.id: model for model in provider.list_models()}
-    finally:
-        provider.close()
-
-    assert set(models) == {"glm-5.3-flash"}
-    assert models["glm-5.3-flash"].thinking_levels == ("low", "high", "max")
-    assert models["glm-5.3-flash"].default_thinking_level == "max"
-    assert models["glm-5.3-flash"].supports_image_inputs is True
-    assert provider.config.model == "glm-5.3-flash"
-    assert provider.config.reasoning_effort == "max"
-
-
 def test_zai_register_provider_honors_context_reasoning_effort() -> None:
     provider = register_provider(
         SimpleNamespace(

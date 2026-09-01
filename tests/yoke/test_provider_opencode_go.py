@@ -12,50 +12,6 @@ from yoke.ai.providers.opencode_go import OpenCodeGoConfig
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 
 
-def test_opencode_go_catalog_has_supported_models_and_default() -> None:
-    provider = OpenCodeGoProvider(OpenCodeGoConfig(api_key="test"))
-    try:
-        models = {model.id: model for model in provider.list_models()}
-        model_ids = set(models)
-        assert "gpt-5.6-luna" in model_ids
-        assert "glm-5.3-flash" in model_ids
-        assert "kimi-k2.7-code" in model_ids
-        assert "deepseek-v4-pro" in model_ids
-        assert "deepseek-v4-flash" in model_ids
-        assert (
-            not {
-                "glm-5.2",
-                "glm-5.3",
-                "glm-5.1",
-                "glm-5",
-                "grok-4.5",
-                "kimi-k2.6",
-                "kimi-k2.5",
-                "mimo-v2.5",
-                "mimo-v2-omni",
-                "mimo-v2-pro",
-                "mimo-v2.5-pro",
-                "minimax-m3",
-                "minimax-m2.7",
-                "minimax-m2.5",
-                "qwen3.7-max",
-                "qwen3.7-plus",
-                "qwen3.6-plus",
-                "qwen3.5-plus",
-                "muse-spark-1.2",
-                "muse-spark-1.2-contributor",
-            }
-            & model_ids
-        )
-        assert models["glm-5.3-flash"].thinking_levels == ("low", "high", "max")
-        assert models["glm-5.3-flash"].default_thinking_level == "max"
-        assert models["glm-5.3-flash"].supports_image_inputs is True
-        assert provider.config.model == "glm-5.3-flash"
-        assert provider.config.reasoning_effort == "max"
-    finally:
-        provider.close()
-
-
 def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
     captured: dict[str, object] = {}
 

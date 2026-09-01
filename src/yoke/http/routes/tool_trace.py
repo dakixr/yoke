@@ -31,7 +31,9 @@ def _service(request: Request) -> ToolTraceService:
 def list_tool_calls(
     request: Request,
     session_id: str,
-    status: Literal["pending", "running", "ok", "failed", "cancelled"] | None = Query(default=None),
+    status: Literal["pending", "running", "ok", "failed", "cancelled"] | None = Query(
+        default=None
+    ),
     turn_id: int | None = Query(default=None, alias="turnID"),
     limit: int = Query(default=100, ge=1, le=200),
     cursor: str | None = Query(default=None),

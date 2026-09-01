@@ -142,7 +142,9 @@ class PendingInputService:
     def queue(self, session_id: str) -> QueueData:
         self._require_session(session_id)
         with self._lock_for(session_id):
-            return _queue_data(load_prompt_queue_snapshot(self.store.directory, session_id))
+            return _queue_data(
+                load_prompt_queue_snapshot(self.store.directory, session_id)
+            )
 
     def patch_queue(self, session_id: str, request: QueuePatchRequest) -> QueueData:
         record = self._require_session(session_id)
@@ -441,7 +443,9 @@ def _apply_operation(items, admissions, operation) -> None:  # noqa: ANN001
     item = items[index]
     admission = admissions.get(item.id)
     if admission is None or admission.state != "admitted":
-        raise ApiError(409, "queue_item_not_editable", "Queue item is no longer editable.")
+        raise ApiError(
+            409, "queue_item_not_editable", "Queue item is no longer editable."
+        )
     if operation.op == "update":
         item.prompt = operation.prompt.text
         item.attachments = [

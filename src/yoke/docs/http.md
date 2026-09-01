@@ -108,6 +108,21 @@ commands execute through the corresponding HTTP operation instead of being sent
 to the model as prompt text. Commands that require a saved session are disabled
 while editing a new-session draft.
 
+Each saved session has its own browser composer draft. Prompt text and pending
+image attachments stay with that session while the user navigates to another
+session, settings, inspectors, or other browser routes, and they are restored
+when the session is opened again. Saved-session composer drafts use per-tab
+session storage, so they also survive a page reload without becoming long-lived
+browser data. A successful prompt admission clears that session draft; a failed
+admission restores the exact text and attachments.
+
+Provider image limits apply only to provider-bound projections. When a model
+has a request-wide image limit, Yoke keeps the newest allowed images and
+replaces older image parts with text notes while leaving canonical conversation
+history unchanged. OpenCode-Go GLM-5.3-Flash currently uses an eight-image
+request limit. A newest user message that itself exceeds the provider's
+per-message limit is rejected instead of silently dropping fresh attachments.
+
 ## Session and execution model
 
 A saved session is independent of an HTTP connection. Listing sessions does
@@ -115,7 +130,8 @@ not construct model providers or live runtimes. The daemon loads a
 `SessionRuntime` only when an operation needs process-local execution state.
 Session lists and recent-location discovery are served from the lightweight
 session index rather than parsing conversation history. The index stores the
-selection and tree summary needed by list cards plus a file signature. Changed,
+selection and tree summary needed by list cards, the latest user-message time,
+and a file signature. Changed,
 missing, legacy, or unreadable session files are repaired individually. The
 session-list response includes the filtered total separately from the paged
 rows, so UI counters do not expose the current page size as product state. The
@@ -125,6 +141,10 @@ in a background task, so `yoke serve --open` and list requests never pay for
 those scans. Parsed index snapshots are reused until `index.json` changes. An
 index written by an older Yoke version is enriched by background maintenance;
 steady-state list latency is independent of conversation-history size.
+The browser requests `lastUserDesc` ordering for its session sidebar, so agent
+completion, tool activity, title edits, and model changes do not move a session
+ahead of one the user interacted with more recently. Sessions without a user
+message fall back to their creation time.
 Session listing also accepts the immediately preceding `session_stream` v1
 storage format and rewrites it to the current JSONL format on first load. A
 single unreadable session file is skipped rather than failing the complete
@@ -351,6 +371,11 @@ scrolling results list; Escape closes the picker and returns focus to its
 trigger. Reasoning effort remains adjacent
 as compact web buttons, so the entire model control uses one consistent custom
 interaction on desktop and mobile.
+Switching to a smaller-context model first attempts the normal transactional
+automatic compaction. If the resulting context still does not fit, the server
+returns `model_context_too_small` with the estimated input size and target
+context budget. The picker stays open, restores the previous selection, and
+shows the failure inline instead of leaving the optimistic model change visible.
 When the responsive layout collapses the session sidebar, fine-pointer devices
 also expose it from the extreme left screen edge. The edge reveal is transient,
 uses a short hover delay to avoid accidental activation, stays open while the
@@ -460,16 +485,24 @@ remaining native browser UI.
 
 Tool activity uses the same split-pane model as the CLI inspector: a dense,
 searchable call list stays on the left while the selected call's detail remains
-visible on the right. The newest call is selected by default. A call opened from
+visible on the right. Calls are chronological from top to bottom. The list opens
+at the bottom with the newest call selected and follows new calls while the user
+stays near the tail; scrolling upward suspends that automatic following until
+the user returns to the bottom. A call opened from
 the chat timeline becomes the inspector's explicit selection, even when that
 historical call is older than the newest retained sidebar page. Choosing another
 call replaces that selection. Detail requests are race-safe, so a slower response
 from an earlier chat or sidebar click cannot replace the latest selection.
 Background tool refreshes follow the selected call ID rather than whichever
-detail happened to finish last. Status, turn/iteration, duration, arguments,
-executed arguments, retained output, result, and surrounding context are shown
-as one readable detail document, with raw JSON and wrapping controls available
-when needed.
+detail happened to finish last. Duplicate requests for the same selected call
+are coalesced, and persisted calls do not request the live-output endpoint. The
+HTTP tool-trace service caches reconstructed persisted traces for the most
+recently inspected session, keyed by session-file revision, so moving between
+historical calls reuses the same parsed trace map until the session advances or
+its HEAD changes. Status, turn/iteration, duration,
+arguments, executed arguments, retained output, result, and surrounding context
+are shown as one readable detail document, with raw JSON and wrapping controls
+available when needed.
 
 The Tree inspector is optimized around moving the current conversation HEAD.
 It defaults to user and assistant message nodes only; tool, control, and other

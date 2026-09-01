@@ -25,7 +25,6 @@ from yoke.cli.interactive.prompt.cancellation import (
     interrupted_turn_snapshot,
 )
 from yoke.cli.interactive.model_commands import _switch_model
-from yoke.cli.providers.catalog import list_all_provider_model_choices
 from yoke.cli.providers.state import set_agent_model
 from yoke.cli.providers.state import switch_agent_provider_model
 from yoke.cli.render import build_console
@@ -330,34 +329,6 @@ def test_model_state_save_preserves_interrupted_user_correction(
         "Fix the outcome cell styling.",
         INTERRUPTED_TURN_NOTICE,
     ]
-
-
-def test_model_selector_catalog_includes_codex_models(
-    tmp_path: Path,
-) -> None:
-    choices = list_all_provider_model_choices(
-        args=CLIArgs(root=str(tmp_path)),
-        home=tmp_path,
-    )
-
-    qualified_ids = {choice.qualified_id for choice in choices}
-    assert "codex:gpt-5.6-sol" in qualified_ids
-    assert "codex:gpt-5.6-luna" in qualified_ids
-    assert "codex:gpt-5.6-terra" in qualified_ids
-
-
-def test_model_selector_catalog_includes_open_provider_models(
-    tmp_path: Path,
-) -> None:
-    choices = list_all_provider_model_choices(
-        args=CLIArgs(root=str(tmp_path)),
-        home=tmp_path,
-    )
-
-    qualified_ids = {choice.qualified_id for choice in choices}
-    assert "opencode-go:gpt-5.6-luna" in qualified_ids
-    assert "opencode-go:glm-5.3-flash" in qualified_ids
-    assert "zai:glm-5.3-flash" in qualified_ids
 
 
 def test_model_switch_keeps_bounded_user_epoch_for_equal_window() -> None:

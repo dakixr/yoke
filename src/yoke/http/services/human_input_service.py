@@ -74,8 +74,7 @@ class HumanInputService:
             return [
                 pending.info.model_copy(deep=True)
                 for pending in self._permissions.values()
-                if pending.info.session_id == session_id
-                and pending.resolution is None
+                if pending.info.session_id == session_id and pending.resolution is None
             ]
 
     def reply_permission(
@@ -165,8 +164,7 @@ class HumanInputService:
             return [
                 pending.info.model_copy(deep=True)
                 for pending in self._questions.values()
-                if pending.info.session_id == session_id
-                and pending.resolution is None
+                if pending.info.session_id == session_id and pending.resolution is None
             ]
 
     def reply_question(
@@ -227,7 +225,9 @@ class HumanInputService:
         with self._lock:
             pending = self._questions.get(request_id)
             if pending is None or pending.info.session_id != session_id:
-                raise ApiError(404, "question_not_found", "Question request was not found.")
+                raise ApiError(
+                    404, "question_not_found", "Question request was not found."
+                )
             if pending.resolution is not None:
                 return pending.resolution.model_copy(deep=True)
             if not rejected:
@@ -248,7 +248,9 @@ class HumanInputService:
         return resolution.model_copy(deep=True)
 
     @staticmethod
-    def _validate_question_answers(info: QuestionRequestInfo, answers: list[str]) -> None:
+    def _validate_question_answers(
+        info: QuestionRequestInfo, answers: list[str]
+    ) -> None:
         if not info.multiple and len(answers) != 1:
             raise ApiError(
                 400,

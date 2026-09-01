@@ -63,6 +63,8 @@ SessionOrder = Literal[
     "updatedAsc",
     "createdDesc",
     "createdAsc",
+    "lastUserDesc",
+    "lastUserAsc",
 ]
 MessageOrder = Literal["asc", "desc"]
 
@@ -916,7 +918,11 @@ class SessionService:
             pinned=record.pinned,
             archived_at=record.archived_at,
             location=LocationInfo(directory=record.root or ""),
-            time=SessionTime(created=record.created_at, updated=record.updated_at),
+            time=SessionTime(
+                created=record.created_at,
+                updated=record.updated_at,
+                last_user_message=record.last_user_message_at,
+            ),
             selection=SessionSelection(
                 provider=record.provider_name,
                 model=record.model_id,
@@ -940,7 +946,11 @@ class SessionService:
             pinned=entry.pinned,
             archived_at=entry.archived_at,
             location=LocationInfo(directory=entry.root or ""),
-            time=SessionTime(created=entry.created_at, updated=entry.updated_at),
+            time=SessionTime(
+                created=entry.created_at,
+                updated=entry.updated_at,
+                last_user_message=entry.last_user_message_at,
+            ),
             selection=SessionSelection(
                 provider=entry.provider_name,
                 model=entry.model_id,
@@ -1012,11 +1022,12 @@ class SessionService:
         record: SessionRecord | SessionIndexEntry,
         order: SessionOrder,
     ) -> tuple[str, str]:
-        value = (
-            record.created_at
-            if order.startswith("created")
-            else record.updated_at or record.created_at
-        )
+        if order.startswith("created"):
+            value = record.created_at
+        elif order.startswith("lastUser"):
+            value = record.last_user_message_at or record.created_at
+        else:
+            value = record.updated_at or record.created_at
         return value or "", record.id
 
     @staticmethod

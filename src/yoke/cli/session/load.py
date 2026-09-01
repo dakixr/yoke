@@ -32,6 +32,7 @@ def scan_canonical_session_summary(
     """Read canonical session metadata and topology without decoding messages."""
     metadata: dict[str, object] = {}
     entry_ids: set[str] = set()
+    last_user_message_at: str | None = None
     saw_header = False
     try:
         with path.open("rb") as handle:
@@ -43,6 +44,9 @@ def scan_canonical_session_summary(
                     if entry_id is None:
                         return None
                     entry_ids.add(entry_id)
+                    user_created_at = _canonical_user_entry_created_at(line)
+                    if user_created_at is not None:
+                        last_user_message_at = user_created_at
                     continue
                 try:
                     payload = from_json(line)
@@ -73,6 +77,10 @@ def scan_canonical_session_summary(
                     if not isinstance(entry_id, str):
                         return None
                     entry_ids.add(entry_id)
+                    if raw_entry.get("kind") == "user":
+                        created_at = raw_entry.get("created_at")
+                        if isinstance(created_at, str):
+                            last_user_message_at = created_at
                     continue
                 return None
     except OSError:
@@ -81,6 +89,9 @@ def scan_canonical_session_summary(
         return None
     metadata["id"] = session_id
     metadata["conversation_entries"] = []
+    metadata["last_user_message_at"] = (
+        metadata.get("last_user_message_at") or last_user_message_at
+    )
     try:
         return SessionRecord.model_validate(metadata), len(entry_ids)
     except ValidationError:
@@ -92,9 +103,16 @@ def reconcile_index_owned_metadata(
     index_entry: SessionIndexEntry | None,
 ) -> SessionRecord:
     """Apply newer index-owned title/pin/archive metadata to a summary record."""
-    if index_entry is None or not _index_is_newer(index_entry, record):
+    if index_entry is None:
         return record
-    changes = _index_metadata_changes(index_entry, record)
+    changes: dict[str, object] = {}
+    if _index_is_newer(index_entry, record):
+        changes.update(_index_metadata_changes(index_entry, record))
+    if (
+        index_entry.last_user_message_at is not None
+        and index_entry.last_user_message_at != record.last_user_message_at
+    ):
+        changes["last_user_message_at"] = index_entry.last_user_message_at
     return record.model_copy(update=changes) if changes else record
 
 
@@ -111,6 +129,21 @@ def _canonical_entry_id(line: bytes) -> str | None:
             return raw[1:-1].decode("utf-8")
         except UnicodeDecodeError:
             return None
+    try:
+        value = from_json(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _canonical_user_entry_created_at(line: bytes) -> str | None:
+    if not line.startswith(b'{"type":"entry","entry":{"kind":"user",'):
+        return None
+    marker = b',"created_at":'
+    created_at = line.rfind(marker)
+    if created_at < 0:
+        return None
+    raw = line[created_at + len(marker) :].rstrip(b"\r\n}")
     try:
         value = from_json(raw)
     except ValueError:
@@ -149,12 +182,19 @@ def load_existing_record(
         needs_rewrite = True
 
     index_entry = store.index_entry(session_id)
-    if index_entry is None or not _index_is_newer(index_entry, record):
+    if index_entry is None:
         if needs_rewrite:
             write_session_record(record, path=path)
             store._update_index(record)
         return record
-    changes = _index_metadata_changes(index_entry, record)
+    changes: dict[str, object] = {}
+    if _index_is_newer(index_entry, record):
+        changes.update(_index_metadata_changes(index_entry, record))
+    if (
+        index_entry.last_user_message_at is not None
+        and index_entry.last_user_message_at != record.last_user_message_at
+    ):
+        changes["last_user_message_at"] = index_entry.last_user_message_at
     if not changes:
         if needs_rewrite:
             write_session_record(record, path=path)

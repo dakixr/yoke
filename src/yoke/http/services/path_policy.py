@@ -13,7 +13,9 @@ class PathPolicy:
     def root(self, directory: str | None) -> Path:
         root = Path(directory or Path.cwd()).expanduser().resolve()
         if not root.is_dir():
-            raise ApiError(404, "location_not_found", "Location directory was not found.")
+            raise ApiError(
+                404, "location_not_found", "Location directory was not found."
+            )
         return root
 
     def contained(
