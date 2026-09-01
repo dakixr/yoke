@@ -123,7 +123,6 @@
   .sidebar.is-open, .sidebar.is-peeking { transform: translateX(0); }
   .sidebar-backdrop { position: fixed; z-index: 15; inset: 0; display: block; background: rgb(0 0 0 / 35%); }
   .sidebar-resize { display: none; }
-  .session-quick-action { display: none; }
   .mobile-only { display: inline-grid; }
   .mobile-titlebar { display: flex; height: 48px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); }
 }
