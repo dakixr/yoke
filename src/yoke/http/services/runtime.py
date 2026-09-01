@@ -165,6 +165,7 @@ class SessionRuntime:
     async def wake(self) -> None:
         """Start eligible work or apply a pending steer at a safe control boundary."""
         async with self._lock:
+            self._reopen_archived_locked()
             if self._operation is not None:
                 return
             if self._active is not None:
@@ -180,6 +181,27 @@ class SessionRuntime:
             admission = self._recover_or_next_locked()
             if admission is not None:
                 self._start_locked(admission)
+
+    def _reopen_archived_locked(self) -> None:
+        record = self.store.summary_record(self.session_id)
+        if record is None or record.archived_at is None:
+            return
+        record = self.store.set_archived(
+            self.session_id,
+            False,
+            existing_record=record,
+        )
+        self.events.durable(
+            self.session_id,
+            "session.updated",
+            {
+                "sessionID": record.id,
+                "title": record.title,
+                "pinned": record.pinned,
+                "archivedAt": record.archived_at,
+            },
+            location=record.root,
+        )
 
     async def interrupt(self) -> tuple[bool, int | None]:
         """Retire the current generation without consuming queued work."""

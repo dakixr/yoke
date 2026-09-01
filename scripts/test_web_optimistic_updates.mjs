@@ -293,6 +293,68 @@ async function testPromptRollbackOnFailure() {
   }
 }
 
+async function testSettledPromptReopensOptimistically() {
+  const id = "settled-prompt-reopen";
+  const archivedAt = "2026-09-01T12:00:00Z";
+  installSession(id, {
+    queue: { revision: 0, items: [] },
+    summary: { archivedAt },
+  });
+  store.setState((state) => ({
+    ...state,
+    sessionOrder: state.sessionOrder.filter((value) => value !== id),
+    archivedOrder: [id, ...state.archivedOrder.filter((value) => value !== id)],
+  }));
+  const gate = deferred();
+  const restore = restoreApi({
+    admitPrompt: () => gate.promise,
+    queue: async () => ({ data: { revision: 1, items: [] } }),
+  });
+  try {
+    const pending = controller.submitPrompt(id, { text: "continue this", delivery: "steer" });
+    const state = store.getState();
+    assert.equal(state.sessions[id].archivedAt, null);
+    assert.equal(state.sessionOrder[0], id);
+    assert.equal(state.archivedOrder.includes(id), false);
+    assert.equal(state.sessionData[id].livePrompt.prompt.text, "continue this");
+    gate.resolve({ data: { id: state.sessionData[id].livePrompt.id } });
+    await pending;
+  } finally {
+    restore();
+  }
+}
+
+async function testSettledPromptFailureRestoresSettledState() {
+  const id = "settled-prompt-reopen-failure";
+  const archivedAt = "2026-09-01T12:00:00Z";
+  installSession(id, {
+    queue: { revision: 0, items: [] },
+    summary: { archivedAt },
+  });
+  store.setState((state) => ({
+    ...state,
+    sessionOrder: state.sessionOrder.filter((value) => value !== id),
+    archivedOrder: [id, ...state.archivedOrder.filter((value) => value !== id)],
+  }));
+  const restore = restoreApi({
+    admitPrompt: async () => { throw new ApiError(500, "fixture_failure", "fixture failure"); },
+    queue: async () => ({ data: { revision: 0, items: [] } }),
+  });
+  try {
+    await assert.rejects(
+      controller.submitPrompt(id, { text: "continue this", delivery: "steer" }),
+      /fixture failure/,
+    );
+    const state = store.getState();
+    assert.equal(state.sessions[id].archivedAt, archivedAt);
+    assert.equal(state.sessionOrder.includes(id), false);
+    assert.equal(state.archivedOrder[0], id);
+    assert.equal(state.sessionData[id].livePrompt, null);
+  } finally {
+    restore();
+  }
+}
+
 async function testSessionPatchesSerializeAndKeepNewestOptimism() {
   const id = "optimistic-session";
   installSession(id);
@@ -1874,6 +1936,8 @@ const tests = [
   testFailedTurnDoesNotDelayNextOptimisticPrompt,
   testDurableMessageKeepsOptimisticPromptUntilSnapshot,
   testPromptRollbackOnFailure,
+  testSettledPromptReopensOptimistically,
+  testSettledPromptFailureRestoresSettledState,
   testSessionPatchesSerializeAndKeepNewestOptimism,
   testQueueMutationsSurviveStaleRefresh,
   testServerRestartLetsEmptyQueueReplaceStaleUi,

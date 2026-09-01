@@ -420,6 +420,123 @@ def _create_session(client: TestClient, root: Path, session_id: str) -> None:
     assert response.status_code == 200
 
 
+def test_prompt_admission_reopens_archived_session(tmp_path: Path) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "session-a")
+        archived = client.patch(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+            json={"archived": True},
+        )
+        assert archived.status_code == 200
+        assert archived.json()["data"]["archivedAt"] is not None
+
+        admitted = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={
+                "id": "inp-reopen",
+                "prompt": {"text": "continue this"},
+                "delivery": "queue",
+                "resume": False,
+            },
+        )
+        assert admitted.status_code == 200
+        session = client.get(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+        )
+        assert session.status_code == 200
+        assert session.json()["data"]["archivedAt"] is None
+
+        history = client.get(
+            "/api/v1/session/session-a/history",
+            headers=_auth(),
+        ).json()["data"]
+        event_types = [event["type"] for event in history]
+        reopened_index = max(
+            index
+            for index, event in enumerate(history)
+            if event["type"] == "session.updated"
+            and event["data"].get("archivedAt") is None
+        )
+        admitted_index = event_types.index("session.prompt.admitted")
+        assert reopened_index < admitted_index
+
+
+def test_wake_reopens_archived_session_before_pending_work_runs(tmp_path: Path) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "session-a")
+        admitted = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={
+                "id": "inp-wake-reopen",
+                "prompt": {"text": "run pending"},
+                "delivery": "queue",
+                "resume": False,
+            },
+        )
+        assert admitted.status_code == 200
+
+        store = app.state.session_service.store
+        record = store.summary_record("session-a")
+        assert record is not None
+        store.set_archived("session-a", True, existing_record=record)
+
+        patched = client.patch(
+            "/api/v1/session/session-a/queue",
+            headers=_auth(),
+            json={
+                "expectedRevision": 1,
+                "operations": [
+                    {
+                        "op": "update",
+                        "id": "inp-wake-reopen",
+                        "prompt": {"text": "run pending"},
+                    }
+                ],
+            },
+        )
+        assert patched.status_code == 200
+        assert controller.started["run pending"].wait(1)
+        session = client.get(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+        )
+        assert session.status_code == 200
+        assert session.json()["data"]["archivedAt"] is None
+
+        controller.release["run pending"].set()
+        waited = client.post(
+            "/api/v1/session/session-a/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        assert waited.json()["data"]["state"] == "idle"
+
+
 def test_session_archive_rejects_running_runtime(tmp_path: Path) -> None:
     controller = FakeRuntimeController()
     app = create_app(

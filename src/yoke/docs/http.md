@@ -152,6 +152,9 @@ separate runnable steer/queued prompts from paused prompts. Session-list and
 single-session refreshes keep a newer locally known queue revision instead of
 letting an older summary overwrite the sidebar card. Settling is rejected while
 the runtime is busy or any queued prompt remains, including paused prompts.
+Sending a prompt to a settled session reopens it automatically as part of the
+same prompt-admission request; the browser mirrors that reopen optimistically
+and restores the settled state if admission fails.
 The sidebar connection dot also follows the event-stream state rather than
 remaining green during reconnect or resynchronization.
 Session listing also accepts the immediately preceding `session_stream` v1

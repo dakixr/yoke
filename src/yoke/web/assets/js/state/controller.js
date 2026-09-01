@@ -1314,6 +1314,17 @@ class AppController {
       delivery,
       timeCreated: new Date().toISOString(),
     };
+    if (previousSession?.archivedAt) {
+      store.setState((state) => {
+        const session = state.sessions[sessionID];
+        if (!session) return state;
+        return installSessionSummary(
+          state,
+          { ...session, archivedAt: null },
+          { moveToFront: true },
+        );
+      });
+    }
     if (delivery === "steer") {
       store.setState((state) => {
         let next = state;
@@ -1401,7 +1412,7 @@ class AppController {
             },
           },
         };
-        if (delivery === "steer" && previousSession) {
+        if (previousSession && (delivery === "steer" || previousSession.archivedAt)) {
           next = restoreSessionSummary(
             next,
             previousSession,

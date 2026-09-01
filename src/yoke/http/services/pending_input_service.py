@@ -80,6 +80,24 @@ class PendingInputService:
                     )
                 return _receipt(existing)
 
+            if record.archived_at is not None:
+                record = self.store.set_archived(
+                    session_id,
+                    False,
+                    existing_record=record,
+                )
+                self.events.durable(
+                    session_id,
+                    "session.updated",
+                    {
+                        "sessionID": record.id,
+                        "title": record.title,
+                        "pinned": record.pinned,
+                        "archivedAt": record.archived_at,
+                    },
+                    location=record.root,
+                )
+
             self._pin_prompt(session_id, request.prompt)
 
             event = self.events.durable(
