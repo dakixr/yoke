@@ -44,6 +44,7 @@ const { filterModelChoices, groupModelChoices, modelNavigationIndex, modelSelect
 const { slashMenuScrollDelta } = await import("../src/yoke/web/assets/js/session/slash-menu-logic.js");
 const { formatTurnSummary } = await import("../src/yoke/web/assets/js/session/turn-summary.js");
 const { installKeybindings } = await import("../src/yoke/web/assets/js/lib/keyboard.js");
+const { visualSessionOrder } = await import("../src/yoke/web/assets/js/state/session-order.js");
 const { readSessionComposerDrafts } = await import("../src/yoke/web/assets/js/state/local-state.js");
 const {
   clearSessionComposerDraft,
@@ -385,6 +386,54 @@ async function testSessionPatchesSerializeAndKeepNewestOptimism() {
   } finally {
     restore();
   }
+}
+
+async function testPinningPreservesSessionRecencyOrder() {
+  const ids = ["pin-order-a", "pin-order-b", "pin-order-c"];
+  for (const id of ids) installSession(id);
+  store.setState((state) => ({ ...state, sessionOrder: [...ids] }));
+  const gate = deferred();
+  const restore = restoreApi({
+    patchSession: () => gate.promise,
+  });
+  try {
+    const pending = controller.patchSession(ids[1], { pinned: true });
+    assert.deepEqual(store.getState().sessionOrder, ids);
+    assert.deepEqual(
+      visualSessionOrder(store.getState().sessionOrder, store.getState().sessions),
+      [ids[1], ids[0], ids[2]],
+    );
+    gate.resolve({ data: sessionSummary(ids[1], { pinned: true }) });
+    await pending;
+    assert.deepEqual(store.getState().sessionOrder, ids);
+  } finally {
+    restore();
+  }
+}
+
+async function testSessionShortcutFollowsPinnedVisualOrder() {
+  const ids = ["switch-a", "switch-b", "switch-c", "switch-d"];
+  for (const id of ids) installSession(id);
+  store.setState((state) => ({
+    ...state,
+    sessions: {
+      ...state.sessions,
+      [ids[1]]: { ...state.sessions[ids[1]], pinned: true },
+      [ids[3]]: { ...state.sessions[ids[3]], pinned: true },
+    },
+    sessionOrder: [...ids],
+    ui: { ...state.ui, selectedSessionID: ids[1] },
+  }));
+  assert.deepEqual(
+    visualSessionOrder(store.getState().sessionOrder, store.getState().sessions),
+    [ids[1], ids[3], ids[0], ids[2]],
+  );
+  controller.switchSession(1);
+  assert.equal(store.getState().ui.selectedSessionID, ids[3]);
+  controller.switchSession(1);
+  assert.equal(store.getState().ui.selectedSessionID, ids[0]);
+  controller.switchSession(-1);
+  assert.equal(store.getState().ui.selectedSessionID, ids[3]);
 }
 
 async function testQueueMutationsSurviveStaleRefresh() {
@@ -1938,6 +1987,8 @@ const tests = [
   testSettledPromptReopensOptimistically,
   testSettledPromptFailureRestoresSettledState,
   testSessionPatchesSerializeAndKeepNewestOptimism,
+  testPinningPreservesSessionRecencyOrder,
+  testSessionShortcutFollowsPinnedVisualOrder,
   testQueueMutationsSurviveStaleRefresh,
   testServerRestartLetsEmptyQueueReplaceStaleUi,
   testHumanInputOldReadCannotResurrectResolvedRequest,

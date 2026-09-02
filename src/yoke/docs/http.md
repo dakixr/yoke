@@ -144,7 +144,10 @@ steady-state list latency is independent of conversation-history size.
 The browser requests `lastUserDesc` ordering for its session sidebar, so agent
 completion, tool activity, title edits, and model changes do not move a session
 ahead of one the user interacted with more recently. Sessions without a user
-message fall back to their creation time.
+message fall back to their creation time. Pinning partitions that recency order
+into pinned sessions followed by the normal inbox without changing relative
+order inside either group. `Alt+Up` and `Alt+Down` follow that same visual order,
+so keyboard navigation matches the rows shown in the sidebar.
 Sidebar status uses current work before historical completion state. `Done`
 means an unreviewed successfully completed turn, and a later running, stopping,
 attention, error, or pending-queue state replaces it immediately. Queue counts

@@ -3,6 +3,7 @@ import { workingDuration, shortAge } from "../lib/duration.js";
 import { currentRoute, draftPath, navigate } from "../router/router.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
+import { visualSessionOrder } from "../state/session-order.js";
 import { SessionContextMenu } from "./session-context-menu.js";
 import { connectionStatusDescriptor, hasPendingQueue, sessionStatusDescriptor } from "./sidebar-status.js";
 
@@ -48,7 +49,9 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
     if (projectScope && !projects.some((project) => project.directory === projectScope)) setProjectScope("");
   }, [projectScope, projects]);
   const matchesScope = (item) => !projectScope || item?.location?.directory === projectScope || item?.location === projectScope;
-  const current = order.map((id) => sessions[id]).filter((item) => item && (matchesScope(item) || item.id === selectedID));
+  const current = visualSessionOrder(order, sessions)
+    .map((id) => sessions[id])
+    .filter((item) => item && (matchesScope(item) || item.id === selectedID));
   const pinned = current.filter((item) => item.pinned);
   const inbox = current.filter((item) => !item.pinned);
   const scopedDrafts = meaningfulDrafts.filter((draft) => matchesScope(draft));

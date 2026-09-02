@@ -17,6 +17,7 @@ import {
 } from "./local-state.js";
 import { fetchOlderMessagePage } from "./message-pagination.js";
 import { installActiveSnapshot, mergeSessionInfo, mergeSessionSummary, reducePublicEvent } from "./reducer.js";
+import { adjacentVisualSessionID } from "./session-order.js";
 import { store } from "./store.js";
 
 const MESSAGE_REFRESH_MS = 180;
@@ -458,7 +459,7 @@ class AppController {
         if (!base) continue;
         let visible = base;
         for (const mutation of mutations) visible = optimisticSessionPatch(visible, mutation.patch);
-        next = installSessionSummary(next, visible, { moveToFront: true });
+        next = installSessionSummary(next, visible);
       }
       for (const [sessionID, selection] of this.pendingSelections) {
         const session = next.sessions[sessionID];
@@ -1577,7 +1578,7 @@ class AppController {
     );
     if (previous) {
       const optimistic = optimisticSessionPatch(previous, patch);
-      store.setState((state) => installSessionSummary(state, optimistic, { moveToFront: true }));
+      store.setState((state) => installSessionSummary(state, optimistic));
     }
 
     const prior = this.sessionMutationChains.get(sessionID) || Promise.resolve();
@@ -1591,7 +1592,7 @@ class AppController {
         for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
         const pendingSelection = this.pendingSelections.get(sessionID);
         if (pendingSelection) visible = { ...visible, selection: pendingSelection };
-        store.setState((state) => installSessionSummary(state, visible, { moveToFront: true }));
+        store.setState((state) => installSessionSummary(state, visible));
         return response.data;
       } catch (error) {
         const remaining = (this.sessionPendingMutations.get(sessionID) || [])
@@ -1603,13 +1604,13 @@ class AppController {
           for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
           const pendingSelection = this.pendingSelections.get(sessionID);
           if (pendingSelection) visible = { ...visible, selection: pendingSelection };
-          store.setState((state) => installSessionSummary(state, visible, { moveToFront: Boolean(remaining.length) }));
+          store.setState((state) => installSessionSummary(state, visible));
         } catch {
           if (previous) {
             let visible = previous;
             for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
             store.setState((state) => remaining.length
-              ? installSessionSummary(state, visible, { moveToFront: true })
+              ? installSessionSummary(state, visible)
               : restoreSessionSummary(state, visible, activeIndex, archivedIndex));
           }
         }
@@ -2280,10 +2281,13 @@ class AppController {
 
   switchSession(delta) {
     const state = store.getState();
-    const ids = state.sessionOrder;
-    if (!ids.length) return;
-    const current = ids.indexOf(state.ui.selectedSessionID);
-    const next = ids[(Math.max(current, 0) + delta + ids.length) % ids.length];
+    const next = adjacentVisualSessionID(
+      state.sessionOrder,
+      state.sessions,
+      state.ui.selectedSessionID,
+      delta,
+    );
+    if (!next) return;
     this.selectSession(next);
   }
 
@@ -2569,11 +2573,22 @@ function mergeServerSessionSummary(current, incoming, queueRevisions) {
 
 function installSessionSummary(state, session, { moveToFront = false } = {}) {
   const sessionID = session.id;
+  const previous = state.sessions[sessionID] || null;
   const merged = mergeSessionInfo(state.sessions[sessionID], session, { preserveQueue: true });
+  const activeIndex = state.sessionOrder.indexOf(sessionID);
+  const archivedIndex = state.archivedOrder.indexOf(sessionID);
   let sessionOrder = state.sessionOrder.filter((id) => id !== sessionID);
   let archivedOrder = state.archivedOrder.filter((id) => id !== sessionID);
   const target = merged.archivedAt ? archivedOrder : sessionOrder;
-  if (moveToFront || !target.includes(sessionID)) target.unshift(sessionID);
+  const previousIndex = merged.archivedAt ? archivedIndex : activeIndex;
+  const changedShelf = previous
+    ? Boolean(previous.archivedAt) !== Boolean(merged.archivedAt)
+    : previousIndex < 0;
+  if (moveToFront || changedShelf || previousIndex < 0) {
+    target.unshift(sessionID);
+  } else {
+    target.splice(Math.min(previousIndex, target.length), 0, sessionID);
+  }
   return {
     ...state,
     sessions: { ...state.sessions, [sessionID]: merged },
