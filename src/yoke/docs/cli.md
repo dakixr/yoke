@@ -342,8 +342,8 @@ bounded so one historical command cannot dominate the continuation context.
 
 Use `--max-chars <n>` to change the output bound, or `--format json` when a
 structured consumer needs the same portable handoff. The built-in
-`yoke-session-resume` skill uses the Markdown form when a user asks an agent to
-continue or resume a Yoke session by id.
+`yoke-sessions` skill uses handoffs to inspect saved sessions and to recover the
+saved root, provider, model, and reasoning effort before automated continuation.
 
 Sessions are stored under `~/.yoke/sessions/` as append-only `.jsonl` files and
 auto-expire after 30 days. The CLI owns session files, indexes, ids, and resume

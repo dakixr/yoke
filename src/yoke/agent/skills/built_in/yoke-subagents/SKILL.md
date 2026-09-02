@@ -12,6 +12,9 @@ Use this skill selectively. It is an orchestration workflow for tasks where
 parallel viewpoints, durable roles, or review/merge handoffs are worth the
 overhead; it is not the default path for small single-threaded work.
 
+Use `yoke-sessions` instead when the user requests a separate yoke CLI process,
+a persisted CLI conversation, or interactive terminal behavior.
+
 ## Core Process
 
 1. Before writing the orchestrator, use `print_builtin_provider_status()` as a

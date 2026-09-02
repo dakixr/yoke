@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from yoke.agent.skills.discovery import discover_skills
 from yoke.agent.skills.discovery import load_skill
 
 
@@ -22,3 +23,10 @@ def test_load_skill_accepts_utf8_bom(tmp_path: Path) -> None:
 
     assert skill.name == "bom-skill"
     assert skill.description == "A BOM-prefixed skill."
+
+
+def test_builtin_yoke_sessions_replaces_resume_skill() -> None:
+    names = {skill.name for skill in discover_skills([])}
+
+    assert "yoke-sessions" in names
+    assert "yoke-session-resume" not in names
