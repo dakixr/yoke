@@ -3,18 +3,37 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
+from yoke.ai.providers.usage_context import UsageMetricContext
+from yoke.ai.providers.usage_context import usage_metric_context
 from yoke.cli.config import CLIArgs
 from yoke.cli.config.runtime import build_cli_agent_from_args
 from yoke.cli.runtime.session import apply_session_defaults_to_args
+from yoke.session import fallback_session_title
 from yoke.session import SessionRecord
 
 
 type SessionAgentFactory = Callable[[SessionRecord], object]
+
+
+@contextmanager
+def http_session_usage_metric_context(
+    record: SessionRecord,
+    prompt: str = "",
+) -> Iterator[UsageMetricContext]:
+    """Attribute an HTTP-owned provider call to its Yoke session."""
+    with usage_metric_context(
+        surface="http",
+        session_id=record.id,
+        session_title=record.title or fallback_session_title(prompt),
+    ) as context:
+        yield context
 
 
 def generate_http_session_title(
@@ -25,13 +44,22 @@ def generate_http_session_title(
     """Generate a title with the session's HTTP agent configuration."""
     from yoke.session.title import generate_session_title
 
-    agent = agent_factory(record)
-    try:
-        return generate_session_title(agent, messages)
-    finally:
-        close = getattr(agent, "close", None)
-        if callable(close):
-            close()
+    prompt = next(
+        (
+            message.plain_text_content or ""
+            for message in reversed(messages)
+            if message.role == "user"
+        ),
+        "",
+    )
+    with http_session_usage_metric_context(record, prompt):
+        agent = agent_factory(record)
+        try:
+            return generate_session_title(agent, messages)
+        finally:
+            close = getattr(agent, "close", None)
+            if callable(close):
+                close()
 
 
 def build_http_session_agent(record: SessionRecord) -> RuntimeAgent:

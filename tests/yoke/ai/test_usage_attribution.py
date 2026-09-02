@@ -72,12 +72,12 @@ def test_usage_context_merges_and_restores_nested_values() -> None:
         assert current_usage_metric_context().call_kind is None
 
         with usage_metric_context(
-            surface="cli",
+            surface="http",
             session_id="session-1",
             session_title="Title",
         ) as context:
             assert context.sdk_operation is None
-            assert context.surface == "cli"
+            assert context.surface == "http"
 
     assert current_usage_metric_context().surface is None
 

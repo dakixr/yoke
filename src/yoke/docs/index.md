@@ -66,7 +66,7 @@ fresh isolated agent and provider for every bounded fan-out task.
 
 Every completed provider response is recorded automatically in daily JSONL
 files under `~/.yoke/usage-metric-logs/<provider>/`. Records include normalized
-token usage and execution attribution for CLI and SDK calls. Writes are local,
+token usage and execution attribution for CLI, HTTP, and SDK calls. Writes are local,
 durably synchronized across concurrent Yoke processes, and can be redirected
 with `YOKE_USAGE_METRIC_LOG_DIR`. Persistent write failures are raised rather
 than silently dropping metrics.

@@ -121,11 +121,11 @@ fork the same agent.
 
 ## Usage Metrics
 
-Yoke records every completed provider response from the CLI and SDK in daily
+Yoke records every completed provider response from the CLI, HTTP API, and SDK in daily
 JSONL files under `~/.yoke/usage-metric-logs/<provider>/`. Records contain only
 the provider, model, completion time, normalized token counts, and explicit
-execution attribution. Attribution includes `surface`, `call_kind`, CLI session
-identity, or the SDK operation and a random SDK run ID as applicable. CLI
+execution attribution. Attribution includes `surface`, `call_kind`, CLI or HTTP
+session identity, or the SDK operation and a random SDK run ID as applicable. A
 `session_title` can contain up to 80 characters derived from the first user
 prompt when the user has not assigned a title. Records do not contain complete
 prompts, responses, tools, paths, caller-supplied batch task IDs, or raw provider
@@ -137,9 +137,9 @@ SDK operations are `complete`, `agent`, and `run_many`. A random `sdk_run_id`
 groups the provider calls produced by one direct completion, agent prompt, or
 batch task attempt. Call kinds distinguish direct completions, model iterations,
 structured-output retries, compaction summaries, branch summaries, and overflow
-retries. Yoke sets this metadata at its CLI and SDK entry points and propagates it
-with execution context; it does not infer attribution from process arguments or
-stack frames.
+retries. Yoke sets this metadata at its CLI, HTTP, and SDK entry points and
+propagates it with execution context; it does not infer attribution from process
+arguments or stack frames.
 
 Set `YOKE_USAGE_METRIC_LOG_DIR` to store these local metrics in another
 directory. Writes use a cross-process lock, retry transient failures, and flush

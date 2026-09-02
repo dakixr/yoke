@@ -20,6 +20,8 @@ from yoke.agent.loop import AgentResult
 from yoke.agent.models import Message
 from yoke.agent.session_tree import ConversationProjection
 from yoke.agent.session_tree import SessionTree
+from yoke.ai.providers.usage_context import current_usage_metric_context
+from yoke.ai.providers.usage_context import UsageMetricContext
 from yoke.http.app import HttpAppSettings
 from yoke.http.app import create_app
 from yoke.http.services.upload_service import UploadService
@@ -41,6 +43,7 @@ class FakeRuntimeController:
         self.lock = Lock()
         self.running_sessions: set[str] = set()
         self.max_parallel_sessions = 0
+        self.usage_contexts: dict[str, UsageMetricContext] = {}
 
     def factory(self, record: SessionRecord) -> FakeAgent:
         return FakeAgent(record, self)
@@ -75,6 +78,7 @@ class FakeAgent:
         on_event=None,
         stop_requested=None,
     ) -> AgentResult:
+        self.controller.usage_contexts[prompt] = current_usage_metric_context()
         self.controller.enter(self.record.id)
         self.controller.started[prompt].set()
         try:
@@ -418,6 +422,47 @@ def _create_session(client: TestClient, root: Path, session_id: str) -> None:
         json={"id": session_id, "location": {"directory": str(root)}},
     )
     assert response.status_code == 200
+
+
+def test_http_prompt_propagates_session_usage_attribution(tmp_path: Path) -> None:
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "http-session")
+        renamed = client.patch(
+            "/api/v1/session/http-session",
+            headers=_auth(),
+            json={"title": "HTTP attribution title"},
+        )
+        assert renamed.status_code == 200
+
+        admitted = client.post(
+            "/api/v1/session/http-session/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "attribute this"}},
+        )
+        assert admitted.status_code == 200
+        assert controller.started["attribute this"].wait(1)
+        controller.release["attribute this"].set()
+        waited = client.post(
+            "/api/v1/session/http-session/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+
+    context = controller.usage_contexts["attribute this"]
+    assert context.surface == "http"
+    assert context.session_id == "http-session"
+    assert context.session_title == "HTTP attribution title"
 
 
 def test_completed_turn_survives_session_index_replace_failure(

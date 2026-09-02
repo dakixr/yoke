@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Event
 from threading import RLock
 import time
+from typing import Any
 from typing import cast
 
 from fastapi import FastAPI
@@ -15,6 +16,8 @@ from fastapi.testclient import TestClient
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.usage_context import current_usage_metric_context
+from yoke.ai.providers.usage_context import UsageMetricContext
 from yoke.http.app import HttpAppSettings
 from yoke.http.app import create_app
 from yoke.session import SessionRecord
@@ -146,6 +149,17 @@ def test_selection_switches_runtime_and_persists_metadata(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    import yoke.http.services.runtime as runtime_module
+
+    observed: UsageMetricContext | None = None
+    original_switch = runtime_module.switch_agent_provider_model
+
+    def capture_context(*args: Any, **kwargs: Any) -> Any:
+        nonlocal observed
+        observed = current_usage_metric_context()
+        return original_switch(*args, **kwargs)
+
+    monkeypatch.setattr(runtime_module, "switch_agent_provider_model", capture_context)
     root = tmp_path / "repo"
     root.mkdir()
     with _client(tmp_path) as client:
@@ -197,6 +211,9 @@ def test_selection_switches_runtime_and_persists_metadata(
             event_type == "session.active.changed" and data.get("state") == "running"
             for event_type, data in live_events
         )
+    assert observed is not None
+    assert observed.surface == "http"
+    assert observed.session_id == "session-a"
 
 
 def test_manual_compaction_is_scheduled_and_waitable(tmp_path: Path) -> None:
@@ -228,6 +245,49 @@ def test_manual_compaction_is_scheduled_and_waitable(tmp_path: Path) -> None:
         event_types = [item["type"] for item in history]
         assert "session.compaction.started" in event_types
         assert "session.compaction.ended" in event_types
+
+
+def test_manual_compaction_propagates_http_session_usage_attribution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import yoke.http.services.runtime as runtime_module
+
+    observed: UsageMetricContext | None = None
+
+    def capture_context(*_args: object, **_kwargs: object) -> None:
+        nonlocal observed
+        observed = current_usage_metric_context()
+        return None
+
+    monkeypatch.setattr(runtime_module, "force_compact_agent", capture_context)
+    root = tmp_path / "repo"
+    root.mkdir()
+    with _client(tmp_path) as client:
+        _create_session(client, root)
+        renamed = client.patch(
+            "/api/v1/session/session-a",
+            headers=_auth(),
+            json={"title": "Compaction title"},
+        )
+        assert renamed.status_code == 200
+        compact = client.post(
+            "/api/v1/session/session-a/compact",
+            headers=_auth(),
+            json={"reason": "manual"},
+        )
+        assert compact.status_code == 202
+        waited = client.post(
+            "/api/v1/session/session-a/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+
+    assert observed is not None
+    assert observed.surface == "http"
+    assert observed.session_id == "session-a"
+    assert observed.session_title == "Compaction title"
 
 
 def test_title_regeneration_uses_saved_conversation_and_persists(
@@ -273,6 +333,55 @@ def test_title_regeneration_uses_saved_conversation_and_persists(
             item["type"] == "session.updated" and item["data"]["title"] == "summary"
             for item in history
         )
+
+
+def test_title_generation_propagates_http_session_usage_attribution(
+    tmp_path: Path,
+) -> None:
+    observed: UsageMetricContext | None = None
+
+    class AttributionProvider(SwitchableProvider):
+        def complete(
+            self,
+            messages: list[Message],
+            tools: list[dict[str, object]],
+        ) -> Message:
+            nonlocal observed
+            observed = current_usage_metric_context()
+            return super().complete(messages, tools)
+
+    def factory(_record: SessionRecord) -> RuntimeAgent:
+        return RuntimeAgent(provider=AttributionProvider(), tools=[])
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=factory,
+        )
+    )
+    with TestClient(app) as client:
+        _create_session(client, root)
+        store = app.state.session_service.store
+        record = store.load("session-a")
+        store.save(
+            "session-a",
+            [Message.user("Title this HTTP session"), Message.assistant("Done")],
+            existing_record=record,
+        )
+        regenerated = client.post(
+            "/api/v1/session/session-a/title/regenerate",
+            headers=_auth(),
+            json={},
+        )
+        assert regenerated.status_code == 200
+
+    assert observed is not None
+    assert observed.surface == "http"
+    assert observed.session_id == "session-a"
+    assert observed.call_kind == "session_title"
 
 
 def test_first_prompt_automatically_generates_title(tmp_path: Path) -> None:

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 from typing import Literal
 
-type UsageSurface = Literal["cli", "sdk"]
+type UsageSurface = Literal["cli", "http", "sdk"]
 type SdkOperation = Literal["complete", "agent", "run_many"]
 type UsageCallKind = Literal[
     "direct_completion",

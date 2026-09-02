@@ -40,6 +40,7 @@ from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.runtime_factory import SessionAgentFactory
+from yoke.http.services.runtime_factory import http_session_usage_metric_context
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.http.services.session_read_cache import SessionReadSnapshot
@@ -444,13 +445,14 @@ class SessionRuntime:
         )
         if not isinstance(agent, RuntimeAgent):
             raise ValueError("Model switching requires a RuntimeAgent-backed session.")
-        state = switch_agent_provider_model(
-            agent,
-            provider_name=provider_name,
-            model_id=model_id,
-            reasoning_effort=reasoning_effort,
-            session_id=self.session_id,
-        )
+        with http_session_usage_metric_context(record):
+            state = switch_agent_provider_model(
+                agent,
+                provider_name=provider_name,
+                model_id=model_id,
+                reasoning_effort=reasoning_effort,
+                session_id=self.session_id,
+            )
         updated = self.store.set_selection(
             self.session_id,
             provider_name=state.provider_name,
@@ -494,11 +496,12 @@ class SessionRuntime:
         )
         if not isinstance(agent, RuntimeAgent):
             raise ValueError("Compaction requires a RuntimeAgent-backed session.")
-        compacted = force_compact_agent(
-            agent,
-            agent.messages,
-            conversation_entries=agent.conversation_entries,
-        )
+        with http_session_usage_metric_context(record):
+            compacted = force_compact_agent(
+                agent,
+                agent.messages,
+                conversation_entries=agent.conversation_entries,
+            )
         payload: dict[str, object]
         if compacted is None:
             payload = {"compacted": False}
@@ -902,29 +905,33 @@ class SessionRuntime:
             def callback(event: str, payload: dict[str, object]) -> None:
                 self._on_agent_event(execution, event, payload)
 
-            if isinstance(turn_agent, RuntimeAgent):
+            with http_session_usage_metric_context(
+                record,
+                execution.admission.prompt,
+            ):
+                if isinstance(turn_agent, RuntimeAgent):
 
-                def checkpoint(context: AgentContext) -> None:
-                    self._checkpoint(execution, turn_agent, context)
+                    def checkpoint(context: AgentContext) -> None:
+                        self._checkpoint(execution, turn_agent, context)
 
-                result = turn_agent.run(
-                    execution.admission.prompt,
-                    user_message=user_message,
-                    on_event=callback,
-                    stop_requested=execution.stop_event.is_set,
-                    active_skills=record.active_skills,
-                    available_skills=turn_agent.available_skills,
-                    after_tool_result_appended=checkpoint,
-                )
-            else:
-                run = getattr(turn_agent, "run")
-                kwargs: dict[str, object] = {
-                    "on_event": callback,
-                    "stop_requested": execution.stop_event.is_set,
-                }
-                if getattr(turn_agent, "supports_user_message", False):
-                    kwargs["user_message"] = user_message
-                result = run(execution.admission.prompt, **kwargs)
+                    result = turn_agent.run(
+                        execution.admission.prompt,
+                        user_message=user_message,
+                        on_event=callback,
+                        stop_requested=execution.stop_event.is_set,
+                        active_skills=record.active_skills,
+                        available_skills=turn_agent.available_skills,
+                        after_tool_result_appended=checkpoint,
+                    )
+                else:
+                    run = getattr(turn_agent, "run")
+                    kwargs: dict[str, object] = {
+                        "on_event": callback,
+                        "stop_requested": execution.stop_event.is_set,
+                    }
+                    if getattr(turn_agent, "supports_user_message", False):
+                        kwargs["user_message"] = user_message
+                    result = run(execution.admission.prompt, **kwargs)
             return TurnOutcome(agent=turn_agent, result=result)
         except BaseException as exc:  # worker boundary must report every failure
             partial = getattr(exc, "partial_conversation_entries", None)
