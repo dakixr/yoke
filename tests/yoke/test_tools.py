@@ -11,6 +11,7 @@ import time
 from typing import Any, cast
 
 import pytest
+from pydantic import ValidationError
 
 from yoke.agent.tools import (
     AttachImageTool,
@@ -24,6 +25,8 @@ from yoke.agent.tools import (
 )
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.tools.command_process_types import (
+    CommandProcessResult,
+    clamp_exec_yield_time,
     clamp_write_yield_time,
 )
 from yoke.agent.tools.command_process_manager import (
@@ -131,6 +134,97 @@ def test_command_tool_defaults_to_thirty_second_yield(tmp_path: Path) -> None:
 
     assert parsed.yield_time_ms == 30_000
     assert properties["yield_time_ms"]["default"] == 30_000
+    assert properties["yield_time_ms"]["maximum"] == 300_000
+
+
+def test_exec_yield_honors_the_documented_five_minute_limit() -> None:
+    assert clamp_exec_yield_time(300_000) == 300_000
+    assert clamp_exec_yield_time(500_000) == 300_000
+
+
+def test_command_manager_passes_five_minute_wait_to_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    waits: list[int] = []
+
+    class FinishedCommand:
+        session_id = 91_001
+
+        def wait_and_consume(
+            self,
+            yield_time_ms: int,
+            *,
+            cancel_requested: object,
+        ) -> CommandProcessResult:
+            del cancel_requested
+            waits.append(yield_time_ms)
+            return CommandProcessResult(
+                session_id=None,
+                exit_code=0,
+                output="done",
+                wall_time_seconds=0,
+                original_output_bytes=4,
+            )
+
+    manager = CommandProcessManager()
+    monkeypatch.setattr(manager, "_spawn", lambda *_args, **_kwargs: FinishedCommand())
+
+    result = manager.exec_command(
+        command="ignored",
+        cwd=tmp_path,
+        tty=False,
+        yield_time_ms=300_000,
+        shell=None,
+        login=True,
+        cancel_requested=None,
+    )
+
+    assert result.exit_code == 0
+    assert waits == [300_000]
+
+
+def test_command_tool_direct_argv_bypasses_shell_parsing(tmp_path: Path) -> None:
+    manager = CommandProcessManager()
+    tool = CommandTool.bind(root=tmp_path, command_process_manager=manager)
+    try:
+        parsed = cast(
+            CommandTool,
+            tool.parse_arguments(
+                {
+                    "argv": [
+                        sys.executable,
+                        "-c",
+                        "import sys; print(sys.argv[1])",
+                        "literal && shell | syntax",
+                    ]
+                }
+            ),
+        )
+        result = as_dict(parsed.execute())
+        parameters = cast(dict[str, Any], tool.to_definition())["function"][
+            "parameters"
+        ]
+        properties = parameters["properties"]
+
+        assert result["ok"] is True
+        assert result["output"] == "literal && shell | syntax"
+        assert "argv" in properties
+        assert parameters["anyOf"] == [
+            {"required": ["cmd"]},
+            {"required": ["argv"]},
+        ]
+    finally:
+        manager.close()
+
+
+def test_command_tool_requires_exactly_one_execution_mode(tmp_path: Path) -> None:
+    tool = CommandTool.bind(root=tmp_path)
+
+    with pytest.raises(ValidationError, match="exactly one of cmd or argv"):
+        tool.parse_arguments({})
+    with pytest.raises(ValidationError, match="exactly one of cmd or argv"):
+        tool.parse_arguments({"cmd": "echo one", "argv": ["echo", "two"]})
 
 
 def test_python_exec_defaults_to_thirty_second_yield(tmp_path: Path) -> None:
@@ -312,6 +406,7 @@ def test_final_release_is_atomic_with_acquire(monkeypatch) -> None:
 
 def test_write_stdin_poll_yield_clamps_to_one_hour() -> None:
     assert clamp_write_yield_time(3_700_000, has_input=False) == 3_600_000
+    assert clamp_write_yield_time(300_000, has_input=True) == 30_000
 
 
 def test_write_stdin_schema_accepts_one_hour_poll(tmp_path: Path) -> None:

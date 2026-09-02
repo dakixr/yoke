@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import atexit
 import secrets
+import shlex
 from pathlib import Path
+from typing import Self
 from typing import cast
 
 from pydantic import AliasChoices
+from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 
 from yoke.agent.tools.command_process_manager import (
     CommandProcessManager,
@@ -21,6 +25,7 @@ from yoke.agent.tools.command_process_types import (
 from yoke.agent.tools.command_process_types import (
     DEFAULT_MAX_OUTPUT_TOKENS,
 )
+from yoke.agent.tools.python_env import prepare_python_env
 from yoke.agent.truncate import DEFAULT_MAX_BYTES
 from yoke.agent.truncate import truncate_tail
 
@@ -105,19 +110,38 @@ class ManagedCommandTool(WorkspaceTool):
 
 
 class ExecCommandTool(ManagedCommandTool):
-    """Run a command and return when it exits or yields to the background."""
+    """Run exactly one shell command or direct argv process."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "anyOf": [
+                {"required": ["cmd"]},
+                {"required": ["argv"]},
+            ]
+        }
+    )
 
     name = "exec_command"
     description = (
-        "Run a command, returning output or a session ID for ongoing "
-        "interaction. Use write_stdin with the returned session ID to poll "
-        "or send input. Defaults to PowerShell on Windows."
+        "Run either a shell command or direct argv process, returning output "
+        "or a session ID for ongoing interaction. Use write_stdin with the "
+        "returned session ID to poll or send input. Shell commands default to "
+        "PowerShell on Windows."
     )
 
-    cmd: str = Field(
+    cmd: str | None = Field(
+        default=None,
         min_length=1,
         validation_alias=AliasChoices("cmd", "command"),
-        description="Shell command to execute.",
+        description="Shell command to execute. Mutually exclusive with argv.",
+    )
+    argv: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Direct process arguments. Bypasses shell parsing and is mutually "
+            "exclusive with cmd."
+        ),
     )
     workdir: str | None = Field(
         default=None,
@@ -145,8 +169,18 @@ class ExecCommandTool(ManagedCommandTool):
     )
     login: bool = Field(
         default=True,
-        description="Use login shell semantics where supported.",
+        description="Use login shell semantics for cmd where supported.",
     )
+
+    @model_validator(mode="after")
+    def _validate_execution_mode(self) -> Self:
+        if (self.cmd is None) == (self.argv is None):
+            raise ValueError("Provide exactly one of cmd or argv.")
+        if self.argv is not None and any(not value for value in self.argv):
+            raise ValueError("argv entries must be non-empty strings.")
+        if self.argv is not None and self.shell is not None:
+            raise ValueError("shell cannot be combined with argv.")
+        return self
 
     def execute(self) -> dict[str, object]:
         """Start a command and wait for completion or the yield deadline."""
@@ -154,21 +188,36 @@ class ExecCommandTool(ManagedCommandTool):
             if self._is_cancel_requested():
                 return self._cancelled_result()
             cwd = self.root if self.workdir is None else self._resolve_workdir()
-            result = self._manager().exec_command(
-                command=self.cmd,
-                cwd=cwd,
-                tty=self.tty,
-                yield_time_ms=self.yield_time_ms,
-                shell=self.shell,
-                login=self.login,
-                cancel_requested=self._is_cancel_requested,
-            )
+            if self.argv is not None:
+                env = self._manager().base_environment()
+                prepare_python_env(env)
+                result = self._manager().exec_argv(
+                    argv=list(self.argv),
+                    display_command=shlex.join(self.argv),
+                    cwd=cwd,
+                    env=env,
+                    tty=self.tty,
+                    yield_time_ms=self.yield_time_ms,
+                    timeout_seconds=None,
+                    cancel_requested=self._is_cancel_requested,
+                )
+            else:
+                assert self.cmd is not None
+                result = self._manager().exec_command(
+                    command=self.cmd,
+                    cwd=cwd,
+                    tty=self.tty,
+                    yield_time_ms=self.yield_time_ms,
+                    shell=self.shell,
+                    login=self.login,
+                    cancel_requested=self._is_cancel_requested,
+                )
             return self._format_result(
                 result,
                 max_output_tokens=self.max_output_tokens,
             )
         except Exception as exc:
-            return self._error(str(exc), command=self.cmd)
+            return self._error(str(exc), command=self.cmd, argv=self.argv)
 
     def _resolve_workdir(self) -> Path:
         if self.workdir is None:

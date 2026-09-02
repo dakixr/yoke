@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import builtins
+import logging
+from collections.abc import Callable
 from collections.abc import Sequence
 import re
 from pathlib import Path
@@ -45,6 +47,8 @@ SESSION_FILE_SUFFIX = ".jsonl"
 SESSION_RETENTION_DAYS = 30
 SESSION_MAINTENANCE_INTERVAL_SECONDS = 5.0
 CURRENT_SESSION_SCHEMA_VERSION = 5
+
+logger = logging.getLogger(__name__)
 
 
 def _last_user_message_at(
@@ -676,25 +680,21 @@ class SessionStore:
     def _load_index(self) -> SessionIndex:
         return self._index_cache.read()
 
-    def _mutable_index(self) -> SessionIndex:
-        """Return a copy-on-write index snapshot safe to mutate before publish."""
-        current = self._load_index()
-        return current.model_copy(update={"sessions": dict(current.sessions)})
-
     def _update_index(
         self,
         record: SessionRecord,
         *,
         entry_count: int | None = None,
     ) -> None:
-        with self._index_lock:
-            index = self._mutable_index()
+        def mutate(index: SessionIndex) -> bool:
             index.sessions[record.id] = session_index_entry(
                 record,
                 path=self._session_path(record.id),
                 entry_count=entry_count,
             )
-            self._write_index(index)
+            return True
+
+        self._mutate_index(mutate)
 
     def _update_index_metadata(
         self,
@@ -703,8 +703,8 @@ class SessionStore:
         entry_count: int | None = None,
     ) -> None:
         """Update metadata without requiring a materialized conversation list."""
-        with self._index_lock:
-            index = self._mutable_index()
+
+        def mutate(index: SessionIndex) -> bool:
             existing = index.sessions.get(record.id)
             index.sessions[record.id] = session_index_entry(
                 record,
@@ -717,19 +717,21 @@ class SessionStore:
                     else len(record.conversation_entries)
                 ),
             )
-            self._write_index(index)
+            return True
 
-    def _repair_index_from_session_files(self) -> None:
-        with self._index_lock:
-            index = self._mutable_index()
-            if repair_index_from_session_files(
+        self._mutate_index(mutate)
+
+    def _repair_index_from_session_files(self) -> bool:
+        def mutate(index: SessionIndex) -> bool:
+            return repair_index_from_session_files(
                 directory=self.directory,
                 index=index,
                 session_file_suffix=SESSION_FILE_SUFFIX,
                 session_id_pattern=SESSION_ID_PATTERN,
                 load_summary=self._load_summary_for_index,
-            ):
-                self._write_index(index)
+            )
+
+        return self._mutate_index(mutate)
 
     def _load_summary_for_index(self, session_id: str) -> tuple[SessionRecord, int]:
         path = self._session_path(session_id)
@@ -740,7 +742,15 @@ class SessionStore:
                 reconcile_index_owned_metadata(record, self.index_entry(session_id)),
                 entry_count,
             )
-        record = self.load(session_id)
+        record = load_existing_record(
+            self,
+            session_id,
+            path,
+            current_schema_version=CURRENT_SESSION_SCHEMA_VERSION,
+            update_index=False,
+        )
+        if record.version != CURRENT_SESSION_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported session schema version: {record.version}.")
         return record, len(record.conversation_entries)
 
     def maintain_index(self, *, force: bool = False) -> None:
@@ -749,9 +759,10 @@ class SessionStore:
             self._maintain_index_if_due()
             return
         with self._maintenance_lock:
-            self._repair_index_from_session_files()
-            self._prune_index_and_sessions()
-            self._last_maintenance_at = time.monotonic()
+            repaired = self._repair_index_from_session_files()
+            pruned = self._prune_index_and_sessions()
+            if repaired and pruned:
+                self._last_maintenance_at = time.monotonic()
 
     def _maintain_index_if_due(self) -> None:
         now = time.monotonic()
@@ -761,23 +772,37 @@ class SessionStore:
             now = time.monotonic()
             if now - self._last_maintenance_at < SESSION_MAINTENANCE_INTERVAL_SECONDS:
                 return
-            self._repair_index_from_session_files()
-            self._prune_index_and_sessions()
-            self._last_maintenance_at = time.monotonic()
+            repaired = self._repair_index_from_session_files()
+            pruned = self._prune_index_and_sessions()
+            if repaired and pruned:
+                self._last_maintenance_at = time.monotonic()
 
-    def _write_index(self, index: SessionIndex) -> None:
+    def _mutate_index(self, mutator: Callable[[SessionIndex], bool]) -> bool:
+        """Best-effort cache update after the authoritative JSONL write."""
         with self._index_lock:
-            self._index_cache.write(index)
+            try:
+                self._index_cache.update(mutator)
+                return True
+            except OSError:
+                self._last_maintenance_at = float("-inf")
+                logger.warning(
+                    "Session index update failed; durable session files will repair it.",
+                    exc_info=True,
+                )
+                return False
 
     def _prune_index_and_sessions(
         self, *, exclude_session_id: str | None = None
-    ) -> None:
-        with self._index_lock:
-            prune_index_and_sessions(
+    ) -> bool:
+        def mutate(index: SessionIndex) -> bool:
+            return prune_index_and_sessions(
                 self,
+                index=index,
                 retention_days=SESSION_RETENTION_DAYS,
                 exclude_session_id=exclude_session_id,
             )
+
+        return self._mutate_index(mutate)
 
     def _write_session_record(
         self,

@@ -384,7 +384,7 @@ from yoke.agent.tools import ReadTool, EditTool, WriteTool
 | `EditTool` | `edit` | Replace exact text in files, including targeted occurrences or replace-all edits. |
 | `WriteTool` | `write` | Create or overwrite a UTF-8 text file under the workspace. |
 | `ApplyPatchTool` | `apply_patch` | Apply codex-style multi-file patches inside the workspace. |
-| `ExecCommandTool` / `CommandTool` | `exec_command` | Run shell commands from the workspace root, returning output or a background session ID. |
+| `ExecCommandTool` / `CommandTool` | `exec_command` | Run shell commands or direct argv processes from the workspace root, returning output or a background session ID. |
 | `WriteStdinTool` | `write_stdin` | Poll a running command session for up to 1 hour or send interactive input. |
 | `FdTool` | `fd` | Run fd for file and directory discovery with regex, glob, ignore, type, extension, and depth behavior. |
 | `RipgrepTool` | `rg` | Run ripgrep for fast recursive content search and file listing. |

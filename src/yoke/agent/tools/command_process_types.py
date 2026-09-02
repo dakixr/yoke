@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Literal
 
 MIN_YIELD_TIME_MS = 250
-MAX_YIELD_TIME_MS = 30_000
+MAX_EXEC_YIELD_TIME_MS = 300_000
+MAX_INPUT_YIELD_TIME_MS = 30_000
 DEFAULT_EXEC_YIELD_TIME_MS = 30_000
 DEFAULT_POLL_YIELD_TIME_MS = 5_000
 MAX_POLL_YIELD_TIME_MS = 3_600_000
@@ -90,7 +91,7 @@ def command_completion_event_id(event: CommandProcessSnapshot) -> str:
 
 def clamp_exec_yield_time(yield_time_ms: int) -> int:
     """Clamp an initial execution wait to supported bounds."""
-    return max(MIN_YIELD_TIME_MS, min(yield_time_ms, MAX_YIELD_TIME_MS))
+    return max(MIN_YIELD_TIME_MS, min(yield_time_ms, MAX_EXEC_YIELD_TIME_MS))
 
 
 def clamp_write_yield_time(yield_time_ms: int | None, *, has_input: bool) -> int:
@@ -98,5 +99,5 @@ def clamp_write_yield_time(yield_time_ms: int | None, *, has_input: bool) -> int
     if yield_time_ms is None:
         return MIN_YIELD_TIME_MS if has_input else DEFAULT_POLL_YIELD_TIME_MS
     minimum = MIN_YIELD_TIME_MS if has_input else DEFAULT_POLL_YIELD_TIME_MS
-    maximum = MAX_YIELD_TIME_MS if has_input else MAX_POLL_YIELD_TIME_MS
+    maximum = MAX_INPUT_YIELD_TIME_MS if has_input else MAX_POLL_YIELD_TIME_MS
     return max(minimum, min(yield_time_ms, maximum))

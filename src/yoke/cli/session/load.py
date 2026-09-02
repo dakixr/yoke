@@ -157,6 +157,7 @@ def load_existing_record(
     path: Path,
     *,
     current_schema_version: int,
+    update_index: bool = True,
 ) -> SessionRecord:
     """Load a record and preserve newer index title or pin edits in JSONL."""
     needs_rewrite = False
@@ -185,7 +186,8 @@ def load_existing_record(
     if index_entry is None:
         if needs_rewrite:
             write_session_record(record, path=path)
-            store._update_index(record)
+            if update_index:
+                store._update_index(record)
         return record
     changes: dict[str, object] = {}
     if _index_is_newer(index_entry, record):
@@ -198,12 +200,14 @@ def load_existing_record(
     if not changes:
         if needs_rewrite:
             write_session_record(record, path=path)
-            store._update_index(record)
+            if update_index:
+                store._update_index(record)
         return record
     record = record.model_copy(update=changes)
     if needs_rewrite:
         write_session_record(record, path=path)
-        store._update_index(record)
+        if update_index:
+            store._update_index(record)
     else:
         append_session_metadata(path, changes)
     return record

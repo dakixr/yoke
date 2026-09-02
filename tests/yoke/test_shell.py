@@ -4,8 +4,10 @@ from __future__ import annotations
 
 # ruff: noqa: S101
 
-import subprocess
 import os
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -48,7 +50,118 @@ def test_build_powershell_command_propagates_native_exit_codes() -> None:
     )
 
     assert "$global:LASTEXITCODE = 0" in command[-1]
-    assert "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in command[-1]
+    assert "$ErrorActionPreference = 'Continue'" in command[-1]
+    assert "$ErrorActionPreference = $yokeErrorActionPreference" in command[-1]
+    assert "NativeCommandError*" in command[-1]
+    assert "$yokePowerShellError" in command[-1]
+    assert "if ($yokeExitCode -ne 0) { exit $yokeExitCode }" in command[-1]
+
+
+def test_powershell_chain_uses_native_exit_code_instead_of_error_stream() -> None:
+    """Successful native stderr must not block the next legacy chain command."""
+    command = rewrite_powershell_command("git fetch && git push")
+
+    assert command.startswith("git fetch; $yokeSegmentSucceeded = $?;")
+    assert "$LASTEXITCODE -eq 0" in command
+    assert "NativeCommandError*" in command
+    assert command.endswith("{ git push }")
+
+
+def test_powershell_chain_nests_later_commands_under_prior_success() -> None:
+    """Every later segment stays inside all preceding success guards."""
+    command = rewrite_powershell_command("first && second && third")
+
+    assert command.count("$yokeSegmentSucceeded = $?") == 2
+    assert command.index("first") < command.index("second") < command.index("third")
+    assert "{ second; $yokeSegmentSucceeded = $?; if " in command
+    assert command.endswith("{ third } }")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell")
+def test_windows_powershell_native_stderr_does_not_fail_successful_command(
+    tmp_path: Path,
+) -> None:
+    """Windows PowerShell 5 judges a native process by its exit code."""
+    shell_exe = shutil.which("powershell.exe") or shutil.which("powershell")
+    if shell_exe is None:
+        pytest.skip("Windows PowerShell is unavailable")
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(tmp_path)
+    command = build_powershell_command(
+        "& $env:ComSpec /d /s /c 'echo harmless 1>&2 & exit /b 0'",
+        env,
+        shell_exe,
+        Path(shell_exe).name.lower(),
+    )
+
+    completed = subprocess.run(  # noqa: S603
+        command,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "harmless" in completed.stdout + completed.stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell")
+def test_windows_powershell_still_propagates_real_exceptions(
+    tmp_path: Path,
+) -> None:
+    """Relaxing native stderr handling must not swallow throw."""
+    shell_exe = shutil.which("powershell.exe") or shutil.which("powershell")
+    if shell_exe is None:
+        pytest.skip("Windows PowerShell is unavailable")
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(tmp_path)
+    command = build_powershell_command(
+        "throw 'real failure'",
+        env,
+        shell_exe,
+        Path(shell_exe).name.lower(),
+    )
+
+    completed = subprocess.run(  # noqa: S603
+        command,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "real failure" in completed.stdout + completed.stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell")
+def test_windows_powershell_still_fails_nonterminating_errors(
+    tmp_path: Path,
+) -> None:
+    """Native stderr filtering must not hide ordinary PowerShell errors."""
+    shell_exe = shutil.which("powershell.exe") or shutil.which("powershell")
+    if shell_exe is None:
+        pytest.skip("Windows PowerShell is unavailable")
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(tmp_path)
+    command = build_powershell_command(
+        "Write-Error 'real failure'",
+        env,
+        shell_exe,
+        Path(shell_exe).name.lower(),
+    )
+
+    completed = subprocess.run(  # noqa: S603
+        command,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "real failure" in completed.stdout + completed.stderr
 
 
 def test_build_cmd_command_preserves_quoted_payload() -> None:

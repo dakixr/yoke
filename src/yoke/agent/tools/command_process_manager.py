@@ -108,6 +108,7 @@ class CommandProcessManager:
         display_command: str,
         cwd: Path,
         env: dict[str, str],
+        tty: bool = False,
         yield_time_ms: int,
         timeout_seconds: int | None,
         cancel_requested: CancelRequested | None,
@@ -116,7 +117,7 @@ class CommandProcessManager:
         managed = self._spawn(
             display_command,
             cwd,
-            False,
+            tty,
             None,
             True,
             argv=argv,

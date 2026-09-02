@@ -10,17 +10,18 @@ from typing import TYPE_CHECKING
 from yoke.cli.session.utils import parse_timestamp
 
 if TYPE_CHECKING:
+    from yoke.cli.session.models import SessionIndex
     from yoke.cli.session.store import SessionStore
 
 
 def prune_index_and_sessions(
     store: SessionStore,
     *,
+    index: SessionIndex,
     retention_days: int,
     exclude_session_id: str | None,
-) -> None:
+) -> bool:
     """Remove expired sessions and stale index entries."""
-    index = store._mutable_index()
     cutoff = datetime.now(UTC) - timedelta(days=retention_days)
     changed = False
     for session_id, entry in list(index.sessions.items()):
@@ -42,5 +43,4 @@ def prune_index_and_sessions(
             continue
         index.sessions.pop(session_id, None)
         changed = True
-    if changed:
-        store._write_index(index)
+    return changed

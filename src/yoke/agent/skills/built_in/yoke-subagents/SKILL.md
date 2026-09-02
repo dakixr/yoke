@@ -37,9 +37,10 @@ overhead; it is not the default path for small single-threaded work.
    `.agents_local/` for a durable structured trace. Keep orchestration phase,
    provider, artifact, and final-status logging as a separate script log.
 5. For file-based orchestrations, run the script with `exec_command`; poll with
-   `write_stdin` until it completes. `exec_command.yield_time_ms` is capped at
-   300,000 ms. `write_stdin.yield_time_ms` may be as high as 3,600,000 ms when
-   a long poll is useful. Keep progress visible.
+   `write_stdin` until it completes. Use `argv` instead of `cmd` when no shell
+   syntax is needed. `exec_command.yield_time_ms` is capped at 300,000 ms and
+   honors that requested initial wait. `write_stdin.yield_time_ms` may be as
+   high as 3,600,000 ms when a long poll is useful. Keep progress visible.
 6. Read the final handoff and raw JSON artifacts. Verify conflicts or errors
    before trusting the subagent results.
 7. The main agent applies final edits, resolves conflicts, runs validation, and

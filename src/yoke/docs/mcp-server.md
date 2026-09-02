@@ -160,8 +160,9 @@ On POSIX systems, `yoke-mcp` imports non-`YOKE_MCP_` variables from the user's
 login shell once at startup. This makes a service-manager launch behave like a
 normal terminal session without sourcing shell startup files for every tool
 call. MCP `exec_command` calls still use a non-login shell by default. A caller
-can request Yoke's `login=true` behavior for an individual command. Treat the
-selected OS account as the real permission boundary.
+can request Yoke's `login=true` behavior for an individual shell command, or
+pass `argv` instead of `cmd` to launch a process without shell parsing. Treat
+the selected OS account as the real permission boundary.
 
 The server does not use a command denylist. OS permissions, narrow sudo rules,
 network policy, authentication, and MCP action confirmations are the security

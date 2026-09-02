@@ -420,6 +420,72 @@ def _create_session(client: TestClient, root: Path, session_id: str) -> None:
     assert response.status_code == 200
 
 
+def test_completed_turn_survives_session_index_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import yoke.cli.session.index_cache as index_cache_module
+
+    controller = FakeRuntimeController()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=TOKEN,
+            session_directory=tmp_path / "sessions",
+            agent_factory=controller.factory,
+        )
+    )
+    with TestClient(app) as client:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _create_session(client, root, "session-a")
+        cache = app.state.session_service.store._index_cache
+
+        def deny_replace(_temporary: Path) -> None:
+            raise PermissionError(5, "Access is denied")
+
+        monkeypatch.setattr(index_cache_module, "INDEX_WRITE_ATTEMPTS", 1)
+        monkeypatch.setattr(cache, "_replace_once", deny_replace)
+
+        admitted = client.post(
+            "/api/v1/session/session-a/prompt",
+            headers=_auth(),
+            json={"prompt": {"text": "durable turn"}, "delivery": "steer"},
+        )
+        assert admitted.status_code == 200
+        assert controller.started["durable turn"].wait(1)
+        controller.release["durable turn"].set()
+
+        waited = client.post(
+            "/api/v1/session/session-a/wait",
+            headers=_auth(),
+            params={"timeoutMs": 3000},
+        )
+        assert waited.status_code == 200
+        assert waited.json()["data"]["state"] == "idle"
+
+        messages = client.get(
+            "/api/v1/session/session-a/message",
+            headers=_auth(),
+            params={"order": "asc"},
+        )
+        assert messages.status_code == 200
+        text = [
+            part["text"]
+            for message in messages.json()["data"]
+            for part in message.get("content", [])
+            if part["type"] == "text"
+        ]
+        assert text == ["durable turn", "done:durable turn"]
+
+        history = client.get(
+            "/api/v1/session/session-a/history",
+            headers=_auth(),
+        ).json()["data"]
+        event_types = [event["type"] for event in history]
+        assert "session.message.updated" in event_types
+        assert "session.runtime.failed" not in event_types
+
+
 def test_prompt_admission_reopens_archived_session(tmp_path: Path) -> None:
     controller = FakeRuntimeController()
     app = create_app(

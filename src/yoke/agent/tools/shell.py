@@ -165,11 +165,28 @@ def prepend_python_alias_bin_to_path() -> str:
 
 
 def invoke_expression_with_exit_propagation() -> str:
-    """Return PowerShell that preserves native command exit codes."""
+    """Return PowerShell that preserves exceptions and native exit codes."""
     return (
         "$global:LASTEXITCODE = 0; "
+        "$yokeErrorActionPreference = $ErrorActionPreference; "
+        "$yokeErrorCount = $Error.Count; "
+        "$yokePowerShellError = $null; "
+        "try { "
+        "$ErrorActionPreference = 'Continue'; "
         "Invoke-Expression $env:YOKE_COMMAND_TOOL_COMMAND; "
-        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
+        "$yokeExitCode = $LASTEXITCODE; "
+        "$yokeNewErrorCount = [Math]::Max(0, $Error.Count - $yokeErrorCount); "
+        "if ($yokeNewErrorCount -gt 0) { "
+        "$yokePowerShellError = $Error | "
+        "Select-Object -First $yokeNewErrorCount | "
+        "Where-Object { $_.FullyQualifiedErrorId -notlike 'NativeCommandError*' } | "
+        "Select-Object -First 1 "
+        "} "
+        "} finally { "
+        "$ErrorActionPreference = $yokeErrorActionPreference "
+        "}; "
+        "if ($null -ne $yokePowerShellError) { throw $yokePowerShellError }; "
+        "if ($yokeExitCode -ne 0) { exit $yokeExitCode }"
     )
 
 
@@ -214,10 +231,14 @@ def rewrite_legacy_powershell_chain_operators(command: str) -> str:
     parts = split_unquoted_token(command, "&&")
     if len(parts) == 1:
         return command
-    rewritten = parts[0].rstrip()
-    for part in parts[1:]:
+    rewritten = parts[-1].strip()
+    for part in reversed(parts[:-1]):
         rewritten = (
-            f"{rewritten}; if ($? -and $LASTEXITCODE -eq 0) {{ {part.strip()} }}"
+            f"{part.strip()}; $yokeSegmentSucceeded = $?; "
+            "if ($yokeSegmentSucceeded -or "
+            "($LASTEXITCODE -eq 0 -and $Error.Count -gt 0 -and "
+            "$Error[0].FullyQualifiedErrorId -like 'NativeCommandError*')) "
+            f"{{ {rewritten} }}"
         )
     return rewritten
 

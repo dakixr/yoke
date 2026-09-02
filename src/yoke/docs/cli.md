@@ -360,6 +360,13 @@ into the current format. Other obsolete or malformed session files still fail
 with a direct load error rather than being guessed at. Session listings skip an
 unreadable file so one damaged session cannot block access to every other saved
 session.
+The session index is a rebuildable cache rather than the source of truth. Index
+updates serialize their complete read-modify-write transaction across
+processes, use a unique temporary file, and retry transient Windows replacement
+denials with bounded backoff. If the cache still cannot be replaced after the
+session JSONL has been committed, the save succeeds, keeps a process-local
+index snapshot, and schedules index repair instead of failing the accepted
+turn.
 Metadata-only changes, including `/model`, append only changed metadata fields
 and update the loaded record in memory. They do not rebuild or reload the
 conversation. Interactive shutdown also trusts the latest accepted turn
@@ -726,9 +733,28 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke reports the fi
 
 **Built-in tool names:** `read`, `edit`, `write`, `apply_patch`, `fd`, `rg`, `find`, `grep`, `ls`, `exec_command`, `write_stdin`, `python_exec`, `web_fetch`, `web_search`, `web_research`, `extract_file_context`, `attach_image`, `image_generation`, `mcp_inspect`, `mcp_call`
 
-The `exec_command` tool runs through the platform shell, defaulting to PowerShell on Windows and Bash elsewhere. It returns output immediately when the command exits, or a `session_id` when the command is still running after `yield_time_ms`; the default wait is 30,000 ms (30 seconds). Use `write_stdin` with that `session_id` to poll for more output or send interactive input, and `/ps` to inspect all command sessions owned by the current live runtime. `write_stdin` polls can wait up to 3,600,000 ms (1 hour). Results include `exit_code`/`returncode`, `running`, `wall_time_seconds`, combined `output`, and `outputTruncationDetails`. When a command previously returned a session ID and then finishes, Yoke automatically supplies the model a bounded completion notice before its next provider call; polling that session directly suppresses the duplicate notice. On Windows, bash-style Python heredocs such as `python - <<'PY'` are rewritten to PowerShell pipelines while preserving stdin through yoke's `python`/`python3` shims. Native PowerShell pipelines use UTF-8 without a BOM so rewritten Python stdin starts at the first script character.
+The `exec_command` tool accepts either `cmd` for shell syntax or `argv` for a
+direct process launch with no shell parsing. Shell mode defaults to PowerShell
+on Windows and Bash elsewhere. Direct argv mode is preferable when the caller
+already has argument boundaries, especially for paths and values containing
+shell metacharacters. The tool returns output immediately when the command
+exits, or a `session_id` when it is still running after `yield_time_ms`. The
+default wait is 30,000 ms and explicit initial waits are honored up to 300,000
+ms. Use `write_stdin` with that `session_id` to poll for more output or send
+interactive input, and `/ps` to inspect all command sessions owned by the
+current live runtime. `write_stdin` polls can wait up to 3,600,000 ms. Results
+include `exit_code`/`returncode`, `running`, `wall_time_seconds`, combined
+`output`, and `outputTruncationDetails`. When a command previously returned a
+session ID and then finishes, Yoke automatically supplies the model a bounded
+completion notice before its next provider call. Polling that session directly
+suppresses the duplicate notice. On Windows, bash-style Python heredocs such as
+`python - <<'PY'` are rewritten to PowerShell pipelines while preserving stdin
+through yoke's `python`/`python3` shims. Native PowerShell pipelines use UTF-8
+without a BOM. Windows PowerShell also judges native command success by
+`LASTEXITCODE`, so harmless stderr from a successful command does not become a
+false tool failure. Terminating PowerShell exceptions still propagate.
 
-The `python_exec` tool uses yoke's current interpreter by default, preferring the parent shell's active `VIRTUAL_ENV` or `CONDA_PREFIX`. Pass `python_executable` to run a single call with a specific interpreter, for example a worktree-local `.venv` Python. Child subprocesses launched by that code inherit `YOKE_PYTHON_EXECUTABLE`; use that environment variable or `sys.executable` when a nested process must use the same interpreter. It waits 30 seconds by default, then returns a session ID for code that is still running. Use `write_stdin` with that session ID to poll incremental unbuffered output.
+The `python_exec` tool uses yoke's current interpreter by default, preferring the parent shell's active `VIRTUAL_ENV` or `CONDA_PREFIX`. Pass `python_executable` to run a single call with a specific interpreter, for example a worktree-local `.venv` Python. Child subprocesses launched by that code inherit `YOKE_PYTHON_EXECUTABLE`; use that environment variable or `sys.executable` when a nested process must use the same interpreter. It waits 30 seconds by default, honors an explicit initial wait up to 300 seconds, then returns a session ID for code that is still running. Use `write_stdin` with that session ID to poll incremental unbuffered output.
 
 `skill` is added when yoke discovers one or more skill directories.
 
