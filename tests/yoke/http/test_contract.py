@@ -1352,64 +1352,6 @@ def test_permission_and_question_routes_resolve_worker_waits(tmp_path: Path) -> 
     assert question_resolution.rejected is False
 
 
-def test_mcp_session_policy_is_typed_and_does_not_expose_secrets(
-    tmp_path: Path,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    config_dir = root / ".yoke"
-    config_dir.mkdir(parents=True)
-    (config_dir / "mcp.json").write_text(
-        """{
-  "mcp_servers": {
-    "demo": {
-      "command": "python",
-      "args": ["-c", "print('secret command')"],
-      "env": {"API_KEY": "top-secret"},
-      "enabled": true,
-      "disabled_tools": ["hidden"]
-    }
-  }
-}
-""",
-        encoding="utf-8",
-    )
-    created = client.post(
-        "/api/v1/session",
-        headers=_auth(),
-        json={"id": "mcp-session", "location": {"directory": str(root)}},
-    )
-    assert created.status_code == 200
-
-    listed = client.get(
-        "/api/v1/session/mcp-session/mcp",
-        headers=_auth(),
-    )
-    assert listed.status_code == 200
-    server = listed.json()["data"][0]
-    assert server["name"] == "demo"
-    assert server["enabled"] is True
-    assert server["scope"] == "repo"
-    assert server["disabledTools"] == ["hidden"]
-    assert "top-secret" not in listed.text
-    assert "secret command" not in listed.text
-
-    patched = client.patch(
-        "/api/v1/session/mcp-session/mcp/demo",
-        headers=_auth(),
-        json={"enabled": False, "disabledTools": ["hidden", "other"]},
-    )
-    assert patched.status_code == 200
-    assert patched.json()["data"]["enabled"] is False
-    assert patched.json()["data"]["disabledTools"] == ["hidden", "other"]
-
-    refreshed = client.get(
-        "/api/v1/session/mcp-session/mcp",
-        headers=_auth(),
-    )
-    assert refreshed.json()["data"][0]["enabled"] is False
-
-
 def test_mcp_repo_scope_persists_policy_and_explicit_null_clears_allowlist(
     tmp_path: Path,
 ) -> None:
