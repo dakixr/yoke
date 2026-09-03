@@ -69,7 +69,9 @@ image-input metadata.
 Codex can authenticate from its OAuth state, the Codex account vault, or
 `YOKE_CODEX_API_KEY`. OpenCode Go uses `OPENCODE_API_KEY`; Z.ai uses
 `ZAI_API_KEY`. The CLI credential store is also included in provider
-resolution.
+resolution. OpenCode Go requests include a stable `x-opencode-session` value.
+Pass `session_id=` to `build_builtin_provider()` when provider instances must
+retain the same OpenCode Go session identity after reconstruction.
 
 Codex uses Responses continuity and a stable cache scope. Healthy follow-up
 requests can send only the new input against the prior response; stale anchors

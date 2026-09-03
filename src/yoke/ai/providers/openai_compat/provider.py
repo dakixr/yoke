@@ -221,6 +221,11 @@ class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
             reasoning_effort=reasoning_effort,
         )
 
+    def set_request_header(self, name: str, value: str) -> None:
+        """Set a header on subsequent requests and owned client construction."""
+        self.config.headers[name] = value
+        self._headers[name] = value
+
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:

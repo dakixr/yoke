@@ -451,6 +451,13 @@ def test_session_store_fork_copies_session_without_pin(
 def test_fork_slash_command_switches_to_persisted_copy(
     tmp_path: Path, monkeypatch
 ) -> None:
+    class SessionAwareProvider:
+        def __init__(self) -> None:
+            self.session_ids: list[str] = []
+
+        def set_session_id(self, session_id: str) -> None:
+            self.session_ids.append(session_id)
+
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     store = SessionStore()
@@ -461,10 +468,11 @@ def test_fork_slash_command_switches_to_persisted_copy(
         root=tmp_path,
     )
     console_stream = CaptureStream()
+    provider = SessionAwareProvider()
 
     handled, forked_messages, forked_session = handle_slash_command(
         "/fork",
-        agent=FakeAgent(),
+        agent=FakeAgent(provider=provider),
         active_session=active_session,
         messages=messages,
         console=build_console(console_stream),
@@ -476,6 +484,7 @@ def test_fork_slash_command_switches_to_persisted_copy(
     assert forked_messages == messages
     assert forked.messages == messages
     assert forked.title == "Fork title (fork)"
+    assert provider.session_ids == [forked_session.id]
     assert (session_dir / f"{forked_session.id}.jsonl").exists()
     assert f"Forked session fork-source -> {forked_session.id}" in (
         console_stream.getvalue()

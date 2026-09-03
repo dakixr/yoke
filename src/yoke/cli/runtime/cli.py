@@ -31,6 +31,7 @@ from yoke.cli.runtime.lifetime import close_cli_owned_agent
 from yoke.cli.runtime.lifetime import register_cli_owned_agent
 from yoke.cli.runtime.session import create_active_session
 from yoke.cli.runtime.session import apply_session_defaults_to_args
+from yoke.cli.runtime.session import bind_agent_provider_session
 from yoke.cli.runtime.session import ensure_session_title
 from yoke.cli.runtime.session import persist_session_state
 from yoke.cli.runtime.session import save_active_session
@@ -114,6 +115,7 @@ def run_cli(
     except ValueError as exc:
         print_error(error_console, str(exc))
         return 1
+    bind_agent_provider_session(active_agent, active_session.id)
     if isinstance(active_agent, RuntimeAgent):
         active_agent.load_conversation(
             conversation_entries=active_session.active_entries(),
@@ -237,6 +239,7 @@ def run_resume_cli(
         record=record,
         title=record.title,
     )
+    bind_agent_provider_session(active_agent, active_session.id)
     resume_projection = project_resumed_session(
         record,
         tree_index=active_session.tree_index,

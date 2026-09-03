@@ -26,6 +26,8 @@ a persisted CLI conversation, or interactive terminal behavior.
    service reachability.
    When adding or changing a provider, separately probe a representative real
    agent turn with function tools and complete the tool-result round trip.
+   When a durable role uses OpenCode Go, pass a stable `session_id` to
+   `build_builtin_provider()` each time that role is reconstructed.
 2. Choose the smallest orchestration shape that fits the request.
 3. Prefer public SDK `run_many()` for independent bounded fan-out. For small
    orchestrations (1-4 subagents, no complex state), run the code
@@ -125,6 +127,12 @@ that task IDs are unique filename-safe slugs before deriving paths from them:
 # inside Agent(...)
 state_path=OUTPUT_DIR / f"{task.id}.reviewer.json",
 autosave=True,
+```
+
+For an OpenCode Go role, build its provider with the same filename-safe role ID:
+
+```python
+provider=build_builtin_provider(selection, session_id=f"{task.id}-reviewer")
 ```
 
 Do not persist throwaway one-shot fan-out agents by default. Persistence is most

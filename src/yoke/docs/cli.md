@@ -85,7 +85,9 @@ The advertised catalog currently includes `gpt-5.6-sol`,
 
 OpenCode Go advertises its maintained model catalog, including its Responses
 path for `gpt-5.6-luna` and OpenAI-compatible chat-completions paths for
-other models. Both Z.ai and OpenCode Go expose GLM-5.3-Flash with `low`,
+other models. Yoke sends `x-opencode-session` with one stable value per Yoke
+session, including retries and resumed conversations. Forked sessions receive a
+new value. Both Z.ai and OpenCode Go expose GLM-5.3-Flash with `low`,
 `high`, and `max` reasoning efforts (default: `max`). Provider catalogs also
 declare context windows, image-input support, and model-specific system messages.
 

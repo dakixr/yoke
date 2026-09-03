@@ -70,6 +70,7 @@ class OpenCodeGoProvider(Provider):
             timeout=self.config.timeout_seconds,
             headers={
                 "Content-Type": "application/json",
+                "x-opencode-session": self.config.session_id,
             },
         )
 
@@ -94,6 +95,7 @@ class OpenCodeGoProvider(Provider):
                 reasoning_effort=openai_reasoning_effort,
                 provider_name=PROVIDER_NAME,
                 model_catalog=config.model_catalog,
+                headers={"x-opencode-session": config.session_id},
             ),
             http_client=http_client,
             sleep=self._sleep,
@@ -117,6 +119,14 @@ class OpenCodeGoProvider(Provider):
             reasoning_effort=reasoning_effort,
         )
         self._sync_openai_config()
+
+    def set_session_id(self, session_id: str) -> None:
+        """Bind subsequent requests to one stable OpenCode Go session."""
+        normalized = session_id.strip()
+        if not normalized:
+            raise ValueError("session_id must not be empty")
+        self.config.session_id = normalized
+        self._openai_provider.set_request_header("x-opencode-session", normalized)
 
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
@@ -188,6 +198,7 @@ class OpenCodeGoProvider(Provider):
             max_retry_backoff_seconds=self.config.max_retry_backoff_seconds,
             cancel_requested=cancel_requested,
             sleep=self._sleep,
+            request_headers={"x-opencode-session": self.config.session_id},
         )
 
     def _with_request_cancellation(

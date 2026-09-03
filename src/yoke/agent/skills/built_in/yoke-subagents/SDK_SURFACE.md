@@ -40,6 +40,9 @@ from yoke.ai.utils import print_builtin_provider_status
   it for every selected string to validate local model and effort selection.
   Providers created only for validation still own resources. Give each one to a
   short-lived `Agent` and close the agent after validation.
+- Pass `session_id=` when reconstructing the same durable OpenCode Go role. Yoke
+  sends that value as `x-opencode-session`. Without it, each newly built
+  provider gets a fresh session value.
 - Provider construction is not a remote health check. Provider implementation
   changes require a real probe with function tools through the full tool-call
   and tool-result cycle.
@@ -104,7 +107,10 @@ Example durable reviewer:
 
 ```python
 reviewer = Agent(
-    provider=build_builtin_provider(task.selection),
+    provider=build_builtin_provider(
+        task.selection,
+        session_id=f"{task.id}-reviewer",
+    ),
     config=RunConfig(root=Path.cwd(), tools=["file.read", "file.search"]),
     state_path=OUTPUT_DIR / f"{task.id}.reviewer.json",
     autosave=True,

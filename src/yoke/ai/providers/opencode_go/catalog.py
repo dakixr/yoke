@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.model_selection import cloned_model_catalog
@@ -112,6 +113,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
         OpenCodeGoConfig(
             api_key=api_key,
             model=_normalize_model_id(context.model or "glm-5.3-flash"),
+            session_id=context.session_id or uuid4().hex,
             timeout_seconds=float(env.get("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "900"),
             max_retries=int(env.get("YOKE_OPENCODE_GO_MAX_RETRIES") or "5"),
             reasoning_effort=(
@@ -126,6 +128,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
 class OpenCodeGoConfig(BaseModel):
     api_key: str
     model: str = "glm-5.3-flash"
+    session_id: str = Field(default_factory=lambda: uuid4().hex)
     timeout_seconds: float = 900.0
     max_retries: int = 5
     retry_backoff_seconds: float = 1.0
@@ -137,6 +140,14 @@ class OpenCodeGoConfig(BaseModel):
     @classmethod
     def validate_model(cls, value: str) -> str:
         return _normalize_model_id(value)
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("session_id must not be empty")
+        return normalized
 
     @field_validator("reasoning_effort")
     @classmethod

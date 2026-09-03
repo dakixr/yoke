@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
@@ -38,6 +38,7 @@ def complete_response(
     max_retry_backoff_seconds: float,
     cancel_requested: Callable[[], bool],
     sleep: Callable[[float], None],
+    request_headers: Mapping[str, str] | None = None,
 ) -> Message:
     """Send a non-streaming Responses API request and normalize its output."""
     payload = _request_payload(
@@ -50,6 +51,7 @@ def complete_response(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        **(request_headers or {}),
     }
     last_error: ProviderError | None = None
     for attempt in range(max_retries + 1):

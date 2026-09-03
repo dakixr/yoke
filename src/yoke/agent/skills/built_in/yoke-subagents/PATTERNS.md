@@ -285,7 +285,10 @@ async def run_coder_reviewer_pair(
         observer=OBSERVER,
     )
     reviewer = Agent(
-        provider=build_builtin_provider(task.selection),
+        provider=build_builtin_provider(
+            task.selection,
+            session_id=f"{task.id}-reviewer",
+        ),
         config=RunConfig(root=Path.cwd(), tools=["file.read", "file.search"]),
         state_path=OUTPUT_DIR / f"{task.id}.reviewer.json",
         autosave=True,

@@ -87,6 +87,7 @@ def fork_active_session(
         root=active_session.root,
         title=title,
     )
+    bind_agent_provider_session(agent, forked_record.id)
     return ActiveSession(
         id=forked_record.id,
         root=Path(forked_record.root).resolve()
@@ -96,6 +97,14 @@ def fork_active_session(
         record=forked_record,
         title=forked_record.title,
     )
+
+
+def bind_agent_provider_session(agent: object, session_id: str) -> None:
+    """Bind provider routing metadata to the active Yoke session when supported."""
+    provider = getattr(agent, "provider", None)
+    set_session_id = getattr(provider, "set_session_id", None)
+    if callable(set_session_id):
+        set_session_id(session_id)
 
 
 def ensure_session_title(
