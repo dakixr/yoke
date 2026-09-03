@@ -13,6 +13,74 @@ from yoke.ai.providers.opencode_go import OpenCodeGoConfig
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 
 
+def test_opencode_go_muse_spark_contributor_catalog_and_request() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "muse-ok"}],
+                    }
+                ]
+            },
+        )
+
+    provider = OpenCodeGoProvider(
+        OpenCodeGoConfig(
+            api_key="test",
+            model="muse-spark-1.3-contributor",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    try:
+        model = provider.current_model_info()
+        message = provider.complete([Message.user("hello")], [])
+    finally:
+        provider.close()
+
+    payload = cast(dict[str, object], captured["payload"])
+    assert model is not None
+    assert model.context_window_tokens == 400_000
+    assert model.thinking_levels == ("minimal", "low", "medium", "high", "xhigh")
+    assert model.default_thinking_level == "high"
+    assert model.supports_image_inputs is True
+    assert [item.id for item in provider.list_models()] == [
+        "muse-spark-1.3-contributor",
+        "glm-5.3-flash",
+        "deepseek-v4-flash",
+    ]
+    assert provider.list_models()[2].context_window_tokens == 400_000
+    assert captured["url"] == "https://opencode.ai/zen/go/v1/responses"
+    assert payload["model"] == "muse-spark-1.3-contributor"
+    assert payload["reasoning"] == {
+        "effort": "high",
+        "summary": "auto",
+        "context": "all_turns",
+    }
+    assert message.content == "muse-ok"
+
+    minimal_provider = OpenCodeGoProvider(
+        OpenCodeGoConfig(
+            api_key="test",
+            model="muse-spark-1.3-contributor",
+            reasoning_effort="minimal",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        assert minimal_provider.config.reasoning_effort == "minimal"
+    finally:
+        minimal_provider.close()
+
+
 def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
     captured: dict[str, object] = {}
 
@@ -46,92 +114,6 @@ def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
     assert payload["model"] == "glm-5.3-flash"
     assert payload["reasoning_effort"] == "high"
     assert message.content == "glm-ok"
-
-
-def test_opencode_go_luna_uses_responses_api() -> None:
-    captured: dict[str, object] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["url"] = str(request.url)
-        captured["authorization"] = request.headers["Authorization"]
-        captured["session"] = request.headers["x-opencode-session"]
-        captured["payload"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200,
-            json={
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": "luna-ok"}],
-                    },
-                    {
-                        "type": "function_call",
-                        "call_id": "call_123",
-                        "name": "read_file",
-                        "arguments": '{"path":"README.md"}',
-                    },
-                ],
-                "usage": {
-                    "input_tokens": 12,
-                    "output_tokens": 7,
-                    "total_tokens": 19,
-                },
-            },
-        )
-
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = OpenCodeGoProvider(
-        OpenCodeGoConfig(
-            api_key="secret",
-            model="gpt-5.6-luna",
-            reasoning_effort="medium",
-            session_id="conversation-responses",
-        ),
-        http_client=client,
-    )
-    tools: list[dict[str, object]] = [
-        {
-            "type": "function",
-            "function": {
-                "name": "read_file",
-                "description": "Read a file",
-                "parameters": {"type": "object"},
-            },
-        }
-    ]
-
-    try:
-        message = provider.complete(
-            [Message.system("Be concise"), Message.user("Probe Luna")], tools
-        )
-    finally:
-        provider.close()
-
-    payload = cast(dict[str, object], captured["payload"])
-    assert captured["url"] == "https://opencode.ai/zen/go/v1/responses"
-    assert captured["authorization"] == "Bearer secret"
-    assert captured["session"] == "conversation-responses"
-    assert payload["model"] == "gpt-5.6-luna"
-    assert payload["instructions"] == "Be concise"
-    assert payload["input"] == [
-        {
-            "role": "user",
-            "content": [{"type": "input_text", "text": "Probe Luna"}],
-        }
-    ]
-    assert payload["parallel_tool_calls"] is False
-    assert payload["reasoning"] == {
-        "effort": "medium",
-        "summary": "auto",
-        "context": "all_turns",
-    }
-    assert payload["max_output_tokens"] == 65_536
-    assert message.content == "luna-ok"
-    assert message.tool_calls[0].id == "call_123"
-    assert message.tool_calls[0].function.name == "read_file"
-    assert message.usage is not None
-    assert message.usage.total_tokens == 19
 
 
 def test_opencode_go_generated_session_id_is_stable_across_requests() -> None:

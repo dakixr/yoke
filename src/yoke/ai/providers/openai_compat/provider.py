@@ -84,6 +84,7 @@ class OpenAICompatibleConfig(BaseModel):
         normalized = value.strip().lower()
         if normalized not in {
             "none",
+            "minimal",
             "low",
             "medium",
             "high",
@@ -91,7 +92,8 @@ class OpenAICompatibleConfig(BaseModel):
             "max",
         }:
             raise ValueError(
-                "reasoning_effort must be one of none, low, medium, high, xhigh or max"
+                "reasoning_effort must be one of none, minimal, low, medium, "
+                "high, xhigh or max"
             )
         return normalized
 

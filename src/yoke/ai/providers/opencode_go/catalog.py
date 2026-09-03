@@ -21,18 +21,23 @@ OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
 
 DEEPSEEK_THINKING_LEVELS = ("high", "max")
 GLM_53_THINKING_LEVELS = ("low", "high", "max")
-KIMI_THINKING_LEVELS = ()
-LUNA_THINKING_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
+MUSE_SPARK_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
 
 MODEL_PROTOCOLS = {
-    "gpt-5.6-luna": "responses",
+    "muse-spark-1.3-contributor": "responses",
     "glm-5.3-flash": "openai",
     "deepseek-v4-flash": "openai",
-    "kimi-k2.7-code": "openai",
-    "deepseek-v4-pro": "openai",
 }
 
 MODEL_CATALOG = build_model_catalog(
+    ProviderModelInfo(
+        id="muse-spark-1.3-contributor",
+        display_name="Muse Spark 1.3 Contributor",
+        context_window_tokens=400_000,
+        thinking_levels=MUSE_SPARK_THINKING_LEVELS,
+        default_thinking_level="high",
+        supports_image_inputs=True,
+    ),
     ProviderModelInfo(
         id="glm-5.3-flash",
         display_name="GLM-5.3-Flash",
@@ -42,41 +47,9 @@ MODEL_CATALOG = build_model_catalog(
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
-        id="gpt-5.6-luna",
-        display_name="GPT-5.6 Luna",
-        context_window_tokens=400_000,
-        thinking_levels=LUNA_THINKING_LEVELS,
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="kimi-k3",
-        display_name="Kimi K3",
-        context_window_tokens=400_000,
-        thinking_levels=KIMI_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="kimi-k2.7-code",
-        display_name="Kimi K2.7 Code",
-        context_window_tokens=262_144,
-        thinking_levels=KIMI_THINKING_LEVELS,
-        default_thinking_level=None,
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="deepseek-v4-pro",
-        display_name="DeepSeek V4 Pro",
-        context_window_tokens=1_000_000,
-        thinking_levels=DEEPSEEK_THINKING_LEVELS,
-        default_thinking_level="high",
-        supports_image_inputs=False,
-    ),
-    ProviderModelInfo(
         id="deepseek-v4-flash",
         display_name="DeepSeek V4 Flash",
-        context_window_tokens=1_000_000,
+        context_window_tokens=400_000,
         thinking_levels=DEEPSEEK_THINKING_LEVELS,
         default_thinking_level="high",
         supports_image_inputs=False,

@@ -36,7 +36,7 @@ skills, hooks, compaction policy, or execution mode:
 from yoke.ai import Agent, RunConfig, build_builtin_provider
 
 agent = Agent(
-    provider=build_builtin_provider("opencode-go:gpt-5.6-luna:high"),
+    provider=build_builtin_provider("opencode-go:muse-spark-1.3-contributor:high"),
     config=RunConfig(
         root=".",
         tools=["file.read", "file.search", "file.write", "web.research"],

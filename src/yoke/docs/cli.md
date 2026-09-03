@@ -51,6 +51,7 @@ Select models with `provider:model` or `provider:model:thinking_effort`:
 ```bash
 yoke --model codex:gpt-5.6-sol:medium "..."
 yoke --model codex:gpt-5.6-terra:max "..."
+yoke --model opencode-go:muse-spark-1.3-contributor:high "..."
 yoke --model opencode-go:glm-5.3-flash:max "..."
 yoke --model zai:glm-5.3-flash:max "..."
 ```
@@ -74,7 +75,8 @@ Provider selections without a model use these defaults:
 Yoke caps `glm-5.3-flash` at a 400,000-token context window for both
 `opencode-go` and `zai`, even when the upstream provider advertises a larger
 window. The catalog, runtime token budget, compaction policy, and context-usage
-display all use that capped value.
+display all use that capped value. OpenCode Go also caps
+`deepseek-v4-flash` at 400,000 tokens.
 
 Codex uses a persistent Responses WebSocket transport and keeps response
 continuity, encrypted replay state, prompt-cache affinity, and routing metadata
@@ -83,13 +85,17 @@ reconstruction and resume. New and forked sessions receive distinct scopes.
 The advertised catalog currently includes `gpt-5.6-sol`,
 `gpt-5.6-terra`, and `gpt-5.6-luna`.
 
-OpenCode Go advertises its maintained model catalog, including its Responses
-path for `gpt-5.6-luna` and OpenAI-compatible chat-completions paths for
-other models. Yoke sends `x-opencode-session` with one stable value per Yoke
-session, including retries and resumed conversations. Forked sessions receive a
-new value. Both Z.ai and OpenCode Go expose GLM-5.3-Flash with `low`,
-`high`, and `max` reasoning efforts (default: `max`). Provider catalogs also
-declare context windows, image-input support, and model-specific system messages.
+OpenCode Go advertises its maintained model catalog, including the Contributor
+tier of `muse-spark-1.3-contributor`. Yoke caps its upstream 1,048,576-token
+window at 400,000 tokens for agentic work and exposes `minimal`, `low`,
+`medium`, `high`, and `xhigh` reasoning efforts (default: `high`). Muse Spark
+uses the Responses path; GLM-5.3-Flash and DeepSeek V4 Flash use
+OpenAI-compatible chat completions. Yoke sends `x-opencode-session` with one
+stable value per Yoke session, including retries and resumed conversations.
+Forked sessions receive a new value. Both Z.ai and OpenCode Go expose
+GLM-5.3-Flash with `low`, `high`, and `max` reasoning efforts (default: `max`).
+Provider catalogs also declare context windows, image-input support, and
+model-specific system messages.
 
 Built-in provider response and stream-idle timeouts default to 15 minutes.
 Connection-establishment and WebSocket health-check timeouts remain shorter so

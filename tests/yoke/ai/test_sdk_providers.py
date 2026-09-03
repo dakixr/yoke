@@ -83,17 +83,17 @@ def test_build_builtin_provider_uses_default_for_invalid_reasoning_effort(
         provider.close()
 
 
-def test_build_builtin_opencode_luna_model(
+def test_build_builtin_opencode_muse_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
 
     provider = cast(
         OpenCodeGoProvider,
-        build_builtin_provider("opencode-go:gpt-5.6-luna:max"),
+        build_builtin_provider("opencode-go:muse-spark-1.3-contributor:xhigh"),
     )
 
     config = provider.config
-    assert config.model == "gpt-5.6-luna"
-    assert config.reasoning_effort == "max"
+    assert config.model == "muse-spark-1.3-contributor"
+    assert config.reasoning_effort == "xhigh"
     provider.close()
