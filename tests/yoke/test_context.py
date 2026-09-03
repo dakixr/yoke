@@ -10,6 +10,31 @@ from yoke.ai.providers.openai_compat import (
 from yoke.agent.models import Message, ToolCall, ToolFunction
 
 
+def test_append_tool_result_uses_compact_json() -> None:
+    manager = ContextManager()
+    context = manager.initialize("start")
+    manager.append_message(
+        context,
+        Message(
+            role="assistant",
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    function=ToolFunction(name="read", arguments="{}"),
+                )
+            ],
+        ),
+    )
+
+    message = manager.append_tool_result(
+        context,
+        tool_call_id="call-1",
+        result={"ok": True, "count": 2},
+    )
+
+    assert message.content == '{"ok":true,"count":2}'
+
+
 def test_context_manager_prepare_compaction_rebuilds_checkpoint() -> None:
     manager = ContextManager(
         compaction_policy=CompactionPolicy(

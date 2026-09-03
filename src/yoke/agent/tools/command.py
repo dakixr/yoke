@@ -69,8 +69,7 @@ class ManagedCommandTool(WorkspaceTool):
             result.output,
             max_bytes=min(DEFAULT_MAX_BYTES, token_budget * 4),
         )
-        truncation_details = truncation.to_dict()
-        truncation_details.pop("content")
+        truncation_details = truncation.to_metadata_dict()
         running = result.session_id is not None
         ok = not result.timed_out and (running or result.exit_code == 0)
         payload: dict[str, object] = {
@@ -94,8 +93,7 @@ class ManagedCommandTool(WorkspaceTool):
         return payload
 
     def _cancelled_result(self) -> dict[str, object]:
-        truncation_details = truncate_tail("").to_dict()
-        truncation_details.pop("content")
+        truncation_details = truncate_tail("").to_metadata_dict()
         return {
             "ok": False,
             "session_id": None,

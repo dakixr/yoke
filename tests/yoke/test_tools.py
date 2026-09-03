@@ -24,6 +24,7 @@ from yoke.agent.tools import (
     COMMAND_TOOL_NAME,
 )
 from yoke.agent.models import MessageImageURLContentPart
+from yoke.agent.truncate import truncate_head
 from yoke.agent.tools.command_process_types import (
     CommandProcessResult,
     clamp_exec_yield_time,
@@ -94,6 +95,32 @@ def test_attach_image_keeps_base64_out_of_tool_result(tmp_path: Path) -> None:
     image_part = pending[0].content[-1]
     assert isinstance(image_part, MessageImageURLContentPart)
     assert image_part.image_url.url.startswith("data:image/png;base64,")
+
+
+def test_truncation_metadata_excludes_retained_content() -> None:
+    truncation = truncate_head("hello")
+
+    assert truncation.to_dict()["content"] == "hello"
+    assert "content" not in truncation.to_metadata_dict()
+
+
+def test_read_byte_truncation_omits_duplicate_details(tmp_path: Path) -> None:
+    tools = tool_set(tmp_path)
+    lines = "\n".join(f"line {index:04d} " + ("x" * 200) for index in range(400))
+    (tmp_path / "wide.txt").write_text(lines, encoding="utf-8")
+
+    result = as_dict(
+        execute_tool(
+            tools,
+            "read",
+            {"path": "wide.txt", "limit": 400},
+        )
+    )
+
+    assert result["ok"] is True
+    assert "50.0KB limit" in str(result["content"])
+    assert result["next_offset"] > 1
+    assert "details" not in result
 
 
 def test_read_defaults_to_first_150_lines_and_reports_next_offset(

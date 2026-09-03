@@ -106,9 +106,13 @@ tool because one generic call can reach downstream read or write actions. Use
 reach a subset of actions.
 
 The gateway preserves downstream text, resource text, and bounded structured
-JSON. Large results use Yoke's existing truncation path and can include a local
-`full_output_path`. Downstream image and audio content currently becomes a text
-placeholder rather than being passed through as native multimedia content.
+JSON without repeating structured JSON inside the text result. Truncated text is
+saved as pageable plain text and exposed through the top-level
+`full_output_path`. Truncated structured content keeps a bounded JSON prefix and
+points to the complete downstream result as JSON. When both truncate, both
+recovery files are retained. Downstream image and audio content currently
+becomes a text placeholder rather than being passed through as native multimedia
+content.
 
 Set `YOKE_MCP_BEARER_TOKEN` to protect `/mcp` with a static bearer token during
 private deployment tests. The health endpoint remains public. Static bearer

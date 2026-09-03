@@ -67,7 +67,6 @@ class ReadTool(WorkspaceTool):
             start_line = start + 1
             next_offset = None
             output_text = truncation.content
-            details: dict[str, object] | None = None
 
             if truncation.first_line_exceeds_limit:
                 first_line_size = format_size(len(all_lines[start].encode("utf-8")))
@@ -77,7 +76,6 @@ class ReadTool(WorkspaceTool):
                     f"[Line {start_line} is {first_line_size}, "
                     f"exceeds {size_limit} limit. {hint}]"
                 )
-                details = {"truncation": truncation.to_dict()}
             elif truncation.truncated:
                 end_line = start_line + truncation.output_lines - 1
                 next_offset = end_line + 1
@@ -95,7 +93,6 @@ class ReadTool(WorkspaceTool):
                         f"Use offset={next_offset} to continue.]"
                     )
                 output_text = f"{truncation.content}\n\n{suffix}"
-                details = {"truncation": truncation.to_dict()}
             elif start + effective_limit < len(all_lines):
                 next_offset = start + effective_limit + 1
                 remaining = len(all_lines) - (start + effective_limit)
@@ -113,8 +110,6 @@ class ReadTool(WorkspaceTool):
             )
             if next_offset is not None:
                 result["next_offset"] = next_offset
-            if details is not None:
-                result["details"] = details
             return result
         except Exception as exc:
             return self._error(str(exc), path=self.path)

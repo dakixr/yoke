@@ -22,8 +22,11 @@ from yoke.mcp.config import server_supports_tool
 from yoke.mcp.inspection import matches_server
 from yoke.mcp.inspection import matches_tool
 from yoke.mcp.inspection import tool_summary
+from yoke.mcp.results import add_full_output_path_to_text_result
 from yoke.mcp.results import bounded_structured_content
 from yoke.mcp.results import mcp_result_text
+from yoke.mcp.results import persist_full_mcp_result
+from yoke.mcp.results import persist_full_mcp_text
 from yoke.mcp.results import truncate_result_text
 
 
@@ -290,11 +293,23 @@ class McpManager:
             if server_lock is not None:
                 server_lock.release()
         text = mcp_result_text(result)
-        truncated = truncate_result_text(text, server=server, tool=tool)
-        structured = bounded_structured_content(
-            result.get("structuredContent"),
-            full_output_path=cast(str | None, truncated.get("file")),
+        truncated, text_was_truncated = truncate_result_text(text)
+        raw_structured = result.get("structuredContent")
+        structured, structured_was_truncated = bounded_structured_content(
+            raw_structured
         )
+        full_output_path: str | None = None
+        if text_was_truncated:
+            full_output_path = persist_full_mcp_text(text, server=server, tool=tool)
+            add_full_output_path_to_text_result(truncated, full_output_path)
+        if structured_was_truncated:
+            structured_path = persist_full_mcp_result(result, server=server, tool=tool)
+            if isinstance(structured, dict):
+                cast(dict[str, object], structured)["full_output_path"] = (
+                    structured_path
+                )
+            if full_output_path is None:
+                full_output_path = structured_path
         return {
             "ok": not bool(result.get("isError")),
             "server": server,
@@ -304,7 +319,9 @@ class McpManager:
             "structuredContent": structured,
             "truncation": truncated["truncation"],
             **(
-                {"full_output_path": truncated["file"]} if truncated.get("file") else {}
+                {"full_output_path": full_output_path}
+                if full_output_path is not None
+                else {}
             ),
         }
 

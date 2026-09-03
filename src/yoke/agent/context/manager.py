@@ -205,7 +205,7 @@ class ContextManager:
         """Append a tool result message to the context and return it."""
         message = Message.tool(
             tool_call_id=tool_call_id,
-            content=json.dumps(result, ensure_ascii=False),
+            content=json.dumps(result, ensure_ascii=False, separators=(",", ":")),
         )
         self.append_message(context, message)
         return message

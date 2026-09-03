@@ -39,6 +39,12 @@ class TruncationResult:
         payload["maxBytes"] = payload.pop("max_bytes")
         return payload
 
+    def to_metadata_dict(self) -> dict[str, object]:
+        """Return truncation metadata without repeating the retained content."""
+        payload = self.to_dict()
+        payload.pop("content", None)
+        return payload
+
 
 def format_size(bytes_count: int) -> str:
     """Format a byte count as a human-readable size string."""

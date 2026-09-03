@@ -187,8 +187,16 @@ def test_manager_bounds_large_structured_content(
     bounded = cast(dict[str, object], bounded)
     assert bounded["truncated"] is True
     assert "payload" not in bounded
+    truncation = cast(dict[str, object], bounded["truncation"])
+    assert isinstance(truncation.get("content"), str)
+    assert truncation["content"]
     assert len(json.dumps(bounded)) < 2_000
-    assert Path(str(result["full_output_path"])).is_file()
+    full_output_path = Path(str(result["full_output_path"]))
+    assert full_output_path.is_file()
+    assert bounded["full_output_path"] == str(full_output_path)
+    persisted = json.loads(full_output_path.read_text(encoding="utf-8"))
+    assert persisted["structuredContent"] == structured
+    assert result["content"] == ""
 
 
 def test_manager_preserves_small_structured_content(tmp_path: Path) -> None:
@@ -201,6 +209,74 @@ def test_manager_preserves_small_structured_content(tmp_path: Path) -> None:
     result = manager.call_tool(server="sample", tool="sample", arguments={})
 
     assert result["structuredContent"] == structured
+    assert result["content"] == ""
+
+
+def test_manager_preserves_distinct_text_with_structured_content(
+    tmp_path: Path,
+) -> None:
+    structured = {"answer": 42}
+    manager = _manager(
+        tmp_path,
+        FakeClient(
+            {
+                "content": [{"type": "text", "text": "distinct text"}],
+                "structuredContent": structured,
+            }
+        ),
+    )
+
+    result = manager.call_tool(server="sample", tool="sample", arguments={})
+
+    assert result["content"] == "distinct text"
+    assert result["structuredContent"] == structured
+    assert "Structured content" not in str(result["content"])
+
+
+def test_manager_persists_pageable_text_when_text_truncates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+    text = "\n".join(f"line {index:04d} " + ("x" * 80) for index in range(4_000))
+    downstream = {"content": [{"type": "text", "text": text}]}
+    manager = _manager(tmp_path, FakeClient(downstream))
+
+    result = manager.call_tool(server="sample", tool="sample", arguments={})
+
+    truncation = cast(dict[str, object], result["truncation"])
+    assert truncation["truncated"] is True
+    assert "content" not in truncation
+    full_output_path = Path(str(result["full_output_path"]))
+    assert full_output_path.suffix == ".txt"
+    persisted = full_output_path.read_text(encoding="utf-8")
+    assert persisted == text
+    assert len(persisted.splitlines()) == 4_000
+    assert str(full_output_path) in str(result["content"])
+
+
+def test_manager_keeps_text_and_structured_recovery_paths_when_both_truncate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+    text = "\n".join(f"line {index:04d} " + ("x" * 80) for index in range(4_000))
+    structured = {"payload": "y" * (DEFAULT_MAX_BYTES * 2)}
+    downstream = {
+        "content": [{"type": "text", "text": text}],
+        "structuredContent": structured,
+    }
+    manager = _manager(tmp_path, FakeClient(downstream))
+
+    result = manager.call_tool(server="sample", tool="sample", arguments={})
+
+    text_path = Path(str(result["full_output_path"]))
+    assert text_path.suffix == ".txt"
+    assert text_path.read_text(encoding="utf-8") == text
+    bounded = cast(dict[str, object], result["structuredContent"])
+    structured_path = Path(str(bounded["full_output_path"]))
+    assert structured_path.suffix == ".json"
+    assert structured_path != text_path
+    persisted = json.loads(structured_path.read_text(encoding="utf-8"))
+    assert persisted["structuredContent"] == structured
 
 
 class ConcurrentFakeClient(FakeClient):

@@ -15,29 +15,23 @@ from yoke.agent.truncate import truncate_head
 
 
 def mcp_result_text(result: dict[str, object]) -> str:
-    """Flatten downstream MCP content into text for the Yoke tool result."""
+    """Flatten distinct downstream MCP content into text for the Yoke tool result."""
     parts: list[str] = []
     content = result.get("content")
     if isinstance(content, list):
         for item in content:
             parts.append(_content_part_text(item))
-    structured = result.get("structuredContent")
-    if structured is not None:
-        parts.append(
-            "Structured content:\n"
-            + json.dumps(structured, indent=2, ensure_ascii=False)
-        )
-    if not parts:
-        return json.dumps(result, indent=2, ensure_ascii=False)
-    return "\n\n".join(part for part in parts if part)
+    if parts:
+        return "\n\n".join(part for part in parts if part)
+    if result.get("structuredContent") is not None:
+        return ""
+    return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-def bounded_structured_content(
-    structured: object, *, full_output_path: str | None
-) -> object:
-    """Bound structured content while retaining the full-output path."""
+def bounded_structured_content(structured: object) -> tuple[object, bool]:
+    """Bound structured content and report whether truncation occurred."""
     if structured is None:
-        return None
+        return None, False
     serialized = json.dumps(structured, indent=2, ensure_ascii=False)
     truncation = truncate_head(
         serialized,
@@ -45,45 +39,74 @@ def bounded_structured_content(
         max_bytes=DEFAULT_MAX_BYTES,
     )
     if not truncation.truncated:
-        return structured
+        return structured, False
     result: dict[str, object] = {
         "truncated": True,
         "truncation": truncation.to_dict(),
     }
-    if full_output_path is not None:
-        result["full_output_path"] = full_output_path
-    return result
+    return result, True
 
 
-def truncate_result_text(text: str, *, server: str, tool: str) -> dict[str, object]:
-    """Bound downstream text and persist the full payload when truncated."""
+def persist_full_mcp_text(text: str, *, server: str, tool: str) -> str:
+    """Persist flattened downstream MCP text and return its local path."""
+    path = _full_output_path(server=server, tool=tool, suffix=".txt")
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def persist_full_mcp_result(
+    result: dict[str, object], *, server: str, tool: str
+) -> str:
+    """Persist one complete downstream MCP result and return its local path."""
+    path = _full_output_path(server=server, tool=tool, suffix=".json")
+    path.write_text(
+        json.dumps(result, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def truncate_result_text(text: str) -> tuple[dict[str, object], bool]:
+    """Bound downstream text without repeating retained content in metadata."""
     truncation = truncate_head(
         text,
         max_lines=DEFAULT_MAX_LINES,
         max_bytes=DEFAULT_MAX_BYTES,
     )
-    file_path: str | None = None
     content = truncation.content
     if truncation.truncated:
-        directory = Path(tempfile.gettempdir()) / "yoke-mcp"
-        directory.mkdir(parents=True, exist_ok=True)
-        safe = f"{int(time.time())}-{server}-{tool}".replace("/", "_")
-        path = directory / f"{safe}.txt"
-        path.write_text(text, encoding="utf-8")
-        file_path = str(path)
         content = (
             content
             + "\n\n"
             + "[MCP output truncated: "
             + f"{truncation.output_lines} of {truncation.total_lines} lines, "
-            + f"{format_size(truncation.output_bytes)} of {format_size(truncation.total_bytes)}. "
-            + f"Full output saved to: {file_path}]"
+            + f"{format_size(truncation.output_bytes)} of {format_size(truncation.total_bytes)}."
+            + "]"
         )
-    return {
-        "text": content,
-        "file": file_path,
-        "truncation": truncation.to_dict(),
-    }
+    return (
+        {
+            "text": content,
+            "truncation": truncation.to_metadata_dict(),
+        },
+        truncation.truncated,
+    )
+
+
+def add_full_output_path_to_text_result(
+    result: dict[str, object], full_output_path: str
+) -> None:
+    """Add a recovery path to an already-truncated text result in place."""
+    text = result.get("text")
+    if not isinstance(text, str) or not text.endswith("]"):
+        return
+    result["text"] = text[:-1] + f" Full output saved to: {full_output_path}]"
+
+
+def _full_output_path(*, server: str, tool: str, suffix: str) -> Path:
+    directory = Path(tempfile.gettempdir()) / "yoke-mcp"
+    directory.mkdir(parents=True, exist_ok=True)
+    safe = f"{time.time_ns()}-{server}-{tool}".replace("/", "_")
+    return directory / f"{safe}{suffix}"
 
 
 def _content_part_text(item: object) -> str:
