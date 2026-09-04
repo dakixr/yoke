@@ -1,6 +1,7 @@
 import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
-import { sortToolCallsChronologically } from "./tool-logic.js";
+import { ToolFieldCard } from "./tool-fields.js";
+import { buildArgumentFields, buildResultFields, sortToolCallsChronologically } from "./tool-logic.js";
 
 export function ToolInspector({ sessionID, inspector, data }) {
   const calls = data?.toolCalls;
@@ -133,6 +134,8 @@ function ToolDetail({ detail, raw, wrap, setRaw, setWrap }) {
   const outputText = (detail.outputChunks || []).map((chunk) => chunk.text).join("");
   const running = detail.status === "running" || detail.status === "pending";
   const context = [...(detail.context || []), ...(detail.afterContext || [])];
+  const args = buildArgumentFields(detail.arguments);
+  const result = buildResultFields(detail.result, outputText);
   if (raw) {
     return html`<div class="tool-detail-document">
       <${ToolDetailHeader} detail=${detail} filePath=${filePath} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />
@@ -150,11 +153,22 @@ function ToolDetail({ detail, raw, wrap, setRaw, setWrap }) {
       <pre class=${wrap ? "is-wrapped" : ""}>${outputText || "Waiting for output…"}</pre>
     </section>` : null}
 
-    <div class="tool-detail-grid">
-      <${ToolDetailSection} title="Arguments" value=${detail.arguments?.raw || detail.arguments?.executed} wrap=${wrap} />
-      ${detail.arguments?.executed ? html`<${ToolDetailSection} title="Executed arguments" value=${detail.arguments.executed} wrap=${wrap} />` : null}
-      <${ToolDetailSection} title="Result" value=${detail.result} wrap=${wrap} />
-    </div>
+    <${ToolFieldCard}
+      title="Arguments"
+      note=${argumentsNote(args)}
+      fields=${args.fields}
+      text=${args.text}
+      wrap=${wrap}
+      copyValue=${argumentsCopyValue(detail)}
+    />
+    <${ToolFieldCard}
+      title="Result"
+      note=${resultNote(detail, result, outputText)}
+      fields=${result.fields}
+      text=${result.text}
+      wrap=${wrap}
+      copyValue=${detail.result != null ? JSON.stringify(detail.result, null, 2) : null}
+    />
 
     ${context.length ? html`<section class="tool-context-document">
       <div class="tool-detail-section-head"><span>Context</span><span>${context.length} messages</span></div>
@@ -191,13 +205,23 @@ function ToolDetailHeader({ detail, filePath, raw, wrap, setRaw, setWrap }) {
   </header>`;
 }
 
-function ToolDetailSection({ title, value, wrap }) {
-  if (value == null || value === "") return null;
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  return html`<section class="tool-detail-section">
-    <div class="tool-detail-section-head"><span>${title}</span></div>
-    <pre class=${wrap ? "is-wrapped" : ""}>${text}</pre>
-  </section>`;
+function argumentsNote(args) {
+  if (!args.fields.length) return args.text ? "unparsed" : "";
+  const adjusted = args.fields.filter((field) => field.tag).length;
+  const label = `${args.fields.length} field${args.fields.length === 1 ? "" : "s"}`;
+  return adjusted ? `${label} · ${adjusted} adjusted by the tool` : label;
+}
+
+function argumentsCopyValue(detail) {
+  const executed = detail.arguments?.executed;
+  if (executed) return JSON.stringify(executed, null, 2);
+  return typeof detail.arguments?.raw === "string" ? detail.arguments.raw : null;
+}
+
+function resultNote(detail, result, outputText) {
+  if (detail.result == null) return "";
+  const hidden = Object.keys(detail.result).length - result.fields.length;
+  return hidden > 0 && outputText ? "output shown above" : "";
 }
 
 function toolSearchText(call) {

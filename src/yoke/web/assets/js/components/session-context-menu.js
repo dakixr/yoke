@@ -1,5 +1,6 @@
 import { html, useEffect, useRef } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
+import { copyText } from "../lib/clipboard.js";
 import { hasPendingQueue } from "./sidebar-status.js";
 
 const MENU_WIDTH = 208;
@@ -108,25 +109,4 @@ export function SessionContextMenu({ session, location, runtime, capabilities, p
       </button>
     </div>
   `;
-}
-
-async function copyText(value) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return;
-    } catch {
-      // Plain HTTP Tailnet origins may not expose Clipboard.writeText.
-    }
-  }
-  const input = document.createElement("textarea");
-  input.value = value;
-  input.setAttribute("readonly", "");
-  input.style.position = "fixed";
-  input.style.opacity = "0";
-  document.body.append(input);
-  input.select();
-  const copied = document.execCommand("copy");
-  input.remove();
-  if (!copied) throw new Error("Could not copy to clipboard.");
 }

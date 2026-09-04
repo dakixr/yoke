@@ -516,10 +516,18 @@ are coalesced, and persisted calls do not request the live-output endpoint. The
 HTTP tool-trace service caches reconstructed persisted traces for the most
 recently inspected session, keyed by session-file revision, so moving between
 historical calls reuses the same parsed trace map until the session advances or
-its HEAD changes. Status, turn/iteration, duration,
-arguments, executed arguments, retained output, result, and surrounding context
-are shown as one readable detail document, with raw JSON and wrapping controls
-available when needed.
+its HEAD changes. Status, turn/iteration, duration, arguments, retained output,
+result, and surrounding context are shown as one readable detail document, with
+raw JSON and wrapping controls available when needed.
+
+Arguments and results render as fields rather than JSON dumps. Scalars collapse
+into a compact chip row, long strings and nested structures get their own
+labelled blocks, tall payloads clamp behind an expander, and each card can be
+copied as JSON. The model-sent and normalized executed arguments are merged into
+a single arguments card: fields the tool filled in are tagged `default`, fields
+it rewrote are tagged `adjusted` with the sent value in the tooltip, and fields
+the model sent that never reached the tool are tagged `dropped`. Result payload
+already shown by the output pane is not repeated in the result card.
 
 The Tree inspector is optimized around moving the current conversation HEAD.
 It defaults to user messages and final assistant messages. Mid-turn assistant
