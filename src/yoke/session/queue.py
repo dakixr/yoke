@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
 
@@ -46,6 +47,39 @@ def load_prompt_queue_snapshot(
     path = prompt_queue_path(session_directory, session_id)
     if not path.exists():
         return PersistedPromptQueue()
+    return _load_prompt_queue_path(path)
+
+
+def load_prompt_queue_snapshots(
+    session_directory: Path,
+    session_ids: Iterable[str],
+) -> dict[str, PersistedPromptQueue]:
+    """Load selected queue sidecars with one directory enumeration."""
+    requested = set(session_ids)
+    if not requested:
+        return {}
+    queue_directory = session_directory / "queues"
+    try:
+        paths = queue_directory.iterdir()
+        matching = {
+            path.stem: path
+            for path in paths
+            if path.suffix == ".json" and path.stem in requested
+        }
+    except OSError:
+        matching = {}
+    return {
+        session_id: (
+            _load_prompt_queue_path(path)
+            if (path := matching.get(session_id)) is not None
+            else PersistedPromptQueue()
+        )
+        for session_id in requested
+    }
+
+
+def _load_prompt_queue_path(path: Path) -> PersistedPromptQueue:
+    """Load one known queue path, returning an empty snapshot on failure."""
     try:
         return PersistedPromptQueue.model_validate_json(path.read_text("utf-8"))
     except (OSError, ValidationError, ValueError):

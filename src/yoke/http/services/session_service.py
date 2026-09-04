@@ -56,6 +56,8 @@ from yoke.session import SessionTreeIndex
 from yoke.session import fork_session_title
 from yoke.session import new_unique_session_id
 from yoke.session.queue import load_prompt_queue_snapshot
+from yoke.session.queue import load_prompt_queue_snapshots
+from yoke.session.queue import PersistedPromptQueue
 
 
 SessionOrder = Literal[
@@ -124,11 +126,21 @@ class SessionService:
         fingerprint = query_fingerprint((directory, search, pinned, archived, order))
         start = self._cursor_start(records, cursor, fingerprint)
         page = records[start : start + limit]
+        queue_snapshots = load_prompt_queue_snapshots(
+            self.store.directory,
+            (record.id for record in page),
+        )
         next_cursor = None
         if start + limit < len(records) and page:
             next_cursor = encode_cursor(query=fingerprint, anchor_id=page[-1].id)
         return SessionListResponse(
-            data=[self.session_info_from_index(record) for record in page],
+            data=[
+                self.session_info_from_index(
+                    record,
+                    queue=self._queue_summary_from_snapshot(queue_snapshots[record.id]),
+                )
+                for record in page
+            ],
             cursor=CursorInfo(previous=None, next=next_cursor),
             total=len(records),
         )
@@ -946,7 +958,12 @@ class SessionService:
             queue=self._queue_summary(record.id),
         )
 
-    def session_info_from_index(self, entry: SessionIndexEntry) -> SessionInfo:
+    def session_info_from_index(
+        self,
+        entry: SessionIndexEntry,
+        *,
+        queue: SessionQueueSummary | None = None,
+    ) -> SessionInfo:
         """Build a list-card projection without loading conversation history."""
         return SessionInfo(
             id=entry.id,
@@ -971,11 +988,18 @@ class SessionService:
                 leaf_id=entry.leaf_id,
                 entry_count=entry.entry_count or 0,
             ),
-            queue=self._queue_summary(entry.id),
+            queue=queue if queue is not None else self._queue_summary(entry.id),
         )
 
     def _queue_summary(self, session_id: str) -> SessionQueueSummary:
-        queue = load_prompt_queue_snapshot(self.store.directory, session_id)
+        return self._queue_summary_from_snapshot(
+            load_prompt_queue_snapshot(self.store.directory, session_id)
+        )
+
+    @staticmethod
+    def _queue_summary_from_snapshot(
+        queue: PersistedPromptQueue,
+    ) -> SessionQueueSummary:
         steering = sum(
             item.kind == "steering" and not item.paused for item in queue.prompts
         )

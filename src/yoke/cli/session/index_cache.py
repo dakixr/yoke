@@ -68,14 +68,21 @@ class SessionIndexCache:
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with _exclusive_file_lock(self._lock_path()):
+                signature = self._file_signature()
                 retry_dirty_snapshot = bool(
                     self._dirty
                     and self._snapshot is not None
-                    and self._file_signature() == self._signature
+                    and signature == self._signature
+                )
+                reuse_clean_snapshot = bool(
+                    not self._dirty
+                    and self._snapshot is not None
+                    and signature == self._signature
                 )
                 current = (
                     self._snapshot
-                    if retry_dirty_snapshot and self._snapshot is not None
+                    if (retry_dirty_snapshot or reuse_clean_snapshot)
+                    and self._snapshot is not None
                     else self._read_disk()
                 )
                 self._publish(current, dirty=retry_dirty_snapshot)

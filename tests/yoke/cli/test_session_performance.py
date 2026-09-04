@@ -344,6 +344,25 @@ def test_index_metadata_updates_publish_copy_on_write_snapshot(tmp_path: Path) -
     assert store._load_index().sessions[record.id].title == "after"
 
 
+def test_session_maintenance_uses_enumerated_file_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SessionStore(tmp_path / "sessions")
+    for index in range(8):
+        store.save(f"session-{index}", [], root=tmp_path)
+    original_stat = Path.stat
+
+    def reject_session_path_stat(path: Path, *args: Any, **kwargs: Any):
+        if path.parent == store.directory and path.suffix == ".jsonl":
+            pytest.fail("maintenance restatted an enumerated session path")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", reject_session_path_stat)
+
+    store.maintain_index(force=True)
+
+
 def test_clean_prompt_exit_does_not_capture_or_save_conversation(
     large_tree: tuple[list[ConversationEntry], str],
     tmp_path: Path,

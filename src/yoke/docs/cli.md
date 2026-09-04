@@ -374,7 +374,10 @@ processes, use a unique temporary file, and retry transient Windows replacement
 denials with bounded backoff. If the cache still cannot be replaced after the
 session JSONL has been committed, the save succeeds, keeps a process-local
 index snapshot, and schedules index repair instead of failing the accepted
-turn.
+turn. Same-process writes reuse an unchanged parsed index snapshot. Background
+repair enumerates session files once and uses metadata captured by that
+enumeration, avoiding repeated path probes that become expensive on Windows
+when hundreds of sessions are present.
 Metadata-only changes, including `/model`, append only changed metadata fields
 and update the loaded record in memory. They do not rebuild or reload the
 conversation. Interactive shutdown also trusts the latest accepted turn
@@ -388,6 +391,8 @@ Session titles are generated asynchronously from the first prompt. Use
 local first-prompt fallback.
 OpenAI-compatible providers create their HTTP transport on the first model
 request instead of importing and initializing it during CLI startup.
+Rich Markdown parsing is also loaded only when Yoke renders assistant or
+scrollback content, rather than while opening an empty interactive prompt.
 
 The `SessionTree` module is the authoritative seam for session topology. It owns
 parent assignment, active selection, legacy repair, branch reconciliation,

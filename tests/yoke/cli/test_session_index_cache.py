@@ -129,6 +129,42 @@ def test_index_update_reads_disk_after_another_cache_writes(tmp_path: Path) -> N
     }
 
 
+def test_index_update_reuses_unchanged_cached_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = SessionIndexCache(tmp_path / "index.json")
+    cache.write(SessionIndex(sessions={"base": SessionIndexEntry(id="base")}))
+
+    def fail_read() -> SessionIndex:
+        raise AssertionError("unchanged cached index should not be parsed again")
+
+    monkeypatch.setattr(cache, "_read_disk", fail_read)
+
+    cache.update(lambda index: _add_index_entry(index, SessionIndexEntry(id="next")))
+
+    assert set(cache.read().sessions) == {"base", "next"}
+
+
+def test_maintenance_preserves_index_when_directory_scan_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import yoke.cli.session.index as index_module
+
+    store = SessionStore(tmp_path / "sessions")
+    store.save("kept", [], root=tmp_path)
+
+    def fail_scan(_directory: Path):
+        raise PermissionError("scan denied")
+
+    monkeypatch.setattr(index_module.os, "scandir", fail_scan)
+
+    store.maintain_index(force=True)
+
+    assert store.index_entry("kept") is not None
+
+
 def test_session_save_survives_and_repairs_an_index_write_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

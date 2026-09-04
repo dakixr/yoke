@@ -3,6 +3,8 @@ from __future__ import annotations
 # ruff: noqa: ANN001,D100,D103,S101
 
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 from yoke.agent.tools import ModelIdentity
@@ -88,3 +90,22 @@ def test_agent_startup_reuses_initial_tool_resolution(
     built.agent.refresh_tools()
 
     assert len(resolutions) == 2
+
+
+def test_render_import_does_not_load_markdown_parser() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import yoke.cli.render; "
+                "assert 'rich.markdown' not in sys.modules; "
+                "assert 'markdown_it' not in sys.modules"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr

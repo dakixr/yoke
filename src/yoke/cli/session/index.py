@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -13,6 +15,15 @@ from yoke.cli.session.models import SessionRecord
 SESSION_INDEX_SUMMARY_VERSION = 3
 
 
+@dataclass(frozen=True, slots=True)
+class SessionFileSnapshot:
+    """One session path plus metadata captured during directory enumeration."""
+
+    path: Path
+    size: int
+    mtime_ns: int
+
+
 def repair_index_from_session_files(
     *,
     directory: Path,
@@ -22,22 +33,22 @@ def repair_index_from_session_files(
     load_summary: Callable[[str], tuple[SessionRecord, int]],
 ) -> bool:
     """Repair missing, stale, or invalid session index entries."""
-    if not directory.exists():
+    paths = _session_file_snapshots(
+        directory,
+        session_file_suffix=session_file_suffix,
+        session_id_pattern=session_id_pattern,
+    )
+    if paths is None:
         return False
-    paths = {
-        path.stem: path
-        for path in directory.glob(f"*{session_file_suffix}")
-        if session_id_pattern.fullmatch(path.stem)
-    }
     changed = False
     for session_id in list(index.sessions):
         if session_id not in paths:
             index.sessions.pop(session_id, None)
             changed = True
 
-    for session_id, path in sorted(paths.items()):
+    for session_id, snapshot in sorted(paths.items()):
         existing = index.sessions.get(session_id)
-        if existing is not None and _index_entry_matches_file(existing, path):
+        if existing is not None and _index_entry_matches_file(existing, snapshot):
             continue
         try:
             record, entry_count = load_summary(session_id)
@@ -49,7 +60,7 @@ def repair_index_from_session_files(
         _upsert_index_record(
             index,
             record.model_copy(update={"id": session_id}),
-            path=path,
+            snapshot=snapshot,
             entry_count=entry_count,
         )
         changed = True
@@ -61,15 +72,19 @@ def session_index_entry(
     *,
     path: Path,
     entry_count: int | None = None,
+    file_signature: tuple[int, int] | None = None,
 ) -> SessionIndexEntry:
     """Build one complete lightweight session summary."""
-    try:
-        stat = path.stat()
-        file_size = stat.st_size
-        file_mtime_ns = stat.st_mtime_ns
-    except OSError:
-        file_size = None
-        file_mtime_ns = None
+    if file_signature is None:
+        try:
+            stat = path.stat()
+            file_size = stat.st_size
+            file_mtime_ns = stat.st_mtime_ns
+        except OSError:
+            file_size = None
+            file_mtime_ns = None
+    else:
+        file_size, file_mtime_ns = file_signature
     return SessionIndexEntry(
         id=record.id,
         root=record.root,
@@ -100,21 +115,52 @@ def _upsert_index_record(
     index: SessionIndex,
     record: SessionRecord,
     *,
-    path: Path,
+    snapshot: SessionFileSnapshot,
     entry_count: int | None = None,
 ) -> None:
     index.sessions[record.id] = session_index_entry(
         record,
-        path=path,
+        path=snapshot.path,
         entry_count=entry_count,
+        file_signature=(snapshot.size, snapshot.mtime_ns),
     )
 
 
-def _index_entry_matches_file(entry: SessionIndexEntry, path: Path) -> bool:
+def _index_entry_matches_file(
+    entry: SessionIndexEntry,
+    snapshot: SessionFileSnapshot,
+) -> bool:
     if entry.summary_version != SESSION_INDEX_SUMMARY_VERSION:
         return False
+    return entry.file_size == snapshot.size and entry.file_mtime_ns == snapshot.mtime_ns
+
+
+def _session_file_snapshots(
+    directory: Path,
+    *,
+    session_file_suffix: str,
+    session_id_pattern: re.Pattern[str],
+) -> dict[str, SessionFileSnapshot] | None:
+    normalized_suffix = os.path.normcase(session_file_suffix)
+    snapshots: dict[str, SessionFileSnapshot] = {}
     try:
-        stat = path.stat()
+        with os.scandir(directory) as entries:
+            for item in entries:
+                normalized_name = os.path.normcase(item.name)
+                if not normalized_name.endswith(normalized_suffix):
+                    continue
+                session_id = item.name[: -len(session_file_suffix)]
+                if not session_id_pattern.fullmatch(session_id):
+                    continue
+                try:
+                    stat = item.stat()
+                except OSError:
+                    continue
+                snapshots[session_id] = SessionFileSnapshot(
+                    path=Path(item.path),
+                    size=stat.st_size,
+                    mtime_ns=stat.st_mtime_ns,
+                )
     except OSError:
-        return False
-    return entry.file_size == stat.st_size and entry.file_mtime_ns == stat.st_mtime_ns
+        return None
+    return snapshots

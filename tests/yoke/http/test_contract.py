@@ -173,7 +173,6 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
             json={"id": session_id, "location": {"directory": str(root)}},
         )
         assert response.status_code == 200
-
     state = getattr(client.app, "state")
     store = state.session_service.store
     write_prompt_queue_snapshot(
@@ -231,6 +230,66 @@ def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
         "queued": 0,
         "paused": 1,
         "revision": 7,
+    }
+
+
+def test_session_list_batches_queue_sidecar_loading(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import yoke.http.services.session_service as session_service_module
+
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    for session_id in ("session-a", "session-b", "session-c"):
+        response = client.post(
+            "/api/v1/session",
+            headers=_auth(),
+            json={"id": session_id, "location": {"directory": str(root)}},
+        )
+        assert response.status_code == 200
+    store = getattr(client.app, "state").session_service.store
+    write_prompt_queue_snapshot(
+        store.directory,
+        "session-b",
+        PersistedPromptQueue(
+            revision=4,
+            prompts=[
+                PersistedPendingInput(
+                    id="pending",
+                    prompt="later",
+                    created_at="2026-09-04T00:00:00+00:00",
+                )
+            ],
+        ),
+    )
+
+    def fail_single_load(*_args, **_kwargs):
+        raise AssertionError("session list must batch queue-sidecar discovery")
+
+    monkeypatch.setattr(
+        session_service_module,
+        "load_prompt_queue_snapshot",
+        fail_single_load,
+    )
+
+    listed = client.get(
+        "/api/v1/session",
+        headers=_auth(),
+        params={"directory": str(root)},
+    )
+
+    assert listed.status_code == 200
+    data = listed.json()["data"]
+    assert len(data) == 3
+    session_b = next(item for item in data if item["id"] == "session-b")
+    assert session_b["queue"] == {
+        "total": 1,
+        "steering": 0,
+        "queued": 1,
+        "paused": 0,
+        "revision": 4,
     }
 
 

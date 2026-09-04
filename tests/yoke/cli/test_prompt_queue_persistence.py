@@ -14,8 +14,45 @@ from yoke.cli.interactive.queue.persistence import clear_prompt_queue
 from yoke.cli.interactive.queue.persistence import load_prompt_queue
 from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.session.queue import load_prompt_queue_snapshot
+from yoke.session.queue import load_prompt_queue_snapshots
+from yoke.session.queue import PersistedPromptQueue
+from yoke.session.queue import write_prompt_queue_snapshot
 
 from .support import active_session_for
+
+
+def test_batch_queue_load_enumerates_the_queue_directory_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_directory = tmp_path / "sessions"
+    write_prompt_queue_snapshot(
+        session_directory,
+        "queued",
+        PersistedPromptQueue(revision=7),
+    )
+    queue_directory = session_directory / "queues"
+    (queue_directory / "corrupt.json").write_text("{", encoding="utf-8")
+    calls = 0
+    original_iterdir = Path.iterdir
+
+    def count_iterdir(path: Path):
+        nonlocal calls
+        if path == queue_directory:
+            calls += 1
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", count_iterdir)
+
+    snapshots = load_prompt_queue_snapshots(
+        session_directory,
+        ["missing", "queued", "corrupt"],
+    )
+
+    assert calls == 1
+    assert snapshots["missing"].revision == 0
+    assert snapshots["queued"].revision == 7
+    assert snapshots["corrupt"].revision == 0
 
 
 def test_consumed_prompt_is_removed_from_persisted_queue(tmp_path) -> None:

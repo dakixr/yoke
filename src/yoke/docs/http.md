@@ -140,9 +140,12 @@ refreshes, keeping the settled-session shelf available immediately. The
 daemon binds and can open the browser before filesystem repair and retention
 maintenance. Existing stores get a short startup grace period, then repair runs
 in a background task, so `yoke serve --open` and list requests never pay for
-those scans. Parsed index snapshots are reused until `index.json` changes. An
-index written by an older Yoke version is enriched by background maintenance;
-steady-state list latency is independent of conversation-history size.
+those scans. Repair enumerates the session directory once and reuses metadata
+from those directory entries instead of issuing repeated path existence and
+stat calls for every session. Parsed index snapshots are reused until
+`index.json` changes, including same-process index updates. An index written by
+an older Yoke version is enriched by background maintenance; steady-state list
+latency is independent of conversation-history size.
 The browser requests `lastUserDesc` ordering for its session sidebar, so agent
 completion, tool activity, title edits, and model changes do not move a session
 ahead of one the user interacted with more recently. Sessions without a user
@@ -153,7 +156,9 @@ so keyboard navigation matches the rows shown in the sidebar.
 Sidebar status uses current work before historical completion state. `Done`
 means an unreviewed successfully completed turn, and a later running, stopping,
 attention, error, or pending-queue state replaces it immediately. Queue counts
-separate runnable steer/queued prompts from paused prompts. Session-list and
+separate runnable steer/queued prompts from paused prompts. Session-list pages
+load their queue summaries with one enumeration of the queue-sidecar directory,
+rather than one filesystem probe per visible session. Session-list and
 single-session refreshes keep a newer locally known queue revision instead of
 letting an older summary overwrite the sidebar card. Settling is rejected while
 the runtime is busy or any queued prompt remains, including paused prompts.
