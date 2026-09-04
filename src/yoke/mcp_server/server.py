@@ -43,6 +43,7 @@ class MCPService:
     runtime: ProcessRuntime
     app: ASGIApp
     downstream_manager: McpManager
+    adapter: ToolAdapter
     oauth_provider: SingleUserOAuthProvider | None = None
 
 
@@ -61,6 +62,7 @@ def create_service(config: MCPServerConfig) -> MCPService:
         try:
             yield runtime
         finally:
+            await adapter.execution.close()
             await run_sync(downstream_manager.close)
             await runtime.close()
 
@@ -152,6 +154,7 @@ def create_service(config: MCPServerConfig) -> MCPService:
     )
     return MCPService(
         config=config,
+        adapter=adapter,
         server=server,
         runtime=runtime,
         app=app,

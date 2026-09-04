@@ -98,3 +98,5 @@ agent.close()
 Use `await agent.prompt_async(...)` in asyncio applications. Use `run_many()`
 for independent parallel tasks and attach a `ConsoleObserver("actions")` when
 live progress matters.
+
+- [Composed MCP work](mcp-composition.md): batches, Python composition, process observation, recipes, and file transfer.

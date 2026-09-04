@@ -1,5 +1,10 @@
 # ChatGPT MCP binary file transfer
 
+Implemented in the MCP composition release. The shipped interface uses opaque
+transfer IDs, create-only defaults, and explicit overwrite hashes rather than
+the tentative truncate flag below. Native file-parameter imports are also
+available. See `src/yoke/docs/mcp-composition.md` for the current contract.
+
 ## User problem
 
 From a ChatGPT conversation, a generated image can exist as a real file in the

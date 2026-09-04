@@ -15,8 +15,16 @@ The service exposes:
 
 - `GET /healthz`
 - MCP Streamable HTTP at `POST /mcp`
-- eleven tools: `read_file`, `view_image`, `rg`, `fd`, `skill`, `apply_patch`,
+- the original eleven tools: `read_file`, `view_image`, `rg`, `fd`, `skill`, `apply_patch`,
   `exec_command`, `exec_python`, `process_io`, `mcp_inspect`, and `mcp_call`
+
+The server also exposes `batch_read`, `result_read`, `process_read`,
+`process_cancel`, `search_then_read`, `workspace_snapshot`, `check_patch`,
+`import_files`, `write_binary_file`, and `export_file`, for 21 default tools.
+`exec_python` includes a parent-owned tool-composition bridge. Explicitly
+configured downstream wrappers may add reviewed names. See
+[Composed MCP work](mcp-composition.md) for schemas, limits, recipes, file
+transfer, and the single-user ownership contract.
 
 `view_image` accepts a local PNG, JPEG, GIF, or WebP path and returns native MCP
 image content while preserving the source bytes. Relative and absolute paths
@@ -105,14 +113,12 @@ tool because one generic call can reach downstream read or write actions. Use
 `enabled_tools` allowlists for services where the remote client should only
 reach a subset of actions.
 
-The gateway preserves downstream text, resource text, and bounded structured
-JSON without repeating structured JSON inside the text result. Truncated text is
-saved as pageable plain text and exposed through the top-level
-`full_output_path`. Truncated structured content keeps a bounded JSON prefix and
-points to the complete downstream result as JSON. When both truncate, both
-recovery files are retained. Downstream image and audio content currently
-becomes a text placeholder rather than being passed through as native multimedia
-content.
+The ChatGPT-facing gateway preserves text and structured data, returns complete
+selected schemas, and supports schema-pinned dispatch, pagination, and bounded
+result handles. Validated downstream images are returned as native MCP image
+blocks. Agent-side MCP projection remains unchanged. See
+[discovery and results](mcp-composition.md#discovery-results-and-media) for the
+server-specific output contract and retention limits.
 
 Set `YOKE_MCP_BEARER_TOKEN` to protect `/mcp` with a static bearer token during
 private deployment tests. The health endpoint remains public. Static bearer

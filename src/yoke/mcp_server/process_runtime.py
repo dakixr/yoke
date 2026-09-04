@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from anyio.to_thread import run_sync
 
 from yoke.agent.tools.base import LocalTool
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.mcp_server.execution.process_manager import MCPProcessManager
 
 
 class ProcessRuntime:
@@ -21,7 +21,7 @@ class ProcessRuntime:
         max_concurrent_calls: int,
         max_concurrent_process_starts: int,
     ) -> None:
-        self.manager = CommandProcessManager(base_environment=command_environment)
+        self.manager = MCPProcessManager(base_environment=command_environment)
         self._total = asyncio.Semaphore(max_concurrent_calls)
         self._process_starts = asyncio.Semaphore(max_concurrent_process_starts)
         self._patch_lock = asyncio.Lock()

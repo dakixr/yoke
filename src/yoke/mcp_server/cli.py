@@ -106,6 +106,11 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         ),
         oauth_allowed_redirect_hosts=env_hosts("YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS")
         or ("chatgpt.com",),
+        legacy_result_text=os.environ.get("YOKE_MCP_LEGACY_RESULT_TEXT", "").lower()
+        in {"1", "true", "yes"},
+        wrappers_file=Path(os.environ["YOKE_MCP_WRAPPERS_FILE"])
+        if os.environ.get("YOKE_MCP_WRAPPERS_FILE")
+        else None,
         log_level=args.log_level,
     )
 

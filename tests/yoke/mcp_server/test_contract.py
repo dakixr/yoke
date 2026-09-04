@@ -25,10 +25,20 @@ EXPECTED_TOOLS = [
     "process_io",
     "mcp_inspect",
     "mcp_call",
+    "batch_read",
+    "result_read",
+    "process_read",
+    "process_cancel",
+    "search_then_read",
+    "workspace_snapshot",
+    "check_patch",
+    "import_files",
+    "write_binary_file",
+    "export_file",
 ]
 
 
-def test_registry_is_an_explicit_eleven_tool_allowlist(tmp_path: Path) -> None:
+def test_registry_is_an_explicit_tool_allowlist(tmp_path: Path) -> None:
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
         async with memory_client(service) as client:

@@ -21,13 +21,8 @@ from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import server_supports_tool
 from yoke.mcp.inspection import matches_server
 from yoke.mcp.inspection import matches_tool
+from yoke.mcp.results import project_tool_result
 from yoke.mcp.inspection import tool_summary
-from yoke.mcp.results import add_full_output_path_to_text_result
-from yoke.mcp.results import bounded_structured_content
-from yoke.mcp.results import mcp_result_text
-from yoke.mcp.results import persist_full_mcp_result
-from yoke.mcp.results import persist_full_mcp_text
-from yoke.mcp.results import truncate_result_text
 
 
 class McpManager:
@@ -292,40 +287,11 @@ class McpManager:
         finally:
             if server_lock is not None:
                 server_lock.release()
-        text = mcp_result_text(result)
-        truncated, text_was_truncated = truncate_result_text(text)
-        raw_structured = result.get("structuredContent")
-        structured, structured_was_truncated = bounded_structured_content(
-            raw_structured
-        )
-        full_output_path: str | None = None
-        if text_was_truncated:
-            full_output_path = persist_full_mcp_text(text, server=server, tool=tool)
-            add_full_output_path_to_text_result(truncated, full_output_path)
-        if structured_was_truncated:
-            structured_path = persist_full_mcp_result(result, server=server, tool=tool)
-            if isinstance(structured, dict):
-                cast(dict[str, object], structured)["full_output_path"] = (
-                    structured_path
-                )
-            if full_output_path is None:
-                full_output_path = structured_path
-        return {
-            "ok": not bool(result.get("isError")),
-            "server": server,
-            "tool": tool,
-            "content": truncated["text"],
-            "isError": bool(result.get("isError")),
-            "structuredContent": structured,
-            "truncation": truncated["truncation"],
-            **(
-                {"full_output_path": full_output_path}
-                if full_output_path is not None
-                else {}
-            ),
-        }
+        return project_tool_result(result, server=server, tool=tool)
 
-    def list_configured_tools(self, server: McpServerConfig) -> tuple[McpToolInfo, ...]:
+    def list_configured_tools(
+        self, server: McpServerConfig, *, force: bool = False
+    ) -> tuple[McpToolInfo, ...]:
         """Return all tools advertised by a configured server."""
         config, server_lock, reload_error = self._acquire_server(server.name)
         if reload_error is not None:
@@ -339,33 +305,37 @@ class McpManager:
         if server_lock is None:  # pragma: no cover - config and lock are paired
             raise McpClientError(f"MCP server lock unavailable: {server.name}")
         try:
-            return tuple(self._client(config).list_tools())
+            return tuple(self._client(config).list_tools(force=force))
         finally:
             server_lock.release()
 
     def _acquire_server(
         self, name: str
     ) -> tuple[McpServerConfig | None, threading.Lock | None, str | None]:
-        with self._config_lock:
-            reload_error = self._refresh_config_locked()
-            if reload_error is not None:
-                return None, None, reload_error
-            config = self._server_unlocked(name)
-            if config is None:
-                return None, None, None
-            lock = self._server_lock(name)
-            lock.acquire()
-            return config, lock, None
+        while True:
+            with self._config_lock:
+                reload_error = self._refresh_config_locked()
+                if reload_error is not None:
+                    return None, None, reload_error
+                config = self._server_unlocked(name)
+                if config is None:
+                    return None, None, None
+                lock = self._server_lock(name)
+                if lock.acquire(blocking=False):
+                    return config, lock, None
+            # Wait without holding the config lock, then revalidate configuration.
+            with lock:
+                pass
 
     def _acquire_configured_server(
         self, config: McpServerConfig
     ) -> threading.Lock | None:
-        with self._config_lock:
-            if self._server_unlocked(config.name) != config:
-                return None
-            lock = self._server_lock(config.name)
-            lock.acquire()
-            return lock
+        current, lock, error = self._acquire_server(config.name)
+        if error is not None or current != config:
+            if lock is not None:
+                lock.release()
+            return None
+        return lock
 
     def _client(self, server: McpServerConfig) -> McpClient:
         with self._clients_lock:

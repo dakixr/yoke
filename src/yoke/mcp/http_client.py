@@ -97,6 +97,12 @@ class StreamableHttpClient:
                         name=name,
                         description=description if isinstance(description, str) else "",
                         input_schema=schema if isinstance(schema, dict) else {},
+                        output_schema=item.get("outputSchema")
+                        if isinstance(item.get("outputSchema"), dict)
+                        else None,
+                        annotations=item.get("annotations")
+                        if isinstance(item.get("annotations"), dict)
+                        else None,
                     )
                 )
             next_cursor = result.get("nextCursor")

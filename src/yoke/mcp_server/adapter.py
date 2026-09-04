@@ -15,6 +15,8 @@ from mcp.types import TextContent
 from mcp.types import Tool
 from pydantic import ValidationError
 
+from yoke.mcp_server.execution.service import ExecutionService
+from yoke.mcp_server.results.encoding import encode
 from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.process_runtime import ProcessRuntime
 from yoke.mcp.manager import McpManager
@@ -37,16 +39,48 @@ class ToolAdapter:
         self.runtime = runtime
         self.downstream_manager = downstream_manager
         self._registry = effective_tool_registry()
+        self.execution = ExecutionService(config, runtime, downstream_manager)
 
     def list_tools(self) -> list[Tool]:
         """Return exact Pydantic schemas with stable external tool names."""
-        return [self._mcp_tool(spec) for spec in self._registry.values()]
+        tools = {spec.name: self._mcp_tool(spec) for spec in self._registry.values()}
+        tools.update(self.execution.tools())
+        return list(tools.values())
 
     async def call_tool(
         self, name: str, arguments: dict[str, object] | None
     ) -> CallToolResult:
         """Validate, bind, execute, and encode one tool call."""
         started = time.monotonic()
+        if self.execution.accepts(name):
+            try:
+                result = await self.execution.dispatch(name, arguments or {})
+                raw_budget = (arguments or {}).get("max_output_tokens")
+                budget = (
+                    min(64000, raw_budget * 4) if isinstance(raw_budget, int) else 32000
+                )
+                if name == "result_read":
+                    budget = 150000
+                elif name == "process_read":
+                    budget = 400000
+                elif name == "export_file":
+                    budget = 3 * 1024 * 1024
+                encoded = encode(
+                    result,
+                    self.execution.store,
+                    budget=budget,
+                    legacy_text=self.config.legacy_result_text,
+                )
+            except ValidationError as exc:
+                return self._error(_validation_message(exc))
+            except Exception as exc:
+                return self._error(str(exc))
+            self._log_call(
+                name,
+                round((time.monotonic() - started) * 1000),
+                bool(result.get("ok", True)),
+            )
+            return encoded
         spec = self._registry.get(name)
         if spec is None:
             return self._error(f"Unknown tool: {name}")
@@ -81,11 +115,24 @@ class ToolAdapter:
         return encoded
 
     def _mcp_tool(self, spec: ExposedTool) -> Tool:
+        schema = spec.tool_class.model_json_schema(by_alias=True)
+        if spec.name == "exec_command":
+            schema["properties"]["login"]["default"] = False
+            schema["properties"]["yield_time_ms"]["default"] = (
+                self.config.default_yield_ms
+            )
+            schema["properties"]["max_output_tokens"]["default"] = (
+                self.config.max_output_tokens
+            )
+        if spec.name == "process_io":
+            schema["properties"]["max_output_tokens"]["default"] = (
+                self.config.max_output_tokens
+            )
         return Tool(
             name=spec.name,
             title=spec.title,
             description=spec.description,
-            input_schema=spec.tool_class.model_json_schema(by_alias=True),
+            input_schema=schema,
             annotations=spec.annotations,
         )
 

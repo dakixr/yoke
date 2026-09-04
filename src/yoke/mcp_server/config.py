@@ -28,6 +28,8 @@ class MCPServerConfig:
     oauth_authorization_password: str | None = None
     oauth_state_file: Path | None = None
     oauth_allowed_redirect_hosts: tuple[str, ...] = ("chatgpt.com",)
+    legacy_result_text: bool = False
+    wrappers_file: Path | None = None
     log_level: str = "info"
 
     def __post_init__(self) -> None:
