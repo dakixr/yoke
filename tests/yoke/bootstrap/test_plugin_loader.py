@@ -13,21 +13,30 @@ from yoke.cli.bootstrap.plugin_loader import _iter_tool_module_paths
 from yoke.cli.bootstrap.types import LoadedToolGroup
 
 
-def test_tool_discovery_prunes_reserved_state_directories(
+def test_tool_discovery_only_walks_explicit_plugin_locations(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     directory = tmp_path / ".yoke"
     expected = [
+        directory / "another_tool.py",
         directory / "root_tool.py",
-        directory / "tools" / "nested_tool.py",
+        directory / "tools" / "nested" / "nested_tool.py",
     ]
     for path in expected:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("VALUE = 1\n", encoding="utf-8")
-    reserved = ["providers", "sessions", "skills", "usage-metric-logs"]
+    ignored = [
+        "cache",
+        ".agents_local",
+        "providers",
+        "sessions",
+        "skills",
+        "usage-metric-logs",
+        "anything-else",
+    ]
     blocked_paths = []
-    for name in reserved:
+    for name in ignored:
         blocked = directory / name
         blocked_paths.append(blocked)
         nested = blocked / "nested"
@@ -45,6 +54,23 @@ def test_tool_discovery_prunes_reserved_state_directories(
         return original_scandir(path)
 
     monkeypatch.setattr(os, "scandir", guarded_scandir)
+
+    assert list(_iter_tool_module_paths(directory)) == sorted(expected)
+
+
+def test_tool_discovery_ignores_private_and_package_modules(tmp_path: Path) -> None:
+    directory = tmp_path / ".yoke"
+    tools = directory / "tools"
+    tools.mkdir(parents=True)
+    expected = [directory / "direct.py", tools / "visible.py"]
+    for path in [
+        *expected,
+        directory / "_private.py",
+        directory / "__init__.py",
+        tools / "_private.py",
+        tools / "__init__.py",
+    ]:
+        path.write_text("VALUE = 1\n", encoding="utf-8")
 
     assert list(_iter_tool_module_paths(directory)) == expected
 

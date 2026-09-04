@@ -4,12 +4,127 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from threading import Lock
 from typing import Any
+from typing import Protocol
+from typing import TYPE_CHECKING
+from typing import cast
 
 from pydantic import Field
 
 from yoke.agent.tools.base import LocalTool
-from yoke.mcp.manager import McpManager
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from yoke.mcp.config import McpSessionPolicy
+
+
+class McpToolManager(Protocol):
+    """Minimal manager contract used by the model-facing MCP tools."""
+
+    def has_servers(self) -> bool: ...
+
+    def inspect(
+        self,
+        *,
+        server: str | None = None,
+        query: str | None = None,
+        include_schemas: bool = False,
+    ) -> dict[str, object]: ...
+
+    def call_tool(
+        self,
+        *,
+        server: str,
+        tool: str,
+        arguments: dict[str, Any],
+        cancel_requested: Callable[[], bool],
+    ) -> dict[str, object]: ...
+
+    def close(self) -> None: ...
+
+
+class LazyMcpManager:
+    """Delay MCP client and HTTP transport imports until an MCP tool executes."""
+
+    def __init__(
+        self,
+        *,
+        root: Path,
+        home: Path,
+        session_policy: McpSessionPolicy | None = None,
+    ) -> None:
+        self.root = root.resolve()
+        self.home = home.resolve()
+        self.session_policy = session_policy
+        self._manager_lock = Lock()
+        self._inner: McpToolManager | None = None
+
+    def has_servers(self) -> bool:
+        """Check enabled-server presence using only the lightweight config module."""
+        from yoke.mcp.config import load_mcp_config
+
+        config = load_mcp_config(
+            root=self.root,
+            home=self.home,
+            session_policy=self.session_policy,
+        )
+        return bool(config.enabled_servers)
+
+    def inspect(
+        self,
+        *,
+        server: str | None = None,
+        query: str | None = None,
+        include_schemas: bool = False,
+    ) -> dict[str, object]:
+        return self._manager().inspect(
+            server=server,
+            query=query,
+            include_schemas=include_schemas,
+        )
+
+    def call_tool(
+        self,
+        *,
+        server: str,
+        tool: str,
+        arguments: dict[str, Any],
+        cancel_requested: Callable[[], bool],
+    ) -> dict[str, object]:
+        return self._manager().call_tool(
+            server=server,
+            tool=tool,
+            arguments=arguments,
+            cancel_requested=cancel_requested,
+        )
+
+    def close(self) -> None:
+        """Close the real manager only when one was created."""
+        with self._manager_lock:
+            manager = self._inner
+            self._inner = None
+        if manager is not None:
+            manager.close()
+
+    def _manager(self) -> McpToolManager:
+        manager = self._inner
+        if manager is not None:
+            return manager
+        with self._manager_lock:
+            manager = self._inner
+            if manager is None:
+                from yoke.mcp.manager import McpManager
+
+                manager = McpManager.from_paths(
+                    root=self.root,
+                    home=self.home,
+                    session_policy=self.session_policy,
+                )
+                self._inner = manager
+            return manager
 
 
 class McpInspectTool(LocalTool):
@@ -43,11 +158,11 @@ class McpInspectTool(LocalTool):
             include_schemas=self.include_schemas,
         )
 
-    def _manager(self) -> McpManager:
+    def _manager(self) -> McpToolManager:
         manager = self._context.get("mcp_manager")
-        if not isinstance(manager, McpManager):
+        if manager is None:
             raise RuntimeError("MCP manager is not configured")
-        return manager
+        return cast(McpToolManager, manager)
 
     def owned_resources(self) -> tuple[object, ...]:
         """Return the shared MCP manager owned by this tool registration."""
@@ -80,18 +195,18 @@ class McpCallTool(LocalTool):
             cancel_requested=self._is_cancel_requested,
         )
 
-    def _manager(self) -> McpManager:
+    def _manager(self) -> McpToolManager:
         manager = self._context.get("mcp_manager")
-        if not isinstance(manager, McpManager):
+        if manager is None:
             raise RuntimeError("MCP manager is not configured")
-        return manager
+        return cast(McpToolManager, manager)
 
     def owned_resources(self) -> tuple[object, ...]:
         """Return the shared MCP manager owned by this tool registration."""
         return (self._manager(),)
 
 
-def register_mcp_tools(manager: McpManager) -> tuple[LocalTool, ...]:
+def register_mcp_tools(manager: McpToolManager) -> tuple[LocalTool, ...]:
     """Return the compact MCP tools when at least one server is configured."""
     if not manager.has_servers():
         return ()

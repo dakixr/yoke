@@ -387,12 +387,17 @@ checkpoint. It saves only changed provider metadata and queue content instead
 of capturing and reconciling the complete conversation again. Context-usage
 estimates run outside the prompt-critical path and coalesce pending requests so
 only one scan runs at a time. Large sessions do not delay input after a command.
-Session titles are generated asynchronously from the first prompt. Use
-`/regenerate-title` to generate a new title from the current conversation; use
-`/title <new-title>` to set one manually. If generation fails, Yoke retains a
-local first-prompt fallback.
+Terminal interactive sessions generate titles asynchronously from the first
+prompt. Headless and basic non-terminal sessions persist the local first-prompt
+fallback immediately and do not make a title-model request before useful work.
+Use `/regenerate-title` to generate a new title from the current conversation;
+use `/title <new-title>` to set one manually. If asynchronous generation fails,
+Yoke retains the local first-prompt fallback.
 OpenAI-compatible providers create their HTTP transport on the first model
 request instead of importing and initializing it during CLI startup.
+MCP configuration is still read during tool registration so the provider sees
+the same `mcp_inspect` and `mcp_call` tools, but MCP client and HTTP transport
+modules are loaded only when an MCP tool actually executes.
 Rich Markdown parsing is also loaded only when Yoke renders assistant or
 scrollback content, rather than while opening an empty interactive prompt.
 
@@ -578,7 +583,12 @@ without discarding the last valid config.
 
 ## Adding extra tools
 
-Place Python files in `.yoke/` (workspace) or `~/.yoke/` (global) and yoke will load your tools automatically alongside the built-ins. Yoke prunes reserved state and content directories such as `providers/`, `sessions/`, `skills/`, and `usage-metric-logs/` before walking for plugins, so session volume does not affect tool discovery and Python helper files bundled with skills are not imported as tool plugins. When the workspace root is your home directory, the shared `~/.yoke/` plugin directory is loaded once rather than once per scope.
+Place compatibility plugins directly in `.yoke/*.py` or `~/.yoke/*.py`, or put namespaced plugins anywhere under `.yoke/tools/` or `~/.yoke/tools/`. Yoke does not recurse through other `.yoke` directories, so cache files, session state, generated artifacts, provider data, and skill helper modules are never imported as tool plugins. When the workspace root is your home directory, the shared `~/.yoke/` plugin directory is loaded once rather than once per scope.
+
+Older installations recursively imported Python from arbitrary nested `.yoke`
+directories. Move any such intentional plugin under `.yoke/tools/` before
+upgrading. Files under cache, artifact, provider, session, or other content
+directories are no longer executable plugin candidates.
 
 There are three ways to define tools in these files.
 

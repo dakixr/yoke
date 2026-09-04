@@ -33,9 +33,9 @@ from yoke.agent.tools import WriteTool
 from yoke.agent.tools.apply_patch.instructions import (
     APPLY_PATCH_INSTRUCTIONS,
 )
+from yoke.agent.tools.mcp import LazyMcpManager
 from yoke.agent.tools.mcp import register_mcp_tools
 from yoke.agent.tools.image_generation import provider_supports_image_generation
-from yoke.mcp import McpManager
 
 
 @dataclass(slots=True, frozen=True)
@@ -140,7 +140,7 @@ class McpCapability(BaseCapability):
     ) -> Iterable[LocalTool]:
         """Expose only the low-context MCP inspect/call tools."""
         policy = getattr(context.provider, "_yoke_mcp_session_policy", None)
-        manager = McpManager.from_paths(
+        manager = LazyMcpManager(
             root=context.root,
             home=context.home,
             session_policy=policy if policy is not None else None,

@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: ANN001,D100,D103,S101
 
 from pathlib import Path
+import json
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -109,3 +110,94 @@ def test_render_import_does_not_load_markdown_parser() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_mcp_tools_exist_without_importing_transport_stack(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".yoke"
+    config_dir.mkdir()
+    (config_dir / "mcp.json").write_text(
+        json.dumps(
+            {
+                "mcp_servers": {
+                    "sample": {
+                        "command": "unused",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    code = f"""
+import sys
+from pathlib import Path
+from yoke.agent.capabilities.builtins import McpCapability
+from yoke.agent.tools import ModelIdentity, ToolRegistrationContext
+from yoke.cli.bootstrap.config import ToolDiscoveryProvider
+
+root = Path({str(tmp_path)!r})
+provider = ToolDiscoveryProvider()
+context = ToolRegistrationContext(
+    root=root,
+    home=root,
+    provider=provider,
+    model=ModelIdentity(provider_name=provider.provider_name),
+)
+tools = tuple(McpCapability().build_tools(context))
+assert [tool.name for tool in tools] == ["mcp_inspect", "mcp_call"]
+for module in ("yoke.mcp.manager", "yoke.mcp.client", "yoke.mcp.http_client"):
+    assert module not in sys.modules, module
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_lazy_mcp_manager_constructs_real_manager_on_first_use(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from yoke.agent.tools.mcp import LazyMcpManager
+    import yoke.mcp.manager as manager_module
+
+    class FakeManager:
+        closed = False
+
+        def inspect(self, **_kwargs) -> dict[str, object]:
+            return {"ok": True, "servers": []}
+
+        def call_tool(self, **_kwargs) -> dict[str, object]:
+            return {"ok": True, "text": "called"}
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake = FakeManager()
+    created: list[dict[str, object]] = []
+
+    class Factory:
+        @staticmethod
+        def from_paths(**kwargs):
+            created.append(kwargs)
+            return fake
+
+    monkeypatch.setattr(manager_module, "McpManager", Factory)
+    manager = LazyMcpManager(root=tmp_path, home=tmp_path)
+
+    assert created == []
+    assert manager.inspect() == {"ok": True, "servers": []}
+    assert len(created) == 1
+    assert manager.call_tool(
+        server="sample",
+        tool="demo",
+        arguments={},
+        cancel_requested=lambda: False,
+    ) == {"ok": True, "text": "called"}
+    assert len(created) == 1
+
+    manager.close()
+    assert fake.closed is True

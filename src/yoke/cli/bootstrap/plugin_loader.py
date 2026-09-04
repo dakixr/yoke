@@ -24,14 +24,6 @@ from yoke.cli.bootstrap.types import ToolSourceKind
 
 type RegisterToolsFunc = Callable[[ToolRegistrationContext], ToolRegistration]
 
-_IGNORED_PLUGIN_DIR_NAMES = {
-    "__pycache__",
-    "providers",
-    "sessions",
-    "skills",
-    "usage-metric-logs",
-}
-
 
 def load_tools_from_directory(
     directory: Path,
@@ -74,22 +66,40 @@ def _tool_scope_label(source_kind: ToolSourceKind) -> str:
 
 
 def _iter_tool_module_paths(directory: Path) -> Iterable[Path]:
+    """Yield only documented plugin locations under one ``.yoke`` directory."""
     paths: list[Path] = []
-    for current, directory_names, file_names in os.walk(directory):
+
+    try:
+        direct_entries = list(directory.iterdir())
+    except OSError:
+        direct_entries = []
+    for path in direct_entries:
+        if path.is_file() and _is_tool_module_name(path.name):
+            paths.append(path)
+
+    tools_directory = directory / "tools"
+    if not tools_directory.is_dir():
+        yield from sorted(paths)
+        return
+
+    for current, directory_names, file_names in os.walk(tools_directory):
         directory_names[:] = sorted(
-            name for name in directory_names if name not in _IGNORED_PLUGIN_DIR_NAMES
+            name for name in directory_names if name != "__pycache__"
         )
         current_path = Path(current)
         for file_name in file_names:
-            normalized_name = os.path.normcase(file_name)
-            if (
-                not normalized_name.endswith(".py")
-                or normalized_name == "__init__.py"
-                or normalized_name.startswith("_")
-            ):
-                continue
-            paths.append(current_path / file_name)
+            if _is_tool_module_name(file_name):
+                paths.append(current_path / file_name)
     yield from sorted(paths)
+
+
+def _is_tool_module_name(file_name: str) -> bool:
+    normalized_name = os.path.normcase(file_name)
+    return (
+        normalized_name.endswith(".py")
+        and normalized_name != "__init__.py"
+        and not normalized_name.startswith("_")
+    )
 
 
 def _load_tool_module(path: Path, *, source_kind: ToolSourceKind) -> ModuleType:

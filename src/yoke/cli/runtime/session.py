@@ -113,20 +113,47 @@ def ensure_session_title(
     prompt: str,
 ) -> None:
     """Generate and persist a title for an unnamed session."""
-    if active_session.title:
-        return
-    messages = active_session.messages()
+    with active_session.save_lock:
+        if active_session.title:
+            return
+        messages = active_session.messages()
     if not messages or messages[-1].plain_text_content != prompt:
         messages.append(Message.user(prompt))
     with session_usage_metric_context(active_session, prompt):
         generated = generate_session_title(agent, messages)
-    active_session.title = generated or fallback_session_title(prompt)
-    save_active_session(
-        active_session,
-        active_session.messages(),
-        conversation_entries=active_session.active_entries(),
-        leaf_id=active_session.record.leaf_id,
-    )
+    title = generated or fallback_session_title(prompt)
+    with active_session.save_lock:
+        if active_session.title:
+            return
+        _persist_session_title(active_session, title)
+
+
+def ensure_local_session_title(
+    active_session: ActiveSession,
+    prompt: str,
+) -> None:
+    """Persist a local fallback title without making a provider request."""
+    with active_session.save_lock:
+        if active_session.title:
+            return
+        _persist_session_title(active_session, fallback_session_title(prompt))
+
+
+def _persist_session_title(active_session: ActiveSession, title: str) -> None:
+    if active_session.record.created_at is None:
+        return
+    try:
+        record = active_session.store.set_title(
+            active_session.id,
+            title,
+            existing_record=active_session.record,
+        )
+    except ValueError:
+        # A detached or deleted session can outlive the background title
+        # worker. Do not recreate a session just for a title.
+        return
+    active_session.record = record
+    active_session.title = title
 
 
 def sync_agent_skill_state_to_session(

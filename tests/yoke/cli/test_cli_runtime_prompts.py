@@ -5,7 +5,9 @@ from __future__ import annotations
 from threading import Lock
 from threading import Thread
 from types import SimpleNamespace
+from typing import cast
 
+from yoke.agent.models import Message
 from yoke.agent.state import conversation_entries_from_messages
 from yoke.cli.interactive.tree_selector import TreeSelectorResult
 from yoke.cli.interactive.common import format_context_usage_text
@@ -26,6 +28,73 @@ def test_cli_runs_headless_prompt(capsys) -> None:
 
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == "synthetic response"
+
+
+def test_headless_cli_never_generates_title_before_user_turn(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+
+    def fail(*_args, **_kwargs) -> None:
+        pytest.fail("headless startup must not make an LLM title request")
+
+    monkeypatch.setattr("yoke.cli.runtime.session.generate_session_title", fail)
+    agent = FakeAgent()
+
+    exit_code = run_cli(
+        CLIArgs(
+            prompt="Reply with exactly OK.",
+            headless=True,
+            root=str(tmp_path),
+        ),
+        agent=agent,
+        stdout=CaptureStream(),
+        stderr=CaptureStream(),
+    )
+
+    assert exit_code == 0
+    records = SessionStore().list(root=tmp_path)
+    assert records[0].title == "Reply with exactly OK."
+
+
+def test_seeded_interactive_cli_does_not_wait_for_title_generation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+
+    def fail(*_args, **_kwargs) -> None:
+        pytest.fail("interactive startup must leave title generation to the turn loop")
+
+    observed: dict[str, object] = {}
+
+    def fake_interactive(_args, _agent, messages, *, active_session, **_kwargs):
+        observed["messages"] = list(messages)
+        observed["title"] = active_session.title
+        return 0
+
+    monkeypatch.setattr("yoke.cli.runtime.session.generate_session_title", fail)
+    monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", fake_interactive)
+
+    exit_code = run_cli(
+        CLIArgs(prompt="start useful work", root=str(tmp_path)),
+        agent=FakeAgent(),
+        stdout=CaptureStream(),
+        stderr=CaptureStream(),
+    )
+
+    assert exit_code == 0
+    assert observed["title"] is None
+    messages = observed["messages"]
+    assert isinstance(messages, list)
+    assert all(isinstance(message, Message) for message in messages)
+    typed_messages = cast(list[Message], messages)
+    assert [message.plain_text_content for message in typed_messages] == [
+        "start useful work"
+    ]
 
 
 def test_prompt_state_adopts_provider_effort_after_model_command(

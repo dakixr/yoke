@@ -33,7 +33,7 @@ from yoke.cli.render import print_session_scrollback
 from yoke.cli.render import print_user_prompt
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
-from yoke.cli.runtime import ensure_session_title
+from yoke.cli.runtime import ensure_local_session_title
 from yoke.cli.runtime import execute_turn
 from yoke.cli.runtime import persist_session_state
 from yoke.cli.runtime import session_usage_metric_context
@@ -166,7 +166,7 @@ def _start_basic_turn(
 
     def run_turn() -> None:
         try:
-            ensure_session_title(active_session, agent, prompt)
+            ensure_local_session_title(active_session, prompt)
             with session_usage_metric_context(active_session, prompt):
                 result = execute_turn(
                     agent,
