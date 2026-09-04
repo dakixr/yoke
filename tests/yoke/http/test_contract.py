@@ -534,6 +534,7 @@ def test_location_browse_expands_home_and_rejects_relative_paths(
     home.mkdir()
     (home / "dev").mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
     browsed = client.get(
         "/api/v1/location/browse",
@@ -1205,7 +1206,11 @@ def test_filesystem_routes_are_location_contained(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     nested = root / "src"
     nested.mkdir(parents=True)
-    (nested / "hello.py").write_text("print('hello')\n", encoding="utf-8")
+    (nested / "hello.py").write_text(
+        "print('hello')\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     outside = tmp_path / "outside.txt"
     outside.write_text("secret\n", encoding="utf-8")
     (root / "escape.txt").symlink_to(outside)
