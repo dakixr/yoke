@@ -375,9 +375,11 @@ denials with bounded backoff. If the cache still cannot be replaced after the
 session JSONL has been committed, the save succeeds, keeps a process-local
 index snapshot, and schedules index repair instead of failing the accepted
 turn. Same-process writes reuse an unchanged parsed index snapshot. Background
-repair enumerates session files once and uses metadata captured by that
-enumeration, avoiding repeated path probes that become expensive on Windows
-when hundreds of sessions are present.
+repair uses one metadata-bearing directory pass plus one name-only prune pass,
+avoiding repeated path probes that become expensive on Windows when hundreds
+of sessions are present. A transient metadata failure for one enumerated file
+falls back to reading that session instead of making it disappear from the
+index.
 Metadata-only changes, including `/model`, append only changed metadata fields
 and update the loaded record in memory. They do not rebuild or reload the
 conversation. Interactive shutdown also trusts the latest accepted turn

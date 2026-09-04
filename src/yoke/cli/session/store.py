@@ -17,6 +17,7 @@ from yoke.agent.models import Message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.cli.session.index import SESSION_INDEX_SUMMARY_VERSION
 from yoke.cli.session.index import repair_index_from_session_files
+from yoke.cli.session.index import session_file_ids
 from yoke.cli.session.index import session_index_entry
 from yoke.cli.session.index_cache import SessionIndexCache
 from yoke.cli.session.load import load_existing_record
@@ -795,11 +796,17 @@ class SessionStore:
         self, *, exclude_session_id: str | None = None
     ) -> bool:
         def mutate(index: SessionIndex) -> bool:
+            existing_session_ids = session_file_ids(
+                self.directory,
+                session_file_suffix=SESSION_FILE_SUFFIX,
+                session_id_pattern=SESSION_ID_PATTERN,
+            )
             return prune_index_and_sessions(
                 self,
                 index=index,
                 retention_days=SESSION_RETENTION_DAYS,
                 exclude_session_id=exclude_session_id,
+                existing_session_ids=existing_session_ids,
             )
 
         return self._mutate_index(mutate)

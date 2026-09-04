@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -44,10 +45,7 @@ def load_prompt_queue_snapshot(
     session_id: str,
 ) -> PersistedPromptQueue:
     """Load one queue sidecar, returning an empty snapshot when absent/corrupt."""
-    path = prompt_queue_path(session_directory, session_id)
-    if not path.exists():
-        return PersistedPromptQueue()
-    return _load_prompt_queue_path(path)
+    return _load_prompt_queue_path(prompt_queue_path(session_directory, session_id))
 
 
 def load_prompt_queue_snapshots(
@@ -58,20 +56,28 @@ def load_prompt_queue_snapshots(
     requested = set(session_ids)
     if not requested:
         return {}
+    requested_keys = {os.path.normcase(session_id) for session_id in requested}
+    normalized_suffix = os.path.normcase(".json")
     queue_directory = session_directory / "queues"
     try:
         paths = queue_directory.iterdir()
         matching = {
-            path.stem: path
+            os.path.normcase(path.stem): path
             for path in paths
-            if path.suffix == ".json" and path.stem in requested
+            if os.path.normcase(path.suffix) == normalized_suffix
+            and os.path.normcase(path.stem) in requested_keys
         }
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         matching = {}
+    except OSError:
+        return {
+            session_id: load_prompt_queue_snapshot(session_directory, session_id)
+            for session_id in requested
+        }
     return {
         session_id: (
             _load_prompt_queue_path(path)
-            if (path := matching.get(session_id)) is not None
+            if (path := matching.get(os.path.normcase(session_id))) is not None
             else PersistedPromptQueue()
         )
         for session_id in requested

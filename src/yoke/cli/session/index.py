@@ -20,8 +20,8 @@ class SessionFileSnapshot:
     """One session path plus metadata captured during directory enumeration."""
 
     path: Path
-    size: int
-    mtime_ns: int
+    size: int | None
+    mtime_ns: int | None
 
 
 def repair_index_from_session_files(
@@ -118,11 +118,16 @@ def _upsert_index_record(
     snapshot: SessionFileSnapshot,
     entry_count: int | None = None,
 ) -> None:
+    file_signature = (
+        (snapshot.size, snapshot.mtime_ns)
+        if snapshot.size is not None and snapshot.mtime_ns is not None
+        else None
+    )
     index.sessions[record.id] = session_index_entry(
         record,
         path=snapshot.path,
         entry_count=entry_count,
-        file_signature=(snapshot.size, snapshot.mtime_ns),
+        file_signature=file_signature,
     )
 
 
@@ -131,6 +136,8 @@ def _index_entry_matches_file(
     snapshot: SessionFileSnapshot,
 ) -> bool:
     if entry.summary_version != SESSION_INDEX_SUMMARY_VERSION:
+        return False
+    if snapshot.size is None or snapshot.mtime_ns is None:
         return False
     return entry.file_size == snapshot.size and entry.file_mtime_ns == snapshot.mtime_ns
 
@@ -155,12 +162,39 @@ def _session_file_snapshots(
                 try:
                     stat = item.stat()
                 except OSError:
-                    continue
+                    size = None
+                    mtime_ns = None
+                else:
+                    size = stat.st_size
+                    mtime_ns = stat.st_mtime_ns
                 snapshots[session_id] = SessionFileSnapshot(
                     path=Path(item.path),
-                    size=stat.st_size,
-                    mtime_ns=stat.st_mtime_ns,
+                    size=size,
+                    mtime_ns=mtime_ns,
                 )
     except OSError:
         return None
     return snapshots
+
+
+def session_file_ids(
+    directory: Path,
+    *,
+    session_file_suffix: str,
+    session_id_pattern: re.Pattern[str],
+) -> set[str] | None:
+    """Return platform-normalized IDs from one directory enumeration."""
+    normalized_suffix = os.path.normcase(session_file_suffix)
+    session_ids: set[str] = set()
+    try:
+        with os.scandir(directory) as entries:
+            for item in entries:
+                normalized_name = os.path.normcase(item.name)
+                if not normalized_name.endswith(normalized_suffix):
+                    continue
+                session_id = item.name[: -len(session_file_suffix)]
+                if session_id_pattern.fullmatch(session_id):
+                    session_ids.add(os.path.normcase(session_id))
+    except OSError:
+        return None
+    return session_ids
