@@ -83,7 +83,10 @@ continuity, encrypted replay state, prompt-cache affinity, and routing metadata
 in memory. Session IDs provide stable cache scope across provider
 reconstruction and resume. New and forked sessions receive distinct scopes.
 The advertised catalog currently includes `gpt-5.6-sol`,
-`gpt-5.6-terra`, and `gpt-5.6-luna`.
+`gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-6-astra`.
+Select Astra with `yoke --model codex:gpt-6-astra:medium "..."`. Yoke caps
+its context window at 400,000 tokens and supports image inputs and `low`,
+`medium`, `high`, `xhigh`, and `max` reasoning efforts (default: `medium`).
 
 OpenCode Go advertises its maintained model catalog, including the Contributor
 tier of `muse-spark-1.3-contributor`. Yoke caps its upstream 1,048,576-token
