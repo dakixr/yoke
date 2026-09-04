@@ -387,12 +387,13 @@ checkpoint. It saves only changed provider metadata and queue content instead
 of capturing and reconciling the complete conversation again. Context-usage
 estimates run outside the prompt-critical path and coalesce pending requests so
 only one scan runs at a time. Large sessions do not delay input after a command.
-Terminal interactive sessions generate titles asynchronously from the first
-prompt. Headless and basic non-terminal sessions persist the local first-prompt
-fallback immediately and do not make a title-model request before useful work.
-Use `/regenerate-title` to generate a new title from the current conversation;
-use `/title <new-title>` to set one manually. If asynchronous generation fails,
-Yoke retains the local first-prompt fallback.
+Every CLI mode generates a title in a background thread from the first prompt.
+The useful turn starts without waiting for that request. Headless mode writes
+the agent response first, then waits during cleanup for the title worker so the
+persisted session still receives its generated title. Use `/regenerate-title`
+to generate a new title from the current conversation; use `/title <new-title>`
+to set one manually. If asynchronous generation fails, Yoke retains the local
+first-prompt fallback.
 OpenAI-compatible providers create their HTTP transport on the first model
 request instead of importing and initializing it during CLI startup.
 MCP configuration is still read during tool registration so the provider sees

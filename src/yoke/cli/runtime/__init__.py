@@ -30,11 +30,17 @@ from yoke.cli.runtime.session import (
 from yoke.cli.runtime.session import (
     create_active_session as create_active_session,
 )
-from yoke.cli.runtime.session import (
+from yoke.cli.runtime.title import (
     ensure_session_title as ensure_session_title,
 )
-from yoke.cli.runtime.session import (
+from yoke.cli.runtime.title import (
     ensure_local_session_title as ensure_local_session_title,
+)
+from yoke.cli.runtime.title import (
+    start_session_title_generation as start_session_title_generation,
+)
+from yoke.cli.runtime.title import (
+    wait_for_session_title as wait_for_session_title,
 )
 from yoke.cli.runtime.title import (
     generate_session_title as generate_session_title,
@@ -48,7 +54,7 @@ from yoke.cli.runtime.session import (
 from yoke.cli.runtime.session import (
     save_active_session as save_active_session,
 )
-from yoke.cli.runtime.session import (
+from yoke.cli.runtime.title import (
     session_usage_metric_context as session_usage_metric_context,
 )
 from yoke.cli.runtime.session import (

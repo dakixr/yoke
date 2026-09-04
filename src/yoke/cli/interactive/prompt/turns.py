@@ -32,9 +32,10 @@ from yoke.cli.interactive.common import prompt_turn_tracking
 from yoke.cli.interactive.queue.persistence import persist_prompt_queue
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.runtime import ActiveSession, AgentRunner, EventRenderer
-from yoke.cli.runtime import ensure_session_title, execute_turn
+from yoke.cli.runtime import execute_turn
 from yoke.cli.runtime import persist_session_state
 from yoke.cli.runtime import session_usage_metric_context
+from yoke.cli.runtime import start_session_title_generation
 from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 
 
@@ -60,6 +61,7 @@ def run_prompt_turn(
     entries = conversation_entries_snapshot
     if entries is None:
         entries = active_session.active_entries()
+    title_messages = [*messages, user_message or Message.user(prompt)]
     turn_agent = prepare_turn_agent(agent, messages=messages, entries=entries or [])
 
     def checkpoint_tool_result(
@@ -88,12 +90,12 @@ def run_prompt_turn(
             )
 
     try:
-        Thread(
-            target=ensure_session_title,
-            args=(active_session, agent, prompt),
-            daemon=True,
-            name="yoke-session-title",
-        ).start()
+        start_session_title_generation(
+            active_session,
+            agent,
+            prompt,
+            messages=title_messages,
+        )
         with session_usage_metric_context(active_session, prompt):
             result = execute_turn(
                 turn_agent,

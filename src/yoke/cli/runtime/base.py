@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
 from threading import RLock
+from threading import Thread
 from typing import Any
 from typing import Protocol
 from typing import cast
@@ -68,6 +69,7 @@ class ActiveSession:
     record: SessionRecord
     title: str | None = None
     save_lock: RLock = field(default_factory=RLock, repr=False)
+    title_worker: Thread | None = field(default=None, init=False, repr=False)
     tree_index: SessionTreeIndex = field(init=False, repr=False)
 
     def __post_init__(self) -> None:

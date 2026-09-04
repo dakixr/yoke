@@ -2,6 +2,8 @@ from __future__ import annotations
 
 # ruff: noqa: F405
 
+from queue import Queue
+from threading import Event
 from threading import Lock
 from threading import Thread
 from types import SimpleNamespace
@@ -17,8 +19,15 @@ from yoke.cli.interactive.prompt.loop import (
 
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageTextContentPart
+from yoke.cli.interactive.basic import _start_basic_turn
+from yoke.cli.interactive.common import BasicCliState
+from yoke.cli.interactive.common import TurnSuccess
+from yoke.cli.render import InteractiveRenderer
 from yoke.cli.runtime.lifetime import close_cli_owned_agent
 from yoke.cli.runtime.lifetime import register_cli_owned_agent
+from yoke.cli.runtime.session import save_active_session
+from yoke.cli.runtime.title import start_session_title_generation
+from yoke.cli.runtime.title import wait_for_session_title
 
 from .support import *  # noqa: F403
 
@@ -30,19 +39,40 @@ def test_cli_runs_headless_prompt(capsys) -> None:
     assert capsys.readouterr().out.strip() == "synthetic response"
 
 
-def test_headless_cli_never_generates_title_before_user_turn(
+def test_headless_cli_generates_title_without_blocking_user_turn(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    title_started = Event()
+    response_written = Event()
+    user_turn_started = Event()
+    title_messages: list[str] = []
 
-    def fail(*_args, **_kwargs) -> None:
-        pytest.fail("headless startup must not make an LLM title request")
+    def generate(_agent, messages) -> str:
+        title_messages.extend(message.plain_text_content or "" for message in messages)
+        title_started.set()
+        assert response_written.wait(timeout=2)
+        return "Generated Background Title"
 
-    monkeypatch.setattr("yoke.cli.runtime.session.generate_session_title", fail)
-    agent = FakeAgent()
+    class ConcurrentAgent(FakeAgent):
+        def run(self, *args, **kwargs):
+            assert title_started.wait(timeout=2)
+            user_turn_started.set()
+            return super().run(*args, **kwargs)
 
+    class SignalingOutput(CaptureStream):
+        def write(self, text: str) -> int:
+            written = super().write(text)
+            if "synthetic response" in self.getvalue():
+                response_written.set()
+            return written
+
+    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", generate)
+    agent = ConcurrentAgent()
+
+    output = SignalingOutput()
     exit_code = run_cli(
         CLIArgs(
             prompt="Reply with exactly OK.",
@@ -50,13 +80,15 @@ def test_headless_cli_never_generates_title_before_user_turn(
             root=str(tmp_path),
         ),
         agent=agent,
-        stdout=CaptureStream(),
+        stdout=output,
         stderr=CaptureStream(),
     )
 
     assert exit_code == 0
+    assert user_turn_started.is_set()
+    assert title_messages == ["Reply with exactly OK."]
     records = SessionStore().list(root=tmp_path)
-    assert records[0].title == "Reply with exactly OK."
+    assert records[0].title == "Generated Background Title"
 
 
 def test_seeded_interactive_cli_does_not_wait_for_title_generation(
@@ -76,7 +108,7 @@ def test_seeded_interactive_cli_does_not_wait_for_title_generation(
         observed["title"] = active_session.title
         return 0
 
-    monkeypatch.setattr("yoke.cli.runtime.session.generate_session_title", fail)
+    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", fail)
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", fake_interactive)
 
     exit_code = run_cli(
@@ -95,6 +127,86 @@ def test_seeded_interactive_cli_does_not_wait_for_title_generation(
     assert [message.plain_text_content for message in typed_messages] == [
         "start useful work"
     ]
+
+
+def test_basic_interactive_turn_generates_title_without_blocking_turn(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    title_started = Event()
+    release_title = Event()
+
+    def generate(*_args, **_kwargs) -> str:
+        title_started.set()
+        assert release_title.wait(timeout=2)
+        return "Generated Interactive Title"
+
+    class ConcurrentAgent(FakeAgent):
+        def run(self, *args, **kwargs):
+            assert title_started.wait(timeout=2)
+            release_title.set()
+            return super().run(*args, **kwargs)
+
+    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", generate)
+    active_session = create_active_session(
+        CLIArgs(root=str(tmp_path)),
+        root=tmp_path,
+    )
+    save_active_session(active_session, [])
+    result_queue: Queue = Queue()
+    thread = _start_basic_turn(
+        "normal interactive prompt",
+        state=BasicCliState(messages=[], pending_prompts=[]),
+        active_session=active_session,
+        agent=ConcurrentAgent(),
+        stderr=CaptureStream(),
+        renderer=InteractiveRenderer(CaptureStream()),
+        result_queue=result_queue,
+    )
+
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert isinstance(result_queue.get_nowait(), TurnSuccess)
+    wait_for_session_title(active_session)
+    assert SessionStore().load(active_session.id).title == "Generated Interactive Title"
+
+
+def test_session_title_worker_is_deduplicated(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_dir = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
+    started = Event()
+    release = Event()
+    calls = 0
+
+    def generate(*_args, **_kwargs) -> str:
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(timeout=2)
+        return "One Generated Title"
+
+    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", generate)
+    active_session = create_active_session(
+        CLIArgs(root=str(tmp_path)),
+        root=tmp_path,
+    )
+    save_active_session(active_session, [])
+    agent = FakeAgent()
+
+    first = start_session_title_generation(active_session, agent, "first prompt")
+    assert started.wait(timeout=2)
+    second = start_session_title_generation(active_session, agent, "second prompt")
+
+    assert first is second
+    assert calls == 1
+    release.set()
+    wait_for_session_title(active_session)
+    assert SessionStore().load(active_session.id).title == "One Generated Title"
 
 
 def test_prompt_state_adopts_provider_effort_after_model_command(
@@ -285,6 +397,13 @@ def test_cli_headless_accepts_image_attachments(tmp_path: Path, monkeypatch) -> 
         )
     )
     agent = ImageAwareAgent()
+    title_messages: list[Message] = []
+
+    def generate(_agent, messages) -> str:
+        title_messages.extend(message.model_copy(deep=True) for message in messages)
+        return "Describe Tiny Image"
+
+    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", generate)
 
     exit_code = run_cli(
         CLIArgs(
@@ -322,6 +441,9 @@ def test_cli_headless_accepts_image_attachments(tmp_path: Path, monkeypatch) -> 
     assert isinstance(stored_image_part, MessageImageURLContentPart)
     assert stored_image_part.image_url.url.startswith("data:image/png;base64,")
     assert stored_image_part.label == "[Image #1]"
+    assert stored.title == "Describe Tiny Image"
+    assert len(title_messages) == 1
+    assert title_messages[0].has_image_inputs()
 
 
 def test_cli_requires_prompt_in_headless_mode(monkeypatch) -> None:

@@ -30,11 +30,19 @@ from yoke.cli.runtime.selector.session import (
 )
 from yoke.cli.session import SessionRecord
 from yoke.cli.session import SessionStore
-from yoke.cli.session import fallback_session_title
 from yoke.cli.session import new_session_id
 from yoke.cli.session.metadata import update_loaded_provider_state
-from yoke.cli.runtime.title import generate_session_title
-from yoke.cli.runtime.title import session_usage_metric_context
+from yoke.cli.runtime.title import (
+    ensure_local_session_title as ensure_local_session_title,
+)
+from yoke.cli.runtime.title import ensure_session_title as ensure_session_title
+from yoke.cli.runtime.title import (
+    session_usage_metric_context as session_usage_metric_context,
+)
+from yoke.cli.runtime.title import (
+    start_session_title_generation as start_session_title_generation,
+)
+from yoke.cli.runtime.title import wait_for_session_title as wait_for_session_title
 
 
 def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
@@ -105,55 +113,6 @@ def bind_agent_provider_session(agent: object, session_id: str) -> None:
     set_session_id = getattr(provider, "set_session_id", None)
     if callable(set_session_id):
         set_session_id(session_id)
-
-
-def ensure_session_title(
-    active_session: ActiveSession,
-    agent: object,
-    prompt: str,
-) -> None:
-    """Generate and persist a title for an unnamed session."""
-    with active_session.save_lock:
-        if active_session.title:
-            return
-        messages = active_session.messages()
-    if not messages or messages[-1].plain_text_content != prompt:
-        messages.append(Message.user(prompt))
-    with session_usage_metric_context(active_session, prompt):
-        generated = generate_session_title(agent, messages)
-    title = generated or fallback_session_title(prompt)
-    with active_session.save_lock:
-        if active_session.title:
-            return
-        _persist_session_title(active_session, title)
-
-
-def ensure_local_session_title(
-    active_session: ActiveSession,
-    prompt: str,
-) -> None:
-    """Persist a local fallback title without making a provider request."""
-    with active_session.save_lock:
-        if active_session.title:
-            return
-        _persist_session_title(active_session, fallback_session_title(prompt))
-
-
-def _persist_session_title(active_session: ActiveSession, title: str) -> None:
-    if active_session.record.created_at is None:
-        return
-    try:
-        record = active_session.store.set_title(
-            active_session.id,
-            title,
-            existing_record=active_session.record,
-        )
-    except ValueError:
-        # A detached or deleted session can outlive the background title
-        # worker. Do not recreate a session just for a title.
-        return
-    active_session.record = record
-    active_session.title = title
 
 
 def sync_agent_skill_state_to_session(

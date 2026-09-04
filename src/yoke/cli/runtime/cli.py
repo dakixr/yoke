@@ -32,12 +32,13 @@ from yoke.cli.runtime.lifetime import register_cli_owned_agent
 from yoke.cli.runtime.session import create_active_session
 from yoke.cli.runtime.session import apply_session_defaults_to_args
 from yoke.cli.runtime.session import bind_agent_provider_session
-from yoke.cli.runtime.session import ensure_local_session_title
 from yoke.cli.runtime.session import persist_session_state
 from yoke.cli.runtime.session import save_active_session
 from yoke.cli.runtime.session import save_agent_session_state
 from yoke.cli.runtime.session import select_session_id
-from yoke.cli.runtime.session import session_usage_metric_context
+from yoke.cli.runtime.title import session_usage_metric_context
+from yoke.cli.runtime.title import start_session_title_generation
+from yoke.cli.runtime.title import wait_for_session_title
 from yoke.cli.runtime.resume import project_resumed_session
 from yoke.cli.session import SessionStore
 
@@ -145,6 +146,8 @@ def run_cli(
         except ValueError as exc:
             print_error(error_console, str(exc))
             return 1
+        finally:
+            wait_for_session_title(active_session)
     if mode.prompt is not None:
         try:
             resolved_images = _resolve_image_paths(
@@ -160,15 +163,18 @@ def run_cli(
     print_tool_discovery_message(output_stream, tool_report)
     from yoke.cli.interactive import run_interactive_cli
 
-    return run_interactive_cli(
-        args,
-        active_agent,
-        session_messages,
-        active_session=active_session,
-        input_func=input_func,
-        stdout=output_stream,
-        stderr=error_stream,
-    )
+    try:
+        return run_interactive_cli(
+            args,
+            active_agent,
+            session_messages,
+            active_session=active_session,
+            input_func=input_func,
+            stdout=output_stream,
+            stderr=error_stream,
+        )
+    finally:
+        wait_for_session_title(active_session)
 
 
 @close_cli_owned_agent
@@ -253,18 +259,21 @@ def run_resume_cli(
     print_tool_discovery_message(output_stream, tool_report)
     from yoke.cli.interactive import run_interactive_cli
 
-    return run_interactive_cli(
-        args,
-        active_agent,
-        resume_projection.runtime_messages,
-        active_session=active_session,
-        input_func=input_func,
-        stdout=output_stream,
-        stderr=error_stream,
-        replay_session=True,
-        replay_messages=resume_projection.scrollback_messages,
-        replay_notice=resume_projection.scrollback_notice,
-    )
+    try:
+        return run_interactive_cli(
+            args,
+            active_agent,
+            resume_projection.runtime_messages,
+            active_session=active_session,
+            input_func=input_func,
+            stdout=output_stream,
+            stderr=error_stream,
+            replay_session=True,
+            replay_messages=resume_projection.scrollback_messages,
+            replay_notice=resume_projection.scrollback_notice,
+        )
+    finally:
+        wait_for_session_title(active_session)
 
 
 def _is_unsupported_resumed_provider_error(exc: ValueError) -> bool:
@@ -300,22 +309,24 @@ def _run_headless_mode(
     del args
     if prompt is None:
         raise ValueError("Headless mode requires a prompt.")
+    resolved_image_paths = _resolve_image_paths(image_paths, root=active_session.root)
+    user_message = build_user_message(prompt, image_paths=resolved_image_paths)
     previous_yoke_headless = os.environ.get("YOKE_HEADLESS")
     os.environ["YOKE_HEADLESS"] = "1"
     try:
-        ensure_local_session_title(active_session, prompt)
+        start_session_title_generation(
+            active_session,
+            active_agent,
+            prompt,
+            messages=[*session_messages, user_message],
+        )
         with session_usage_metric_context(active_session, prompt):
             result = execute_turn(
                 active_agent,
                 prompt,
                 session_messages,
                 stderr=error_stream,
-                user_message=build_user_message(
-                    prompt,
-                    image_paths=_resolve_image_paths(
-                        image_paths, root=active_session.root
-                    ),
-                ),
+                user_message=user_message,
                 conversation_entries=active_session.active_entries(),
                 active_skills=active_session.record.active_skills,
                 available_skills=(
