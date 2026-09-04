@@ -75,8 +75,15 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
     initial_active_skills = _activate_cli_skills(skill_registry, args.skills)
     provider = build_provider_from_args(args)
     root = Path(args.root).resolve()
+    initial_resolution = _resolve_cli_agent_config(
+        root=root,
+        skill_registry=skill_registry,
+        active_skills=initial_active_skills,
+        provider=provider,
+    )
     agent_holder: list[RuntimeAgent] = []
-    report_holder: list[ToolLoadReport] = []
+    report_holder = [initial_resolution.tool_report]
+    pending_initial_resolution = [initial_resolution]
 
     def tool_factory(
         context: ToolRegistrationContext,
@@ -84,12 +91,21 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
         active_skills = (
             agent_holder[0].active_skills if agent_holder else initial_active_skills
         )
-        resolved = _resolve_cli_agent_config(
-            root=root,
-            skill_registry=skill_registry,
-            active_skills=active_skills,
-            provider=context.provider,
-        )
+        if (
+            not agent_holder
+            and pending_initial_resolution
+            and context.provider is provider
+            and context.root == root
+        ):
+            resolved = pending_initial_resolution.pop()
+        else:
+            pending_initial_resolution.clear()
+            resolved = _resolve_cli_agent_config(
+                root=root,
+                skill_registry=skill_registry,
+                active_skills=active_skills,
+                provider=context.provider,
+            )
         report_holder[:] = [resolved.tool_report]
         if agent_holder:
             agent_holder[0].tool_report = resolved.tool_report
@@ -98,15 +114,9 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
             system_messages=resolved.tool_system_messages or [],
         )
 
-    initial_messages = _resolve_cli_agent_config(
-        root=root,
-        skill_registry=skill_registry,
-        active_skills=initial_active_skills,
-        provider=provider,
-    ).system_messages
     context_manager = build_provider_context_manager(
         provider=provider,
-        instructions=initial_messages,
+        instructions=initial_resolution.system_messages,
     )
 
     agent = RuntimeAgent(

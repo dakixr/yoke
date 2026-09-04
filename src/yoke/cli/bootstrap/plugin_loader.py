@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 import sys
 from collections.abc import Callable
 from collections.abc import Iterable
@@ -25,8 +26,10 @@ type RegisterToolsFunc = Callable[[ToolRegistrationContext], ToolRegistration]
 
 _IGNORED_PLUGIN_DIR_NAMES = {
     "__pycache__",
+    "providers",
     "sessions",
     "skills",
+    "usage-metric-logs",
 }
 
 
@@ -71,13 +74,22 @@ def _tool_scope_label(source_kind: ToolSourceKind) -> str:
 
 
 def _iter_tool_module_paths(directory: Path) -> Iterable[Path]:
-    for path in sorted(directory.rglob("*.py")):
-        relative_parts = path.relative_to(directory).parts[:-1]
-        if any(part in _IGNORED_PLUGIN_DIR_NAMES for part in relative_parts):
-            continue
-        if path.name == "__init__.py" or path.name.startswith("_"):
-            continue
-        yield path
+    paths: list[Path] = []
+    for current, directory_names, file_names in os.walk(directory):
+        directory_names[:] = sorted(
+            name for name in directory_names if name not in _IGNORED_PLUGIN_DIR_NAMES
+        )
+        current_path = Path(current)
+        for file_name in file_names:
+            normalized_name = os.path.normcase(file_name)
+            if (
+                not normalized_name.endswith(".py")
+                or normalized_name == "__init__.py"
+                or normalized_name.startswith("_")
+            ):
+                continue
+            paths.append(current_path / file_name)
+    yield from sorted(paths)
 
 
 def _load_tool_module(path: Path, *, source_kind: ToolSourceKind) -> ModuleType:

@@ -44,12 +44,24 @@ def load_tools(
         for capability in capabilities
         for message in capability.system_messages
     ]
+    global_directory = home / ".yoke"
+    repo_directory = root / ".yoke"
     if include_global_tools:
-        group = _load_plugin_group(home / ".yoke", context, source_kind="global")
+        group = _load_plugin_group(
+            global_directory,
+            context,
+            source_kind="global",
+        )
         loaded_tools.extend(group.tools)
         system_messages.extend(group.system_messages)
-    if include_repo_tools:
-        group = _load_plugin_group(root / ".yoke", context, source_kind="repo")
+    if include_repo_tools and (
+        not include_global_tools or repo_directory != global_directory
+    ):
+        group = _load_plugin_group(
+            repo_directory,
+            context,
+            source_kind="repo",
+        )
         loaded_tools.extend(group.tools)
         system_messages.extend(group.system_messages)
     return LoadedToolGroup(tools=loaded_tools, system_messages=system_messages)

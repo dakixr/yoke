@@ -571,7 +571,7 @@ without discarding the last valid config.
 
 ## Adding extra tools
 
-Place Python files in `.yoke/` (workspace) or `~/.yoke/` (global) and yoke will load your tools automatically alongside the built-ins. Yoke skips state and content subdirectories such as `skills/` and `sessions/`, so Python helper files bundled with skills are not imported as tool plugins.
+Place Python files in `.yoke/` (workspace) or `~/.yoke/` (global) and yoke will load your tools automatically alongside the built-ins. Yoke prunes reserved state and content directories such as `providers/`, `sessions/`, `skills/`, and `usage-metric-logs/` before walking for plugins, so session volume does not affect tool discovery and Python helper files bundled with skills are not imported as tool plugins. When the workspace root is your home directory, the shared `~/.yoke/` plugin directory is loaded once rather than once per scope.
 
 There are three ways to define tools in these files.
 
