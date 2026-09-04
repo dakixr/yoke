@@ -135,6 +135,8 @@ and a file signature. Changed,
 missing, legacy, or unreadable session files are repaired individually. The
 session-list response includes the filtered total separately from the paged
 rows, so UI counters do not expose the current page size as product state. The
+browser retains that total during both initial bootstrap and later list
+refreshes, keeping the settled-session shelf available immediately. The
 daemon binds and can open the browser before filesystem repair and retention
 maintenance. Existing stores get a short startup grace period, then repair runs
 in a background task, so `yoke serve --open` and list requests never pay for

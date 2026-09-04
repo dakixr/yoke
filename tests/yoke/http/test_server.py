@@ -189,6 +189,13 @@ def test_packaged_web_app_routes_and_assets_share_api_origin(tmp_path: Path) -> 
     assert asset.headers["cache-control"] == "no-store"
     assert asset.headers["content-type"].startswith("text/javascript")
 
+    controller_asset = client.get("/assets/js/state/controller.js")
+    assert controller_asset.status_code == 200
+    assert (
+        controller_asset.text.count("archivedTotal: Number.isFinite(archived.total)")
+        == 2
+    )
+
     missing = client.get("/assets/not-real.js")
     assert missing.status_code == 404
     unknown = client.get("/not-an-app-route")

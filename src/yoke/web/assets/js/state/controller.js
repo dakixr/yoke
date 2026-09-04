@@ -164,6 +164,7 @@ class AppController {
           sessions,
           sessionOrder: current.data.map((item) => item.id),
           archivedOrder: archived.data.map((item) => item.id),
+          archivedTotal: Number.isFinite(archived.total) ? archived.total : archived.data.length,
           sessionsCursor: current.cursor?.next || null,
           archivedCursor: archived.cursor?.next || null,
           commands: commands.data,
