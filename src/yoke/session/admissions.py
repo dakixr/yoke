@@ -9,6 +9,8 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic import Field
 
+from yoke._file_io import atomic_write_text
+
 
 INPUT_ID_METADATA_KEY = "yoke_input_id"
 
@@ -67,10 +69,7 @@ class AdmissionStore:
     def save(self, session_id: str, snapshot: AdmissionSnapshot) -> None:
         path = self._path(session_id)
         with self._lock_for(session_id):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(path.suffix + ".tmp")
-            tmp.write_text(snapshot.model_dump_json(indent=2), encoding="utf-8")
-            tmp.replace(path)
+            atomic_write_text(path, snapshot.model_dump_json(indent=2))
 
     def _path(self, session_id: str) -> Path:
         return self.session_directory / "inputs" / f"{session_id}.json"

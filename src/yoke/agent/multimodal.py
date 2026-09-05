@@ -58,13 +58,6 @@ def next_image_label_index(messages: Sequence[Message]) -> int:
     return highest + 1
 
 
-def encode_local_image_data_url(path_value: str | Path) -> str:
-    """Encode a local image as a provider-compatible data URL."""
-    from yoke.agent.image_data import local_image_to_data_url
-
-    return local_image_to_data_url(path_value)
-
-
 def build_image_user_message(
     prompt: str,
     *,
@@ -110,10 +103,10 @@ def messages_for_provider_capabilities(
     messages: Sequence[Message], provider: object
 ) -> list[Message]:
     """Adapt provider-bound messages to the active provider capabilities."""
-    if _provider_supports_image_inputs(provider) is False:
+    if provider_supports_image_inputs(provider) is False:
         return omit_image_inputs_for_text_model(messages)
     projected = [message.model_copy(deep=True) for message in messages]
-    max_images = _provider_max_images_per_request(provider)
+    max_images = provider_max_images_per_request(provider)
     if max_images is None:
         return projected
     return _limit_request_images(projected, max_images=max_images)
@@ -130,18 +123,12 @@ def provider_supports_image_inputs(provider: object) -> bool | None:
     return provider_support if isinstance(provider_support, bool) else None
 
 
-_provider_supports_image_inputs = provider_supports_image_inputs
-
-
 def provider_max_images_per_request(provider: object) -> int | None:
     """Return the active provider's request-wide image limit, when known."""
     value = getattr(provider, "max_images_per_request", None)
     if callable(value):
         value = value()
     return value if isinstance(value, int) and value >= 0 else None
-
-
-_provider_max_images_per_request = provider_max_images_per_request
 
 
 def _limit_request_images(

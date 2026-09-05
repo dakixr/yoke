@@ -38,6 +38,11 @@ export function clearSessionComposerDraft(sessionID) {
   install(next);
 }
 
+export function clearAllSessionComposerDrafts() {
+  if (!Object.keys(drafts).length) return;
+  install({});
+}
+
 function install(next) {
   drafts = next;
   writeSessionComposerDrafts(drafts);

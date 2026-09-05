@@ -9,10 +9,13 @@ from pathlib import Path
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
+from yoke.http.services.projectors import PUBLIC_CHAT_EXCLUDED_KINDS
 
 
 INDEX_VERSION = 3
-PUBLIC_EXCLUDED_KINDS = {"instruction", "memory_snapshot", "tool_context"}
+# Kept as an import-compatible alias for the index helpers. The policy itself
+# belongs to the public chat projector used by indexed and fallback reads.
+PUBLIC_EXCLUDED_KINDS = PUBLIC_CHAT_EXCLUDED_KINDS
 UNSET = object()
 
 

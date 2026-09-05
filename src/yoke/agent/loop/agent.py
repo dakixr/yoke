@@ -207,6 +207,11 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         finally:
             self.command_process_manager.release()
 
+    @property
+    def closed(self) -> bool:
+        """Return whether in-process work stopped and terminal cleanup began."""
+        return self._closed
+
     def load_conversation(
         self,
         *,

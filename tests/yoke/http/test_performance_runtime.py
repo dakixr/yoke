@@ -3,6 +3,8 @@ from __future__ import annotations
 # ruff: noqa: ANN001,D100,D103,S101
 
 from pathlib import Path
+
+from yoke.http.services.session_message_index import storage as index_storage
 from threading import Event
 from threading import Thread
 import time
@@ -414,7 +416,7 @@ def test_descending_cold_message_page_uses_tail_without_topology_scan(
     def fail(*_args, **_kwargs):
         raise AssertionError("cold latest page must not build the full topology index")
 
-    monkeypatch.setattr(service.message_index, "_scan", fail)
+    monkeypatch.setattr(index_storage, "scan", fail)
     monkeypatch.setattr(store, "load", fail)
     page = service.messages("large", limit=100, order="desc", cursor=None)
 

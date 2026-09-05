@@ -174,6 +174,17 @@ def create_builtin_capabilities(
     return [capability.resolve(context) for capability in builtin_capabilities()]
 
 
+def resolve_builtin_capability(
+    capability_id: str,
+    context: ToolRegistrationContext,
+) -> CapabilityRegistration:
+    """Resolve one built-in capability without constructing the others."""
+    for capability in builtin_capabilities():
+        if capability.capability_id == capability_id:
+            return capability.resolve(context)
+    raise ValueError(f"Unknown built-in tool capability: {capability_id}")
+
+
 def create_builtin_tool_entries(
     context: ToolRegistrationContext,
 ) -> list[tuple[LocalTool, str]]:

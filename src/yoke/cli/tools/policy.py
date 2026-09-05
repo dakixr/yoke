@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -12,6 +13,8 @@ from pydantic import Field
 from pydantic import ValidationError
 from pydantic import field_validator
 
+from yoke._file_io import atomic_write_text
+from yoke._file_io import exclusive_file_lock
 from yoke.agent.capabilities import known_builtin_capability_ids
 
 GLOB_META_CHARS = ("*", "?", "[")
@@ -97,13 +100,12 @@ def _summarize_config_validation_error(exc: ValidationError) -> str:
     return str(message)
 
 
-def load_config_file(path: Path) -> LoadedWorkspaceConfig:
-    """load_config_file."""
+def _read_config_file(path: Path) -> LoadedWorkspaceConfig:
     if not path.is_file():
         return LoadedWorkspaceConfig(path=None, config=PiConfig())
     try:
         payload = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise ValueError(f"Could not read yoke config file `{path}`: {exc}") from exc
     try:
         config = PiConfig.model_validate_json(payload)
@@ -118,10 +120,19 @@ def load_config_file(path: Path) -> LoadedWorkspaceConfig:
             '"default_reasoning_effort": "provider-supported-level"}. '
             "All fields are optional."
         ) from exc
-    if _has_legacy_tool_globs(config):
-        config = _migrate_legacy_glob_config(config)
-        _write_config_file(path, config)
     return LoadedWorkspaceConfig(path=path, config=config)
+
+
+def load_config_file(path: Path) -> LoadedWorkspaceConfig:
+    """Load one config file, applying the established legacy migration."""
+    loaded = _read_config_file(path)
+    if not _has_legacy_tool_globs(loaded.config):
+        return loaded
+    config = _update_config_file(path, lambda current: current, legacy_only=True)
+    return LoadedWorkspaceConfig(
+        path=path if path.is_file() else None,
+        config=config,
+    )
 
 
 def load_workspace_config(root: Path) -> LoadedWorkspaceConfig:
@@ -149,11 +160,45 @@ def _migrate_legacy_glob_config(config: PiConfig) -> PiConfig:
 
 
 def _write_config_file(path: Path, config: PiConfig) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    atomic_write_text(
+        path,
         config.model_dump_json(indent=2, exclude_none=True) + "\n",
-        encoding="utf-8",
     )
+
+
+def update_config_file(
+    path: Path,
+    mutator: Callable[[PiConfig], PiConfig],
+    *,
+    migrate_legacy: bool = False,
+) -> PiConfig:
+    """Update a complete config under a sibling lock and replace it atomically."""
+    return _update_config_file(
+        path, mutator, legacy_only=False, migrate_legacy=migrate_legacy
+    )
+
+
+def _update_config_file(
+    path: Path,
+    mutator: Callable[[PiConfig], PiConfig],
+    *,
+    legacy_only: bool,
+    migrate_legacy: bool = False,
+) -> PiConfig:
+    path = path.resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f".{path.name}.lock")
+    with exclusive_file_lock(lock_path):
+        current = _read_config_file(path).config
+        has_legacy_globs = _has_legacy_tool_globs(current)
+        if legacy_only and not has_legacy_globs:
+            return current
+        if has_legacy_globs and (legacy_only or migrate_legacy):
+            current = _migrate_legacy_glob_config(current)
+        candidate = mutator(current.model_copy(deep=True))
+        validated = PiConfig.model_validate(candidate.model_dump(mode="python"))
+        _write_config_file(path, validated)
+        return validated
 
 
 def default_yoke_config() -> PiConfig:

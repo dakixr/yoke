@@ -1,33 +1,14 @@
 from __future__ import annotations
 
-# ruff: noqa: F401
-
-import json
-import os
-import time
-
-import pytest
 from pathlib import Path
-from threading import Event
 
 from yoke.agent.compaction import COMPACTION_SUMMARY_PROMPT
-from yoke.agent.context import CompactionPolicy, ContextManager
-from yoke.agent.loop import (
-    AfterToolCallContext,
-    RuntimeAgent,
-    BeforeToolCallContext,
-    INTERRUPTED_TURN_NOTICE,
-)
 from yoke.agent.models import (
     Message,
-    MessageLocalImageContentPart,
-    MessageTextContentPart,
     ToolCall,
     ToolFunction,
 )
-from yoke.agent.skills.models import ActiveSkill, SkillSpec
 from yoke.agent.tools import (
-    COMMAND_TOOL_NAME,
     CommandTool,
     EditTool,
     LocalTool,

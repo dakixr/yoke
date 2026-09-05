@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -23,6 +24,7 @@ from yoke.cli.bootstrap.types import LoadedSystemMessage
 from yoke.cli.bootstrap.types import ToolSourceKind
 
 type RegisterToolsFunc = Callable[[ToolRegistrationContext], ToolRegistration]
+LOGGER = logging.getLogger(__name__)
 
 
 def load_tools_from_directory(
@@ -54,7 +56,8 @@ def load_tools_from_directory(
                     path=path,
                     source_kind=source_kind,
                 )
-        except Exception:  # noqa: S112
+        except Exception as exc:
+            LOGGER.warning("Skipping tool plugin %s: %s", path, exc)
             continue
         loaded.extend(group.tools)
         system_messages.extend(group.system_messages)
@@ -113,6 +116,7 @@ def _load_tool_module(path: Path, *, source_kind: ToolSourceKind) -> ModuleType:
     try:
         spec.loader.exec_module(module)
     except Exception as exc:
+        sys.modules.pop(module_name, None)
         raise ValueError(
             f"Could not load {_tool_scope_label(source_kind)} "
             f"tool plugin `{path}`. The Python module failed to import: {exc}"
@@ -142,7 +146,7 @@ def _call_register_tools(
     path: Path,
     source_kind: ToolSourceKind,
 ) -> LoadedToolGroup:
-    registration_id = _registration_id(source_kind=source_kind, path=path)
+    registration_id = f"{source_kind}:{path}"
     try:
         registration = normalize_tool_registration(register_tools(context))
     except Exception as exc:
@@ -163,10 +167,11 @@ def _call_register_tools(
             for tool in tool_list
         ],
         system_messages=[
-            _loaded_system_message(
-                message,
+            LoadedSystemMessage(
+                message=message,
                 source_kind=source_kind,
-                path=path,
+                source_label=registration_id,
+                source_path=path,
                 registration_id=registration_id,
             )
             for message in registration.system_messages
@@ -254,23 +259,3 @@ def _loaded(
         source_path=path,
         registration_id=registration_id,
     )
-
-
-def _loaded_system_message(
-    message,
-    *,
-    source_kind: ToolSourceKind,
-    path: Path,
-    registration_id: str | None = None,
-) -> LoadedSystemMessage:
-    return LoadedSystemMessage(
-        message=message,
-        source_kind=source_kind,
-        source_label=f"{source_kind}:{path}",
-        source_path=path,
-        registration_id=registration_id,
-    )
-
-
-def _registration_id(*, source_kind: ToolSourceKind, path: Path) -> str:
-    return f"{source_kind}:{path}"

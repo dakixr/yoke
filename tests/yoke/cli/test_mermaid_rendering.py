@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections.abc import Callable
 
 import pytest
 from rich.console import Console
@@ -12,6 +13,7 @@ from yoke.cli.render import (
     build_console,
     print_agent_output,
     print_scrollback_agent,
+    print_scrollback_commentary,
 )
 from yoke.cli.render.markdown import YokeMarkdown
 
@@ -110,11 +112,21 @@ def test_non_mermaid_fences_keep_normal_rich_rendering() -> None:
     assert "print" in output and "hello" in output
 
 
-def test_non_tty_output_preserves_original_markdown() -> None:
+@pytest.mark.parametrize(
+    ("printer", "padding"),
+    [
+        (print_agent_output, ""),
+        (print_scrollback_agent, "\n"),
+        (print_scrollback_commentary, "\n"),
+    ],
+)
+def test_non_tty_output_preserves_original_markdown(
+    printer: Callable[[Console, str], None], padding: str
+) -> None:
     stream = _PlainStream()
     source = "```mermaid\nflowchart TD\nA --> B\n```"
-    print_agent_output(build_console(stream), source)
-    assert stream.getvalue() == source + "\n"
+    printer(build_console(stream), source)
+    assert stream.getvalue() == padding + source + "\n" + padding
 
 
 @pytest.mark.parametrize(
@@ -139,7 +151,11 @@ def test_all_nine_advertised_families_render(source: str, needle: str) -> None:
 def test_live_and_replayed_agent_output_share_mermaid_rendering() -> None:
     source = "```mermaid\nflowchart TD\nLive --> Replay\n```"
     outputs: list[str] = []
-    for printer in (print_agent_output, print_scrollback_agent):
+    for printer in (
+        print_agent_output,
+        print_scrollback_agent,
+        print_scrollback_commentary,
+    ):
         stream = io.StringIO()
         console = Console(
             file=stream,
@@ -152,3 +168,4 @@ def test_live_and_replayed_agent_output_share_mermaid_rendering() -> None:
         outputs.append(stream.getvalue())
     assert all("▼" in output for output in outputs)
     assert all("flowchart TD" not in output for output in outputs)
+    assert outputs[1] == outputs[2]

@@ -1,11 +1,25 @@
 from __future__ import annotations
 
-# ruff: noqa: D100, D103, F405, S101
+# ruff: noqa: D100, D103, S101
 
-from .support import *  # noqa: F403
+from pathlib import Path
+
+import pytest
+
+from yoke.agent.models import Message
+from yoke.cli.bootstrap.config import resolve_agent_config
+
+from .support import StaticProvider
 
 
-def test_default_builtin_policy_uses_curated_allowlist(tmp_path: Path) -> None:
+def test_default_builtin_policy_uses_curated_allowlist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "yoke.agent.capabilities.builtins.shutil.which",
+        lambda name: f"/test-bin/{name}" if name in {"rg", "fd"} else None,
+    )
     resolved = resolve_agent_config(
         root=tmp_path,
         base_system_prompt=None,
@@ -32,6 +46,7 @@ def test_default_builtin_policy_uses_curated_allowlist(tmp_path: Path) -> None:
     assert "exec_command" in denied_names
     assert "python_exec" in denied_names
     assert "write_stdin" in denied_names
+    assert resolved.tool_system_messages == []
 
 
 def test_shell_capability_controls_shell_and_python_tools(
@@ -81,15 +96,3 @@ def test_gpt_models_use_apply_patch_for_file_write(tmp_path: Path) -> None:
     assert resolved.tool_system_messages
     instructions = resolved.tool_system_messages[0].text_content() or ""
     assert "*** Begin Patch" in instructions
-
-
-def test_non_gpt_models_do_not_receive_apply_patch_instructions(
-    tmp_path: Path,
-) -> None:
-    resolved = resolve_agent_config(
-        root=tmp_path,
-        base_system_prompt=None,
-        include_global_tools=False,
-    )
-
-    assert resolved.tool_system_messages == []

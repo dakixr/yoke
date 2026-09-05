@@ -92,7 +92,7 @@ def web_search(
                 fallback_reason=fallback_reason,
             )
         finally:
-            getattr(client, "close", lambda: None)()
+            client.close()
     except Exception as exc:
         return {"ok": False, "error": str(exc), "query": query}
 

@@ -328,7 +328,7 @@ def test_python_exec_timeout_applies_after_yield(tmp_path: Path) -> None:
 def test_command_process_close_waits_for_in_flight_spawn(
     tmp_path: Path, monkeypatch
 ) -> None:
-    import yoke.agent.tools.command_process_manager as manager_module
+    from yoke.agent.tools.command_process_support import admission
 
     opening = threading.Event()
     allow_open = threading.Event()
@@ -358,7 +358,7 @@ def test_command_process_close_waits_for_in_flight_spawn(
         assert allow_open.wait(timeout=5)
         return cast(subprocess.Popen[bytes], FinishedProcess()), None, None
 
-    monkeypatch.setattr(manager_module, "_open_process", delayed_open_process)
+    monkeypatch.setattr(admission, "open_process", delayed_open_process)
     manager = CommandProcessManager()
     errors: list[BaseException] = []
 
@@ -416,19 +416,18 @@ def test_final_release_is_atomic_with_acquire(monkeypatch) -> None:
     monkeypatch.setattr(manager, "close", delayed_close)
     releaser = threading.Thread(target=manager.release)
     releaser.start()
-    assert closing.wait(timeout=5)
-    acquirer = threading.Thread(target=acquire)
-    acquirer.start()
-    time.sleep(0.05)
-    assert acquirer.is_alive()
-    allow_close.set()
-    releaser.join(timeout=5)
-    acquirer.join(timeout=5)
-
+    try:
+        assert closing.wait(timeout=5)
+        acquirer = threading.Thread(target=acquire)
+        acquirer.start()
+        acquirer.join(timeout=5)
+        assert not acquirer.is_alive()
+        assert len(errors) == 1
+        assert isinstance(errors[0], RuntimeError)
+    finally:
+        allow_close.set()
+        releaser.join(timeout=5)
     assert not releaser.is_alive()
-    assert not acquirer.is_alive()
-    assert len(errors) == 1
-    assert isinstance(errors[0], RuntimeError)
 
 
 def test_write_stdin_poll_yield_clamps_to_one_hour() -> None:

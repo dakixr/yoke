@@ -1,24 +1,79 @@
-"""Extracted helpers for the persistent HTTP session message index."""
+"""Cold-tail reads and indexed targets for session-tree navigation."""
 
 from __future__ import annotations
 
 import mmap
-from typing import Any
+from typing import TYPE_CHECKING
 
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tool_context import normalize_legacy_tool_context_entries
-from yoke.http.services.session_message_index_models import MessageIndexSnapshot
-from yoke.http.services.session_message_index_models import MessagePage
-from yoke.http.services.session_message_index_models import NavigationIndexPreview
-from yoke.http.services.session_message_index_models import PUBLIC_EXCLUDED_KINDS
-from yoke.http.services.session_message_index_models import entry_topology
-from yoke.http.services.session_message_index_models import known_parent_chain
+from yoke.http.services.session_message_index import paths as paths
+from yoke.http.services.session_message_index.models import MessageIndexSnapshot
+from yoke.http.services.session_message_index.models import MessagePage
+from yoke.http.services.session_message_index.models import NavigationIndexPreview
+from yoke.http.services.session_message_index.models import PUBLIC_EXCLUDED_KINDS
+from yoke.http.services.session_message_index.models import entry_topology
+from yoke.http.services.session_message_index.models import known_parent_chain
+from yoke.http.services.session_message_index.models import (
+    parent_id as location_parent_id,
+)
+from yoke.http.services.session_message_index.storage import current_snapshot
+from yoke.http.services.session_message_index.storage import read_entries
+
+if TYPE_CHECKING:
+    from yoke.http.services.session_message_index import SessionMessageIndex
+
+
+def query_entry_tree_state(
+    host: SessionMessageIndex,
+    session_id: str,
+    entry_id: str,
+) -> tuple[ConversationEntry, bool, bool, int] | None:
+    """Read one entry with its active/current and child-count state."""
+    snapshot = host._ensure(session_id)
+    if snapshot is None or entry_id not in snapshot.entries:
+        return None
+    entries = read_entries(host, session_id, snapshot, [entry_id])
+    if not entries:
+        return None
+    active_ids = paths.active_ids(snapshot)
+    if active_ids is None:
+        return None
+    child_count = sum(
+        location_parent_id(location) == entry_id
+        for location in snapshot.entries.values()
+    )
+    return (
+        entries[0],
+        entry_id in set(active_ids),
+        entry_id == snapshot.leaf_id,
+        child_count,
+    )
+
+
+def query_navigation_target(
+    host: SessionMessageIndex,
+    session_id: str,
+    target_id: str,
+) -> ConversationEntry | None:
+    """Return one proven persisted navigation target from the topology index."""
+    snapshot = current_snapshot(host, session_id)
+    if snapshot is None:
+        entry = tail_entry(host, session_id, target_id)
+        if entry is not None:
+            host.warm_async(session_id)
+            return entry
+        snapshot = host._ensure(session_id)
+    if snapshot is None or target_id not in snapshot.entries:
+        return None
+    entries = read_entries(host, session_id, snapshot, [target_id])
+    return entries[0] if entries else None
 
 
 def tail_navigation_preview(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     *,
     target_id: str,
@@ -113,7 +168,7 @@ def tail_navigation_preview(
         leaf_id=leaf_id,
         entries=locations,
     )
-    entries = host._read_entries(session_id, snapshot, read_ids)
+    entries = read_entries(host, session_id, snapshot, read_ids)
     if not entries:
         return None
     return NavigationIndexPreview(
@@ -126,7 +181,7 @@ def tail_navigation_preview(
 
 
 def tail_entry(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     entry_id: str,
 ) -> ConversationEntry | None:
@@ -166,7 +221,7 @@ def tail_entry(
 
 
 def tail_page(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     *,
     limit: int,
@@ -178,27 +233,39 @@ def tail_page(
         stat = source.stat()
     except OSError:
         return None
-    leaf_id = host._indexed_leaf_id(session_id, stat.st_size, stat.st_mtime_ns)
+    leaf_id = indexed_leaf_id(host, session_id, stat.st_size, stat.st_mtime_ns)
     raw_entries: dict[str, tuple[str | None, str, int, int]] = {}
     selected: list[tuple[int, int]] = []
     current = leaf_id
+    waiting_for = current
     passed_anchor = anchor_id is None
 
-    def consume_available() -> bool:
-        nonlocal current, passed_anchor
+    def consume_available(mapped: mmap.mmap) -> bool:
+        nonlocal current, passed_anchor, waiting_for
         while current is not None:
             item = raw_entries.get(current)
             if item is None:
+                waiting_for = current
                 return False
             parent_id, kind, offset, length = item
             if not passed_anchor:
                 if current == anchor_id:
                     passed_anchor = True
-            elif kind not in PUBLIC_EXCLUDED_KINDS:
-                selected.append((offset, length))
-                if len(selected) > limit:
-                    return True
+            else:
+                normalized_kind, missing_id = _tail_entry_kind(
+                    mapped,
+                    raw_entries,
+                    current,
+                )
+                if normalized_kind is None:
+                    waiting_for = missing_id
+                    return False
+                if normalized_kind not in PUBLIC_EXCLUDED_KINDS:
+                    selected.append((offset, length))
+            if len(selected) > limit:
+                return True
             current = parent_id
+            waiting_for = current
         return True
 
     try:
@@ -234,7 +301,8 @@ def tail_page(
                             # metadata-only checkout.
                             leaf_id = entry_id
                             current = entry_id
-                        if current == entry_id and consume_available():
+                            waiting_for = entry_id
+                        if waiting_for == entry_id and consume_available(mapped):
                             break
                         continue
                     if leaf_id is None and raw.startswith(b'{"type":"metadata"'):
@@ -247,7 +315,8 @@ def tail_page(
                             if value is None or isinstance(value, str):
                                 leaf_id = value
                                 current = value
-                                if consume_available():
+                                waiting_for = value
+                                if consume_available(mapped):
                                     break
                 if current is not None and len(selected) <= limit:
                     return None
@@ -271,13 +340,44 @@ def tail_page(
                 entries.append(ConversationEntry.model_validate(raw_entry))
     except (OSError, ValueError):
         return None
-    normalize_legacy_tool_context_entries(entries)
-    entries = [entry for entry in entries if entry.kind not in PUBLIC_EXCLUDED_KINDS]
     return MessagePage(entries=entries, has_more=len(selected) > limit)
 
 
+def _tail_entry_kind(
+    mapped: mmap.mmap,
+    raw_entries: dict[str, tuple[str | None, str, int, int]],
+    entry_id: str,
+) -> tuple[str | None, str | None]:
+    """Classify one cold-tail user after its provenance chain is available."""
+    location = raw_entries[entry_id]
+    if location[1] != "user":
+        return location[1], None
+    chain: list[ConversationEntry] = []
+    current: str | None = entry_id
+    seen: set[str] = set()
+    while current is not None and current not in seen:
+        seen.add(current)
+        item = raw_entries.get(current)
+        if item is None:
+            return None, current
+        parent, item_kind, offset, length = item
+        payload = from_json(mapped[offset : offset + length])
+        raw_entry = payload.get("entry") if isinstance(payload, dict) else None
+        if not isinstance(raw_entry, dict):
+            raise ValueError("Invalid session entry")
+        chain.append(ConversationEntry.model_validate(raw_entry))
+        if current != entry_id and item_kind == "user":
+            normalize_legacy_tool_context_entries(chain)
+            return chain[0].kind, None
+        current = parent
+    if current is not None:
+        return None, None
+    normalize_legacy_tool_context_entries(chain)
+    return chain[0].kind, None
+
+
 def indexed_leaf_id(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     source_size: int,
     source_mtime_ns: int,

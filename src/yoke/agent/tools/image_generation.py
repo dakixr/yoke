@@ -10,11 +10,11 @@ from typing import cast
 
 from pydantic import Field
 
+from yoke.agent.image_data import local_image_to_data_url
 from yoke.agent.models import Message
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.multimodal import build_image_user_message
-from yoke.agent.multimodal import encode_local_image_data_url
 from yoke.agent.multimodal import format_image_label
 from yoke.agent.multimodal import next_image_label_index
 from yoke.agent.multimodal import resolve_image_path
@@ -164,7 +164,7 @@ class ImageGenerationTool(LocalTool):
             )
         if explicit_paths:
             return [
-                encode_local_image_data_url(
+                local_image_to_data_url(
                     resolve_image_path(path, root=self.context.root)
                 )
                 for path in explicit_paths
@@ -209,7 +209,7 @@ def _recent_image_urls(messages: list[Message], count: int) -> list[str]:
             continue
         for part in reversed(content):
             if isinstance(part, MessageLocalImageContentPart):
-                images.append(encode_local_image_data_url(part.path))
+                images.append(local_image_to_data_url(part.path))
             elif isinstance(part, MessageImageURLContentPart):
                 images.append(part.image_url.url)
             if len(images) == count:

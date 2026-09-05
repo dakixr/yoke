@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from threading import Event, Lock
 import time
 
@@ -46,3 +47,43 @@ def test_context_usage_worker_coalesces_pending_estimates() -> None:
     assert state.context_usage_text == "latest"
     assert calls == ["first", "latest"]
     assert maximum_active == 1
+
+
+def test_context_usage_worker_recovers_after_estimator_failure(caplog) -> None:
+    next_published = Event()
+    calls: list[str] = []
+    state = PromptCliState(messages=[], pending_prompts=[])
+    state.context_usage_text = "previous"
+    state_lock = Lock()
+
+    def estimate(text: str) -> str:
+        calls.append(text)
+        if text == "fails":
+            raise RuntimeError("broken estimator")
+        return text
+
+    worker = ContextUsageWorker(
+        state=state,
+        state_lock=state_lock,
+        estimate=estimate,
+        invalidate=next_published.set,
+    )
+    caplog.set_level(
+        logging.ERROR,
+        logger="yoke.cli.interactive.prompt.context_usage",
+    )
+
+    worker.submit("fails")
+    deadline = time.monotonic() + 2
+    while "Failed to estimate context usage." not in caplog.text:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    assert state.context_usage_text == "previous"
+    assert not next_published.is_set()
+
+    worker.submit("next")
+
+    assert next_published.wait(timeout=2)
+    assert state.context_usage_text == "next"
+    assert calls == ["fails", "next"]

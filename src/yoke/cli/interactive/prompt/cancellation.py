@@ -12,7 +12,6 @@ from yoke.cli.interactive.common import prompt_turn_tracking
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
 from yoke.cli.runtime import persist_session_state
-from yoke.session.interrupt import active_branch_entries as _active_branch_entries
 from yoke.session.interrupt import interrupted_turn_snapshot
 
 
@@ -64,12 +63,3 @@ def persist_stopped_turn_if_idle(
             messages,
             conversation_entries=entries,
         )
-
-
-def active_branch_entry_refs(
-    entries: list[ConversationEntry],
-    *,
-    leaf_id: str | None,
-) -> list[ConversationEntry]:
-    """Adapt persisted active entries while preserving existing references."""
-    return _active_branch_entries(entries, leaf_id=leaf_id)

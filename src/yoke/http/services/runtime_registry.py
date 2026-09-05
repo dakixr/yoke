@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+import logging
 from threading import Lock
 from typing import TYPE_CHECKING
+from typing import Literal
 from typing import TypeVar
 
 from yoke.http.models.session import ActiveRuntimeInfo
@@ -27,6 +30,13 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 type SessionAgentFactory = Callable[[SessionRecord], object]
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _TitleGenerationResult:
+    status: Literal["empty", "generated"]
+    title: str | None = None
 
 
 class SessionRuntimeRegistry:
@@ -64,6 +74,7 @@ class SessionRuntimeRegistry:
         )
         self._lock = Lock()
         self._runtimes: dict[str, SessionRuntime] = {}
+        self._executor_closed = False
 
     def get_or_start(self, session_id: str) -> SessionRuntime:
         """Return one lazy runtime without starting model work."""
@@ -157,33 +168,37 @@ class SessionRuntimeRegistry:
 
     async def regenerate_title(self, session_id: str) -> str:
         """Generate a fresh title from the persisted conversation."""
-        record = self.read_cache.get(session_id).record
-        if not record.messages:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            self.executor,
+            self._regenerate_title_sync,
+            session_id,
+        )
+        if result.status == "empty":
             raise ApiError(
                 400,
                 "title_regeneration_unavailable",
                 "Session has no conversation to title.",
             )
-        loop = asyncio.get_running_loop()
-        generated = await loop.run_in_executor(
-            self.executor,
-            self._regenerate_title_sync,
-            session_id,
-        )
-        if generated is None:
+        if result.title is None:
             raise ApiError(
                 502,
                 "title_regeneration_failed",
                 "Could not generate a session title.",
             )
-        return generated
+        return result.title
 
-    def _regenerate_title_sync(self, session_id: str) -> str | None:
+    def _regenerate_title_sync(self, session_id: str) -> _TitleGenerationResult:
         record = self.read_cache.get(session_id).record
-        return generate_http_session_title(
-            self.agent_factory,
-            record,
-            record.messages,
+        if not record.messages:
+            return _TitleGenerationResult(status="empty")
+        return _TitleGenerationResult(
+            status="generated",
+            title=generate_http_session_title(
+                self.agent_factory,
+                record,
+                record.messages,
+            ),
         )
 
     async def activate_skill(self, session_id: str, skill_name: str) -> ActiveSkill:
@@ -229,17 +244,57 @@ class SessionRuntimeRegistry:
         )
 
     async def close(self, *, grace_seconds: float = 5.0) -> None:
-        """Signal every runtime and wait only for a bounded logical grace period."""
+        """Close all runtimes, then stop their shared worker executor."""
+        await self.close_runtimes(grace_seconds=grace_seconds)
+        self.shutdown_executor()
+
+    async def close_runtimes(self, *, grace_seconds: float = 5.0) -> None:
+        """Give loaded runtime controllers bounded grace and log timeouts.
+
+        Running provider calls are ordinary Python threads and cannot be force
+        terminated. Their retained outcomes and resources retire on the daemon
+        cleanup path if those calls return after this method's grace expires.
+        This method can return first, but Python interpreter shutdown may still
+        wait for a non-cooperative runtime-executor thread to return.
+        """
         with self._lock:
-            runtimes = list(self._runtimes.values())
+            runtimes = list(self._runtimes.items())
             self._runtimes.clear()
-        if runtimes:
-            try:
-                async with asyncio.timeout(grace_seconds):
-                    await asyncio.gather(
-                        *(runtime.close() for runtime in runtimes),
-                        return_exceptions=True,
-                    )
-            except TimeoutError:
-                pass
+        if not runtimes:
+            return
+        tasks = {
+            asyncio.create_task(
+                runtime.close(),
+                name=f"yoke-http-runtime-close-{session_id}",
+            ): session_id
+            for session_id, runtime in runtimes
+        }
+        done, pending = await asyncio.wait(tasks, timeout=grace_seconds)
+        for task in done:
+            if task.cancelled():
+                LOGGER.warning("Closing HTTP runtime %s was cancelled.", tasks[task])
+                continue
+            error = task.exception()
+            if error is not None:
+                LOGGER.error(
+                    "Failed to close HTTP runtime %s.",
+                    tasks[task],
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+        if pending:
+            LOGGER.warning(
+                "Timed out closing %d HTTP runtime(s): %s",
+                len(pending),
+                ", ".join(sorted(tasks[task] for task in pending)),
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    def shutdown_executor(self) -> None:
+        """Reject queued work without claiming running provider threads stopped."""
+        with self._lock:
+            if self._executor_closed:
+                return
+            self._executor_closed = True
         self.executor.shutdown(wait=False, cancel_futures=True)

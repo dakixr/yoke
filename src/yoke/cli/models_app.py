@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -24,7 +23,9 @@ from yoke.cli.render import build_console
 from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
 from yoke.cli.runtime.selector.ui import SelectorTableColumns
 from yoke.cli.runtime.selector.ui import select_table_item_interactive
+from yoke.cli.tools.policy import load_config_file
 from yoke.cli.tools.policy import PiConfig
+from yoke.cli.tools.policy import update_config_file
 
 DEFAULT_ROOT = Path.cwd().absolute()
 
@@ -43,15 +44,7 @@ def _config_path(*, root: Path, global_scope: bool, repo_scope: bool) -> Path:
 
 
 def _load_config(path: Path) -> PiConfig:
-    if not path.is_file():
-        return PiConfig()
-    try:
-        return PiConfig.model_validate_json(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise ValueError(
-            "Could not update default model because "
-            f"`{path}` is invalid. Fix or remove that file first. {exc}"
-        ) from exc
+    return load_config_file(path).config
 
 
 def _write_default_model_config(
@@ -60,21 +53,12 @@ def _write_default_model_config(
     default_model: str,
     default_reasoning_effort: str | None,
 ) -> None:
-    config = _load_config(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            PiConfig(
-                capabilities=dict(config.capabilities),
-                tools=dict(config.tools),
-                default_model=default_model,
-                default_reasoning_effort=default_reasoning_effort,
-            ).model_dump(mode="json", exclude_none=True),
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    def set_model(config: PiConfig) -> PiConfig:
+        config.default_model = default_model
+        config.default_reasoning_effort = default_reasoning_effort
+        return config
+
+    update_config_file(path, set_model)
 
 
 def set_default_model(

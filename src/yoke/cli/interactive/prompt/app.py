@@ -42,7 +42,11 @@ from yoke.cli.interactive.prompt.win32 import (
 from yoke.cli.interactive.prompt.paste import (
     patch_prompt_toolkit_input_for_multiline_paste,
 )
-from yoke.cli.interactive.queue.persistence import load_prompt_queue
+from yoke.cli.interactive.queue.mutations import attach_pending_image
+from yoke.cli.interactive.queue.mutations import (
+    remove_pending_image as persist_remove_pending_image,
+)
+from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
 from yoke.cli.interactive.prompt.rendering import (
     initialize_prompt_toolkit_session,
 )  # noqa: E501
@@ -78,13 +82,15 @@ def run_prompt_toolkit_cli(  # noqa: C901
     from prompt_toolkit import PromptSession
     from prompt_toolkit.key_binding import KeyBindings
 
-    restored_prompts, restored_images = load_prompt_queue(active_session)
+    restored_queue = load_prompt_queue_state(active_session)
     provider_config = getattr(getattr(agent, "provider", None), "config", None)
     provider_effort = getattr(provider_config, "reasoning_effort", None)
     state = PromptCliState(
         messages=list(session_messages),
-        pending_prompts=restored_prompts,
-        pending_images=restored_images,
+        pending_prompts=restored_queue.prompts,
+        pending_images=restored_queue.pending_images,
+        queue_revision=restored_queue.revision,
+        queue_session_id=active_session.id,
         abandoned_turn_ids=set(),
         steered_turn_ids=set(),
         thinking_effort=(
@@ -93,7 +99,6 @@ def run_prompt_toolkit_cli(  # noqa: C901
             else None
         ),
     )
-    provider_model_text = format_provider_model_status(agent)
 
     def refresh_provider_model_text() -> str | None:
         return format_provider_model_status(agent)
@@ -204,32 +209,28 @@ def run_prompt_toolkit_cli(  # noqa: C901
         scrollback=scrollback,
     )
 
-    def open_model_selector(preserved_text: str) -> None:
-        with state_lock:
-            state.next_editor_text = preserved_text
-
-    def open_tree_selector(preserved_text: str) -> None:
-        with state_lock:
-            state.next_editor_text = preserved_text
-
-    def open_queue_selector(preserved_text: str) -> None:
+    def preserve_editor_text(preserved_text: str) -> None:
         with state_lock:
             state.next_editor_text = preserved_text
 
     def attach_image(attachment: ImageAttachment) -> None:
-        with state_lock:
-            state.pending_images.append(attachment)
+        attach_pending_image(
+            state=state,
+            state_lock=state_lock,
+            active_session=session_ref["active_session"],
+            attachment=attachment,
+        )
         update_status(f"Attached image: {attachment.label}")
 
     def remove_pending_image(index: int = -1) -> None:
-        with state_lock:
-            if not state.pending_images:
-                return
-            if index < 0:
-                index = len(state.pending_images) - 1
-            if index >= len(state.pending_images):
-                return
-            removed = state.pending_images.pop(index)
+        removed = persist_remove_pending_image(
+            state=state,
+            state_lock=state_lock,
+            active_session=session_ref["active_session"],
+            index=index,
+        )
+        if removed is None:
+            return
         update_status(
             "Removed image attachment: "
             f"{removed.label}. Edit its prompt reference if needed."
@@ -299,8 +300,6 @@ def run_prompt_toolkit_cli(  # noqa: C901
         )
         if config is not None and hasattr(config, "reasoning_effort"):
             config.reasoning_effort = next_effort
-        nonlocal provider_model_text
-        provider_model_text = refresh_provider_model_text()
         invalidate_prompt()
         return next_effort
 
@@ -313,9 +312,9 @@ def run_prompt_toolkit_cli(  # noqa: C901
         request_clipboard_paste=request_clipboard_paste,
         open_tool_inspector=show_tool_inspector,
         open_process_inspector=show_process_inspector,
-        open_model_selector=open_model_selector,
-        open_tree_selector=open_tree_selector,
-        open_queue_manager=open_queue_selector,
+        open_model_selector=preserve_editor_text,
+        open_tree_selector=preserve_editor_text,
+        open_queue_manager=preserve_editor_text,
         update_status=update_status,
     )
     initialize_prompt_toolkit_session(

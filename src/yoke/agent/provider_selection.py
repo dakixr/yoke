@@ -163,10 +163,31 @@ def switch_agent_provider_model(
         session_id=session_id,
         home=home or Path.home(),
     )
-    prepare_context_for_provider(agent, target_provider=target_provider)
     previous_provider = agent.provider
-    agent.provider = target_provider
-    rebind_context_manager_budget(agent.context_manager, provider=target_provider)
+    transition = None
+    try:
+        transition = prepare_context_for_provider(
+            agent,
+            target_provider=target_provider,
+        )
+        agent.provider = target_provider
+        rebind_context_manager_budget(agent.context_manager, provider=target_provider)
+    except Exception:
+        agent.provider = previous_provider
+        if transition is not None:
+            with suppress(Exception):
+                transition.rollback()
+        else:
+            with suppress(Exception):
+                rebind_context_manager_budget(
+                    agent.context_manager,
+                    provider=previous_provider,
+                )
+        with suppress(Exception):
+            close_target = getattr(target_provider, "close", None)
+            if callable(close_target):
+                close_target()
+        raise
     close_previous = getattr(previous_provider, "close", None)
     if callable(close_previous):
         with suppress(Exception):

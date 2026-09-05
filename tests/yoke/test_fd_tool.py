@@ -3,16 +3,21 @@ from __future__ import annotations
 # ruff: noqa: D100, D101, D102, D103, D106, S101
 
 from pathlib import Path
+import shutil
 from typing import Any, cast
+
+import pytest
 
 from yoke.agent.capabilities import create_builtin_capabilities
 from yoke.agent.models import Message
 from yoke.agent.tools import FdTool
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools.context import ModelIdentity
-from yoke.agent.tools.fd import _resolve_fd_binary
-from yoke.agent.tools.rg import _resolve_rg_binary
 from yoke.ai.providers.base import Provider
+
+requires_fd = pytest.mark.skipif(
+    shutil.which("fd") is None, reason="fd is not installed"
+)
 
 
 class ProviderStub(Provider):
@@ -39,15 +44,14 @@ def execute_fd(tmp_path: Path, **arguments: object) -> dict[str, Any]:
     return cast(dict[str, Any], tool.parse_arguments(arguments).execute())
 
 
-def test_fd_and_rg_are_available_on_path() -> None:
-    fd_binary = Path(_resolve_fd_binary())
-    rg_binary = Path(_resolve_rg_binary())
-
-    assert fd_binary.is_file()
-    assert rg_binary.is_file()
-
-
-def test_fd_is_first_class_file_search_tool(tmp_path: Path) -> None:
+def test_fd_is_first_class_file_search_tool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "yoke.agent.capabilities.builtins.shutil.which",
+        lambda name: f"/test-bin/{name}" if name in {"rg", "fd"} else None,
+    )
     provider = ProviderStub()
     context = ToolRegistrationContext(
         root=tmp_path,
@@ -67,6 +71,7 @@ def test_fd_is_first_class_file_search_tool(tmp_path: Path) -> None:
     assert search_tools == {"fd", "rg"}
 
 
+@requires_fd
 def test_fd_finds_paths_with_real_fd_arguments(tmp_path: Path) -> None:
     source = tmp_path / "src"
     source.mkdir()
@@ -84,6 +89,7 @@ def test_fd_finds_paths_with_real_fd_arguments(tmp_path: Path) -> None:
     assert not any(str(path).endswith("notes.txt") for path in result["output"])
 
 
+@requires_fd
 def test_fd_root_dir_and_ignore_semantics(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -99,6 +105,7 @@ def test_fd_root_dir_and_ignore_semantics(tmp_path: Path) -> None:
     assert not any(str(path).endswith("ignored.py") for path in result["output"])
 
 
+@requires_fd
 def test_fd_bounds_output(tmp_path: Path) -> None:
     for index in range(20):
         (tmp_path / f"file-{index:02}.txt").write_text("", encoding="utf-8")

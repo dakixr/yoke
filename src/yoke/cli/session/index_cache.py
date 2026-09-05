@@ -6,13 +6,12 @@ import os
 import tempfile
 import time
 from collections.abc import Callable
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 
 from pydantic import ValidationError
 
+from yoke._file_io import exclusive_file_lock
 from yoke.cli.session.models import SessionIndex
 
 
@@ -55,7 +54,7 @@ class SessionIndexCache:
         """Atomically replace the index and publish the new cached snapshot."""
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with _exclusive_file_lock(self._lock_path()):
+            with exclusive_file_lock(self._lock_path()):
                 try:
                     self._replace(index)
                 except OSError:
@@ -67,22 +66,15 @@ class SessionIndexCache:
         """Apply one read-modify-write update under the shared index lock."""
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with _exclusive_file_lock(self._lock_path()):
+            with exclusive_file_lock(self._lock_path()):
                 signature = self._file_signature()
-                retry_dirty_snapshot = bool(
-                    self._dirty
-                    and self._snapshot is not None
-                    and signature == self._signature
+                reuse_snapshot = (
+                    self._snapshot is not None and signature == self._signature
                 )
-                reuse_clean_snapshot = bool(
-                    not self._dirty
-                    and self._snapshot is not None
-                    and signature == self._signature
-                )
+                retry_dirty_snapshot = self._dirty and reuse_snapshot
                 current = (
                     self._snapshot
-                    if (retry_dirty_snapshot or reuse_clean_snapshot)
-                    and self._snapshot is not None
+                    if reuse_snapshot and self._snapshot is not None
                     else self._read_disk()
                 )
                 self._publish(current, dirty=retry_dirty_snapshot)
@@ -179,48 +171,3 @@ class SessionIndexCache:
             stat.st_mtime_ns,
             stat.st_size,
         )
-
-
-@contextmanager
-def _exclusive_file_lock(path: Path) -> Iterator[None]:
-    """Coordinate index transactions across processes on Windows and POSIX."""
-    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_BINARY", 0)
-    descriptor = os.open(path, flags, 0o600)
-    locked = False
-    try:
-        _lock_descriptor(descriptor)
-        locked = True
-        yield
-    finally:
-        try:
-            if locked:
-                _unlock_descriptor(descriptor)
-        finally:
-            os.close(descriptor)
-
-
-def _lock_descriptor(descriptor: int) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        if os.fstat(descriptor).st_size == 0:
-            os.write(descriptor, b"\0")
-            os.fsync(descriptor)
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(descriptor, fcntl.LOCK_EX)
-
-
-def _unlock_descriptor(descriptor: int) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(descriptor, fcntl.LOCK_UN)

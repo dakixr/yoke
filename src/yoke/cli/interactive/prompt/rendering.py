@@ -8,7 +8,6 @@ from typing import cast
 
 from yoke.agent.models import Message
 from yoke.cli.image_input import format_attachment_lines
-from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.renderer import format_bottom_toolbar
 from yoke.cli.render import print_session_scrollback
@@ -98,7 +97,7 @@ def build_prompt_toolbar(
             worker_active=current_worker is not None,
             stop_pending=stop_pending,
             status_message=current_status,
-            pending_prompts=_copy_pending_prompts(queued_prompts),
+            pending_prompts=list(queued_prompts),
             pending_images=format_attachment_lines(pending_images),
             context_usage=current_context_usage,
             context_usage_percent=current_usage_percent,
@@ -129,10 +128,3 @@ def _current_output_columns() -> int | None:
     if app is None:
         return None
     return app.output.get_size().columns
-
-
-def _copy_pending_prompts(
-    prompts: list[PendingPrompt],
-) -> list[PendingPrompt]:
-    """Return a shallow copy with the declared prompt type."""
-    return list(prompts)

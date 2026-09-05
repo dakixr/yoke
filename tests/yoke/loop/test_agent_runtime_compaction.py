@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# ruff: noqa: D100, D103, F403, F405, S101
+# ruff: noqa: D100, D103, S101
 
 from yoke.agent.compaction import force_compact_agent
 from yoke.agent.compaction import CompactionPreparation
@@ -11,7 +11,19 @@ from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import TokenUsage
 from yoke.ai.providers.base import ProviderError
 
-from .support import *  # noqa: F403
+from pathlib import Path
+
+from yoke.agent.compaction import COMPACTION_SUMMARY_PROMPT
+from yoke.agent.context import CompactionPolicy, ContextManager
+from yoke.agent.loop import RuntimeAgent
+from yoke.agent.models import (
+    Message,
+    MessageLocalImageContentPart,
+    MessageTextContentPart,
+)
+from yoke.ai.providers.base import Provider
+
+from .support import OverflowRetryProvider
 
 
 def test_codex_context_length_error_triggers_overflow_retry() -> None:

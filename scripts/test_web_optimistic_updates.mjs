@@ -5,29 +5,65 @@ class MemoryStorage {
   getItem(key) { return this.values.has(key) ? this.values.get(key) : null; }
   setItem(key, value) { this.values.set(key, String(value)); }
   removeItem(key) { this.values.delete(key); }
+  clear() { this.values.clear(); }
 }
 
 globalThis.localStorage = new MemoryStorage();
 globalThis.sessionStorage = new MemoryStorage();
+const windowListeners = new Map();
 globalThis.window = {
   location: { pathname: "/", search: "", hash: "", href: "http://127.0.0.1/" },
   innerWidth: 1440,
-  addEventListener() {},
-  removeEventListener() {},
-  dispatchEvent() {},
+  addEventListener(type, callback) {
+    const listeners = windowListeners.get(type) || new Set();
+    listeners.add(callback);
+    windowListeners.set(type, listeners);
+  },
+  removeEventListener(type, callback) {
+    const listeners = windowListeners.get(type);
+    listeners?.delete(callback);
+    if (!listeners?.size) windowListeners.delete(type);
+  },
+  dispatchEvent(event) {
+    for (const callback of windowListeners.get(event.type) || []) callback(event);
+  },
   prompt() { return null; },
 };
 globalThis.location = globalThis.window.location;
 globalThis.history = { pushState() {}, replaceState() {} };
 globalThis.document = { querySelector() { return null; } };
 globalThis.PopStateEvent = class PopStateEvent {};
-globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 0);
-globalThis.cancelAnimationFrame = (timer) => clearTimeout(timer);
+let nextAnimationFrame = 1;
+const animationFrames = new Map();
+globalThis.requestAnimationFrame = (callback) => {
+  const frame = nextAnimationFrame++;
+  animationFrames.set(frame, callback);
+  return frame;
+};
+globalThis.cancelAnimationFrame = (frame) => animationFrames.delete(frame);
+const nativeSetTimeout = globalThis.setTimeout;
+const nativeClearTimeout = globalThis.clearTimeout;
+const timerHandles = new Set();
+globalThis.setTimeout = (callback, delay, ...args) => {
+  const handle = nativeSetTimeout(() => {
+    timerHandles.delete(handle);
+    callback(...args);
+  }, delay);
+  timerHandles.add(handle);
+  return handle;
+};
+globalThis.clearTimeout = (handle) => {
+  timerHandles.delete(handle);
+  nativeClearTimeout(handle);
+};
 
 const { api, ApiError } = await import("../src/yoke/web/assets/js/api/client.js");
-const { controller } = await import("../src/yoke/web/assets/js/state/controller.js");
+const { AppController, controller: exportedController } = await import("../src/yoke/web/assets/js/state/controller.js");
+assert.ok(exportedController instanceof AppController);
+let controller = exportedController;
 const { installActiveSnapshot, mergeSessionInfo, reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
 const { store } = await import("../src/yoke/web/assets/js/state/store.js");
+const { currentRoute } = await import("../src/yoke/web/assets/js/router/router.js");
 const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
 const { assistantMetadataMessageIDs, compactToolBatchMessageIDs } = await import("../src/yoke/web/assets/js/lib/messages.js");
 const { defaultTreeEntries, displayTreeEntries, treeGraphLayout } = await import("../src/yoke/web/assets/js/inspector/tree-graph.js");
@@ -45,8 +81,9 @@ const { slashMenuScrollDelta } = await import("../src/yoke/web/assets/js/session
 const { formatTurnSummary } = await import("../src/yoke/web/assets/js/session/turn-summary.js");
 const { installKeybindings } = await import("../src/yoke/web/assets/js/lib/keyboard.js");
 const { visualSessionOrder } = await import("../src/yoke/web/assets/js/state/session-order.js");
-const { readSessionComposerDrafts } = await import("../src/yoke/web/assets/js/state/local-state.js");
+const { readDrafts, readSessionComposerDrafts } = await import("../src/yoke/web/assets/js/state/local-state.js");
 const {
+  clearAllSessionComposerDrafts,
   clearSessionComposerDraft,
   getSessionComposerDraft,
   updateSessionComposerDraft,
@@ -66,8 +103,33 @@ function tick() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-function delay(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function settlesWithin(promise, milliseconds) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(false), milliseconds);
+    promise.then(
+      () => {
+        clearTimeout(timer);
+        resolve(true);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function settleControllerTimerTasks(instance) {
+  while (instance.refreshTimerTasks.size) {
+    await Promise.allSettled([...instance.refreshTimerTasks]);
+  }
+  await tick();
+}
+
+function runAnimationFrames() {
+  const queued = [...animationFrames.values()];
+  animationFrames.clear();
+  for (const callback of queued) callback(performance.now());
 }
 
 function sessionSummary(id, overrides = {}) {
@@ -82,6 +144,26 @@ function sessionSummary(id, overrides = {}) {
     tree: { leafID: null, entryCount: 0 },
     queue: { total: 0, steering: 0, queued: 0, paused: 0, revision: 0 },
     ...overrides,
+  };
+}
+
+function treeSnapshot(revision, ids, next = null, labels = {}) {
+  return {
+    revision,
+    leafID: ids.at(-1) || null,
+    totalEntries: ids.length,
+    cursor: { next },
+    entries: ids.map((id, index) => ({
+      id,
+      parentID: index ? ids[index - 1] : null,
+      kind: index % 2 ? "assistant" : "user",
+      createdAt: `2026-08-27T00:00:0${index}Z`,
+      label: labels[id] ?? null,
+      active: true,
+      current: index === ids.length - 1,
+      preview: id,
+      childCount: index === ids.length - 1 ? 0 : 1,
+    })),
   };
 }
 
@@ -142,6 +224,51 @@ async function testSessionComposerDraftsStayScopedAndPersisted() {
   clearSessionComposerDraft(secondID);
 }
 
+async function testClearedNewSessionDraftIsRemovedFromPersistenceButStaysLive() {
+  const textID = "new-session-text-draft";
+  const attachmentID = "new-session-attachment-draft";
+  const keeperID = "new-session-keeper-draft";
+  const image = {
+    id: "upl_new_session_draft",
+    uri: "yoke-upload://upl_new_session_draft",
+    name: "draft.png",
+    mime: "image/png",
+    size: 456,
+  };
+
+  controller.updateDraft(keeperID, { text: "keep this draft" });
+  controller.updateDraft(textID, { text: "remove this text" });
+  assert.equal(readDrafts()[textID].text, "remove this text");
+  controller.updateDraft(textID, { text: "" });
+  assert.equal(readDrafts()[textID], undefined);
+  assert.equal(readDrafts()[keeperID].text, "keep this draft");
+  assert.equal(store.getState().drafts[textID].text, "");
+
+  controller.updateDraft(attachmentID, { text: "", attachments: [image] });
+  assert.deepEqual(readDrafts()[attachmentID].attachments, [image]);
+  assert.equal(readDrafts()[textID], undefined);
+  controller.updateDraft(attachmentID, { attachments: [] });
+  assert.equal(readDrafts()[attachmentID], undefined);
+  assert.equal(readDrafts()[keeperID].text, "keep this draft");
+  assert.deepEqual(store.getState().drafts[attachmentID].attachments, []);
+
+  controller.deleteDraft(keeperID);
+  assert.equal(readDrafts()[textID], undefined);
+  assert.equal(readDrafts()[attachmentID], undefined);
+  controller.deleteDraft(textID);
+  controller.deleteDraft(attachmentID);
+}
+
+function testSettingsRouteAliasesHome() {
+  const previousPath = window.location.pathname;
+  try {
+    window.location.pathname = "/settings";
+    assert.deepEqual(currentRoute(), { name: "home" });
+  } finally {
+    window.location.pathname = previousPath;
+  }
+}
+
 function restoreApi(overrides) {
   const originals = new Map();
   for (const [name, value] of Object.entries(overrides)) {
@@ -150,6 +277,39 @@ function restoreApi(overrides) {
   }
   return () => {
     for (const [name, value] of originals) api[name] = value;
+  };
+}
+
+function installKeybindingHarness(actions, key) {
+  let handler = null;
+  const originalAdd = document.addEventListener;
+  const originalRemove = document.removeEventListener;
+  document.addEventListener = (type, callback) => {
+    if (type === "keydown") handler = callback;
+  };
+  document.removeEventListener = (type, callback) => {
+    if (type === "keydown" && handler === callback) handler = null;
+  };
+  const uninstall = installKeybindings(actions);
+  return {
+    fire(overrides = {}) {
+      let prevented = false;
+      handler?.({
+        key,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        preventDefault() { prevented = true; },
+        ...overrides,
+      });
+      return prevented;
+    },
+    cleanup() {
+      uninstall();
+      document.addEventListener = originalAdd;
+      document.removeEventListener = originalRemove;
+    },
   };
 }
 
@@ -383,6 +543,7 @@ async function testSessionPatchesSerializeAndKeepNewestOptimism() {
     await Promise.all([first, second]);
     assert.equal(store.getState().sessions[id].title, "Renamed");
     assert.equal(store.getState().sessions[id].pinned, true);
+    assert.equal(controller.sessionPendingMutations.has(id), false);
   } finally {
     restore();
   }
@@ -497,6 +658,7 @@ async function testQueueMutationsSurviveStaleRefresh() {
     assert.deepEqual(visible.items.map((item) => item.id), ["b", "a"]);
     assert.equal(visible.items[1].paused, true);
     assert.equal(visible.revision, 12);
+    assert.equal(controller.queuePendingMutations.has(id), false);
   } finally {
     restore();
   }
@@ -642,6 +804,53 @@ async function testSelectionAndToolTogglesKeepLatestClick() {
   }
 }
 
+async function testConfigMutationsRejectOlderInspectorReads() {
+  const id = "config-read-mutation-race";
+  const skill = { name: "review", description: "Review", sourcePath: "/skills/review" };
+  installSession(id, {
+    extraData: {
+      tools: [{ name: "alpha", enabled: true }],
+      skills: { available: [skill], active: [] },
+      mcp: [{ name: "docs", enabled: true, enabledTools: [], disabledTools: [] }],
+    },
+  });
+  const toolsRead = deferred();
+  const skillsRead = deferred();
+  const mcpRead = deferred();
+  const restore = restoreApi({
+    tools: () => toolsRead.promise,
+    patchTools: async () => ({ data: { enabled: [] } }),
+    sessionSkills: () => skillsRead.promise,
+    activateSkill: async () => ({ data: { activated: { ...skill, active: true } } }),
+    sessionMcp: () => mcpRead.promise,
+    patchMcp: async () => ({ data: { name: "docs", enabled: false } }),
+  });
+  try {
+    const staleTools = controller.refreshTools(id);
+    await controller.toggleTool(id, "alpha", false);
+    toolsRead.resolve({ data: [{ name: "alpha", enabled: true }] });
+    await staleTools;
+    assert.equal(store.getState().sessionData[id].tools[0].enabled, false);
+
+    const staleSkills = controller.refreshSkills(id);
+    await controller.activateSkill(id, "review");
+    skillsRead.resolve({ data: { available: [skill], active: [] } });
+    await staleSkills;
+    assert.deepEqual(
+      store.getState().sessionData[id].skills.active.map((item) => item.name),
+      ["review"],
+    );
+
+    const staleMcp = controller.refreshMcp(id);
+    await controller.patchMcp(id, "docs", { enabled: false });
+    mcpRead.resolve({ data: [{ name: "docs", enabled: true }] });
+    await staleMcp;
+    assert.equal(store.getState().sessionData[id].mcp[0].enabled, false);
+  } finally {
+    restore();
+  }
+}
+
 async function testProcessRefreshDoesNotRestoreAnOldSelection() {
   const id = "process-refresh-selection";
   installSession(id, {
@@ -671,6 +880,31 @@ async function testProcessRefreshDoesNotRestoreAnOldSelection() {
 
     await controller.refreshProcesses(id);
     assert.equal(listArgs.limit, 200);
+  } finally {
+    restore();
+  }
+}
+
+async function testProcessSelectionKeepsNewestClick() {
+  const id = "process-selection-race";
+  installSession(id, { extraData: { processes: [], processDetail: null } });
+  store.setState((state) => ({
+    ...state,
+    ui: { ...state.ui, selectedSessionID: id, inspector: { mode: "process" } },
+  }));
+  const processA = deferred();
+  const processB = deferred();
+  const restore = restoreApi({
+    process: (processID) => processID === "proc-a" ? processA.promise : processB.promise,
+  });
+  try {
+    const loadA = controller.loadProcess("proc-a");
+    const loadB = controller.loadProcess("proc-b");
+    processB.resolve({ data: { processID: "proc-b", sessionID: id, status: "running" } });
+    await loadB;
+    processA.resolve({ data: { processID: "proc-a", sessionID: id, status: "running" } });
+    await loadA;
+    assert.equal(store.getState().sessionData[id].processDetail.processID, "proc-b");
   } finally {
     restore();
   }
@@ -873,6 +1107,34 @@ async function testToolDetailKeepsNewestSelection() {
   }
 }
 
+async function testClosingInspectorRejectsPendingToolDetail() {
+  const id = "tool-detail-close";
+  installSession(id, { extraData: { toolDetail: null } });
+  store.setState((state) => ({
+    ...state,
+    ui: {
+      ...state.ui,
+      selectedSessionID: id,
+      inspector: { mode: "tool", callID: "call-pending" },
+    },
+  }));
+  const detail = deferred();
+  const restore = restoreApi({
+    toolCall: () => detail.promise,
+    toolOutput: async () => ({ data: [], cursor: { next: 0, truncatedBefore: 0 } }),
+  });
+  try {
+    const loading = controller.loadToolCall(id, "call-pending");
+    controller.closeInspector();
+    detail.resolve({ data: { id: "call-pending", toolName: "read", status: "ok" } });
+    await loading;
+    assert.equal(store.getState().ui.inspector, null);
+    assert.equal(store.getState().sessionData[id].toolDetail, null);
+  } finally {
+    restore();
+  }
+}
+
 async function testPersistedToolDetailSkipsOutputRequest() {
   const id = "tool-persisted-detail";
   installSession(id, {
@@ -935,6 +1197,56 @@ async function testToolDetailCoalescesSameCallRequest() {
     assert.equal(store.getState().sessionData[id].toolDetail.id, "call-live");
     assert.equal(store.getState().sessionData[id].toolDetail.outputChunks.length, 1);
   } finally {
+    restore();
+  }
+}
+
+async function testOpeningSameToolInspectorCoalescesOwnedRequests() {
+  const id = "tool-open-coalescing";
+  installSession(id, {
+    extraData: {
+      toolCalls: [{ id: "call-live", toolName: "exec", status: "running", retention: "runtime" }],
+      toolDetail: null,
+    },
+  });
+  store.setState((state) => ({
+    ...state,
+    ui: { ...state.ui, selectedSessionID: id },
+  }));
+  const detailGate = deferred();
+  const outputGate = deferred();
+  let detailReads = 0;
+  let outputReads = 0;
+  const restore = restoreApi({
+    toolCalls: async () => ({ data: store.getState().sessionData[id].toolCalls }),
+    toolCall: () => {
+      detailReads += 1;
+      return detailGate.promise;
+    },
+    toolOutput: () => {
+      outputReads += 1;
+      return outputGate.promise;
+    },
+  });
+  try {
+    const first = controller.openInspector("tool", { callID: "call-live" });
+    const second = controller.openInspector("tool", { callID: "call-live" });
+    assert.equal(detailReads, 1);
+    assert.equal(outputReads, 1);
+    detailGate.resolve({
+      data: { id: "call-live", toolName: "exec", status: "running", retention: "runtime" },
+    });
+    outputGate.resolve({
+      data: [{ seq: 1, stream: "output", text: "coalesced" }],
+      cursor: { next: 1, truncatedBefore: 0 },
+    });
+    await Promise.all([first, second]);
+    assert.equal(store.getState().ui.inspector.callID, "call-live");
+    assert.equal(store.getState().sessionData[id].toolDetail.id, "call-live");
+    assert.equal(store.getState().sessionData[id].toolDetail.outputChunks[0].text, "coalesced");
+  } finally {
+    detailGate.resolve({ data: {} });
+    outputGate.resolve({ data: [], cursor: { next: 0, truncatedBefore: 0 } });
     restore();
   }
 }
@@ -1008,6 +1320,10 @@ async function testTimelineToolOpenKeepsNewestClickAcrossListRace() {
 
     assert.equal(store.getState().ui.inspector.callID, "call-new");
     assert.equal(store.getState().sessionData[id].toolDetail.id, "call-new");
+    assert.deepEqual(
+      store.getState().sessionData[id].toolCalls.map((call) => call.id),
+      ["call-new"],
+    );
   } finally {
     restore();
   }
@@ -1268,6 +1584,99 @@ async function testTreeLabelsSerializeAndKeepNewestOptimism() {
   }
 }
 
+async function testStaleTreeRefreshCannotRollbackConfirmedLabel() {
+  const id = "tree-refresh-label-race";
+  installSession(id, { extraData: { tree: treeSnapshot(10, ["node"], null) } });
+  store.setState((state) => ({
+    ...state,
+    ui: { ...state.ui, selectedSessionID: id, inspector: { mode: "tree" } },
+  }));
+  const staleTree = deferred();
+  const restore = restoreApi({
+    tree: () => staleTree.promise,
+    patchTreeEntry: async () => ({
+      data: {
+        revision: 11,
+        entry: { ...treeSnapshot(11, ["node"], null, { node: "Confirmed" }).entries[0] },
+      },
+    }),
+  });
+  try {
+    const refresh = controller.refreshTree(id);
+    await controller.labelTreeEntry(id, "node", "Confirmed");
+    staleTree.resolve({ data: treeSnapshot(10, ["node"], null) });
+    await refresh;
+    const tree = store.getState().sessionData[id].tree;
+    assert.equal(tree.revision, 11);
+    assert.equal(tree.entries[0].label, "Confirmed");
+    assert.equal(controller.treeServerRevisions.get(id), 11);
+    assert.equal(controller.treePendingLabels.has(id), false);
+  } finally {
+    restore();
+  }
+}
+
+async function testOlderTreePageCannotReplaceNewerSnapshot() {
+  const id = "tree-page-newer-snapshot-race";
+  installSession(id, { extraData: { tree: treeSnapshot(10, ["latest-10"], "cursor-10") } });
+  store.setState((state) => ({
+    ...state,
+    ui: { ...state.ui, selectedSessionID: id, inspector: { mode: "tree" } },
+  }));
+  controller.treeServerRevisions.set(id, 10);
+  controller.inspectorState.treeInstalledEpochs.set(id, controller.lifecycleEpoch);
+  const olderPage = deferred();
+  const restore = restoreApi({
+    tree: async (_sessionID, options) => {
+      if (options.cursor) return olderPage.promise;
+      return { data: treeSnapshot(11, ["latest-11"], "cursor-11") };
+    },
+  });
+  try {
+    const loadingOlder = controller.loadMoreTree(id);
+    await controller.refreshTree(id);
+    olderPage.resolve({ data: treeSnapshot(10, ["older-10"], null) });
+    await loadingOlder;
+    const tree = store.getState().sessionData[id].tree;
+    assert.equal(tree.revision, 11);
+    assert.equal(tree.cursor.next, "cursor-11");
+    assert.deepEqual(tree.entries.map((entry) => entry.id), ["latest-11"]);
+  } finally {
+    restore();
+  }
+}
+
+async function testConcurrentSameRevisionTreePagesDoNotDuplicateEntries() {
+  const id = "tree-page-same-revision-race";
+  installSession(id, { extraData: { tree: treeSnapshot(7, ["latest"], "cursor-7") } });
+  store.setState((state) => ({
+    ...state,
+    ui: { ...state.ui, selectedSessionID: id, inspector: { mode: "tree" } },
+  }));
+  controller.treeServerRevisions.set(id, 7);
+  controller.inspectorState.treeInstalledEpochs.set(id, controller.lifecycleEpoch);
+  const first = deferred();
+  const second = deferred();
+  let reads = 0;
+  const restore = restoreApi({
+    tree: () => (++reads === 1 ? first.promise : second.promise),
+  });
+  try {
+    const firstLoad = controller.loadMoreTree(id);
+    const secondLoad = controller.loadMoreTree(id);
+    second.resolve({ data: treeSnapshot(7, ["older", "latest"], null) });
+    await secondLoad;
+    first.resolve({ data: treeSnapshot(7, ["older", "latest"], null) });
+    await firstLoad;
+    assert.deepEqual(
+      store.getState().sessionData[id].tree.entries.map((entry) => entry.id),
+      ["older", "latest"],
+    );
+  } finally {
+    restore();
+  }
+}
+
 function testLateDurableEventDoesNotClearNewerOptimisticPrompt() {
   const id = "optimistic-reducer";
   const base = {
@@ -1298,6 +1707,28 @@ function testLateDurableEventDoesNotClearNewerOptimisticPrompt() {
     data: { inputID: "old-input" },
   });
   assert.equal(reduced.sessionData[id].livePrompt.id, "new-input");
+}
+
+function testPromotedSsePromptAlwaysCarriesInputID() {
+  const id = "sse-live-prompt-id";
+  installSession(id);
+  let state = reducePublicEvent(store.getState(), {
+    type: "session.prompt.admitted",
+    sessionID: id,
+    time: "2026-08-27T12:00:00Z",
+    data: {
+      inputID: "inp_from_sse",
+      prompt: { text: "queued prompt", attachments: [] },
+      delivery: "steer",
+    },
+  });
+  state = reducePublicEvent(state, {
+    type: "session.prompt.promoted",
+    sessionID: id,
+    time: "2026-08-27T12:00:01Z",
+    data: { inputID: "inp_from_sse" },
+  });
+  assert.equal(state.sessionData[id].livePrompt.id, "inp_from_sse");
 }
 
 async function testCheckpointedToolCommentaryDoesNotStickAtTail() {
@@ -1364,7 +1795,15 @@ async function testBootstrapDoesNotWaitForProviderOrLocationEnrichment() {
     activeSessions: async () => ({ data: {} }),
     commands: async () => ({ data: [] }),
     recentLocations: async () => ({ data: [] }),
-    listSessions: async () => ({ data: [], cursor: { next: null } }),
+    listSessions: async ({ archived }) => archived
+      ? {
+          data: [sessionSummary("bootstrap-archived", {
+            archivedAt: "2026-08-29T00:00:00Z",
+          })],
+          total: 73,
+          cursor: { next: "bootstrap-archived-next" },
+        }
+      : { data: [], total: 0, cursor: { next: null } },
     providers: () => providerGate.promise,
   });
   const originals = {
@@ -1380,11 +1819,13 @@ async function testBootstrapDoesNotWaitForProviderOrLocationEnrichment() {
   try {
     const completed = controller.bootstrap().then(() => true);
     assert.equal(
-      await Promise.race([completed, delay(100).then(() => false)]),
+      await settlesWithin(completed, 100),
       true,
       "bootstrap should not wait for provider or location enrichment",
     );
     assert.deepEqual(store.getState().providers, []);
+    assert.equal(store.getState().archivedOrder.length, 1);
+    assert.equal(store.getState().archivedTotal, 73);
     providerGate.resolve({ data: [{ id: "codex", ready: true }] });
     await tick();
     assert.equal(store.getState().providers[0].id, "codex");
@@ -1392,6 +1833,785 @@ async function testBootstrapDoesNotWaitForProviderOrLocationEnrichment() {
     locationGate.resolve();
     processGate.resolve();
     Object.assign(controller, originals);
+    restore();
+  }
+}
+
+async function testBootstrapDrainsEventsThroughReconciliationOnce() {
+  const id = "bootstrap-buffered-events";
+  const currentSessions = deferred();
+  const scheduled = [];
+  const broadResyncs = [];
+  const restore = restoreApi({
+    capabilities: async () => ({ data: { limits: {} } }),
+    activeSessions: async () => ({ data: {} }),
+    commands: async () => ({ data: [] }),
+    recentLocations: async () => ({ data: [] }),
+    listSessions: ({ archived }) => archived
+      ? Promise.resolve({ data: [], total: 0, cursor: { next: null } })
+      : currentSessions.promise,
+    providers: async () => ({ data: [] }),
+  });
+  const originals = {
+    startSse: controller.startSse,
+    schedule: controller.schedule,
+    resync: controller.resync,
+    resolveVisibleLocations: controller.resolveVisibleLocations,
+    refreshProcessLocalState: controller.refreshProcessLocalState,
+    applyRoute: controller.applyRoute,
+  };
+  controller.startSse = () => {};
+  controller.schedule = (key) => scheduled.push(key);
+  controller.resync = async (broad) => { broadResyncs.push(broad); };
+  controller.resolveVisibleLocations = async () => {};
+  controller.refreshProcessLocalState = async () => {};
+  controller.applyRoute = async () => {};
+  try {
+    installSession(id, { extraData: { contextUsage: null } });
+    controller.bufferEvents = false;
+    controller.receiveEvent({
+      type: "session.context.updated",
+      sessionID: id,
+      durable: null,
+      data: { usage_percent: 77 },
+    });
+    assert.notEqual(controller.liveFrame, null);
+    const bootstrapping = controller.bootstrap();
+    await tick();
+    controller.receiveEvent({
+      type: "session.created",
+      sessionID: id,
+      durable: { seq: 1 },
+      data: {},
+    });
+    controller.receiveEvent({
+      type: "session.prompt.admitted",
+      sessionID: id,
+      time: "2026-08-27T12:00:00Z",
+      durable: { seq: 2 },
+      data: {
+        inputID: "inp_buffered",
+        prompt: { text: "buffered", attachments: [] },
+        delivery: "queue",
+      },
+    });
+    controller.receiveEvent({
+      type: "session.message.updated",
+      sessionID: id,
+      time: "2026-08-27T12:00:01Z",
+      durable: null,
+      data: { turnID: "turn-buffered", iteration: 1, phase: "commentary", content: "once" },
+    });
+    controller.receiveEvent({ type: "server.resyncRequired", durable: null, data: {} });
+    currentSessions.resolve({
+      data: [sessionSummary(id)],
+      total: 1,
+      cursor: { next: null },
+    });
+    await bootstrapping;
+    await tick();
+
+    assert.equal(controller.bufferEvents, false);
+    assert.deepEqual(controller.eventBuffer, []);
+    assert.deepEqual(Object.keys(store.getState().sessionData[id].pendingPrompts), ["inp_buffered"]);
+    assert.equal(store.getState().sessionData[id].latestSeq, 2, "buffered events must be reduced once");
+    assert.equal(store.getState().sessionData[id].liveTimelineSequence, 1);
+    assert.ok(scheduled.includes("lists"));
+    assert.ok(scheduled.includes(`queue:${id}`));
+    assert.deepEqual(broadResyncs, [true]);
+    runAnimationFrames();
+    assert.equal(store.getState().sessionData[id].contextUsage, null);
+  } finally {
+    Object.assign(controller, originals);
+    restore();
+  }
+}
+
+async function testAuthReplacementRetiresDeferredBootstrap() {
+  const oldActive = deferred();
+  let activeReads = 0;
+  let streamStarts = 0;
+  let streamStops = 0;
+  const restore = restoreApi({
+    request: async () => ({ data: { ok: true } }),
+    capabilities: async () => ({ data: { limits: {} } }),
+    activeSessions: () => (++activeReads === 1
+      ? oldActive.promise
+      : Promise.resolve({ data: { replacement: { state: "idle", turnID: null } } })),
+    commands: async () => ({ data: [] }),
+    recentLocations: async () => ({ data: [] }),
+    listSessions: async () => ({ data: [], total: 0, cursor: { next: null } }),
+    providers: async () => ({ data: [] }),
+  });
+  const originals = {
+    startSse: controller.startSse,
+    resolveVisibleLocations: controller.resolveVisibleLocations,
+    refreshProcessLocalState: controller.refreshProcessLocalState,
+    applyRoute: controller.applyRoute,
+  };
+  controller.startSse = () => {
+    streamStarts += 1;
+    controller.sse = { stop() { streamStops += 1; } };
+  };
+  controller.resolveVisibleLocations = async () => {};
+  controller.refreshProcessLocalState = async () => {};
+  controller.applyRoute = async () => {};
+  try {
+    const oldAuthentication = controller.authenticateAndBootstrap("old-token");
+    await tick();
+    assert.equal(controller.bootstrapping, true);
+
+    const replacement = controller.authenticateAndBootstrap("replacement-token");
+    await replacement;
+    assert.equal(streamStarts, 2);
+    assert.ok(streamStops >= 1);
+    assert.equal(store.getState().auth.token, "replacement-token");
+    assert.equal(store.getState().connection.current, true);
+    assert.equal(store.getState().active.replacement.state, "idle");
+
+    oldActive.resolve({ data: { stale: { state: "running", turnID: "old" } } });
+    await oldAuthentication;
+    assert.equal(store.getState().active.stale, undefined);
+    assert.equal(store.getState().connection.current, true);
+  } finally {
+    oldActive.resolve({ data: {} });
+    Object.assign(controller, originals);
+    restore();
+  }
+}
+
+async function testAuthReplacementRetiresDeferredResyncBufferOwnership() {
+  const oldActive = deferred();
+  const replacementSessions = deferred();
+  let activeReads = 0;
+  let currentListReads = 0;
+  const restore = restoreApi({
+    request: async () => ({ data: { ok: true } }),
+    capabilities: async () => ({ data: { limits: {} } }),
+    activeSessions: () => (++activeReads === 1 ? oldActive.promise : Promise.resolve({ data: {} })),
+    commands: async () => ({ data: [] }),
+    recentLocations: async () => ({ data: [] }),
+    listSessions: ({ archived }) => {
+      if (archived) return Promise.resolve({ data: [], total: 0, cursor: { next: null } });
+      currentListReads += 1;
+      return currentListReads === 1
+        ? Promise.resolve({ data: [], total: 0, cursor: { next: null } })
+        : replacementSessions.promise;
+    },
+    providers: async () => ({ data: [] }),
+  });
+  const originals = {
+    startSse: controller.startSse,
+    resolveVisibleLocations: controller.resolveVisibleLocations,
+    refreshProcessLocalState: controller.refreshProcessLocalState,
+    applyRoute: controller.applyRoute,
+  };
+  controller.startSse = () => { controller.sse = { stop() {} }; };
+  controller.resolveVisibleLocations = async () => {};
+  controller.refreshProcessLocalState = async () => {};
+  controller.applyRoute = async () => {};
+  try {
+    const oldResync = controller.resync(false);
+    await tick();
+    const replacement = controller.authenticateAndBootstrap("replacement-token");
+    await tick();
+    assert.equal(controller.bootstrapping, true);
+    controller.receiveEvent({
+      type: "session.created",
+      sessionID: "replacement-buffered",
+      durable: { seq: 1 },
+      data: {},
+    });
+    oldActive.reject(new Error("old resync failed"));
+    await oldResync;
+    assert.equal(controller.bufferEvents, true);
+    assert.equal(controller.eventBuffer.length, 1);
+    assert.equal(controller.bootstrapping, true);
+
+    replacementSessions.resolve({ data: [], total: 0, cursor: { next: null } });
+    await replacement;
+    assert.equal(controller.bufferEvents, false);
+    assert.equal(store.getState().sessionData["replacement-buffered"].latestSeq, 1);
+    assert.equal(store.getState().connection.current, true);
+  } finally {
+    oldActive.resolve({ data: {} });
+    replacementSessions.resolve({ data: [], total: 0, cursor: { next: null } });
+    Object.assign(controller, originals);
+    restore();
+  }
+}
+
+async function testReplacementDetachesTwoOperationQueueChains() {
+  const originalResync = controller.resync;
+  controller.resync = async () => {};
+  try {
+    for (const outcome of ["resolve", "reject"]) {
+      const id = `replacement-queue-${outcome}`;
+      const base = {
+        revision: 4,
+        items: [{ id: "item", delivery: "queue", paused: false, prompt: { text: "old" } }],
+      };
+      installSession(id, { queue: base });
+      controller.installQueue(id, base);
+      store.setState((state) => ({
+        ...state,
+        connection: {
+          ...state.connection,
+          current: true,
+          serverInstanceID: `old-${outcome}`,
+        },
+      }));
+      controller.bufferEvents = false;
+      const firstGate = deferred();
+      const calls = [];
+      const restore = restoreApi({
+        patchQueue: (_sessionID, body) => {
+          calls.push(body);
+          return firstGate.promise;
+        },
+      });
+      try {
+        const first = controller.patchQueue(id, [{ op: "setPaused", id: "item", paused: true }]);
+        const second = controller.patchQueue(id, [{
+          op: "update",
+          id: "item",
+          prompt: { text: "queued-old-chain" },
+        }]);
+        await tick();
+        assert.equal(calls.length, 1);
+        controller.receiveEvent({
+          type: "server.connected",
+          durable: null,
+          data: { serverInstanceID: `new-${outcome}` },
+        });
+        const replacement = {
+          revision: 0,
+          items: [{ id: "new-item", delivery: "queue", paused: false, prompt: { text: "new" } }],
+        };
+        controller.installQueue(id, replacement);
+        if (outcome === "resolve") {
+          firstGate.resolve({ data: { ...base, revision: 5 } });
+        } else {
+          firstGate.reject(new Error("old queue mutation failed"));
+        }
+        await Promise.all([first, second]);
+        assert.equal(calls.length, 1, "queued old-lifecycle request must never be issued");
+        assert.deepEqual(store.getState().sessionData[id].queue, replacement);
+        assert.equal(controller.queuePendingMutations.has(id), false);
+      } finally {
+        firstGate.resolve({ data: base });
+        restore();
+      }
+    }
+  } finally {
+    controller.resync = originalResync;
+  }
+}
+
+async function testReplacementRejectsOldSessionModelAndTreeMutationCompletions() {
+  const id = "replacement-mutation-completions";
+  installSession(id, { extraData: { tree: treeSnapshot(7, ["node"], null) } });
+  const sessionGate = deferred();
+  const modelGate = deferred();
+  const labelGate = deferred();
+  const newLabelGate = deferred();
+  let labelCalls = 0;
+  const restore = restoreApi({
+    patchSession: () => sessionGate.promise,
+    selectModel: () => modelGate.promise,
+    patchTreeEntry: () => (++labelCalls === 1 ? labelGate.promise : newLabelGate.promise),
+  });
+  const originalResync = controller.resync;
+  controller.resync = async () => {};
+  try {
+    const sessionMutation = controller.patchSession(id, { title: "old optimistic title" });
+    const modelMutation = controller.setSelection(id, "codex", "old-pending-model", "high");
+    const labelMutation = controller.labelTreeEntry(id, "node", "old optimistic label");
+    await tick();
+    store.setState((state) => ({
+      ...state,
+      connection: { ...state.connection, current: true, serverInstanceID: "mutation-old" },
+    }));
+    controller.bufferEvents = false;
+    controller.receiveEvent({
+      type: "server.connected",
+      durable: null,
+      data: { serverInstanceID: "mutation-new" },
+    });
+    assert.equal(
+      store.getState().sessionData[id].tree.entries[0].label,
+      null,
+      "lifecycle replacement must remove old tree-label optimism immediately",
+    );
+    store.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [id]: sessionSummary(id, {
+          title: "new server title",
+          selection: { provider: "codex", model: "new-server-model", reasoningEffort: "medium" },
+        }),
+      },
+      sessionData: {
+        ...state.sessionData,
+        [id]: { ...state.sessionData[id], tree: treeSnapshot(0, ["node"], null, { node: "new label" }) },
+      },
+    }));
+    const newLabelMutation = controller.labelTreeEntry(id, "node", "new lifecycle edit");
+    await tick();
+    assert.equal(labelCalls, 2, "new lifecycle label must not wait for the old chain");
+    newLabelGate.resolve({
+      data: {
+        revision: 1,
+        entry: treeSnapshot(1, ["node"], null, { node: "new lifecycle edit" }).entries[0],
+      },
+    });
+    await newLabelMutation;
+
+    sessionGate.resolve({ data: sessionSummary(id, { title: "stale response" }) });
+    modelGate.reject(new Error("stale model failure"));
+    labelGate.resolve({
+      data: { revision: 8, entry: treeSnapshot(8, ["node"], null, { node: "stale label" }).entries[0] },
+    });
+    await Promise.all([sessionMutation, modelMutation, labelMutation]);
+    assert.equal(store.getState().sessions[id].title, "new server title");
+    assert.equal(store.getState().sessions[id].selection.model, "new-server-model");
+    assert.equal(store.getState().sessionData[id].tree.entries[0].label, "new lifecycle edit");
+    assert.equal(controller.sessionPendingMutations.has(id), false);
+    assert.equal(controller.pendingSelections.has(id), false);
+    assert.equal(controller.treePendingLabels.has(id), false);
+  } finally {
+    sessionGate.resolve({ data: sessionSummary(id) });
+    modelGate.resolve({ data: {} });
+    labelGate.resolve({ data: {} });
+    newLabelGate.resolve({ data: {} });
+    controller.resync = originalResync;
+    restore();
+  }
+}
+
+async function testFailedBootstrapStopsStreamAndReleasesBuffers() {
+  const sessions = deferred();
+  let streamStops = 0;
+  const restore = restoreApi({
+    capabilities: async () => ({ data: { limits: {} } }),
+    activeSessions: async () => ({ data: {} }),
+    commands: async () => ({ data: [] }),
+    recentLocations: async () => ({ data: [] }),
+    listSessions: ({ archived }) => archived
+      ? Promise.resolve({ data: [], total: 0, cursor: { next: null } })
+      : sessions.promise,
+    providers: async () => ({ data: [] }),
+  });
+  const originalStartSse = controller.startSse;
+  controller.startSse = () => {
+    controller.sse = { stop() { streamStops += 1; } };
+  };
+  try {
+    const bootstrapping = controller.bootstrap();
+    await tick();
+    controller.receiveEvent({
+      type: "session.updated",
+      sessionID: "failed-bootstrap-session",
+      durable: { seq: 1 },
+      data: {},
+    });
+    controller.pendingLiveEvents.set("old:session.context.updated", {
+      type: "session.context.updated",
+    });
+    controller.liveFrame = requestAnimationFrame(() => {
+      throw new Error("cancelled bootstrap frame ran");
+    });
+    sessions.reject(new Error("bootstrap fixture failed"));
+    await bootstrapping;
+
+    assert.equal(streamStops, 1);
+    assert.equal(controller.sse, null);
+    assert.equal(controller.bufferEvents, false);
+    assert.deepEqual(controller.eventBuffer, []);
+    assert.equal(controller.pendingLiveEvents.size, 0);
+    assert.equal(controller.liveFrame, null);
+    runAnimationFrames();
+  } finally {
+    controller.startSse = originalStartSse;
+    restore();
+  }
+}
+
+async function testFailedBootstrapDoesNotStartBufferedControlResync() {
+  let streamStops = 0;
+  const sessions = deferred();
+  const restore = restoreApi({
+    capabilities: async () => ({ data: { limits: {} } }),
+    activeSessions: async () => ({ data: {} }),
+    commands: async () => ({ data: [] }),
+    recentLocations: async () => ({ data: [] }),
+    listSessions: ({ archived }) => archived
+      ? Promise.resolve({ data: [], total: 0, cursor: { next: null } })
+      : sessions.promise,
+    providers: async () => ({ data: [] }),
+  });
+  const resyncs = [];
+  const originals = {
+    startSse: controller.startSse,
+    resync: controller.resync,
+    resolveVisibleLocations: controller.resolveVisibleLocations,
+    refreshProcessLocalState: controller.refreshProcessLocalState,
+    applyRoute: controller.applyRoute,
+  };
+  controller.startSse = () => {
+    controller.sse = { stop() { streamStops += 1; } };
+  };
+  controller.resync = async (broad) => { resyncs.push(broad); };
+  controller.resolveVisibleLocations = async () => {};
+  controller.refreshProcessLocalState = async () => {};
+  controller.applyRoute = async () => { throw new Error("route failed after buffered control"); };
+  try {
+    const bootstrapping = controller.bootstrap();
+    await tick();
+    controller.receiveEvent({ type: "server.resyncRequired", durable: null, data: {} });
+    sessions.resolve({ data: [], total: 0, cursor: { next: null } });
+    await bootstrapping;
+    await tick();
+    assert.equal(streamStops, 1);
+    assert.equal(controller.sse, null);
+    assert.equal(controller.broadResyncPending, false);
+    assert.deepEqual(resyncs, []);
+    assert.equal(store.getState().connection.current, false);
+    assert.equal(store.getState().connection.status, "error");
+  } finally {
+    sessions.resolve({ data: [], total: 0, cursor: { next: null } });
+    Object.assign(controller, originals);
+    restore();
+  }
+}
+
+async function testFailedResyncDrainsBufferedDurableEvent() {
+  const id = "failed-resync-durable";
+  installSession(id);
+  const active = deferred();
+  const restore = restoreApi({
+    activeSessions: () => active.promise,
+    listSessions: async () => ({ data: [], total: 0, cursor: { next: null } }),
+  });
+  const originalResolveLocations = controller.resolveVisibleLocations;
+  controller.resolveVisibleLocations = async () => {};
+  try {
+    const resyncing = controller.resync(false);
+    await tick();
+    controller.receiveEvent({
+      type: "session.prompt.admitted",
+      sessionID: id,
+      time: "2026-08-27T12:00:00Z",
+      durable: { seq: 3 },
+      data: {
+        inputID: "inp_failed_resync",
+        prompt: { text: "must survive", attachments: [] },
+        delivery: "queue",
+      },
+    });
+    active.reject(new Error("resync snapshot failed"));
+    await resyncing;
+    assert.deepEqual(
+      Object.keys(store.getState().sessionData[id].pendingPrompts),
+      ["inp_failed_resync"],
+    );
+    assert.equal(store.getState().sessionData[id].latestSeq, 3);
+    assert.equal(controller.bufferEvents, false);
+    assert.deepEqual(controller.eventBuffer, []);
+    assert.equal(store.getState().connection.status, "error");
+  } finally {
+    active.resolve({ data: {} });
+    controller.resolveVisibleLocations = originalResolveLocations;
+    restore();
+  }
+}
+
+async function testFailedResyncStartsBufferedControlRecovery() {
+  const active = deferred();
+  const restore = restoreApi({
+    activeSessions: () => active.promise,
+    listSessions: async () => ({ data: [], total: 0, cursor: { next: null } }),
+  });
+  const originalResolveLocations = controller.resolveVisibleLocations;
+  const originalResync = controller.resync;
+  controller.resolveVisibleLocations = async () => {};
+  try {
+    const resyncing = controller.resync(false);
+    await tick();
+    const recoveries = [];
+    controller.resync = async (broad) => { recoveries.push(broad); };
+    controller.receiveEvent({ type: "server.resyncRequired", durable: null, data: {} });
+    active.reject(new Error("resync failed after control"));
+    await resyncing;
+    await tick();
+    assert.deepEqual(recoveries, [true]);
+    assert.equal(controller.broadResyncPending, false);
+    assert.equal(store.getState().connection.current, false);
+    assert.equal(store.getState().connection.status, "error");
+  } finally {
+    active.resolve({ data: {} });
+    controller.resync = originalResync;
+    controller.resolveVisibleLocations = originalResolveLocations;
+    restore();
+  }
+}
+
+async function testBufferedServerReplacementKeepsDurableSuccessor() {
+  const id = "buffered-server-replacement";
+  const sessions = deferred();
+  installSession(id);
+  store.setState((state) => ({
+    ...state,
+    connection: { ...state.connection, current: false, serverInstanceID: "buffer-old" },
+  }));
+  const restore = restoreApi({
+    capabilities: async () => ({ data: { limits: {} } }),
+    activeSessions: async () => ({ data: {} }),
+    commands: async () => ({ data: [] }),
+    recentLocations: async () => ({ data: [] }),
+    listSessions: ({ archived }) => archived
+      ? Promise.resolve({ data: [], total: 0, cursor: { next: null } })
+      : sessions.promise,
+    providers: async () => ({ data: [] }),
+  });
+  const resyncs = [];
+  const originals = {
+    startSse: controller.startSse,
+    resync: controller.resync,
+    resolveVisibleLocations: controller.resolveVisibleLocations,
+    refreshProcessLocalState: controller.refreshProcessLocalState,
+    applyRoute: controller.applyRoute,
+  };
+  controller.startSse = () => { controller.sse = { stop() {} }; };
+  controller.resync = async (broad) => { resyncs.push(broad); };
+  controller.resolveVisibleLocations = async () => {};
+  controller.refreshProcessLocalState = async () => {};
+  controller.applyRoute = async () => {};
+  try {
+    const bootstrapping = controller.bootstrap();
+    await tick();
+    controller.receiveEvent({
+      type: "server.connected",
+      durable: null,
+      data: { serverInstanceID: "buffer-new" },
+    });
+    controller.receiveEvent({
+      type: "session.prompt.admitted",
+      sessionID: id,
+      time: "2026-08-27T12:00:00Z",
+      durable: { seq: 9 },
+      data: {
+        inputID: "inp_after_replacement",
+        prompt: { text: "successor", attachments: [] },
+        delivery: "queue",
+      },
+    });
+    sessions.resolve({ data: [sessionSummary(id)], total: 1, cursor: { next: null } });
+    await bootstrapping;
+    await tick();
+    assert.deepEqual(resyncs, [true]);
+    assert.equal(controller.bootstrapping, false);
+    assert.equal(store.getState().connection.current, false);
+    assert.equal(store.getState().connection.serverInstanceID, "buffer-new");
+    assert.equal(store.getState().sessionData[id].latestSeq, 9);
+    assert.deepEqual(
+      Object.keys(store.getState().sessionData[id].pendingPrompts),
+      ["inp_after_replacement"],
+    );
+  } finally {
+    sessions.resolve({ data: [], total: 0, cursor: { next: null } });
+    Object.assign(controller, originals);
+    restore();
+  }
+}
+
+async function testStoppedBootstrapCannotInstallLateSnapshot() {
+  const sessions = deferred();
+  const restore = restoreApi({
+    capabilities: async () => ({ data: { limits: {} } }),
+    activeSessions: async () => ({ data: {} }),
+    commands: async () => ({ data: [] }),
+    recentLocations: async () => ({ data: [] }),
+    listSessions: ({ archived }) => archived
+      ? Promise.resolve({ data: [], total: 0, cursor: { next: null } })
+      : sessions.promise,
+    providers: async () => ({ data: [] }),
+  });
+  const originalStartSse = controller.startSse;
+  controller.startSse = () => {
+    controller.sse = { stop() {} };
+  };
+  try {
+    const bootstrapping = controller.bootstrap();
+    await tick();
+    controller.stop();
+    sessions.resolve({
+      data: [sessionSummary("late-bootstrap-session")],
+      total: 1,
+      cursor: { next: null },
+    });
+    await bootstrapping;
+    assert.equal(store.getState().sessions["late-bootstrap-session"], undefined);
+    assert.notEqual(store.getState().connection.status, "connected");
+  } finally {
+    controller.startSse = originalStartSse;
+    restore();
+  }
+}
+
+async function testStopCancelsAnimationFrameAndStaleReadCompletion() {
+  const id = "stopped-frame";
+  installSession(id, { extraData: { contextUsage: null } });
+  controller.bufferEvents = false;
+  controller.receiveEvent({
+    type: "session.context.updated",
+    sessionID: id,
+    durable: null,
+    data: { usage_percent: 99 },
+  });
+  const messages = deferred();
+  const restore = restoreApi({
+    messages: () => messages.promise,
+  });
+  try {
+    const refreshing = controller.refreshMessages(id);
+    controller.schedule("never", 60_000, () => {
+      throw new Error("cancelled timer ran");
+    });
+    controller.stop();
+    runAnimationFrames();
+    messages.resolve({
+      data: [{ id: "stale", type: "assistant", content: [] }],
+      cursor: { next: null },
+      snapshotSeq: 1,
+    });
+    await refreshing;
+    assert.equal(store.getState().sessionData[id].contextUsage, null);
+    assert.deepEqual(store.getState().sessionData[id].messages, []);
+    assert.equal(controller.pendingLiveEvents.size, 0);
+    assert.equal(controller.liveFrame, null);
+    assert.equal(controller.refreshTimers.size, 0);
+  } finally {
+    restore();
+  }
+}
+
+function testStopRemovesControllerWindowListener() {
+  window.addEventListener("popstate", controller.routeHandler);
+  assert.equal(windowListeners.get("popstate")?.size, 1);
+  controller.stop();
+  assert.equal(windowListeners.has("popstate"), false);
+}
+
+async function runInFlightLiveTimerStop(outcome) {
+  const id = `in-flight-live-timer-${outcome}`;
+  installSession(id, { extraData: { liveTools: {} } });
+  store.setState((state) => ({
+    ...state,
+    active: {
+      ...state.active,
+      [id]: { state: "running", turnID: `turn-${outcome}` },
+    },
+    ui: { ...state.ui, notice: null },
+  }));
+  const entered = deferred();
+  const toolCalls = deferred();
+  const restore = restoreApi({
+    toolCalls: () => {
+      entered.resolve();
+      return toolCalls.promise;
+    },
+  });
+  try {
+    controller.scheduleLiveReconcile(id);
+    assert.equal(
+      await settlesWithin(entered.promise, 1000),
+      true,
+      "scheduled live reconciliation did not enter its controlled request",
+    );
+    assert.equal(controller.refreshTimerTasks.size, 1);
+    controller.stop();
+    if (outcome === "resolve") {
+      toolCalls.resolve({ data: [{ id: "stale-tool", status: "ok" }] });
+    } else {
+      toolCalls.reject(new Error("stale timer request failed"));
+    }
+    await settleControllerTimerTasks(controller);
+    assert.equal(controller.refreshTimers.size, 0);
+    assert.equal(controller.refreshTimerTasks.size, 0);
+    assert.equal(store.getState().ui.notice, null);
+    assert.deepEqual(store.getState().sessionData[id].liveTools, {});
+  } finally {
+    toolCalls.resolve({ data: [] });
+    restore();
+  }
+}
+
+async function testResolvedInFlightLiveTimerCannotRearmAfterStop() {
+  await runInFlightLiveTimerStop("resolve");
+}
+
+async function testRejectedInFlightLiveTimerCannotNoticeOrRearmAfterStop() {
+  await runInFlightLiveTimerStop("reject");
+}
+
+async function testServerReplacementCancelsOldFrameAndQueuesBroadResync() {
+  const id = "server-replacement-frame";
+  installSession(id, { extraData: { contextUsage: null, tree: treeSnapshot(12, ["old-tree"]) } });
+  controller.bufferEvents = false;
+  controller.queueServerRevisions.set(id, 8);
+  controller.treeServerRevisions.set(id, 12);
+  store.setState((state) => ({
+    ...state,
+    connection: {
+      ...state.connection,
+      current: true,
+      status: "connected",
+      serverInstanceID: "server-old",
+    },
+  }));
+  controller.receiveEvent({
+    type: "session.context.updated",
+    sessionID: id,
+    durable: null,
+    data: { usage_percent: 88 },
+  });
+  controller.resyncing = true;
+  const resyncs = [];
+  const originalResync = controller.resync;
+  const staleTree = deferred();
+  let treeReads = 0;
+  const restore = restoreApi({
+    tree: async () => {
+      treeReads += 1;
+      if (treeReads === 1) return staleTree.promise;
+      return { data: treeSnapshot(0, ["new-tree"]) };
+    },
+  });
+  controller.resync = async (broad) => { resyncs.push(broad); };
+  try {
+    const staleTreeRead = controller.refreshTree(id);
+    controller.receiveEvent({
+      type: "server.connected",
+      durable: null,
+      data: { serverInstanceID: "server-new" },
+    });
+    staleTree.resolve({ data: treeSnapshot(13, ["stale-tree"]) });
+    await staleTreeRead;
+    runAnimationFrames();
+    assert.equal(store.getState().sessionData[id].contextUsage, null);
+    assert.equal(store.getState().sessionData[id].tree.revision, 12);
+    assert.equal(controller.queueServerRevisions.size, 0);
+    assert.equal(controller.treeServerRevisions.size, 0);
+    assert.equal(controller.broadResyncPending, false);
+    assert.deepEqual(resyncs, [true]);
+    await controller.refreshTree(id);
+    assert.equal(store.getState().sessionData[id].tree.revision, 0);
+    assert.deepEqual(store.getState().sessionData[id].tree.entries.map((entry) => entry.id), ["new-tree"]);
+  } finally {
+    controller.resyncing = false;
+    controller.resync = originalResync;
     restore();
   }
 }
@@ -1589,122 +2809,71 @@ async function testTreeKeyboardNavigationFollowsVisibleTopology() {
 }
 
 async function testNewSessionGlobalShortcutSupportsMacAndWindows() {
-  let handler = null;
-  const originalAdd = document.addEventListener;
-  const originalRemove = document.removeEventListener;
-  document.addEventListener = (type, callback) => {
-    if (type === "keydown") handler = callback;
-  };
-  document.removeEventListener = (type, callback) => {
-    if (type === "keydown" && handler === callback) handler = null;
-  };
   let created = 0;
-  const uninstall = installKeybindings({ newSession: () => { created += 1; } });
-  const fire = (overrides) => {
-    let prevented = false;
-    handler?.({
-      key: "o",
-      metaKey: false,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      preventDefault() { prevented = true; },
-      ...overrides,
-    });
-    return prevented;
-  };
+  const keyboard = installKeybindingHarness({ newSession: () => { created += 1; } }, "o");
   try {
-    assert.equal(fire({ metaKey: true, shiftKey: true }), true);
+    assert.equal(keyboard.fire({ metaKey: true, shiftKey: true }), true);
     assert.equal(created, 1);
-    assert.equal(fire({ ctrlKey: true, shiftKey: true }), true);
+    assert.equal(keyboard.fire({ ctrlKey: true, shiftKey: true }), true);
     assert.equal(created, 2);
-    assert.equal(fire({ metaKey: true }), false);
-    assert.equal(fire({ key: "n", metaKey: true }), false);
-    assert.equal(fire({ key: "n", ctrlKey: true }), false);
-    assert.equal(fire({ ctrlKey: true, shiftKey: true, altKey: true }), false);
+    assert.equal(keyboard.fire({ metaKey: true }), false);
+    assert.equal(keyboard.fire({ key: "n", metaKey: true }), false);
+    assert.equal(keyboard.fire({ key: "n", ctrlKey: true }), false);
+    assert.equal(keyboard.fire({ ctrlKey: true, shiftKey: true, altKey: true }), false);
     assert.equal(created, 2);
   } finally {
-    uninstall();
-    document.addEventListener = originalAdd;
-    document.removeEventListener = originalRemove;
+    keyboard.cleanup();
   }
 }
 
 async function testSidebarGlobalShortcutSupportsMacAndWindows() {
-  let handler = null;
-  const originalAdd = document.addEventListener;
-  const originalRemove = document.removeEventListener;
-  document.addEventListener = (type, callback) => {
-    if (type === "keydown") handler = callback;
-  };
-  document.removeEventListener = (type, callback) => {
-    if (type === "keydown" && handler === callback) handler = null;
-  };
   let toggled = 0;
-  const uninstall = installKeybindings({ toggleSidebar: () => { toggled += 1; } });
-  const fire = (overrides) => {
-    let prevented = false;
-    handler?.({
-      key: "b",
-      metaKey: false,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      preventDefault() { prevented = true; },
-      ...overrides,
-    });
-    return prevented;
-  };
+  const keyboard = installKeybindingHarness({ toggleSidebar: () => { toggled += 1; } }, "b");
   try {
-    assert.equal(fire({ metaKey: true }), true);
+    assert.equal(keyboard.fire({ metaKey: true }), true);
     assert.equal(toggled, 1);
-    assert.equal(fire({ ctrlKey: true }), true);
+    assert.equal(keyboard.fire({ ctrlKey: true }), true);
     assert.equal(toggled, 2);
-    assert.equal(fire({ metaKey: true, shiftKey: true }), false);
-    assert.equal(fire({ ctrlKey: true, altKey: true }), false);
+    assert.equal(keyboard.fire({ metaKey: true, shiftKey: true }), false);
+    assert.equal(keyboard.fire({ ctrlKey: true, altKey: true }), false);
     assert.equal(toggled, 2);
   } finally {
-    uninstall();
-    document.addEventListener = originalAdd;
-    document.removeEventListener = originalRemove;
+    keyboard.cleanup();
   }
 }
 
 async function testRemovedCtrlXChordFallsThrough() {
-  let handler = null;
-  const originalAdd = document.addEventListener;
-  const originalRemove = document.removeEventListener;
-  document.addEventListener = (type, callback) => {
-    if (type === "keydown") handler = callback;
-  };
-  document.removeEventListener = (type, callback) => {
-    if (type === "keydown" && handler === callback) handler = null;
-  };
   let opened = 0;
-  const uninstall = installKeybindings({ processInspector: () => { opened += 1; } });
-  const fire = (overrides) => {
-    let prevented = false;
-    handler?.({
-      key: "",
-      metaKey: false,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      preventDefault() { prevented = true; },
-      ...overrides,
-    });
-    return prevented;
-  };
+  const keyboard = installKeybindingHarness({ processInspector: () => { opened += 1; } }, "");
   try {
-    assert.equal(fire({ key: "x", ctrlKey: true }), false);
-    assert.equal(fire({ key: "p" }), false);
-    assert.equal(fire({ key: "p", ctrlKey: true }), false);
+    assert.equal(keyboard.fire({ key: "x", ctrlKey: true }), false);
+    assert.equal(keyboard.fire({ key: "p" }), false);
+    assert.equal(keyboard.fire({ key: "p", ctrlKey: true }), false);
     assert.equal(opened, 0);
   } finally {
-    uninstall();
-    document.addEventListener = originalAdd;
-    document.removeEventListener = originalRemove;
+    keyboard.cleanup();
   }
+}
+
+async function testHumanInputEventsKeepAttentionCountsInSync() {
+  const id = "human-input-events";
+  let state = {
+    ...store.getState(),
+    attention: { [id]: { permissions: 0, questions: 0 } },
+    sessionData: { [id]: { permissions: [], questions: [] } },
+  };
+  const receive = (type, data) => {
+    state = reducePublicEvent(state, { type, sessionID: id, data });
+  };
+
+  receive("session.permission.requested", { id: "permission" });
+  assert.deepEqual(state.attention[id], { permissions: 1, questions: 0 });
+  receive("session.question.requested", { id: "question" });
+  assert.deepEqual(state.attention[id], { permissions: 1, questions: 1 });
+  receive("session.permission.resolved", { requestID: "permission" });
+  assert.deepEqual(state.attention[id], { permissions: 0, questions: 1 });
+  receive("session.question.resolved", { requestID: "question" });
+  assert.deepEqual(state.attention[id], { permissions: 0, questions: 0 });
 }
 
 async function testSettledTotalDoesNotDependOnLoadedPage() {
@@ -1748,6 +2917,7 @@ async function testDoneTracksCompletedTurnsOnly() {
     sessionID: id,
     data: { state: "idle" },
   });
+  assert.equal(next.active[id], undefined, "idle sessions must be absent from the active map");
   assert.equal(next.ui.doneUnreviewed[id], false, "idle alone must not mean an unseen completion");
 
   next = reducePublicEvent(next, {
@@ -1763,6 +2933,7 @@ async function testDoneTracksCompletedTurnsOnly() {
     sessionID: id,
     data: { state: "running", turnID: 2, startedAt: "2026-09-01T12:00:00Z" },
   });
+  assert.equal(next.active[id].state, "running");
   assert.equal(next.ui.doneUnreviewed[id], false, "new work must clear an older Done badge");
 
   next = {
@@ -1814,6 +2985,48 @@ async function testResyncReplaysCompletionForPreviouslyActiveSession() {
     assert.equal(historyReads, 1);
     assert.equal(store.getState().ui.doneUnreviewed[id], true);
   } finally {
+    controller.resolveVisibleLocations = originalResolveLocations;
+    restore();
+  }
+}
+
+async function testBroadSameServerResyncKeepsCurrentLifecycleMutation() {
+  const id = "same-server-broad-resync-mutation";
+  const summary = installSession(id, { queue: { revision: 0, items: [] } });
+  const mutationGate = deferred();
+  const activeGate = deferred();
+  const restore = restoreApi({
+    patchSession: () => mutationGate.promise,
+    activeSessions: () => activeGate.promise,
+    listSessions: async ({ archived }) => archived
+      ? { data: [], total: 0, cursor: { next: null } }
+      : { data: [summary], total: 1, cursor: { next: null } },
+    history: async () => ({ data: [], hasMore: false }),
+    queue: async () => ({ data: { revision: 0, items: [] } }),
+  });
+  const originalProcessRefresh = controller.refreshProcessLocalState;
+  const originalResolveLocations = controller.resolveVisibleLocations;
+  controller.refreshProcessLocalState = async () => {};
+  controller.resolveVisibleLocations = async () => {};
+  try {
+    const mutation = controller.patchSession(id, { title: "valid pending mutation" });
+    await tick();
+    const lifecycleEpoch = controller.lifecycleEpoch;
+    const resyncing = controller.resync(true);
+    await tick();
+    assert.equal(controller.lifecycleEpoch, lifecycleEpoch);
+    assert.equal(controller.sessionPendingMutations.has(id), true);
+    assert.equal(store.getState().sessions[id].title, "valid pending mutation");
+
+    mutationGate.resolve({ data: sessionSummary(id, { title: "valid pending mutation" }) });
+    activeGate.resolve({ data: {} });
+    await Promise.all([mutation, resyncing]);
+    assert.equal(store.getState().sessions[id].title, "valid pending mutation");
+    assert.equal(controller.sessionPendingMutations.has(id), false);
+  } finally {
+    mutationGate.resolve({ data: summary });
+    activeGate.resolve({ data: {} });
+    controller.refreshProcessLocalState = originalProcessRefresh;
     controller.resolveVisibleLocations = originalResolveLocations;
     restore();
   }
@@ -1980,6 +3193,8 @@ async function testModelSelectionContextErrorStaysSpecific() {
 
 const tests = [
   testSessionComposerDraftsStayScopedAndPersisted,
+  testClearedNewSessionDraftIsRemovedFromPersistenceButStaysLive,
+  testSettingsRouteAliasesHome,
   testPromptAppearsBeforeAdmissionReturns,
   testFailedTurnDoesNotDelayNextOptimisticPrompt,
   testDurableMessageKeepsOptimisticPromptUntilSnapshot,
@@ -1993,14 +3208,18 @@ const tests = [
   testServerRestartLetsEmptyQueueReplaceStaleUi,
   testHumanInputOldReadCannotResurrectResolvedRequest,
   testSelectionAndToolTogglesKeepLatestClick,
+  testConfigMutationsRejectOlderInspectorReads,
   testProcessRefreshDoesNotRestoreAnOldSelection,
+  testProcessSelectionKeepsNewestClick,
   testLoadOlderMessagesSkipsDuplicateOnlyPages,
   testLoadOlderMessagesRecoversInvalidCursor,
   testProcessOutputRefreshAppendsIncrementallyWithoutDuplication,
   testProcessMetadataRefreshCannotMoveOutputBackward,
   testToolDetailKeepsNewestSelection,
+  testClosingInspectorRejectsPendingToolDetail,
   testPersistedToolDetailSkipsOutputRequest,
   testToolDetailCoalescesSameCallRequest,
+  testOpeningSameToolInspectorCoalescesOwnedRequests,
   testToolTimelineDeepLinkDoesNotLockInspectorSelection,
   testTimelineToolOpenKeepsNewestClickAcrossListRace,
   testTimelineToolOpenLoadsCallOutsideSidebarPage,
@@ -2009,9 +3228,29 @@ const tests = [
   testLoadSessionHydratesOptimisticEmptySession,
   testCompactionShowsImmediatelyAndRollsBackFailure,
   testTreeLabelsSerializeAndKeepNewestOptimism,
+  testStaleTreeRefreshCannotRollbackConfirmedLabel,
+  testOlderTreePageCannotReplaceNewerSnapshot,
+  testConcurrentSameRevisionTreePagesDoNotDuplicateEntries,
   testLateDurableEventDoesNotClearNewerOptimisticPrompt,
+  testPromotedSsePromptAlwaysCarriesInputID,
   testCheckpointedToolCommentaryDoesNotStickAtTail,
   testBootstrapDoesNotWaitForProviderOrLocationEnrichment,
+  testBootstrapDrainsEventsThroughReconciliationOnce,
+  testAuthReplacementRetiresDeferredBootstrap,
+  testAuthReplacementRetiresDeferredResyncBufferOwnership,
+  testReplacementDetachesTwoOperationQueueChains,
+  testReplacementRejectsOldSessionModelAndTreeMutationCompletions,
+  testFailedBootstrapStopsStreamAndReleasesBuffers,
+  testFailedBootstrapDoesNotStartBufferedControlResync,
+  testFailedResyncDrainsBufferedDurableEvent,
+  testFailedResyncStartsBufferedControlRecovery,
+  testBufferedServerReplacementKeepsDurableSuccessor,
+  testStoppedBootstrapCannotInstallLateSnapshot,
+  testStopCancelsAnimationFrameAndStaleReadCompletion,
+  testStopRemovesControllerWindowListener,
+  testResolvedInFlightLiveTimerCannotRearmAfterStop,
+  testRejectedInFlightLiveTimerCannotNoticeOrRearmAfterStop,
+  testServerReplacementCancelsOldFrameAndQueuesBroadResync,
   testChatWorkingIndicatorTracksRuntimeState,
   testAssistantMetadataOnlyMarksFinalTextPerTurn,
   testSequentialToolOnlyBatchesCompactWithoutEatingTextSpacing,
@@ -2026,9 +3265,11 @@ const tests = [
   testNewSessionGlobalShortcutSupportsMacAndWindows,
   testSidebarGlobalShortcutSupportsMacAndWindows,
   testRemovedCtrlXChordFallsThrough,
+  testHumanInputEventsKeepAttentionCountsInSync,
   testSettledTotalDoesNotDependOnLoadedPage,
   testDoneTracksCompletedTurnsOnly,
   testResyncReplaysCompletionForPreviouslyActiveSession,
+  testBroadSameServerResyncKeepsCurrentLifecycleMutation,
   testSidebarStatusPrioritizesCurrentWork,
   testSessionSummaryKeepsNewestQueueRevision,
   testQueueSummarySeparatesPausedWork,
@@ -2041,8 +3282,28 @@ const tests = [
 
 const started = performance.now();
 for (const test of tests) {
+  assert.equal(windowListeners.size, 0, "previous controller leaked a window listener");
+  assert.equal(animationFrames.size, 0, "previous controller leaked an animation frame");
+  assert.equal(timerHandles.size, 0, "previous controller leaked a timer");
+  clearAllSessionComposerDrafts();
+  localStorage.clear();
+  sessionStorage.clear();
   store.reset();
-  await test();
-  console.log(`PASS ${test.name}`);
+  controller = new AppController();
+  try {
+    await test();
+    console.log(`PASS ${test.name}`);
+  } finally {
+    controller.stop();
+    await settleControllerTimerTasks(controller);
+    assert.equal(controller.refreshTimers.size, 0, `${test.name} left controller timers registered`);
+    assert.equal(controller.refreshTimerTasks.size, 0, `${test.name} left timer callbacks running`);
+    assert.equal(windowListeners.size, 0, `${test.name} leaked a window listener`);
+    assert.equal(animationFrames.size, 0, `${test.name} leaked an animation frame`);
+    assert.equal(timerHandles.size, 0, `${test.name} leaked a timer handle`);
+    clearAllSessionComposerDrafts();
+    localStorage.clear();
+    sessionStorage.clear();
+  }
 }
 console.log(JSON.stringify({ tests: tests.length, milliseconds: performance.now() - started }));

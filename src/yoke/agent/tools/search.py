@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 from fnmatch import fnmatch
+from heapq import nsmallest
+from itertools import islice
 
 from pydantic import Field
 
@@ -32,17 +34,27 @@ class LsTool(WorkspaceTool):
             path = self._resolve_path(self.path)
             if path.is_file():
                 entries = [self._display_path(path)]
+                truncated = False
             else:
                 iterator = (
-                    self._walk(path) if self.recursive else sorted(path.iterdir())
+                    self._walk(path)
+                    if self.recursive
+                    else nsmallest(self.limit + 1, path.iterdir())
                 )
                 entries = [
-                    self._display_path(entry) for entry in iterator if entry != path
-                ][: self.limit]
+                    self._display_path(entry)
+                    for entry in islice(
+                        (entry for entry in iterator if entry != path),
+                        self.limit + 1,
+                    )
+                ]
+                truncated = len(entries) > self.limit
+                if truncated:
+                    entries.pop()
             result = self._success(entries=entries)
             if self.recursive:
                 result["recursive"] = True
-            if len(entries) >= self.limit:
+            if truncated:
                 result["truncated"] = True
             return result
         except Exception as exc:
@@ -70,12 +82,15 @@ class FindTool(WorkspaceTool):
                     candidate.name, self.pattern
                 ):
                     matches.append(relative)
-                if len(matches) >= self.limit:
+                if len(matches) > self.limit:
                     break
+            truncated = len(matches) > self.limit
+            if truncated:
+                matches.pop()
             result = self._success()
             if matches:
                 result["matches"] = matches
-            if len(matches) >= self.limit:
+            if truncated:
                 result["truncated"] = True
             return result
         except Exception as exc:
@@ -113,6 +128,9 @@ class GrepTool(WorkspaceTool):
                 for line_number, line in enumerate(text.splitlines(), start=1):
                     if not regex.search(line):
                         continue
+                    if match_count == self.limit:
+                        truncated = True
+                        break
                     rendered_line, line_truncated = truncate_line(line)
                     match_payload: dict[str, object] = {
                         "line": line_number,
@@ -122,9 +140,6 @@ class GrepTool(WorkspaceTool):
                         match_payload["line_truncated"] = True
                     file_matches.append(match_payload)
                     match_count += 1
-                    if match_count >= self.limit:
-                        truncated = True
-                        break
                 if file_matches:
                     files.append(
                         {

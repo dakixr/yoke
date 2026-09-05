@@ -9,6 +9,8 @@ from yoke.agent.tools.rg import RipgrepTool
 class MCPRipgrepTool(RipgrepTool):
     """Expose native rg arguments without its subprocess preprocessor hook."""
 
+    read_rg_config = False
+
     description = (
         "Run ripgrep using raw_args containing the exact arguments to pass after "
         "`rg`. Prefer rg for text search and file listing. The subprocess-running "
@@ -18,10 +20,7 @@ class MCPRipgrepTool(RipgrepTool):
     def execute(self) -> dict[str, object]:
         """Reject subprocess hooks, then execute native ripgrep."""
         arguments = self._parse_raw_args()
-        if any(
-            argument == "--pre" or argument.startswith("--pre=")
-            for argument in arguments
-        ):
+        if any(_is_rg_execution_argument(argument) for argument in arguments):
             return self._error(
                 "rg --pre is disabled in the read-only MCP tool; use exec_command"
             )
@@ -47,6 +46,10 @@ class MCPFdTool(FdTool):
                 "tool; use exec_command"
             )
         return super().execute()
+
+
+def _is_rg_execution_argument(argument: str) -> bool:
+    return argument == "--pre" or argument.startswith("--pre=")
 
 
 def _is_fd_execution_argument(argument: str) -> bool:

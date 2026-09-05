@@ -21,11 +21,40 @@ jobs:
       - name: Sync Python environment
         run: uv sync --group dev
 
-      - name: Validate HTTP Python contract
+      - name: Install native search tools
         run: |
-          uv run pytest -q tests/yoke/http
-          uv run ruff check src/yoke/http tests/yoke/http scripts/generate_http_openapi.py
-          uv run pyright src/yoke/http tests/yoke/http
+          sudo apt-get update
+          sudo apt-get install -y ripgrep fd-find
+          mkdir -p "$HOME/.local/bin"
+          ln -s "$(command -v fdfind)" "$HOME/.local/bin/fd"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Validate Python regressions and contract
+        run: |
+          uv run pytest -q
+          uv run ruff check .
+          uv run ty check
+          uv run pyright
+
+  web-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: clients/typescript/package-lock.json
+
+      - name: Validate browser behavior
+        run: node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
+
+      - name: Validate TypeScript contract
+        working-directory: clients/typescript
+        run: |
+          npm ci
+          npm run check
 
   session-startup-windows:
     runs-on: windows-latest

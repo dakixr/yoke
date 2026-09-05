@@ -407,7 +407,3 @@ class ContextManager:
             provider_name=self.compactor.provider_name,
             model_id=self.compactor.model,
         )
-
-
-def _drop_incomplete_tool_turns(messages: Sequence[Message]) -> list[Message]:
-    return normalize_tool_call_sequence(messages, drop_incomplete_assistant=True)

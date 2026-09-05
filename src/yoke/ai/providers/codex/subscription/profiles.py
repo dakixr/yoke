@@ -9,6 +9,7 @@ import json
 import os
 import time
 from collections.abc import Callable
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -119,7 +120,7 @@ class CodexProfileStore:
         return credentials
 
     def fresh_credentials_with_profile(self) -> tuple[OAuthCredentials, str]:
-        with self._lock():
+        with _credential_lock(self.lock_path, label="Codex profile"):
             profiles = self._read_profiles()
             profile = self._cached_profile(profiles)
             if profile is None:
@@ -185,9 +186,6 @@ class CodexProfileStore:
         return None
 
     def _read_profiles(self) -> dict[str, CodexProfile]:
-        return self._read_account_profiles()
-
-    def _read_account_profiles(self) -> dict[str, CodexProfile]:
         profiles: dict[str, CodexProfile] = {}
         if not self.accounts_dir.exists():
             return profiles
@@ -206,7 +204,7 @@ class CodexProfileStore:
     def _write_profile(self, name: str, payload: dict[str, Any]) -> None:
         account_path = self.accounts_dir / name / "auth.json"
         if account_path.exists() or self.accounts_dir.exists():
-            self._atomic_write(account_path, payload)
+            write_private_json(account_path, payload)
             return
         profiles = json.loads(self.auths_path.read_text(encoding="utf-8"))
         if not isinstance(profiles, dict):
@@ -214,7 +212,7 @@ class CodexProfileStore:
                 f"Codex auth profiles file {self.auths_path} is invalid."
             )
         profiles[name] = payload
-        self._atomic_write(self.auths_path, profiles)
+        write_private_json(self.auths_path, profiles)
 
     def _read_selection(self) -> dict[str, Any]:
         if not self.selection_path.exists():
@@ -226,37 +224,10 @@ class CodexProfileStore:
         return payload if isinstance(payload, dict) else {}
 
     def _write_selection(self, profile_name: str) -> None:
-        self._atomic_write(
+        write_private_json(
             self.selection_path,
             {"selected_profile": profile_name, "selected_at": time.time()},
         )
-
-    def _atomic_write(self, path: Path, payload: dict[str, Any]) -> None:
-        write_private_json(path, payload)
-
-    @contextlib.contextmanager
-    def _lock(self) -> Any:
-        self.selection_path.parent.mkdir(parents=True, exist_ok=True)
-        deadline = time.monotonic() + 30
-        handle: int | None = None
-        while handle is None:
-            try:
-                handle = os.open(
-                    self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
-                )
-            except FileExistsError:
-                if time.monotonic() >= deadline:
-                    raise ProviderError(
-                        f"Timed out waiting for Codex profile lock {self.lock_path}."
-                    ) from None
-                time.sleep(0.1)
-        try:
-            os.write(handle, str(os.getpid()).encode("ascii"))
-            yield
-        finally:
-            os.close(handle)
-            with contextlib.suppress(FileNotFoundError):
-                self.lock_path.unlink()
 
 
 class AuthStorage:
@@ -274,17 +245,15 @@ class AuthStorage:
         return OAuthCredentials.from_json(raw)  # ty:ignore[invalid-argument-type]
 
     def set_oauth(self, provider_id: str, credentials: OAuthCredentials) -> None:
-        with self._lock():
-            payload = self._read()
-            payload[provider_id] = credentials.to_json()
-            self._write(payload)
+        with _credential_lock(self.lock_path, label="auth"):
+            self._write_provider(provider_id, credentials)
 
     def refresh_oauth_with_lock(
         self,
         provider_id: str,
         refresher: Callable[[OAuthCredentials], OAuthCredentials],
     ) -> OAuthCredentials:
-        with self._lock():
+        with _credential_lock(self.lock_path, label="auth"):
             current = self.get_oauth(provider_id)
             if current is None:
                 current = login_openai_codex("yoke")
@@ -299,7 +268,7 @@ class AuthStorage:
     def _write_provider(self, provider_id: str, credentials: OAuthCredentials) -> None:
         payload = self._read()
         payload[provider_id] = credentials.to_json()
-        self._write(payload)
+        write_private_json(self.path, payload)
 
     def _read(self) -> dict[str, object]:
         if not self.path.exists():
@@ -314,31 +283,25 @@ class AuthStorage:
             raise ProviderError(f"Codex auth file {self.path} is invalid.")
         return payload
 
-    def _write(self, payload: dict[str, object]) -> None:
-        write_private_json(self.path, payload)
 
-    @contextlib.contextmanager
-    def _lock(self) -> Any:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        deadline = time.monotonic() + 30
-        handle: int | None = None
-        while handle is None:
-            try:
-                handle = os.open(
-                    self.lock_path,
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o600,
-                )
-            except FileExistsError:
-                if time.monotonic() >= deadline:
-                    raise ProviderError(
-                        f"Timed out waiting for auth lock {self.lock_path}."
-                    ) from None
-                time.sleep(0.1)
+@contextlib.contextmanager
+def _credential_lock(path: Path, *, label: str) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + 30
+    handle: int | None = None
+    while handle is None:
         try:
-            os.write(handle, str(os.getpid()).encode("ascii"))
-            yield
-        finally:
-            os.close(handle)
-            with contextlib.suppress(FileNotFoundError):
-                self.lock_path.unlink()
+            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise ProviderError(
+                    f"Timed out waiting for {label} lock {path}."
+                ) from None
+            time.sleep(0.1)
+    try:
+        os.write(handle, str(os.getpid()).encode("ascii"))
+        yield
+    finally:
+        os.close(handle)
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()

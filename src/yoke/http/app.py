@@ -112,8 +112,14 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
-            session_service.close()
-            await runtime_registry.close()
+            broker.close()
+            try:
+                await runtime_registry.close_runtimes()
+            finally:
+                try:
+                    session_service.close()
+                finally:
+                    runtime_registry.shutdown_executor()
 
     app = FastAPI(
         title="Yoke HTTP API",
@@ -179,6 +185,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
             status_code=exc.status_code,
             code=code,
             message=str(exc.detail),
+            headers=exc.headers,
         )
 
     app.include_router(health.router, prefix="/api/v1")

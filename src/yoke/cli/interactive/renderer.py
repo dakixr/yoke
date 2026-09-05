@@ -154,7 +154,7 @@ class PromptToolkitLiveRenderer:
         if event == "tool_execution_end":
             if not payload.get("ok", False):
                 self._emit_tool_output(
-                    _tool_error_text(payload) or "The tool returned an error.",
+                    format_tool_result_error(payload) or "The tool returned an error.",
                     True,
                 )
                 self._set_status_from_event(event, payload)
@@ -225,7 +225,3 @@ class PromptToolkitLiveRenderer:
             return
         if self._record_tool_event is not None:
             self._record_tool_event(event, payload)
-
-
-def _tool_error_text(payload: dict[str, object]) -> str | None:
-    return format_tool_result_error(payload)

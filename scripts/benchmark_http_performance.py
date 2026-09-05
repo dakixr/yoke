@@ -243,7 +243,11 @@ def main() -> None:
     parser.add_argument("--events", type=int, default=20_000)
     parser.add_argument("--fixture-dir", type=Path)
     parser.add_argument("--keep", action="store_true")
-    parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Compatibility flag; output is always JSON.",
+    )
     args = parser.parse_args()
 
     created_temp = args.fixture_dir is None
@@ -267,10 +271,7 @@ def main() -> None:
             fixture_dir,
             fixture,
         )
-        if args.json:
-            print(json.dumps(result, indent=2))
-        else:
-            print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
     finally:
         if created_temp and not args.keep:
             shutil.rmtree(fixture_dir, ignore_errors=True)

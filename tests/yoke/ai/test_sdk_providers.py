@@ -36,6 +36,46 @@ def test_openai_compatible_provider_does_not_retry_read_timeout() -> None:
     assert calls == 1
 
 
+def test_openai_compatible_provider_honors_zero_retry_after() -> None:
+    calls = 0
+    delays: list[float] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                429,
+                headers={"Retry-After": "0"},
+                json={"error": "retry now"},
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        OpenAICompatibleConfig(
+            api_key="test",
+            model="test",
+            max_retries=1,
+            retry_backoff_seconds=10,
+        ),
+        http_client=client,
+        sleep=delays.append,
+    )
+
+    try:
+        message = provider.complete([Message.user("hello")], [])
+    finally:
+        client.close()
+
+    assert message.content == "ok"
+    assert calls == 2
+    assert delays == [0.0]
+
+
 def test_build_builtin_provider_accepts_selection_string(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

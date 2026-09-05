@@ -34,7 +34,9 @@ class ProcessRuntime:
             if name in {"exec_command", "exec_python"}:
                 async with self._process_starts:
                     result = await self._run_sync(tool)
-                await self._remember_process(result)
+                session_id = result.get("session_id")
+                if isinstance(session_id, int):
+                    await self._process_lock(session_id)
                 return result
             if name == "process_io":
                 return await self._run_process_io(tool)
@@ -60,11 +62,6 @@ class ProcessRuntime:
                 async with self._locks_guard:
                     self._process_locks.pop(raw_session_id, None)
             return result
-
-    async def _remember_process(self, result: dict[str, object]) -> None:
-        session_id = result.get("session_id")
-        if isinstance(session_id, int):
-            await self._process_lock(session_id)
 
     async def _process_lock(self, session_id: int) -> asyncio.Lock:
         async with self._locks_guard:

@@ -38,6 +38,9 @@ The `rg` and `fd` tools accept their native raw argument syntax. To keep their
 MCP annotations truthfully read-only, subprocess-launching switches (`rg
 --pre` and `fd --exec`/`--exec-batch`/`-x`/`-X`) are rejected; use
 `exec_command` when command execution is intended.
+MCP ripgrep also ignores `RIPGREP_CONFIG_PATH`, so a local configuration cannot
+enable a subprocess hook behind the read-only argument check. The ordinary
+agent `rg` tool retains its native configuration behavior.
 
 The HTTP transport is stateless. One long-lived application runtime owns a
 shared `CommandProcessManager`, so commands that outlive their initial call can

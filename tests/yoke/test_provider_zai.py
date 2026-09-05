@@ -340,34 +340,42 @@ def test_zai_message_recovery_resends_with_zero_retry_budget() -> None:
     assert payloads[0]["messages"] != payloads[1]["messages"]
 
 
-def test_zai_provider_retries_on_streaming_idle_timeout() -> None:
-    attempts = {"count": 0}
+@pytest.mark.parametrize(
+    ("failure", "expected_delay"), [("idle_timeout", 0.01), ("rate_limit", 0.0)]
+)
+def test_zai_provider_retries_transient_failure(
+    failure: str, expected_delay: float
+) -> None:
+    attempts = 0
+    delays: list[float] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        attempts["count"] += 1
-        if attempts["count"] == 1:
-            raise httpx.ReadTimeout("stream idle timeout simulated")
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            if failure == "idle_timeout":
+                raise httpx.ReadTimeout("stream idle timeout simulated")
+            return httpx.Response(
+                429, headers={"Retry-After": "0"}, json={"error": "retry now"}
+            )
         return _sse_response(content="done")
 
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = ZAIProvider(
-        ZAIConfig(
-            api_key="test",
-            read_idle_timeout_seconds=0.2,
-            max_retries=3,
-            retry_backoff_seconds=0.01,
-        ),
-        http_client=client,
-        sleep=lambda _seconds: None,
-    )
-
-    try:
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        provider = ZAIProvider(
+            ZAIConfig(
+                api_key="test",
+                read_idle_timeout_seconds=0.2,
+                max_retries=1,
+                retry_backoff_seconds=0.01,
+            ),
+            http_client=client,
+            sleep=delays.append,
+        )
         message = provider.complete([Message.user("hello")], [])
-    finally:
-        provider.close()
 
-    assert attempts["count"] >= 2
+    assert attempts == 2
     assert message.content == "done"
+    assert delays == [expected_delay]
 
 
 def test_zai_provider_raises_on_empty_streaming_completion() -> None:

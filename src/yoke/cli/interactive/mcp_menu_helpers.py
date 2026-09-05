@@ -5,10 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
-from typing import Any
-from typing import cast
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.cli.runtime.selector.ui import select_list_item_interactive
@@ -17,7 +14,6 @@ from yoke.mcp.config import GLOBAL_MCP_CONFIG_RELATIVE_PATH
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import McpSessionServerPolicy
-from yoke.mcp.config import load_mcp_config
 from yoke.mcp.config import server_supports_tool
 from yoke.mcp.editing import set_persisted_mcp_server_enabled
 from yoke.mcp.editing import toggle_persisted_mcp_tool
@@ -196,11 +192,6 @@ def _toggle_mcp_tool(
     )
 
 
-def _base_mcp_server(*, root: Path, server: McpServerConfig) -> McpServerConfig:
-    config = load_mcp_config(root=root, home=Path.home())
-    return _find_server(config.servers, server.name) or server
-
-
 def _toggle_session_mcp_tool(
     *,
     session_policy: McpSessionPolicy,
@@ -227,115 +218,6 @@ def _toggle_session_mcp_tool(
         enabled_tools=tuple(enabled_tools) if enabled_tools is not None else None,
         disabled_tools=tuple(disabled_tools),
     )
-
-
-def _toggle_tool_entry(
-    entry: dict[str, Any],
-    *,
-    tool_name: str,
-    currently_enabled: bool,
-) -> None:
-    enabled_tools = _optional_string_list(entry.get("enabled_tools"))
-    disabled_tools = _string_list(entry.get("disabled_tools"))
-    if currently_enabled:
-        if enabled_tools is not None:
-            _remove_value(enabled_tools, tool_name)
-        elif tool_name not in disabled_tools:
-            disabled_tools.append(tool_name)
-    else:
-        _remove_value(disabled_tools, tool_name)
-        if enabled_tools is not None and tool_name not in enabled_tools:
-            enabled_tools.append(tool_name)
-    if enabled_tools is None:
-        entry.pop("enabled_tools", None)
-    else:
-        entry["enabled_tools"] = enabled_tools
-    if disabled_tools:
-        entry["disabled_tools"] = disabled_tools
-    else:
-        entry.pop("disabled_tools", None)
-
-
-def _load_mcp_json(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {"mcp_servers": {}}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"Invalid MCP config `{path}`: expected a JSON object")
-    servers = payload.get("mcp_servers")
-    if servers is None and "mcpServers" in payload:
-        servers = payload.pop("mcpServers")
-        payload["mcp_servers"] = servers
-    if servers is None:
-        payload["mcp_servers"] = {}
-    if not isinstance(payload["mcp_servers"], dict):
-        raise ValueError(f"Invalid MCP config `{path}`: mcp_servers must be an object")
-    return payload
-
-
-def _write_mcp_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-
-
-def _ensure_server_entry(
-    payload: dict[str, Any],
-    server: McpServerConfig,
-) -> dict[str, Any]:
-    servers = cast(dict[str, Any], payload.setdefault("mcp_servers", {}))
-    entry = servers.get(server.name)
-    if not isinstance(entry, dict):
-        entry = _server_config_to_json(server)
-        servers[server.name] = entry
-    elif "command" not in entry and server.command is not None:
-        entry.update(_server_config_to_json(server))
-    return cast(dict[str, Any], entry)
-
-
-def _server_config_to_json(server: McpServerConfig) -> dict[str, Any]:
-    entry: dict[str, Any] = {
-        "transport": server.transport,
-        "enabled": server.enabled,
-    }
-    if server.command is not None:
-        entry["command"] = server.command
-    if server.args:
-        entry["args"] = list(server.args)
-    if server.env:
-        entry["env"] = dict(server.env)
-    if server.env_vars:
-        entry["env_vars"] = list(server.env_vars)
-    if server.cwd is not None:
-        entry["cwd"] = str(server.cwd)
-    if server.url is not None:
-        entry["url"] = server.url
-    if server.required:
-        entry["required"] = server.required
-    if server.startup_timeout_sec != 10.0:
-        entry["startup_timeout_sec"] = server.startup_timeout_sec
-    if server.tool_timeout_sec != 60.0:
-        entry["tool_timeout_sec"] = server.tool_timeout_sec
-    if server.enabled_tools is not None:
-        entry["enabled_tools"] = list(server.enabled_tools)
-    if server.disabled_tools:
-        entry["disabled_tools"] = list(server.disabled_tools)
-    if not server.verify:
-        entry["verify"] = False
-    return entry
-
-
-def _optional_string_list(value: object) -> list[str] | None:
-    if value is None:
-        return None
-    return _string_list(value)
-
-
-def _string_list(value: object) -> list[str]:
-    if value is None:
-        return []
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError("Expected a list of strings")
-    return [item for item in value if isinstance(item, str)]
 
 
 def _remove_value(values: list[str], value: str) -> None:

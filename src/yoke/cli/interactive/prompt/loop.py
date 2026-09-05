@@ -10,18 +10,18 @@ from yoke.cli.interactive.completion.menu import YokeCompletionsMenu
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import handle_slash_command
-from yoke.cli.image_input import ImageAttachment
 from yoke.cli.interactive.prompt.lifecycle import PromptLifecycleConfig
 from yoke.cli.interactive.prompt.lifecycle import run_persistent_prompt_application
 from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
-from yoke.cli.interactive.prompt.submission import (
-    submit_prompt_toolkit_prompt,
-)
-from yoke.cli.interactive.prompt.turns import next_pending_prompt_index
-from yoke.cli.interactive.queue.persistence import clear_prompt_queue
-from yoke.cli.interactive.queue.persistence import persist_prompt_queue
+from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
+from yoke.cli.interactive.queue.mutations import QUEUE_MANAGER_CONFLICT_NOTICE
+from yoke.cli.interactive.queue.mutations import attach_pending_image
+from yoke.cli.interactive.queue.mutations import dequeue_prompt_with_position
+from yoke.cli.interactive.queue.mutations import replace_prompt_queue
+from yoke.cli.interactive.queue.mutations import restore_dequeued_prompt
+from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
 from yoke.cli.interactive.skill_commands import is_skill_command
-from yoke.cli.render import print_session_scrollback
+from yoke.cli.render import print_scrollback_notice, print_session_scrollback
 from yoke.cli.runtime import ActiveSession, AgentRunner
 from yoke.cli.runtime.metadata import persist_active_session_metadata
 
@@ -50,17 +50,10 @@ def persist_prompt_exit_state(
     """Persist prompt-toolkit state before leaving the interactive loop."""
     with state_lock:
         thinking_effort = state.thinking_effort
-        pending_prompts = list(state.pending_prompts)
-        pending_images = list(state.pending_images)
     persist_active_session_metadata(
         active_session,
         agent,
         reasoning_effort=thinking_effort,
-    )
-    persist_prompt_queue(
-        active_session,
-        pending_prompts,
-        pending_images,
     )
 
 
@@ -93,6 +86,16 @@ def process_prompt_toolkit_prompt(  # noqa: C901
             state.submit_action = "steer"
     if not prompt and not state.pending_images:
         return active_session
+    normalized = prompt.strip().lower()
+    if normalized in {"/new", "/fork"}:
+        with state_lock:
+            active_work = state.worker is not None or state.turn_handoff_active
+        if active_work:
+            print_scrollback_notice(
+                scrollback_console,
+                "Finish or stop the active turn before using /new or /fork.",
+            )
+            return active_session
     if action == "queue" and is_skill_command(prompt):
         with state_lock:
             must_wait = state.worker is not None or bool(state.pending_prompts)
@@ -112,13 +115,24 @@ def process_prompt_toolkit_prompt(  # noqa: C901
         request_exit()
         return active_session
     if prompt.strip().lower() == "/queue":
+        with state_lock:
+            manager_prompts = [
+                pending.copy_for_queue() for pending in state.pending_prompts
+            ]
+            manager_revision = state.queue_revision
+        manager_save_conflicted = False
 
-        def persist_current_queue() -> None:
-            with state_lock:
-                prompts = list(state.pending_prompts)
-                images = list(state.pending_images)
-                session = active_session_ref["active_session"]
-            persist_prompt_queue(session, prompts, images)
+        def save_manager_queue(updated: list[PendingPrompt]) -> str | None:
+            nonlocal manager_save_conflicted
+            saved = replace_prompt_queue(
+                state=state,
+                state_lock=state_lock,
+                active_session=active_session,
+                prompts=updated,
+                expected_revision=manager_revision,
+            )
+            manager_save_conflicted = not saved
+            return None if saved else QUEUE_MANAGER_CONFLICT_NOTICE
 
         handled, updated_messages, updated_session = handle_slash_command(
             prompt,
@@ -127,64 +141,56 @@ def process_prompt_toolkit_prompt(  # noqa: C901
             messages=state.messages,
             console=scrollback_console,
             pending_images=state.pending_images,
-            pending_prompts=state.pending_prompts,
-            on_queue_changed=persist_current_queue,
+            pending_prompts=manager_prompts,
+            on_queue_replace=save_manager_queue,
         )
         if handled:
-            next_prompt_to_start: PendingPrompt | None = None
-            steering_prompt_to_start: PendingPrompt | None = None
-            queue_snapshot: tuple[list[PendingPrompt], list[ImageAttachment]] | None = (
-                None
-            )
-            clear_queue = False
             with state_lock:
                 state.messages = updated_messages
                 active_session_ref["active_session"] = updated_session
-                if not state.pending_prompts and not state.pending_images:
-                    clear_queue = True
-                elif any(
-                    pending.kind == "steering" and not pending.paused
-                    for pending in state.pending_prompts
-                ):
-                    if (
-                        state.worker is not None
-                        and state.active_stop_request is not None
-                    ):
-                        next_index = next_pending_prompt_index(state.pending_prompts)
-                        if next_index is not None:
-                            steering_prompt_to_start = state.pending_prompts.pop(
-                                next_index
-                            )
-                    else:
-                        next_index = next_pending_prompt_index(state.pending_prompts)
-                        if next_index is not None:
-                            next_prompt_to_start = state.pending_prompts.pop(next_index)
-                            queue_snapshot = (
-                                list(state.pending_prompts),
-                                list(state.pending_images),
-                            )
-            if clear_queue:
-                clear_prompt_queue(updated_session)
-            if queue_snapshot is not None:
-                persist_prompt_queue(
-                    updated_session,
-                    *queue_snapshot,
+                active_worker = (
+                    state.worker is not None and state.active_stop_request is not None
                 )
             invalidate_prompt()
-            if steering_prompt_to_start is not None:
-                steer_active_turn(
-                    steering_prompt_to_start.prompt,
-                    steering_prompt_to_start.user_message,
-                )
-                persist_current_queue()
-            elif next_prompt_to_start is not None:
-                if start_pending_prompt is None:
+            if manager_save_conflicted:
+                return updated_session
+            dequeued = dequeue_prompt_with_position(
+                state=state,
+                state_lock=state_lock,
+                active_session=updated_session,
+                steering_only=True,
+            )
+            if dequeued is None:
+                return updated_session
+            next_prompt = dequeued.prompt
+            try:
+                if active_worker:
+                    accepted = steer_active_turn(
+                        next_prompt.prompt,
+                        next_prompt.user_message,
+                    )
+                    if not accepted:
+                        restore_dequeued_prompt(
+                            state=state,
+                            state_lock=state_lock,
+                            active_session=updated_session,
+                            dequeued=dequeued,
+                        )
+                elif start_pending_prompt is None:
                     start_turn(
-                        next_prompt_to_start.prompt,
-                        next_prompt_to_start.user_message,
+                        next_prompt.prompt,
+                        next_prompt.user_message,
                     )
                 else:
-                    start_pending_prompt(next_prompt_to_start, False)
+                    start_pending_prompt(next_prompt, False)
+            except Exception:
+                restore_dequeued_prompt(
+                    state=state,
+                    state_lock=state_lock,
+                    active_session=updated_session,
+                    dequeued=dequeued,
+                )
+                raise
             return updated_session
     if prompt.strip().lower() == "/compact" and start_compaction is not None:
         with state_lock:
@@ -221,6 +227,12 @@ def process_prompt_toolkit_prompt(  # noqa: C901
             start_turn=start_turn,
             steer_active_turn=steer_active_turn,
         ),
+        on_image_attached=lambda attachment: attach_pending_image(
+            state=state,
+            state_lock=state_lock,
+            active_session=active_session,
+            attachment=attachment,
+        ),
         on_replay_messages=lambda messages: replay_messages_ref.__setitem__(
             0,
             list(messages),
@@ -230,9 +242,19 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     if handled:
         provider_config = getattr(getattr(agent, "provider", None), "config", None)
         provider_effort = getattr(provider_config, "reasoning_effort", None)
+        switched_queue = (
+            load_prompt_queue_state(updated_session)
+            if updated_session.id != active_session.id
+            else None
+        )
         with state_lock:
             state.messages = updated_messages
             active_session_ref["active_session"] = updated_session
+            if switched_queue is not None:
+                state.pending_prompts = switched_queue.prompts
+                state.pending_images = switched_queue.pending_images
+                state.queue_revision = switched_queue.revision
+                state.queue_session_id = updated_session.id
             state.thinking_effort = (
                 provider_effort
                 if isinstance(provider_effort, str) and provider_effort.strip()
@@ -286,9 +308,7 @@ def run_prompt_toolkit_event_loop(
     scrollback: BatchedScrollback,
 ) -> int:
     """Run one persistent prompt-toolkit application."""
-    from yoke.cli.interactive.prompt.rendering import (
-        build_prompt_toolbar,
-    )
+    from yoke.cli.interactive.prompt.rendering import build_prompt_toolbar
 
     configure_prompt_session_completion_menu(prompt_session)
     get_bottom_toolbar = build_prompt_toolbar(

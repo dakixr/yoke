@@ -23,16 +23,13 @@ from yoke.agent.activity import activity_status_for_event
         ("provider_recovered", {}, "Retrying provider", "Thinking"),
         ("model_start", {}, "Rate limited", "Rate limited"),
         ("model_start", {}, "Retrying provider", "Retrying provider"),
+        ("context_usage", {}, "Thinking", None),
     ],
 )
 def test_activity_status_matches_cli_status_labels(
     event: str,
     payload: dict[str, object],
     current: str,
-    expected: str,
+    expected: str | None,
 ) -> None:
     assert activity_status_for_event(event, payload, current=current) == expected
-
-
-def test_non_status_event_does_not_change_activity() -> None:
-    assert activity_status_for_event("context_usage", {}, current="Thinking") is None

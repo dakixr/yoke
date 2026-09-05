@@ -15,8 +15,7 @@ from yoke.cli.interactive.common import SHORTCUTS_NOTICE
 from yoke.cli.interactive.model_commands import handle_switch_model
 from yoke.cli.interactive.mcp_menu import handle_mcp_menu
 from yoke.cli.interactive.process_commands import print_process_table
-from yoke.cli.interactive.queue.manager import edit_queue_prompt
-from yoke.cli.interactive.queue.manager import open_queue_manager
+from yoke.cli.interactive.queue.commands import handle_queue_command
 from yoke.cli.interactive.session_commands import handle_pin_session
 from yoke.cli.interactive.session_commands import print_session_info
 from yoke.cli.interactive.skill_commands import handle_skill_load
@@ -55,6 +54,8 @@ def handle_slash_command(  # noqa: C901
     on_editor_text: Callable[[str], None] | None = None,
     on_submit_prompt: Callable[[str], None] | None = None,
     on_queue_changed: Callable[[], None] | None = None,
+    on_queue_replace: (Callable[[list[PendingPrompt]], str | None] | None) = None,
+    on_image_attached: Callable[[ImageAttachment], None] | None = None,
     on_replay_messages: Callable[[list[Message]], None] | None = None,
     on_process_inspector: Callable[[], None] | None = None,
 ) -> tuple[bool, list[Message], ActiveSession]:
@@ -84,33 +85,22 @@ def handle_slash_command(  # noqa: C901
         except ValueError as exc:
             print_scrollback_notice(console, str(exc))
             return True, messages, active_session
-        pending_images.append(ImageAttachment(path=resolved))
+        attachment = ImageAttachment(path=resolved)
+        if on_image_attached is None:
+            pending_images.append(attachment)
+        else:
+            on_image_attached(attachment)
         print_scrollback_notice(console, f"Attached image: {resolved.name}")
-        if on_queue_changed is not None:
+        if on_image_attached is None and on_queue_changed is not None:
             on_queue_changed()
         return True, messages, active_session
-    if normalized == "/queue" or normalized.startswith("/queue "):
-        if pending_prompts is None:
-            print_scrollback_notice(
-                console, "/queue is only available in the prompt-toolkit TUI."
-            )
-            return True, messages, active_session
-        if normalized != "/queue":
-            print_scrollback_notice(console, "Use /queue without arguments.")
-            return True, messages, active_session
-        updated = open_queue_manager(
-            pending_prompts,
-            edit_prompt=edit_queue_prompt,
-        )
-        if updated is None:
-            print_scrollback_notice(console, "Queue manager cancelled.")
-            return True, messages, active_session
-        pending_prompts[:] = updated
-        if on_queue_changed is not None:
-            on_queue_changed()
-        print_scrollback_notice(
-            console, f"Queue updated: {len(pending_prompts)} pending."
-        )
+    if handle_queue_command(
+        normalized,
+        console=console,
+        pending_prompts=pending_prompts,
+        on_queue_changed=on_queue_changed,
+        on_queue_replace=on_queue_replace,
+    ):
         return True, messages, active_session
     if normalized == "/skill" or normalized.startswith("/skill "):
         handle_skill_load(

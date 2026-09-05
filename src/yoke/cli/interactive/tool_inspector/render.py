@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import shutil
 import textwrap
 from collections.abc import Sequence
-from contextlib import suppress
 from typing import Literal
 from typing import Protocol
 
@@ -30,6 +28,7 @@ from yoke.cli.interactive.tool_inspector.styles import fit_cell
 from yoke.cli.interactive.tool_inspector.trace import ToolTraceContext
 from yoke.cli.interactive.tool_inspector.trace import ToolTraceEntry
 from yoke.cli.render.base import format_tool_preview
+from yoke.cli.runtime.terminal_output_gate import terminal_size
 
 
 type ToolInspectorItem = ToolTraceEntry | ToolTraceContext
@@ -211,19 +210,6 @@ def entry_text(entry: ToolInspectorItem) -> str:
 def page_step() -> int:
     """Return detail page-scroll step."""
     return max(1, terminal_size()[1] - 8)
-
-
-def terminal_size() -> tuple[int, int]:
-    """Return current terminal size."""
-    with suppress(Exception):
-        from prompt_toolkit.application.current import get_app_or_none
-
-        app = get_app_or_none()
-        if app is not None:
-            size = app.output.get_size()
-            return size.columns, size.rows
-    size = shutil.get_terminal_size(fallback=(100, 24))
-    return size.columns, size.lines
 
 
 def sidebar_items(entries: list[ToolTraceEntry]) -> list[ToolInspectorItem]:

@@ -6,7 +6,6 @@ from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import suppress
 from html import escape
-import shutil
 from typing import TypeVar
 
 from yoke.cli.runtime.selector.format import (
@@ -24,6 +23,9 @@ from yoke.cli.runtime.selector.format import SelectorTableColumns
 from yoke.cli.runtime.selector.format import truncate_selector_line
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
+)
+from yoke.cli.runtime.terminal_output_gate import (
+    terminal_size as selector_terminal_size,
 )
 
 ItemT = TypeVar("ItemT")
@@ -304,16 +306,3 @@ def render_table_selector_row(
 def selector_page_step() -> int:
     """Return the number of rows advanced by page-up/page-down."""
     return max(1, selector_terminal_size()[1] - 6)
-
-
-def selector_terminal_size() -> tuple[int, int]:
-    """Return the current terminal size with prompt-toolkit awareness."""
-    with suppress(Exception):
-        from prompt_toolkit.application.current import get_app_or_none
-
-        app = get_app_or_none()
-        if app is not None:
-            size = app.output.get_size()
-            return size.columns, size.rows
-    size = shutil.get_terminal_size(fallback=(100, 24))
-    return size.columns, size.lines

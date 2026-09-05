@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 from collections.abc import Awaitable
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Sequence
 import inspect
 import time
@@ -13,7 +14,6 @@ from typing import cast
 from uuid import uuid4
 
 from yoke.agent.models import Message
-from yoke.agent.models import TokenUsage
 from yoke.ai.sdk.agent import Agent
 from yoke.ai.sdk.async_support import drain_worker
 from yoke.ai.sdk.batch_safety import close_attempt_agent
@@ -113,7 +113,7 @@ async def run_many[StructuredT](
         raise
     return BatchResult(
         items=items,
-        usage=_aggregate_usage(items),
+        usage=_sum_batch_usage(item.usage for item in items),
         duration_seconds=time.monotonic() - started,
         progress_errors=progress_errors,
     )
@@ -186,9 +186,13 @@ async def _run_task[StructuredT](
                     observer=bound_observer,
                     timeout=timeout,
                 )
-            usage = _add_usage(
-                usage,
-                _subtract_usage(_usage_from_messages(result.messages), baseline_usage),
+            usage = _sum_batch_usage(
+                (
+                    usage,
+                    _subtract_usage(
+                        _usage_from_messages(result.messages), baseline_usage
+                    ),
+                )
             )
         except asyncio.CancelledError:
             raise
@@ -196,12 +200,14 @@ async def _run_task[StructuredT](
             attempt_error = exc
             if agent is not None and registered:
                 attempt_usage = _usage_from_messages(agent.messages)
-                usage = _add_usage(
-                    usage,
-                    _subtract_usage(
-                        attempt_usage,
-                        baseline_usage,
-                    ),
+                usage = _sum_batch_usage(
+                    (
+                        usage,
+                        _subtract_usage(
+                            attempt_usage,
+                            baseline_usage,
+                        ),
+                    )
                 )
         finally:
             close_error = await close_attempt_agent(agent, close_candidate)
@@ -274,45 +280,33 @@ async def _emit_progress(
         await outcome
 
 
-def _aggregate_usage[StructuredT](
-    items: list[BatchItemResult[StructuredT]],
-) -> BatchUsage:
-    return _sum_batch_usage([item.usage for item in items])
-
-
 def _usage_from_messages(messages: Sequence[Message]) -> BatchUsage:
-    usages = [
-        usage
+    return _sum_batch_usage(
+        BatchUsage(
+            calls=1,
+            input_tokens=int(usage.input_tokens or 0),
+            output_tokens=int(usage.output_tokens or 0),
+            reasoning_tokens=int(usage.reasoning_tokens or 0),
+            total_tokens=int(usage.total_tokens or 0),
+            cached_input_tokens=int(usage.cached_input_tokens or 0),
+            cache_creation_input_tokens=int(usage.cache_creation_input_tokens or 0),
+        )
         for message in messages
         if (usage := getattr(message, "usage", None)) is not None
-    ]
-    return BatchUsage(
-        calls=len(usages),
-        input_tokens=_sum_usage(usages, "input_tokens"),
-        output_tokens=_sum_usage(usages, "output_tokens"),
-        reasoning_tokens=_sum_usage(usages, "reasoning_tokens"),
-        total_tokens=_sum_usage(usages, "total_tokens"),
-        cached_input_tokens=_sum_usage(usages, "cached_input_tokens"),
-        cache_creation_input_tokens=_sum_usage(usages, "cache_creation_input_tokens"),
     )
 
 
-def _sum_batch_usage(usages: list[BatchUsage]) -> BatchUsage:
-    return BatchUsage(
-        calls=sum(usage.calls for usage in usages),
-        input_tokens=sum(usage.input_tokens for usage in usages),
-        output_tokens=sum(usage.output_tokens for usage in usages),
-        reasoning_tokens=sum(usage.reasoning_tokens for usage in usages),
-        total_tokens=sum(usage.total_tokens for usage in usages),
-        cached_input_tokens=sum(usage.cached_input_tokens for usage in usages),
-        cache_creation_input_tokens=sum(
-            usage.cache_creation_input_tokens for usage in usages
-        ),
-    )
-
-
-def _add_usage(left: BatchUsage, right: BatchUsage) -> BatchUsage:
-    return _sum_batch_usage([left, right])
+def _sum_batch_usage(usages: Iterable[BatchUsage]) -> BatchUsage:
+    total = BatchUsage()
+    for usage in usages:
+        total.calls += usage.calls
+        total.input_tokens += usage.input_tokens
+        total.output_tokens += usage.output_tokens
+        total.reasoning_tokens += usage.reasoning_tokens
+        total.total_tokens += usage.total_tokens
+        total.cached_input_tokens += usage.cached_input_tokens
+        total.cache_creation_input_tokens += usage.cache_creation_input_tokens
+    return total
 
 
 def _subtract_usage(total: BatchUsage, baseline: BatchUsage) -> BatchUsage:
@@ -330,10 +324,6 @@ def _subtract_usage(total: BatchUsage, baseline: BatchUsage) -> BatchUsage:
             total.cache_creation_input_tokens - baseline.cache_creation_input_tokens,
         ),
     )
-
-
-def _sum_usage(usages: list[TokenUsage], field: str) -> int:
-    return sum(int(getattr(usage, field) or 0) for usage in usages)
 
 
 def _validate_inputs(

@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from pydantic_core import from_json
 from pydantic_core import to_json
 
-from yoke.http.services.session_message_index_models import INDEX_VERSION
-from yoke.http.services.session_message_index_models import MessageIndexSnapshot
+from yoke.http.services.session_message_index.models import INDEX_VERSION
+from yoke.http.services.session_message_index.models import MessageIndexSnapshot
+
+if TYPE_CHECKING:
+    from yoke.http.services.session_message_index import SessionMessageIndex
 
 
-def sidecar_path(host: Any, session_id: str) -> Path:
+def sidecar_path(host: SessionMessageIndex, session_id: str) -> Path:
     return host.store.directory / "read-index" / f"{session_id}.json"
 
 
-def load_sidecar(host: Any, session_id: str) -> MessageIndexSnapshot | None:
-    path = host._sidecar_path(session_id)
+def load_sidecar(
+    host: SessionMessageIndex, session_id: str
+) -> MessageIndexSnapshot | None:
+    path = sidecar_path(host, session_id)
     try:
         payload = from_json(path.read_bytes())
     except (OSError, ValueError):
@@ -49,8 +54,12 @@ def load_sidecar(host: Any, session_id: str) -> MessageIndexSnapshot | None:
         return None
 
 
-def write_sidecar(host: Any, session_id: str, snapshot: MessageIndexSnapshot) -> None:
-    path = host._sidecar_path(session_id)
+def write_sidecar(
+    host: SessionMessageIndex,
+    session_id: str,
+    snapshot: MessageIndexSnapshot,
+) -> None:
+    path = sidecar_path(host, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": INDEX_VERSION,
@@ -72,10 +81,12 @@ def write_sidecar(host: Any, session_id: str, snapshot: MessageIndexSnapshot) ->
             pass
 
 
-def link_sidecar(host: Any, source_session_id: str, target_session_id: str) -> bool:
+def link_sidecar(
+    host: SessionMessageIndex, source_session_id: str, target_session_id: str
+) -> bool:
     """Seed a fork from an existing immutable sidecar inode in O(1)."""
-    source = host._sidecar_path(source_session_id)
-    target = host._sidecar_path(target_session_id)
+    source = sidecar_path(host, source_session_id)
+    target = sidecar_path(host, target_session_id)
     temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
     try:
         if not source.is_file():

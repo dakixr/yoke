@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-
-from yoke.http.services.session_message_index_models import MessageIndexSnapshot
-from yoke.http.services.session_message_index_models import PUBLIC_EXCLUDED_KINDS
-from yoke.http.services.session_message_index_models import kind
-from yoke.http.services.session_message_index_models import parent_id
+from yoke.http.services.session_message_index.models import MessageIndexSnapshot
+from yoke.http.services.session_message_index.models import PUBLIC_EXCLUDED_KINDS
+from yoke.http.services.session_message_index.models import kind
+from yoke.http.services.session_message_index.models import parent_id
 
 
 def descending_ids(
-    host: Any,
     snapshot: MessageIndexSnapshot,
     *,
     limit: int,
@@ -45,7 +41,6 @@ def descending_ids(
 
 
 def ascending_ids(
-    host: Any,
     snapshot: MessageIndexSnapshot,
     *,
     limit: int,

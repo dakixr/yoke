@@ -26,7 +26,6 @@ def handle_pin_session(
         existing_record=active_session.record,
     )
     active_session.title = active_session.record.title
-    persist_session_state(active_session, agent, messages)
     state = "pinned" if active_session.record.pinned else "unpinned"
     return f"Session {state}: {active_session.id}"
 

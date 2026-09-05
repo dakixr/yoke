@@ -16,9 +16,6 @@ from yoke.cli.runtime.selector.multiselect import (
     select_table_items_interactive as select_table_items_interactive,
 )
 from yoke.cli.runtime.selector.session import (
-    _can_use_keyboard_session_selector as _can_use_keyboard_session_selector,
-)
-from yoke.cli.runtime.selector.session import (
     _format_session_activity as _format_session_activity,
 )
 from yoke.cli.runtime.selector.session import (

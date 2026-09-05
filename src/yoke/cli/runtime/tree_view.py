@@ -132,7 +132,6 @@ def flatten_tree_rows(  # noqa: C901
             roots,
             filter_mode,
             query_tokens,
-            current_leaf_id,
         )
 
     def node_matches(node: TreeNode) -> bool:
@@ -295,9 +294,7 @@ def _mark_subtree_matches(
     roots: list[TreeNode],
     filter_mode: TreeFilterMode,
     query_tokens: list[str],
-    current_leaf_id: str | None = None,
 ) -> int:
-    del current_leaf_id
     view_index = roots[0].view_index if roots else None
     if view_index is None:
         return 0

@@ -12,6 +12,7 @@ from yoke.agent.capabilities.builtins import (
     known_builtin_capability_ids,
 )
 from yoke.agent.capabilities.builtins import model_prefers_apply_patch
+from yoke.agent.capabilities.builtins import resolve_builtin_capability
 
 __all__ = [
     "BaseCapability",
@@ -24,4 +25,5 @@ __all__ = [
     "create_builtin_tool_entries",
     "known_builtin_capability_ids",
     "model_prefers_apply_patch",
+    "resolve_builtin_capability",
 ]

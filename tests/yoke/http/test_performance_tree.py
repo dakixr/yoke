@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from yoke.http.services.session_message_index import storage as index_storage
+
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -147,8 +149,8 @@ def test_fork_clones_canonical_session_without_loading_history(
 
     monkeypatch.setattr(store, "load", fail)
     monkeypatch.setattr(
-        service.message_index,
-        "_write_sidecar",
+        index_storage,
+        "write_sidecar",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError(
                 "fork should reuse the persisted sidecar without serializing it"
@@ -188,13 +190,13 @@ def test_fork_clones_canonical_session_without_loading_history(
     assert branch_record.leaf_id == target_id
     assert len(branch_record.conversation_entries) == len(source.conversation_entries)
 
-    original_scan = service.message_index._scan
+    original_scan = index_storage.scan
 
     def guard_scan(*args, **kwargs):
         if kwargs.get("start") == 0:
             raise AssertionError("forked sidecar should avoid a full topology rescan")
         return original_scan(*args, **kwargs)
 
-    monkeypatch.setattr(service.message_index, "_scan", guard_scan)
+    monkeypatch.setattr(index_storage, "scan", guard_scan)
     page = service.messages("full-fork", limit=10, order="desc", cursor=None)
     assert len(page.data) == 10

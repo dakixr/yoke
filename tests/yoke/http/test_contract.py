@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: D100,D103,S101
 
 import json
+import os
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
@@ -11,6 +12,7 @@ from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -114,6 +116,7 @@ def test_health_is_public_and_capabilities_require_auth(tmp_path: Path) -> None:
 
     denied = client.get("/api/v1/capabilities")
     assert denied.status_code == 401
+    assert denied.headers["www-authenticate"] == "Bearer"
     assert denied.json()["error"]["code"] == "unauthorized"
     assert denied.json()["error"]["requestID"].startswith("req_")
 
@@ -458,7 +461,6 @@ def test_session_list_and_recent_locations_skip_request_path_maintenance(
         raise AssertionError("HTTP list endpoints must not run index maintenance")
 
     monkeypatch.setattr(store, "_maintain_index_if_due", fail)
-    monkeypatch.setattr(store, "_load_index", fail)
 
     listed = client.get(
         "/api/v1/session",
@@ -1255,6 +1257,41 @@ def test_filesystem_routes_are_location_contained(tmp_path: Path) -> None:
         params={"directory": str(root), "path": "escape.txt"},
     )
     assert symlink_escape.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_disposition"),
+    [
+        ("café.txt", "inline; filename*=utf-8''caf%C3%A9.txt"),
+        ("資料.txt", "inline; filename*=utf-8''%E8%B3%87%E6%96%99.txt"),
+        pytest.param(
+            'say "hello".txt',
+            "inline; filename*=utf-8''say%20%22hello%22.txt",
+            marks=pytest.mark.skipif(
+                os.name == "nt", reason="Windows filenames cannot contain quotes"
+            ),
+        ),
+    ],
+)
+def test_filesystem_read_encodes_content_disposition_filename(
+    tmp_path: Path,
+    filename: str,
+    expected_disposition: str,
+) -> None:
+    client = _client(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / filename).write_text("file contents\n", encoding="utf-8")
+
+    response = client.get(
+        "/api/v1/fs/read",
+        headers=_auth(),
+        params={"directory": str(root), "path": filename},
+    )
+
+    assert response.status_code == 200
+    assert response.text == "file contents\n"
+    assert response.headers["content-disposition"] == expected_disposition
 
 
 def test_tool_inventory_and_session_override_do_not_require_provider_runtime(

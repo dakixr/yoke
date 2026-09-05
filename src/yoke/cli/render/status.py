@@ -124,7 +124,7 @@ class StatusIndicator:
             ok = payload.get("ok", False)
             if not ok:
                 self._log_event_line(
-                    _tool_error_text(payload) or "The tool returned an error.",
+                    format_tool_result_error(payload) or "The tool returned an error.",
                     style="dim",
                 )
             self._update_from_event(event, payload)
@@ -302,7 +302,7 @@ class InteractiveRenderer:
             return
         if event == "tool_execution_end" and not payload.get("ok", False):
             self._print_event_line(
-                _tool_error_text(payload) or "The tool returned an error."
+                format_tool_result_error(payload) or "The tool returned an error."
             )
             self._turn_has_tool_output = True
 
@@ -342,7 +342,3 @@ class InteractiveRenderer:
     def _print_event_line(self, text: str, *, style: str = "dim") -> None:
         with self._lock:
             self._console.print(Text(text, style=style))
-
-
-def _tool_error_text(payload: dict[str, object]) -> str | None:
-    return format_tool_result_error(payload)

@@ -1,8 +1,19 @@
 from __future__ import annotations
 
-# ruff: noqa: ANN002, ANN003, ANN401, D100, D103, F401, F403, F405, S101
+# ruff: noqa: ANN002, ANN003, ANN401, D100, D103, S101
 
-from .support import *  # noqa: F403
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from yoke.agent.conversation import render_memory_message
+from yoke.agent.models import Message, ToolCall, ToolFunction
+from yoke.cli.main import CLIArgs, run_resume_cli
+from yoke.cli.render import build_console, print_session_scrollback
+from yoke.cli.session import SessionStore
+
+from .support import CaptureStream, FakeAgent
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
@@ -11,9 +22,8 @@ from yoke.cli.runtime.resume import project_resumed_session
 from yoke.cli.session import SessionRecord
 
 
-def test_resume_by_id_continues_saved_session(tmp_path: Path, monkeypatch) -> None:
+def test_resume_by_id_continues_saved_session(tmp_path: Path) -> None:
     session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     store = SessionStore(directory=session_dir)
     store.save(
         "saved",
@@ -57,7 +67,6 @@ def test_resume_falls_back_when_saved_provider_is_unsupported(
     tmp_path: Path, monkeypatch
 ) -> None:
     session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     store = SessionStore(directory=session_dir)
     store.save(
         "saved",
@@ -359,7 +368,6 @@ def test_resume_does_not_write_unchanged_session_before_interactive(
     monkeypatch,
 ) -> None:
     session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     store = SessionStore(directory=session_dir)
     store.save(
         "saved",

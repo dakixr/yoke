@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from yoke.agent.models import ConversationEntry
 from yoke.agent.skills.models import ActiveSkill
 from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.session.admissions import INPUT_ID_METADATA_KEY
+from yoke.http.services.runtime_persistence import normalized_runtime_entry_count
+from yoke.http.services.runtime_persistence import tag_input_entry
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
 
@@ -27,6 +28,7 @@ class RuntimeAppendPersistence:
 
     runtime_entry_count: int
     leaf_id: str
+    leaf_is_instruction: bool = False
 
     def append(
         self,
@@ -60,13 +62,15 @@ class RuntimeAppendPersistence:
                 active_skills=active_skills,
                 clear_context_usage=False,
             )
-        if suffix[0].parent_id != self.leaf_id:
+        if self.leaf_is_instruction:
+            suffix[0].parent_id = self.leaf_id
+        elif suffix[0].parent_id != self.leaf_id:
             raise ValueError("Indexed runtime suffix does not extend the saved leaf.")
         for previous, current in zip(suffix, suffix[1:], strict=False):
             if current.parent_id != previous.id:
                 raise ValueError("Indexed runtime suffix is not append-only.")
         if input_id is not None:
-            _tag_input_entry(suffix, input_id)
+            tag_input_entry(suffix, input_id)
 
         updated = store.save_indexed_tree_navigation(
             session_id,
@@ -103,16 +107,12 @@ def indexed_runtime_start(
         record=record,
         entries=seed.entries,
         persistence=RuntimeAppendPersistence(
-            runtime_entry_count=len(seed.entries),
+            runtime_entry_count=normalized_runtime_entry_count(seed.entries),
             leaf_id=record.leaf_id,
+            leaf_is_instruction=bool(
+                seed.entries
+                and seed.entries[-1].id == record.leaf_id
+                and seed.entries[-1].kind == "instruction"
+            ),
         ),
     )
-
-
-def _tag_input_entry(entries: list[ConversationEntry], input_id: str) -> None:
-    if any(entry.metadata.get(INPUT_ID_METADATA_KEY) == input_id for entry in entries):
-        return
-    for entry in reversed(entries):
-        if entry.kind == "user" and entry.message is not None:
-            entry.metadata[INPUT_ID_METADATA_KEY] = input_id
-            return

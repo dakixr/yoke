@@ -2,6 +2,7 @@
 
 import { ApiError, api } from "../api/client.js";
 import { SseClient } from "../api/sse.js";
+import { InspectorStateController } from "../inspector/state/controller.js";
 import { randomUUID } from "../lib/id.js";
 import { currentRoute, draftPath, navigate, sessionPath } from "../router/router.js";
 import { effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
@@ -16,22 +17,33 @@ import {
   writeToken,
 } from "./local-state.js";
 import { fetchOlderMessagePage } from "./message-pagination.js";
-import { installActiveSnapshot, mergeSessionInfo, mergeSessionSummary, reducePublicEvent } from "./reducer.js";
+import { BrowserLifecycle } from "./lifecycle.js";
+import { installActiveSnapshot, mergeSessionSummary, reducePublicEvent } from "./reducer.js";
+import {
+  applyQueueOperations,
+  installSessionLists,
+  installSessionSummary,
+  mergeServerSessionSummary,
+  optimisticSessionPatch,
+  queueSummary,
+  restoreSessionSummary,
+} from "./optimistic-projections.js";
 import { adjacentVisualSessionID } from "./session-order.js";
 import { store } from "./store.js";
 
 const MESSAGE_REFRESH_MS = 180;
 const SUMMARY_REFRESH_MS = 250;
-const TREE_PAGE_SIZE = 80;
 
-class AppController {
+export class AppController {
   constructor() {
     this.sse = null;
     this.bufferEvents = true;
     this.eventBuffer = [];
     this.bootstrapping = false;
     this.resyncing = false;
-    this.refreshTimers = new Map();
+    this.bootstrapEpoch = null;
+    this.resyncEpoch = null;
+    this.broadResyncPending = false;
     this.messageRefreshGeneration = new Map();
     this.liveToolRefreshGeneration = new Map();
     this.optimisticSessionGeneration = new Map();
@@ -49,17 +61,22 @@ class AppController {
     this.toolMutationGeneration = new Map();
     this.mcpMutationChains = new Map();
     this.mcpMutationGeneration = new Map();
-    this.treeMutationChains = new Map();
-    this.treeMutationGeneration = new Map();
-    this.treePendingLabels = new Map();
-    this.treeServerRevisions = new Map();
-    this.toolDetailGeneration = new Map();
-    this.toolDetailRequests = new Map();
-    this.processOutputRequests = new Map();
     this.pendingLiveEvents = new Map();
     this.liveFrame = null;
     this.routeHandler = () => void this.applyRoute();
+    this.inspectorState = new InspectorStateController({
+      lifecycleEpoch: () => this.lifecycleEpoch,
+      refreshMessages: (sessionID) => this.refreshMessages(sessionID),
+      notice: (message) => this.notice(message),
+    });
+    this.treeServerRevisions = this.inspectorState.treeServerRevisions;
+    this.treePendingLabels = this.inspectorState.treePendingLabels;
+    this.lifecycle = new BrowserLifecycle(this);
+    this.refreshTimers = this.lifecycle.scheduler.timers;
+    this.refreshTimerTasks = this.lifecycle.scheduler.tasks;
   }
+
+  get lifecycleEpoch() { return this.lifecycle?.epoch || 0; }
 
   async start() {
     this.consumeURLToken();
@@ -76,10 +93,16 @@ class AppController {
   }
 
   stop() {
-    this.sse?.stop();
     window.removeEventListener("popstate", this.routeHandler);
-    for (const timer of this.refreshTimers.values()) clearTimeout(timer);
-    this.refreshTimers.clear();
+    this.retireLifecycle({ stopStream: true });
+  }
+
+  retireLifecycle({ stopStream = false } = {}) {
+    this.lifecycle.retire({ stopStream });
+  }
+
+  ownsLifecycle(lifecycleEpoch) {
+    return this.lifecycle.owns(lifecycleEpoch);
   }
 
   consumeURLToken() {
@@ -95,6 +118,8 @@ class AppController {
   }
 
   async authenticateAndBootstrap(token = readToken()) {
+    this.retireLifecycle({ stopStream: true });
+    const lifecycleEpoch = this.lifecycleEpoch;
     if (token) {
       api.setToken(token);
       writeToken(token);
@@ -106,8 +131,11 @@ class AppController {
     }));
     try {
       await api.request("/api/v1/health");
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       await api.capabilities();
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
     } catch (error) {
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       if (error instanceof ApiError && error.status === 401) {
         this.sse?.stop();
         store.setState((state) => ({
@@ -120,6 +148,7 @@ class AppController {
       this.fail(error);
       return;
     }
+    if (this.lifecycleEpoch !== lifecycleEpoch) return;
     store.setState((state) => ({ ...state, auth: { required: false, token: token || null } }));
     await this.bootstrap();
   }
@@ -132,14 +161,19 @@ class AppController {
 
   async bootstrap() {
     if (this.bootstrapping) return;
+    this.retireLifecycle({ stopStream: true });
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.bootstrapping = true;
+    this.bootstrapEpoch = lifecycleEpoch;
     this.bufferEvents = true;
     this.eventBuffer = [];
     this.startSse();
     try {
-      const providerPromise = api.providers().then((providers) => {
+      void api.providers().then((providers) => {
+        if (this.lifecycleEpoch !== lifecycleEpoch) return;
         store.setState((state) => ({ ...state, providers: providers.data }));
-        return providers;
+      }).catch((error) => {
+        if (this.lifecycleEpoch === lifecycleEpoch) this.notice(errorMessage(error));
       });
       const [capabilities, active, commands, recent, current, archived] = await Promise.all([
         api.capabilities(),
@@ -149,61 +183,59 @@ class AppController {
         api.listSessions({ archived: false, limit: 100, order: "lastUserDesc" }),
         api.listSessions({ archived: true, limit: 30, order: "lastUserDesc" }),
       ]);
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       store.setState((state) => {
-        const sessions = { ...state.sessions };
-        for (const session of [...current.data, ...archived.data]) {
-          sessions[session.id] = mergeServerSessionSummary(
-            sessions[session.id],
-            session,
-            this.queueServerRevisions,
-          );
-        }
-        let next = {
-          ...state,
+        const next = {
+          ...installSessionLists(state, current, archived, this.queueServerRevisions),
           capabilities: capabilities.data,
-          sessions,
-          sessionOrder: current.data.map((item) => item.id),
-          archivedOrder: archived.data.map((item) => item.id),
-          archivedTotal: Number.isFinite(archived.total) ? archived.total : archived.data.length,
-          sessionsCursor: current.cursor?.next || null,
-          archivedCursor: archived.cursor?.next || null,
           commands: commands.data,
           recentLocations: recent.data,
         };
-        next = installActiveSnapshot(next, active.data);
-        for (const event of this.eventBuffer) next = reducePublicEvent(next, event);
-        return next;
+        return installActiveSnapshot(next, active.data);
       });
+      this.drainBufferedEvents();
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       this.bufferEvents = false;
       this.eventBuffer = [];
-      void providerPromise.catch((error) => this.notice(errorMessage(error)));
       void this.resolveVisibleLocations();
       void this.refreshProcessLocalState();
       await this.applyRoute();
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       this.persistDone();
       store.setState((state) => ({
         ...state,
         connection: { ...state.connection, status: "connected", current: true, error: null },
       }));
     } catch (error) {
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
+      this.retireLifecycle({ stopStream: true });
       if (error instanceof ApiError && error.status === 401) {
         store.setState((state) => ({ ...state, auth: { required: true, token: null } }));
       } else {
         this.fail(error);
       }
     } finally {
-      this.bootstrapping = false;
+      if (this.bootstrapEpoch === lifecycleEpoch) {
+        this.bootstrapping = false;
+        this.bootstrapEpoch = null;
+        this.startPendingBroadResync();
+      }
     }
   }
 
   startSse() {
     this.sse?.stop();
-    this.sse = new SseClient({
+    const client = new SseClient({
       headers: () => api.headers(),
-      onEvent: (event) => this.receiveEvent(event),
-      onState: (status, error) => this.onStreamState(status, error),
+      onEvent: (event) => {
+        if (this.sse === client) this.receiveEvent(event);
+      },
+      onState: (status, error) => {
+        if (this.sse === client) this.onStreamState(status, error);
+      },
     });
-    this.sse.start();
+    this.sse = client;
+    client.start();
   }
 
   onStreamState(status, error) {
@@ -228,33 +260,71 @@ class AppController {
     if (!event.durable && ["session.compaction.delta", "session.context.updated"].includes(event.type)) {
       this.pendingLiveEvents.set(liveEventCoalesceKey(event), event);
       if (this.liveFrame === null) {
+        const lifecycleEpoch = this.lifecycleEpoch;
         this.liveFrame = requestAnimationFrame(() => {
+          if (this.lifecycleEpoch !== lifecycleEpoch) return;
           const events = [...this.pendingLiveEvents.values()];
           this.pendingLiveEvents.clear();
           this.liveFrame = null;
-          store.setState((state) => events.reduce((next, item) => reducePublicEvent(next, item), state));
-          for (const item of events) this.scheduleEventRefresh(item);
+          this.applyEvents(events);
         });
       }
       return;
     }
-    const priorInstance = store.getState().connection.serverInstanceID;
-    store.setState((state) => reducePublicEvent(state, event));
+    this.applyEvents([event]);
+  }
+
+  applyEvents(events) {
+    const applied = [];
+    store.setState((state) => {
+      let next = state;
+      for (const event of events) {
+        const priorInstance = next.connection.serverInstanceID;
+        next = reducePublicEvent(next, event);
+        applied.push({ event, priorInstance });
+      }
+      return next;
+    });
+    for (const item of applied) this.reconcileAppliedEvent(item.event, item.priorInstance);
+  }
+
+  drainBufferedEvents() {
+    const events = this.eventBuffer;
+    this.eventBuffer = [];
+    if (events.length) this.applyEvents(events);
+  }
+
+  reconcileAppliedEvent(event, priorInstance) {
     if (event.type === "server.connected") {
       const instance = event.data?.serverInstanceID || null;
       if (priorInstance && instance && priorInstance !== instance) {
-        this.queueServerRevisions.clear();
-        void this.resync(true);
+        this.retireLifecycle();
+        this.requestResync(true);
+      } else if (!store.getState().connection.current && !this.bootstrapping) {
+        this.requestResync(false);
       }
-      else if (!store.getState().connection.current) void this.resync(false);
       return;
     }
     if (event.type === "server.resyncRequired") {
-      void this.resync(true);
+      this.requestResync(true);
       return;
     }
     this.scheduleEventRefresh(event);
     this.persistDone();
+  }
+
+  requestResync(broad) {
+    if (this.bootstrapping || this.resyncing) {
+      if (broad) this.broadResyncPending = true;
+      return;
+    }
+    void this.resync(broad);
+  }
+
+  startPendingBroadResync() {
+    if (!this.broadResyncPending || this.bootstrapping || this.resyncing) return;
+    this.broadResyncPending = false;
+    void this.resync(true);
   }
 
   scheduleEventRefresh(event) {
@@ -284,7 +354,9 @@ class AppController {
       this.schedule(`live-tools:${id}`, 80, () => this.refreshLiveToolCalls(id));
       if (store.getState().ui.inspector?.mode === "tool") {
         this.schedule(`tool-inspector:${id}`, 100, async () => {
+          const lifecycleEpoch = this.lifecycleEpoch;
           await this.listToolCalls(id);
+          if (!this.ownsLifecycle(lifecycleEpoch)) return;
           const inspector = store.getState().ui.inspector;
           const callID = inspector?.mode === "tool" ? inspector.callID : null;
           if (callID) await this.loadToolCall(id, callID);
@@ -309,7 +381,12 @@ class AppController {
     }
     if (event.type === "session.process.updated") {
       const processID = store.getState().sessionData[id]?.processDetail?.processID;
-      if (processID) void this.refreshProcessOutput(processID).catch((error) => this.notice(errorMessage(error)));
+      if (processID) {
+        const lifecycleEpoch = this.lifecycleEpoch;
+        void this.refreshProcessOutput(processID).catch((error) => {
+          if (this.ownsLifecycle(lifecycleEpoch)) this.notice(errorMessage(error));
+        });
+      }
       this.throttle(`process-list:${id}`, 750, () => this.refreshProcesses(id));
     }
     if (event.type === "session.selection.changed") {
@@ -327,42 +404,41 @@ class AppController {
   }
 
   schedule(key, delay, task) {
-    clearTimeout(this.refreshTimers.get(key));
-    const timer = setTimeout(async () => {
-      this.refreshTimers.delete(key);
-      try { await task(); } catch (error) { this.notice(errorMessage(error)); }
-    }, delay);
-    this.refreshTimers.set(key, timer);
+    this.lifecycle.scheduler.schedule(key, delay, task);
   }
 
   throttle(key, delay, task) {
-    if (this.refreshTimers.has(key)) return;
-    const timer = setTimeout(async () => {
-      this.refreshTimers.delete(key);
-      try { await task(); } catch (error) { this.notice(errorMessage(error)); }
-    }, delay);
-    this.refreshTimers.set(key, timer);
+    this.lifecycle.scheduler.throttle(key, delay, task);
   }
 
   scheduleLiveReconcile(sessionID) {
     const key = `live-reconcile:${sessionID}`;
     if (this.refreshTimers.has(key)) return;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.schedule(key, 750, async () => {
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       if (store.getState().active[sessionID]?.state !== "running") return;
       await this.refreshLiveToolCalls(sessionID);
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       const liveTools = Object.values(
         store.getState().sessionData[sessionID]?.liveTools || {},
       );
       if (liveTools.some((tool) => tool.status !== "running")) {
         await this.refreshMessages(sessionID);
+        if (this.lifecycleEpoch !== lifecycleEpoch) return;
       }
       this.scheduleLiveReconcile(sessionID);
     });
   }
 
   async resync(broad = false) {
-    if (this.resyncing || this.bootstrapping) return;
+    if (this.resyncing || this.bootstrapping) {
+      if (broad) this.broadResyncPending = true;
+      return;
+    }
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.resyncing = true;
+    this.resyncEpoch = lifecycleEpoch;
     this.bufferEvents = true;
     this.eventBuffer = [];
     store.setState((state) => ({
@@ -372,6 +448,7 @@ class AppController {
     try {
       const previouslyActive = Object.keys(store.getState().active);
       const [active] = await Promise.all([api.activeSessions(), this.refreshSessionLists()]);
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       store.setState((state) => installActiveSnapshot(state, active.data));
       const relevant = new Set([
         ...Object.keys(store.getState().sessionData),
@@ -380,12 +457,15 @@ class AppController {
       ]);
       const selected = store.getState().ui.selectedSessionID;
       if (selected) relevant.add(selected);
-      if (selected) await this.loadSession(idOr(selected), { force: true });
+      if (selected) await this.loadSession(selected, { force: true });
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       for (const id of relevant) {
         if (id === selected) continue;
         await this.catchUpHistory(id);
+        if (this.lifecycleEpoch !== lifecycleEpoch) return;
       }
       await this.refreshProcessLocalState();
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       if (broad) {
         for (const id of relevant) {
           await Promise.allSettled([
@@ -393,25 +473,35 @@ class AppController {
             this.refreshTree(id),
             this.refreshProcesses(id),
           ]);
+          if (this.lifecycleEpoch !== lifecycleEpoch) return;
         }
       }
-      store.setState((state) => {
-        let next = state;
-        for (const event of this.eventBuffer) next = reducePublicEvent(next, event);
-        return { ...next, connection: { ...next.connection, current: true, status: "connected", error: null } };
-      });
+      this.drainBufferedEvents();
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
+      store.setState((state) => ({
+        ...state,
+        connection: { ...state.connection, current: true, status: "connected", error: null },
+      }));
       this.persistDone();
       this.notice(broad ? "Reconnected. State synchronized." : "Connection restored. State synchronized.");
     } catch (error) {
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
+      this.drainBufferedEvents();
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       this.fail(error);
     } finally {
-      this.bufferEvents = false;
-      this.eventBuffer = [];
-      this.resyncing = false;
+      if (this.resyncEpoch === lifecycleEpoch) {
+        this.bufferEvents = false;
+        this.eventBuffer = [];
+        this.resyncing = false;
+        this.resyncEpoch = null;
+        this.startPendingBroadResync();
+      }
     }
   }
 
   async catchUpHistory(sessionID) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     let after = store.getState().sessionData[sessionID]?.latestSeq || 0;
     while (true) {
       let response;
@@ -420,6 +510,7 @@ class AppController {
         if (error instanceof ApiError && error.status === 404) return;
         throw error;
       }
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       if (!response.data.length && !response.hasMore) return;
       store.setState((state) => {
         let next = state;
@@ -432,28 +523,19 @@ class AppController {
   }
 
   async refreshSessionLists() {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const [current, archived] = await Promise.all([
       api.listSessions({ archived: false, limit: 100, order: "lastUserDesc" }),
       api.listSessions({ archived: true, limit: 30, order: "lastUserDesc" }),
     ]);
+    if (this.lifecycleEpoch !== lifecycleEpoch) return;
     store.setState((state) => {
-      const sessions = { ...state.sessions };
-      for (const item of [...current.data, ...archived.data]) {
-        sessions[item.id] = mergeServerSessionSummary(
-          sessions[item.id],
-          item,
-          this.queueServerRevisions,
-        );
-      }
-      let next = {
-        ...state,
-        sessions,
-        sessionOrder: current.data.map((item) => item.id),
-        archivedOrder: archived.data.map((item) => item.id),
-        archivedTotal: Number.isFinite(archived.total) ? archived.total : archived.data.length,
-        sessionsCursor: current.cursor?.next || null,
-        archivedCursor: archived.cursor?.next || null,
-      };
+      let next = installSessionLists(
+        state,
+        current,
+        archived,
+        this.queueServerRevisions,
+      );
       for (const [sessionID, mutations] of this.sessionPendingMutations) {
         if (!mutations.length) continue;
         const base = next.sessions[sessionID] || state.sessions[sessionID];
@@ -482,12 +564,14 @@ class AppController {
     const state = store.getState();
     const cursor = archived ? state.archivedCursor : state.sessionsCursor;
     if (!cursor) return;
+    const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.listSessions({
       archived,
       limit: archived ? 30 : 100,
       order: "lastUserDesc",
       cursor,
     });
+    if (!this.ownsLifecycle(lifecycleEpoch)) return;
     store.setState((current) => {
       const sessions = { ...current.sessions };
       for (const item of response.data) {
@@ -520,7 +604,9 @@ class AppController {
   }
 
   async refreshSessionSummary(sessionID) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.getSession(sessionID);
+    if (this.lifecycleEpoch !== lifecycleEpoch) return;
     store.setState((state) => {
       let summary = response.data;
       const localLastUserMessage = state.sessions[sessionID]?.time?.lastUserMessage || null;
@@ -551,6 +637,7 @@ class AppController {
   }
 
   async resolveVisibleLocations() {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const state = store.getState();
     const directories = [...new Set(
       [...state.sessionOrder, ...state.archivedOrder]
@@ -560,15 +647,18 @@ class AppController {
     let next = 0;
     const worker = async () => {
       while (next < directories.length) {
+        if (!this.ownsLifecycle(lifecycleEpoch)) return;
         const directory = directories[next++];
         if (store.getState().locations[directory]) continue;
         try {
           const response = await api.resolveLocation(directory);
+          if (!this.ownsLifecycle(lifecycleEpoch)) return;
           store.setState((current) => ({
             ...current,
             locations: { ...current.locations, [directory]: response.data },
           }));
         } catch {
+          if (!this.ownsLifecycle(lifecycleEpoch)) return;
           store.setState((current) => ({
             ...current,
             locations: {
@@ -585,6 +675,7 @@ class AppController {
   }
 
   async searchSessions(query) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const value = query.trim();
     store.setState((state) => ({ ...state, ui: { ...state.ui, search: query, searching: Boolean(value) } }));
     if (!value) {
@@ -592,6 +683,7 @@ class AppController {
       return;
     }
     const response = await api.listSessions({ search: value, limit: 100, order: "lastUserDesc" });
+    if (!this.ownsLifecycle(lifecycleEpoch)) return;
     store.setState((state) => {
       const sessions = { ...state.sessions };
       for (const item of response.data) {
@@ -650,6 +742,9 @@ class AppController {
 
   selectSession(sessionID, { navigate: shouldNavigate = true } = {}) {
     this.clearNotice();
+    if (store.getState().ui.selectedSessionID !== sessionID) {
+      this.inspectorState.invalidateSelection();
+    }
     const done = { ...store.getState().ui.doneUnreviewed, [sessionID]: false };
     const reviewed = readReviewed();
     reviewed[sessionID] = new Date().toISOString();
@@ -673,6 +768,7 @@ class AppController {
     if (existing?.loading) return;
     if (existing?.loaded && existing?.messageSnapshotLoaded && !force) return;
     const loadGeneration = (this.messageRefreshGeneration.get(sessionID) || 0) + 1;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.messageRefreshGeneration.set(sessionID, loadGeneration);
     store.setState((state) => ({
       ...state,
@@ -685,21 +781,26 @@ class AppController {
         : api.getSession(sessionID);
       const messagesPromise = api.messages(sessionID, { limit: 100, order: "desc" });
       const queueGeneration = this.queueMutationGeneration.get(sessionID) || 0;
-      const queuePromise = api.queue(sessionID).then((response) => {
-        if (this.messageRefreshGeneration.get(sessionID) === loadGeneration) {
+      void api.queue(sessionID).then((response) => {
+        if (
+          this.lifecycleEpoch === lifecycleEpoch &&
+          this.messageRefreshGeneration.get(sessionID) === loadGeneration
+        ) {
           this.installAuthoritativeQueue(sessionID, response.data, queueGeneration);
         }
       }).catch(() => {});
       const humanGeneration = this.humanInputGeneration.get(sessionID) || 0;
-      const humanInputPromise = Promise.all([
+      void Promise.all([
         api.permissions(sessionID),
         api.questions(sessionID),
       ]).then(([permissions, questions]) => {
+        if (this.lifecycleEpoch !== lifecycleEpoch) return;
         if (this.messageRefreshGeneration.get(sessionID) !== loadGeneration) return;
         if ((this.humanInputGeneration.get(sessionID) || 0) !== humanGeneration) return;
         this.installHumanInput(sessionID, permissions.data, questions.data);
       }).catch(() => {});
       const [session, messages] = await Promise.all([sessionPromise, messagesPromise]);
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       store.setState((state) => {
         const current = state.sessionData[sessionID] || {};
         const loadedMessages = [...messages.data].reverse();
@@ -729,9 +830,9 @@ class AppController {
           },
         };
       });
-      void Promise.all([queuePromise, humanInputPromise]);
       await this.catchUpHistory(sessionID);
     } catch (error) {
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       store.setState((state) => ({
         ...state,
         sessionData: { ...state.sessionData, [sessionID]: { ...state.sessionData[sessionID], loading: false, loadError: errorMessage(error) } },
@@ -744,6 +845,7 @@ class AppController {
     const data = store.getState().sessionData[sessionID];
     if (!data?.messageCursor || data.loadingOlder) return;
     const startingCursor = data.messageCursor;
+    const lifecycleEpoch = this.lifecycleEpoch;
     store.setState((state) => ({
       ...state,
       sessionData: { ...state.sessionData, [sessionID]: { ...state.sessionData[sessionID], loadingOlder: true } },
@@ -755,6 +857,7 @@ class AppController {
         fetchPage: (cursor) => api.messages(sessionID, { limit: 100, order: "desc", cursor }),
         fetchLatest: () => api.messages(sessionID, { limit: 100, order: "desc" }),
       });
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       const currentBeforeApply = store.getState().sessionData[sessionID];
       if (!page.replacementMessages && currentBeforeApply?.messageCursor !== startingCursor) {
         store.setState((state) => ({
@@ -805,6 +908,7 @@ class AppController {
         skippedDuplicatePages: page.duplicatePages,
       };
     } catch (error) {
+      if (this.lifecycleEpoch !== lifecycleEpoch) return;
       store.setState((state) => ({
         ...state,
         sessionData: { ...state.sessionData, [sessionID]: { ...state.sessionData[sessionID], loadingOlder: false } },
@@ -817,9 +921,13 @@ class AppController {
     const sessionData = store.getState().sessionData[sessionID];
     if (!sessionData?.loaded || sessionData.loading) return;
     const generation = (this.messageRefreshGeneration.get(sessionID) || 0) + 1;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.messageRefreshGeneration.set(sessionID, generation);
     const response = await api.messages(sessionID, { limit: 100, order: "desc" });
-    if (this.messageRefreshGeneration.get(sessionID) !== generation) return;
+    if (
+      this.lifecycleEpoch !== lifecycleEpoch ||
+      this.messageRefreshGeneration.get(sessionID) !== generation
+    ) return;
     const latest = [...response.data].reverse();
     store.setState((state) => {
       const current = state.sessionData[sessionID] || {};
@@ -851,9 +959,13 @@ class AppController {
     if (!runtime?.turnID) return;
     const turnID = runtime.turnID;
     const generation = (this.liveToolRefreshGeneration.get(sessionID) || 0) + 1;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.liveToolRefreshGeneration.set(sessionID, generation);
     const response = await api.toolCalls(sessionID, { turnID, limit: 100 });
-    if (this.liveToolRefreshGeneration.get(sessionID) !== generation) return;
+    if (
+      this.lifecycleEpoch !== lifecycleEpoch ||
+      this.liveToolRefreshGeneration.get(sessionID) !== generation
+    ) return;
     store.setState((state) => {
       const current = state.sessionData[sessionID] || {};
       if (state.active[sessionID]?.turnID !== turnID) return state;
@@ -876,18 +988,23 @@ class AppController {
   async refreshQueue(sessionID) {
     if (!store.getState().sessionData[sessionID]?.loaded) return;
     const generation = this.queueMutationGeneration.get(sessionID) || 0;
+    const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.queue(sessionID);
+    if (this.lifecycleEpoch !== lifecycleEpoch) return;
     this.installAuthoritativeQueue(sessionID, response.data, generation);
   }
 
   async refreshHumanInput(sessionID) {
     const generation = this.humanInputGeneration.get(sessionID) || 0;
+    const lifecycleEpoch = this.lifecycleEpoch;
     const [permissions, questions] = await Promise.all([api.permissions(sessionID), api.questions(sessionID)]);
+    if (this.lifecycleEpoch !== lifecycleEpoch) return;
     if ((this.humanInputGeneration.get(sessionID) || 0) !== generation) return;
     this.installHumanInput(sessionID, permissions.data, questions.data);
   }
 
   async refreshProcessLocalState() {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const state = store.getState();
     const attentionIDs = Object.entries(state.attention)
       .filter(([, value]) => (value?.permissions || 0) + (value?.questions || 0) > 0)
@@ -902,77 +1019,76 @@ class AppController {
       state.ui.selectedSessionID,
     ].filter(Boolean));
     for (const id of ids) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return;
       if (state.active[id]?.state === "running") this.scheduleLiveReconcile(id);
       await Promise.allSettled([
         this.refreshHumanInput(id),
         this.refreshProcesses(id),
         this.refreshLiveToolCalls(id),
       ]);
+      if (!this.ownsLifecycle(lifecycleEpoch)) return;
     }
   }
 
   async refreshTree(sessionID) {
-    if (!store.getState().sessionData[sessionID]?.tree && store.getState().ui.inspector?.mode !== "tree") return;
-    const response = await api.tree(sessionID, { limit: TREE_PAGE_SIZE });
-    this.treeServerRevisions.set(sessionID, response.data.revision || 0);
-    const pending = this.treePendingLabels.get(sessionID) || [];
-    const incoming = applyPendingTreeLabels(response.data, pending);
-    const current = store.getState().sessionData[sessionID]?.tree;
-    if (!current?.entries?.length || current.entries.length <= incoming.entries.length) {
-      this.setSessionField(sessionID, "tree", incoming);
-      return;
-    }
-    const latestIDs = new Set(incoming.entries.map((entry) => entry.id));
-    const older = current.entries.filter((entry) => !latestIDs.has(entry.id));
-    this.setSessionField(sessionID, "tree", applyPendingTreeLabels({
-      ...incoming,
-      entries: [...older, ...incoming.entries],
-      cursor: current.cursor,
-    }, pending));
+    return this.inspectorState.refreshTree(sessionID);
   }
 
   async loadMoreTree(sessionID) {
-    const current = store.getState().sessionData[sessionID]?.tree;
-    const cursor = current?.cursor?.next;
-    if (!cursor) return;
-    const response = await api.tree(sessionID, { limit: TREE_PAGE_SIZE, cursor });
-    this.treeServerRevisions.set(sessionID, response.data.revision || 0);
-    const existingIDs = new Set(current.entries.map((entry) => entry.id));
-    const older = response.data.entries.filter((entry) => !existingIDs.has(entry.id));
-    const pending = this.treePendingLabels.get(sessionID) || [];
-    this.setSessionField(sessionID, "tree", applyPendingTreeLabels({
-      ...current,
-      ...response.data,
-      entries: [...older, ...current.entries],
-      cursor: response.data.cursor,
-    }, pending));
+    return this.inspectorState.loadMoreTree(sessionID);
   }
 
   async refreshProcesses(sessionID) {
     if (store.getState().ui.inspector?.mode !== "process" && !store.getState().sessionData[sessionID]?.processes) return;
+    const request = this.inspectorState.nextRequest(sessionID, "process:list");
+    const selection = this.inspectorState.selectedRequest(sessionID, "process");
     const response = await api.processes({ sessionID, limit: 200 });
+    if (
+      !this.inspectorState.ownsRequest(request) ||
+      !this.inspectorState.ownsSelection(sessionID, "process", selection)
+    ) return;
     this.setSessionField(sessionID, "processes", response.data);
   }
 
   async refreshTools(sessionID) {
     const session = store.getState().sessions[sessionID];
     if (!session) return;
+    const request = this.inspectorState.nextRequest(sessionID, "config:tools");
+    const selection = this.inspectorState.selectedRequest(sessionID, "tools");
     const response = await api.tools({ directory: session.location.directory, sessionID });
+    if (
+      !this.inspectorState.ownsRequest(request) ||
+      !this.inspectorState.ownsSelection(sessionID, "tools", selection)
+    ) return;
     this.setSessionField(sessionID, "tools", response.data);
   }
 
   async refreshSkills(sessionID) {
+    const request = this.inspectorState.nextRequest(sessionID, "config:skills");
+    const selection = this.inspectorState.selectedRequest(sessionID, "skills");
     const response = await api.sessionSkills(sessionID);
+    if (
+      !this.inspectorState.ownsRequest(request) ||
+      !this.inspectorState.ownsSelection(sessionID, "skills", selection)
+    ) return;
     this.setSessionField(sessionID, "skills", response.data);
   }
 
   async refreshMcp(sessionID) {
+    const request = this.inspectorState.nextRequest(sessionID, "config:mcp");
+    const selection = this.inspectorState.selectedRequest(sessionID, "mcp");
     const response = await api.sessionMcp(sessionID, true);
+    if (
+      !this.inspectorState.ownsRequest(request) ||
+      !this.inspectorState.ownsSelection(sessionID, "mcp", selection)
+    ) return;
     this.setSessionField(sessionID, "mcp", response.data);
   }
 
   async loadModels(directory, provider = null, search = null) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.models({ directory, provider, search });
+    if (!this.ownsLifecycle(lifecycleEpoch)) return [];
     store.setState((state) => ({
       ...state,
       models: { ...(state.models || {}), [`${directory || ""}:${provider || ""}:${search || ""}`]: response.data },
@@ -981,7 +1097,9 @@ class AppController {
   }
 
   async loadProviders(directory = null) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.providers(directory);
+    if (!this.ownsLifecycle(lifecycleEpoch)) return [];
     store.setState((state) => ({
       ...state,
       providerCatalogs: { ...(state.providerCatalogs || {}), [directory || ""]: response.data },
@@ -1073,21 +1191,28 @@ class AppController {
     const draft = { ...current, ...patch, id, updatedAt: new Date().toISOString() };
     const drafts = { ...store.getState().drafts, [id]: draft };
     store.setState((state) => ({ ...state, drafts }));
-    if ((draft.text || "").trim() || draft.attachments?.length) writeDrafts(drafts);
+    const persistedDrafts = { ...readDrafts() };
+    if ((draft.text || "").trim() || draft.attachments?.length) persistedDrafts[id] = draft;
+    else delete persistedDrafts[id];
+    writeDrafts(persistedDrafts);
   }
 
   deleteDraft(id) {
     const drafts = { ...store.getState().drafts };
     delete drafts[id];
-    writeDrafts(drafts);
+    const persistedDrafts = { ...readDrafts() };
+    delete persistedDrafts[id];
+    writeDrafts(persistedDrafts);
     store.setState((state) => ({ ...state, drafts }));
   }
 
   async submitDraft(id, { delivery = "steer", background = false } = {}) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const draft = store.getState().drafts[id];
     if (!draft) throw new Error("Draft was not found.");
     if (!(draft.text || "").trim() && !draft.attachments?.length) throw new Error("Write a prompt or attach an image first.");
     const sessionID = await this.createSessionFromDraft(id);
+    if (!this.ownsLifecycle(lifecycleEpoch) || !sessionID) return;
     if (!background) this.selectSession(sessionID);
     try {
       await this.submitPrompt(sessionID, {
@@ -1095,6 +1220,7 @@ class AppController {
         attachments: draft.attachments || [],
         delivery,
       });
+      if (!this.ownsLifecycle(lifecycleEpoch)) return;
       this.deleteDraft(id);
       if (background) {
         this.createDraft({
@@ -1107,6 +1233,7 @@ class AppController {
         });
       }
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return;
       if (!background && draft.text) this.setSessionField(sessionID, "editorHandoff", draft.text);
       throw error;
     }
@@ -1118,6 +1245,7 @@ class AppController {
     const location = draft.location || store.getState().recentLocations[0]?.directory;
     if (!location) throw new Error("Choose a working location first.");
     const sessionID = `web_${randomUUID()}`;
+    const lifecycleEpoch = this.lifecycleEpoch;
     const selection = draft.provider && draft.model ? {
       provider: draft.provider,
       model: draft.model,
@@ -1129,6 +1257,7 @@ class AppController {
       title: titleText === null ? null : provisionalSessionTitle(titleText),
       selection,
     });
+    if (!this.ownsLifecycle(lifecycleEpoch)) return null;
     store.setState((state) => {
       const next = installSessionSummary(state, response.data, { moveToFront: true });
       const revision = response.data.queue?.revision || 0;
@@ -1158,9 +1287,11 @@ class AppController {
   }
 
   async finishDraftSession(id, sessionID) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.deleteDraft(id);
     this.selectSession(sessionID);
     await this.loadSession(sessionID, { force: true });
+    if (!this.ownsLifecycle(lifecycleEpoch)) return;
   }
 
   async slashSkillCompletions(directory, search = "") {
@@ -1304,6 +1435,7 @@ class AppController {
 
   async submitPrompt(sessionID, { text, attachments = [], delivery = "steer" }) {
     if (!text.trim() && !attachments.length) return;
+    const lifecycleEpoch = this.lifecycleEpoch;
     const before = store.getState();
     const previousSession = before.sessions[sessionID] || null;
     const previousActiveIndex = before.sessionOrder.indexOf(sessionID);
@@ -1392,8 +1524,10 @@ class AppController {
         delivery,
         resume: true,
       });
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       this.schedule(`queue:${sessionID}`, SUMMARY_REFRESH_MS, () => this.refreshQueue(sessionID));
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       const queued = store.getState().sessionData[sessionID]?.queue;
       if (queued?.items?.some((item) => item.id === inputID)) {
         this.installQueue(
@@ -1430,6 +1564,7 @@ class AppController {
   }
 
   async interrupt(sessionID) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const prior = store.getState().active[sessionID] || null;
     if (prior?.state && prior.state !== "idle") {
       store.setState((state) => ({
@@ -1442,6 +1577,7 @@ class AppController {
     }
     try {
       const response = await api.interrupt(sessionID);
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       if (!response.data?.interrupted && prior) {
         store.setState((state) => ({
           ...state,
@@ -1450,6 +1586,7 @@ class AppController {
       }
       return response.data;
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       if (prior) {
         store.setState((state) => ({
           ...state,
@@ -1470,6 +1607,7 @@ class AppController {
   }
 
   async compact(sessionID) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const previous = store.getState().active[sessionID] || null;
     const startedAt = new Date().toISOString();
     store.setState((state) => ({
@@ -1485,8 +1623,10 @@ class AppController {
       },
     }));
     try {
-      return await api.compact(sessionID);
+      const response = await api.compact(sessionID);
+      return this.ownsLifecycle(lifecycleEpoch) ? response : null;
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       store.setState((state) => {
         const current = state.active[sessionID];
         if (current?.startedAt !== startedAt || current?.activity !== "Compacting") return state;
@@ -1510,6 +1650,7 @@ class AppController {
     const queue = store.getState().sessionData[sessionID]?.queue;
     if (!queue) return;
     const generation = (this.queueMutationGeneration.get(sessionID) || 0) + 1;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.queueMutationGeneration.set(sessionID, generation);
     const pending = this.queuePendingMutations.get(sessionID) || [];
     if (!this.queueServerRevisions.has(sessionID)) {
@@ -1518,7 +1659,7 @@ class AppController {
         Math.max(0, (queue.revision || 0) - pending.length),
       );
     }
-    const mutation = { generation, operations };
+    const mutation = { generation, operations, lifecycleEpoch };
     this.queuePendingMutations.set(sessionID, [...pending, mutation]);
     this.installQueue(
       sessionID,
@@ -1531,24 +1672,31 @@ class AppController {
 
     const prior = this.queueMutationChains.get(sessionID) || Promise.resolve();
     const task = prior.catch(() => {}).then(async () => {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       const expectedRevision = this.queueServerRevisions.get(sessionID) || 0;
       try {
         const response = await api.patchQueue(sessionID, { expectedRevision, operations });
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         const remaining = (this.queuePendingMutations.get(sessionID) || [])
           .filter((item) => item.generation !== generation);
-        this.queuePendingMutations.set(sessionID, remaining);
+        if (remaining.length) this.queuePendingMutations.set(sessionID, remaining);
+        else this.queuePendingMutations.delete(sessionID);
         this.installAuthoritativeQueue(sessionID, response.data);
         return response.data;
       } catch (error) {
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         const remaining = (this.queuePendingMutations.get(sessionID) || [])
           .filter((item) => item.generation !== generation);
-        this.queuePendingMutations.set(sessionID, remaining);
+        if (remaining.length) this.queuePendingMutations.set(sessionID, remaining);
+        else this.queuePendingMutations.delete(sessionID);
         try {
           const refreshed = await api.queue(sessionID);
+          if (!this.ownsLifecycle(lifecycleEpoch)) return null;
           this.installAuthoritativeQueue(sessionID, refreshed.data);
         } catch {
           // A later SSE/resync will reconcile if the recovery read also fails.
         }
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         if (error instanceof ApiError && error.code === "queue_revision_conflict") {
           this.notice("Queue changed elsewhere. Refreshed the current order.");
           return null;
@@ -1571,8 +1719,9 @@ class AppController {
     const activeIndex = before.sessionOrder.indexOf(sessionID);
     const archivedIndex = before.archivedOrder.indexOf(sessionID);
     const generation = (this.optimisticSessionGeneration.get(sessionID) || 0) + 1;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.optimisticSessionGeneration.set(sessionID, generation);
-    const mutation = { generation, patch, previous, activeIndex, archivedIndex };
+    const mutation = { generation, patch, previous, activeIndex, archivedIndex, lifecycleEpoch };
     this.sessionPendingMutations.set(
       sessionID,
       [...(this.sessionPendingMutations.get(sessionID) || []), mutation],
@@ -1584,11 +1733,14 @@ class AppController {
 
     const prior = this.sessionMutationChains.get(sessionID) || Promise.resolve();
     const task = prior.catch(() => {}).then(async () => {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       try {
         const response = await api.patchSession(sessionID, patch);
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         const remaining = (this.sessionPendingMutations.get(sessionID) || [])
           .filter((item) => item.generation !== generation);
-        this.sessionPendingMutations.set(sessionID, remaining);
+        if (remaining.length) this.sessionPendingMutations.set(sessionID, remaining);
+        else this.sessionPendingMutations.delete(sessionID);
         let visible = response.data;
         for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
         const pendingSelection = this.pendingSelections.get(sessionID);
@@ -1596,17 +1748,21 @@ class AppController {
         store.setState((state) => installSessionSummary(state, visible));
         return response.data;
       } catch (error) {
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         const remaining = (this.sessionPendingMutations.get(sessionID) || [])
           .filter((item) => item.generation !== generation);
-        this.sessionPendingMutations.set(sessionID, remaining);
+        if (remaining.length) this.sessionPendingMutations.set(sessionID, remaining);
+        else this.sessionPendingMutations.delete(sessionID);
         try {
           const response = await api.getSession(sessionID);
+          if (!this.ownsLifecycle(lifecycleEpoch)) return null;
           let visible = response.data;
           for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
           const pendingSelection = this.pendingSelections.get(sessionID);
           if (pendingSelection) visible = { ...visible, selection: pendingSelection };
           store.setState((state) => installSessionSummary(state, visible));
         } catch {
+          if (!this.ownsLifecycle(lifecycleEpoch)) return null;
           if (previous) {
             let visible = previous;
             for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
@@ -1628,7 +1784,9 @@ class AppController {
   }
 
   async regenerateTitle(sessionID) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.regenerateTitle(sessionID);
+    if (!this.ownsLifecycle(lifecycleEpoch)) return null;
     store.setState((state) => mergeSessionSummary(
       state,
       mergeServerSessionSummary(
@@ -1638,48 +1796,59 @@ class AppController {
       ),
     ));
     await this.refreshSessionLists();
+    if (!this.ownsLifecycle(lifecycleEpoch)) return null;
     return response.data;
   }
 
   async forkSession(sessionID) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.pendingNotice("Forking session…");
     try {
       const response = await api.forkSession(sessionID, {});
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       store.setState((state) => installSessionSummary(state, response.data, { moveToFront: true }));
       this.selectSession(response.data.id);
       await this.loadSession(response.data.id, { force: true });
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       void this.refreshSessionLists().catch(() => {});
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       this.clearNotice();
       throw error;
     }
   }
 
   async replyPermission(sessionID, requestID, reply, message = null) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.resolveHumanInputOptimistically(sessionID, "permissions", requestID);
     try {
       await api.replyPermission(sessionID, requestID, { reply, message: message || null });
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       await this.refreshHumanInput(sessionID).catch(() => {});
       throw error;
     }
   }
 
   async replyQuestion(sessionID, requestID, answers) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.resolveHumanInputOptimistically(sessionID, "questions", requestID);
     try {
       await api.replyQuestion(sessionID, requestID, answers);
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       await this.refreshHumanInput(sessionID).catch(() => {});
       throw error;
     }
   }
 
   async rejectQuestion(sessionID, requestID) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.resolveHumanInputOptimistically(sessionID, "questions", requestID);
     try {
       await api.rejectQuestion(sessionID, requestID);
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       await this.refreshHumanInput(sessionID).catch(() => {});
       throw error;
     }
@@ -1701,9 +1870,11 @@ class AppController {
   }
 
   async toggleTool(sessionID, toolName, enabled) {
+    this.inspectorState.invalidateRequest(sessionID, "config:tools");
     const current = store.getState().sessionData[sessionID]?.tools || [];
     const key = `${sessionID}:${toolName}`;
     const generation = (this.toolMutationGeneration.get(key) || 0) + 1;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.toolMutationGeneration.set(key, generation);
     if (current.length) {
       this.setSessionField(
@@ -1714,11 +1885,13 @@ class AppController {
     }
     const prior = this.toolMutationChains.get(sessionID) || Promise.resolve();
     const task = prior.catch(() => {}).then(async () => {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       try {
         const response = await api.patchTools(
           sessionID,
           enabled ? { enabled: [toolName], disabled: [] } : { enabled: [], disabled: [toolName] },
         );
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         if (
           this.toolMutationGeneration.get(key) === generation &&
           Array.isArray(response.data?.enabled)
@@ -1735,8 +1908,10 @@ class AppController {
         }
         return response.data;
       } catch (error) {
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         if (this.toolMutationGeneration.get(key) === generation) {
           await this.refreshTools(sessionID).catch(() => {});
+          if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         }
         throw error;
       }
@@ -1751,6 +1926,8 @@ class AppController {
   }
 
   async activateSkill(sessionID, skillName, prompt = null) {
+    const lifecycleEpoch = this.lifecycleEpoch;
+    this.inspectorState.invalidateRequest(sessionID, "config:skills");
     const skills = store.getState().sessionData[sessionID]?.skills;
     const candidate = skills?.available?.find((skill) => skill.name === skillName) || null;
     if (skills && candidate && !(skills.active || []).some((skill) => skill.name === skillName)) {
@@ -1761,6 +1938,7 @@ class AppController {
     }
     try {
       const response = await api.activateSkill(sessionID, skillName, prompt);
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       if (skills && response.data?.activated) {
         const current = store.getState().sessionData[sessionID]?.skills || skills;
         this.setSessionField(sessionID, "skills", {
@@ -1773,15 +1951,19 @@ class AppController {
       }
       return response.data;
     } catch (error) {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       await this.refreshSkills(sessionID).catch(() => {});
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       throw error;
     }
   }
 
   async patchMcp(sessionID, serverName, patch) {
+    this.inspectorState.invalidateRequest(sessionID, "config:mcp");
     const current = store.getState().sessionData[sessionID]?.mcp || [];
     const key = `${sessionID}:${serverName}`;
     const generation = (this.mcpMutationGeneration.get(key) || 0) + 1;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.mcpMutationGeneration.set(key, generation);
     if (current.length) {
       this.setSessionField(
@@ -1799,15 +1981,19 @@ class AppController {
     }
     const prior = this.mcpMutationChains.get(key) || Promise.resolve();
     const task = prior.catch(() => {}).then(async () => {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       try {
         const response = await api.patchMcp(sessionID, serverName, patch);
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         if (this.mcpMutationGeneration.get(key) === generation) {
           this.schedule(`mcp:${sessionID}`, SUMMARY_REFRESH_MS, () => this.refreshMcp(sessionID));
         }
         return response.data;
       } catch (error) {
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         if (this.mcpMutationGeneration.get(key) === generation) {
           await this.refreshMcp(sessionID).catch(() => {});
+          if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         }
         throw error;
       }
@@ -1825,6 +2011,7 @@ class AppController {
     const previous = store.getState().sessions[sessionID]?.selection || null;
     const previousContextUsage = store.getState().sessionData[sessionID]?.contextUsage || null;
     const generation = (this.selectionGeneration.get(sessionID) || 0) + 1;
+    const lifecycleEpoch = this.lifecycleEpoch;
     this.selectionGeneration.set(sessionID, generation);
     const desired = {
       provider,
@@ -1857,8 +2044,10 @@ class AppController {
 
     const prior = this.selectionMutationChains.get(sessionID) || Promise.resolve();
     const task = prior.catch(() => {}).then(async () => {
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       try {
         const response = await api.selectModel(sessionID, desired);
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         if (this.selectionGeneration.get(sessionID) === generation) {
           this.pendingSelections.delete(sessionID);
           const effective = response.data?.effective;
@@ -1878,6 +2067,7 @@ class AppController {
         }
         return response.data;
       } catch (error) {
+        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
         if (this.selectionGeneration.get(sessionID) === generation) {
           this.pendingSelections.delete(sessionID);
           if (previous) {
@@ -1993,21 +2183,9 @@ class AppController {
 
   async openInspector(mode, payload = {}) {
     this.clearNotice();
-    const sessionID = store.getState().ui.selectedSessionID;
-    if (!sessionID) return;
-    store.setState((state) => {
-      const next = { ...state, ui: { ...state.ui, inspector: { mode, ...payload } } };
-      if (mode !== "tool" || !payload.callID) return next;
-      const current = state.sessionData[sessionID] || {};
-      if (current.toolDetail?.id === payload.callID) return next;
-      return {
-        ...next,
-        sessionData: {
-          ...state.sessionData,
-          [sessionID]: { ...current, toolDetail: null },
-        },
-      };
-    });
+    const selection = this.inspectorState.beginSelection(mode, payload);
+    if (!selection) return;
+    const { sessionID, selectionVersion } = selection;
     if (mode === "tree") await this.refreshTree(sessionID);
     if (mode === "process") await this.refreshProcesses(sessionID);
     if (mode === "tool") {
@@ -2021,168 +2199,63 @@ class AppController {
     if (mode === "mcp") await this.refreshMcp(sessionID);
     if (mode === "context") {
       const response = await api.context(sessionID);
-      this.setSessionField(sessionID, "context", response.data);
+      if (this.inspectorState.ownsSelection(sessionID, mode, selectionVersion)) {
+        this.setSessionField(sessionID, "context", response.data);
+      }
     }
-    if (mode === "file" && payload.path) await this.loadFile(sessionID, payload.path);
+    if (mode === "file" && payload.path) {
+      await this.loadFile(sessionID, payload.path, selectionVersion);
+    }
   }
 
   closeInspector() {
-    store.setState((state) => ({ ...state, ui: { ...state.ui, inspector: null } }));
+    this.inspectorState.close();
   }
 
   async loadToolCall(sessionID, callID) {
-    const generation = (this.toolDetailGeneration.get(sessionID) || 0) + 1;
-    this.toolDetailGeneration.set(sessionID, generation);
-    const requestKey = `${sessionID}\u0000${callID}`;
-    let request = this.toolDetailRequests.get(requestKey);
-    if (!request) {
-      request = (async () => {
-        const known = store.getState().sessionData[sessionID]?.toolCalls?.find((call) => call.id === callID);
-        if (known?.retention === "runtime") {
-          const [detail, output] = await Promise.all([
-            api.toolCall(sessionID, callID),
-            api.toolOutput(sessionID, callID),
-          ]);
-          return { detail, output };
-        }
-        const detail = await api.toolCall(sessionID, callID);
-        if (detail.data?.retention === "session") {
-          return { detail, output: { data: [], cursor: { next: 0, truncatedBefore: 0 } } };
-        }
-        const output = await api.toolOutput(sessionID, callID);
-        return { detail, output };
-      })();
-      this.toolDetailRequests.set(requestKey, request);
-      void request.finally(() => {
-        if (this.toolDetailRequests.get(requestKey) === request) this.toolDetailRequests.delete(requestKey);
-      }).catch(() => {});
-    }
-    const { detail, output } = await request;
-    if (this.toolDetailGeneration.get(sessionID) !== generation) return null;
-    const inspector = store.getState().ui.inspector;
-    if (inspector?.mode === "tool" && inspector.callID && inspector.callID !== callID) return null;
-    this.setSessionField(sessionID, "toolDetail", { ...detail.data, outputChunks: output.data, outputCursor: output.cursor });
-    return detail.data;
+    return this.inspectorState.loadToolCall(sessionID, callID);
   }
 
   async selectToolCall(sessionID, callID) {
-    store.setState((state) => {
-      const inspector = state.ui.inspector;
-      if (inspector?.mode !== "tool") return state;
-      const current = state.sessionData[sessionID] || {};
-      return {
-        ...state,
-        ui: { ...state.ui, inspector: { ...inspector, callID } },
-        sessionData: {
-          ...state.sessionData,
-          [sessionID]: current.toolDetail?.id === callID
-            ? current
-            : { ...current, toolDetail: null },
-        },
-      };
-    });
-    return this.loadToolCall(sessionID, callID);
+    return this.inspectorState.selectToolCall(sessionID, callID);
   }
 
   async loadProcess(processID) {
-    const detail = await api.process(processID);
-    const sessionID = detail.data.sessionID;
-    if (!sessionID) return;
-    this.setSessionField(sessionID, "processDetail", detail.data);
+    return this.inspectorState.loadProcess(processID);
   }
 
   async refreshProcessOutput(processID) {
-    const existingRequest = this.processOutputRequests.get(processID);
-    if (existingRequest) return existingRequest;
-    const request = (async () => {
-      const located = this.findProcessDetail(processID);
-      if (!located) return;
-      const { sessionID, detail } = located;
-      const afterSeq = detail.output?.latestSeq || 0;
-      const response = await api.processOutput(processID, afterSeq, 500);
-      const current = store.getState().sessionData[sessionID]?.processDetail;
-      if (current?.processID !== processID) return;
-      const currentSeq = current.output?.latestSeq || 0;
-      if (response.cursor.truncatedBefore > currentSeq) {
-        await this.refreshProcess(processID);
-        return;
-      }
-      const chunks = response.data.filter((chunk) => chunk.seq > currentSeq);
-      if (!chunks.length && response.cursor.next <= currentSeq) return;
-      const appended = chunks.map((chunk) => chunk.text).join("");
-      this.setSessionField(sessionID, "processDetail", {
-        ...current,
-        output: {
-          ...current.output,
-          tail: `${current.output?.tail || ""}${appended}`,
-          latestSeq: Math.max(currentSeq, response.cursor.next || 0),
-        },
-      });
-    })().finally(() => {
-      if (this.processOutputRequests.get(processID) === request) {
-        this.processOutputRequests.delete(processID);
-      }
-    });
-    this.processOutputRequests.set(processID, request);
-    return request;
+    return this.inspectorState.refreshProcessOutput(processID);
   }
 
   findProcessDetail(processID) {
-    for (const [sessionID, data] of Object.entries(store.getState().sessionData)) {
-      if (data?.processDetail?.processID === processID) {
-        return { sessionID, detail: data.processDetail };
-      }
-    }
-    return null;
+    return this.inspectorState.findProcessDetail(processID);
   }
 
   async refreshProcess(processID) {
-    const detail = await api.process(processID);
-    const sessionID = detail.data.sessionID;
-    if (!sessionID) return;
-    const current = store.getState().sessionData[sessionID]?.processDetail;
-    if (current?.processID !== processID) return;
-    const currentSeq = current.output?.latestSeq || 0;
-    const incomingSeq = detail.data.output?.latestSeq || 0;
-    this.setSessionField(sessionID, "processDetail", incomingSeq < currentSeq
-      ? { ...detail.data, output: current.output }
-      : detail.data);
+    return this.inspectorState.refreshProcess(processID);
   }
 
-  async loadFile(sessionID, path) {
+  async loadFile(sessionID, path, selectionVersion = null) {
     const session = store.getState().sessions[sessionID];
     if (!session) return;
+    const lifecycleEpoch = this.lifecycleEpoch;
     const content = await api.fsRead(session.location.directory, path);
+    if (!this.ownsLifecycle(lifecycleEpoch)) return;
+    if (!this.inspectorState.ownsSelection(sessionID, "file", selectionVersion)) return;
     this.setSessionField(sessionID, "fileDetail", { path, content });
   }
 
   async treePreview(sessionID, targetID) {
-    const response = await api.treePreview(sessionID, targetID);
-    this.setSessionField(sessionID, "treePreview", response.data);
-    return response.data;
+    return this.inspectorState.treePreview(sessionID, targetID);
   }
 
   clearTreePreview(sessionID) {
-    this.setSessionField(sessionID, "treePreview", null);
+    this.inspectorState.clearTreePreview(sessionID);
   }
 
   async navigateTree(sessionID, targetID, branchSummary = null) {
-    const tree = store.getState().sessionData[sessionID]?.tree;
-    if (!tree) return;
-    try {
-      const response = await api.navigateTree(sessionID, { expectedRevision: tree.revision, targetID, branchSummary });
-      await Promise.all([this.refreshTree(sessionID), this.refreshMessages(sessionID)]);
-      this.setSessionField(sessionID, "treePreview", null);
-      if (response.data.editorText) this.setSessionField(sessionID, "editorHandoff", response.data.editorText);
-      return response.data;
-    } catch (error) {
-      if (error instanceof ApiError && error.code === "tree_revision_conflict") {
-        await this.refreshTree(sessionID);
-        this.notice("Session tree changed elsewhere. Refreshed before navigation.");
-        return null;
-      }
-      throw error;
-    }
+    return this.inspectorState.navigateTree(sessionID, targetID, branchSummary);
   }
 
   clearEditorHandoff(sessionID) {
@@ -2190,92 +2263,33 @@ class AppController {
   }
 
   async labelTreeEntry(sessionID, entryID, label) {
-    const tree = store.getState().sessionData[sessionID]?.tree;
-    if (!tree) return;
-    const normalized = String(label || "").trim().replace(/\s+/g, " ") || null;
-    const generation = (this.treeMutationGeneration.get(sessionID) || 0) + 1;
-    this.treeMutationGeneration.set(sessionID, generation);
-    const mutation = { generation, entryID, label: normalized };
-    const pending = [...(this.treePendingLabels.get(sessionID) || []), mutation];
-    this.treePendingLabels.set(sessionID, pending);
-    if (!this.treeServerRevisions.has(sessionID)) {
-      this.treeServerRevisions.set(sessionID, tree.revision || 0);
-    }
-    this.setSessionField(sessionID, "tree", applyPendingTreeLabels(tree, pending));
-
-    const prior = this.treeMutationChains.get(sessionID) || Promise.resolve();
-    const task = prior.catch(() => {}).then(async () => {
-      const expectedRevision = this.treeServerRevisions.get(sessionID) || 0;
-      try {
-        const response = await api.patchTreeEntry(sessionID, entryID, {
-          expectedRevision,
-          label: normalized,
-        });
-        this.treeServerRevisions.set(sessionID, response.data.revision || 0);
-        const remaining = (this.treePendingLabels.get(sessionID) || [])
-          .filter((item) => item.generation !== generation);
-        this.treePendingLabels.set(sessionID, remaining);
-        const current = store.getState().sessionData[sessionID]?.tree;
-        if (current) {
-          const authoritative = mergeTreeEntry(current, response.data.entry, response.data.revision);
-          this.setSessionField(
-            sessionID,
-            "tree",
-            applyPendingTreeLabels(authoritative, remaining),
-          );
-        }
-        return response.data;
-      } catch (error) {
-        const remaining = (this.treePendingLabels.get(sessionID) || [])
-          .filter((item) => item.generation !== generation);
-        this.treePendingLabels.set(sessionID, remaining);
-        try {
-          const refreshed = await api.tree(sessionID);
-          this.treeServerRevisions.set(sessionID, refreshed.data.revision || 0);
-          this.setSessionField(
-            sessionID,
-            "tree",
-            applyPendingTreeLabels(refreshed.data, remaining),
-          );
-        } catch {
-          // SSE or the next tree refresh will reconcile if recovery also fails.
-        }
-        if (error instanceof ApiError && error.code === "tree_revision_conflict") {
-          this.notice("Session tree changed elsewhere. Refreshed before labeling.");
-          return null;
-        }
-        throw error;
-      }
-    });
-    const chained = task.finally(() => {
-      if (this.treeMutationChains.get(sessionID) === chained) {
-        this.treeMutationChains.delete(sessionID);
-      }
-    });
-    this.treeMutationChains.set(sessionID, chained);
-    return chained;
+    return this.inspectorState.labelTreeEntry(sessionID, entryID, label);
   }
 
   async listToolCalls(sessionID) {
-    const response = await api.toolCalls(sessionID, { limit: 100 });
-    this.setSessionField(sessionID, "toolCalls", response.data);
-    return response.data;
+    return this.inspectorState.listToolCalls(sessionID);
   }
 
   async signalProcess(processID, signal) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.processSignal(processID, signal);
+    if (!this.ownsLifecycle(lifecycleEpoch)) return;
     const sessionID = response.data.sessionID;
     if (sessionID) {
       await this.refreshProcesses(sessionID);
+      if (!this.ownsLifecycle(lifecycleEpoch)) return;
       await this.loadProcess(processID);
     }
   }
 
   async sendProcessInput(processID, text) {
+    const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.processStdin(processID, text);
+    if (!this.ownsLifecycle(lifecycleEpoch)) return;
     const sessionID = response.data.sessionID;
     if (sessionID) {
       await this.refreshProcesses(sessionID);
+      if (!this.ownsLifecycle(lifecycleEpoch)) return;
       await this.loadProcess(processID);
     }
   }
@@ -2391,35 +2405,10 @@ function promptAttachments(items) {
 }
 
 function messagesContainPrompt(messages, livePrompt) {
-  if (!livePrompt) return false;
-  if (livePrompt.id) return messages.some((message) => message.inputID === livePrompt.id);
-  const prompt = livePrompt.prompt || {};
-  const expectedText = String(prompt.text || "");
-  const expectedAttachments = (prompt.attachments || [])
-    .map((item) => item.name || "")
-    .sort();
-  const admittedAt = Date.parse(livePrompt.timeCreated || "");
-  return messages.some((message) => {
-    if (message.type !== "user") return false;
-    const createdAt = Date.parse(message.timeCreated || "");
-    if (
-      Number.isFinite(admittedAt) &&
-      Number.isFinite(createdAt) &&
-      createdAt < admittedAt - 2000
-    ) return false;
-    const text = (message.content || [])
-      .filter((part) => part.type === "text")
-      .map((part) => part.text || "")
-      .join("\n");
-    const attachments = (message.content || [])
-      .filter((part) => part.type === "image")
-      .map((part) => part.name || "")
-      .sort();
-    return (
-      text === expectedText &&
-      JSON.stringify(attachments) === JSON.stringify(expectedAttachments)
-    );
-  });
+  return Boolean(
+    livePrompt?.id &&
+    messages.some((message) => message.inputID === livePrompt.id),
+  );
 }
 
 function reconcileLivePrompt(livePrompt, messages) {
@@ -2521,152 +2510,6 @@ function provisionalSessionTitle(text) {
   return title || "New session";
 }
 
-function optimisticSessionPatch(session, patch) {
-  const now = new Date().toISOString();
-  const has = (key) => Object.prototype.hasOwnProperty.call(patch, key);
-  return {
-    ...session,
-    title: has("title") ? patch.title : session.title,
-    pinned: has("pinned") ? Boolean(patch.pinned) : session.pinned,
-    archivedAt: has("archived")
-      ? patch.archived ? now : null
-      : session.archivedAt,
-    time: { ...(session.time || {}), updated: now },
-  };
-}
-
-function applyPendingTreeLabels(tree, pending) {
-  if (!tree?.entries?.length || !pending?.length) return tree;
-  const labels = new Map();
-  for (const mutation of pending) labels.set(mutation.entryID, mutation.label);
-  return {
-    ...tree,
-    entries: tree.entries.map((entry) => labels.has(entry.id)
-      ? { ...entry, label: labels.get(entry.id) }
-      : entry),
-  };
-}
-
-function mergeTreeEntry(tree, entry, revision) {
-  if (!tree?.entries?.length) return tree;
-  return {
-    ...tree,
-    revision,
-    entries: tree.entries.map((item) => item.id === entry.id ? entry : item),
-  };
-}
-
-function mergeServerSessionSummary(current, incoming, queueRevisions) {
-  const knownRevision = queueRevisions.get(incoming.id);
-  const preserveQueue = knownRevision !== undefined;
-  const merged = mergeSessionInfo(current, incoming, { preserveQueue });
-  const incomingRevision = Number(incoming.queue?.revision);
-  if (Number.isFinite(incomingRevision)) {
-    queueRevisions.set(
-      incoming.id,
-      knownRevision === undefined
-        ? incomingRevision
-        : Math.max(knownRevision, incomingRevision),
-    );
-  }
-  return merged;
-}
-
-function installSessionSummary(state, session, { moveToFront = false } = {}) {
-  const sessionID = session.id;
-  const previous = state.sessions[sessionID] || null;
-  const merged = mergeSessionInfo(state.sessions[sessionID], session, { preserveQueue: true });
-  const activeIndex = state.sessionOrder.indexOf(sessionID);
-  const archivedIndex = state.archivedOrder.indexOf(sessionID);
-  let sessionOrder = state.sessionOrder.filter((id) => id !== sessionID);
-  let archivedOrder = state.archivedOrder.filter((id) => id !== sessionID);
-  const target = merged.archivedAt ? archivedOrder : sessionOrder;
-  const previousIndex = merged.archivedAt ? archivedIndex : activeIndex;
-  const changedShelf = previous
-    ? Boolean(previous.archivedAt) !== Boolean(merged.archivedAt)
-    : previousIndex < 0;
-  if (moveToFront || changedShelf || previousIndex < 0) {
-    target.unshift(sessionID);
-  } else {
-    target.splice(Math.min(previousIndex, target.length), 0, sessionID);
-  }
-  return {
-    ...state,
-    sessions: { ...state.sessions, [sessionID]: merged },
-    sessionOrder,
-    archivedOrder,
-  };
-}
-
-function restoreSessionSummary(state, session, activeIndex, archivedIndex) {
-  const sessionID = session.id;
-  const merged = mergeSessionInfo(state.sessions[sessionID], session, { preserveQueue: true });
-  const sessionOrder = state.sessionOrder.filter((id) => id !== sessionID);
-  const archivedOrder = state.archivedOrder.filter((id) => id !== sessionID);
-  if (activeIndex >= 0) sessionOrder.splice(Math.min(activeIndex, sessionOrder.length), 0, sessionID);
-  if (archivedIndex >= 0) archivedOrder.splice(Math.min(archivedIndex, archivedOrder.length), 0, sessionID);
-  return {
-    ...state,
-    sessions: { ...state.sessions, [sessionID]: merged },
-    sessionOrder,
-    archivedOrder,
-  };
-}
-
-function applyQueueOperations(queue, operations) {
-  let items = [...(queue?.items || [])];
-  for (const operation of operations || []) {
-    const index = items.findIndex((item) => item.id === operation.id);
-    if (operation.op === "remove") {
-      if (index >= 0) items.splice(index, 1);
-      continue;
-    }
-    if (index < 0) continue;
-    if (operation.op === "update") {
-      items[index] = { ...items[index], prompt: operation.prompt };
-      continue;
-    }
-    if (operation.op === "setDelivery") {
-      items[index] = { ...items[index], delivery: operation.delivery };
-      continue;
-    }
-    if (operation.op === "setPaused") {
-      items[index] = { ...items[index], paused: operation.paused };
-      continue;
-    }
-    const [item] = items.splice(index, 1);
-    if (operation.op === "moveToStart") {
-      items.unshift(item);
-      continue;
-    }
-    if (operation.op === "moveBefore") {
-      const targetID = operation.beforeID ?? operation.before_id;
-      const target = items.findIndex((candidate) => candidate.id === targetID);
-      items.splice(target >= 0 ? target : items.length, 0, item);
-      continue;
-    }
-    if (operation.op === "moveAfter") {
-      const targetID = operation.afterID ?? operation.after_id;
-      const target = items.findIndex((candidate) => candidate.id === targetID);
-      items.splice(target >= 0 ? target + 1 : items.length, 0, item);
-      continue;
-    }
-    items.splice(Math.min(index, items.length), 0, item);
-  }
-  return { ...queue, items };
-}
-
-function queueSummary(queue) {
-  const items = queue?.items || [];
-  return {
-    total: items.length,
-    steering: items.filter((item) => item.delivery === "steer" && !item.paused).length,
-    queued: items.filter((item) => item.delivery === "queue" && !item.paused).length,
-    paused: items.filter((item) => item.paused).length,
-    revision: queue?.revision || 0,
-  };
-}
-
 function errorMessage(error) {
   if (error instanceof ApiError) return `${error.message}${error.requestID ? ` (${error.requestID})` : ""}`;
   return error?.message || String(error);
@@ -2697,7 +2540,5 @@ function slashUsage(controller, usage) {
   controller.notice(`Usage: ${usage}`);
   return { handled: true, clear: false };
 }
-
-function idOr(value) { return value; }
 
 export const controller = new AppController();

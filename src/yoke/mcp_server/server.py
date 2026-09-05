@@ -78,7 +78,11 @@ def create_service(config: MCPServerConfig) -> MCPService:
         version=__version__,
         title="Yoke server harness",
         description="Tool-only remote coding and server execution harness.",
-        instructions=_server_instructions(config),
+        instructions=(
+            "Inspect before modifying. "
+            "Use mcp_inspect before mcp_call when accessing configured downstream MCP servers. "
+            "Use apply_patch for file changes and process_io for commands that return a live session ID."
+        ),
         lifespan=lifespan,
         on_list_tools=list_tools,
         on_call_tool=call_tool,
@@ -165,15 +169,3 @@ def create_service(config: MCPServerConfig) -> MCPService:
 
 async def _health(_: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
-
-
-def _server_instructions(config: MCPServerConfig) -> str:
-    parts = [
-        "Inspect before modifying.",
-        "Use apply_patch for file changes and process_io for commands that return a live session ID.",
-    ]
-    parts.insert(
-        1,
-        "Use mcp_inspect before mcp_call when accessing configured downstream MCP servers.",
-    )
-    return " ".join(parts)

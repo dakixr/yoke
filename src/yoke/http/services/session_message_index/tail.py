@@ -1,9 +1,9 @@
-"""Extracted helpers for the persistent HTTP session message index."""
+"""Bounded reads of active context and tree tails."""
 
 from __future__ import annotations
 
 import mmap
-from typing import Any
+from typing import TYPE_CHECKING
 
 from pydantic_core import from_json
 
@@ -11,17 +11,24 @@ from yoke.agent.models import ConversationEntry
 from yoke.agent.tool_context import normalize_legacy_tool_context_entries
 from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
 from yoke.cli.session.io import SESSION_METADATA_EVENT
-from yoke.http.services.session_message_index_models import ContextIndexWindow
-from yoke.http.services.session_message_index_models import MessageIndexSnapshot
-from yoke.http.services.session_message_index_models import TreeIndexPage
-from yoke.http.services.session_message_index_models import UNSET
-from yoke.http.services.session_message_index_models import entry_topology
-from yoke.http.services.session_message_index_models import (
+from yoke.http.services.session_message_index.models import ContextIndexWindow
+from yoke.http.services.session_message_index.models import MessageIndexSnapshot
+from yoke.http.services.session_message_index.models import TreeIndexPage
+from yoke.http.services.session_message_index.models import UNSET
+from yoke.http.services.session_message_index.models import entry_topology
+from yoke.http.services.session_message_index.models import (
     parent_id as location_parent_id,
 )
+from yoke.http.services.session_message_index.storage import read_entries
+from yoke.http.services.session_message_index.tail_navigation import indexed_leaf_id
+
+if TYPE_CHECKING:
+    from yoke.http.services.session_message_index import SessionMessageIndex
 
 
-def has_persisted_tool_entries(host: Any, session_id: str) -> bool | None:
+def has_persisted_tool_entries(
+    host: SessionMessageIndex, session_id: str
+) -> bool | None:
     """Detect canonical persisted tool entries without building topology."""
     source = host.store.directory / f"{session_id}.jsonl"
     try:
@@ -45,7 +52,7 @@ def has_persisted_tool_entries(host: Any, session_id: str) -> bool | None:
 
 
 def tail_tree_page(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     *,
     limit: int,
@@ -146,7 +153,7 @@ def tail_tree_page(
         leaf_id=leaf_id,
         entries=locations,
     )
-    entries = host._read_entries(session_id, snapshot, selected_ids)
+    entries = read_entries(host, session_id, snapshot, selected_ids)
     if entries is None:
         return None
     normalize_legacy_tool_context_entries(entries)
@@ -177,7 +184,7 @@ def tail_tree_page(
 
 
 def tail_context_window(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     *,
     limit: int,
@@ -189,7 +196,7 @@ def tail_context_window(
         stat = source.stat()
     except OSError:
         return None
-    leaf_id = host._indexed_leaf_id(session_id, stat.st_size, stat.st_mtime_ns)
+    leaf_id = indexed_leaf_id(host, session_id, stat.st_size, stat.st_mtime_ns)
     raw_entries: dict[str, tuple[str | None, str, int, int]] = {}
     selected: list[tuple[str, int, int]] = []
     current = leaf_id

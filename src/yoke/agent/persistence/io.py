@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
 
+from yoke._file_io import atomic_write_text
 from yoke.agent.persistence.models import AGENT_STATE_FORMAT
 from yoke.agent.persistence.models import AGENT_STATE_SCHEMA_VERSION
 from yoke.agent.persistence.models import AgentStateLoadError
@@ -30,7 +31,7 @@ def read_agent_state_snapshot(
         payload = json.loads(resolved.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise AgentStateLoadError(
             f"Failed to read agent state snapshot {resolved}: {exc}"
         ) from exc
@@ -75,14 +76,14 @@ def write_agent_state_snapshot_model(
 ) -> Path:
     """Write a prebuilt durable agent state snapshot."""
     resolved = _resolve_path(path)
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    data = snapshot.model_dump_json(indent=2) + "\n"
     try:
+        data = snapshot.model_dump_json(indent=2) + "\n"
         if atomic:
-            _atomic_write_text(resolved, data)
+            atomic_write_text(resolved, data, fsync=True)
         else:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
             resolved.write_text(data, encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeError, PydanticSerializationError) as exc:
         raise AgentStateSaveError(
             f"Failed to write agent state snapshot {resolved}: {exc}"
         ) from exc
@@ -107,25 +108,6 @@ def _validate_envelope(payload: dict[str, Any], *, strict: bool) -> None:
         raise AgentStateLoadError(
             f"Unsupported agent state schema_version: {schema_version}."
         )
-
-
-def _atomic_write_text(path: Path, data: str) -> None:
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            delete=False,
-        ) as handle:
-            temp_path = Path(handle.name)
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_path, path)
-    finally:
-        if temp_path is not None and temp_path.exists():
-            temp_path.unlink(missing_ok=True)
 
 
 def _resolve_path(path: str | os.PathLike[str]) -> Path:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from collections.abc import Iterator
 from io import StringIO
 
 from pydantic_core import from_json
@@ -22,11 +23,6 @@ SESSION_ENTRY_METADATA_EVENT = "entry_metadata"
 def decode_session_record(raw_text: str) -> SessionRecord:
     """Decode the current JSONL session format."""
     return decode_session_record_lines(StringIO(raw_text))
-
-
-def decode_session_record_lines(lines: Iterable[str]) -> SessionRecord:
-    """Decode a JSONL session incrementally from text lines."""
-    return _decode_event_stream(lines)
 
 
 def decode_legacy_session_record(raw_text: str) -> SessionRecord:
@@ -78,14 +74,11 @@ def append_jsonl_lines(
         new_record.conversation_entries,
     ):
         return None
-    existing_count = len(existing_record.conversation_entries)
-    metadata_delta = _metadata_delta_event(existing_record, new_record)
-    lines = [_jsonl_line(metadata_delta)] if len(metadata_delta) > 1 else []
-    lines.extend(
-        _jsonl_line(_entry_event(entry))
-        for entry in new_record.conversation_entries[existing_count:]
+    return trusted_append_jsonl_lines(
+        existing_record,
+        new_record,
+        new_record.conversation_entries[len(existing_record.conversation_entries) :],
     )
-    return lines
 
 
 def trusted_append_jsonl_lines(
@@ -129,7 +122,7 @@ def entry_jsonl_line(entry: ConversationEntry) -> str:
 def is_canonical_jsonl(raw_text: str) -> bool:
     """Return whether raw text is already the append-only JSONL format."""
     try:
-        first = _first_jsonl_object(raw_text)
+        first = next(_jsonl_objects(StringIO(raw_text)), {})
     except ValueError:
         return False
     return (
@@ -138,7 +131,8 @@ def is_canonical_jsonl(raw_text: str) -> bool:
     )
 
 
-def _decode_event_stream(lines: Iterable[str]) -> SessionRecord:
+def decode_session_record_lines(lines: Iterable[str]) -> SessionRecord:
+    """Decode a JSONL session incrementally from text lines."""
     metadata: dict[str, object] = {}
     entries: list[ConversationEntry | None] = []
     entry_positions: dict[str, int] = {}
@@ -287,17 +281,6 @@ def _jsonl_line(payload: dict[str, object]) -> str:
     )
 
 
-def _first_jsonl_object(raw_text: str) -> dict[str, object]:
-    for line in StringIO(raw_text):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        payload = from_json(stripped)
-        if isinstance(payload, dict):
-            return payload
-    raise ValueError("Session file is empty.")
-
-
 def _json_object_from_jsonl(raw_text: str) -> str:
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     if not lines:
@@ -305,7 +288,7 @@ def _json_object_from_jsonl(raw_text: str) -> str:
     return lines[-1]
 
 
-def _jsonl_objects(lines: Iterable[str]) -> Iterable[dict[str, object]]:
+def _jsonl_objects(lines: Iterable[str]) -> Iterator[dict[str, object]]:
     for line in lines:
         stripped = line.strip()
         if not stripped:

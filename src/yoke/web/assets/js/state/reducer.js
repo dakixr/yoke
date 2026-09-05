@@ -4,6 +4,17 @@ function copySessionData(state, sessionID) {
   return { ...(state.sessionData[sessionID] || {}) };
 }
 
+function withAttentionCount(state, sessionID, field, count) {
+  const current = state.attention[sessionID];
+  const attention = field === "permissions"
+    ? { permissions: count, questions: current?.questions || 0 }
+    : { permissions: current?.permissions || 0, questions: count };
+  return {
+    ...state,
+    attention: { ...state.attention, [sessionID]: attention },
+  };
+}
+
 function nextLiveSequence(data) {
   const next = (data.liveTimelineSequence || 0) + 1;
   data.liveTimelineSequence = next;
@@ -84,10 +95,16 @@ export function reducePublicEvent(state, event) {
       activity: event.data?.activity ?? null,
     };
     const done = { ...next.ui.doneUnreviewed };
-    if (current.state !== "idle") done[sessionID] = false;
+    const active = { ...next.active };
+    if (current.state === "idle") {
+      delete active[sessionID];
+    } else {
+      active[sessionID] = current;
+      done[sessionID] = false;
+    }
     return {
       ...next,
-      active: { ...next.active, [sessionID]: current },
+      active,
       ui: { ...next.ui, doneUnreviewed: done },
     };
   }
@@ -99,60 +116,24 @@ export function reducePublicEvent(state, event) {
       ...current.filter((item) => item.id !== event.data?.id),
       event.data,
     ];
-    next = {
-      ...next,
-      attention: {
-        ...next.attention,
-        [sessionID]: {
-          permissions: data.permissions.length,
-          questions: next.attention[sessionID]?.questions || 0,
-        },
-      },
-    };
+    next = withAttentionCount(next, sessionID, "permissions", data.permissions.length);
   } else if (event.type === "session.permission.resolved") {
     data.permissions = (data.permissions || []).filter(
       (item) => item.id !== event.data?.requestID,
     );
-    next = {
-      ...next,
-      attention: {
-        ...next.attention,
-        [sessionID]: {
-          permissions: data.permissions.length,
-          questions: next.attention[sessionID]?.questions || 0,
-        },
-      },
-    };
+    next = withAttentionCount(next, sessionID, "permissions", data.permissions.length);
   } else if (event.type === "session.question.requested") {
     const current = data.questions || [];
     data.questions = [
       ...current.filter((item) => item.id !== event.data?.id),
       event.data,
     ];
-    next = {
-      ...next,
-      attention: {
-        ...next.attention,
-        [sessionID]: {
-          permissions: next.attention[sessionID]?.permissions || 0,
-          questions: data.questions.length,
-        },
-      },
-    };
+    next = withAttentionCount(next, sessionID, "questions", data.questions.length);
   } else if (event.type === "session.question.resolved") {
     data.questions = (data.questions || []).filter(
       (item) => item.id !== event.data?.requestID,
     );
-    next = {
-      ...next,
-      attention: {
-        ...next.attention,
-        [sessionID]: {
-          permissions: next.attention[sessionID]?.permissions || 0,
-          questions: data.questions.length,
-        },
-      },
-    };
+    next = withAttentionCount(next, sessionID, "questions", data.questions.length);
   } else if (event.type === "session.runtime.failed") {
     data.lastError = event.data?.error || "Agent execution failed.";
     next = {

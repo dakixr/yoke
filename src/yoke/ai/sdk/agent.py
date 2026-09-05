@@ -23,6 +23,7 @@ from yoke.ai.sdk.durable import DurableAgentMixin
 from yoke.ai.sdk.durable import normalize_state_path
 from yoke.ai.sdk.observability import AgentObserver
 from yoke.ai.sdk.prompt_runner import run_agent_prompt
+from yoke.ai.sdk.resources import CloseAttempt
 from yoke.ai.sdk.resources import ProviderLease
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.usage_context import (
@@ -67,7 +68,7 @@ class Agent(DurableAgentMixin):
         self._async_loop_lock = threading.Lock()
         self._prompt_owner: int | None = None
         self._state_lock = threading.Lock()
-        self._closed_event = threading.Event()
+        self._close_attempt: CloseAttempt | None = None
         self._closing = False
         self._closed = False
         try:
@@ -143,21 +144,48 @@ class Agent(DurableAgentMixin):
         with self._state_lock:
             if self._closed:
                 return
-            wait_for_close = self._closing
-            self._closing = True
-        if wait_for_close:
-            self._closed_event.wait()
+            attempt = self._close_attempt
+            if attempt is None:
+                attempt = CloseAttempt()
+                self._close_attempt = attempt
+                self._closing = True
+                owns_attempt = True
+            else:
+                owns_attempt = False
+        if not owns_attempt:
+            if attempt.owner_thread_id == threading.get_ident():
+                return
+            attempt.wait()
             return
-        with self._prompt_lock:
-            try:
-                self._runtime.close()
-            finally:
+
+        error: BaseException | None = None
+        runtime_terminal = False
+        try:
+            with self._prompt_lock:
                 try:
-                    self._provider_lease.release()
-                finally:
-                    with self._state_lock:
-                        self._closed = True
-                    self._closed_event.set()
+                    self._runtime.close()
+                except BaseException as exc:
+                    error = exc
+                    runtime_terminal = self._runtime.closed
+                else:
+                    runtime_terminal = True
+                if runtime_terminal:
+                    try:
+                        self._provider_lease.release()
+                    except BaseException as exc:
+                        if error is None:
+                            error = exc
+        except BaseException as exc:
+            if error is None:
+                error = exc
+        finally:
+            with self._state_lock:
+                self._closed = runtime_terminal
+                self._closing = not runtime_terminal
+                self._close_attempt = None
+                attempt.finish(error)
+        if error is not None:
+            raise error
 
     @property
     def closed(self) -> bool:
@@ -167,6 +195,12 @@ class Agent(DurableAgentMixin):
 
     async def aclose(self) -> None:
         """Release owned resources without blocking the event loop."""
+        if self._prompt_owner == threading.get_ident():
+            raise RuntimeError("Cannot close an agent from its prompt callback")
+        with self._state_lock:
+            attempt = self._close_attempt
+            if attempt is not None and attempt.owner_thread_id == threading.get_ident():
+                return
         worker = asyncio.create_task(asyncio.to_thread(self.close))
         try:
             await asyncio.shield(worker)
@@ -206,7 +240,7 @@ class Agent(DurableAgentMixin):
             new._async_loop_lock = threading.Lock()
             new._prompt_owner = None
             new._state_lock = threading.Lock()
-            new._closed_event = threading.Event()
+            new._close_attempt = None
             new._closing = False
             new._closed = False
             new._provider_lease = (
@@ -243,7 +277,8 @@ class Agent(DurableAgentMixin):
                     sdk_operation=usage_context.sdk_operation or "agent",
                     sdk_run_id=usage_context.sdk_run_id or uuid4().hex,
                 ):
-                    return self._prompt_unlocked(
+                    return run_agent_prompt(
+                        self,
                         prompt,
                         images=images,
                         image_urls=image_urls,
@@ -308,33 +343,6 @@ class Agent(DurableAgentMixin):
                     timeout=None,
                     stop_event=cancelled,
                 )
-
-    def _prompt_unlocked[StructuredT](
-        self,
-        prompt: str,
-        *,
-        images: Sequence[Image | str | Path],
-        image_urls: Sequence[str],
-        output_type: type[StructuredT] | None,
-        on_event: AgentEventHandler | None,
-        observer: AgentObserver | None,
-        stop_requested: StopRequested | None,
-        before_tool_call: BeforeToolCallHook | None,
-        after_tool_call: AfterToolCallHook | None,
-    ) -> AgentResult[StructuredT]:
-        """Run one prompt while the caller owns the prompt lock."""
-        return run_agent_prompt(
-            self,
-            prompt,
-            images=images,
-            image_urls=image_urls,
-            output_type=output_type,
-            on_event=on_event,
-            observer=observer,
-            stop_requested=stop_requested,
-            before_tool_call=before_tool_call,
-            after_tool_call=after_tool_call,
-        )
 
     def _async_lock_for_current_loop(self) -> asyncio.Lock:
         """Bind asynchronous use to one event loop."""

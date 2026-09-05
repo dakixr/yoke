@@ -285,7 +285,7 @@ def test_websocket_response_timeout_resets_after_each_event(
             return None
 
     monkeypatch.setattr(
-        "yoke.ai.providers.codex.websockets.time.monotonic",
+        "yoke.ai.providers.codex.websocket.transport.time.monotonic",
         lambda: next(monotonic_values),
     )
     provider = CodexWebSockets(

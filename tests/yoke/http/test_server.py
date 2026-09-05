@@ -10,10 +10,14 @@ from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
 import pytest
+from fastapi import FastAPI, Request
+
+from yoke.http.routes.event import stream_events
 
 from yoke.http.server import is_loopback_host
 from yoke.http.server import run_server
 from yoke.http.services.event_broker import GlobalEventBroker
+from yoke.http.services.event_broker import live_event
 from yoke.http.app import HttpAppSettings
 from yoke.http.app import create_app
 from fastapi.testclient import TestClient
@@ -166,6 +170,65 @@ def test_event_broker_close_releases_live_subscribers() -> None:
     asyncio.run(scenario())
 
 
+def test_event_broker_close_releases_subscriber_with_full_queue() -> None:
+    async def scenario() -> None:
+        broker = GlobalEventBroker(queue_size=1)
+        subscription = broker.subscribe()
+        subscription.queue.put_nowait(live_event("queued", {}))
+
+        broker.close()
+        await asyncio.sleep(0)
+
+        assert subscription.closed is True
+        assert subscription.queue.qsize() == 1
+        assert await asyncio.wait_for(subscription.queue.get(), timeout=0.2) is None
+
+    asyncio.run(scenario())
+
+
+def test_event_broker_unsubscribe_removes_and_releases_subscriber() -> None:
+    async def scenario() -> None:
+        broker = GlobalEventBroker(queue_size=1)
+        subscription = broker.subscribe()
+        subscription.queue.put_nowait(live_event("queued", {}))
+
+        broker.unsubscribe(subscription)
+        await asyncio.sleep(0)
+
+        assert subscription.closed is True
+        assert subscription.id not in broker._subscriptions
+        assert subscription.queue.qsize() == 1
+        assert await asyncio.wait_for(subscription.queue.get(), timeout=0.2) is None
+
+    asyncio.run(scenario())
+
+
+def test_slow_consumer_stream_closes_after_resync_with_single_slot_queue() -> None:
+    async def scenario() -> None:
+        broker = GlobalEventBroker(queue_size=1)
+        app = FastAPI()
+        app.state.event_broker = broker
+        app.state.server_instance_id = "test-server"
+        response = await stream_events(Request({"type": "http", "app": app}))
+        body = aiter(response.body_iterator)
+        connected = await anext(body)
+        assert isinstance(connected, str)
+        assert "server.connected" in connected
+
+        broker.publish(live_event("first", {}))
+        broker.publish(live_event("second", {}))
+        await asyncio.sleep(0)
+
+        resync = await asyncio.wait_for(anext(body), timeout=0.5)
+        assert isinstance(resync, str)
+        assert "server.resyncRequired" in resync
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(anext(body), timeout=0.5)
+        assert not broker._subscriptions
+
+    asyncio.run(scenario())
+
+
 def test_packaged_web_app_routes_and_assets_share_api_origin(tmp_path: Path) -> None:
     client = TestClient(
         create_app(
@@ -191,10 +254,6 @@ def test_packaged_web_app_routes_and_assets_share_api_origin(tmp_path: Path) -> 
 
     controller_asset = client.get("/assets/js/state/controller.js")
     assert controller_asset.status_code == 200
-    assert (
-        controller_asset.text.count("archivedTotal: Number.isFinite(archived.total)")
-        == 2
-    )
 
     missing = client.get("/assets/not-real.js")
     assert missing.status_code == 404

@@ -284,7 +284,9 @@ def _sleep_before_retry(
     retry_after_seconds: float | None = None,
 ) -> None:
     backoff = min(
-        retry_after_seconds or retry_backoff_seconds * (2**attempt),
+        retry_backoff_seconds * (2**attempt)
+        if retry_after_seconds is None
+        else retry_after_seconds,
         max_retry_backoff_seconds,
     )
     sleep_with_cancel(backoff, cancel_requested=cancel_requested, sleep=sleep)

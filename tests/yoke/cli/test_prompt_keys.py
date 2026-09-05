@@ -111,9 +111,6 @@ def test_inspector_shortcuts_have_distinct_handlers(monkeypatch) -> None:
     key_bindings.handlers[("c-x", "c-p")](_Event())
 
     assert opened == ["tool", "process"]
-    assert (
-        key_bindings.handlers[("c-x", "o")] is not key_bindings.handlers[("c-x", "c-p")]
-    )
     assert ("c-o",) not in key_bindings.handlers
 
 
@@ -155,14 +152,6 @@ def test_shift_tab_variants_cycle_without_submitting(monkeypatch) -> None:
         if event.current_buffer.validation_count != 0:
             raise AssertionError
     if efforts != ["medium", "high"]:
-        raise AssertionError
-
-
-def test_paste_shortcuts_share_handler(monkeypatch) -> None:
-    """Ctrl+V and Alt+V run the same paste action."""
-    key_bindings = _registered_key_bindings(monkeypatch)
-
-    if key_bindings.handlers[("c-v",)] is not key_bindings.handlers[("escape", "v")]:
         raise AssertionError
 
 

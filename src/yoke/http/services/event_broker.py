@@ -101,26 +101,20 @@ class GlobalEventBroker:
                 return
         subscription.closed = True
         while not subscription.queue.empty():
-            try:
-                subscription.queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+            subscription.queue.get_nowait()
         resync = live_event(
             "server.resyncRequired",
             {"reason": "slow_consumer"},
         )
-        try:
-            subscription.queue.put_nowait(resync)
+        subscription.queue.put_nowait(resync)
+        if not subscription.queue.full():
             subscription.queue.put_nowait(None)
-        except asyncio.QueueFull:
-            pass
 
     @staticmethod
     def _close_queue(subscription: EventSubscription) -> None:
-        try:
-            subscription.queue.put_nowait(None)
-        except asyncio.QueueFull:
-            pass
+        while not subscription.queue.empty():
+            subscription.queue.get_nowait()
+        subscription.queue.put_nowait(None)
 
 
 class EventService:

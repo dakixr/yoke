@@ -3,6 +3,8 @@ from __future__ import annotations
 # ruff: noqa: ANN001,D100,D103,S101
 
 from pathlib import Path
+
+from yoke.http.services.session_message_index import storage as index_storage
 import time
 
 from fastapi.testclient import TestClient
@@ -108,7 +110,7 @@ def test_message_offset_index_survives_service_restart_without_source_rescan(
     def fail(*_args, **_kwargs):
         raise AssertionError("current sidecar should avoid a source topology rescan")
 
-    monkeypatch.setattr(restarted.message_index, "_scan", fail)
+    monkeypatch.setattr(index_storage, "scan", fail)
     page = restarted.messages("large", limit=100, order="desc", cursor=None)
     assert len(page.data) == 100
 

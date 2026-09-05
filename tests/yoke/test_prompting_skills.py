@@ -1,7 +1,6 @@
 """Tests for skill prompt rendering."""
 
 from pathlib import Path
-from unittest import TestCase
 
 from yoke.agent.context.manager import ContextManager
 from yoke.agent.prompting import render_active_skill_message
@@ -35,11 +34,10 @@ def test_active_skill_message_lists_skill_directory_files(
     )
 
     content = message.plain_text_content or ""
-    test_case = TestCase()
-    test_case.assertIn("Skill directory files:", content)
-    test_case.assertIn(f"- {skill_md}", content)
-    test_case.assertIn(f"- {reference}", content)
-    test_case.assertIn("skill instructions", content)
+    assert "Skill directory files:" in content
+    assert f"- {skill_md}" in content
+    assert f"- {reference}" in content
+    assert "skill instructions" in content
 
 
 def test_active_skill_message_uses_cached_content_when_file_is_gone(
@@ -60,8 +58,7 @@ def test_active_skill_message_uses_cached_content_when_file_is_gone(
     )
 
     content = message.plain_text_content or ""
-    test_case = TestCase()
-    test_case.assertIn("cached skill instructions", content)
+    assert "cached skill instructions" in content
 
 
 def test_active_skill_message_does_not_crash_without_cached_content(
@@ -80,8 +77,7 @@ def test_active_skill_message_does_not_crash_without_cached_content(
     )
 
     content = message.plain_text_content or ""
-    test_case = TestCase()
-    test_case.assertIn("Skill content unavailable for `missing-skill`", content)
+    assert "Skill content unavailable for `missing-skill`" in content
 
 
 def test_skill_activation_does_not_crash_when_file_disappears(
@@ -100,9 +96,8 @@ def test_skill_activation_does_not_crash_when_file_disappears(
 
     active_skill = SkillRegistry([spec]).activate("vanished-skill")
 
-    test_case = TestCase()
-    test_case.assertIsNotNone(active_skill.content)
-    test_case.assertIn("Skill content unavailable", active_skill.content or "")
+    assert active_skill.content is not None
+    assert "Skill content unavailable" in active_skill.content
 
 
 def test_skill_activation_payload_omits_context_instructions(

@@ -3,35 +3,32 @@
 from __future__ import annotations
 
 import os
-import shutil
 import signal
 import subprocess
 import threading
 import time
-from collections import deque
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from yoke.agent.tools.command_process_types import INTERRUPT
-from yoke.agent.tools.command_process_types import (
-    MAX_RETAINED_OUTPUT_BYTES,
+from yoke.agent.tools.command_process_support.lifecycle import (
+    terminate_owned_process_tree,
 )
+from yoke.agent.tools.command_process_support.output import CompletedCommandProcess
+from yoke.agent.tools.command_process_support.output import RetainedProcessOutput
+from yoke.agent.tools.command_process_types import INTERRUPT
 from yoke.agent.tools.command_process_types import CancelRequested
 from yoke.agent.tools.command_process_types import CommandProcessResult
-from yoke.agent.tools.command_process_types import (
-    CommandProcessOutputChunk,
-)
 from yoke.agent.tools.command_process_types import (
     CommandProcessOutputPage,
 )
 from yoke.agent.tools.command_process_types import (
     CommandProcessSnapshot,
 )
-from yoke.agent.tools.command_process_types import (
-    decode_command_output_chunk,
-)
+
+FINAL_DRAIN_SECONDS = 1.0
+READER_JOIN_RESERVE_SECONDS = 0.1
 
 
 class _ManagedCommandProcess:
@@ -63,17 +60,16 @@ class _ManagedCommandProcess:
         self.finished_monotonic: float | None = None
         self.last_used_at = self.started_monotonic
         self.condition = threading.Condition()
-        self.pending: deque[bytes] = deque()
-        self.pending_bytes = 0
-        self.pending_original_bytes = 0
-        self.history: deque[bytes] = deque()
-        self.history_bytes = 0
-        self.output_chunks: deque[tuple[int, bytes]] = deque()
-        self.output_chunk_bytes = 0
-        self.next_output_seq = 1
-        self.truncated_before_seq = 0
-        self.original_output_bytes = 0
+        self.output = RetainedProcessOutput()
         self.open_readers = 0
+        self._reader_threads: list[threading.Thread] = []
+        self._watcher_thread: threading.Thread | None = None
+        self._timeout_thread: threading.Thread | None = None
+        self._lifecycle_lock = threading.RLock()
+        self._process_group_id = process.pid
+        self._accepting_output = True
+        self._tree_cleanup_complete = False
+        self._local_cleanup_complete = False
         self.closed = False
 
     def start_readers(self) -> None:
@@ -86,25 +82,29 @@ class _ManagedCommandProcess:
                     continue
                 self.open_readers += 1
                 self._start_reader(lambda pipe=pipe: os.read(pipe.fileno(), 4096))
-        threading.Thread(
+        self._watcher_thread = threading.Thread(
             target=self._watch_exit,
             daemon=True,
             name=f"yoke-command-{self.session_id}-watcher",
-        ).start()
+        )
+        self._watcher_thread.start()
         if self.timeout_seconds is not None:
-            threading.Thread(
+            self._timeout_thread = threading.Thread(
                 target=self._watch_timeout,
                 daemon=True,
                 name=f"yoke-command-{self.session_id}-timeout",
-            ).start()
+            )
+            self._timeout_thread.start()
 
     def _start_reader(self, read_chunk: Callable[[], bytes]) -> None:
-        threading.Thread(
+        thread = threading.Thread(
             target=self._reader_main,
             args=(read_chunk,),
             daemon=True,
             name=f"yoke-command-{self.session_id}-reader",
-        ).start()
+        )
+        self._reader_threads.append(thread)
+        thread.start()
 
     def _reader_main(self, read_chunk: Callable[[], bytes]) -> None:
         try:
@@ -113,33 +113,20 @@ class _ManagedCommandProcess:
         except OSError:
             pass
         finally:
-            with self.condition:
-                self.open_readers = max(0, self.open_readers - 1)
-                self.condition.notify_all()
-            self.on_change()
+            self._reader_finished()
+
+    def _reader_finished(self) -> None:
+        with self.condition:
+            self.open_readers = max(0, self.open_readers - 1)
+            self._mark_finished_locked()
+            self.condition.notify_all()
+        self.on_change()
 
     def _append_output(self, raw: bytes) -> None:
         with self.condition:
-            self.pending.append(raw)
-            self.pending_bytes += len(raw)
-            self.pending_original_bytes += len(raw)
-            self.history.append(raw)
-            self.history_bytes += len(raw)
-            seq = self.next_output_seq
-            self.next_output_seq += 1
-            self.output_chunks.append((seq, raw))
-            self.output_chunk_bytes += len(raw)
-            self.original_output_bytes += len(raw)
-            while self.pending_bytes > MAX_RETAINED_OUTPUT_BYTES:
-                dropped = self.pending.popleft()
-                self.pending_bytes -= len(dropped)
-            while self.history_bytes > MAX_RETAINED_OUTPUT_BYTES:
-                dropped = self.history.popleft()
-                self.history_bytes -= len(dropped)
-            while self.output_chunk_bytes > MAX_RETAINED_OUTPUT_BYTES:
-                dropped_seq, dropped = self.output_chunks.popleft()
-                self.output_chunk_bytes -= len(dropped)
-                self.truncated_before_seq = dropped_seq
+            if not self._accepting_output:
+                return
+            self.output.append(raw)
             self.condition.notify_all()
         self.on_change()
 
@@ -148,22 +135,26 @@ class _ManagedCommandProcess:
         with self.condition:
             while self.open_readers:
                 self.condition.wait(timeout=0.05)
-            self.finished_monotonic = time.monotonic()
+            self._mark_finished_locked()
             self.condition.notify_all()
         self.on_change()
 
     def _watch_timeout(self) -> None:
-        try:
-            self.process.wait(timeout=self.timeout_seconds)
-            return
-        except subprocess.TimeoutExpired:
-            pass
+        assert self.timeout_seconds is not None
+        deadline = self.started_monotonic + self.timeout_seconds
         with self.condition:
-            if self.process.poll() is not None:
+            while not self.finished:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self.condition.wait(timeout=min(remaining, 0.05))
+            if self.finished:
                 return
             self.timed_out = True
-        self._terminate_running_process()
-        self.on_change()
+        try:
+            self.terminate()
+        finally:
+            self.on_change()
 
     def wait_and_consume(
         self,
@@ -181,19 +172,14 @@ class _ManagedCommandProcess:
                 if remaining <= 0:
                     break
                 self.condition.wait(timeout=min(remaining, 0.05))
-            chunks = list(self.pending)
-            original_output_bytes = self.pending_original_bytes
-            self.pending.clear()
-            self.pending_bytes = 0
-            self.pending_original_bytes = 0
+            output, original_output_bytes = self.output.consume()
             self.last_used_at = time.monotonic()
             finished = self.finished
             exit_code = self.process.poll() if finished else None
-        output = "".join(decode_command_output_chunk(raw) for raw in chunks)
         return CommandProcessResult(
             session_id=None if finished else self.session_id,
             exit_code=exit_code,
-            output=output.replace("\r\n", "\n").replace("\r", "\n"),
+            output=output,
             wall_time_seconds=time.monotonic() - started_at,
             original_output_bytes=original_output_bytes,
             timed_out=self.timed_out,
@@ -202,47 +188,42 @@ class _ManagedCommandProcess:
     def snapshot(self) -> CommandProcessSnapshot:
         """Return current process metadata without consuming buffered output."""
         with self.condition:
-            finished = self.finished
-            output = "".join(decode_command_output_chunk(raw) for raw in self.history)
-            return CommandProcessSnapshot(
-                session_id=self.session_id,
-                pid=self.process.pid,
-                command=self.command,
-                cwd=self.cwd,
-                tty=self.tty,
-                status=self._status(finished),
-                started_at=self.started_at,
-                elapsed_seconds=max(
-                    0.0,
-                    (self.finished_monotonic or time.monotonic())
-                    - self.started_monotonic,
-                ),
-                exit_code=self.process.poll() if finished else None,
-                output_tail=output.replace("\r\n", "\n").replace("\r", "\n"),
-                original_output_bytes=self.original_output_bytes,
-                retained_output_bytes=self.history_bytes,
-                latest_output_seq=self.next_output_seq - 1,
-                truncated_before_seq=self.truncated_before_seq,
+            return self._snapshot_locked()
+
+    def completed_record(self) -> CompletedCommandProcess:
+        """Freeze one snapshot and its matching retained output sequence ring."""
+        with self.condition:
+            return CompletedCommandProcess(
+                snapshot=self._snapshot_locked(),
+                output_records=self.output.freeze(),
             )
+
+    def _snapshot_locked(self) -> CommandProcessSnapshot:
+        finished = self.finished
+        return CommandProcessSnapshot(
+            session_id=self.session_id,
+            pid=self.process.pid,
+            command=self.command,
+            cwd=self.cwd,
+            tty=self.tty,
+            status=self._status(finished),
+            started_at=self.started_at,
+            elapsed_seconds=max(
+                0.0,
+                (self.finished_monotonic or time.monotonic()) - self.started_monotonic,
+            ),
+            exit_code=self.process.poll() if finished else None,
+            output_tail=self.output.tail(),
+            original_output_bytes=self.output.original_bytes,
+            retained_output_bytes=self.output.retained_bytes,
+            latest_output_seq=self.output.latest_seq,
+            truncated_before_seq=self.output.truncated_before_seq,
+        )
 
     def output_page(self, *, after_seq: int, limit: int) -> CommandProcessOutputPage:
         """Return retained output chunks after an exclusive sequence cursor."""
         with self.condition:
-            selected = [
-                CommandProcessOutputChunk(
-                    seq=seq,
-                    text=decode_command_output_chunk(raw)
-                    .replace("\r\n", "\n")
-                    .replace("\r", "\n"),
-                )
-                for seq, raw in self.output_chunks
-                if seq > after_seq
-            ][:limit]
-            return CommandProcessOutputPage(
-                chunks=tuple(selected),
-                latest_seq=self.next_output_seq - 1,
-                truncated_before_seq=self.truncated_before_seq,
-            )
+            return self.output.page(after_seq=after_seq, limit=limit)
 
     def _status(self, finished: bool) -> Literal["running", "exited", "failed"]:
         if not finished:
@@ -270,59 +251,103 @@ class _ManagedCommandProcess:
         if self.process.poll() is not None:
             return
         if os.name != "nt":
-            os.killpg(self.process.pid, signal.SIGINT)
+            os.killpg(self._process_group_id, signal.SIGINT)
             return
         self.process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT))
 
     def terminate(self) -> None:
-        if self.process.poll() is None:
-            self._terminate_running_process()
-        self.close()
-
-    def _terminate_running_process(self) -> None:
-        if os.name == "nt":
-            taskkill = shutil.which("taskkill.exe") or shutil.which("taskkill")
-            try:
-                subprocess.run(  # noqa: S603
-                    [
-                        taskkill or "taskkill.exe",
-                        "/PID",
-                        str(self.process.pid),
-                        "/T",
-                        "/F",
-                    ],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                    timeout=2,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                self.process.kill()
-        else:
-            try:
-                os.killpg(self.process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                return
-        try:
-            self.process.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=1)
+        """Terminate the owned tree, then bound pipe drain and local cleanup."""
+        self._shutdown()
 
     def close(self) -> None:
-        if self.closed:
-            return
-        self.closed = True
-        pipes = (self.process.stdin, self.process.stdout, self.process.stderr)
-        for pipe in pipes:
-            if pipe is not None:
+        """Release the process tree and every local descriptor."""
+        self._shutdown()
+
+    def _shutdown(self) -> None:
+        first_error: BaseException | None = None
+        with self._lifecycle_lock:
+            with self.condition:
+                if self.finished:
+                    self._tree_cleanup_complete = True
+            if not self._tree_cleanup_complete:
                 try:
-                    pipe.close()
-                except OSError:
-                    pass
+                    terminate_owned_process_tree(
+                        self.process,
+                        self._process_group_id,
+                    )
+                except BaseException as exc:
+                    first_error = exc
+                else:
+                    self._tree_cleanup_complete = True
+            try:
+                self._close_local_resources()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    def _close_local_resources(self) -> None:
+        if self._local_cleanup_complete:
+            return
+        deadline = time.monotonic() + FINAL_DRAIN_SECONDS
+        drain_deadline = deadline - READER_JOIN_RESERVE_SECONDS
+        with self.condition:
+            while self.open_readers and time.monotonic() < drain_deadline:
+                self.condition.wait(
+                    timeout=min(0.05, drain_deadline - time.monotonic())
+                )
+
+        first_error = self._close_descriptors()
+        for reader in self._reader_threads:
+            if reader is threading.current_thread():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            reader.join(timeout=remaining)
+
+        live_readers = [reader for reader in self._reader_threads if reader.is_alive()]
+        with self.condition:
+            self._accepting_output = False
+            if live_readers:
+                self.open_readers = 0
+            self._mark_finished_locked()
+            self.condition.notify_all()
+        if live_readers and first_error is None:
+            first_error = RuntimeError(
+                f"Timed out draining command session {self.session_id} output"
+            )
+        if first_error is None:
+            self._local_cleanup_complete = True
+            self.closed = True
+        if first_error is not None:
+            raise first_error
+
+    def _close_descriptors(self) -> BaseException | None:
+        first_error: BaseException | None = None
+        for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
+            if pipe is None:
+                continue
+            try:
+                pipe.close()
+            except OSError:
+                pass
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
         if self.master_fd is not None:
             try:
                 os.close(self.master_fd)
             except OSError:
                 pass
             self.master_fd = None
+        return first_error
+
+    def _mark_finished_locked(self) -> None:
+        if (
+            self.finished_monotonic is None
+            and self.process.poll() is not None
+            and self.open_readers == 0
+        ):
+            self.finished_monotonic = time.monotonic()

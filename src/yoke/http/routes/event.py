@@ -33,7 +33,7 @@ async def stream_events(request: Request) -> StreamingResponse:
     async def body():  # noqa: ANN202
         try:
             yield _sse(connected)
-            while True:
+            while not subscription.closed or not subscription.queue.empty():
                 try:
                     event = await asyncio.wait_for(subscription.queue.get(), timeout=20)
                 except TimeoutError:

@@ -9,7 +9,6 @@ from pathlib import Path
 from collections.abc import Callable
 
 from yoke.cli.path_display import format_root_label
-from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
 from yoke.cli.runtime.selector.format import fit_selector_cell
 from yoke.cli.runtime.selector.format import fit_selector_identifier
 from yoke.cli.runtime.selector.ui import SelectorTableColumns
@@ -38,10 +37,6 @@ class _SessionSelectorColumnWidths:
             + self.session_id
             + 12
         )
-
-
-def _can_use_keyboard_session_selector(stream: object) -> bool:
-    return can_use_keyboard_selector(stream)
 
 
 def _select_session_id_interactive(
@@ -127,7 +122,7 @@ def _format_session_selector_row(
     table_columns = _session_table_columns(widths, include_root=include_root)
     marker = ">" if is_selected else " "
     cells = [
-        _fit_session_selector_cell(
+        fit_selector_cell(
             f"{marker} {index + 1:>{widths.index}}",
             table_columns.widths[0],
         ),
@@ -254,10 +249,6 @@ def _fuzzy_match(query: str, text: str) -> bool:
             return False
         search_from = found_at + 1
     return True
-
-
-def _fit_session_selector_cell(text: str, width: int) -> str:
-    return fit_selector_cell(text, width)
 
 
 def _format_session_root(record: SessionRecord) -> str:

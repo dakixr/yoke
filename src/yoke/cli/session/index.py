@@ -52,7 +52,11 @@ def repair_index_from_session_files(
             continue
         try:
             record, entry_count = load_summary(session_id)
-        except (OSError, ValueError):
+        except OSError:
+            # A transient read failure does not prove an existing session is gone.
+            # Keep its old signature so the next repair retries the summary.
+            continue
+        except ValueError:
             if existing is not None:
                 index.sessions.pop(session_id, None)
                 changed = True

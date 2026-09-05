@@ -15,6 +15,7 @@ from yoke.cli.session.io import SESSION_ENTRY_EVENT
 from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
 from yoke.cli.session.io import SESSION_METADATA_EVENT
 from yoke.cli.session.models import SessionRecord
+from yoke.http.services.projectors import public_chat_entries
 from yoke.session import SessionStore
 
 
@@ -101,11 +102,7 @@ class SessionReadCache:
             active_path_entries = tuple(
                 _active_path_entries(entries_by_id, record.leaf_id)
             )
-            active_entries = tuple(
-                entry
-                for entry in active_path_entries
-                if entry.kind not in {"instruction", "memory_snapshot"}
-            )
+            active_entries = tuple(public_chat_entries(active_path_entries))
             snapshot = SessionReadSnapshot(
                 signature=final_signature,
                 record=record,
@@ -239,10 +236,9 @@ class SessionReadCache:
             active_path_entries = (*prior.active_path_entries, *appended_entries)
             active_entries = (
                 *prior.active_entries,
-                *(
-                    entry
-                    for entry in appended_entries
-                    if entry.kind not in {"instruction", "memory_snapshot"}
+                *_public_chat_appended_entries(
+                    prior.active_path_entries,
+                    appended_entries,
                 ),
             )
         elif (
@@ -254,11 +250,7 @@ class SessionReadCache:
             active_entries = prior.active_entries
         else:
             active_path_entries = tuple(_active_path_entries(by_id, record.leaf_id))
-            active_entries = tuple(
-                entry
-                for entry in active_path_entries
-                if entry.kind not in {"instruction", "memory_snapshot"}
-            )
+            active_entries = tuple(public_chat_entries(active_path_entries))
         return SessionReadSnapshot(
             signature=signature,
             record=record,
@@ -315,6 +307,24 @@ def _extends_active_leaf(
             return False
         parent = entry.id
     return new_leaf_id == parent
+
+
+def _public_chat_appended_entries(
+    prior_entries: tuple[ConversationEntry, ...],
+    appended_entries: list[ConversationEntry],
+) -> list[ConversationEntry]:
+    """Filter an append using only the current turn's provenance ancestors."""
+    start = next(
+        (
+            index
+            for index in range(len(prior_entries) - 1, -1, -1)
+            if prior_entries[index].kind == "user"
+        ),
+        0,
+    )
+    appended_ids = {entry.id for entry in appended_entries}
+    scope = [*prior_entries[start:], *appended_entries]
+    return [entry for entry in public_chat_entries(scope) if entry.id in appended_ids]
 
 
 def _active_path_entries(

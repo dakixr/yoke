@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextlib import suppress
+import shutil
 from threading import RLock
 
 
@@ -33,6 +35,19 @@ class TerminalOutputGate:
 
 
 terminal_output_gate = TerminalOutputGate()
+
+
+def terminal_size() -> tuple[int, int]:
+    """Return the current terminal size with prompt-toolkit awareness."""
+    with suppress(Exception):
+        from prompt_toolkit.application.current import get_app_or_none
+
+        app = get_app_or_none()
+        if app is not None:
+            size = app.output.get_size()
+            return size.columns, size.rows
+    size = shutil.get_terminal_size(fallback=(100, 24))
+    return size.columns, size.lines
 
 
 def is_fullscreen_output_suppressed() -> bool:

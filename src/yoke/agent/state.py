@@ -110,15 +110,6 @@ def active_branch_entries(
     return [entry.model_copy(deep=True) for entry in projection.runtime_entries]
 
 
-def _active_branch_entry_refs(
-    entries: Sequence[ConversationEntry] | None,
-    *,
-    leaf_id: str | None = None,
-) -> list[ConversationEntry] | None:
-    """Return internal references on the active branch."""
-    return active_branch_entries(entries, leaf_id=leaf_id)
-
-
 def _agent_conversation_entries(
     agent: object,
 ) -> Sequence[ConversationEntry] | None:

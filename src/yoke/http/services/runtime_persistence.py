@@ -33,6 +33,11 @@ def tag_input_entry(entries: list[ConversationEntry], input_id: str) -> None:
             return
 
 
+def normalized_runtime_entry_count(entries: Sequence[ConversationEntry]) -> int:
+    """Count persisted entries retained by runtime-context normalization."""
+    return sum(entry.kind != "instruction" for entry in entries)
+
+
 def with_turn_summary(
     entries: list[ConversationEntry],
     *,

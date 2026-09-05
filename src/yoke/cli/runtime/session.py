@@ -21,13 +21,11 @@ from yoke.cli.providers.state import provider_session_state_from_values
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
 from yoke.cli.runtime.base import ActiveSession
-from yoke.cli.runtime.selector.session import (
-    _can_use_keyboard_session_selector,
-)
 from yoke.cli.runtime.selector.session import _format_session_activity
 from yoke.cli.runtime.selector.session import (
     _select_session_id_interactive,
 )
+from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
 from yoke.cli.session import SessionRecord
 from yoke.cli.session import SessionStore
 from yoke.cli.session import new_session_id
@@ -328,7 +326,7 @@ def select_session_id(
             raise ValueError("No saved sessions found.")
         raise ValueError(f"No sessions found for root: {root.resolve()}")
     console = build_console(stdout or sys.stdout)
-    if _can_use_keyboard_session_selector(stdout or sys.stdout):
+    if can_use_keyboard_selector(stdout or sys.stdout):
         selected = _select_session_id_interactive(
             records,
             root=root,

@@ -81,6 +81,53 @@ def test_opencode_go_muse_spark_contributor_catalog_and_request() -> None:
         minimal_provider.close()
 
 
+def test_opencode_go_responses_honors_zero_retry_after() -> None:
+    calls = 0
+    delays: list[float] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                429,
+                headers={"Retry-After": "0"},
+                json={"error": "retry now"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "ok"}],
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = OpenCodeGoProvider(
+        OpenCodeGoConfig(
+            api_key="test",
+            model="muse-spark-1.3-contributor",
+            max_retries=1,
+            retry_backoff_seconds=10,
+        ),
+        http_client=client,
+        sleep=delays.append,
+    )
+
+    try:
+        message = provider.complete([Message.user("hello")], [])
+    finally:
+        client.close()
+
+    assert message.content == "ok"
+    assert calls == 2
+    assert delays == [0.0]
+
+
 def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
     captured: dict[str, object] = {}
 

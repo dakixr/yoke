@@ -13,15 +13,10 @@ from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.plugins import ProviderPluginContext
 
 BUILTIN_PROVIDER_NAMES = ("codex", "opencode-go", "zai")
-_PROVIDER_TARGETS = {
-    "codex": ("yoke.ai.providers.codex.websockets", "register_provider"),
-    "opencode-go": ("yoke.ai.providers.opencode_go", "register_provider"),
-    "zai": ("yoke.ai.providers.zai", "register_provider"),
-}
-_MODEL_LISTER_TARGETS = {
-    "codex": ("yoke.ai.providers.codex.websockets", "list_provider_models"),
-    "opencode-go": ("yoke.ai.providers.opencode_go", "list_provider_models"),
-    "zai": ("yoke.ai.providers.zai", "list_provider_models"),
+_PROVIDER_MODULES = {
+    "codex": "yoke.ai.providers.codex.websockets",
+    "opencode-go": "yoke.ai.providers.opencode_go",
+    "zai": "yoke.ai.providers.zai",
 }
 
 type ProviderFactory = Callable[[ProviderPluginContext], Provider]
@@ -40,7 +35,7 @@ def build_registered_provider(
     """Construct one built-in provider from its lazily imported factory."""
     factory = cast(
         ProviderFactory | None,
-        _load_target(_PROVIDER_TARGETS, provider_name),
+        _load_target(provider_name, "register_provider"),
     )
     if factory is None:
         raise ValueError(f"Unsupported built-in provider {provider_name!r}.")
@@ -67,7 +62,7 @@ def list_registered_models(
     """Return copied model metadata for one built-in provider."""
     lister = cast(
         ModelLister | None,
-        _load_target(_MODEL_LISTER_TARGETS, provider_name),
+        _load_target(provider_name, "list_provider_models"),
     )
     if lister is None:
         return None
@@ -104,12 +99,8 @@ def _provider_context(
     )
 
 
-def _load_target(
-    targets: Mapping[str, tuple[str, str]],
-    provider_name: str,
-) -> object | None:
-    target = targets.get(provider_name)
-    if target is None:
+def _load_target(provider_name: str, attribute: str) -> object | None:
+    module_name = _PROVIDER_MODULES.get(provider_name)
+    if module_name is None:
         return None
-    module_name, attribute = target
     return getattr(import_module(module_name), attribute)

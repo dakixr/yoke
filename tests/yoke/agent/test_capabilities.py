@@ -23,7 +23,8 @@ class ProviderStub(Provider):
 
         model = "claude-test"
 
-    config = Config()
+    def __init__(self) -> None:
+        self.config = self.Config()
 
     def complete(
         self,

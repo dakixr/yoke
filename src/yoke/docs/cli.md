@@ -42,6 +42,16 @@ a timer; the spinner redraws only while a turn is active. This keeps cursor
 movement and typing responsive even when Markdown rendering, tool output, or
 session persistence is busy.
 
+New and resumed user prompts use the same full-width terminal block renderer,
+including line wrapping and blank-line padding. Plain-text output keeps its
+separate live-prompt and scrollback labels. Terminal decorations are available
+when the output encoding supports box-drawing characters, including CP437;
+ASCII-only streams keep the plain-text fallback.
+Assistant commentary and final responses share the same scrollback Markdown
+renderer and blank-line spacing. Redirected output preserves their Markdown text.
+Diagnostic text and redirected prompts are literal text, so square brackets and
+emoji aliases are not interpreted as Rich formatting.
+
 ---
 
 ## Providers and models
@@ -297,6 +307,9 @@ Context budgeting follows the selected model's advertised window, and yoke may
 compact the provider working context before a switch to a smaller context
 window. The canonical session remains append-only. The switch rolls back when
 handoff generation fails or the reduced epoch still does not fit.
+Failed cross-provider preparation or budget rebinding restores the previous
+provider and prepared context, closes the unsuccessful target, and keeps the
+previous provider open.
 When providers report token usage, yoke stores normalized input, output,
 reasoning, cached-input, cache-creation, and total token counts on the
 assistant response for session diagnostics and future budgeting improvements.
@@ -351,6 +364,10 @@ that Yoke already compacted is represented by the persisted handoff instead of
 replaying superseded messages. Large tool results and the overall output are
 bounded so one historical command cannot dominate the continuation context.
 
+The bounded reader uses the index only when its summary version, entry count,
+and journal file signature are current. A stale index falls back to the
+authoritative session journal without repairing the index on the read path.
+
 Use `--max-chars <n>` to change the output bound, or `--format json` when a
 structured consumer needs the same portable handoff. The built-in
 `yoke-sessions` skill uses handoffs to inspect saved sessions and to recover the
@@ -383,6 +400,9 @@ avoiding repeated path probes that become expensive on Windows when hundreds
 of sessions are present. A transient metadata failure for one enumerated file
 falls back to reading that session instead of making it disappear from the
 index.
+If that read also fails temporarily, repair retains the previous indexed summary
+with its old signature and retries later. Confirmed-invalid and deleted sessions
+are still omitted.
 Metadata-only changes, including `/model`, append only changed metadata fields
 and update the loaded record in memory. They do not rebuild or reload the
 conversation. Interactive shutdown also trusts the latest accepted turn
@@ -390,6 +410,8 @@ checkpoint. It saves only changed provider metadata and queue content instead
 of capturing and reconciling the complete conversation again. Context-usage
 estimates run outside the prompt-critical path and coalesce pending requests so
 only one scan runs at a time. Large sessions do not delay input after a command.
+An estimation error is logged without replacing the last valid usage value;
+later estimates still run.
 Every CLI mode generates a title in a background thread from the first prompt.
 The useful turn starts without waiting for that request. Headless mode writes
 the agent response first, then waits during cleanup for the title worker so the
@@ -579,6 +601,9 @@ Configure global MCP servers in `~/.yoke/mcp.json` and workspace servers in
 an internal server with a self-signed certificate, set `"verify": false` on that
 server. This disables TLS certificate verification only for that MCP server.
 
+The `/mcp` menu uses `yoke.mcp.editing` for persisted configuration changes.
+Session-only changes stay in the session policy and do not write either file.
+
 Managers created from these config paths re-read them before `mcp_inspect` and
 `mcp_call`. Existing clients are reused when their server config is unchanged.
 Changed or removed server clients are closed after any active call finishes and
@@ -742,6 +767,8 @@ By default yoke allows these built-in capabilities: `file.read`, `file.write`, `
 Values are `"allow"` or `"deny"`. Capability IDs and tool names are exact strings; glob patterns are not supported. If yoke sees legacy glob keys in `tools`, such as `"*"`, it replaces that config file with the current default capability policy. Built-in `file.write` is model-aware: GPT/OpenAI-style models receive `apply_patch` and its patch-format system instructions, while other models receive `edit` plus `write`. Disabling the capability also removes its contributed instructions from the context.
 
 If a `config.json`, tool plugin, or skill file is malformed, yoke reports the file path and a short plain-English reason such as invalid JSON syntax, missing `SKILL.md` frontmatter, or a plugin import failure.
+Invalid tool plugins are skipped with a warning. A failed import is removed from
+the module cache so another plugin cannot reuse its partially initialized exports.
 
 **Example: read-only agent**
 
@@ -753,7 +780,7 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke reports the fi
     "file.read": "allow",
     "web.fetch": "deny",
     "web.research": "deny",
-    "shell": "deny",
+    "shell": "deny"
   }
 }
 ```
@@ -761,6 +788,12 @@ If a `config.json`, tool plugin, or skill file is malformed, yoke reports the fi
 **Built-in capability IDs:** `file.read`, `file.write`, `file.search`, `image.attach`, `image.generate`, `web.fetch`, `web.search`, `web.research`, `shell`, `mcp`
 
 **Built-in tool names:** `read`, `edit`, `write`, `apply_patch`, `fd`, `rg`, `find`, `grep`, `ls`, `exec_command`, `write_stdin`, `python_exec`, `web_fetch`, `web_search`, `web_research`, `extract_file_context`, `attach_image`, `image_generation`, `mcp_inspect`, `mcp_call`
+
+The `rg` tool reports subprocess failures with `ok: false`, diagnostic output,
+and the exit code. A no-match exit remains a successful search. Its
+`max_output_chars` accepts values from 1 through 200,000. The portable `ls`,
+`find`, and `grep` tools mark a result as truncated only when a matching entry
+or line was actually omitted, not merely when the result reaches its limit.
 
 The `exec_command` tool accepts either `cmd` for shell syntax or `argv` for a
 direct process launch with no shell parsing. Shell mode defaults to PowerShell

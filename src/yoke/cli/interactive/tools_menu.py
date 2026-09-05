@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
 
 from yoke.agent.loop.agent import RuntimeAgent
@@ -18,7 +17,7 @@ from yoke.cli.runtime.selector.multiselect import (
 from yoke.cli.runtime.selector.ui import SelectorTableColumns
 from yoke.cli.tools.policy import PiConfig
 from yoke.cli.tools.policy import ToolPolicy
-from yoke.cli.tools.policy import load_config_file
+from yoke.cli.tools.policy import update_config_file
 
 
 @dataclass(slots=True, frozen=True)
@@ -240,33 +239,20 @@ def _write_tool_policy_config(
     rows: list[ToolMenuRow],
     active_names: set[str],
 ) -> None:
-    loaded_config = load_config_file(path)
-    capabilities = dict(loaded_config.config.capabilities)
-    tools = dict(loaded_config.config.tools)
-    for row in rows:
-        policy = ToolPolicy.allow if row.tool_names & active_names else ToolPolicy.deny
-        if row.policy_kind == "capability":
-            capabilities[row.policy_key] = policy
-            for tool_name in row.tool_names:
-                tools.pop(tool_name, None)
-        else:
-            tools[row.policy_key] = policy
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            PiConfig(
-                capabilities=capabilities,
-                tools=tools,
-                default_model=loaded_config.config.default_model,
-                default_reasoning_effort=(
-                    loaded_config.config.default_reasoning_effort
-                ),
-            ).model_dump(mode="json", exclude_none=True),
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    def set_policies(config: PiConfig) -> PiConfig:
+        for row in rows:
+            policy = (
+                ToolPolicy.allow if row.tool_names & active_names else ToolPolicy.deny
+            )
+            if row.policy_kind == "capability":
+                config.capabilities[row.policy_key] = policy
+                for tool_name in row.tool_names:
+                    config.tools.pop(tool_name, None)
+            else:
+                config.tools[row.policy_key] = policy
+        return config
+
+    update_config_file(path, set_policies, migrate_legacy=True)
 
 
 def _tool_rows(report: ToolLoadReport) -> list[ToolMenuRow]:

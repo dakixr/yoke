@@ -8,6 +8,7 @@ from typing import BinaryIO
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
+from yoke.cli.session.index import SESSION_INDEX_SUMMARY_VERSION
 from yoke.cli.session.store import SessionStore
 
 _ENTRY_PREFIX = b'{"type":"entry","entry":{"kind":'
@@ -45,13 +46,19 @@ def read_handoff_context_window(
 ) -> HandoffContextWindow | None:
     """Read the latest checkpoint and recent active tail without full session decode."""
     summary = store.index_entry(session_id)
-    if summary is None or not summary.leaf_id:
+    source_signature = store.session_file_signature(session_id)
+    if (
+        summary is None
+        or not summary.leaf_id
+        or summary.summary_version != SESSION_INDEX_SUMMARY_VERSION
+        or summary.entry_count is None
+        or source_signature is None
+        or summary.file_size != source_signature[0]
+        or summary.file_mtime_ns != source_signature[1]
+    ):
         return None
     source = store.directory / f"{session_id}.jsonl"
-    try:
-        source_size = source.stat().st_size
-    except OSError:
-        return None
+    source_size = source_signature[0]
 
     recent: list[_EntryLocation] = []
     checkpoint: _EntryLocation | None = None
@@ -72,8 +79,9 @@ def read_handoff_context_window(
             if len(recent) < recent_limit:
                 recent.append(topology)
 
-        # If the indexed leaf could not be found, fall back to the canonical loader.
-        if active_seen == 0:
+        # A missing parent is not an intentional context bound. Let the canonical
+        # loader validate any chain we could not follow to its root or checkpoint.
+        if active_seen == 0 or (current is not None and checkpoint is None):
             return None
 
         selected = list(reversed(recent))
@@ -81,10 +89,9 @@ def read_handoff_context_window(
             selected.insert(0, checkpoint)
         entries = [_read_entry(handle, location) for location in selected]
 
-    total_entries = summary.entry_count or active_seen
     return HandoffContextWindow(
         entries=entries,
-        total_entries=total_entries,
+        total_entries=summary.entry_count,
         truncated=(
             checkpoint is not None or active_seen > len(recent) or current is not None
         ),
@@ -204,9 +211,8 @@ def _elide_embedded_image_data(raw: bytes) -> bytes:
 
 
 def _decode_json_string(value: bytes) -> str | None:
-    if len(value) < 2 or value[0] != 34 or value[-1] != 34:
-        return None
     try:
-        return value[1:-1].decode("utf-8")
-    except UnicodeDecodeError:
+        decoded = from_json(value)
+    except ValueError:
         return None
+    return decoded if isinstance(decoded, str) else None

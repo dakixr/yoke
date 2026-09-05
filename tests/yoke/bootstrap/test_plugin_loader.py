@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
+
+import pytest
 
 from yoke.agent.tools import ModelIdentity
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.cli.bootstrap import tools as tools_module
 from yoke.cli.bootstrap.config import ToolDiscoveryProvider
 from yoke.cli.bootstrap.plugin_loader import _iter_tool_module_paths
-from yoke.cli.bootstrap.types import LoadedToolGroup
+from yoke.cli.bootstrap.plugin_loader import load_tools_from_directory
 
 
 def test_tool_discovery_only_walks_explicit_plugin_locations(
@@ -75,20 +78,31 @@ def test_tool_discovery_ignores_private_and_package_modules(tmp_path: Path) -> N
     assert list(_iter_tool_module_paths(directory)) == expected
 
 
-def test_global_tool_directory_is_not_loaded_twice_when_root_is_home(
+@pytest.mark.parametrize(
+    ("include_global_tools", "expected_scope"),
+    [(True, "global"), (False, "repo")],
+)
+def test_shared_home_and_repo_registers_plugin_once(
     tmp_path: Path,
     monkeypatch,
+    include_global_tools: bool,
+    expected_scope: str,
 ) -> None:
-    calls: list[tuple[Path, str]] = []
-
-    def load_group(directory, _context, *, source_kind):
-        calls.append((directory, source_kind))
-        return LoadedToolGroup(tools=[], system_messages=[])
+    directory = tmp_path / ".yoke"
+    directory.mkdir()
+    plugin_path = directory / "probe.py"
+    plugin_path.write_text(
+        "from yoke.agent.tools import ReadTool\n"
+        "def register_tools(context):\n"
+        "    with (context.root / 'registrations.txt').open('a') as log:\n"
+        "        log.write('registered\\n')\n"
+        "    return [ReadTool.bind(root=context.root)]\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(
         tools_module, "create_builtin_capabilities", lambda _context: []
     )
-    monkeypatch.setattr(tools_module, "_load_plugin_group", load_group)
     provider = ToolDiscoveryProvider()
     context = ToolRegistrationContext(
         root=tmp_path,
@@ -97,12 +111,75 @@ def test_global_tool_directory_is_not_loaded_twice_when_root_is_home(
         model=ModelIdentity(provider_name=provider.provider_name),
     )
 
-    tools_module.load_tools(
+    loaded = tools_module.load_tools(
         root=tmp_path,
         home=tmp_path,
         include_repo_tools=True,
-        include_global_tools=True,
+        include_global_tools=include_global_tools,
         context=context,
     )
 
-    assert calls == [(tmp_path / ".yoke", "global")]
+    assert (tmp_path / "registrations.txt").read_text() == "registered\n"
+    assert [entry.tool.name for entry in loaded.tools] == ["read"]
+    assert loaded.tools[0].source_kind == expected_scope
+    assert loaded.tools[0].source_path == plugin_path
+
+
+def test_failed_import_cannot_be_reused_by_another_plugin(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    directory = tmp_path / ".yoke"
+    directory.mkdir()
+    (directory / "broken.py").write_text(
+        "VALUE = 'partly initialized'\nraise RuntimeError('not ready')\n",
+        encoding="utf-8",
+    )
+    (directory / "dependent.py").write_text(
+        "from .broken import VALUE\n"
+        "from yoke.agent.tools import ReadTool\n"
+        "def register_tools(context):\n"
+        "    return [ReadTool.bind(root=context.root)]\n",
+        encoding="utf-8",
+    )
+    provider = ToolDiscoveryProvider()
+    context = ToolRegistrationContext(
+        root=tmp_path,
+        home=tmp_path,
+        provider=provider,
+        model=ModelIdentity(provider_name=provider.provider_name),
+    )
+    before = set(sys.modules)
+    try:
+        loaded = load_tools_from_directory(directory, context, source_kind="repo")
+
+        assert loaded.tools == []
+        leaked = [
+            module
+            for name, module in sys.modules.items()
+            if name not in before
+            and getattr(module, "__file__", None)
+            in {str(directory / "broken.py"), str(directory / "dependent.py")}
+        ]
+        assert leaked == []
+        assert (
+            len(
+                [
+                    record
+                    for record in caplog.records
+                    if record.name == "yoke.cli.bootstrap.plugin_loader"
+                ]
+            )
+            == 2
+        )
+        assert str(directory / "broken.py") in caplog.text
+        assert str(directory / "dependent.py") in caplog.text
+        assert "not ready" in caplog.text
+
+        (directory / "broken.py").write_text("VALUE = 'ready'\n", encoding="utf-8")
+        recovered = load_tools_from_directory(directory, context, source_kind="repo")
+        assert [entry.tool.name for entry in recovered.tools] == ["read"]
+        assert recovered.tools[0].source_path == directory / "dependent.py"
+    finally:
+        for name in set(sys.modules) - before:
+            if name.startswith("yoke_external_tools_"):
+                sys.modules.pop(name, None)

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: F405
-
 from queue import Queue
 from threading import Event
 from threading import Lock
@@ -29,7 +27,18 @@ from yoke.cli.runtime.session import save_active_session
 from yoke.cli.runtime.title import start_session_title_generation
 from yoke.cli.runtime.title import wait_for_session_title
 
-from .support import *  # noqa: F403
+import base64
+from pathlib import Path
+
+import pytest
+
+from yoke.cli.interactive.common import PromptCliState
+from yoke.cli.main import CLIArgs, run_cli
+from yoke.cli.render import build_console
+from yoke.cli.runtime import create_active_session
+from yoke.cli.session import SessionStore
+
+from .support import CaptureStream, FakeAgent, ImageAwareAgent, active_session_for
 
 
 def test_cli_runs_headless_prompt(capsys) -> None:
@@ -43,8 +52,6 @@ def test_headless_cli_generates_title_without_blocking_user_turn(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     title_started = Event()
     response_written = Event()
     user_turn_started = Event()
@@ -95,9 +102,6 @@ def test_seeded_interactive_cli_does_not_wait_for_title_generation(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
-
     def fail(*_args, **_kwargs) -> None:
         pytest.fail("interactive startup must leave title generation to the turn loop")
 
@@ -133,8 +137,6 @@ def test_basic_interactive_turn_generates_title_without_blocking_turn(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     title_started = Event()
     release_title = Event()
 
@@ -177,8 +179,6 @@ def test_session_title_worker_is_deduplicated(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     started = Event()
     release = Event()
     calls = 0
@@ -253,7 +253,7 @@ def test_prompt_state_adopts_provider_effort_after_model_command(
 
 
 def test_headless_cli_propagates_session_usage_attribution(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
 ) -> None:
     from yoke.ai.providers.usage_context import (
         current_usage_metric_context,
@@ -266,7 +266,6 @@ def test_headless_cli_propagates_session_usage_attribution(
             self.observed_context = current_usage_metric_context()
             return super().run(*args, **kwargs)
 
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     agent = AttributionAgent()
 
     exit_code = run_cli(
@@ -297,7 +296,6 @@ def test_cli_closes_runtime_it_constructs(tmp_path: Path, monkeypatch) -> None:
             self.closed = True
 
     agent = CloseTrackingAgent()
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setattr(
         "yoke.cli.runtime.cli.build_cli_agent_from_args",
         lambda _args: SimpleNamespace(agent=agent, tool_report=None),
@@ -389,7 +387,6 @@ def test_cli_reads_headless_prompt_from_stdin(monkeypatch) -> None:
 
 def test_cli_headless_accepts_image_attachments(tmp_path: Path, monkeypatch) -> None:
     session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     image_path = tmp_path / "tiny.png"
     image_path.write_bytes(
         base64.b64decode(

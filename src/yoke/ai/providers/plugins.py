@@ -8,6 +8,7 @@ import os
 import sys
 from collections.abc import Callable
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path
@@ -162,13 +163,20 @@ def create_custom_provider(
                 f"Could not initialize provider `{plugin.name}` "
                 f"from `{plugin.source_path}`: {exc}"
             ) from exc
-        if not callable(getattr(provider, "complete", None)):
-            raise ValueError(
-                f"Provider `{plugin.name}` from `{plugin.source_path}` "
-                "is invalid. It must return an object with "
-                "`complete(messages, tools)`."
-            )
-        _attach_plugin_model_catalog(provider, plugin=plugin, context=context)
+        try:
+            if not callable(getattr(provider, "complete", None)):
+                raise ValueError(
+                    f"Provider `{plugin.name}` from `{plugin.source_path}` "
+                    "is invalid. It must return an object with "
+                    "`complete(messages, tools)`."
+                )
+            _attach_plugin_model_catalog(provider, plugin=plugin, context=context)
+        except Exception:
+            with suppress(Exception):
+                close = getattr(provider, "close", None)
+                if callable(close):
+                    close()
+            raise
         return provider
     return None
 

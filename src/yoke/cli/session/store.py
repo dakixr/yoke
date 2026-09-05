@@ -678,9 +678,6 @@ class SessionStore:
     def _index_path(self) -> Path:
         return self.directory / SESSION_INDEX_NAME
 
-    def _load_index(self) -> SessionIndex:
-        return self._index_cache.read()
-
     def _update_index(
         self,
         record: SessionRecord,

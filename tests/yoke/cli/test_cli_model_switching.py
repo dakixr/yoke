@@ -394,25 +394,27 @@ def test_model_switch_keeps_bounded_user_epoch_for_equal_window() -> None:
     assert "context_compaction" not in second_events
 
 
+class SmallTargetProvider(SwitchableProvider):
+    def list_models(self) -> list[ProviderModelInfo]:
+        return [
+            ProviderModelInfo(
+                id="gpt-a",
+                display_name="GPT A",
+                context_window_tokens=10_000,
+            ),
+            ProviderModelInfo(
+                id="gpt-b",
+                display_name="GPT B",
+                context_window_tokens=1_000,
+            ),
+        ]
+
+
 def test_model_switch_compacts_for_smaller_target() -> None:
-    class ShrinkingProvider(SwitchableProvider):
+    class ShrinkingProvider(SmallTargetProvider):
         def __init__(self) -> None:
             super().__init__()
             self.summary_calls = 0
-
-        def list_models(self) -> list[ProviderModelInfo]:
-            return [
-                ProviderModelInfo(
-                    id="gpt-a",
-                    display_name="GPT A",
-                    context_window_tokens=10_000,
-                ),
-                ProviderModelInfo(
-                    id="gpt-b",
-                    display_name="GPT B",
-                    context_window_tokens=1_000,
-                ),
-            ]
 
         def complete(
             self, messages: list[Message], tools: list[dict[str, object]]
@@ -445,21 +447,7 @@ def test_model_switch_compacts_for_smaller_target() -> None:
 def test_interactive_model_switch_adopts_and_persists_compacted_state(
     tmp_path: Path,
 ) -> None:
-    class ShrinkingProvider(SwitchableProvider):
-        def list_models(self) -> list[ProviderModelInfo]:
-            return [
-                ProviderModelInfo(
-                    id="gpt-a",
-                    display_name="GPT A",
-                    context_window_tokens=10_000,
-                ),
-                ProviderModelInfo(
-                    id="gpt-b",
-                    display_name="GPT B",
-                    context_window_tokens=1_000,
-                ),
-            ]
-
+    class ShrinkingProvider(SmallTargetProvider):
         def complete(
             self, messages: list[Message], tools: list[dict[str, object]]
         ) -> Message:
@@ -511,21 +499,7 @@ def test_interactive_model_switch_adopts_and_persists_compacted_state(
 
 
 def test_model_switch_rolls_back_context_when_auto_compaction_fails() -> None:
-    class FailingCompactionProvider(SwitchableProvider):
-        def list_models(self) -> list[ProviderModelInfo]:
-            return [
-                ProviderModelInfo(
-                    id="gpt-a",
-                    display_name="GPT A",
-                    context_window_tokens=10_000,
-                ),
-                ProviderModelInfo(
-                    id="gpt-b",
-                    display_name="GPT B",
-                    context_window_tokens=1_000,
-                ),
-            ]
-
+    class FailingCompactionProvider(SmallTargetProvider):
         def complete(
             self, messages: list[Message], tools: list[dict[str, object]]
         ) -> Message:

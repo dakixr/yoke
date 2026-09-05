@@ -6,6 +6,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
@@ -157,6 +158,16 @@ class ToolTraceStore:
             return
         result = payload.get("result")
         executed_arguments = payload.get("executed_arguments")
+        copied_result = (
+            cast(dict[str, object], deepcopy(result))
+            if isinstance(result, dict)
+            else None
+        )
+        copied_executed_arguments = (
+            cast(dict[str, object], deepcopy(executed_arguments))
+            if isinstance(executed_arguments, dict)
+            else None
+        )
         with self._lock:
             turn_id = _payload_int(payload, "turn_id")
             if turn_id in self._retired_turn_ids:
@@ -168,13 +179,11 @@ class ToolTraceStore:
             entry.ended_at = time.monotonic()
             entry.ended_wall_at = datetime.now(UTC).isoformat()
             entry.executed_arguments = (
-                cast(dict[str, object], executed_arguments)
-                if isinstance(executed_arguments, dict)
+                copied_executed_arguments
+                if copied_executed_arguments is not None
                 else entry.executed_arguments
             )
-            entry.result = (
-                cast(dict[str, object], result) if isinstance(result, dict) else None
-            )
+            entry.result = copied_result
             entry.status = "ok" if payload.get("ok", False) else "failed"
             subscribers = self._changed_locked()
         self._notify(subscribers)
@@ -206,7 +215,7 @@ class ToolTraceStore:
     def snapshot(self) -> list[ToolTraceEntry]:
         with self._lock:
             return [
-                _copy_entry(self._entries[tool_call_id])
+                deepcopy(self._entries[tool_call_id])
                 for tool_call_id in self._order
                 if tool_call_id in self._entries
             ]
@@ -214,7 +223,7 @@ class ToolTraceStore:
     def get(self, tool_call_id: str) -> ToolTraceEntry | None:
         with self._lock:
             entry = self._entries.get(tool_call_id)
-            return _copy_entry(entry) if entry is not None else None
+            return deepcopy(entry) if entry is not None else None
 
     def output_page(
         self,
@@ -286,39 +295,6 @@ class ToolTraceStore:
         for callback in subscribers:
             with suppress(Exception):
                 callback()
-
-
-def _copy_entry(entry: ToolTraceEntry) -> ToolTraceEntry:
-    return ToolTraceEntry(
-        tool_call_id=entry.tool_call_id,
-        tool_name=entry.tool_name,
-        raw_arguments=entry.raw_arguments,
-        executed_arguments=(
-            dict(entry.executed_arguments)
-            if entry.executed_arguments is not None
-            else None
-        ),
-        result=dict(entry.result) if entry.result is not None else None,
-        iteration=entry.iteration,
-        turn_id=entry.turn_id,
-        started_at=entry.started_at,
-        ended_at=entry.ended_at,
-        started_wall_at=entry.started_wall_at,
-        ended_wall_at=entry.ended_wall_at,
-        status=entry.status,
-        context=list(entry.context) if entry.context is not None else None,
-        after_context=(
-            list(entry.after_context) if entry.after_context is not None else None
-        ),
-        output_chunks=(
-            [
-                ToolTraceOutputChunk(chunk.stream, chunk.text, chunk.seq)
-                for chunk in entry.output_chunks
-            ]
-            if entry.output_chunks is not None
-            else None
-        ),
-    )
 
 
 def _payload_text(payload: dict[str, object], key: str) -> str | None:

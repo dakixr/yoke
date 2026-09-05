@@ -47,7 +47,7 @@ def load_tools(
     global_directory = home / ".yoke"
     repo_directory = root / ".yoke"
     if include_global_tools:
-        group = _load_plugin_group(
+        group = load_tools_from_directory(
             global_directory,
             context,
             source_kind="global",
@@ -57,7 +57,7 @@ def load_tools(
     if include_repo_tools and (
         not include_global_tools or repo_directory != global_directory
     ):
-        group = _load_plugin_group(
+        group = load_tools_from_directory(
             repo_directory,
             context,
             source_kind="repo",
@@ -86,19 +86,6 @@ def resolve_tool_overrides(loaded_tools: list[LoadedTool]) -> list[LoadedTool]:
                 continue
         seen[entry.tool.name] = entry
     return list(seen.values())
-
-
-def _load_plugin_group(
-    directory: Path,
-    context: ToolRegistrationContext,
-    *,
-    source_kind: ToolSourceKind,
-) -> LoadedToolGroup:
-    return load_tools_from_directory(
-        directory,
-        context,
-        source_kind=source_kind,
-    )
 
 
 def _tool_source_priority(source_kind: ToolSourceKind) -> int:

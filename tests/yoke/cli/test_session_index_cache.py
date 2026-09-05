@@ -352,7 +352,7 @@ def test_concurrent_session_creation_survives_a_stale_prune_scan(
     assert prune.exitcode == 0
     assert writer.exitcode == 0
     restarted = SessionStore(directory)
-    assert set(restarted._load_index().sessions) == {"base", "concurrent"}
+    assert set(restarted._index_cache.read().sessions) == {"base", "concurrent"}
     assert restarted.load("concurrent").messages[-1].text_content() == (
         "created while maintenance held the index lock"
     )
@@ -363,7 +363,7 @@ def test_prune_without_directory_snapshot_keeps_direct_missing_file_check(
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
     store.save("missing", [], root=tmp_path)
-    index = store._load_index().model_copy(deep=True)
+    index = store._index_cache.read().model_copy(deep=True)
     store._session_path("missing").unlink()
 
     changed = prune_index_and_sessions(

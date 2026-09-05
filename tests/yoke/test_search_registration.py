@@ -23,29 +23,26 @@ def registration_context(tmp_path: Path) -> ToolRegistrationContext:
     )
 
 
-def test_search_registration_prefers_rg_when_available(
+@pytest.mark.parametrize(
+    ("available", "expected"),
+    [
+        ({"rg"}, ["rg"]),
+        ({"fd"}, ["fd"]),
+        ({"rg", "fd"}, ["rg", "fd"]),
+        (set(), ["grep", "find", "ls"]),
+    ],
+)
+def test_search_registration_selects_native_tools_or_portable_fallbacks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    available: set[str],
+    expected: list[str],
 ) -> None:
     monkeypatch.setattr(
         "yoke.agent.capabilities.builtins.shutil.which",
-        lambda name: "/usr/bin/rg" if name == "rg" else None,
+        lambda name: f"/test-bin/{name}" if name in available else None,
     )
 
     tools = register_search_tools(registration_context(tmp_path))
 
-    assert [tool.name for tool in tools] == ["rg"]
-
-
-def test_search_registration_uses_fallback_when_rg_is_unavailable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "yoke.agent.capabilities.builtins.shutil.which",
-        lambda _name: None,
-    )
-
-    tools = register_search_tools(registration_context(tmp_path))
-
-    assert [tool.name for tool in tools] == ["grep", "find", "ls"]
+    assert [tool.name for tool in tools] == expected

@@ -11,22 +11,19 @@ from yoke.cli.interactive.common import (
 from yoke.cli.interactive.common import InputFunc
 from yoke.cli.interactive.common import PendingPrompt as PendingPrompt
 from yoke.cli.interactive.common import (
-    format_context_usage_text,
+    format_context_usage_text as format_context_usage_text,
 )
 from yoke.cli.interactive.prompt import run_prompt_toolkit_cli
 from yoke.cli.interactive.renderer import (
     PromptToolkitLiveRenderer as PromptToolkitLiveRenderer,
 )
 from yoke.cli.interactive.renderer import (
-    format_bottom_toolbar,
+    format_bottom_toolbar as format_bottom_toolbar,
 )
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import AgentRunner
-
-_format_context_usage_text = format_context_usage_text
-_format_bottom_toolbar = format_bottom_toolbar
 
 
 def run_interactive_cli(

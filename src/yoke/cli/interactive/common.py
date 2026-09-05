@@ -15,7 +15,7 @@ from typing import Literal
 from typing import Protocol
 from uuid import uuid4
 
-from yoke.agent.context.manager import _drop_incomplete_tool_turns
+from yoke.agent.message_sanitizer import normalize_tool_call_sequence
 from yoke.agent.loop import AgentResult
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -65,6 +65,8 @@ def handle_slash_command(
     on_editor_text: Callable[[str], None] | None = None,
     on_submit_prompt: Callable[[str], None] | None = None,
     on_queue_changed: Callable[[], None] | None = None,
+    on_queue_replace: (Callable[[list[PendingPrompt]], str | None] | None) = None,
+    on_image_attached: Callable[[ImageAttachment], None] | None = None,
     on_replay_messages: Callable[[list[Message]], None] | None = None,
     on_process_inspector: Callable[[], None] | None = None,
 ) -> tuple[bool, list[Message], ActiveSession]:
@@ -85,6 +87,8 @@ def handle_slash_command(
         on_editor_text=on_editor_text,
         on_submit_prompt=on_submit_prompt,
         on_queue_changed=on_queue_changed,
+        on_queue_replace=on_queue_replace,
+        on_image_attached=on_image_attached,
         on_replay_messages=on_replay_messages,
         on_process_inspector=on_process_inspector,
     )
@@ -224,7 +228,10 @@ class PromptCliState:
     messages: list[Message]
     pending_prompts: list[PendingPrompt]
     pending_images: list[ImageAttachment] = field(default_factory=list)
+    queue_revision: int = 0
+    queue_session_id: str | None = None
     worker: Thread | None = None
+    turn_handoff_active: bool = False
     active_stop_request: Event | None = None
     active_user_message: Message | None = None
     continuation_entries: list[ConversationEntry] | None = None
@@ -269,7 +276,7 @@ def partial_messages_from_error(error: Exception) -> list[Message] | None:
         return None
     if not all(isinstance(message, Message) for message in messages):
         return None
-    return _drop_incomplete_tool_turns(messages)
+    return normalize_tool_call_sequence(messages, drop_incomplete_assistant=True)
 
 
 def partial_conversation_entries_from_error(

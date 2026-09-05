@@ -7,7 +7,6 @@ export function currentRoute() {
   }
   const match = path.match(/^\/session\/([^/]+)$/);
   if (match) return { name: "session", sessionID: decodeURIComponent(match[1]) };
-  if (path === "/settings") return { name: "settings" };
   return { name: "home" };
 }
 

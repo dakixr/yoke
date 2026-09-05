@@ -114,8 +114,6 @@ async def patch_session(
     body: SessionPatchRequest,
 ) -> SessionResponse:
     fields = body.model_fields_set
-    if "title" in fields:
-        _runtimes(request).cancel_automatic_title(session_id)
 
     def mutate() -> SessionInfo:
         return _service(request).patch_session(
@@ -126,6 +124,11 @@ async def patch_session(
             pinned=body.pinned,
             archived_set="archived" in fields,
             archived=body.archived,
+            before_mutation=(
+                lambda: _runtimes(request).cancel_automatic_title(session_id)
+            )
+            if "title" in fields
+            else None,
         )
 
     data = (

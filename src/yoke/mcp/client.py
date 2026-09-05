@@ -305,7 +305,10 @@ class StdioMcpClient:
                 with self._pending_lock:
                     pending = self._pending.get(message_id)
                 if pending is not None:
-                    pending.put(message)
+                    try:
+                        pending.put_nowait(message)
+                    except queue.Full:
+                        pass
             return
         method = message.get("method")
         if not isinstance(method, str):

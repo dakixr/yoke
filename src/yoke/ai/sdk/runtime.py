@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from yoke.agent.capabilities import create_builtin_capabilities
+from yoke.agent.capabilities import resolve_builtin_capability
 from yoke.agent.context import ContextManager
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
@@ -232,13 +232,11 @@ def _bind_capability_tool(
         model=resolve_model_identity(provider),
         cancel_requested=never_cancel,
     )
-    for capability in create_builtin_capabilities(context):
-        if capability.capability_id == capability_id:
-            return ToolRegistrationResult(
-                tools=tuple(capability.tools),
-                system_messages=tuple(capability.system_messages),
-            )
-    raise ValueError(f"Unknown built-in tool capability: {capability_id}")
+    capability = resolve_builtin_capability(capability_id, context)
+    return ToolRegistrationResult(
+        tools=capability.tools,
+        system_messages=capability.system_messages,
+    )
 
 
 def build_system_messages(

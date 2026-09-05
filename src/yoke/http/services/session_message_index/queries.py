@@ -1,40 +1,45 @@
-"""Extracted helpers for the persistent HTTP session message index."""
+"""Indexed transcript, context, and branch-preview queries."""
 
 from __future__ import annotations
 
-from typing import Any
-
+from typing import TYPE_CHECKING
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
-from yoke.http.services.session_message_index_models import ContextIndexWindow
-from yoke.http.services.session_message_index_models import can_append
-from yoke.http.services.session_message_index_models import MessagePage
-from yoke.http.services.session_message_index_models import NavigationIndexPreview
-from yoke.http.services.session_message_index_models import PUBLIC_EXCLUDED_KINDS
-from yoke.http.services.session_message_index_models import RuntimeIndexSeed
-from yoke.http.services.session_message_index_models import TreeIndexPage
-from yoke.http.services.session_message_index_models import kind
-from yoke.http.services.session_message_index_models import prefix_hash
-from yoke.http.services.session_message_index_models import (
+from yoke.http.services.session_message_index import paths as paths
+from yoke.http.services.session_message_index import sidecar as sidecar
+from yoke.http.services.session_message_index import storage as storage
+from yoke.http.services.session_message_index import tail as tail
+from yoke.http.services.session_message_index import tail_navigation as tail_navigation
+from yoke.http.services.session_message_index.models import ContextIndexWindow
+from yoke.http.services.session_message_index.models import can_append
+from yoke.http.services.session_message_index.models import MessagePage
+from yoke.http.services.session_message_index.models import NavigationIndexPreview
+from yoke.http.services.session_message_index.models import PUBLIC_EXCLUDED_KINDS
+from yoke.http.services.session_message_index.models import RuntimeIndexSeed
+from yoke.http.services.session_message_index.models import TreeIndexPage
+from yoke.http.services.session_message_index.models import kind
+from yoke.http.services.session_message_index.models import prefix_hash
+from yoke.http.services.session_message_index.models import (
     parent_id as location_parent_id,
 )
 
+if TYPE_CHECKING:
+    from yoke.http.services.session_message_index import SessionMessageIndex
+
 
 def query_page(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     *,
     limit: int,
     order: str,
     anchor_id: str | None,
 ) -> MessagePage | None:
-    snapshot = host._current_snapshot(session_id)
+    snapshot = storage.current_snapshot(host, session_id)
     if snapshot is None and order == "desc":
-        page = host._tail_page(
-            session_id,
-            limit=limit,
-            anchor_id=anchor_id,
+        page = tail_navigation.tail_page(
+            host, session_id, limit=limit, anchor_id=anchor_id
         )
         if page is not None:
             host.warm_async(session_id)
@@ -44,41 +49,45 @@ def query_page(
     if snapshot is None:
         return None
     if order == "desc":
-        ids = host._descending_ids(snapshot, limit=limit, anchor_id=anchor_id)
+        ids = paths.descending_ids(snapshot, limit=limit, anchor_id=anchor_id)
     else:
-        ids = host._ascending_ids(snapshot, limit=limit, anchor_id=anchor_id)
+        ids = paths.ascending_ids(snapshot, limit=limit, anchor_id=anchor_id)
     if ids is None:
         return None
     selected, has_more = ids
-    entries = host._read_entries(session_id, snapshot, selected)
+    entries = storage.read_entries(host, session_id, snapshot, selected)
     if entries is None:
         return None
     return MessagePage(entries=entries, has_more=has_more)
 
 
-def query_entry(host: Any, session_id: str, entry_id: str) -> ConversationEntry | None:
+def query_entry(
+    host: SessionMessageIndex, session_id: str, entry_id: str
+) -> ConversationEntry | None:
     snapshot = host._ensure(session_id)
     if snapshot is None:
         return None
     location = snapshot.entries.get(entry_id)
     if location is None or kind(location) in PUBLIC_EXCLUDED_KINDS:
         return None
-    entries = host._read_entries(session_id, snapshot, [entry_id])
+    entries = storage.read_entries(host, session_id, snapshot, [entry_id])
     return entries[0] if entries else None
 
 
-def query_tool_trace_messages(host: Any, session_id: str) -> list[Message] | None:
+def query_tool_trace_messages(
+    host: SessionMessageIndex, session_id: str
+) -> list[Message] | None:
     """Read only active-branch turns that contain persisted tool activity."""
-    snapshot = host._current_snapshot(session_id)
+    snapshot = storage.current_snapshot(host, session_id)
     if snapshot is None:
-        has_tools = host._has_persisted_tool_entries(session_id)
+        has_tools = tail.has_persisted_tool_entries(host, session_id)
         if has_tools is False:
             host.warm_async(session_id)
             return []
         snapshot = host._ensure(session_id)
     if snapshot is None:
         return None
-    active_ids = host._active_ids(snapshot)
+    active_ids = paths.active_ids(snapshot)
     if active_ids is None:
         return None
     tool_indexes = [
@@ -107,26 +116,26 @@ def query_tool_trace_messages(host: Any, session_id: str) -> list[Message] | Non
     entry_ids = [
         entry_id for index, entry_id in enumerate(active_ids) if index in selected
     ]
-    entries = host._read_entries(session_id, snapshot, entry_ids)
+    entries = storage.read_entries(host, session_id, snapshot, entry_ids)
     if entries is None:
         return None
     return [entry.message for entry in entries if entry.message is not None]
 
 
 def query_tree_page(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     *,
     limit: int,
     anchor_id: str | None,
 ) -> TreeIndexPage | None:
     """Read one newest-first tree page while keeping node rows chronological."""
-    snapshot = host._current_snapshot(session_id)
+    snapshot = storage.current_snapshot(host, session_id)
     if snapshot is None and anchor_id is None:
-        tail = host._tail_tree_page(session_id, limit=limit)
-        if tail is not None:
+        tail_page = tail.tail_tree_page(host, session_id, limit=limit)
+        if tail_page is not None:
             host.warm_async(session_id)
-            return tail
+            return tail_page
     if snapshot is None:
         snapshot = host._ensure(session_id)
     if snapshot is None:
@@ -140,10 +149,10 @@ def query_tree_page(
             return None
     start = max(0, end - limit)
     selected_ids = ordered_ids[start:end]
-    entries = host._read_entries(session_id, snapshot, selected_ids)
+    entries = storage.read_entries(host, session_id, snapshot, selected_ids)
     if entries is None:
         return None
-    active = host._active_ids(snapshot)
+    active = paths.active_ids(snapshot)
     if active is None:
         return None
     child_counts = {entry_id: 0 for entry_id in snapshot.entries}
@@ -162,27 +171,28 @@ def query_tree_page(
 
 
 def query_context_window(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     *,
     limit: int,
     include_instructions: bool,
 ) -> ContextIndexWindow | None:
     """Read a bounded active context tail and the latest checkpoint if present."""
-    snapshot = host._current_snapshot(session_id)
+    snapshot = storage.current_snapshot(host, session_id)
     if snapshot is None:
-        tail = host._tail_context_window(
+        tail_window = tail.tail_context_window(
+            host,
             session_id,
             limit=limit,
             include_instructions=include_instructions,
         )
-        if tail is not None:
+        if tail_window is not None:
             host.warm_async(session_id)
-            return tail
+            return tail_window
         snapshot = host._ensure(session_id)
     if snapshot is None:
         return None
-    active_ids = host._active_ids(snapshot)
+    active_ids = paths.active_ids(snapshot)
     if active_ids is None:
         return None
     checkpoint_index = next(
@@ -215,7 +225,7 @@ def query_context_window(
             *selected_ids,
         ]
         truncated = len(set(selected_ids)) < len(active_ids)
-    entries = host._read_entries(session_id, snapshot, selected_ids)
+    entries = storage.read_entries(host, session_id, snapshot, selected_ids)
     if entries is None:
         return None
     return ContextIndexWindow(
@@ -225,11 +235,15 @@ def query_context_window(
     )
 
 
-def query_runtime_seed(host: Any, session_id: str) -> RuntimeIndexSeed | None:
+def query_runtime_seed(
+    host: SessionMessageIndex, session_id: str
+) -> RuntimeIndexSeed | None:
     """Read a compacted runtime seed without forcing a cold full index scan."""
-    snapshot = host._current_snapshot(session_id)
+    snapshot = storage.current_snapshot(host, session_id)
     if snapshot is None:
-        prior = host._cached(session_id) or host._load_sidecar(session_id)
+        prior = storage.cached(host, session_id) or sidecar.load_sidecar(
+            host, session_id
+        )
         if prior is None:
             return None
         source = host.store.directory / f"{session_id}.jsonl"
@@ -245,7 +259,7 @@ def query_runtime_seed(host: Any, session_id: str) -> RuntimeIndexSeed | None:
         snapshot = host._ensure(session_id)
     if snapshot is None:
         return None
-    active_ids = host._active_ids(snapshot)
+    active_ids = paths.active_ids(snapshot)
     if not active_ids:
         return None
     checkpoint_index = next(
@@ -260,7 +274,9 @@ def query_runtime_seed(host: Any, session_id: str) -> RuntimeIndexSeed | None:
         return None
 
     checkpoint_id = active_ids[checkpoint_index]
-    checkpoint_entries = host._read_entries(session_id, snapshot, [checkpoint_id])
+    checkpoint_entries = storage.read_entries(
+        host, session_id, snapshot, [checkpoint_id]
+    )
     if not checkpoint_entries:
         return None
     checkpoint = checkpoint_entries[0]
@@ -295,7 +311,7 @@ def query_runtime_seed(host: Any, session_id: str) -> RuntimeIndexSeed | None:
         *(entry_id for entry_id in prior_skill_ids if entry_id != cache_scope_id),
     ]
     selected_ids = [*prefix_ids, checkpoint_id, *continuation_ids]
-    entries = host._read_entries(session_id, snapshot, selected_ids)
+    entries = storage.read_entries(host, session_id, snapshot, selected_ids)
     if not entries:
         return None
 
@@ -311,28 +327,29 @@ def query_runtime_seed(host: Any, session_id: str) -> RuntimeIndexSeed | None:
 
 
 def query_navigation_preview(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     *,
     target_id: str,
     abandoned_limit: int,
 ) -> NavigationIndexPreview | None:
     """Compare current and target parent chains without loading full entries."""
-    snapshot = host._current_snapshot(session_id)
+    snapshot = storage.current_snapshot(host, session_id)
     if snapshot is None:
-        tail = host._tail_navigation_preview(
+        tail_preview = tail_navigation.tail_navigation_preview(
+            host,
             session_id,
             target_id=target_id,
             abandoned_limit=abandoned_limit,
         )
-        if tail is not None:
+        if tail_preview is not None:
             host.warm_async(session_id)
-            return tail
+            return tail_preview
         snapshot = host._ensure(session_id)
     if snapshot is None or target_id not in snapshot.entries:
         return None
-    current_ids = host._active_ids(snapshot)
-    target_ids = host._path_to(snapshot, target_id)
+    current_ids = paths.active_ids(snapshot)
+    target_ids = paths.path_to(snapshot, target_id)
     if current_ids is None or target_ids is None:
         return None
     common_count = 0
@@ -343,7 +360,7 @@ def query_navigation_preview(
     abandoned_ids = current_ids[common_count:]
     selected_abandoned_ids = abandoned_ids[-abandoned_limit:] if abandoned_limit else []
     read_ids = [target_id, *selected_abandoned_ids]
-    entries = host._read_entries(session_id, snapshot, read_ids)
+    entries = storage.read_entries(host, session_id, snapshot, read_ids)
     if entries is None or not entries:
         return None
     return NavigationIndexPreview(
@@ -353,49 +370,3 @@ def query_navigation_preview(
         abandoned_total=len(abandoned_ids),
         abandoned_truncated=len(selected_abandoned_ids) < len(abandoned_ids),
     )
-
-
-def query_entry_tree_state(
-    host: Any,
-    session_id: str,
-    entry_id: str,
-) -> tuple[ConversationEntry, bool, bool, int] | None:
-    """Read one entry with its active/current and child-count state."""
-    snapshot = host._ensure(session_id)
-    if snapshot is None or entry_id not in snapshot.entries:
-        return None
-    entries = host._read_entries(session_id, snapshot, [entry_id])
-    if not entries:
-        return None
-    active_ids = host._active_ids(snapshot)
-    if active_ids is None:
-        return None
-    child_count = sum(
-        location_parent_id(location) == entry_id
-        for location in snapshot.entries.values()
-    )
-    return (
-        entries[0],
-        entry_id in set(active_ids),
-        entry_id == snapshot.leaf_id,
-        child_count,
-    )
-
-
-def query_navigation_target(
-    host: Any,
-    session_id: str,
-    target_id: str,
-) -> ConversationEntry | None:
-    """Return one proven persisted navigation target from the topology index."""
-    snapshot = host._current_snapshot(session_id)
-    if snapshot is None:
-        entry = host._tail_entry(session_id, target_id)
-        if entry is not None:
-            host.warm_async(session_id)
-            return entry
-        snapshot = host._ensure(session_id)
-    if snapshot is None or target_id not in snapshot.entries:
-        return None
-    entries = host._read_entries(session_id, snapshot, [target_id])
-    return entries[0] if entries else None

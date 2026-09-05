@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
+from yoke._file_io import exclusive_file_lock
 
 WRITE_ATTEMPTS = 3
 WRITE_RETRY_SECONDS = 0.02
@@ -28,6 +27,8 @@ def append_json_line(path: Path, record: dict[str, object]) -> None:
         try:
             _append_once(path, encoded)
             return
+        except UsageLogWriteError:
+            raise
         except OSError as exc:
             last_error = exc
             if attempt + 1 < WRITE_ATTEMPTS:
@@ -41,12 +42,12 @@ def append_json_line(path: Path, record: dict[str, object]) -> None:
 def _append_once(path: Path, encoded: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(f".{path.name}.lock")
-    with _exclusive_file_lock(lock_path):
+    with exclusive_file_lock(lock_path):
         flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
         flags |= getattr(os, "O_BINARY", 0)
         descriptor = os.open(path, flags, 0o600)
-        original_size = os.fstat(descriptor).st_size
         try:
+            original_size = os.fstat(descriptor).st_size
             try:
                 _write_all(descriptor, encoded)
                 os.fsync(descriptor)
@@ -88,45 +89,3 @@ def _write_all(descriptor: int, payload: bytes) -> None:
         if written <= 0:
             raise OSError("Usage metric write made no forward progress.")
         remaining = remaining[written:]
-
-
-@contextmanager
-def _exclusive_file_lock(path: Path) -> Iterator[None]:
-    flags = os.O_CREAT | os.O_RDWR
-    flags |= getattr(os, "O_BINARY", 0)
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        _lock_descriptor(descriptor)
-        yield
-    finally:
-        try:
-            _unlock_descriptor(descriptor)
-        finally:
-            os.close(descriptor)
-
-
-def _lock_descriptor(descriptor: int) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        if os.fstat(descriptor).st_size == 0:
-            os.write(descriptor, b"\0")
-            os.fsync(descriptor)
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(descriptor, fcntl.LOCK_EX)
-
-
-def _unlock_descriptor(descriptor: int) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(descriptor, fcntl.LOCK_UN)

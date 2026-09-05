@@ -32,9 +32,6 @@ from yoke.agent.tools import ToolRuntimeContext
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import format_context_usage_text
-from yoke.cli.interactive.prompt.cancellation import (
-    active_branch_entry_refs,
-)
 from yoke.cli.interactive.prompt.control import (
     create_prompt_toolkit_control,
 )
@@ -42,9 +39,6 @@ from yoke.cli.interactive.prompt.loop import (
     process_prompt_toolkit_prompt,
 )
 from yoke.cli.interactive.prompt.scrollback import ScrollbackKind
-from yoke.cli.interactive.prompt.cancellation import (
-    interrupted_turn_snapshot,
-)
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.render import build_console
@@ -52,6 +46,8 @@ from yoke.mcp.client import McpClientError
 from yoke.mcp.client import StdioMcpClient
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp.http_client import StreamableHttpClient
+from yoke.session.interrupt import active_branch_entries
+from yoke.session.interrupt import interrupted_turn_snapshot
 
 from ..cli.support import active_session_for
 
@@ -207,7 +203,7 @@ def test_queued_skill_waits_for_its_fifo_position(tmp_path, monkeypatch) -> None
 
 
 def test_steering_starts_replacement_before_retired_turn_finishes(
-    tmp_path, monkeypatch
+    tmp_path,
 ) -> None:
     @dataclass
     class NonCooperativeAgent:
@@ -244,7 +240,6 @@ def test_steering_starts_replacement_before_retired_turn_finishes(
                 iterations=1,
             )
 
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     state = PromptCliState(
         messages=[],
         pending_prompts=[],
@@ -293,7 +288,7 @@ def test_steering_starts_replacement_before_retired_turn_finishes(
     ]
 
 
-def test_instant_stop_emits_total_turn_summary(tmp_path, monkeypatch) -> None:
+def test_instant_stop_emits_total_turn_summary(tmp_path) -> None:
     @dataclass
     class BlockingAgent:
         supports_message_history = True
@@ -314,7 +309,6 @@ def test_instant_stop_emits_total_turn_summary(tmp_path, monkeypatch) -> None:
             self.release.wait(timeout=5)
             return AgentResult(output="late", messages=[], iterations=1)
 
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     summaries: list[dict[str, object]] = []
     state = PromptCliState(
         messages=[],
@@ -430,7 +424,6 @@ def test_steering_continues_from_latest_tool_result_checkpoint(
             iterations=1,
         )
 
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setattr(
         "yoke.cli.interactive.prompt.turns.execute_turn",
         fake_execute_turn,
@@ -574,7 +567,6 @@ def test_stop_and_immediate_continue_retain_completed_tool_work(
             iterations=1,
         )
 
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setattr(
         "yoke.cli.interactive.prompt.turns.execute_turn",
         fake_execute_turn,
@@ -654,7 +646,7 @@ def test_tool_process_start_failure_releases_resources(monkeypatch) -> None:
     assert invocation not in list(tool_process_module._ACTIVE_INVOCATIONS)
 
 
-def test_turn_cancellation_retires_live_tool_traces(tmp_path, monkeypatch) -> None:
+def test_turn_cancellation_retires_live_tool_traces(tmp_path) -> None:
     @dataclass
     class ToolEventAgent:
         supports_message_history = True
@@ -694,7 +686,6 @@ def test_turn_cancellation_retires_live_tool_traces(tmp_path, monkeypatch) -> No
             conversation.extend([Message.user(prompt), Message.assistant("late")])
             return AgentResult(output="late", messages=conversation, iterations=1)
 
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     state = PromptCliState(
         messages=[],
         pending_prompts=[],
@@ -990,7 +981,7 @@ def test_large_interruption_checkpoint_reuses_immutable_history() -> None:
         messages.append(message)
         parent_id = entry.id
 
-    branch = active_branch_entry_refs(entries, leaf_id=parent_id)
+    branch = active_branch_entries(entries, leaf_id=parent_id)
     snapshot_messages, snapshot_entries = interrupted_turn_snapshot(
         messages=messages,
         entries=branch,

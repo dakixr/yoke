@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from yoke.cli.config.runtime import CLIArgs
+    from yoke.cli.tools.policy import PiConfig
 
     BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
     BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
@@ -43,10 +44,13 @@ _BUILTIN_MODEL_LISTERS: dict[str, BuiltinModelLister] = {}
 def prepare_provider_args(args: CLIArgs) -> None:
     """Apply default model config and split provider-qualified models."""
     model_was_explicit = args.model is not None
-    _apply_config_default_model(args)
-    _normalize_provider_model_args(args)
+    config = None
     if not model_was_explicit:
-        _apply_config_default_reasoning_effort(args)
+        config = load_effective_yoke_config(root=Path(args.root), home=Path.home())
+        _apply_config_default_model(args, config)
+    _normalize_provider_model_args(args)
+    if config is not None:
+        _apply_config_default_reasoning_effort(args, config)
     _apply_compatible_model_reasoning_effort(args)
 
 
@@ -55,7 +59,7 @@ def build_provider_from_args(args: CLIArgs) -> Provider:
     try:
         provider_name = _resolve_provider_name(args)
     except ValueError as exc:
-        provider = _build_first_available_provider(args)
+        provider = _build_first_available_custom_provider(args)
         if provider is not None:
             return provider
         raise exc
@@ -149,20 +153,16 @@ def _provider_context(
     )
 
 
-def _apply_config_default_model(args: CLIArgs) -> None:
-    if args.model is not None:
-        return
-    config = load_effective_yoke_config(root=Path(args.root), home=Path.home())
+def _apply_config_default_model(args: CLIArgs, config: PiConfig) -> None:
     default_model = parse_config_default_model(config.default_model)
     if default_model is None:
         return
     args.model = f"{default_model.provider_name}:{default_model.model_name}"
 
 
-def _apply_config_default_reasoning_effort(args: CLIArgs) -> None:
+def _apply_config_default_reasoning_effort(args: CLIArgs, config: PiConfig) -> None:
     if args.reasoning_effort is not None:
         return
-    config = load_effective_yoke_config(root=Path(args.root), home=Path.home())
     if config.default_reasoning_effort is None:
         return
     args.reasoning_effort = config.default_reasoning_effort
@@ -253,19 +253,10 @@ def _available_provider_names() -> list[str]:
     )
 
 
-def _build_first_available_provider(args: CLIArgs) -> Provider | None:
-    return _build_first_available_custom_provider(args)
-
-
 def _build_first_available_custom_provider(
     args: CLIArgs,
-    *,
-    exclude: set[str] | None = None,
 ) -> Provider | None:
-    excluded = exclude or set()
     for provider_name in available_custom_provider_names(home=Path.home()):
-        if provider_name in excluded:
-            continue
         try:
             provider = create_custom_provider(
                 provider_name,

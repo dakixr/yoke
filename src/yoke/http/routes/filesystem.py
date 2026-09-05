@@ -59,5 +59,6 @@ def read_file(
     return FileResponse(
         target,
         media_type=media_type,
-        headers={"Content-Disposition": f'inline; filename="{target.name}"'},
+        filename=target.name,
+        content_disposition_type="inline",
     )

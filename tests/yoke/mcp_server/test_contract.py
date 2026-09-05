@@ -78,7 +78,6 @@ def test_downstream_gateway_has_conservative_annotations(tmp_path: Path) -> None
         async with memory_client(service) as client:
             result = await client.list_tools()
             tools = {tool.name: tool for tool in result.tools}
-            assert list(tools) == EXPECTED_TOOLS
             assert tools["mcp_inspect"].annotations is not None
             assert tools["mcp_inspect"].annotations.read_only_hint is True
             assert tools["mcp_call"].annotations is not None

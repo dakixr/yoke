@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from yoke.agent.models import ConversationEntry
@@ -25,44 +26,26 @@ from yoke.http.models.session import UserProjectedMessage
 from yoke.session.admissions import INPUT_ID_METADATA_KEY
 
 
-def project_active_messages(
-    record_entries: list[ConversationEntry], leaf_id: str | None
-) -> list[ProjectedMessage]:
-    """Project the selected branch without exposing provider-private fields."""
-    return [
-        project_entry(entry) for entry in active_public_entries(record_entries, leaf_id)
-    ]
+PUBLIC_CHAT_EXCLUDED_KINDS = frozenset(
+    {"instruction", "memory_snapshot", "tool_context"}
+)
 
 
-def active_public_entries(
-    record_entries: list[ConversationEntry],
-    leaf_id: str | None,
+def is_public_chat_entry(entry: ConversationEntry) -> bool:
+    """Return whether one canonical entry belongs in the public chat view."""
+    return entry.kind not in PUBLIC_CHAT_EXCLUDED_KINDS
+
+
+def public_chat_entries(
+    entries: Sequence[ConversationEntry],
 ) -> list[ConversationEntry]:
-    """Return the public selected branch with one linear index pass.
-
-    HTTP transcript reads do not need the mutable ``SessionTree`` machinery.
-    Building the parent map directly avoids reconstructing and validating the
-    complete tree before every paginated message response.
-    """
-    if leaf_id is None:
-        return []
-    legacy_tool_context = legacy_tool_context_entry_ids(record_entries)
-    by_id = {entry.id: entry for entry in record_entries}
-    result: list[ConversationEntry] = []
-    current = leaf_id
-    seen: set[str] = set()
-    while current is not None:
-        if current in seen:
-            raise ValueError("Session tree contains a parent cycle.")
-        seen.add(current)
-        entry = by_id.get(current)
-        if entry is None:
-            break
-        if _is_public_entry(entry) and entry.id not in legacy_tool_context:
-            result.append(entry)
-        current = entry.parent_id
-    result.reverse()
-    return result
+    """Apply the public chat policy, including legacy tool-context detection."""
+    legacy_tool_context = legacy_tool_context_entry_ids(entries)
+    return [
+        entry
+        for entry in entries
+        if is_public_chat_entry(entry) and entry.id not in legacy_tool_context
+    ]
 
 
 def project_tree(
@@ -131,7 +114,7 @@ def project_entry(entry: ConversationEntry) -> ProjectedMessage:
             kind=entry.kind,
             turn_summary=_entry_turn_summary(entry),
             input_id=_entry_input_id(entry),
-            content=_content(message),
+            content=project_message_content(message),
         )
     if entry.kind in {"assistant", "assistant_tool_calls"}:
         return AssistantProjectedMessage(
@@ -140,7 +123,7 @@ def project_entry(entry: ConversationEntry) -> ProjectedMessage:
             kind=entry.kind,
             turn_summary=_entry_turn_summary(entry),
             phase=message.phase if message is not None else None,
-            content=_content(message),
+            content=project_message_content(message),
             tool_calls=[
                 ToolCallSummary(
                     id=call.id,
@@ -169,10 +152,6 @@ def project_entry(entry: ConversationEntry) -> ProjectedMessage:
     )
 
 
-def _is_public_entry(entry: ConversationEntry) -> bool:
-    return entry.kind not in {"instruction", "memory_snapshot", "tool_context"}
-
-
 def project_message_content(message: Message | None) -> list[ProjectedContent]:
     """Project message content without exposing local file paths."""
     if message is None or message.content is None:
@@ -190,9 +169,6 @@ def project_message_content(message: Message | None) -> list[ProjectedContent]:
                 ImageContent(name=part.display_label, uri=part.image_url.url)
             )
     return content
-
-
-_content = project_message_content
 
 
 def _entry_input_id(entry: ConversationEntry) -> str | None:

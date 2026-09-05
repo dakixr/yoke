@@ -74,6 +74,31 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
     skill_registry = _load_cli_skill_registry(Path(args.root))
     initial_active_skills = _activate_cli_skills(skill_registry, args.skills)
     provider = build_provider_from_args(args)
+    try:
+        return _build_cli_agent(
+            args,
+            provider=provider,
+            skill_registry=skill_registry,
+            initial_active_skills=initial_active_skills,
+        )
+    except BaseException:
+        close = getattr(provider, "close", None)
+        if callable(close):
+            try:
+                close()
+            except BaseException:
+                pass
+        raise
+
+
+def _build_cli_agent(
+    args: CLIArgs,
+    *,
+    provider: Provider,
+    skill_registry: SkillRegistry | None,
+    initial_active_skills: list[ActiveSkill],
+) -> BuiltCLIAgent:
+    """Build a CLI runtime after its provider has been created."""
     root = Path(args.root).resolve()
     initial_resolution = _resolve_cli_agent_config(
         root=root,

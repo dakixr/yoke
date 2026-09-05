@@ -16,7 +16,7 @@ from yoke.agent.models import Message
 from yoke.agent.session_tree import SessionTree
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
-from yoke.agent.state import _active_branch_entry_refs
+from yoke.agent.state import active_branch_entries
 
 
 def append_conversation_entry(context: AgentContext, entry: ConversationEntry) -> bool:
@@ -87,7 +87,7 @@ def update_message_projection(
     if not branching:
         context.messages.append(message.model_copy(deep=True))
         return
-    entries = _active_branch_entry_refs(
+    entries = active_branch_entries(
         context.conversation_log.entries,
         leaf_id=context.conversation_log.leaf_id,
     )

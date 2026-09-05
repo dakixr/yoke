@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import Executor
+from concurrent.futures import Future
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC
 from datetime import datetime
+import logging
 import secrets
 from pathlib import Path
 from threading import Event
@@ -19,7 +21,6 @@ from typing import TypeVar
 
 from yoke.agent.loop import AgentResult
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.loop.forking import promote_runtime_fork
 from yoke.agent.compaction import force_compact_agent
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
@@ -50,8 +51,11 @@ from yoke.http.services.runtime_context_usage import RuntimeContextUsageState
 from yoke.http.services.runtime_persistence import active_skill_list
 from yoke.http.services.runtime_persistence import input_has_terminal_assistant
 from yoke.http.services.runtime_persistence import input_is_persisted
+from yoke.http.services.runtime_persistence import normalized_runtime_entry_count
 from yoke.http.services.runtime_persistence import tag_input_entry
 from yoke.http.services.runtime_persistence import with_turn_summary
+from yoke.http.services.session_runtime import SessionRuntimeResources
+from yoke.http.services.session_runtime.completion import retain_cancelled_worker
 from yoke.http.services.runtime_title import SessionTitleAutomation
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
@@ -59,10 +63,10 @@ from yoke.agent.activity import activity_status_for_event
 from yoke.session.admissions import AdmissionRecord
 from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.mcp.config import McpSessionPolicy
-from yoke.mcp.config import McpSessionServerPolicy
 
 type RuntimeState = Literal["idle", "running", "stopping", "waiting_input", "error"]
 T = TypeVar("T")
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -138,12 +142,13 @@ class SessionRuntime:
         self.executor = executor
         self.active_slots = active_slots
         self._lock = asyncio.Lock()
-        self._agent_lock = Lock()
         self._persistence_lock = Lock()
-        self._primary_agent: RuntimeAgent | None = None
-        self._process_unsubscribe: Callable[[], None] | None = None
-        self._session_enabled_tool_names: set[str] | None = None
-        self._mcp_session_policy = McpSessionPolicy.empty()
+        self.resources = SessionRuntimeResources(
+            session_id=session_id,
+            agent_factory=agent_factory,
+            executor=executor,
+            on_process_change=self._on_process_change,
+        )
         self.tool_traces = ToolTraceStore()
         self._active: TurnExecution | None = None
         self._operation: SessionOperation | None = None
@@ -324,8 +329,8 @@ class SessionRuntime:
         async with self._lock:
             self._require_no_work_locked()
             record = self._record()
-            with self._agent_lock:
-                primary = self._primary_agent
+            with self.resources.lock:
+                primary = self.resources.primary_locked()
                 registry = (
                     primary.skill_registry
                     if primary is not None and primary.skill_registry is not None
@@ -384,25 +389,25 @@ class SessionRuntime:
 
     async def close(self) -> None:
         """Stop current work and release the primary runtime."""
-        async with self._lock:
-            if self._active is not None:
-                await self._retire_locked(reason="shutdown")
-            operation_task = (
-                self._operation.task if self._operation is not None else None
-            )
-        if operation_task is not None:
-            await asyncio.shield(operation_task)
-        await self._automatic_title.close()
-        async with self._lock:
-            primary = self._primary_agent
-            self._primary_agent = None
-            unsubscribe = self._process_unsubscribe
-            self._process_unsubscribe = None
-        if unsubscribe is not None:
-            unsubscribe()
-        if primary is not None:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(self.executor, primary.close)
+        operation_task: asyncio.Task[object] | None = None
+        try:
+            async with self._lock:
+                if self._active is not None:
+                    await self._retire_locked(reason="shutdown")
+                operation_task = (
+                    self._operation.task if self._operation is not None else None
+                )
+            if operation_task is not None:
+                try:
+                    await asyncio.shield(operation_task)
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception(
+                        "Session operation failed during runtime shutdown: %s",
+                        self.session_id,
+                    )
+            await self._automatic_title.close()
+        finally:
+            await self.resources.close()
 
     async def _run_selection(
         self,
@@ -438,7 +443,7 @@ class SessionRuntime:
     ) -> ProviderSessionState:
         snapshot = self._snapshot()
         record = snapshot.record
-        agent = self._ensure_primary_agent(
+        agent = self.resources.ensure_primary(
             record,
             load_state=True,
             active_entries=snapshot.owned_active_path(),
@@ -478,9 +483,9 @@ class SessionRuntime:
         try:
             loop = asyncio.get_running_loop()
             payload = await loop.run_in_executor(self.executor, self._compact_sync)
-        except BaseException as exc:
+        except Exception as exc:  # accepted operations settle into runtime status
             await self._finish_operation_error(operation, exc)
-            raise
+            return {"compacted": False}
         finally:
             self.active_slots.release()
         await self._finish_operation_success(operation)
@@ -489,7 +494,7 @@ class SessionRuntime:
     def _compact_sync(self) -> dict[str, object]:
         snapshot = self._snapshot()
         record = snapshot.record
-        agent = self._ensure_primary_agent(
+        agent = self.resources.ensure_primary(
             record,
             load_state=True,
             active_entries=snapshot.owned_active_path(),
@@ -553,13 +558,15 @@ class SessionRuntime:
             self._state = "error"
             self._last_error = str(error)
             self._activity_status = None
-            self.events.durable(
-                self.session_id,
+            self._best_effort_durable(
                 f"session.{operation.kind}.failed",
                 {"operationID": operation.id, "error": self._last_error},
-                location=self._event_location,
             )
-            self._publish_activity(None)
+            self._best_effort_publish_activity(None)
+            if operation.kind == "compaction":
+                next_admission = self._recover_or_next_locked()
+                if next_admission is not None:
+                    self._start_locked(next_admission)
 
     def _new_operation(
         self,
@@ -583,10 +590,7 @@ class SessionRuntime:
 
     def process_manager(self) -> CommandProcessManager | None:
         """Return the live command manager when this runtime has built an agent."""
-        with self._agent_lock:
-            if self._primary_agent is None:
-                return None
-            return self._primary_agent.command_process_manager
+        return self.resources.process_manager()
 
     def tool_trace_store(self) -> ToolTraceStore:
         """Return this runtime's shared live tool trace store."""
@@ -625,17 +629,11 @@ class SessionRuntime:
 
     def session_enabled_tool_names(self) -> set[str] | None:
         """Return the process-local tool allowlist without loading an agent."""
-        with self._agent_lock:
-            return (
-                set(self._session_enabled_tool_names)
-                if self._session_enabled_tool_names is not None
-                else None
-            )
+        return self.resources.session_enabled_tool_names()
 
     def mcp_session_policy(self) -> McpSessionPolicy:
         """Return a defensive process-local MCP policy snapshot."""
-        with self._agent_lock:
-            return McpSessionPolicy(servers=dict(self._mcp_session_policy.servers))
+        return self.resources.mcp_session_policy()
 
     async def set_mcp_policy(
         self,
@@ -650,41 +648,14 @@ class SessionRuntime:
         """Apply session-only MCP server and tool policy."""
         async with self._lock:
             self._require_no_work_locked()
-            with self._agent_lock:
-                existing = self._mcp_session_policy.servers.get(server_name)
-                self._mcp_session_policy.servers[server_name] = McpSessionServerPolicy(
-                    enabled=(
-                        enabled
-                        if enabled is not None
-                        else existing.enabled
-                        if existing
-                        else None
-                    ),
-                    enabled_tools=(
-                        enabled_tools
-                        if update_enabled_tools
-                        else existing.enabled_tools
-                        if existing
-                        else None
-                    ),
-                    disabled_tools=(
-                        disabled_tools
-                        if update_disabled_tools
-                        else existing.disabled_tools
-                        if existing
-                        else None
-                    ),
-                )
-                primary = self._primary_agent
-                if primary is not None:
-                    object.__setattr__(
-                        primary.provider,
-                        "_yoke_mcp_session_policy",
-                        self._mcp_session_policy,
-                    )
-                    primary.refresh_tools(force=True)
-                    if primary._context is not None:
-                        primary._sync_context_instructions(primary._context)
+            self.resources.set_mcp_policy(
+                server_name,
+                enabled=enabled,
+                enabled_tools=enabled_tools,
+                disabled_tools=disabled_tools,
+                update_enabled_tools=update_enabled_tools,
+                update_disabled_tools=update_disabled_tools,
+            )
             self.events.live(
                 "session.mcp.updated",
                 {"server": server_name},
@@ -712,21 +683,12 @@ class SessionRuntime:
                     "unknown_tool",
                     f"Unknown tools: {', '.join(sorted(unknown))}.",
                 )
-            base = (
-                set(self._session_enabled_tool_names)
-                if self._session_enabled_tool_names is not None
-                else set(default_enabled_names)
+            next_enabled = self.resources.set_tools(
+                discovered_names=discovered_names,
+                default_enabled_names=default_enabled_names,
+                enabled=enabled,
+                disabled=disabled,
             )
-            next_enabled = (base | enabled) - disabled
-            self._session_enabled_tool_names = set(next_enabled)
-            with self._agent_lock:
-                primary = self._primary_agent
-                if primary is not None:
-                    hidden_names = set(primary.tools) - discovered_names
-                    primary.set_session_enabled_tools(next_enabled | hidden_names)
-                    primary._install_session_filtered_tool_system_messages()
-                    if primary._context is not None:
-                        primary._sync_context_instructions(primary._context)
             self.events.live(
                 "session.tool.config.changed",
                 {"enabled": sorted(next_enabled)},
@@ -757,8 +719,9 @@ class SessionRuntime:
 
     def _start_locked(self, admission: AdmissionRecord) -> None:
         self._turn_counter += 1
-        cold_start = self._primary_agent is None and not self.read_cache.is_current(
-            self.session_id
+        cold_start = (
+            not self.resources.has_primary()
+            and not self.read_cache.is_current(self.session_id)
         )
         summary = self.store.summary_record(self.session_id)
         automatic_title = bool(
@@ -823,6 +786,9 @@ class SessionRuntime:
         self._publish_activity(None)
 
     async def _run_execution(self, execution: TurnExecution) -> None:
+        outcome: TurnOutcome | None = None
+        worker: Future[TurnOutcome] | None = None
+        loop: asyncio.AbstractEventLoop | None = None
         try:
             if execution.cold_start:
                 # Let the prompt-admission response flush before a cold large-session
@@ -835,16 +801,31 @@ class SessionRuntime:
                 return
             execution.worker_started = True
             loop = asyncio.get_running_loop()
-            outcome = await loop.run_in_executor(
-                self.executor,
+            worker = self.executor.submit(
                 self._execute_sync,
                 execution,
                 loop,
             )
-            await self._finish_execution(execution, outcome)
+            completed_outcome = await asyncio.shield(asyncio.wrap_future(worker))
+            outcome = completed_outcome
+            await self._finish_execution(execution, completed_outcome)
         except asyncio.CancelledError:
-            self._release_slot(execution)
+            if worker is None:
+                self._release_slot(execution)
+            else:
+                assert loop is not None
+                retain_cancelled_worker(
+                    worker,
+                    loop=loop,
+                    retire_agent=self.resources.retire,
+                    release_slot=lambda: self._release_slot(execution),
+                )
             raise
+        except Exception as exc:  # controller finalization boundary
+            await self._finish_execution_error(execution, exc)
+        finally:
+            if outcome is not None:
+                await self.resources.reap(outcome.agent)
 
     def _execute_sync(
         self,
@@ -870,8 +851,15 @@ class SessionRuntime:
                 active_entries = snapshot.runtime_active_path()
                 if record.leaf_id is not None:
                     execution.append_persistence = RuntimeAppendPersistence(
-                        runtime_entry_count=len(active_entries),
+                        runtime_entry_count=normalized_runtime_entry_count(
+                            active_entries
+                        ),
                         leaf_id=record.leaf_id,
+                        leaf_is_instruction=bool(
+                            active_entries
+                            and active_entries[-1].id == record.leaf_id
+                            and active_entries[-1].kind == "instruction"
+                        ),
                     )
             else:
                 record = indexed.record
@@ -951,7 +939,6 @@ class SessionRuntime:
         async with self._lock:
             self._release_slot(execution)
             if execution.retired_event.is_set() or self._active is not execution:
-                self._close_turn_agent_later(outcome.agent)
                 return
             record = self._record_for_execution(execution)
             if outcome.result is not None:
@@ -972,7 +959,7 @@ class SessionRuntime:
                         ),
                     )
                 if outcome.result.status == "completed":
-                    self._promote_runtime_agent(outcome.agent)
+                    self.resources.promote(outcome.agent)
                     settlement = "completed"
                 else:
                     settlement = "stopped"
@@ -1028,7 +1015,6 @@ class SessionRuntime:
                 session_id=self.session_id,
                 record=record,
             )
-            self._close_turn_agent_later(outcome.agent)
             self._active = None
             self._activity_status = None
             self._active_tool_call_ids.pop(execution.turn_id, None)
@@ -1039,6 +1025,37 @@ class SessionRuntime:
                 self._state = "error" if outcome.error is not None else "idle"
                 self._publish_activity(None)
 
+    async def _finish_execution_error(
+        self,
+        execution: TurnExecution,
+        error: BaseException,
+    ) -> None:
+        """Recover local controller state after uncertain final persistence."""
+        self._release_slot(execution)
+        LOGGER.error(
+            "HTTP runtime finalization failed for session %s input %s.",
+            self.session_id,
+            execution.admission.id,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        async with self._lock:
+            if self._active is not execution:
+                return
+            self._active = None
+            self._state = "error"
+            self._last_error = "Session finalization failed."
+            self._activity_status = None
+            self._active_tool_call_ids.pop(execution.turn_id, None)
+            self._best_effort_durable(
+                "session.runtime.failed",
+                {
+                    "inputID": execution.admission.id,
+                    "turnID": execution.turn_id,
+                    "error": self._last_error,
+                },
+            )
+            self._best_effort_publish_activity(None)
+
     def _prepare_turn_agent(
         self,
         record: SessionRecord,
@@ -1046,68 +1063,15 @@ class SessionRuntime:
         active_entries: list[ConversationEntry] | None,
         snapshot: SessionReadSnapshot | None,
     ) -> object:
-        primary_or_candidate = self._ensure_primary_agent(record, load_state=False)
-        if not isinstance(primary_or_candidate, RuntimeAgent):
-            return primary_or_candidate
-        with self._agent_lock:
-            primary = self._primary_agent
-            assert primary is not None
-            turn_agent = primary.fork(isolate_provider=True, include_state=False)
-            if active_entries is None:
-                assert snapshot is not None
-                active_entries = snapshot.owned_active_path()
-            turn_agent.load_owned_conversation(
-                active_entries,
-                available_skills=primary.available_skills,
-                active_skills=primary.active_skills,
-            )
-            return turn_agent
+        def load_active_entries() -> list[ConversationEntry]:
+            assert snapshot is not None
+            return snapshot.owned_active_path()
 
-    def _ensure_primary_agent(
-        self,
-        record: SessionRecord,
-        *,
-        load_state: bool,
-        active_entries: list[ConversationEntry] | None = None,
-    ) -> object:
-        with self._agent_lock:
-            if self._primary_agent is None:
-                candidate = self.agent_factory(record)
-                if not isinstance(candidate, RuntimeAgent):
-                    return candidate
-                self._primary_agent = candidate
-                object.__setattr__(
-                    candidate.provider,
-                    "_yoke_mcp_session_policy",
-                    self._mcp_session_policy,
-                )
-                candidate.refresh_tools(force=True)
-                self._process_unsubscribe = candidate.command_process_manager.subscribe(
-                    self._on_process_change
-                )
-                if self._session_enabled_tool_names is not None:
-                    candidate.set_session_enabled_tools(
-                        self._session_enabled_tool_names
-                    )
-            primary = self._primary_agent
-            assert primary is not None
-            if load_state:
-                if active_entries is None:
-                    active_entries = self._snapshot().owned_active_path()
-                primary.load_owned_conversation(
-                    active_entries,
-                    available_skills=primary.available_skills,
-                    active_skills=record.active_skills,
-                )
-            return primary
-
-    def _promote_runtime_agent(self, turn_agent: object | None) -> None:
-        if not isinstance(turn_agent, RuntimeAgent):
-            return
-        with self._agent_lock:
-            primary = self._primary_agent
-            if primary is not None and turn_agent is not primary:
-                promote_runtime_fork(primary, turn_agent)
+        return self.resources.prepare_turn(
+            record,
+            active_entries=active_entries,
+            load_active_entries=load_active_entries,
+        )
 
     def _checkpoint(
         self,
@@ -1337,6 +1301,39 @@ class SessionRuntime:
             location=self._event_location,
         )
 
+    def _best_effort_durable(
+        self,
+        event_type: str,
+        data: dict[str, object],
+    ) -> None:
+        """Report a controller failure without making cleanup depend on the journal."""
+        try:
+            self.events.durable(
+                self.session_id,
+                event_type,
+                data,
+                location=self._event_location,
+            )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception(
+                "Failed to journal %s for session %s.",
+                event_type,
+                self.session_id,
+            )
+
+    def _best_effort_publish_activity(
+        self,
+        execution: TurnExecution | None,
+    ) -> None:
+        """Publish terminal local state without making cleanup depend on the broker."""
+        try:
+            self._publish_activity(execution)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception(
+                "Failed to publish terminal activity for session %s.",
+                self.session_id,
+            )
+
     def _on_process_change(self) -> None:
         self.events.live(
             "session.process.updated",
@@ -1349,22 +1346,6 @@ class SessionRuntime:
         if execution.slot_acquired and not execution.slot_released:
             execution.slot_released = True
             self.active_slots.release()
-
-    def _close_turn_agent_later(self, turn_agent: object | None) -> None:
-        if not isinstance(turn_agent, RuntimeAgent):
-            return
-        primary = self._primary_agent
-        provider = getattr(turn_agent, "provider", None)
-
-        def close() -> None:
-            turn_agent.close()
-            close_provider = getattr(provider, "close", None)
-            if callable(close_provider) and provider is not getattr(
-                primary, "provider", None
-            ):
-                close_provider()
-
-        asyncio.get_running_loop().run_in_executor(self.executor, close)
 
 
 _PUBLIC_AGENT_EVENTS = {

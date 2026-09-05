@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import random
-import subprocess
 import threading
 from collections import deque
 from collections.abc import Callable
@@ -13,13 +12,13 @@ from contextlib import suppress
 from pathlib import Path
 
 from yoke.agent.tools.command_process import _ManagedCommandProcess
+from yoke.agent.tools.command_process_support.output import CompletedCommandProcess
+from yoke.agent.tools.command_process_support.admission import spawn
 from yoke.agent.tools.command_process_types import (
     MAX_COMPLETED_PROCESS_COUNT,
 )
-from yoke.agent.tools.command_process_types import MAX_PROCESS_COUNT
 from yoke.agent.tools.command_process_types import CancelRequested
 from yoke.agent.tools.command_process_types import CommandProcessResult
-from yoke.agent.tools.command_process_types import CommandProcessOutputChunk
 from yoke.agent.tools.command_process_types import CommandProcessOutputPage
 from yoke.agent.tools.command_process_types import (
     CommandProcessSnapshot,
@@ -28,8 +27,6 @@ from yoke.agent.tools.command_process_types import clamp_exec_yield_time
 from yoke.agent.tools.command_process_types import (
     clamp_write_yield_time,
 )
-from yoke.agent.tools.python_env import prepare_python_env
-from yoke.agent.tools.shell import build_shell_command
 
 ProcessChangeListener = Callable[[], None]
 
@@ -37,10 +34,13 @@ ProcessChangeListener = Callable[[], None]
 class CommandProcessManager:
     """Own and expose command processes for one live agent runtime."""
 
+    _managed_process_factory = _ManagedCommandProcess
+
     def __init__(self, *, base_environment: Mapping[str, str] | None = None) -> None:
         self._lock = threading.RLock()
+        self._spawn_lock = threading.Lock()
         self._processes: dict[int, _ManagedCommandProcess] = {}
-        self._completed: deque[CommandProcessSnapshot] = deque(
+        self._completed: deque[CompletedCommandProcess] = deque(
             maxlen=MAX_COMPLETED_PROCESS_COUNT
         )
         self._background_session_ids: set[int] = set()
@@ -73,10 +73,13 @@ class CommandProcessManager:
     def release(self) -> None:
         """Release one runtime lease and close after the final release."""
         with self._lock:
-            if self._leases > 0:
-                self._leases -= 1
-                if self._leases == 0:
-                    self.close()
+            if self._leases == 0:
+                return
+            self._leases -= 1
+            if self._leases:
+                return
+            self._closed = True
+        self.close()
 
     def exec_command(
         self,
@@ -161,7 +164,7 @@ class CommandProcessManager:
     def snapshots(self) -> list[CommandProcessSnapshot]:
         """Return stable non-consuming snapshots, oldest first."""
         with self._lock:
-            completed = list(self._completed)
+            completed = [process.snapshot for process in self._completed]
             active = [process.snapshot() for process in self._processes.values()]
         return sorted([*completed, *active], key=lambda item: item.started_at)
 
@@ -172,7 +175,11 @@ class CommandProcessManager:
             if managed is not None:
                 return managed.snapshot()
             completed = next(
-                (item for item in self._completed if item.session_id == session_id),
+                (
+                    item.snapshot
+                    for item in self._completed
+                    if item.snapshot.session_id == session_id
+                ),
                 None,
             )
         if completed is None:
@@ -192,28 +199,18 @@ class CommandProcessManager:
             completed = None
             if managed is None:
                 completed = next(
-                    (item for item in self._completed if item.session_id == session_id),
+                    (
+                        item
+                        for item in self._completed
+                        if item.snapshot.session_id == session_id
+                    ),
                     None,
                 )
         if managed is not None:
             return managed.output_page(after_seq=after_seq, limit=limit)
         if completed is None:
             raise ValueError(f"Unknown command session ID {session_id}")
-        latest = completed.latest_output_seq
-        if latest == 0 or after_seq >= latest or not completed.output_tail:
-            chunks: tuple[CommandProcessOutputChunk, ...] = ()
-        else:
-            chunks = (
-                CommandProcessOutputChunk(seq=latest, text=completed.output_tail),
-            )
-        return CommandProcessOutputPage(
-            chunks=chunks,
-            latest_seq=latest,
-            truncated_before_seq=max(
-                completed.truncated_before_seq,
-                max(0, latest - 1),
-            ),
-        )
+        return completed.output_page(after_seq=after_seq, limit=limit)
 
     def write_input(self, session_id: int, chars: str) -> None:
         """Write stdin without consuming process output."""
@@ -260,30 +257,43 @@ class CommandProcessManager:
         """Terminate all running command sessions."""
         with self._lock:
             processes = list(self._processes.values())
-            self._processes.clear()
-            session_ids = {process.session_id for process in processes}
-            self._background_session_ids.difference_update(session_ids)
-            self._notified_completion_ids.difference_update(session_ids)
+        first_error: BaseException | None = None
         for process in processes:
-            process.terminate()
+            try:
+                process.terminate()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+                continue
+            with self._lock:
+                if self._processes.get(process.session_id) is process:
+                    self._processes.pop(process.session_id)
+                    self._background_session_ids.discard(process.session_id)
+                    self._notified_completion_ids.discard(process.session_id)
         if processes:
             self._notify()
+        if first_error is not None:
+            raise first_error
         return len(processes)
 
     def close(self) -> None:
         """Terminate live processes and release retained process state."""
         with self._lock:
-            if self._closed:
-                return
             self._closed = True
             self._listeners.clear()
-        self.terminate_all()
+        first_error: BaseException | None = None
+        try:
+            self.terminate_all()
+        except BaseException as exc:
+            first_error = exc
         with self._lock:
             self._completed.clear()
             self._completion_events.clear()
             self._background_session_ids.clear()
             self._notified_completion_ids.clear()
             self._dropped_completion_events = 0
+        if first_error is not None:
+            raise first_error
 
     def _spawn(
         self,
@@ -297,52 +307,21 @@ class CommandProcessManager:
         env: dict[str, str] | None = None,
         timeout_seconds: int | None = None,
     ) -> _ManagedCommandProcess:
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("Command process manager is closed")
-            self._prune_if_needed()
-            session_id = self._allocate_session_id()
-            process_env = env.copy() if env is not None else self.base_environment()
-            if env is None:
-                prepare_python_env(process_env)
-            process_argv = argv or build_shell_command(
-                command, process_env, shell=shell, login=login
-            )
-            master_fd: int | None = None
-            slave_fd: int | None = None
-            managed: _ManagedCommandProcess | None = None
-            try:
-                process, master_fd, slave_fd = _open_process(
-                    process_argv, cwd, process_env, tty=tty
-                )
-                managed = _ManagedCommandProcess(
-                    session_id=session_id,
-                    command=command,
-                    cwd=cwd,
-                    process=process,
-                    tty=tty,
-                    master_fd=master_fd,
-                    on_change=self._notify,
-                    timeout_seconds=timeout_seconds,
-                )
-                self._processes[session_id] = managed
-                managed.start_readers()
-            except Exception:
-                self._processes.pop(session_id, None)
-                if managed is not None:
-                    managed.terminate()
-                elif master_fd is not None:
-                    os.close(master_fd)
-                raise
-            finally:
-                if slave_fd is not None:
-                    os.close(slave_fd)
-        self._notify()
-        return managed
+        return spawn(
+            self,
+            command,
+            cwd,
+            tty,
+            shell,
+            login,
+            argv=argv,
+            env=env,
+            timeout_seconds=timeout_seconds,
+        )
 
     def _allocate_session_id(self) -> int:
         used = set(self._processes)
-        used.update(item.session_id for item in self._completed)
+        used.update(item.snapshot.session_id for item in self._completed)
         used.update(item.session_id for item in self._completion_events)
         while True:
             candidate = random.SystemRandom().randrange(1_000, 100_000)
@@ -380,37 +359,24 @@ class CommandProcessManager:
 
     def _complete(self, session_id: int) -> None:
         with self._lock:
-            managed = self._processes.pop(session_id, None)
+            managed = self._processes.get(session_id)
             if managed is None:
+                return
+            completed = managed.completed_record()
+        managed.close()
+        with self._lock:
+            if self._processes.get(session_id) is not managed:
                 return
             if (
                 session_id in self._background_session_ids
                 and session_id not in self._notified_completion_ids
             ):
-                self._record_completion_event(managed.snapshot())
+                self._record_completion_event(completed.snapshot)
+            self._processes.pop(session_id)
             self._background_session_ids.discard(session_id)
             self._notified_completion_ids.discard(session_id)
-            self._completed.append(managed.snapshot())
-        managed.close()
+            self._completed.append(completed)
         self._notify()
-
-    def _prune_if_needed(self) -> None:
-        if len(self._processes) < MAX_PROCESS_COUNT:
-            return
-        oldest = min(
-            self._processes.values(),
-            key=lambda process: (not process.finished, process.last_used_at),
-        )
-        if oldest.finished:
-            self._capture_completion_events()
-        self._processes.pop(oldest.session_id, None)
-        self._background_session_ids.discard(oldest.session_id)
-        self._notified_completion_ids.discard(oldest.session_id)
-        if oldest.finished:
-            self._completed.append(oldest.snapshot())
-            oldest.close()
-        else:
-            oldest.terminate()
 
     def _notify(self) -> None:
         self._capture_completion_events()
@@ -419,38 +385,3 @@ class CommandProcessManager:
         for listener in listeners:
             with suppress(Exception):
                 listener()
-
-
-def _open_process(
-    argv: list[str] | str, cwd: Path, env: dict[str, str], *, tty: bool
-) -> tuple[subprocess.Popen[bytes], int | None, int | None]:
-    if tty and os.name != "nt":
-        import pty
-
-        master_fd, slave_fd = pty.openpty()
-        process = subprocess.Popen(  # noqa: S603
-            argv,
-            cwd=cwd,
-            env=env,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            start_new_session=True,
-            text=False,
-        )
-        return process, master_fd, slave_fd
-    creationflags = (
-        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
-    )
-    process = subprocess.Popen(  # noqa: S603
-        argv,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=creationflags,
-        start_new_session=os.name != "nt",
-        text=False,
-    )
-    return process, None, None

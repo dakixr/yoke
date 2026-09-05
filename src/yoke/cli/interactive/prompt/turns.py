@@ -16,7 +16,6 @@ from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.state import capture_agent_state
 from yoke.cli.config import RUN_ERRORS
-from yoke.cli.image_input import ImageAttachment
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.common import (
@@ -29,7 +28,10 @@ from yoke.cli.interactive.common import (
 )
 from yoke.cli.interactive.common import partial_messages_from_error
 from yoke.cli.interactive.common import prompt_turn_tracking
-from yoke.cli.interactive.queue.persistence import persist_prompt_queue
+from yoke.cli.interactive.queue.mutations import dequeue_prompt
+from yoke.cli.interactive.queue.mutations import (
+    next_pending_prompt_index as next_pending_prompt_index,
+)
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.runtime import ActiveSession, AgentRunner, EventRenderer
 from yoke.cli.runtime import execute_turn
@@ -303,38 +305,23 @@ def finish_prompt_turn(
     request_context_usage: Callable[[str], None],
 ) -> tuple[PendingPrompt | None, bool]:
     """Clear active turn state and return next prompt/shutdown flags."""
-    next_prompt: PendingPrompt | None = None
-    should_finish = False
-    queue_snapshot: tuple[list[PendingPrompt], list[ImageAttachment]] | None = None
     with state_lock:
+        state.turn_handoff_active = True
         state.worker = None
         state.active_stop_request = None
         state.active_user_message = None
-        if state.shutdown_requested:
-            should_finish = True
-        elif any(not prompt.paused for prompt in state.pending_prompts):
-            next_index = next_pending_prompt_index(state.pending_prompts)
-            if next_index is not None:
-                next_prompt = state.pending_prompts.pop(next_index)
-                queue_snapshot = (
-                    list(state.pending_prompts),
-                    list(state.pending_images),
-                )
-    if queue_snapshot is not None:
-        persist_prompt_queue(active_session, *queue_snapshot)
+        should_finish = state.shutdown_requested
+    next_prompt = None
+    if not should_finish:
+        next_prompt = dequeue_prompt(
+            state=state,
+            state_lock=state_lock,
+            active_session=active_session,
+        )
+    with state_lock:
+        state.turn_handoff_active = next_prompt is not None
     request_context_usage("")
     return next_prompt, should_finish
-
-
-def next_pending_prompt_index(prompts: list[PendingPrompt]) -> int | None:
-    """Return the next runnable prompt, prioritizing steering items."""
-    for index, prompt in enumerate(prompts):
-        if prompt.kind == "steering" and not prompt.paused:
-            return index
-    for index, prompt in enumerate(prompts):
-        if not prompt.paused:
-            return index
-    return None
 
 
 def emit_turn_summary(

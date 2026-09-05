@@ -66,12 +66,19 @@ custom provider plugins under `~/.yoke/providers/`. Provider status includes
 credential readiness, model catalogs, context windows, thinking controls, and
 image-input metadata.
 
+If a custom provider factory returns an instance that fails validation or
+model-catalog initialization, Yoke closes that instance before reporting the
+original error. An error during cleanup does not replace the construction error.
+
 Codex can authenticate from its OAuth state, the Codex account vault, or
 `YOKE_CODEX_API_KEY`. OpenCode Go uses `OPENCODE_API_KEY`; Z.ai uses
 `ZAI_API_KEY`. The CLI credential store is also included in provider
 resolution. OpenCode Go requests include a stable `x-opencode-session` value.
 Pass `session_id=` to `build_builtin_provider()` when provider instances must
 retain the same OpenCode Go session identity after reconstruction.
+
+OpenAI-compatible, Responses, and Z.ai retries honor an explicit `Retry-After: 0`.
+They use exponential backoff only when no usable retry delay was supplied.
 
 Codex uses Responses continuity and a stable cache scope. Healthy follow-up
 requests can send only the new input against the prior response; stale anchors
@@ -135,6 +142,10 @@ payloads. A provider that does not report token counts still gets a completion
 record with an empty `usage` object. Usage records continue to use
 `schema_version: 1`; the attribution fields are optional additions.
 
+Reported zero counts remain zero. For aliases such as `output_tokens` and
+`completion_tokens`, the fallback applies only when the preferred value is
+missing or invalid, not when it is zero.
+
 SDK operations are `complete`, `agent`, and `run_many`. A random `sdk_run_id`
 groups the provider calls produced by one direct completion, agent prompt, or
 batch task attempt. Call kinds distinguish direct completions, model iterations,
@@ -147,7 +158,8 @@ Set `YOKE_USAGE_METRIC_LOG_DIR` to store these local metrics in another
 directory. Writes use a cross-process lock, retry transient failures, and flush
 data to disk before returning. A persistent failure raises
 `yoke.ai.providers.UsageLogWriteError` instead of silently losing a completed
-usage record.
+usage record. A failed append is rolled back before retrying. If that rollback
+fails, the writer stops rather than appending more bytes to an uncertain record.
 
 ## Observing Agent Work
 
@@ -185,6 +197,9 @@ are logged and do not fail the agent run. Each observer receives an isolated
 deep payload snapshot, so an observer cannot change runtime results or another
 observer's input. Serialized tool arguments are parsed before credential
 redaction; malformed serialized arguments are hidden rather than logged.
+Singular token keys such as `accessToken`, `refreshToken`, and `authToken` are
+redacted regardless of case. Plural usage counters such as `input_tokens` and
+`outputTokens` remain visible.
 
 Cancellation and timeouts are cooperative. They signal the runtime through its
 existing stop callback and propagate to the async caller immediately. The
@@ -409,7 +424,9 @@ for the active provider/model, and both the CLI and SDK use that same registry.
 Built-in `file.write` exposes `apply_patch` for GPT-family models and
 `edit` plus `write` for other models. Image attachment is omitted when a
 model is known not to support image input, and `image.generate` resolves only
-for a compatible Codex provider. `web_research` uses Codex hosted Responses
+for a compatible Codex provider. SDK tool binding resolves only selected
+capabilities; unknown IDs fail without constructing unrelated tool resources.
+`web_research` uses Codex hosted Responses
 web search when available. Multiple hosted research calls from one model
 response run concurrently and keep provider tool-result order stable. Other
 providers use bounded local search, fetch, and provider synthesis. The local

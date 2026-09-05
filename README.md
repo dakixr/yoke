@@ -81,6 +81,12 @@ uv run ruff check .
 uv run ruff format .
 uv run ty check
 uv run pyright
+node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
+cd clients/typescript && npm ci && npm run check
 ```
+
+The full Python suite, browser regression script, and TypeScript contract check
+run in CI. Native `fd` execution tests skip when `fd` is not installed; search
+registration tests exercise both native and portable fallback configurations.
 
 Documentation lives in `src/yoke/docs`.

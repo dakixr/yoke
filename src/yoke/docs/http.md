@@ -25,8 +25,14 @@ npm ci
 npm run check
 ```
 
-The `HTTP contract` GitHub Actions workflow runs both the Python contract tests
-and this TypeScript generation/typecheck on pushes to `main` and pull requests.
+The `HTTP contract` GitHub Actions workflow runs the full Python suite, including
+the contract tests, plus TypeScript generation/typechecking and browser
+regressions on pushes to `main` and pull requests. Run the browser tests locally
+from the repository root with:
+
+```bash
+node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
+```
 
 ## Starting the daemon
 
@@ -77,10 +83,14 @@ in session-scoped browser storage, not long-lived local storage. A launch URL
 may supply `?token=...`; the application consumes it and removes it from the
 visible/history URL immediately.
 
+Authentication failures return HTTP 401 with `WWW-Authenticate: Bearer` and the
+normal JSON error envelope.
+
 The browser application is a no-build Preact + HTM application shipped under
 `src/yoke/web`. `GET /`, `/new`, `/session/<id>`, and `/settings` return the
 application shell, and `GET /assets/*` serves the packaged browser modules,
-CSS, vendored dependencies, and licenses. These browser routes are excluded
+CSS, vendored dependencies, and licenses. `/settings` is a compatibility alias
+for the home view, not a separate settings screen. These browser routes are excluded
 from the v1 OpenAPI schema. Production does not require Node.js, npm, a CDN, or
 a separate frontend server. When image attachments are enabled, the composer
 accepts images from the file picker, drag and drop, and the browser paste event
@@ -94,10 +104,10 @@ Windows and Linux, toggles the sessions sidebar without stealing the browser's
 Shift-modified variant. From a new-session draft, Cmd+Enter on macOS or
 Ctrl+Enter elsewhere creates and starts that session in the background, then
 opens a fresh draft with the same location, provider, model, and reasoning
-effort instead of navigating into the running session. The
-Ctrl+X chords open tools (`Ctrl+X O`), processes (`Ctrl+X P`), queue, model
-selection, and the session tree. The process chord also accepts the CLI-style
-`Ctrl+X Ctrl+P` form. `/shortcuts` and `?` show the browser shortcut summary.
+effort instead of navigating into the running session. Open inspectors from
+the Inspect menu, command palette, or slash commands. The browser does not
+capture the terminal CLI's Ctrl+X chords. `/shortcuts` and `?` show the browser
+shortcut summary.
 Alt+V is terminal-specific; browser clipboard security requires Cmd+V/Ctrl+V.
 Typing `/` at the start of an empty prompt opens the browser slash-command
 completion menu using `/api/v1/command` metadata. The menu supports keyboard
@@ -110,11 +120,15 @@ while editing a new-session draft.
 
 Each saved session has its own browser composer draft. Prompt text and pending
 image attachments stay with that session while the user navigates to another
-session, settings, inspectors, or other browser routes, and they are restored
+session, inspectors, or other browser routes, and they are restored
 when the session is opened again. Saved-session composer drafts use per-tab
 session storage, so they also survive a page reload without becoming long-lived
 browser data. A successful prompt admission clears that session draft; a failed
 admission restores the exact text and attachments.
+
+Clearing a new-session draft removes its saved text and attachments without
+closing the open composer. Editing or deleting another draft does not save the
+cleared draft again.
 
 Provider image limits apply only to provider-bound projections. When a model
 has a request-wide image limit, Yoke keeps the newest allowed images and
@@ -177,6 +191,8 @@ single unreadable session file is skipped rather than failing the complete
 session list.
 
 Large-session reads use a separate persistent byte-offset/topology sidecar.
+The implementation lives in `yoke.http.services.session_message_index`, with
+storage, queries, tail reading, and sidecar encoding in separate modules.
 The initial latest-message, Context, Tree, and nearby tree-navigation reads have
 bounded reverse-scan paths that do not wait for a complete topology build. A
 single background worker builds or catches up the full sidecar afterward.
@@ -211,6 +227,11 @@ at the same time, subject to the daemon-wide active-session limit. Disconnecting
 an HTTP request or event stream does not cancel admitted work. Use
 `POST /api/v1/session/{sessionID}/interrupt` to retire the active generation.
 
+Completed agents and providers retire on independent daemon workers. A blocked
+provider close cannot delay another session's cleanup. Each retirement retries
+sequentially and retains its resources until cleanup succeeds; it cannot force
+a non-cooperative close callback to return.
+
 Prompt submission uses:
 
 ```text
@@ -233,6 +254,15 @@ PATCH /api/v1/session/{sessionID}/queue
 Queue patches send `expectedRevision` and an atomic operation list. A stale
 revision returns `409 queue_revision_conflict` without applying any operation.
 
+CLI and HTTP queue mutations share a per-queue cross-process lock covering the
+disk read and commit. Queue and admission writes use unique temporary siblings
+before atomic replacement. They remain separate files, not one crash-atomic
+transaction. Code that reads and later replaces a queue should use
+`yoke.session.queue.prompt_queue_transaction` to avoid interleaved mutations.
+The CLI queue manager supplies the revision it opened. If an HTTP or CLI edit
+changes that revision, saving the manager reloads the current queue and reports
+a conflict. It does not overwrite the intervening edit.
+
 ## Events and reconnect
 
 One browser client should keep one global Server-Sent Events connection:
@@ -244,6 +274,11 @@ GET /api/v1/event
 The stream multiplexes activity from every loaded session. Completed semantic
 boundaries are also written to the per-session durable event journal. Token and
 tool-output deltas stay process-local and ephemeral.
+
+A slow consumer receives `server.resyncRequired` before its stream closes.
+Shutdown and unsubscribe discard pending live events and release the stream,
+even when the subscriber queue is full. Durable history remains available for
+recovery after reconnecting.
 
 Recover durable events with:
 
@@ -529,6 +564,11 @@ its HEAD changes. Status, turn/iteration, duration, arguments, retained output,
 result, and surrounding context are shown as one readable detail document, with
 raw JSON and wrapping controls available when needed.
 
+Reconstructed tool context stops at the next user turn, so a later response is
+not attributed to an earlier tool call. Live trace snapshots and merged entries
+copy nested arguments, results, and context rather than exposing mutable store
+state to callers.
+
 Arguments and results render as fields rather than JSON dumps. Scalars collapse
 into a compact chip row, long strings and nested structures get their own
 labelled blocks, tall payloads clamp behind an expander, and each card can be
@@ -584,7 +624,9 @@ from visually undoing a newer click or resurrecting an already durable prompt.
 ## Files and uploads
 
 Filesystem endpoints canonicalize requested paths and reject traversal or
-symlink escapes outside the authorized root.
+symlink escapes outside the authorized root. File responses use an inline
+`Content-Disposition` header with encoded filenames, so non-ASCII names and
+quotes do not break the response.
 
 Prompt images use `POST /api/v1/upload`, then reference the returned opaque
 `yoke-upload://...` URI in prompt admission. Uploads are bound to a session.

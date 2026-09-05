@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,17 +19,40 @@ from yoke.ai.providers.codex.subscription import OAuthCredentials
 TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0mQAAAAASUVORK5CYII="
 
 
+class _ImageProvider(CodexSubscriptionProvider):
+    def _fresh_credentials(self) -> OAuthCredentials:
+        return OAuthCredentials(
+            access="access-token",
+            refresh="refresh-token",
+            expires=9999999999999,
+            account_id="account-id",
+        )
+
+
+@contextmanager
+def _provider(
+    tmp_path: Path, handler: Callable[[httpx.Request], httpx.Response]
+) -> Iterator[CodexSubscriptionProvider]:
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        provider = _ImageProvider(
+            CodexSubscriptionConfig(
+                auth_path=tmp_path / "auth.json",
+                accounts_dir=tmp_path / "accounts",
+                auths_path=tmp_path / "auths.json",
+                selection_path=tmp_path / "selection.json",
+                base_url="https://chatgpt.com/backend-api",
+            ),
+            http_client=client,
+        )
+        try:
+            yield provider
+        finally:
+            provider.close()
+
+
 def test_codex_provider_generate_image_posts_to_subscription_endpoint(
     tmp_path: Path,
 ) -> None:
-    class TestCodexProvider(CodexSubscriptionProvider):
-        def _fresh_credentials(self) -> OAuthCredentials:
-            return OAuthCredentials(
-                access="access-token",
-                refresh="refresh-token",
-                expires=9999999999999,
-                account_id="account-id",
-            )
 
     requests: list[httpx.Request] = []
 
@@ -43,20 +68,8 @@ def test_codex_provider_generate_image_posts_to_subscription_endpoint(
             ),
         )
 
-    provider = TestCodexProvider(
-        CodexSubscriptionConfig(
-            auth_path=tmp_path / "auth.json",
-            accounts_dir=tmp_path / "accounts",
-            auths_path=tmp_path / "auths.json",
-            selection_path=tmp_path / "selection.json",
-            base_url="https://chatgpt.com/backend-api",
-        ),
-        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    try:
+    with _provider(tmp_path, handler) as provider:
         encoded = provider.generate_image(prompt="a small fox")
-    finally:
-        provider.close()
 
     assert base64.b64decode(encoded) == base64.b64decode(TINY_PNG)
     assert len(requests) == 1
@@ -78,15 +91,6 @@ def test_codex_provider_generate_image_posts_to_subscription_endpoint(
 def test_codex_provider_edit_image_posts_to_subscription_endpoint(
     tmp_path: Path,
 ) -> None:
-    class TestCodexProvider(CodexSubscriptionProvider):
-        def _fresh_credentials(self) -> OAuthCredentials:
-            return OAuthCredentials(
-                access="access-token",
-                refresh="refresh-token",
-                expires=9999999999999,
-                account_id="account-id",
-            )
-
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -100,23 +104,11 @@ def test_codex_provider_edit_image_posts_to_subscription_endpoint(
             ),
         )
 
-    provider = TestCodexProvider(
-        CodexSubscriptionConfig(
-            auth_path=tmp_path / "auth.json",
-            accounts_dir=tmp_path / "accounts",
-            auths_path=tmp_path / "auths.json",
-            selection_path=tmp_path / "selection.json",
-            base_url="https://chatgpt.com/backend-api",
-        ),
-        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    try:
+    with _provider(tmp_path, handler) as provider:
         encoded = provider.edit_image(
             prompt="add a hat",
             image_urls=["data:image/png;base64,Zm9v"],
         )
-    finally:
-        provider.close()
 
     assert base64.b64decode(encoded) == base64.b64decode(TINY_PNG)
     assert len(requests) == 1

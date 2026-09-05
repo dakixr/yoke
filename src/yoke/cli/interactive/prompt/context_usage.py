@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from threading import Lock, Thread
 
 from yoke.cli.interactive.common import PromptCliState
+
+logger = logging.getLogger(__name__)
 
 
 class ContextUsageWorker:
@@ -40,22 +43,40 @@ class ContextUsageWorker:
                 self._running = True
                 start_worker = True
         if start_worker:
-            Thread(
-                target=self._run,
-                daemon=True,
-                name="yoke-context-usage",
-            ).start()
+            self._start_worker()
+
+    def _start_worker(self) -> None:
+        Thread(
+            target=self._run,
+            daemon=True,
+            name="yoke-context-usage",
+        ).start()
 
     def _run(self) -> None:
+        restart_worker = False
+        try:
+            self._process_requests()
+        finally:
+            with self._lock:
+                self._running = False
+                if self._pending is not None:
+                    self._running = True
+                    restart_worker = True
+            if restart_worker:
+                self._start_worker()
+
+    def _process_requests(self) -> None:
         while True:
             with self._lock:
-                request = self._pending
-                self._pending = None
-                if request is None:
-                    self._running = False
-                    return
+                request, self._pending = self._pending, None
+            if request is None:
+                return
             editor_text, revision, turn_id = request
-            usage = self._estimate(editor_text)
+            try:
+                usage = self._estimate(editor_text)
+            except Exception:
+                logger.exception("Failed to estimate context usage.")
+                continue
             with self._state_lock:
                 if (
                     self._state.context_usage_revision != revision

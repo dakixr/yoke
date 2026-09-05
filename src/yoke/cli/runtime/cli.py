@@ -133,7 +133,6 @@ def run_cli(
     if mode.kind == "headless":
         try:
             return _run_headless_mode(
-                args=args,
                 active_agent=active_agent,
                 active_session=active_session,
                 session_messages=session_messages,
@@ -296,7 +295,6 @@ def _resolve_runtime_agent(
 
 def _run_headless_mode(
     *,
-    args: CLIArgs,
     active_agent: AgentRunner,
     active_session: ActiveSession,
     session_messages: list[Message],
@@ -306,7 +304,6 @@ def _run_headless_mode(
     error_console,
     output_console,
 ) -> int:
-    del args
     if prompt is None:
         raise ValueError("Headless mode requires a prompt.")
     resolved_image_paths = _resolve_image_paths(image_paths, root=active_session.root)

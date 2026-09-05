@@ -35,10 +35,6 @@ Add the reusable instructions for this skill here.
 """
 
 
-def _resolve_cli_skill_dirs(root: Path) -> list[str]:
-    return default_cli_skill_dirs(root)
-
-
 @skills_app.command(
     "list",
     help=("List discovered skills from built-in and default CLI skill directories."),
@@ -57,7 +53,7 @@ def skills_list(
 ) -> None:
     """skills_list."""
     try:
-        registry = load_skill_registry(_resolve_cli_skill_dirs(root))
+        registry = load_skill_registry(default_cli_skill_dirs(root))
     except ValueError as exc:
         typer.echo(f"Skill loading failed: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -91,7 +87,7 @@ def skills_show(
 ) -> None:
     """skills_show."""
     try:
-        registry = load_skill_registry(_resolve_cli_skill_dirs(root))
+        registry = load_skill_registry(default_cli_skill_dirs(root))
         skill = registry.require(name)
         typer.echo(skill.load_content())
     except (KeyError, ValueError) as exc:

@@ -1,18 +1,33 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405,S101,D100,D103,ANN401
+# ruff: noqa: S101,D100,D103,ANN401
 
 import json
+from pathlib import Path
 from typing import Any
 from typing import cast
+from unittest.mock import Mock
 
+import pytest
+
+from yoke.agent.compaction import COMPACTION_SUMMARY_PROMPT
+from yoke.agent.context import CompactionPolicy, ContextManager
+from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import ConversationEntry
+from yoke.agent.models import Message
+from yoke.agent.skills.models import ActiveSkill
+from yoke.ai.providers.base import Provider
+from yoke.cli.interactive import session_commands
+from yoke.cli.interactive.common import handle_slash_command
+from yoke.cli.main import CLIArgs, run_cli
+from yoke.cli.render import build_console
+from yoke.cli.runtime import create_active_session
+from yoke.cli.session import SessionStore
 from yoke.cli.session.io import decode_session_record
 from yoke.cli.session.models import SessionRecord
 from yoke.cli.session.writer import write_session_record
-from yoke.cli.interactive.common import handle_slash_command
 
-from .support import *  # noqa: F403
+from .support import CaptureStream, FakeAgent
 
 
 def session_payload(path: Path) -> dict[str, Any]:
@@ -290,24 +305,6 @@ def test_session_save_can_clear_skills_and_skill_directories(
     assert loaded.skill_dirs == []
 
 
-def test_cli_uses_local_title_for_first_prompt(tmp_path: Path, capsys) -> None:
-    agent = FakeAgent()
-
-    exit_code = run_cli(
-        CLIArgs(
-            prompt="please fix the config loader bug",
-            headless=True,
-            root=str(tmp_path),
-        ),
-        agent=agent,
-    )
-
-    assert exit_code == 0
-    capsys.readouterr()
-    records = SessionStore().list(root=tmp_path)
-    assert records[0].title == "please fix the config loader bug"
-
-
 def test_session_load_reconciles_newer_index_title(tmp_path: Path, monkeypatch) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
@@ -318,7 +315,7 @@ def test_session_load_reconciles_newer_index_title(tmp_path: Path, monkeypatch) 
         root=tmp_path,
         title="Generated title",
     )
-    index = store._load_index()
+    index = store._index_cache.read()
     index.sessions["title-demo"].title = "Manual title"
     index.sessions["title-demo"].updated_at = "2999-01-01T00:00:00+00:00"
     store._index_path().write_text(index.model_dump_json(indent=2), encoding="utf-8")
@@ -372,6 +369,8 @@ def test_pin_slash_command_toggles_active_session(tmp_path: Path, monkeypatch) -
     )
     console_stream = CaptureStream()
     console = build_console(console_stream)
+    persist = Mock(wraps=session_commands.persist_session_state)
+    monkeypatch.setattr(session_commands, "persist_session_state", persist)
 
     handled, messages, updated_session = handle_slash_command(
         "/pin",
@@ -384,7 +383,10 @@ def test_pin_slash_command_toggles_active_session(tmp_path: Path, monkeypatch) -
     assert handled is True
     assert messages == active_session.record.messages
     assert updated_session.record.pinned is True
-    assert store.load("pin-demo").pinned is True
+    loaded = store.load("pin-demo")
+    assert loaded.pinned is True
+    assert loaded.messages == [Message.user("hello")]
+    assert persist.call_count == 0
     assert "Session pinned: pin-demo" in console_stream.getvalue()
 
 
@@ -395,6 +397,8 @@ def test_pin_slash_command_persists_new_session(tmp_path: Path, monkeypatch) -> 
         CLIArgs(root=str(tmp_path)),
         root=tmp_path,
     )
+    persist = Mock(wraps=session_commands.persist_session_state)
+    monkeypatch.setattr(session_commands, "persist_session_state", persist)
 
     handled, _messages, updated_session = handle_slash_command(
         "/pin",
@@ -406,7 +410,11 @@ def test_pin_slash_command_persists_new_session(tmp_path: Path, monkeypatch) -> 
 
     assert handled is True
     assert updated_session.record.pinned is True
-    assert SessionStore().load(updated_session.id).pinned is True
+    loaded = SessionStore().load(updated_session.id)
+    assert loaded.pinned is True
+    assert loaded.messages == []
+    assert loaded.created_at is not None
+    assert persist.call_count == 1
 
 
 def test_session_store_fork_copies_session_without_pin(

@@ -180,13 +180,9 @@ def print_user_prompt(console: Console, prompt: str) -> None:
     """Print a user prompt in interactive mode."""
     prompt = _sanitize_console_output(console, prompt.rstrip())
     if console.is_terminal and _supports_console_chrome(console):
-        console.print(_user_prompt_block(console, prompt))
+        console.print(format_user_prompt_block(console, prompt))
         return
-    console.print(format_user_separator(prompt), markup=False)
-
-
-def _user_prompt_block(console: Console, prompt: str) -> Text:
-    return format_user_prompt_block(console, prompt)
+    console.print(Text(format_user_separator(prompt)))
 
 
 def format_user_prompt_block(console: Console, prompt: str) -> Text:
@@ -218,16 +214,14 @@ def print_agent_output(console: Console, output: str) -> None:
 
         console.print(YokeMarkdown(sanitized))
     else:
-        console.print(sanitized)
+        console.print(Text(sanitized))
 
 
 def print_error(console: Console, message: str) -> None:
     """Print an error message."""
     message = _sanitize_console_output(console, message)
-    if console.is_terminal:
-        console.print(f"[bold red]Error:[/bold red] {message}")
-        return
-    console.print(f"Error: {message}")
+    style = "bold red" if console.is_terminal else ""
+    console.print(Text.assemble(("Error:", style), " ", message))
 
 
 def _sanitize_console_output(console: Console, text: str) -> str:
@@ -235,7 +229,7 @@ def _sanitize_console_output(console: Console, text: str) -> str:
 
 
 def _supports_console_chrome(console: Console) -> bool:
-    return _can_encode_text("â”€â”‚â”Œâ”â””â”˜", encoding=console.encoding)
+    return _can_encode_text("─│┌┐└┘", encoding=console.encoding)
 
 
 def _sanitize_text_for_encoding(text: str, *, encoding: str | None) -> str:

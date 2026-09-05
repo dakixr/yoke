@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -17,9 +16,11 @@ from yoke.cli.config import build_tool_report
 from yoke.cli.config import format_tool_discovery_message
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
+from yoke.cli.tools.policy import load_config_file
 from yoke.cli.tools.policy import PiConfig
 from yoke.cli.tools.policy import ToolPolicy
 from yoke.cli.tools.policy import known_builtin_capability_ids
+from yoke.cli.tools.policy import update_config_file
 
 DEFAULT_ROOT = Path.cwd().absolute()
 
@@ -131,15 +132,7 @@ def _config_path(*, root: Path, global_scope: bool, repo_scope: bool) -> Path:
 
 
 def _load_config(path: Path) -> PiConfig:
-    if not path.is_file():
-        return PiConfig()
-    try:
-        return PiConfig.model_validate_json(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise ValueError(
-            "Could not update tool policy because "
-            f"`{path}` is invalid. Fix or remove that file first. {exc}"
-        ) from exc
+    return load_config_file(path).config
 
 
 def _write_policy(
@@ -149,27 +142,12 @@ def _write_policy(
     *,
     capability: bool,
 ) -> None:
-    config = _load_config(path)
-    capabilities = dict(config.capabilities)
-    tools = dict(config.tools)
-    if capability:
-        capabilities[name] = policy
-    else:
-        tools[name] = policy
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            PiConfig(
-                capabilities=capabilities,
-                tools=tools,
-                default_model=config.default_model,
-                default_reasoning_effort=config.default_reasoning_effort,
-            ).model_dump(mode="json", exclude_none=True),
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    def set_policy(config: PiConfig) -> PiConfig:
+        policies = config.capabilities if capability else config.tools
+        policies[name] = policy
+        return config
+
+    update_config_file(path, set_policy)
 
 
 def _set_tool_policy(
@@ -182,11 +160,6 @@ def _set_tool_policy(
     tool_override: bool,
 ) -> None:
     path = _config_path(root=root, global_scope=global_scope, repo_scope=repo_scope)
-    try:
-        _load_config(path)
-    except ValueError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
     if tool_override:
         _validate_tool_name(name, root=root)
     else:

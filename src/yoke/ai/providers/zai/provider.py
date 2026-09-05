@@ -180,7 +180,9 @@ class ZAIProvider(
                         )
                         if attempt < self.config.max_retries:
                             sleep_with_cancel(
-                                retry_after or self._backoff_seconds(attempt),
+                                self._backoff_seconds(attempt)
+                                if retry_after is None
+                                else retry_after,
                                 cancel_requested=cancel_requested,
                                 sleep=self._sleep,
                             )

@@ -11,6 +11,7 @@ from typing import ClassVar
 from typing import cast
 
 from pydantic import BaseModel
+import pytest
 
 from yoke.agent.models import Message
 from yoke.agent.models import TokenUsage
@@ -440,7 +441,9 @@ def test_run_many_is_bounded_ordered_and_aggregates_usage(
         assert result.usage.calls == 5
         assert result.usage.input_tokens == 10
         assert result.usage.output_tokens == 15
+        assert result.usage.reasoning_tokens == 5
         assert result.usage.total_tokens == 30
+        assert result.usage.cached_input_tokens == 5
         assert result.usage.cache_creation_input_tokens == 10
         assert [event.completed for event in progress] == [1, 2, 3, 4, 5]
         assert {event.task_id for event in progress} == {
@@ -575,7 +578,7 @@ def test_run_many_runs_sync_factory_outside_event_loop(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_run_many_isolates_invalid_factory_result(tmp_path: Path) -> None:
+def test_run_many_isolates_invalid_factory_result() -> None:
     async def scenario() -> None:
         def invalid_factory(task: BatchTask) -> Agent:
             return cast(Agent, task)
@@ -588,7 +591,6 @@ def test_run_many_isolates_invalid_factory_result(tmp_path: Path) -> None:
         assert isinstance(result.items[0].error, TypeError)
         assert "return an Agent" in str(result.items[0].error)
 
-    del tmp_path
     asyncio.run(scenario())
 
 
@@ -708,31 +710,37 @@ def test_run_many_cancellation_stops_and_closes_active_agent(
 def test_factory_cleanup_failure_does_not_mask_cancellation(
     tmp_path: Path,
 ) -> None:
-    from yoke.ai.sdk.batch import _call_factory
-
     class CleanupFailingAgent(Agent):
         async def aclose(self) -> None:
             await super().aclose()
             raise RuntimeError("cleanup failed")
 
     async def scenario() -> None:
+        started = threading.Event()
+        release = threading.Event()
+
         def factory(_task: BatchTask) -> Agent:
-            time.sleep(0.03)
+            started.set()
+            assert release.wait(timeout=5)
             return CleanupFailingAgent(
                 provider=ConcurrentProvider("done"), config=config(tmp_path)
             )
 
-        call = asyncio.create_task(
-            _call_factory(factory, BatchTask(id="cancel", prompt="cancel"))
+        ConcurrentProvider.reset()
+        batch = asyncio.create_task(
+            run_many(
+                [BatchTask(id="cancel", prompt="cancel")],
+                agent_factory=factory,
+            )
         )
-        await asyncio.sleep(0.005)
-        call.cancel()
         try:
-            await call
-        except asyncio.CancelledError:
-            pass
-        else:
-            raise AssertionError("Expected factory cancellation")
+            assert await asyncio.to_thread(started.wait, timeout=5)
+            batch.cancel()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await batch
+        assert ConcurrentProvider.closed == 1
 
     asyncio.run(scenario())
 

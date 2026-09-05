@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 from yoke.agent.models import Message
-from yoke.agent.observability.tool_trace import _copy_entry
 from yoke.agent.observability.tool_trace import ToolTraceContext
 from yoke.agent.observability.tool_trace import ToolTraceEntry
 
@@ -21,6 +21,7 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
         if message.role == "user":
             recent_user_text = message.text_content()
             pending_user_context = bool(recent_user_text)
+            last_tool_call_id = None
             continue
         if message.role == "assistant":
             assistant_text = message.text_content()
@@ -85,28 +86,31 @@ def merge_trace_entries(
     for entry in [*completed, *live]:
         if entry.tool_call_id not in merged:
             order.append(entry.tool_call_id)
-            merged[entry.tool_call_id] = _copy_entry(entry)
+            merged[entry.tool_call_id] = deepcopy(entry)
             continue
         merged[entry.tool_call_id] = _overlay_entry(merged[entry.tool_call_id], entry)
     return [merged[tool_call_id] for tool_call_id in order]
 
 
 def _overlay_entry(base: ToolTraceEntry, update: ToolTraceEntry) -> ToolTraceEntry:
-    entry = _copy_entry(base)
-    entry.tool_name = update.tool_name or entry.tool_name
-    entry.raw_arguments = update.raw_arguments or entry.raw_arguments
-    entry.executed_arguments = update.executed_arguments or entry.executed_arguments
-    entry.result = update.result or entry.result
-    entry.iteration = update.iteration or entry.iteration
-    entry.turn_id = update.turn_id or entry.turn_id
-    entry.started_at = update.started_at or entry.started_at
-    entry.ended_at = update.ended_at or entry.ended_at
-    entry.started_wall_at = update.started_wall_at or entry.started_wall_at
-    entry.ended_wall_at = update.ended_wall_at or entry.ended_wall_at
-    entry.status = update.status or entry.status
-    entry.context = update.context or entry.context
-    entry.after_context = update.after_context or entry.after_context
-    entry.output_chunks = update.output_chunks or entry.output_chunks
+    entry = deepcopy(base)
+    copied_update = deepcopy(update)
+    entry.tool_name = copied_update.tool_name or entry.tool_name
+    entry.raw_arguments = copied_update.raw_arguments or entry.raw_arguments
+    entry.executed_arguments = (
+        copied_update.executed_arguments or entry.executed_arguments
+    )
+    entry.result = copied_update.result or entry.result
+    entry.iteration = copied_update.iteration or entry.iteration
+    entry.turn_id = copied_update.turn_id or entry.turn_id
+    entry.started_at = copied_update.started_at or entry.started_at
+    entry.ended_at = copied_update.ended_at or entry.ended_at
+    entry.started_wall_at = copied_update.started_wall_at or entry.started_wall_at
+    entry.ended_wall_at = copied_update.ended_wall_at or entry.ended_wall_at
+    entry.status = copied_update.status or entry.status
+    entry.context = copied_update.context or entry.context
+    entry.after_context = copied_update.after_context or entry.after_context
+    entry.output_chunks = copied_update.output_chunks or entry.output_chunks
     return entry
 
 

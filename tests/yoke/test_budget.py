@@ -39,12 +39,26 @@ def test_default_provider_budget_uses_separate_compaction_limits() -> None:
     assert policy.recent_user_tokens == 20_000
 
 
-@pytest.mark.parametrize("context_window_tokens", [1_000, 10_000, 200_000])
-def test_scaled_provider_budget_keeps_user_limit_above_handoff_target(
+@pytest.mark.parametrize(
+    ("context_window_tokens", "reserved", "recent", "handoff"),
+    [
+        (1_000, 500, 500, 499),
+        (10_000, 5_000, 4_000, 2_000),
+        (200_000, 32_000, 22_000, 12_000),
+    ],
+)
+def test_scaled_provider_budget_preserves_ratios_and_small_window_limits(
     context_window_tokens: int,
+    reserved: int,
+    recent: int,
+    handoff: int,
 ) -> None:
     policy = resolve_provider_compaction_budget(
         CatalogProvider(context_window_tokens)
     ).policy
 
-    assert policy.handoff_target_tokens < policy.recent_user_tokens
+    assert policy.max_total_tokens == context_window_tokens
+    assert policy.reserved_output_tokens == reserved
+    assert policy.keep_recent_tokens == recent
+    assert policy.recent_user_tokens == recent
+    assert policy.handoff_target_tokens == handoff

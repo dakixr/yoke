@@ -174,7 +174,8 @@ retained log ranges without consuming terminal output. `wait_ms` is bounded to
 30 seconds. `gap` and `truncated_before_seq` report evicted ranges, including
 the reduced tail retained after a process completes. The MCP reader decodes
 UTF-8 incrementally so pipe boundaries cannot split characters; invalid UTF-8
-uses replacement characters. The agent reader is unchanged. Processes are ephemeral.
+uses replacement characters. The agent reader is unchanged. Final-lease shutdown and capacity pruning drain
+output readers without holding the manager notification lock. Processes are ephemeral.
 
 `search_then_read` selects the first match window from each of at most 16 files.
 It does not claim semantic relevance. `workspace_snapshot` reads the root's

@@ -9,6 +9,8 @@ import pytest
 
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 from yoke.ai.providers.credentials import save_provider_credential
+from yoke.ai.providers.plugins import create_custom_provider
+from yoke.ai.providers.plugins import LoadedProviderPlugin
 from yoke.ai.providers.resolution import build_provider
 from yoke.ai.providers.resolution import parse_provider_ref
 from yoke.ai.providers.resolution import provider_status
@@ -171,6 +173,91 @@ def list_provider_models(context):
     custom_provider = cast(Any, provider)
     assert custom_provider.config.model == "demo-model"
     assert custom_provider.config.reasoning_effort == "thinking"
+
+
+def test_custom_provider_closes_invalid_factory_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[bool] = []
+
+    class InvalidProvider:
+        def close(self) -> None:
+            closed.append(True)
+
+    plugin = LoadedProviderPlugin(
+        name="demo",
+        source_path=tmp_path / "demo.py",
+        factory=lambda _context: cast(Any, InvalidProvider()),
+    )
+    monkeypatch.setattr(
+        "yoke.ai.providers.plugins.load_global_provider_plugins",
+        lambda **_kwargs: [plugin],
+    )
+
+    with pytest.raises(ValueError, match="is invalid"):
+        create_custom_provider("demo", home=tmp_path, env={})
+
+    assert closed == [True]
+
+
+def test_custom_provider_cleanup_failure_does_not_mask_catalog_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[bool] = []
+
+    class ProviderWithBrokenClose:
+        def complete(self, messages: object, tools: object) -> None:
+            del messages, tools
+
+        def close(self) -> None:
+            closed.append(True)
+            raise RuntimeError("cleanup failed")
+
+    plugin = LoadedProviderPlugin(
+        name="demo",
+        source_path=tmp_path / "demo.py",
+        factory=lambda _context: cast(Any, ProviderWithBrokenClose()),
+        list_models=lambda _context: (_ for _ in ()).throw(
+            RuntimeError("catalog failed")
+        ),
+    )
+    monkeypatch.setattr(
+        "yoke.ai.providers.plugins.load_global_provider_plugins",
+        lambda **_kwargs: [plugin],
+    )
+
+    with pytest.raises(RuntimeError, match="catalog failed"):
+        create_custom_provider("demo", home=tmp_path, env={})
+
+    assert closed == [True]
+
+
+def test_custom_provider_does_not_close_when_factory_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[bool] = []
+
+    class FailingFactory:
+        def __call__(self, _context: object) -> Any:
+            raise RuntimeError("factory failed")
+
+        def close(self) -> None:
+            closed.append(True)
+
+    plugin = LoadedProviderPlugin(
+        name="demo",
+        source_path=tmp_path / "demo.py",
+        factory=FailingFactory(),
+    )
+    monkeypatch.setattr(
+        "yoke.ai.providers.plugins.load_global_provider_plugins",
+        lambda **_kwargs: [plugin],
+    )
+
+    with pytest.raises(ValueError, match="factory failed"):
+        create_custom_provider("demo", home=tmp_path, env={})
+
+    assert closed == []
 
 
 def test_provider_status_reports_model_catalog_failure(

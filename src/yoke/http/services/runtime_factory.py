@@ -15,10 +15,12 @@ from yoke.ai.providers.usage_context import usage_metric_context
 from yoke.cli.config import CLIArgs
 from yoke.cli.config.runtime import build_cli_agent_from_args
 from yoke.cli.runtime.session import apply_session_defaults_to_args
+from yoke.http.services.session_runtime import close_owned_agent
 from yoke.session import fallback_session_title
 from yoke.session import SessionRecord
 
 
+# Every object returned by this factory is owned by its HTTP caller.
 type SessionAgentFactory = Callable[[SessionRecord], object]
 
 
@@ -57,9 +59,10 @@ def generate_http_session_title(
         try:
             return generate_session_title(agent, messages)
         finally:
-            close = getattr(agent, "close", None)
-            if callable(close):
-                close()
+            close_owned_agent(
+                agent,
+                description=f"HTTP title agent for session {record.id}",
+            )
 
 
 def build_http_session_agent(record: SessionRecord) -> RuntimeAgent:

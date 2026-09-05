@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yoke.cli.interactive.mcp_menu_helpers import McpMenuScope
 from yoke.cli.interactive.mcp_menu_helpers import McpServerAction
 from yoke.cli.interactive.mcp_menu_helpers import McpToolRow
 from yoke.cli.runtime.selector.ui import SelectorTableColumns
@@ -96,16 +95,6 @@ def _render_server_action_row(
 ) -> str:
     marker = ">" if is_selected else " "
     return f"{marker} {action.label} - {action.description}"[:width]
-
-
-def _render_scope_row(
-    scope: McpMenuScope,
-    _index: int,
-    is_selected: bool,
-    width: int,
-) -> str:
-    marker = ">" if is_selected else " "
-    return f"{marker} {scope.label} - {scope.description}"[:width]
 
 
 def _source_label(server: McpServerConfig, *, root: Path | None) -> str:

@@ -62,6 +62,10 @@ SDK agents can save portable state snapshots and autosave durable roles. The
 async API serializes calls on one stateful agent, while `run_many()` creates a
 fresh isolated agent and provider for every bounded fan-out task.
 
+Session indexes, prompt queues, and usage logs share the portable file lock in
+`yoke._file_io`. Their write policies stay separate: index replacement retries,
+atomic queue snapshots, and usage-log append rollback and disk flushing.
+
 ### Usage and observability
 
 Every completed provider response is recorded automatically in daily JSONL

@@ -1,11 +1,11 @@
-"""Extracted helpers for the persistent HTTP session message index."""
+"""Snapshot caching, journal scanning, and background index warming."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from threading import Lock
 import time
-from typing import Any
+from typing import TYPE_CHECKING
 
 from pydantic_core import from_json
 
@@ -15,30 +15,37 @@ from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
 from yoke.cli.session.io import SESSION_JSONL_HEADER_TYPE
 from yoke.cli.session.io import SESSION_JSONL_HEADER_VERSION
 from yoke.cli.session.io import SESSION_METADATA_EVENT
-from yoke.http.services.session_message_index_models import MessageIndexSnapshot
-from yoke.http.services.session_message_index_models import can_append
-from yoke.http.services.session_message_index_models import (
+from yoke.http.services.session_message_index.models import MessageIndexSnapshot
+from yoke.http.services.session_message_index.models import can_append
+from yoke.http.services.session_message_index.models import (
     entry_topology as parse_entry_topology,
 )
-from yoke.http.services.session_message_index_legacy import (
+from yoke.http.services.session_message_index.legacy import (
     mark_legacy_tool_context_locations,
 )
-from yoke.http.services.session_message_index_models import length as location_length
-from yoke.http.services.session_message_index_models import metadata_length
-from yoke.http.services.session_message_index_models import metadata_offset
-from yoke.http.services.session_message_index_models import offset as location_offset
-from yoke.http.services.session_message_index_models import kind as location_kind
-from yoke.http.services.session_message_index_models import (
+from yoke.http.services.session_message_index.models import length as location_length
+from yoke.http.services.session_message_index.models import metadata_length
+from yoke.http.services.session_message_index.models import metadata_offset
+from yoke.http.services.session_message_index.models import offset as location_offset
+from yoke.http.services.session_message_index.models import kind as location_kind
+from yoke.http.services.session_message_index.models import (
     parent_id as location_parent_id,
 )
-from yoke.http.services.session_message_index_models import (
+from yoke.http.services.session_message_index.models import (
     prefix_hash as calculate_prefix_hash,
 )
-from yoke.http.services.session_message_index_models import snapshot_matches
-from yoke.http.services.session_message_index_sidecar import link_sidecar
+from yoke.http.services.session_message_index.models import snapshot_matches
+from yoke.http.services.session_message_index.sidecar import link_sidecar
+from yoke.http.services.session_message_index.sidecar import load_sidecar
+from yoke.http.services.session_message_index.sidecar import write_sidecar
+
+if TYPE_CHECKING:
+    from yoke.http.services.session_message_index import SessionMessageIndex
 
 
-def clone_sidecar(host: Any, source_session_id: str, target_session_id: str) -> None:
+def clone_sidecar(
+    host: SessionMessageIndex, source_session_id: str, target_session_id: str
+) -> None:
     """Seed a fork with the source topology snapshot without rescanning it."""
     # Sidecars are replaced atomically rather than mutated in place. A hard
     # link therefore gives the fork an immutable snapshot of the source index
@@ -46,7 +53,7 @@ def clone_sidecar(host: Any, source_session_id: str, target_session_id: str) -> 
     # The fork's appended metadata is caught up incrementally on first use.
     if link_sidecar(host, source_session_id, target_session_id):
         return
-    snapshot = host._current_snapshot(source_session_id)
+    snapshot = current_snapshot(host, source_session_id)
     if snapshot is None:
         return
     target = host.store.directory / f"{target_session_id}.jsonl"
@@ -60,24 +67,24 @@ def clone_sidecar(host: Any, source_session_id: str, target_session_id: str) -> 
         or stat.st_size < snapshot.indexed_size
     ):
         return
-    host._write_sidecar(target_session_id, snapshot)
+    write_sidecar(host, target_session_id, snapshot)
 
 
-def warm_async(host: Any, session_id: str) -> None:
+def warm_async(host: SessionMessageIndex, session_id: str) -> None:
     """Build a durable topology sidecar after latency-sensitive reads return."""
     with host._cache_lock:
         if session_id in host._warming:
             return
         host._warming.add(session_id)
-    host._executor.submit(host._warm_one, session_id)
+    host._executor.submit(warm_one, host, session_id)
 
 
-def close(host: Any) -> None:
+def close(host: SessionMessageIndex) -> None:
     """Stop accepting background index work during application shutdown."""
     host._executor.shutdown(wait=False, cancel_futures=True)
 
 
-def warm_one(host: Any, session_id: str) -> None:
+def warm_one(host: SessionMessageIndex, session_id: str) -> None:
     try:
         # Give the HTTP response and browser paint a head start. The full
         # source scan is deliberately background work.
@@ -88,7 +95,9 @@ def warm_one(host: Any, session_id: str) -> None:
             host._warming.discard(session_id)
 
 
-def current_snapshot(host: Any, session_id: str) -> MessageIndexSnapshot | None:
+def current_snapshot(
+    host: SessionMessageIndex, session_id: str
+) -> MessageIndexSnapshot | None:
     source = host.store.directory / f"{session_id}.jsonl"
     try:
         stat = source.stat()
@@ -97,27 +106,27 @@ def current_snapshot(host: Any, session_id: str) -> MessageIndexSnapshot | None:
     source_prefix_hash = calculate_prefix_hash(source, stat.st_size)
     if source_prefix_hash is None:
         return None
-    cached = host._cached(session_id)
-    if cached is not None and snapshot_matches(
-        cached,
+    cached_snapshot = cached(host, session_id)
+    if cached_snapshot is not None and snapshot_matches(
+        cached_snapshot,
         stat.st_size,
         stat.st_mtime_ns,
         source_prefix_hash,
     ):
-        return cached
-    sidecar = host._load_sidecar(session_id)
-    if sidecar is not None and snapshot_matches(
-        sidecar,
+        return cached_snapshot
+    sidecar_snapshot = load_sidecar(host, session_id)
+    if sidecar_snapshot is not None and snapshot_matches(
+        sidecar_snapshot,
         stat.st_size,
         stat.st_mtime_ns,
         source_prefix_hash,
     ):
-        host._store_cache(session_id, sidecar)
-        return sidecar
+        store_cache(host, session_id, sidecar_snapshot)
+        return sidecar_snapshot
     return None
 
 
-def ensure(host: Any, session_id: str) -> MessageIndexSnapshot | None:
+def ensure(host: SessionMessageIndex, session_id: str) -> MessageIndexSnapshot | None:
     source = host.store.directory / f"{session_id}.jsonl"
     try:
         stat = source.stat()
@@ -126,16 +135,16 @@ def ensure(host: Any, session_id: str) -> MessageIndexSnapshot | None:
     source_prefix_hash = calculate_prefix_hash(source, stat.st_size)
     if source_prefix_hash is None:
         return None
-    cached = host._cached(session_id)
-    if cached is not None and snapshot_matches(
-        cached,
+    cached_snapshot = cached(host, session_id)
+    if cached_snapshot is not None and snapshot_matches(
+        cached_snapshot,
         stat.st_size,
         stat.st_mtime_ns,
         source_prefix_hash,
     ):
-        return cached
+        return cached_snapshot
 
-    lock = host._session_lock(session_id)
+    lock = session_lock(host, session_id)
     with lock:
         try:
             stat = source.stat()
@@ -144,22 +153,22 @@ def ensure(host: Any, session_id: str) -> MessageIndexSnapshot | None:
         source_prefix_hash = calculate_prefix_hash(source, stat.st_size)
         if source_prefix_hash is None:
             return None
-        cached = host._cached(session_id)
-        if cached is not None and snapshot_matches(
-            cached,
+        cached_snapshot = cached(host, session_id)
+        if cached_snapshot is not None and snapshot_matches(
+            cached_snapshot,
             stat.st_size,
             stat.st_mtime_ns,
             source_prefix_hash,
         ):
-            return cached
-        prior = cached or host._load_sidecar(session_id)
+            return cached_snapshot
+        prior = cached_snapshot or load_sidecar(host, session_id)
         if prior is not None and snapshot_matches(
             prior,
             stat.st_size,
             stat.st_mtime_ns,
             source_prefix_hash,
         ):
-            host._store_cache(session_id, prior)
+            store_cache(host, session_id, prior)
             return prior
         append_only = prior is not None and can_append(
             prior,
@@ -167,7 +176,7 @@ def ensure(host: Any, session_id: str) -> MessageIndexSnapshot | None:
             source_prefix_hash,
         )
         if append_only and prior is not None:
-            snapshot = host._scan(
+            snapshot = scan(
                 source,
                 start=prior.indexed_size,
                 source_size=stat.st_size,
@@ -176,7 +185,7 @@ def ensure(host: Any, session_id: str) -> MessageIndexSnapshot | None:
                 prior=prior,
             )
         else:
-            snapshot = host._scan(
+            snapshot = scan(
                 source,
                 start=0,
                 source_size=stat.st_size,
@@ -186,18 +195,17 @@ def ensure(host: Any, session_id: str) -> MessageIndexSnapshot | None:
             )
         if snapshot is None:
             return None
-        host._store_cache(session_id, snapshot)
+        store_cache(host, session_id, snapshot)
         # Rewriting a multi-megabyte topology cache for every appended
         # assistant/tool event would put O(session size) work back into
         # live refreshes. A stale sidecar is safe: the next daemon catches
         # it up from indexed_size. Persist complete rebuilds only.
         if not append_only:
-            host._write_sidecar(session_id, snapshot)
+            write_sidecar(host, session_id, snapshot)
         return snapshot
 
 
 def scan(
-    host: Any,
     source: Path,
     *,
     start: int,
@@ -210,6 +218,7 @@ def scan(
     leaf_id = prior.leaf_id if prior is not None else None
     saw_header = prior is not None
     indexed_size = start
+    scanned_entry_ids: list[str] = []
     try:
         with source.open("rb") as handle:
             handle.seek(start)
@@ -238,6 +247,7 @@ def scan(
                         metadata_offset(existing),
                         metadata_length(existing),
                     ]
+                    scanned_entry_ids.append(entry_id)
                     continue
                 try:
                     payload = from_json(stripped)
@@ -283,12 +293,16 @@ def scan(
                         metadata_offset(existing),
                         metadata_length(existing),
                     ]
+                    scanned_entry_ids.append(entry.id)
     except OSError:
         return None
     if not saw_header:
         return None
-    if prior is None:
-        mark_legacy_tool_context_locations(source, entries)
+    mark_legacy_tool_context_locations(
+        source,
+        entries,
+        candidate_ids=scanned_entry_ids if prior is not None else None,
+    )
     return MessageIndexSnapshot(
         source_size=source_size,
         source_mtime_ns=source_mtime_ns,
@@ -300,7 +314,7 @@ def scan(
 
 
 def read_entries(
-    host: Any,
+    host: SessionMessageIndex,
     session_id: str,
     snapshot: MessageIndexSnapshot,
     entry_ids: list[str],
@@ -347,7 +361,7 @@ def read_entries(
     return result
 
 
-def cached(host: Any, session_id: str) -> MessageIndexSnapshot | None:
+def cached(host: SessionMessageIndex, session_id: str) -> MessageIndexSnapshot | None:
     with host._cache_lock:
         snapshot = host._cache.get(session_id)
         if snapshot is not None:
@@ -355,7 +369,11 @@ def cached(host: Any, session_id: str) -> MessageIndexSnapshot | None:
         return snapshot
 
 
-def store_cache(host: Any, session_id: str, snapshot: MessageIndexSnapshot) -> None:
+def store_cache(
+    host: SessionMessageIndex,
+    session_id: str,
+    snapshot: MessageIndexSnapshot,
+) -> None:
     with host._cache_lock:
         host._cache[session_id] = snapshot
         host._cache.move_to_end(session_id)
@@ -363,6 +381,6 @@ def store_cache(host: Any, session_id: str, snapshot: MessageIndexSnapshot) -> N
             host._cache.popitem(last=False)
 
 
-def session_lock(host: Any, session_id: str) -> Lock:
+def session_lock(host: SessionMessageIndex, session_id: str) -> Lock:
     with host._cache_lock:
         return host._session_locks.setdefault(session_id, Lock())

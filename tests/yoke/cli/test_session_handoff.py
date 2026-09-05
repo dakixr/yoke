@@ -12,7 +12,9 @@ from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
 from yoke.agent.session_tree import SessionTree
 from yoke.cli.main import main
+from yoke.cli.session.writer import append_session_tree_delta
 from yoke.session import SessionStore
+from yoke.session.handoff import build_session_handoff
 
 
 def test_session_handoff_cli_continues_from_compacted_active_context(
@@ -125,3 +127,41 @@ def test_session_handoff_keeps_tool_state_without_dumping_inline_image_bytes(
     assert "Settings page is missing the save button." in captured.out
     assert "The save button still needs to be restored." in captured.out
     assert captured.err == ""
+
+
+def test_session_handoff_falls_back_when_jsonl_is_newer_than_index(
+    tmp_path: Path,
+) -> None:
+    session_id = "handoff-stale-index"
+    tree = SessionTree.from_messages([Message.user("Original request")])
+    store = SessionStore(tmp_path / "sessions")
+    store.save(
+        session_id,
+        [],
+        conversation_entries=list(tree.entries),
+        leaf_id=tree.leaf_id,
+        root=tmp_path,
+    )
+    index_path = store.directory / "index.json"
+    stale_index = index_path.read_bytes()
+
+    tree.append_message(Message.assistant("Answer appended before index update"))
+    appended = tree.entries[-1]
+    append_session_tree_delta(
+        store.directory / f"{session_id}.jsonl",
+        session_changes={"leaf_id": tree.leaf_id},
+        appended_entries=(appended,),
+    )
+
+    handoff = build_session_handoff(
+        session_id,
+        store=SessionStore(store.directory),
+    )
+
+    assert handoff.leaf_id == appended.id
+    assert handoff.total_entries == 2
+    assert [message.content for message in handoff.messages] == [
+        "Original request",
+        "Answer appended before index update",
+    ]
+    assert index_path.read_bytes() == stale_index

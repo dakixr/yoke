@@ -188,17 +188,16 @@ class BoundObserver:
 
 def compose_event_handler(
     on_event: AgentEventHandler | None,
-    observers: tuple[AgentObserver | None, ...],
+    observers: tuple[AgentObserver, ...],
 ) -> AgentEventHandler | None:
     """Combine the legacy callback and SDK observers into one handler."""
-    active = tuple(observer for observer in observers if observer is not None)
-    if on_event is None and not active:
+    if on_event is None and not observers:
         return None
 
     def handle(name: str, payload: dict[str, object]) -> None:
         if on_event is not None:
             on_event(name, payload)
-        notify_observers(active, name, payload)
+        notify_observers(observers, name, payload)
 
     return handle
 
@@ -334,9 +333,7 @@ def _parse_arguments(raw: object) -> dict[str, object] | None:
 
 def _redact(value: object, key: str = "") -> object:
     normalized_key = key.casefold().replace("-", "_")
-    is_token = normalized_key == "token" or (
-        normalized_key.endswith("_token") and not normalized_key.endswith("_tokens")
-    )
+    is_token = normalized_key.endswith("token")
     if is_token or any(part in normalized_key for part in _SENSITIVE_PARTS):
         return "<redacted>"
     if isinstance(value, str) and normalized_key in {

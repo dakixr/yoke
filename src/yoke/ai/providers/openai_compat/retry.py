@@ -34,7 +34,11 @@ class OpenAICompatibleRetryMixin:
     def _sleep_seconds(
         self, attempt: int, retry_after_seconds: float | None = None
     ) -> float:
-        base_seconds = retry_after_seconds or self._backoff_seconds(attempt)
+        base_seconds = (
+            self._backoff_seconds(attempt)
+            if retry_after_seconds is None
+            else retry_after_seconds
+        )
         jitter = secrets.randbelow(1000) / 1000 * min(1.0, base_seconds * 0.1)
         return min(base_seconds + jitter, self.config.max_retry_backoff_seconds)
 

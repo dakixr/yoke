@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 import os
 from pathlib import Path
 from typing import Literal
@@ -12,6 +15,8 @@ from pydantic import Field
 from pydantic import ValidationError
 
 from yoke.agent.models import Message
+from yoke._file_io import atomic_write_text
+from yoke._file_io import exclusive_file_lock
 
 
 class PersistedPendingInput(BaseModel):
@@ -33,6 +38,18 @@ class PersistedPromptQueue(BaseModel):
     revision: int = 0
     prompts: list[PersistedPendingInput] = Field(default_factory=list)
     pending_images: list[str] = Field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PromptQueueTransaction:
+    """One queue snapshot held under its cross-process mutation lock."""
+
+    snapshot: PersistedPromptQueue
+    _path: Path
+
+    def commit(self) -> None:
+        """Persist the transaction snapshot while retaining the queue lock."""
+        _write_prompt_queue_path(self._path, self.snapshot)
 
 
 def prompt_queue_path(session_directory: Path, session_id: str) -> Path:
@@ -99,13 +116,32 @@ def write_prompt_queue_snapshot(
 ) -> None:
     """Atomically persist one queue snapshot without resetting its revision."""
     path = prompt_queue_path(session_directory, session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with exclusive_file_lock(path.with_name(f".{path.name}.lock")):
+        _write_prompt_queue_path(path, snapshot)
+
+
+@contextmanager
+def prompt_queue_transaction(
+    session_directory: Path,
+    session_id: str,
+) -> Iterator[PromptQueueTransaction]:
+    """Lock, load, and expose one queue for a read-modify-write transaction."""
+    path = prompt_queue_path(session_directory, session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with exclusive_file_lock(path.with_name(f".{path.name}.lock")):
+        yield PromptQueueTransaction(
+            snapshot=_load_prompt_queue_path(path),
+            _path=path,
+        )
+
+
+def _write_prompt_queue_path(path: Path, snapshot: PersistedPromptQueue) -> None:
+    """Persist a queue snapshot while the caller holds its mutation lock."""
     if snapshot.revision == 0 and not snapshot.prompts and not snapshot.pending_images:
         try:
             path.unlink()
         except FileNotFoundError:
             pass
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(snapshot.model_dump_json(indent=2), encoding="utf-8")
-    tmp_path.replace(path)
+    atomic_write_text(path, snapshot.model_dump_json(indent=2))

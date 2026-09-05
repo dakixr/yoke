@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,7 @@ def error_response(
     code: str,
     message: str,
     details: dict[str, Any] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     """Build the stable public error envelope."""
     envelope = ErrorEnvelope(
@@ -49,6 +51,7 @@ def error_response(
     return JSONResponse(
         status_code=status_code,
         content=envelope.model_dump(mode="json", by_alias=True),
+        headers=headers,
     )
 
 

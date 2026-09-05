@@ -62,83 +62,62 @@ def complete[StructuredT](
         sdk_operation="complete",
         sdk_run_id=uuid4().hex,
     ):
-        return _complete(
-            prompt,
-            provider=provider,
+        normalized_images, normalized_urls = normalize_image_inputs(
+            images=images,
+            image_urls=image_urls,
+        )
+        resolved_messages = _build_messages(
+            prompt=prompt,
             context=context,
             messages=messages,
             sys_prompt=sys_prompt,
-            images=images,
-            image_urls=image_urls,
-            output_type=output_type,
+            images=normalized_images,
+            image_urls=normalized_urls,
         )
-
-
-def _complete[StructuredT](
-    prompt: str | None = None,
-    *,
-    provider: Provider,
-    context: Context | None = None,
-    messages: list[Message] | None = None,
-    sys_prompt: str | None = None,
-    images: Sequence[Image | str | Path] = (),
-    image_urls: Sequence[str] = (),
-    output_type: type[StructuredT] | None = None,
-) -> CompletionResult[StructuredT]:
-    normalized_images, normalized_urls = normalize_image_inputs(
-        images=images,
-        image_urls=image_urls,
-    )
-    resolved_messages = _build_messages(
-        prompt=prompt,
-        context=context,
-        messages=messages,
-        sys_prompt=sys_prompt,
-        images=normalized_images,
-        image_urls=normalized_urls,
-    )
-    if output_type is not None:
-        resolved_messages = _with_structured_output_instructions(
-            resolved_messages,
-            output_type=output_type,
-        )
-    attempts = 1 if output_type is None else STRUCTURED_OUTPUT_MAX_ATTEMPTS
-    response: Message | None = None
-    output = ""
-    structured: StructuredT | None = None
-    last_error: StructuredOutputError | None = None
-    for attempt in range(attempts):
-        call_kind = "direct_completion" if attempt == 0 else "structured_output_retry"
-        with usage_metric_context(call_kind=call_kind):
-            response = complete_with_cancel(provider, resolved_messages, [])
-        output = response.final_text_content() or ""
-        try:
-            structured = parse_structured_output(
-                output,
+        if output_type is not None:
+            resolved_messages = _with_structured_output_instructions(
+                resolved_messages,
                 output_type=output_type,
             )
-            break
-        except StructuredOutputError as exc:
-            last_error = exc
-            if output_type is None or attempt == attempts - 1:
-                continue
-            resolved_messages.extend(
-                [
-                    response,
-                    structured_output_retry_message(output_type, exc),
-                ]
+        attempts = 1 if output_type is None else STRUCTURED_OUTPUT_MAX_ATTEMPTS
+        response: Message | None = None
+        output = ""
+        structured: StructuredT | None = None
+        last_error: StructuredOutputError | None = None
+        for attempt in range(attempts):
+            call_kind = (
+                "direct_completion" if attempt == 0 else "structured_output_retry"
             )
-    else:
-        if last_error is not None:
-            raise last_error
-    if response is None:
-        raise RuntimeError("Provider did not return a response.")
-    return CompletionResult(
-        message=response,
-        output=output,
-        messages=[*resolved_messages, response],
-        structured=structured,
-    )
+            with usage_metric_context(call_kind=call_kind):
+                response = complete_with_cancel(provider, resolved_messages, [])
+            output = response.final_text_content() or ""
+            try:
+                structured = parse_structured_output(
+                    output,
+                    output_type=output_type,
+                )
+                break
+            except StructuredOutputError as exc:
+                last_error = exc
+                if output_type is None or attempt == attempts - 1:
+                    continue
+                resolved_messages.extend(
+                    [
+                        response,
+                        structured_output_retry_message(output_type, exc),
+                    ]
+                )
+        else:
+            if last_error is not None:
+                raise last_error
+        if response is None:
+            raise RuntimeError("Provider did not return a response.")
+        return CompletionResult(
+            message=response,
+            output=output,
+            messages=[*resolved_messages, response],
+            structured=structured,
+        )
 
 
 def _build_messages(

@@ -3,8 +3,30 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
+from dataclasses import field
 
 from yoke.ai.providers.base import Provider
+
+
+@dataclass(slots=True)
+class CloseAttempt:
+    """Completion and error shared by callers joining one close attempt."""
+
+    completed: threading.Event = field(default_factory=threading.Event)
+    owner_thread_id: int = field(default_factory=threading.get_ident)
+    error: BaseException | None = None
+
+    def finish(self, error: BaseException | None) -> None:
+        """Publish this attempt's result to waiting close callers."""
+        self.error = error
+        self.completed.set()
+
+    def wait(self) -> None:
+        """Wait for this attempt and reproduce its failure for the caller."""
+        self.completed.wait()
+        if self.error is not None:
+            raise self.error
 
 
 class ProviderLease:

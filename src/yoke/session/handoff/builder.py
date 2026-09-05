@@ -51,8 +51,10 @@ def build_session_handoff(
         session_id,
         max_chars=max_chars,
     )
-    if record is None:
-        record = fallback_record or session_store.load(session_id)
+    if fallback_record is not None:
+        record = fallback_record
+    elif record is None:
+        record = session_store.load(session_id)
 
     messages = _handoff_messages(entries)
     bounded, omitted_messages = _bound_messages(messages, max_chars=max_chars)

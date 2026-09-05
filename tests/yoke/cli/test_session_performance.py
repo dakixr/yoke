@@ -330,7 +330,7 @@ def test_index_metadata_updates_publish_copy_on_write_snapshot(tmp_path: Path) -
         root=tmp_path,
         title="before",
     )
-    published = store._load_index()
+    published = store._index_cache.read()
     published_entry = published.sessions[record.id]
 
     store.set_title(
@@ -341,7 +341,7 @@ def test_index_metadata_updates_publish_copy_on_write_snapshot(tmp_path: Path) -
 
     assert published.sessions[record.id] is published_entry
     assert published.sessions[record.id].title == "before"
-    assert store._load_index().sessions[record.id].title == "after"
+    assert store._index_cache.read().sessions[record.id].title == "after"
 
 
 def test_session_maintenance_uses_enumerated_file_metadata(

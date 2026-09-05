@@ -7,7 +7,6 @@ from datetime import datetime
 import hashlib
 import json
 import secrets
-from threading import Lock
 from typing import Literal
 
 from yoke.http.errors import ApiError
@@ -26,8 +25,7 @@ from yoke.session.admissions import AdmissionRecord
 from yoke.session.admissions import AdmissionStore
 from yoke.session.queue import PersistedPendingInput
 from yoke.session.queue import PersistedPromptQueue
-from yoke.session.queue import load_prompt_queue_snapshot
-from yoke.session.queue import write_prompt_queue_snapshot
+from yoke.session.queue import prompt_queue_transaction
 
 
 class PendingInputService:
@@ -44,8 +42,6 @@ class PendingInputService:
         self.admissions = admissions
         self.events = events
         self.uploads = uploads
-        self._locks_lock = Lock()
-        self._locks: dict[str, Lock] = {}
 
     def admit(
         self,
@@ -57,7 +53,7 @@ class PendingInputService:
         self._validate_prompt(session_id, request.prompt)
         input_id = request.id or f"inp_{secrets.token_hex(12)}"
         fingerprint = _fingerprint(session_id, request.prompt, request.delivery)
-        with self._lock_for(session_id):
+        with prompt_queue_transaction(self.store.directory, session_id) as transaction:
             snapshot = self.admissions.load(session_id)
             existing = snapshot.records.get(input_id)
             if existing is not None:
@@ -128,7 +124,7 @@ class PendingInputService:
                 time_created=datetime.now(UTC).isoformat(),
                 admitted_seq=admitted_seq,
             )
-            queue = load_prompt_queue_snapshot(self.store.directory, session_id)
+            queue = transaction.snapshot
             queue.prompts.append(
                 PersistedPendingInput(
                     id=input_id,
@@ -148,7 +144,7 @@ class PendingInputService:
             queue.revision += 1
             snapshot.records[input_id] = admission
             self.admissions.save(session_id, snapshot)
-            write_prompt_queue_snapshot(self.store.directory, session_id, queue)
+            transaction.commit()
             self.events.durable(
                 session_id,
                 "session.queue.updated",
@@ -159,15 +155,13 @@ class PendingInputService:
 
     def queue(self, session_id: str) -> QueueData:
         self._require_session(session_id)
-        with self._lock_for(session_id):
-            return _queue_data(
-                load_prompt_queue_snapshot(self.store.directory, session_id)
-            )
+        with prompt_queue_transaction(self.store.directory, session_id) as transaction:
+            return _queue_data(transaction.snapshot)
 
     def patch_queue(self, session_id: str, request: QueuePatchRequest) -> QueueData:
         record = self._require_session(session_id)
-        with self._lock_for(session_id):
-            queue = load_prompt_queue_snapshot(self.store.directory, session_id)
+        with prompt_queue_transaction(self.store.directory, session_id) as transaction:
+            queue = transaction.snapshot
             if queue.revision != request.expected_revision:
                 raise ApiError(
                     409,
@@ -208,7 +202,7 @@ class PendingInputService:
             queue.prompts = prompts
             queue.revision += 1
             self.admissions.save(session_id, admissions)
-            write_prompt_queue_snapshot(self.store.directory, session_id, queue)
+            transaction.commit()
             retained_uris = {
                 attachment.uri
                 for admission in admissions.records.values()
@@ -255,8 +249,8 @@ class PendingInputService:
     def pop_next(self, session_id: str, *, allow_queue: bool) -> AdmissionRecord | None:
         """Atomically promote the next eligible input for one runtime drain."""
         record = self._require_session(session_id)
-        with self._lock_for(session_id):
-            queue = load_prompt_queue_snapshot(self.store.directory, session_id)
+        with prompt_queue_transaction(self.store.directory, session_id) as transaction:
+            queue = transaction.snapshot
             index = _next_eligible_index(queue.prompts, allow_queue=allow_queue)
             if index is None:
                 return None
@@ -265,7 +259,7 @@ class PendingInputService:
             admission = admissions.records.get(pending.id)
             if admission is None or admission.state != "admitted":
                 queue.revision += 1
-                write_prompt_queue_snapshot(self.store.directory, session_id, queue)
+                transaction.commit()
                 return None
             promoted = self.events.durable(
                 session_id,
@@ -280,7 +274,7 @@ class PendingInputService:
             queue.revision += 1
             admissions.records[admission.id] = admission
             self.admissions.save(session_id, admissions)
-            write_prompt_queue_snapshot(self.store.directory, session_id, queue)
+            transaction.commit()
             self.events.durable(
                 session_id,
                 "session.queue.updated",
@@ -292,7 +286,7 @@ class PendingInputService:
     def unsettled_promoted(self, session_id: str) -> AdmissionRecord | None:
         """Return the oldest promoted input that has no terminal runtime outcome."""
         self._require_session(session_id)
-        with self._lock_for(session_id):
+        with prompt_queue_transaction(self.store.directory, session_id):
             admissions = self.admissions.load(session_id)
             promoted = [
                 item
@@ -318,7 +312,7 @@ class PendingInputService:
     ) -> None:
         """Mark one promoted input as having reached a terminal runtime boundary."""
         record = self._require_session(session_id)
-        with self._lock_for(session_id):
+        with prompt_queue_transaction(self.store.directory, session_id):
             admissions = self.admissions.load(session_id)
             admission = admissions.records.get(input_id)
             if admission is None:
@@ -348,10 +342,6 @@ class PendingInputService:
         if record is None:
             raise ApiError(404, "session_not_found", "Session was not found.")
         return record
-
-    def _lock_for(self, session_id: str) -> Lock:
-        with self._locks_lock:
-            return self._locks.setdefault(session_id, Lock())
 
     def _validate_prompt(self, session_id: str, prompt: PromptInput) -> None:
         if len(prompt.attachments) > 20:

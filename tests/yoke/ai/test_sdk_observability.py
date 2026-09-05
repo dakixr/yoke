@@ -162,6 +162,53 @@ def test_jsonl_observer_writes_redacted_structured_events(
     assert "private-value" not in path.read_text(encoding="utf-8")
 
 
+def test_observers_redact_token_suffixes_without_redacting_usage(
+    tmp_path: Path,
+) -> None:
+    arguments = {
+        "auth": {
+            "accessToken": "access-value",
+            "refreshToken": "refresh-value",
+            "nested": {"authToken": "auth-value"},
+        },
+        "usage": {"input_tokens": 4, "outputTokens": 5},
+    }
+    path = tmp_path / "trace.jsonl"
+    JsonlObserver(path).observe(
+        AgentTraceEvent(
+            name="tool_execution_start",
+            payload={"tool_name": "fetch", "tool_arguments": arguments},
+        )
+    )
+    stream = StringIO()
+    ConsoleObserver(stream=stream).observe(
+        AgentTraceEvent(
+            name="tool_execution_start",
+            payload={
+                "tool_name": "fetch",
+                "tool_arguments": json.dumps(arguments),
+            },
+        )
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    structured = payload["payload"]["tool_arguments"]
+    assert structured == {
+        "auth": {
+            "accessToken": "<redacted>",
+            "refreshToken": "<redacted>",
+            "nested": {"authToken": "<redacted>"},
+        },
+        "usage": {"input_tokens": 4, "outputTokens": 5},
+    }
+    rendered = stream.getvalue()
+    assert "access-value" not in rendered
+    assert "refresh-value" not in rendered
+    assert "auth-value" not in rendered
+    assert '"input_tokens":4' in rendered
+    assert '"outputTokens":5' in rendered
+
+
 def test_run_many_observer_labels_concurrent_task_output(
     tmp_path: Path,
 ) -> None:
@@ -259,9 +306,7 @@ def test_agent_error_respects_max_length() -> None:
     assert rendered.endswith("...")
 
 
-def test_run_many_observes_factory_failures(tmp_path: Path) -> None:
-    del tmp_path
-
+def test_run_many_observes_factory_failures() -> None:
     async def scenario() -> str:
         stream = StringIO()
 

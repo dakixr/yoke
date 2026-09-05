@@ -106,6 +106,34 @@ def test_configured_model_replaces_stale_effort_with_model_default(
     assert args.reasoning_effort == "max"
 
 
+def test_prepare_provider_args_loads_effective_config_once(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_reads: list[tuple[Path, Path | None]] = []
+
+    def load_config(*, root: Path, home: Path | None = None) -> PiConfig:
+        config_reads.append((root, home))
+        return PiConfig(
+            default_model="zai:glm-5.3-flash",
+            default_reasoning_effort="medium",
+        )
+
+    monkeypatch.setattr(
+        "yoke.cli.config.providers.load_effective_yoke_config",
+        load_config,
+    )
+    args = CLIArgs(root=str(tmp_path))
+
+    prepare_provider_args(args)
+
+    assert config_reads == [(tmp_path, tmp_path)]
+    assert args.provider_name == "zai"
+    assert args.model == "glm-5.3-flash"
+    assert args.reasoning_effort == "max"
+
+
 def test_resumed_model_replaces_stale_effort_with_model_default(
     tmp_path: Path,
 ) -> None:

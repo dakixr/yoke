@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 
 import pytest
+from pydantic import ValidationError
 
 from yoke.mcp.client import McpToolInfo
 from yoke.mcp.config import McpConfig, McpServerConfig
@@ -132,5 +133,8 @@ def test_uncertain_downstream_write_is_not_retried(tmp_path: Path) -> None:
 
 
 def test_process_read_limit_is_explicit() -> None:
-    with pytest.raises(ValueError):
-        ProcessRead.model_validate({"sessions": [{"session_id": 1}] * 17})
+    sessions = [{"session_id": number} for number in range(1, 17)]
+    request = ProcessRead.model_validate({"sessions": sessions})
+    assert [cursor.session_id for cursor in request.sessions] == list(range(1, 17))
+    with pytest.raises(ValidationError):
+        ProcessRead.model_validate({"sessions": [*sessions, {"session_id": 17}]})

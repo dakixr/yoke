@@ -38,12 +38,14 @@ def parse_token_usage(
     if cache_creation_input_tokens is None:
         cache_creation_input_tokens = input_details.cache_creation_tokens
     input_tokens = _total_input_tokens(raw_dict, input_details)
+    output_tokens = _int_value(raw_dict, "output_tokens")
+    if output_tokens is None:
+        output_tokens = _int_value(raw_dict, "completion_tokens")
     usage = TokenUsage(
         provider_name=provider_name,
         model_id=model_id,
         input_tokens=input_tokens,
-        output_tokens=_int_value(raw_dict, "output_tokens")
-        or _int_value(raw_dict, "completion_tokens"),
+        output_tokens=output_tokens,
         reasoning_tokens=reasoning_tokens,
         total_tokens=_int_value(raw_dict, "total_tokens"),
         cached_input_tokens=cached_input_tokens,
@@ -95,12 +97,14 @@ def _total_input_tokens(
     input_tokens = _int_value(raw, "input_tokens")
     if input_tokens is None:
         return None
-    cache_read_tokens = _int_value(raw, "cache_read_input_tokens") or 0
-    cache_creation_tokens = (
-        _int_value(raw, "cache_creation_input_tokens")
-        or input_details.cache_creation_tokens
-        or 0
-    )
+    cache_read_tokens = _int_value(raw, "cache_read_input_tokens")
+    if cache_read_tokens is None:
+        cache_read_tokens = 0
+    cache_creation_tokens = _int_value(raw, "cache_creation_input_tokens")
+    if cache_creation_tokens is None:
+        cache_creation_tokens = input_details.cache_creation_tokens
+    if cache_creation_tokens is None:
+        cache_creation_tokens = 0
     return input_tokens + cache_read_tokens + cache_creation_tokens
 
 

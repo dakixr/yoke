@@ -10,7 +10,12 @@ import threading
 import time
 from typing import Any
 
-from yoke.mcp_server.search import MCPFdTool, MCPRipgrepTool, _is_fd_execution_argument
+from yoke.mcp_server.search import (
+    MCPFdTool,
+    MCPRipgrepTool,
+    _is_fd_execution_argument,
+    _is_rg_execution_argument,
+)
 
 
 def execute(
@@ -18,7 +23,7 @@ def execute(
 ) -> dict[str, Any]:
     arguments = tool._parse_raw_args()
     rg = isinstance(tool, MCPRipgrepTool)
-    if rg and any(arg == "--pre" or arg.startswith("--pre=") for arg in arguments):
+    if rg and any(_is_rg_execution_argument(arg) for arg in arguments):
         raise ValueError("rg --pre is disabled in read-only operations")
     if not rg and any(_is_fd_execution_argument(arg) for arg in arguments):
         raise ValueError("fd execution is disabled in read-only operations")

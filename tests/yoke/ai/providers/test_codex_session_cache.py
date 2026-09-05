@@ -46,11 +46,16 @@ def test_codex_websockets_uses_context_session_for_cache_key(tmp_path: Path) -> 
     context = ProviderContext(tmp_path)
     first = register_provider(context)
     resumed = register_provider(context)
+    other_context = ProviderContext(tmp_path)
+    other_context.session_id = "session-456"
+    other = register_provider(other_context)
     try:
         assert first._prompt_cache_key == resumed._prompt_cache_key
+        assert first._prompt_cache_key != other._prompt_cache_key
     finally:
         first.close()
         resumed.close()
+        other.close()
 
 
 def test_codex_turn_state_resets_between_logical_user_turns(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 
 from yoke.agent.tools.base import WorkspaceTool
 from pydantic import Field
@@ -24,6 +25,7 @@ class RipgrepTool(WorkspaceTool):
     """Run ripgrep using a single raw argument string, close to native rg usage."""
 
     is_yoke_tool = True
+    read_rg_config: ClassVar[bool] = True
     name = "rg"
     description = (
         "Run ripgrep using a single raw_args string containing the exact arguments "
@@ -38,7 +40,7 @@ class RipgrepTool(WorkspaceTool):
             "from the workspace root."
         ),
     )
-    max_output_chars: int = 12_000
+    max_output_chars: int = Field(default=12_000, ge=1, le=200_000)
 
     def execute(self) -> dict[str, object]:
         try:
@@ -53,6 +55,8 @@ class RipgrepTool(WorkspaceTool):
 
         user_argv = self._parse_raw_args()
         command = [rg_binary]
+        if not self.read_rg_config:
+            command.append("--no-config")
         if "--json" not in user_argv:
             command.append("--json")
         command.extend(user_argv)
@@ -76,7 +80,12 @@ class RipgrepTool(WorkspaceTool):
             return {"ok": False, "output": str(exc)}
 
         if completed.returncode not in {0, 1}:
-            return self._render_text(completed.stdout, completed.stderr)
+            return self._render_text(
+                completed.stdout,
+                completed.stderr,
+                ok=False,
+                exit_code=completed.returncode,
+            )
 
         parsed = self._parse_json_output(completed.stdout, command)
         if parsed is None:
@@ -229,14 +238,26 @@ class RipgrepTool(WorkspaceTool):
     def _serialized_result_size(self, output: dict[str, object]) -> int:
         return len(json.dumps(output, ensure_ascii=False))
 
-    def _render_text(self, stdout: str, stderr: str) -> dict[str, object]:
+    def _render_text(
+        self,
+        stdout: str,
+        stderr: str,
+        *,
+        ok: bool = True,
+        exit_code: int | None = None,
+    ) -> dict[str, object]:
         output = stdout.rstrip("\n")
         if stderr.strip():
             output = (output + "\n" if output else "") + stderr.rstrip("\n")
+        if not output and not ok and exit_code is not None:
+            output = f"rg failed with exit code {exit_code}"
         if len(output) > self.max_output_chars:
             line_count = output.count("\n") + (1 if output else 0)
             output = (
                 output[: self.max_output_chars]
                 + f"\n...[truncated after {line_count} lines]"
             )
-        return {"ok": True, "output": output}
+        result: dict[str, object] = {"ok": ok, "output": output}
+        if exit_code is not None:
+            result["exit_code"] = exit_code
+        return result
