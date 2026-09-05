@@ -1273,15 +1273,19 @@ def test_filesystem_routes_are_location_contained(tmp_path: Path) -> None:
         ),
     ],
 )
+@pytest.mark.parametrize(
+    "contents", [b"file contents\n", b"file contents\r\n"], ids=["lf", "crlf"]
+)
 def test_filesystem_read_encodes_content_disposition_filename(
     tmp_path: Path,
     filename: str,
     expected_disposition: str,
+    contents: bytes,
 ) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
-    (root / filename).write_text("file contents\n", encoding="utf-8")
+    (root / filename).write_bytes(contents)
 
     response = client.get(
         "/api/v1/fs/read",
@@ -1290,7 +1294,7 @@ def test_filesystem_read_encodes_content_disposition_filename(
     )
 
     assert response.status_code == 200
-    assert response.text == "file contents\n"
+    assert response.content == contents
     assert response.headers["content-disposition"] == expected_disposition
 
 
