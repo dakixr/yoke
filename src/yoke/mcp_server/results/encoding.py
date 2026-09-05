@@ -11,6 +11,7 @@ from mcp.types import CallToolResult, ImageContent, TextContent
 from yoke.mcp.results import mcp_result_text
 from yoke.mcp_server.files import MAX_VIEW_IMAGE_BYTES, validate_image_bytes
 from yoke.mcp_server.results.store import ResultStore
+from yoke.mcp_server.results.batch import project_batch
 
 
 def encode(
@@ -19,6 +20,7 @@ def encode(
     *,
     budget: int = 32000,
     legacy_text: bool = False,
+    batch: bool = False,
 ) -> CallToolResult:
     content: list[Any] = []
     remaining = MAX_VIEW_IMAGE_BYTES
@@ -48,7 +50,11 @@ def encode(
         value["media"] = [
             b for b in projected if isinstance(b, dict) and b.get("type") == "image"
         ]
-    value = store.project(value, limit=budget)
+    value = (
+        project_batch(value, store, budget)
+        if batch
+        else store.project(value, limit=budget)
+    )
     content.insert(
         0,
         TextContent(

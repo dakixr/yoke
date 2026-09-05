@@ -55,7 +55,10 @@ The batch allows at most four concurrent operations and shares the service's
 operation limit. Each item receives a separate output allowance, so a noisy
 search cannot hide another item's status. The approximate token budget is four
 ASCII JSON bytes per token, capped at 64,000 bytes. Requests must reserve 512
-bytes per item plus 1,024 bytes for the envelope. This is a byte heuristic, not
+bytes per item, the actual ASCII JSON encoding of each ID, and 1,024 bytes
+for the envelope. Oversized payloads become retained-result receipts within
+individual items; the batch always preserves its run ID, item IDs and statuses,
+operation count, and elapsed time. This is a byte heuristic, not
 a measurement of tokens consumed by ChatGPT.
 
 The deadline stops queued work and cancels unfinished items. Composed searches
@@ -185,8 +188,15 @@ mutex. This does not lock external editors or make a multi-file transaction.
 Patch failure prevents all checks; a failed or timed-out check skips later
 checks. No rollback resets the working tree.
 
-Checks run in one managed Python job. If it yields, the response contains its
-process session; observe it with `process_read`. The child emits a final retained
+Snapshots and check specifications live in a private temporary job file, so
+large source files do not expand command-line arguments. The managed Python
+runner must acknowledge readiness before the patch is applied. File hashes
+are checked again after startup. Failed startup leaves the patch unapplied;
+failed patch application cancels the waiting runner. Temporary jobs are removed
+after completion or cancellation.
+
+Checks run in that managed job. The response contains its process session;
+observe it with `process_read`. The child emits a final retained
 report with individual check outcomes, final diff, and file hashes. A timeout
 can leave check side effects unknown. Do not repeat writes automatically.
 All three recipes report `recipe_version: 1`.
@@ -216,7 +226,10 @@ the returned `transfer_id`, and send subsequent chunks at `next_offset`.
 Matching retries are accepted; gaps and conflicting retries fail. Finalize with
 `final: true` and preferably `sha256`. Chunks contain at most 2 MiB decoded data,
 files at most 64 MiB, and the service permits eight staged transfers. Handles
-expire after 15 minutes; normal service shutdown cleans staged files. A crash
+expire after 15 minutes; normal service shutdown cleans staged files. A failed
+final commit or digest check removes its staged file and releases its slot.
+Restart a failed finalized upload from offset zero; successful final retries
+remain supported. A crash
 can leave hidden `.yoke-upload-*` or `.yoke-import-*` sibling files for cleanup.
 
 `export_file` returns bounded base64 pages, SHA-256, size, and `next_offset`.
@@ -230,7 +243,9 @@ Set `YOKE_MCP_WRAPPERS_FILE` to a reviewed JSON list, then restart the MCP
 service. Each entry supplies `name`, `server`, `tool`, `description`,
 `input_schema`, optional `output_schema`, and `read_only`, defaulting to false.
 Names must start with `downstream_`; at most 32 entries are accepted. No
-downstream actions are exported automatically.
+downstream actions are exported automatically. Embedded output schemas keep
+their own reference scope, including local `$defs`, anchors, recursive
+references, and nested schema IDs.
 
 The declared input schema pins the downstream schema hash. A changed contract
 fails before execution. `read_only: true` is a server-owner policy assertion

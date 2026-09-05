@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import json
+from copy import deepcopy
+from urllib.parse import urljoin
 from typing import Any
 
 from mcp.types import Tool, ToolAnnotations
@@ -29,7 +31,7 @@ class Wrapper(Request):
                 "type": "object",
                 "properties": {
                     "ok": {"type": "boolean"},
-                    "structuredContent": self.output_schema or {},
+                    "structuredContent": embed_output_schema(self.output_schema),
                 },
                 "required": ["ok"],
             },
@@ -62,3 +64,20 @@ def load(path: Path | None) -> dict[str, Wrapper]:
     for wrapper in wrappers:
         Draft202012Validator.check_schema(wrapper.input_schema)
     return {wrapper.name: wrapper for wrapper in wrappers}
+
+
+def embed_output_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
+    """Make the nested schema a resource, preserving its local reference scope.
+
+    An absolute root $id stays unchanged. Relative root IDs resolve against a
+    stable hierarchical base; nested IDs, anchors and recursive refs retain
+    their normal JSON Schema semantics without rewriting annotations or refs.
+    """
+    if schema is None:
+        return {}
+    embedded = deepcopy(schema)
+    base = (
+        f"https://schemas.yoke.invalid/wrapper-output/{schema_hash(schema)}/schema.json"
+    )
+    embedded["$id"] = urljoin(base, str(schema.get("$id", "")))
+    return embedded

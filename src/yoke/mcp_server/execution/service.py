@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import secrets
 import threading
+import tempfile
+from pathlib import Path
 import time
 from functools import partial
 from typing import Any
@@ -36,6 +38,7 @@ from yoke.mcp_server.recipes.workspace import (
 )
 from yoke.mcp_server.registry import effective_tool_registry
 from yoke.mcp_server.results.store import ResultStore
+from yoke.mcp_server.results.batch import project_batch
 from yoke.mcp_server.transfers.files import (
     ExportFile,
     FileTransfers,
@@ -50,6 +53,7 @@ class ExecutionService:
     ) -> None:
         self.config, self.runtime, self.manager = config, runtime, manager
         self.store = ResultStore()
+        self._patch_jobs = tempfile.TemporaryDirectory(prefix="yoke-patch-jobs-")
         self.transfers = FileTransfers(config.root)
         self.wrappers = wrappers.load(config.wrappers_file)
         read_tools = tuple(
@@ -166,7 +170,11 @@ class ExecutionService:
             return await snapshot(self.config.root, request, self.dispatch)
         if isinstance(request, CheckPatch):
             return await check_patch(
-                self.config.root, request, self.dispatch, self.runtime._patch_lock
+                self.config.root,
+                request,
+                self.dispatch,
+                self.runtime._patch_lock,
+                Path(self._patch_jobs.name),
             )
         if isinstance(request, ImportFiles):
             async with self.runtime._total:
@@ -217,7 +225,6 @@ class ExecutionService:
         semaphore = asyncio.Semaphore(request.max_concurrency)
         run_id = secrets.token_urlsafe(16)
         budget = min(64000, request.max_output_tokens * 4)
-        item_budget = max(256, (budget - 1024) // len(request.items) - 256)
 
         async def item_result(item: Any) -> dict[str, Any]:
             async with semaphore:
@@ -239,7 +246,7 @@ class ExecutionService:
                     return {
                         "id": item.id,
                         "status": status,
-                        "data": self.store.project(result, limit=item_budget),
+                        "data": result,
                     }
                 except Exception as exc:
                     return {"id": item.id, "status": "error", "error": str(exc)[:256]}
@@ -267,13 +274,17 @@ class ExecutionService:
             }
             for item, result in zip(request.items, settled)
         ]
-        return {
-            "ok": True,
-            "run_id": run_id,
-            "items": results,
-            "operations": sum(r["status"] != "skipped" for r in results),
-            "elapsed_ms": round((time.monotonic() - started) * 1000),
-        }
+        return project_batch(
+            {
+                "ok": True,
+                "run_id": run_id,
+                "items": results,
+                "operations": sum(r["status"] != "skipped" for r in results),
+                "elapsed_ms": round((time.monotonic() - started) * 1000),
+            },
+            self.store,
+            budget,
+        )
 
     async def python(self, request: ComposePython) -> dict[str, Any]:
         async with self._orchestrations:
@@ -324,3 +335,4 @@ class ExecutionService:
             await asyncio.gather(*self._watchers, return_exceptions=True)
         self.store.close()
         self.transfers.close()
+        self._patch_jobs.cleanup()

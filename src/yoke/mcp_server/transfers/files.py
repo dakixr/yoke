@@ -148,17 +148,27 @@ class FileTransfers:
                 "complete": False,
             }
             if request.final:
-                sha = digest(temporary)
-                if request.sha256 and sha != request.sha256.lower():
+                try:
+                    sha = digest(temporary)
+                    if request.sha256 and sha != request.sha256.lower():
+                        raise ValueError(
+                            "SHA-256 mismatch; destination was not changed"
+                        )
+                    self._commit(temporary, target, expected)
+                    result.update(complete=True, sha256=sha)
+                    self._finished[transfer] = (
+                        result,
+                        time.monotonic() + 900,
+                        fingerprint,
+                    )
+                    if len(self._finished) > 512:
+                        del self._finished[next(iter(self._finished))]
+                finally:
+                    # Finalization is terminal, including failed create-only or
+                    # overwrite commits. Never retain an inaccessible slot.
+                    self._uploads.pop(transfer, None)
                     temporary.unlink(missing_ok=True)
-                    del self._uploads[transfer]
-                    raise ValueError("SHA-256 mismatch; destination was not changed")
-                self._commit(temporary, target, expected)
-                del self._uploads[transfer]
-                result.update(complete=True, sha256=sha)
-                self._finished[transfer] = (result, time.monotonic() + 900, fingerprint)
-                if len(self._finished) > 512:
-                    del self._finished[next(iter(self._finished))]
+
             return result
 
     def imports(self, request: ImportFiles) -> dict[str, Any]:

@@ -70,6 +70,7 @@ class ToolAdapter:
                     self.execution.store,
                     budget=budget,
                     legacy_text=self.config.legacy_result_text,
+                    batch=name == "batch_read" and bool(result.get("ok")),
                 )
             except ValidationError as exc:
                 return self._error(_validation_message(exc))

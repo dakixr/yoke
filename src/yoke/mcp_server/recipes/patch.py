@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from yoke.agent.tools.apply_patch.parser import PatchParser
 from yoke.agent.tools.apply_patch.types import UpdateFileOp
 from yoke.mcp_server.execution.models import Request
 from yoke.mcp_server.recipes.workspace import Dispatch, file_hash
+from yoke.mcp_server.recipes.patch_job import prepare
 
 
 class Check(Request):
@@ -44,7 +46,11 @@ class CheckPatch(Request):
 
 
 async def check_patch(
-    root: Path, request: CheckPatch, dispatch: Dispatch, patch_lock: asyncio.Lock
+    root: Path,
+    request: CheckPatch,
+    dispatch: Dispatch,
+    patch_lock: asyncio.Lock,
+    job_root: Path,
 ) -> dict[str, Any]:
     paths = {name: (root / name).resolve() for name in request.expected_hashes}
     before: dict[str, str] = {}
@@ -60,30 +66,72 @@ async def check_patch(
             if path.exists() and path.stat().st_size > 4 * 1024 * 1024:
                 raise ValueError("Patch recipe files must be at most 4 MiB")
             before[name] = path.read_text() if path.exists() else ""
-        tool = ApplyPatchTool.bind(root=root).parse_arguments({"input": request.input})
-        patch = await run_sync(tool.execute)
-    if not patch.get("ok"):
-        return {"ok": False, "patch": patch, "checks": [], "recipe_version": 1}
-    code = (
-        "from yoke.mcp_server.recipes.check_runner import run\n"
-        "from yoke_mcp import output\n"
-        f"output.emit(run({str(root)!r}, {[c.model_dump() for c in request.checks]!r}, "
-        f"{request.timeout_seconds!r}, {before!r}))\n"
-    )
-    execution = await dispatch(
-        "exec_python",
-        {
-            "code": code,
-            "timeout": len(request.checks) * request.timeout_seconds + 10,
-            "yield_time_ms": 1000,
-            "max_output_tokens": 8000,
-        },
-    )
-    return {
-        "ok": execution.get("ok", False),
-        "recipe_version": 1,
-        "patch": patch,
-        "status": "running" if execution.get("session_id") else "complete",
-        "execution": execution,
-        "report": "The child emits check outcomes, final diff and hashes through output.emit; use process_read if running.",
-    }
+        directory = prepare(
+            job_root,
+            {
+                "root": str(root),
+                "checks": [c.model_dump() for c in request.checks],
+                "timeout": request.timeout_seconds,
+                "before": before,
+            },
+        )
+        execution: dict[str, Any] = {}
+        patch: dict[str, Any] = {"ok": False, "status": "not_applied"}
+        released = False
+        try:
+            execution = await dispatch(
+                "exec_python",
+                {
+                    "code": "from yoke.mcp_server.recipes.patch_job import run_job\n"
+                    f"run_job({str(directory)!r})\n",
+                    "timeout": len(request.checks) * request.timeout_seconds + 40,
+                    "yield_time_ms": 250,
+                    "max_output_tokens": 8000,
+                },
+            )
+            if not execution.get("ok") or not execution.get("session_id"):
+                raise RuntimeError("Verification runner could not be started")
+            async with asyncio.timeout(10):
+                while not (directory / "ready").exists():
+                    await asyncio.sleep(0.02)
+            # Readiness does not reserve files against external editors. Recheck
+            # hashes after startup so edits during the handshake are preserved.
+            for name, path in paths.items():
+                if file_hash(path) != request.expected_hashes[name]:
+                    raise ValueError(
+                        f"File changed during verification startup: {name}"
+                    )
+            tool = ApplyPatchTool.bind(root=root).parse_arguments(
+                {"input": request.input}
+            )
+            patch = await run_sync(tool.execute)
+            if not patch.get("ok"):
+                return {"ok": False, "patch": patch, "checks": [], "recipe_version": 1}
+            (directory / "go").touch()
+            released = True
+            return {
+                "ok": True,
+                "recipe_version": 1,
+                "patch": patch,
+                "status": "running",
+                "execution": execution,
+                "report": "Use process_read for the child report containing check outcomes, final diff and hashes.",
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "recipe_version": 1,
+                "status": "error" if patch.get("ok") else "skipped",
+                "patch": patch,
+                "execution": execution,
+                "checks": [],
+                "error": str(exc) or "Verification startup timed out",
+            }
+        finally:
+            if not released:
+                shutil.rmtree(directory, ignore_errors=True)
+                session = execution.get("session_id")
+                if session is not None:
+                    await asyncio.shield(
+                        dispatch("process_cancel", {"session_id": session})
+                    )

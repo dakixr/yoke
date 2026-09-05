@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yoke.agent.tools.read import ReadTool
+from yoke.mcp_server.results.batch import minimum_budget
 from yoke.mcp_server.search import MCPFdTool, MCPRipgrepTool
 
 
@@ -42,9 +43,11 @@ class BatchRead(Request):
 
     @model_validator(mode="after")
     def unique_ids(self) -> BatchRead:
-        if self.max_output_tokens * 4 < 1024 + 512 * len(self.items):
+        if min(64000, self.max_output_tokens * 4) < minimum_budget(
+            [item.id for item in self.items]
+        ):
             raise ValueError(
-                "Output budget must reserve at least 512 bytes per item plus 1024 bytes for the envelope"
+                "Output budget must reserve escaped item IDs, 512 bytes per item and 1024 bytes for the envelope"
             )
         if len({item.id for item in self.items}) != len(self.items):
             raise ValueError("Item IDs must be unique")
