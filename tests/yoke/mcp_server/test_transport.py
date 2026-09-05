@@ -47,6 +47,69 @@ def test_health_is_public_but_mcp_requires_configured_bearer(tmp_path: Path) -> 
     asyncio.run(scenario())
 
 
+def test_streamable_http_uses_sse_by_default(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        service = create_service(MCPServerConfig(root=tmp_path))
+        transport = httpx2.ASGITransport(app=service.app)
+        async with service.server.session_manager.run():
+            async with httpx2.AsyncClient(
+                transport=transport,
+                base_url="http://localhost",
+                headers={
+                    "Host": "localhost",
+                    "Accept": "application/json, text/event-stream",
+                },
+            ) as client:
+                response = await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "clientInfo": {"name": "test", "version": "1"},
+                        },
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+    asyncio.run(scenario())
+
+
+def test_streamable_http_can_opt_into_json_response(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        service = create_service(MCPServerConfig(root=tmp_path, json_response=True))
+        transport = httpx2.ASGITransport(app=service.app)
+        async with service.server.session_manager.run():
+            async with httpx2.AsyncClient(
+                transport=transport,
+                base_url="http://localhost",
+                headers={"Host": "localhost", "Accept": "application/json"},
+            ) as client:
+                response = await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "clientInfo": {"name": "test", "version": "1"},
+                        },
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/json")
+
+    asyncio.run(scenario())
+
+
 def test_transport_rejects_unapproved_host_header(tmp_path: Path) -> None:
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))

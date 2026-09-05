@@ -29,6 +29,7 @@ class MCPServerConfig:
     oauth_state_file: Path | None = None
     oauth_allowed_redirect_hosts: tuple[str, ...] = ("chatgpt.com",)
     legacy_result_text: bool = False
+    json_response: bool = False
     wrappers_file: Path | None = None
     log_level: str = "info"
 
@@ -132,6 +133,19 @@ def env_int(name: str, default: int) -> int:
     """Read an integer environment value."""
     value = os.environ.get(name)
     return default if value is None else int(value)
+
+
+def env_bool(name: str, default: bool) -> bool:
+    """Read a boolean environment value."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
 
 
 def env_hosts(name: str = "YOKE_MCP_ALLOWED_HOSTS") -> tuple[str, ...]:

@@ -166,3 +166,23 @@ def test_parse_config_accepts_platform_separated_skill_dirs(
     config = parse_config(["--root", str(tmp_path)])
 
     assert config.skill_dirs == (first.resolve(), second.resolve())
+
+
+def test_parse_config_streams_mcp_responses_by_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("YOKE_MCP_JSON_RESPONSE", raising=False)
+
+    config = parse_config(["--root", str(tmp_path)])
+
+    assert config.json_response is False
+
+
+def test_parse_config_can_opt_into_json_responses(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("YOKE_MCP_JSON_RESPONSE", "true")
+
+    env_config = parse_config(["--root", str(tmp_path)])
+    cli_config = parse_config(["--root", str(tmp_path), "--no-json-response"])
+
+    assert env_config.json_response is True
+    assert cli_config.json_response is False

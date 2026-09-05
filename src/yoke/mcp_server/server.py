@@ -143,7 +143,7 @@ def create_service(config: MCPServerConfig) -> MCPService:
 
     starlette_app = server.streamable_http_app(
         streamable_http_path="/mcp",
-        json_response=True,
+        json_response=config.json_response,
         stateless_http=True,
         max_request_body_size=config.max_request_body_size,
         transport_security=transport_security,

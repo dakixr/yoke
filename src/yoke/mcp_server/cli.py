@@ -10,6 +10,7 @@ from pathlib import Path
 import uvicorn
 
 from yoke.mcp_server.config import MCPServerConfig
+from yoke.mcp_server.config import env_bool
 from yoke.mcp_server.config import env_hosts
 from yoke.mcp_server.config import env_int
 from yoke.mcp_server.config import env_paths
@@ -82,6 +83,12 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         help="Skill directory to discover recursively; may be repeated.",
     )
     parser.add_argument(
+        "--json-response",
+        action=argparse.BooleanOptionalAction,
+        default=env_bool("YOKE_MCP_JSON_RESPONSE", False),
+        help="Return one JSON response instead of streaming SSE keepalives for long MCP calls.",
+    )
+    parser.add_argument(
         "--log-level", default=os.environ.get("YOKE_MCP_LOG_LEVEL", "info")
     )
     args = parser.parse_args(argv)
@@ -108,6 +115,7 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         or ("chatgpt.com",),
         legacy_result_text=os.environ.get("YOKE_MCP_LEGACY_RESULT_TEXT", "").lower()
         in {"1", "true", "yes"},
+        json_response=args.json_response,
         wrappers_file=Path(os.environ["YOKE_MCP_WRAPPERS_FILE"])
         if os.environ.get("YOKE_MCP_WRAPPERS_FILE")
         else None,

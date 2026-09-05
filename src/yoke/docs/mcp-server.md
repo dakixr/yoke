@@ -64,11 +64,18 @@ CLI flags have environment equivalents:
 | `--max-output-tokens` | `YOKE_MCP_MAX_OUTPUT_TOKENS` | `20000` |
 | `--allowed-host` | `YOKE_MCP_ALLOWED_HOSTS` | loopback hosts |
 | `--skill-dir` | `YOKE_MCP_SKILL_DIRS` | built-in skills only |
+| `--json-response` / `--no-json-response` | `YOKE_MCP_JSON_RESPONSE` | `false` |
 | `--log-level` | `YOKE_MCP_LOG_LEVEL` | `info` |
 
 `YOKE_MCP_ALLOWED_HOSTS` is a comma-separated list of accepted HTTP Host
 headers. Add the public hostname when a reverse proxy or tunnel forwards an
 external hostname to the loopback service.
+
+Streamable HTTP uses SSE responses by default. The MCP SDK sends periodic SSE
+keepalives while a long tool call is still running, which prevents idle-read
+timeouts in reverse proxies from cutting off the request. Set
+`YOKE_MCP_JSON_RESPONSE=true` or pass `--json-response` only for clients that
+require one buffered JSON response.
 
 `--skill-dir` may be repeated. `YOKE_MCP_SKILL_DIRS` uses the platform path
 separator (`:` on Linux and macOS). The MCP-only `skill` tool recursively
