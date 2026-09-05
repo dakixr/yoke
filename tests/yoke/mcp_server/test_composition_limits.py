@@ -138,3 +138,13 @@ def test_process_read_limit_is_explicit() -> None:
     assert [cursor.session_id for cursor in request.sessions] == list(range(1, 17))
     with pytest.raises(ValidationError):
         ProcessRead.model_validate({"sessions": [*sessions, {"session_id": 17}]})
+    assert (
+        ProcessRead.model_validate(
+            {"sessions": [{"session_id": 1}], "wait_ms": 240_000}
+        ).wait_ms
+        == 240_000
+    )
+    with pytest.raises(ValidationError):
+        ProcessRead.model_validate(
+            {"sessions": [{"session_id": 1}], "wait_ms": 240_001}
+        )

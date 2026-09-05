@@ -108,7 +108,8 @@ TOOL_REGISTRY = {
             "Execute a shell command on the server for builds, tests, Git, "
             "service inspection, package managers, and other terminal tasks. "
             "Returns final output if it finishes within the yield window, "
-            "otherwise a process session ID for process_io.",
+            "otherwise a process session ID. Continue long-running work with "
+            "process_read instead of restarting the command.",
             ExecCommandTool,
             EXECUTION,
         ),
@@ -124,8 +125,8 @@ TOOL_REGISTRY = {
             "process_io",
             "Process input/output",
             "Continue a live exec_command or exec_python process using its "
-            "session ID. Pass empty chars to poll recent output; pass non-empty "
-            "chars to write to the process stdin.",
+            "session ID. Use this primarily for stdin interaction. Empty polling "
+            "is remotely bounded; use process_read to wait for completion.",
             WriteStdinTool,
             EXECUTION,
         ),

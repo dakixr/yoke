@@ -48,7 +48,7 @@ ACTIONS = {
     ),
     "exec_python": Action(
         ComposePython,
-        "Run Python with the yoke_mcp helper library. tools.call reaches local reads; tools.mcp uses shared downstream clients. Declare exact downstream effects in managed_calls unless server policy grants a reviewed read. output.emit retains selected data. Arbitrary Python remains an execution action.",
+        "Run Python with the yoke_mcp helper library. tools.call reaches local reads; tools.mcp uses shared downstream clients. Declare exact downstream effects in managed_calls unless server policy grants a reviewed read. output.emit retains selected data. Long execution waits are remotely bounded; continue a returned process session with process_read.",
         False,
     ),
     "result_read": Action(
@@ -58,7 +58,7 @@ ACTIONS = {
     ),
     "process_read": Action(
         ProcessRead,
-        "Observe several process sessions without consuming output or writing stdin. Repeat next_cursor safely; gap reports logs no longer retained. Use process_io for input and process_cancel to terminate.",
+        "Wait for and observe several process sessions without consuming output or writing stdin. Each call is bounded below the remote request deadline and returns earlier on output or completion. Repeat next_cursor while continue is true. Use process_io for input and process_cancel to terminate.",
         True,
     ),
     "process_cancel": Action(

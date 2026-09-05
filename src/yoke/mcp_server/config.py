@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+MIN_REMOTE_WAIT_CAP_MS = 5_000
+MAX_SAFE_REMOTE_WAIT_MS = 240_000
+
+
 @dataclass(frozen=True, slots=True)
 class MCPServerConfig:
     """Validated runtime settings for one MCP application process."""
@@ -21,6 +25,7 @@ class MCPServerConfig:
     max_concurrent_calls: int = 16
     max_concurrent_process_starts: int = 8
     max_request_body_size: int = 4 * 1024 * 1024
+    max_remote_wait_ms: int = MAX_SAFE_REMOTE_WAIT_MS
     allowed_hosts: tuple[str, ...] = ()
     skill_dirs: tuple[Path, ...] = ()
     bearer_token: str | None = None
@@ -70,9 +75,18 @@ class MCPServerConfig:
             "max_concurrent_calls",
             "max_concurrent_process_starts",
             "max_request_body_size",
+            "max_remote_wait_ms",
         ):
             if int(getattr(self, name)) < 1:
                 raise ValueError(f"{name} must be at least 1")
+        if self.max_remote_wait_ms < MIN_REMOTE_WAIT_CAP_MS:
+            raise ValueError(
+                f"max_remote_wait_ms must be at least {MIN_REMOTE_WAIT_CAP_MS}"
+            )
+        if self.max_remote_wait_ms > MAX_SAFE_REMOTE_WAIT_MS:
+            raise ValueError(
+                f"max_remote_wait_ms must not exceed {MAX_SAFE_REMOTE_WAIT_MS}"
+            )
 
     @property
     def transport_allowed_hosts(self) -> list[str]:

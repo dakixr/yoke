@@ -186,3 +186,15 @@ def test_parse_config_can_opt_into_json_responses(tmp_path: Path, monkeypatch) -
 
     assert env_config.json_response is True
     assert cli_config.json_response is False
+
+
+def test_parse_config_accepts_remote_wait_cap(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("YOKE_MCP_MAX_REMOTE_WAIT_MS", "120000")
+
+    env_config = parse_config(["--root", str(tmp_path)])
+    cli_config = parse_config(
+        ["--root", str(tmp_path), "--max-remote-wait-ms", "60000"]
+    )
+
+    assert env_config.max_remote_wait_ms == 120_000
+    assert cli_config.max_remote_wait_ms == 60_000

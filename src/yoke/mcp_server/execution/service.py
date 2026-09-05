@@ -74,6 +74,15 @@ class ExecutionService:
             name: descriptor(name, action, self.defaults(name))
             for name, action in ACTIONS.items()
         }
+        for name, property_name in (
+            ("exec_python", "yield_time_ms"),
+            ("process_read", "wait_ms"),
+        ):
+            tool = result[name]
+            properties = tool.input_schema.get("properties", {})
+            property_schema = properties.get(property_name)
+            if isinstance(property_schema, dict):
+                property_schema["maximum"] = self.config.max_remote_wait_ms
         result.update(
             {name: wrapper.descriptor() for name, wrapper in self.wrappers.items()}
         )
@@ -82,7 +91,9 @@ class ExecutionService:
     def defaults(self, name: str) -> dict[str, Any]:
         if name == "exec_python":
             return {
-                "yield_time_ms": self.config.default_yield_ms,
+                "yield_time_ms": min(
+                    self.config.default_yield_ms, self.config.max_remote_wait_ms
+                ),
                 "timeout": self.config.python_timeout,
                 "max_output_tokens": self.config.max_output_tokens,
             }
@@ -114,7 +125,7 @@ class ExecutionService:
                 return await self.local(name, arguments, cancel=cancel)
             except (ValueError, OSError) as exc:
                 return {"ok": False, "status": "error", "error": str(exc)}
-        values = {**self.defaults(name), **arguments}
+        values = self._limit_remote_wait(name, {**self.defaults(name), **arguments})
         request = ACTIONS[name].model.model_validate(values)
         if isinstance(request, BatchRead):
             return await self.batch(request)
@@ -149,7 +160,11 @@ class ExecutionService:
                 fields=request.fields,
             )
         if isinstance(request, ProcessRead):
-            return await processes.read(self.runtime.manager, request)
+            return await processes.read(
+                self.runtime.manager,
+                request,
+                recommended_wait_ms=self.config.max_remote_wait_ms,
+            )
         if isinstance(request, ProcessCancel):
             token = self._sessions.get(request.session_id)
             if token:
@@ -186,6 +201,18 @@ class ExecutionService:
             async with self.runtime._total:
                 return await run_sync(partial(self.transfers.export, request))
         raise ValueError("Unsupported action")
+
+    def _limit_remote_wait(self, name: str, values: dict[str, Any]) -> dict[str, Any]:
+        wait_key = {
+            "exec_python": "yield_time_ms",
+            "process_read": "wait_ms",
+        }.get(name)
+        if wait_key is None:
+            return values
+        requested_wait = values.get(wait_key)
+        if isinstance(requested_wait, int) and not isinstance(requested_wait, bool):
+            values[wait_key] = min(requested_wait, self.config.max_remote_wait_ms)
+        return values
 
     async def local(
         self,

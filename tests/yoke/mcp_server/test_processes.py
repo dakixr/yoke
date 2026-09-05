@@ -119,6 +119,9 @@ def test_process_handle_works_across_http_clients(tmp_path: Path) -> None:
                     )
                 )
                 assert started["running"] is True
+                assert started["continue"] is True
+                assert started["next_tool"] == "process_read"
+                assert started["recommended_wait_ms"] == 240_000
                 session_id = started["session_id"]
                 final = structured(
                     await second.call_tool(
@@ -127,10 +130,40 @@ def test_process_handle_works_across_http_clients(tmp_path: Path) -> None:
                     )
                 )
                 assert final["running"] is False
+                assert final["continue"] is False
                 assert final["exit_code"] == 0
                 assert "finished" in final["output"]
 
     asyncio.run(scenario())
+
+
+def test_remote_wait_arguments_are_capped_before_execution(tmp_path: Path) -> None:
+    service = create_service(MCPServerConfig(root=tmp_path, max_remote_wait_ms=5_000))
+
+    assert (
+        service.adapter._with_runtime_defaults(
+            "exec_command", {"yield_time_ms": 999_999}
+        )["yield_time_ms"]
+        == 5_000
+    )
+    assert (
+        service.adapter._with_runtime_defaults(
+            "process_io", {"yield_time_ms": 999_999}
+        )["yield_time_ms"]
+        == 5_000
+    )
+    assert (
+        service.adapter.execution._limit_remote_wait(
+            "exec_python", {"yield_time_ms": 999_999}
+        )["yield_time_ms"]
+        == 5_000
+    )
+    assert (
+        service.adapter.execution._limit_remote_wait(
+            "process_read", {"wait_ms": 999_999}
+        )["wait_ms"]
+        == 5_000
+    )
 
 
 def test_python_timeout_kills_the_managed_process(tmp_path: Path) -> None:

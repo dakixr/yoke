@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import Field
 
 from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.mcp_server.config import MAX_SAFE_REMOTE_WAIT_MS
 from yoke.mcp_server.execution.models import Request
 
 
@@ -19,7 +20,7 @@ class ProcessCursor(Request):
 
 class ProcessRead(Request):
     sessions: list[ProcessCursor] = Field(min_length=1, max_length=16)
-    wait_ms: int = Field(default=0, ge=0, le=30000)
+    wait_ms: int = Field(default=0, ge=0, le=MAX_SAFE_REMOTE_WAIT_MS)
     max_bytes: int = Field(default=32000, ge=1024, le=64000)
 
 
@@ -28,7 +29,10 @@ class ProcessCancel(Request):
 
 
 def page(
-    manager: CommandProcessManager, cursor: ProcessCursor, budget: int
+    manager: CommandProcessManager,
+    cursor: ProcessCursor,
+    budget: int,
+    recommended_wait_ms: int = MAX_SAFE_REMOTE_WAIT_MS,
 ) -> dict[str, Any]:
     snapshot = manager.snapshot(cursor.session_id)
     output = manager.output_chunks(
@@ -50,12 +54,15 @@ def page(
             offset = start + used
             break
         seq, offset = chunk.seq, 0
-    return {
+    running = snapshot.status == "running"
+    result = {
         "ok": True,
         "session_id": cursor.session_id,
         "status": snapshot.status,
         "exit_code": snapshot.exit_code,
         "output": text,
+        "elapsed_seconds": snapshot.elapsed_seconds,
+        "continue": running,
         "next_cursor": {
             "session_id": cursor.session_id,
             "after_seq": seq,
@@ -65,16 +72,30 @@ def page(
         "truncated_before_seq": output.truncated_before_seq,
         "latest_seq": output.latest_seq,
     }
+    if running:
+        result["next_tool"] = "process_read"
+        result["recommended_wait_ms"] = recommended_wait_ms
+    return result
 
 
-async def read(manager: CommandProcessManager, request: ProcessRead) -> dict[str, Any]:
+async def read(
+    manager: CommandProcessManager,
+    request: ProcessRead,
+    *,
+    recommended_wait_ms: int = MAX_SAFE_REMOTE_WAIT_MS,
+) -> dict[str, Any]:
     deadline = asyncio.get_running_loop().time() + request.wait_ms / 1000
     while True:
         results = []
         for cursor in request.sessions:
             try:
                 results.append(
-                    page(manager, cursor, request.max_bytes // len(request.sessions))
+                    page(
+                        manager,
+                        cursor,
+                        request.max_bytes // len(request.sessions),
+                        recommended_wait_ms,
+                    )
                 )
             except ValueError as exc:
                 results.append(

@@ -44,8 +44,9 @@ agent `rg` tool retains its native configuration behavior.
 
 The HTTP transport is stateless. One long-lived application runtime owns a
 shared `CommandProcessManager`, so commands that outlive their initial call can
-return an ephemeral process `session_id`. A later `process_io` call from any
-MCP client connected to that runtime can poll the process or write stdin. Live
+return an ephemeral process `session_id`. Long waits continue with bounded
+`process_read` calls; `process_io` is primarily for terminal input and short
+interaction. The OS process keeps running between MCP calls. Live
 processes and handles are never persisted and are terminated when the service
 stops. Run one ASGI worker unless process ownership is moved to a separate
 executor.
@@ -62,6 +63,7 @@ CLI flags have environment equivalents:
 | `--default-yield-ms` | `YOKE_MCP_DEFAULT_YIELD_MS` | `30000` |
 | `--python-timeout` | `YOKE_MCP_PYTHON_TIMEOUT` | `180` |
 | `--max-output-tokens` | `YOKE_MCP_MAX_OUTPUT_TOKENS` | `20000` |
+| `--max-remote-wait-ms` | `YOKE_MCP_MAX_REMOTE_WAIT_MS` | `240000` |
 | `--allowed-host` | `YOKE_MCP_ALLOWED_HOSTS` | loopback hosts |
 | `--skill-dir` | `YOKE_MCP_SKILL_DIRS` | built-in skills only |
 | `--json-response` / `--no-json-response` | `YOKE_MCP_JSON_RESPONSE` | `false` |
@@ -76,6 +78,14 @@ keepalives while a long tool call is still running, which prevents idle-read
 timeouts in reverse proxies from cutting off the request. Set
 `YOKE_MCP_JSON_RESPONSE=true` or pass `--json-response` only for clients that
 require one buffered JSON response.
+
+Remote execution and observation calls are capped at 240 seconds by default so
+they return before common five-minute connector deadlines. If a command is
+still running, the result includes `continue: true`, `next_tool:
+"process_read"`, and `recommended_wait_ms`. Calling `process_read` again with
+its returned cursor continues observing the same OS process; it does not rerun
+the command. The environment setting may lower this safety cap but cannot raise
+it above 240 seconds.
 
 `--skill-dir` may be repeated. `YOKE_MCP_SKILL_DIRS` uses the platform path
 separator (`:` on Linux and macOS). The MCP-only `skill` tool recursively

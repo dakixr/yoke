@@ -156,8 +156,13 @@ def test_process_read_replays_cursors_and_cancel(tmp_path: Path) -> None:
                 await client.call_tool("process_read", {**request, "wait_ms": 5000})
             )
             again = structured(await client.call_tool("process_read", request))
-            assert first == again
             assert first["items"][0]["output"] == "hello\n"
+            assert again["items"][0]["output"] == "hello\n"
+            assert first["items"][0]["next_cursor"] == again["items"][0]["next_cursor"]
+            assert first["items"][0]["continue"] is True
+            assert first["items"][0]["next_tool"] == "process_read"
+            assert first["items"][0]["recommended_wait_ms"] == 240_000
+            assert first["items"][0]["elapsed_seconds"] > 0
             next_page = structured(
                 await client.call_tool(
                     "process_read", {"sessions": [first["items"][0]["next_cursor"]]}

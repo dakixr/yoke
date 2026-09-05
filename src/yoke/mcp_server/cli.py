@@ -10,6 +10,7 @@ from pathlib import Path
 import uvicorn
 
 from yoke.mcp_server.config import MCPServerConfig
+from yoke.mcp_server.config import MAX_SAFE_REMOTE_WAIT_MS
 from yoke.mcp_server.config import env_bool
 from yoke.mcp_server.config import env_hosts
 from yoke.mcp_server.config import env_int
@@ -69,6 +70,15 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         default=env_int("YOKE_MCP_MAX_OUTPUT_TOKENS", 20_000),
     )
     parser.add_argument(
+        "--max-remote-wait-ms",
+        type=int,
+        default=env_int("YOKE_MCP_MAX_REMOTE_WAIT_MS", MAX_SAFE_REMOTE_WAIT_MS),
+        help=(
+            "Maximum time one remote MCP execution or process-observation call may "
+            "block before returning a continuation handle."
+        ),
+    )
+    parser.add_argument(
         "--allowed-host",
         action="append",
         dest="allowed_hosts",
@@ -99,6 +109,7 @@ def parse_config(argv: list[str] | None = None) -> MCPServerConfig:
         default_yield_ms=args.default_yield_ms,
         python_timeout=args.python_timeout,
         max_output_tokens=args.max_output_tokens,
+        max_remote_wait_ms=args.max_remote_wait_ms,
         allowed_hosts=tuple(args.allowed_hosts or env_hosts()),
         skill_dirs=tuple(args.skill_dirs or env_paths("YOKE_MCP_SKILL_DIRS")),
         bearer_token=os.environ.get("YOKE_MCP_BEARER_TOKEN") or None,

@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from yoke.mcp_server.execution.models import ResultEnvelope
 
@@ -40,6 +40,9 @@ class ExecutionOutput(ResultEnvelope):
     session_id: int | None = None
     exit_code: int | None = None
     running: bool | None = None
+    continue_: bool | None = Field(default=None, alias="continue")
+    next_tool: str | None = None
+    recommended_wait_ms: int | None = None
     status: str | None = None
     error: str | None = None
     result_ref: str | None = None

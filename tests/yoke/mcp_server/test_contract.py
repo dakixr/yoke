@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from yoke.mcp_server.config import MAX_SAFE_REMOTE_WAIT_MS
 from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.registry import TOOL_REGISTRY
 from yoke.mcp_server.server import create_service
@@ -58,6 +59,28 @@ def test_registry_is_an_explicit_tool_allowlist(tmp_path: Path) -> None:
             assert image_tool.annotations.open_world_hint is False
             assert set(image_tool.input_schema["properties"]) == {"path"}
             assert image_tool.input_schema["required"] == ["path"]
+            assert (
+                tools["exec_command"].input_schema["properties"]["yield_time_ms"][
+                    "maximum"
+                ]
+                == MAX_SAFE_REMOTE_WAIT_MS
+            )
+            assert (
+                tools["process_io"].input_schema["properties"]["yield_time_ms"][
+                    "maximum"
+                ]
+                == MAX_SAFE_REMOTE_WAIT_MS
+            )
+            assert (
+                tools["exec_python"].input_schema["properties"]["yield_time_ms"][
+                    "maximum"
+                ]
+                == MAX_SAFE_REMOTE_WAIT_MS
+            )
+            assert (
+                tools["process_read"].input_schema["properties"]["wait_ms"]["maximum"]
+                == MAX_SAFE_REMOTE_WAIT_MS
+            )
             assert skill_tool.annotations is not None
             assert skill_tool.annotations.read_only_hint is True
             assert patch_tool.annotations is not None

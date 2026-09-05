@@ -55,6 +55,8 @@ class ToolAdapter:
         if self.execution.accepts(name):
             try:
                 result = await self.execution.dispatch(name, arguments or {})
+                if name == "exec_python":
+                    result = self._decorate_process_result(result)
                 raw_budget = (arguments or {}).get("max_output_tokens")
                 budget = (
                     min(64000, raw_budget * 4) if isinstance(raw_budget, int) else 32000
@@ -105,6 +107,8 @@ class ToolAdapter:
         except Exception as exc:  # pragma: no cover - final adapter boundary
             logger.exception("MCP tool execution crashed", extra={"tool": name})
             result = {"ok": False, "error": str(exc)}
+        if name in {"exec_command", "process_io"}:
+            result = self._decorate_process_result(result)
         try:
             encoded = _encode_tool_result(spec, result)
         except (TypeError, ValueError) as exc:
@@ -119,13 +123,19 @@ class ToolAdapter:
         schema = spec.tool_class.model_json_schema(by_alias=True)
         if spec.name == "exec_command":
             schema["properties"]["login"]["default"] = False
-            schema["properties"]["yield_time_ms"]["default"] = (
-                self.config.default_yield_ms
+            schema["properties"]["yield_time_ms"]["default"] = min(
+                self.config.default_yield_ms, self.config.max_remote_wait_ms
+            )
+            schema["properties"]["yield_time_ms"]["maximum"] = (
+                self.config.max_remote_wait_ms
             )
             schema["properties"]["max_output_tokens"]["default"] = (
                 self.config.max_output_tokens
             )
         if spec.name == "process_io":
+            schema["properties"]["yield_time_ms"]["maximum"] = (
+                self.config.max_remote_wait_ms
+            )
             schema["properties"]["max_output_tokens"]["default"] = (
                 self.config.max_output_tokens
             )
@@ -142,7 +152,10 @@ class ToolAdapter:
     ) -> dict[str, object]:
         values = dict(arguments)
         if name in {"exec_command", "exec_python"}:
-            values.setdefault("yield_time_ms", self.config.default_yield_ms)
+            values.setdefault(
+                "yield_time_ms",
+                min(self.config.default_yield_ms, self.config.max_remote_wait_ms),
+            )
             values.setdefault("max_output_tokens", self.config.max_output_tokens)
         if name == "exec_command":
             values.setdefault("login", False)
@@ -150,7 +163,23 @@ class ToolAdapter:
             values.setdefault("timeout", self.config.python_timeout)
         if name == "process_io":
             values.setdefault("max_output_tokens", self.config.max_output_tokens)
+        if name in {"exec_command", "process_io"}:
+            requested_wait = values.get("yield_time_ms")
+            if isinstance(requested_wait, int) and not isinstance(requested_wait, bool):
+                values["yield_time_ms"] = min(
+                    requested_wait, self.config.max_remote_wait_ms
+                )
         return values
+
+    def _decorate_process_result(self, result: dict[str, object]) -> dict[str, object]:
+        running = result.get("running")
+        if not isinstance(running, bool):
+            return result
+        result["continue"] = running
+        if running:
+            result["next_tool"] = "process_read"
+            result["recommended_wait_ms"] = self.config.max_remote_wait_ms
+        return result
 
     def _log_call(self, name: str, duration_ms: int, ok: bool) -> None:
         logger.info(
