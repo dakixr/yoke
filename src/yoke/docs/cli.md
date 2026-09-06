@@ -562,10 +562,13 @@ repo-local discovery or scaffolding to target a different workspace.
 
 Yoke auto-discovers skills from:
 - built-in yoke skills under `src/yoke/agent/skills/built_in/`
-- `~/.yoke/skills/` — your personal skills, available in every project
 - `.yoke/skills/` — skills for the current repo
+- `~/.yoke/skills/` — your personal skills, available in every project
 
 Place skill folders inside these directories and they'll be available by name.
+If the same skill name exists in more than one scope, Yoke uses the built-in
+skill first, then the repo-local skill, then the global skill. Lower-priority
+copies are ignored instead of preventing the session from starting.
 
 During a session the agent can also activate skills itself when the `skill`
 tool is available. Each activation reads the skill's current `SKILL.md` content

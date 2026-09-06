@@ -20,7 +20,7 @@ CWD_PATH = Path.cwd()
 skills_app = typer.Typer(
     help=(
         "Manage skills. The CLI discovers built-in skills from the yoke "
-        "codebase plus ~/.yoke/skills and <repo>/.yoke/skills by default."
+        "codebase plus <repo>/.yoke/skills and ~/.yoke/skills by default."
     )
 )
 

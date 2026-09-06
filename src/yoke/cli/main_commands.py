@@ -380,7 +380,7 @@ def register_commands(app: typer.Typer) -> None:
         context_settings=_DELEGATE_CONTEXT_SETTINGS,
         help=(
             "Manage skills. The CLI discovers built-in skills from the yoke "
-            "codebase plus ~/.yoke/skills and <repo>/.yoke/skills by default."
+            "codebase plus <repo>/.yoke/skills and ~/.yoke/skills by default."
         ),
     )
     def skills(ctx: typer.Context) -> None:

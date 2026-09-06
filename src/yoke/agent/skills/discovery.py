@@ -23,7 +23,7 @@ def builtin_skill_dir() -> Path:
 
 
 def discover_skills(skill_dirs: list[Path]) -> list[SkillSpec]:
-    """Discover all skills in the given directories and return their specs."""
+    """Discover skills, preferring built-ins and then earlier directories."""
     discovered: list[SkillSpec] = []
     seen: set[str] = set()
     all_skill_dirs = [builtin_skill_dir(), *skill_dirs]
@@ -40,13 +40,9 @@ def discover_skills(skill_dirs: list[Path]) -> list[SkillSpec]:
         for child in children:
             if not child.is_dir():
                 continue
+            if child.name in seen:
+                continue
             spec = load_skill(child)
-            if spec.name in seen:
-                raise SkillDiscoveryError(
-                    f"Duplicate skill name `{spec.name}` found while "
-                    "loading skills. Rename one of the skill "
-                    "directories."
-                )
             seen.add(spec.name)
             discovered.append(spec)
     return discovered

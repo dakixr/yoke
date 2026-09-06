@@ -6,11 +6,19 @@ from pathlib import Path
 
 
 def default_skill_dirs(root: Path, *, home: Path | None = None) -> list[str]:
-    """Return existing repo and user skill directories for one root."""
+    """Return existing repo and user skill directories in precedence order."""
     resolved_root = root.resolve()
     resolved_home = (home or Path.home()).resolve()
-    candidates = {
+    candidates = [
         resolved_root / ".yoke" / "skills",
         resolved_home / ".yoke" / "skills",
-    }
-    return [str(path.resolve()) for path in candidates if path.is_dir()]
+    ]
+    discovered: list[str] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        path = candidate.resolve()
+        if path in seen or not path.is_dir():
+            continue
+        seen.add(path)
+        discovered.append(str(path))
+    return discovered
