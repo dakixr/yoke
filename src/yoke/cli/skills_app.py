@@ -71,7 +71,7 @@ def skills_list(
     console.print(table)
 
 
-@skills_app.command("show", help="Show the full contents of a discovered skill.")
+@skills_app.command("show", help="Show a discovered skill's files and instructions.")
 def skills_show(
     name: Annotated[str, typer.Argument(help="Skill name.")],
     root: Annotated[
@@ -89,7 +89,14 @@ def skills_show(
     try:
         registry = load_skill_registry(default_cli_skill_dirs(root))
         skill = registry.require(name)
-        typer.echo(skill.load_content())
+        content = skill.load_content()
+        files = skill.directory_file_listing()
+        if files:
+            typer.echo("Skill directory files:")
+            for path in files:
+                typer.echo(f"- {path}")
+            typer.echo()
+        typer.echo(content)
     except (KeyError, ValueError) as exc:
         typer.echo(f"Skill loading failed: {exc}", err=True)
         raise typer.Exit(1) from exc

@@ -556,7 +556,10 @@ yoke skills init repo-style
 
 `yoke skills list` and `yoke skills show` use the same built-in, global, and
 repo-local discovery paths as normal CLI sessions. Pass `--root` when you want
-repo-local discovery or scaffolding to target a different workspace.
+repo-local discovery or scaffolding to target a different workspace. `yoke
+skills show <name>` prints the recursive list of full file paths in the skill
+directory before the `SKILL.md` instructions, matching the file context the
+model receives when that skill is activated.
 
 ### Skill directories
 

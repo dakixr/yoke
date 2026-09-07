@@ -7,6 +7,16 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 
+def _directory_file_listing(root: Path) -> list[str]:
+    """Return sorted absolute paths for files under a skill directory."""
+    try:
+        resolved_root = root.expanduser().resolve()
+        paths = [path for path in resolved_root.rglob("*") if path.is_file()]
+    except OSError:
+        return []
+    return [str(path) for path in sorted(paths)]
+
+
 class SkillSpec(BaseModel):
     """Specification for a discoverable skill loaded from a SKILL.md file."""
 
@@ -25,6 +35,10 @@ class SkillSpec(BaseModel):
             raise ValueError(
                 f"Could not read skill file `{self.skill_md_path}`: {exc}"
             ) from exc
+
+    def directory_file_listing(self) -> list[str]:
+        """Return full paths for files in the skill directory."""
+        return _directory_file_listing(self.root)
 
 
 class ActiveSkill(BaseModel):
@@ -73,9 +87,4 @@ class ActiveSkill(BaseModel):
         """Return full paths for files in the skill directory."""
         if self.is_inline or not self.source_path.strip():
             return []
-        root = Path(self.source_path).parent
-        try:
-            paths = [path for path in root.rglob("*") if path.is_file()]
-        except OSError:
-            return []
-        return [str(path) for path in sorted(paths)]
+        return _directory_file_listing(Path(self.source_path).parent)
