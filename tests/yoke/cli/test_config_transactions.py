@@ -12,6 +12,7 @@ from typing import Iterator
 import pytest
 import typer
 
+from yoke.ai.providers.resolution import ProviderRef
 from yoke.cli import models_app
 from yoke.cli.interactive import tools_menu
 from yoke.cli.models_app import set_default_model
@@ -52,9 +53,8 @@ def test_concurrent_model_and_tool_commands_preserve_both_changes(
     with ThreadPoolExecutor(max_workers=2) as executor:
         model_update = executor.submit(
             set_default_model,
-            "demo:new-model",
+            "demo:new-model:high",
             root=tmp_path,
-            reasoning_effort="high",
             repo_scope=True,
         )
         tool_update = executor.submit(
@@ -168,11 +168,11 @@ def test_model_mutation_is_validated_before_config_replacement(
     _avoid_model_discovery(monkeypatch)
     monkeypatch.setattr(
         models_app,
-        "parse_provider_model_identifier",
-        lambda _model: ("demo", ""),
+        "parse_provider_ref",
+        lambda _model: ProviderRef(provider_name="demo"),
     )
 
-    with pytest.raises(ValueError, match="both parts non-empty"):
+    with pytest.raises(ValueError, match="with model name"):
         set_default_model("demo:new", root=tmp_path, repo_scope=True)
 
     assert config_path.read_bytes() == original

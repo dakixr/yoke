@@ -61,6 +61,19 @@ def test_set_default_zai_model_persists_model_default_effort(tmp_path: Path) -> 
     assert updated.default_reasoning_effort == "max"
 
 
+def test_set_default_model_accepts_sdk_style_thinking_effort(tmp_path: Path) -> None:
+    set_default_model(
+        "zai:glm-5.3-flash:low",
+        root=tmp_path,
+        repo_scope=True,
+    )
+
+    config_path = tmp_path / ".yoke" / "config.json"
+    updated = PiConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
+    assert updated.default_model == "zai:glm-5.3-flash"
+    assert updated.default_reasoning_effort == "low"
+
+
 def test_explicit_model_does_not_inherit_incompatible_config_effort(
     tmp_path: Path,
     monkeypatch,
@@ -79,6 +92,16 @@ def test_explicit_model_does_not_inherit_incompatible_config_effort(
     assert args.provider_name == "zai"
     assert args.model == "glm-5.3-flash"
     assert args.reasoning_effort == "max"
+
+
+def test_explicit_model_accepts_sdk_style_thinking_effort(tmp_path: Path) -> None:
+    args = CLIArgs(model="zai:glm-5.3-flash:low", root=str(tmp_path))
+
+    prepare_provider_args(args)
+
+    assert args.provider_name == "zai"
+    assert args.model == "glm-5.3-flash"
+    assert args.reasoning_effort == "low"
 
 
 def test_configured_model_replaces_stale_effort_with_model_default(

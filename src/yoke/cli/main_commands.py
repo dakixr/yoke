@@ -65,20 +65,9 @@ def register_commands(app: typer.Typer) -> None:
             typer.Option(
                 "--model",
                 help=(
-                    "Model to send to the provider. "
-                    "Use `provider-name:model-name` to select a specific "
-                    "provider, or just `model-name` to let yoke pick a "
+                    "Model selection as `provider-name:model-name[:thinking-effort]`. "
+                    "You can also pass just `model-name` to let yoke pick a "
                     "provider from available credentials."
-                ),
-            ),
-        ] = None,
-        reasoning_effort: Annotated[
-            str | None,
-            typer.Option(
-                "--reasoning-effort",
-                help=(
-                    "Reasoning effort for supported chat-completions models: "
-                    "none, low, medium, high, xhigh, or max."
                 ),
             ),
         ] = None,
@@ -126,7 +115,6 @@ def register_commands(app: typer.Typer) -> None:
                     session=session,
                     fork_session_id=fork_session_id,
                     model=model,
-                    reasoning_effort=reasoning_effort,
                     root=root,
                     skills=tuple(skill),
                     images=tuple(image),
@@ -236,19 +224,8 @@ def register_commands(app: typer.Typer) -> None:
             typer.Option(
                 "--model",
                 help=(
-                    "Model to send to the provider. "
-                    "Use `provider-name:model-name` "
-                    "to override the resumed provider as well."
-                ),
-            ),
-        ] = None,
-        reasoning_effort: Annotated[
-            str | None,
-            typer.Option(
-                "--reasoning-effort",
-                help=(
-                    "Reasoning effort for supported chat-completions models: "
-                    "none, low, medium, high, xhigh, or max."
+                    "Model selection as `provider-name:model-name[:thinking-effort]`. "
+                    "Including the provider overrides the resumed provider as well."
                 ),
             ),
         ] = None,
@@ -269,7 +246,6 @@ def register_commands(app: typer.Typer) -> None:
             run_resume_cli(
                 build_cli_args(
                     model=model,
-                    reasoning_effort=reasoning_effort,
                     root=root,
                 ),
                 session_id,

@@ -13,11 +13,11 @@ from rich.text import Text
 
 from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
 from yoke.ai.providers.resolution import list_provider_models
+from yoke.ai.providers.resolution import parse_provider_ref
 from yoke.cli.config import CLIArgs
 from yoke.cli.config import load_effective_yoke_config
 from yoke.cli.path_display import format_root_label
 from yoke.cli.providers.catalog import list_all_provider_model_choices
-from yoke.cli.providers.catalog import parse_provider_model_identifier
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
 from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
@@ -65,12 +65,17 @@ def set_default_model(
     default_model: str,
     *,
     root: Path,
-    reasoning_effort: str | None = None,
     global_scope: bool = False,
     repo_scope: bool = False,
 ) -> Path:
     """Persist the configured default model and return the config path."""
-    provider_name, model_name = parse_provider_model_identifier(default_model)
+    provider_ref = parse_provider_ref(default_model)
+    provider_name = provider_ref.provider_name
+    model_name = provider_ref.model
+    if model_name is None:
+        raise ValueError(
+            "Expected `provider-name:model-name[:thinking-effort]` with model name."
+        )
     normalized = f"{provider_name}:{model_name}"
     models = list_provider_models(
         provider_name,
@@ -80,9 +85,9 @@ def set_default_model(
     )
     selected = next((model for model in models or () if model.id == model_name), None)
     resolved_effort = (
-        compatible_reasoning_effort_for_model(selected, reasoning_effort)
+        compatible_reasoning_effort_for_model(selected, provider_ref.reasoning_effort)
         if selected is not None
-        else reasoning_effort
+        else provider_ref.reasoning_effort
     )
     path = _config_path(
         root=root,
@@ -100,11 +105,8 @@ def set_default_model(
 def _prompt_for_default_model(
     *,
     root: Path,
-    reasoning_effort: str | None = None,
 ) -> str:
-    choices = list_all_provider_model_choices(
-        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort)
-    )
+    choices = list_all_provider_model_choices(args=CLIArgs(root=str(root)))
     if not choices:
         raise ValueError("No models advertised by providers.")
     qualified_ids = [choice.qualified_id for choice in choices]
@@ -178,7 +180,6 @@ def print_model_inventory(
     stream: OutputStream,
     *,
     root: Path,
-    reasoning_effort: str | None = None,
 ) -> None:
     """Print the provider-qualified model catalog known to the CLI."""
     console = build_console(stream)
@@ -192,9 +193,7 @@ def print_model_inventory(
     table.add_column("Default")
     table.add_column("Context")
     table.add_column("Thinking")
-    choices = list_all_provider_model_choices(
-        args=CLIArgs(root=str(root), reasoning_effort=reasoning_effort)
-    )
+    choices = list_all_provider_model_choices(args=CLIArgs(root=str(root)))
     for choice in choices:
         is_default = effective_config.default_model == choice.qualified_id
         table.add_row(
@@ -229,19 +228,11 @@ def models_list(
             resolve_path=True,
         ),
     ] = DEFAULT_ROOT,
-    reasoning_effort: Annotated[
-        str | None,
-        typer.Option(
-            "--reasoning-effort",
-            help="Optional thinking level passed to provider model discovery.",
-        ),
-    ] = None,
 ) -> None:
     """List all provider-qualified models exposed by yoke providers."""
     print_model_inventory(
         cast(OutputStream, sys.stdout),
         root=root,
-        reasoning_effort=reasoning_effort,
     )
 
 
@@ -251,7 +242,7 @@ def models_set(
         str | None,
         typer.Argument(
             help=(
-                "Default model as provider-name:model-name. "
+                "Default model as provider-name:model-name[:thinking-effort]. "
                 "If omitted, yoke prompts you to choose."
             ),
         ),
@@ -266,16 +257,6 @@ def models_set(
             resolve_path=True,
         ),
     ] = DEFAULT_ROOT,
-    reasoning_effort: Annotated[
-        str | None,
-        typer.Option(
-            "--reasoning-effort",
-            help=(
-                "Persist the default reasoning effort alongside the default "
-                "model: none, low, medium, high, xhigh, or max."
-            ),
-        ),
-    ] = None,
     global_scope: Annotated[
         bool,
         typer.Option(
@@ -297,7 +278,6 @@ def models_set(
         path = set_default_model(
             target_model,
             root=root,
-            reasoning_effort=reasoning_effort,
             global_scope=global_scope,
             repo_scope=repo_scope,
         )

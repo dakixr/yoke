@@ -57,9 +57,9 @@ Keep them separate.
    ]
    ```
 
-3. Add `--model`, `--reasoning-effort`, repeated `--skill`, and repeated
-   `--image` arguments when the user requests them. Preserve explicit user
-   selections exactly.
+3. Add `--model <provider:model[:thinking-effort]>`, repeated `--skill`, and
+   repeated `--image` arguments when the user requests them. Preserve explicit
+   user selections exactly.
 4. Run without a TTY. If the command returns an `exec_command` session ID, poll
    it with empty `write_stdin` calls until it exits unless the user explicitly
    asks to leave it running.
@@ -91,10 +91,10 @@ answer first and then report the verification failure.
    supplied by the user. Otherwise use the current workspace and report that
    fallback.
 5. Build the headless argument list using the same persisted session ID:
-   - Add `--model <provider_name>:<model_id>` when both fields exist.
+   - Add `--model <provider_name>:<model_id>:<effort>` when all three fields exist.
+   - Add `--model <provider_name>:<model_id>` when provider and model exist.
    - Add `--model <model_id>` when only the model exists.
    - Omit `--model` when the handoff contains no model.
-   - Add `--reasoning-effort <effort>` only when the value exists.
 6. Run the follow-up without a TTY and poll any live command process until it
    exits, unless the user asks to leave it running.
 7. Read a second bounded JSON handoff after success when actual post-run model

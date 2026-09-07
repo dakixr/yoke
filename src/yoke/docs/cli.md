@@ -118,9 +118,9 @@ Use these commands to inspect or change defaults:
 
 ```bash
 yoke models list
-yoke models set codex:gpt-5.6-sol --reasoning-effort medium
-yoke models set opencode-go:glm-5.3-flash --reasoning-effort max
-yoke models set zai:glm-5.3-flash --reasoning-effort max
+yoke models set codex:gpt-5.6-sol:medium
+yoke models set opencode-go:glm-5.3-flash:max
+yoke models set zai:glm-5.3-flash:max
 yoke models set
 yoke models set --repo
 
