@@ -28,6 +28,7 @@ from yoke.ai.providers.codex.subscription import clamp_reasoning_effort
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
 from yoke.ai.providers.base import ProviderCancelledError
+from yoke.ai.providers.codex.websockets import CodexWebSocketsConfig
 
 
 def _write_fallback_auth(path: Path, credentials: OAuthCredentials) -> None:
@@ -50,6 +51,39 @@ def _fake_access_token(*, account_id: str, exp: int = 4_102_444_800) -> str:
         raw = json.dumps(payload, separators=(",", ":")).encode()
         encoded_parts.append(base64.urlsafe_b64encode(raw).decode().rstrip("="))
     return f"{encoded_parts[0]}.{encoded_parts[1]}."
+
+
+@pytest.mark.parametrize(
+    "config_type",
+    [CodexSubscriptionConfig, CodexWebSocketsConfig],
+)
+def test_codex_logs_dir_resolves_lazily_from_environment(
+    config_type: type[CodexSubscriptionConfig],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def make_config() -> CodexSubscriptionConfig:
+        return config_type(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+        )
+
+    provider_logs = tmp_path / "provider-logs"
+    codex_logs = tmp_path / "codex-logs"
+    monkeypatch.setenv("YOKE_PROVIDER_LOGS_DIR", str(provider_logs))
+    monkeypatch.setenv("YOKE_CODEX_LOGS_DIR", str(codex_logs))
+
+    assert make_config().logs_dir == codex_logs
+
+    monkeypatch.delenv("YOKE_CODEX_LOGS_DIR")
+    assert make_config().logs_dir == provider_logs
+
+    redirected_home = tmp_path / "redirected-home"
+    monkeypatch.delenv("YOKE_PROVIDER_LOGS_DIR")
+    monkeypatch.setenv("HOME", str(redirected_home))
+    assert make_config().logs_dir == (redirected_home / ".yoke" / "providers" / "logs")
 
 
 def test_invalid_oauth_token_error_detection() -> None:
@@ -246,7 +280,6 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
             selection_path=selection_path,
             model="gpt-5.6-sol",
             max_retries=1,
-            logs_dir=tmp_path / "provider-logs",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
@@ -302,7 +335,6 @@ def test_codex_subscription_cancellation_closes_client_before_stream_enters(
             / "codex-auth"
             / "selection.json",
             model="gpt-5.6-sol",
-            logs_dir=tmp_path / "provider-logs",
         )
     )
     monkeypatch.setattr(provider, "_client", cast(httpx.Client, BlockingClient()))
@@ -345,7 +377,6 @@ def test_codex_provider_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:
             auths_path=tmp_path / "auths.json",
             selection_path=tmp_path / "selection.json",
             model="gpt-5.6-sol",
-            logs_dir=tmp_path / "provider-logs",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
@@ -398,7 +429,6 @@ def test_codex_provider_captures_and_replays_turn_state(tmp_path: Path) -> None:
             auths_path=tmp_path / "auths.json",
             selection_path=tmp_path / "selection.json",
             model="gpt-5.6-sol",
-            logs_dir=tmp_path / "provider-logs",
         ),
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 
@@ -25,7 +24,6 @@ JWT_CLAIM_PATH = "https://api.openai.com/auth"
 DEFAULT_BASE_URL = "https://chatgpt.com/backend-api"
 DEFAULT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DEFAULT_CXAUTH_VAULT_NAME = ".codex-auth"
-DEFAULT_LOGS_DIR = Path.home() / ".yoke" / "providers" / "logs"
 DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 900.0
 X_CODEX_TURN_STATE_HEADER = "x-codex-turn-state"
 X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite"

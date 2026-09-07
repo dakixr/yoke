@@ -11,12 +11,11 @@ from typing import Any
 from .catalog import (
     DEFAULT_BASE_URL,
     DEFAULT_CXAUTH_VAULT_NAME,
-    DEFAULT_LOGS_DIR,
     DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
     DEFAULT_YOKE_ORIGINATOR,
     default_reasoning_effort_for_model_id,
 )
-from .config import CodexSubscriptionConfig
+from .config import CodexSubscriptionConfig, resolve_codex_logs_dir
 from .provider import CodexSubscriptionProvider
 
 
@@ -61,10 +60,6 @@ def register_provider(context: Any) -> CodexSubscriptionProvider:
                 )
             ),
             text_verbosity=(env.get("YOKE_CODEX_TEXT_VERBOSITY") or "medium"),
-            logs_dir=Path(
-                env.get("YOKE_CODEX_LOGS_DIR")
-                or env.get("YOKE_PROVIDER_LOGS_DIR")
-                or str(DEFAULT_LOGS_DIR)
-            ),
+            logs_dir=resolve_codex_logs_dir(env),
         )
     )

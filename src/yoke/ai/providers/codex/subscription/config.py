@@ -4,15 +4,32 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .catalog import (
     DEFAULT_BASE_URL,
-    DEFAULT_LOGS_DIR,
     DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
 )
+
+
+def resolve_codex_logs_dir(
+    env: Mapping[str, str] | None = None,
+    *,
+    include_websocket_override: bool = False,
+) -> Path:
+    """Resolve the Codex log directory from the current environment and home."""
+    source = os.environ if env is None else env
+    configured = source.get("YOKE_CODEX_LOGS_DIR")
+    if not configured and include_websocket_override:
+        configured = source.get("YOKE_CODEX_WEBSOCKETS_LOGS_DIR")
+    configured = configured or source.get("YOKE_PROVIDER_LOGS_DIR")
+    if configured:
+        return Path(configured)
+    return Path.home() / ".yoke" / "providers" / "logs"
 
 
 class CodexSubscriptionConfig(BaseModel):
@@ -31,4 +48,4 @@ class CodexSubscriptionConfig(BaseModel):
     max_retry_backoff_seconds: float = 15.0
     reasoning_effort: str = "medium"
     text_verbosity: str = "medium"
-    logs_dir: Path = DEFAULT_LOGS_DIR
+    logs_dir: Path = Field(default_factory=resolve_codex_logs_dir)

@@ -4,7 +4,6 @@ from .catalog import (
     CODEX_CLI_ORIGINATOR,
     DEFAULT_BASE_URL,
     DEFAULT_CXAUTH_VAULT_NAME,
-    DEFAULT_LOGS_DIR,
     DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
     DEFAULT_USAGE_URL,
     DEFAULT_YOKE_ORIGINATOR,
@@ -17,7 +16,7 @@ from .catalog import (
     originator_for_model,
     uses_responses_lite,
 )
-from .config import CodexSubscriptionConfig
+from .config import CodexSubscriptionConfig, resolve_codex_logs_dir
 from .helpers import (
     clamp_reasoning_effort,
     error_detail,
@@ -46,7 +45,6 @@ __all__ = [
     "CodexSubscriptionProvider",
     "DEFAULT_BASE_URL",
     "DEFAULT_CXAUTH_VAULT_NAME",
-    "DEFAULT_LOGS_DIR",
     "DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS",
     "DEFAULT_USAGE_URL",
     "DEFAULT_YOKE_ORIGINATOR",
@@ -70,6 +68,7 @@ __all__ = [
     "query_codex_quota",
     "refresh_openai_codex_token",
     "register_provider",
+    "resolve_codex_logs_dir",
     "retry_after_seconds",
     "uses_responses_lite",
 ]

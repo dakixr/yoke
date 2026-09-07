@@ -14,11 +14,11 @@ from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import (
     DEFAULT_BASE_URL,
     DEFAULT_CXAUTH_VAULT_NAME,
-    DEFAULT_LOGS_DIR,
     DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
     DEFAULT_YOKE_ORIGINATOR,
     CodexSubscriptionConfig,
     default_reasoning_effort_for_model_id,
+    resolve_codex_logs_dir,
 )
 
 if TYPE_CHECKING:
@@ -102,11 +102,9 @@ def register_provider(context: Any) -> CodexProvider:
                 or env.get("YOKE_CODEX_WEBSOCKETS_TEXT_VERBOSITY")
                 or "medium"
             ),
-            logs_dir=Path(
-                env.get("YOKE_CODEX_LOGS_DIR")
-                or env.get("YOKE_CODEX_WEBSOCKETS_LOGS_DIR")
-                or env.get("YOKE_PROVIDER_LOGS_DIR")
-                or str(DEFAULT_LOGS_DIR)
+            logs_dir=resolve_codex_logs_dir(
+                env,
+                include_websocket_override=True,
             ),
             websocket_ping_interval_seconds=optional_float_env(
                 env.get("YOKE_CODEX_WEBSOCKETS_PING_INTERVAL_SECONDS"),

@@ -157,8 +157,12 @@ keyless search, fetch, and multi-source synthesis workflow.
 Provider retries, rate limits, connection recovery, and stale-continuity
 fallbacks appear as visible warning events in interactive and observed SDK
 runs. Provider and web clients use the operating system's standard TLS
-certificate validation. Every completed response also writes an attributed local usage record
-under `~/.yoke/usage-metric-logs/<provider>/`.
+certificate validation. Codex request logs default to
+`~/.yoke/providers/logs/`; `YOKE_CODEX_LOGS_DIR` overrides that location, with
+`YOKE_PROVIDER_LOGS_DIR` as the shared provider fallback. Yoke resolves these
+paths when it creates the provider config, so changes to `HOME` apply without
+restarting Python. Every completed response also writes an attributed local
+usage record under `~/.yoke/usage-metric-logs/<provider>/`.
 
 ---
 
