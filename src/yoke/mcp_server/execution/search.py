@@ -13,32 +13,18 @@ from typing import Any
 from yoke.mcp_server.search import (
     MCPFdTool,
     MCPRipgrepTool,
-    _is_fd_execution_argument,
-    _is_rg_execution_argument,
 )
 
 
 def execute(
     tool: MCPFdTool | MCPRipgrepTool, cancel: threading.Event | None
 ) -> dict[str, Any]:
-    arguments = tool._parse_raw_args()
     rg = isinstance(tool, MCPRipgrepTool)
-    if rg and any(_is_rg_execution_argument(arg) for arg in arguments):
-        raise ValueError("rg --pre is disabled in read-only operations")
-    if not rg and any(_is_fd_execution_argument(arg) for arg in arguments):
-        raise ValueError("fd execution is disabled in read-only operations")
     binary = shutil.which("rg" if rg else "fd")
     if binary is None:
         raise ValueError("Search executable not found")
     root = tool._resolve_search_root()
-    command = [binary]
-    if rg:
-        command += ["--no-config"]
-        if "--json" not in arguments:
-            command.append("--json")
-    command += arguments
-    if rg and not tool._has_explicit_path(arguments):
-        command.append(str(root))
+    command = tool._build_command(binary, root)
     process = subprocess.Popen(
         command,
         cwd=root,
@@ -80,14 +66,8 @@ def execute(
         stdout, stderr = (
             buffers[key].decode("utf-8", errors="replace") for key in ("out", "err")
         )
-        if rg:
-            result = tool._parse_json_output(stdout, command)
-            if result is None:
-                result = tool._render_text(stdout, stderr)
-        else:
-            result = tool._render_output(stdout, stderr, command, code)
-        if code not in {0, 1} and not truncated:
-            return {"ok": False, "error": stderr[:4000], "exit_code": code}
+        effective_code = 0 if truncated and code not in {0, 1} else code
+        result = tool._render_output(stdout, stderr, command, effective_code)
         if truncated:
             result["truncated"] = True
         result["complete"] = not result.get("truncated", False)

@@ -34,13 +34,26 @@ or excessively large decoded images are rejected before any image is returned.
 `mcp_inspect` and `mcp_call` let the authenticated remote client inspect and
 call MCP servers configured through Yoke without starting a Yoke agent.
 
-The `rg` and `fd` tools accept their native raw argument syntax. To keep their
-MCP annotations truthfully read-only, subprocess-launching switches (`rg
---pre` and `fd --exec`/`--exec-batch`/`-x`/`-X`) are rejected; use
-`exec_command` when command execution is intended.
-MCP ripgrep also ignores `RIPGREP_CONFIG_PATH`, so a local configuration cannot
-enable a subprocess hook behind the read-only argument check. The ordinary
-agent `rg` tool retains its native configuration behavior.
+The `rg` and `fd` tools expose typed search semantics instead of native argument
+strings. `rg` accepts pattern lists, paths, globs, file types, match/result
+modes, context, ignore behavior, sorting, and a global result limit. `fd`
+accepts a pattern, search paths, file types, extensions, excludes, depth and
+time/size filters, ignore behavior, sorting, a global result limit, and an
+optional regex over returned paths. Shell pipelines and subprocess-launching
+switches are intentionally not representable; use `exec_command` when command
+execution or arbitrary shell composition is intended. MCP ripgrep ignores
+`RIPGREP_CONFIG_PATH`, while the ordinary agent `rg` tool retains its native
+configuration behavior.
+
+`rg` returns mode-specific structured output: match/context objects with paths,
+line numbers and submatches, path lists for file modes, or `{path, count}`
+objects for count mode. `fd` returns bounded path strings, or structured
+`path`/`type`/`size_bytes`/`modified_at` metadata when `details=true`. `limit`
+replaces common `| head` usage without shell parsing.
+
+The typed contract is the only `rg`/`fd` API. Native argument strings and
+execution switches are not accepted; use `exec_command` for arbitrary native
+CLI behavior or shell composition.
 
 The HTTP transport is stateless. One long-lived application runtime owns a
 shared `CommandProcessManager`, so commands that outlive their initial call can

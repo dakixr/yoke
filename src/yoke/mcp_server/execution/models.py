@@ -8,12 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yoke.agent.tools.read import ReadTool
 from yoke.mcp_server.results.batch import minimum_budget
-from yoke.mcp_server.search import (
-    MCPFdTool,
-    MCPRipgrepTool,
-    _is_fd_execution_argument,
-    _is_rg_execution_argument,
-)
+from yoke.mcp_server.search import MCPFdTool, MCPRipgrepTool
 
 
 class Request(BaseModel):
@@ -56,17 +51,6 @@ class BatchRead(Request):
             )
         if len({item.id for item in self.items}) != len(self.items):
             raise ValueError("Item IDs must be unique")
-        for item in self.items:
-            if item.tool == "rg" and any(
-                _is_rg_execution_argument(a) for a in item.arguments._parse_raw_args()
-            ):
-                raise ValueError("rg --pre is not a read operation")
-            if item.tool == "fd":
-                if any(
-                    _is_fd_execution_argument(a)
-                    for a in item.arguments._parse_raw_args()
-                ):
-                    raise ValueError("fd execution is not a read operation")
         return self
 
 

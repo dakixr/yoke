@@ -403,8 +403,8 @@ from yoke.agent.tools import ReadTool, EditTool, WriteTool
 | `ApplyPatchTool` | `apply_patch` | Apply codex-style multi-file patches inside the workspace. |
 | `ExecCommandTool` / `CommandTool` | `exec_command` | Run shell commands or direct argv processes from the workspace root, returning output or a background session ID. |
 | `WriteStdinTool` | `write_stdin` | Poll a running command session for up to 1 hour or send interactive input. |
-| `FdTool` | `fd` | Run fd for file and directory discovery with regex, glob, ignore, type, extension, and depth behavior. |
-| `RipgrepTool` | `rg` | Run ripgrep for fast recursive content search and file listing. |
+| `FdTool` | `fd` | Find files and directories with typed pattern, path, type, extension, ignore, depth, time/size, sorting, filtering, and limit fields. |
+| `RipgrepTool` | `rg` | Search contents or list files with typed patterns, paths, globs, file types, match/result modes, context, sorting, and limits. |
 | `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
 | `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
 | `ImageGenerationTool` | `image_generation` | Generate or edit images when the active Codex provider supports it. |
@@ -417,6 +417,10 @@ Most workspace tools can be passed as classes and are bound to `RunConfig.root`
 automatically. Pass already-bound instances when you need custom context. Pass
 capability IDs such as `"file.write"` when you want the SDK to choose the
 provider/model-specific concrete tools.
+
+`FdTool` and `RipgrepTool` accept only typed search fields. Native argument
+strings are intentionally not part of the SDK contract; use `exec_command` for
+shell composition or native CLI behavior outside the typed search surface.
 
 Capabilities are implemented in `yoke.agent.capabilities`. Each
 `BaseCapability` resolves a high-level ability into one or more concrete tools

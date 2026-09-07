@@ -1528,7 +1528,7 @@ wheels = [
 
 [[package]]
 name = "yoke"
-version = "2.2.6"
+version = "2.3.6"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

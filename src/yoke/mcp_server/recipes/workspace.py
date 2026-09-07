@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import shlex
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -33,7 +32,7 @@ async def search_then_read(
     search = await dispatch(
         "rg",
         {
-            "raw_args": "-n -- " + shlex.quote(request.pattern),
+            "patterns": [request.pattern],
             "root_dir": request.root_dir,
             "max_output_chars": 64000,
         },

@@ -37,7 +37,7 @@ The MCP command descriptor advertises its effective non-login-shell default.
 {
   "items": [
     {"id": "instructions", "tool": "read_file", "arguments": {"path": "AGENTS.md"}},
-    {"id": "matches", "tool": "rg", "arguments": {"raw_args": "-n needle src"}}
+    {"id": "matches", "tool": "rg", "arguments": {"patterns": ["needle"], "paths": ["src"], "limit": 50}}
   ],
   "max_concurrency": 4,
   "deadline_ms": 30000,
@@ -46,10 +46,11 @@ The MCP command descriptor advertises its effective non-login-shell default.
 ```
 
 `batch_read` accepts 1–16 typed `read_file`, `rg`, or `fd` operations. It validates
-the entire request before starting, rejects duplicate IDs and search execution
-switches, and returns outcomes in input order. A missing file does not discard
-successful siblings. No nested batch, shell, Python, or generic downstream call
-is accepted in this tool.
+the entire request before starting, rejects duplicate IDs, and returns outcomes
+in input order. Search tools expose search semantics rather than native shell
+argument strings, so subprocess switches and pipelines are not representable.
+A missing file does not discard successful siblings. No nested batch, shell,
+Python, or generic downstream call is accepted in this tool.
 
 The batch allows at most four concurrent operations and shares the service's
 operation limit. Each item receives a separate output allowance, so a noisy

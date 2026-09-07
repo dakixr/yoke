@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from yoke.mcp_server.config import MAX_SAFE_REMOTE_WAIT_MS
@@ -59,6 +60,9 @@ def test_registry_is_an_explicit_tool_allowlist(tmp_path: Path) -> None:
             assert image_tool.annotations.open_world_hint is False
             assert set(image_tool.input_schema["properties"]) == {"path"}
             assert image_tool.input_schema["required"] == ["path"]
+            assert "raw_args" not in tools["rg"].input_schema["properties"]
+            assert "raw_args" not in tools["fd"].input_schema["properties"]
+            assert "raw_args" not in json.dumps(tools["batch_read"].input_schema)
             assert (
                 tools["exec_command"].input_schema["properties"]["yield_time_ms"][
                     "maximum"
@@ -145,12 +149,17 @@ def test_file_tools_keep_yoke_path_semantics(tmp_path: Path) -> None:
             )
             search = structured(
                 await client.call_tool(
-                    "rg", {"raw_args": "needle", "root_dir": str(tmp_path)}
+                    "rg", {"patterns": ["needle"], "root_dir": str(tmp_path)}
                 )
             )
             found = structured(
                 await client.call_tool(
-                    "fd", {"raw_args": "--glob '*.txt'", "root_dir": str(tmp_path)}
+                    "fd",
+                    {
+                        "pattern": "*.txt",
+                        "match_mode": "glob",
+                        "root_dir": str(tmp_path),
+                    },
                 )
             )
             assert relative["content"].startswith("needle inside")
@@ -164,23 +173,14 @@ def test_file_tools_keep_yoke_path_semantics(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_rg_and_fd_reject_native_subprocess_switches(tmp_path: Path) -> None:
+def test_rg_and_fd_reject_raw_argument_contract(tmp_path: Path) -> None:
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
         async with memory_client(service) as client:
-            rg_result = await client.call_tool(
-                "rg", {"raw_args": "--pre 'touch should-not-exist' needle"}
-            )
-            fd_result = await client.call_tool(
-                "fd", {"raw_args": "--exec touch should-not-exist"}
-            )
-            short_fd_result = await client.call_tool(
-                "fd", {"raw_args": "-x touch should-not-exist"}
-            )
+            rg_result = await client.call_tool("rg", {"raw_args": "needle"})
+            fd_result = await client.call_tool("fd", {"raw_args": "-t f"})
             assert rg_result.is_error is True
             assert fd_result.is_error is True
-            assert short_fd_result.is_error is True
-            assert not (tmp_path / "should-not-exist").exists()
 
     asyncio.run(scenario())
 

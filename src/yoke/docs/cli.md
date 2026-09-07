@@ -792,11 +792,16 @@ the module cache so another plugin cannot reuse its partially initialized export
 
 **Built-in tool names:** `read`, `edit`, `write`, `apply_patch`, `fd`, `rg`, `find`, `grep`, `ls`, `exec_command`, `write_stdin`, `python_exec`, `web_fetch`, `web_search`, `web_research`, `extract_file_context`, `attach_image`, `image_generation`, `mcp_inspect`, `mcp_call`
 
-The `rg` tool reports subprocess failures with `ok: false`, diagnostic output,
-and the exit code. A no-match exit remains a successful search. Its
-`max_output_chars` accepts values from 1 through 200,000. The portable `ls`,
-`find`, and `grep` tools mark a result as truncated only when a matching entry
-or line was actually omitted, not merely when the result reaches its limit.
+The native `rg` and `fd` tools expose typed search fields instead of shell-like
+argument strings. Use `limit` and `sort` for common result shaping, and use
+`exec_command` for pipelines or command execution. `rg` supports structured
+match, file-list, files-with-matches, and count modes; match results include
+line numbers and submatches. Both tools report subprocess failures with
+`ok: false`, a diagnostic `error`, and the exit code. A no-match exit remains a
+successful search. `max_output_chars` accepts values from 1 through 200,000.
+The portable `ls`, `find`, and `grep` tools mark a result as truncated only when
+a matching entry or line was actually omitted, not merely when the result
+reaches its limit.
 
 The `exec_command` tool accepts either `cmd` for shell syntax or `argv` for a
 direct process launch with no shell parsing. Shell mode defaults to PowerShell

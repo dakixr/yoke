@@ -1,17 +1,38 @@
-"""First-class fd file-discovery tool."""
+"""First-class typed fd file-discovery tool."""
 
 from __future__ import annotations
 
 # ruff: noqa: S603
 
-import os
-import shlex
+import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Literal
+
+from pydantic import ConfigDict, Field, model_validator
 
 from yoke.agent.tools.base import WorkspaceTool
-from pydantic import Field
+from yoke.agent.tools.search_common import bound_text
+from yoke.agent.tools.search_common import path_detail
+from yoke.agent.tools.search_common import split_nul_paths
+
+
+FdType = Literal[
+    "file",
+    "directory",
+    "symlink",
+    "executable",
+    "empty",
+    "socket",
+    "pipe",
+]
+FdMatch = Literal["regex", "glob", "fixed"]
+FdCase = Literal["auto", "sensitive", "insensitive"]
+FdIgnore = Literal["normal", "none", "no_vcs"]
+FdTake = Literal["first", "last"]
+FdSort = Literal["none", "path"]
 
 
 def _resolve_fd_binary() -> str:
@@ -22,36 +43,98 @@ def _resolve_fd_binary() -> str:
 
 
 class FdTool(WorkspaceTool):
-    """Run fd for fast, ergonomic file and directory discovery."""
+    """Find files and directories using typed fd search semantics."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     is_yoke_tool = True
     name = "fd"
     description = (
-        "Run fd, the fast and user-friendly file finder. Pass raw_args exactly "
-        "as you would after `fd`; supports regex/glob search, ignore files, "
-        "hidden paths, extensions, types, depth, excludes, and execution. "
-        "Prefer fd for discovering files and directories by name or path."
+        "Find files and directories using typed fd options. Do not write shell "
+        "pipelines or fd execution flags here. Use limit/sort/filter_pattern for "
+        "result shaping and exec_command when command execution is intended."
     )
 
-    raw_args: str = Field(
-        default="",
-        description=("Exact arguments to pass after `fd`; empty lists all files."),
+    pattern: str | None = Field(
+        default=None,
+        description="Name/path pattern. Empty means match every entry.",
+    )
+    paths: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+        description=(
+            "Directories to search beneath root_dir. Multiple paths are supported. "
+            "Relative paths resolve from root_dir."
+        ),
     )
     root_dir: str | None = Field(
         default=None,
         description=(
-            "Optional directory in which fd runs. Relative paths resolve from "
-            "the workspace root."
+            "Directory in which fd runs. It must be a directory. Use paths for "
+            "search locations beneath it. Relative values resolve from the workspace root."
         ),
     )
+    types: list[FdType] = Field(default_factory=list, max_length=8)
+    extensions: list[str] = Field(default_factory=list, max_length=32)
+    excludes: list[str] = Field(default_factory=list, max_length=32)
+    match_mode: FdMatch = Field(default="regex")
+    case: FdCase = Field(default="auto")
+    full_path: bool = Field(
+        default=False,
+        description="Match the pattern against the full path instead of only the basename.",
+    )
+    hidden: bool = Field(default=False)
+    ignore: FdIgnore = Field(default="normal")
+    ignore_files: list[str] = Field(default_factory=list, max_length=8)
+    follow_symlinks: bool = Field(default=False)
+    min_depth: int | None = Field(default=None, ge=0, le=10_000)
+    max_depth: int | None = Field(default=None, ge=0, le=10_000)
+    changed_within: str | None = Field(default=None)
+    changed_before: str | None = Field(default=None)
+    size: str | None = Field(default=None)
+    absolute_paths: bool = Field(default=False)
+    details: bool = Field(
+        default=False,
+        description="Return structured path metadata instead of plain path strings.",
+    )
+    filter_pattern: str | None = Field(
+        default=None,
+        description=(
+            "Optional regex applied to returned paths/details, replacing simple | rg or | grep filters."
+        ),
+    )
+    sort: FdSort = Field(default="none")
+    limit: int | None = Field(
+        default=None,
+        ge=1,
+        le=10_000,
+        description="Global result count limit, replacing | head.",
+    )
+    take: FdTake = Field(default="first")
     max_output_chars: int = Field(default=12_000, ge=1, le=200_000)
 
+    @model_validator(mode="after")
+    def validate_semantics(self) -> FdTool:
+        if self.take == "last" and self.limit is None:
+            raise ValueError("take='last' requires limit")
+        if (
+            self.min_depth is not None
+            and self.max_depth is not None
+            and self.min_depth > self.max_depth
+        ):
+            raise ValueError("min_depth cannot exceed max_depth")
+        if self.filter_pattern is not None:
+            try:
+                re.compile(self.filter_pattern)
+            except re.error as exc:
+                raise ValueError(f"Invalid filter_pattern regex: {exc}") from exc
+        return self
+
     def execute(self) -> dict[str, object]:
-        """Run fd and return bounded path results."""
         try:
             fd_binary = _resolve_fd_binary()
             search_root = self._resolve_search_root()
-            command = [fd_binary, *self._parse_raw_args()]
+            command = self._build_command(fd_binary, search_root)
         except (FileNotFoundError, ValueError) as exc:
             return self._error(str(exc))
 
@@ -71,12 +154,6 @@ class FdTool(WorkspaceTool):
         except Exception as exc:
             return self._error(str(exc))
 
-        if completed.returncode not in {0, 1}:
-            return self._error(
-                self._combined_error(completed.stdout, completed.stderr),
-                command=command,
-                exit_code=completed.returncode,
-            )
         return self._render_output(
             completed.stdout,
             completed.stderr,
@@ -92,20 +169,68 @@ class FdTool(WorkspaceTool):
         except Exception as exc:
             raise ValueError(f"Invalid fd root_dir: {exc}") from exc
         if not root_dir.is_dir():
-            raise ValueError(f"fd root_dir is not a directory: {root_dir}")
+            raise ValueError(
+                f"fd root_dir is not a directory: {root_dir}. Use paths for search locations."
+            )
         return root_dir
 
-    def _parse_raw_args(self) -> list[str]:
-        argv = shlex.split(self.raw_args, posix=os.name != "nt")
-        if os.name != "nt":
-            return argv
-        return [self._strip_wrapping_quotes(arg) for arg in argv]
+    def _build_command(self, binary: str, search_root: Path) -> list[str]:
+        del search_root
+        command = [binary]
+        for file_type in self.types:
+            command.extend(["--type", file_type])
+        for extension in self.extensions:
+            command.extend(["--extension", extension])
+        for exclude in self.excludes:
+            command.extend(["--exclude", exclude])
+        if self.match_mode == "glob":
+            command.append("--glob")
+        elif self.match_mode == "fixed":
+            command.append("--fixed-strings")
+        if self.case == "sensitive":
+            command.append("--case-sensitive")
+        elif self.case == "insensitive":
+            command.append("--ignore-case")
+        if self.full_path:
+            command.append("--full-path")
+        if self.hidden:
+            command.append("--hidden")
+        if self.ignore == "none":
+            command.append("--no-ignore")
+        elif self.ignore == "no_vcs":
+            command.append("--no-ignore-vcs")
+        for ignore_file in self.ignore_files:
+            command.extend(["--ignore-file", ignore_file])
+        if self.follow_symlinks:
+            command.append("--follow")
+        if self.min_depth is not None:
+            command.extend(["--min-depth", str(self.min_depth)])
+        if self.max_depth is not None:
+            command.extend(["--max-depth", str(self.max_depth)])
+        if self.changed_within is not None:
+            command.extend(["--changed-within", self.changed_within])
+        if self.changed_before is not None:
+            command.extend(["--changed-before", self.changed_before])
+        if self.size is not None:
+            command.extend(["--size", self.size])
+        if self.absolute_paths:
+            command.append("--absolute-path")
+        command.append("--print0")
 
-    @staticmethod
-    def _strip_wrapping_quotes(value: str) -> str:
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-            return value[1:-1]
-        return value
+        can_limit_natively = (
+            self.limit is not None
+            and self.take == "first"
+            and self.sort == "none"
+            and self.filter_pattern is None
+        )
+        if can_limit_natively:
+            command.extend(["--max-results", str(self.limit)])
+
+        for path in self.paths:
+            command.extend(["--search-path", path])
+        if self.pattern is not None:
+            command.extend(["--", self.pattern])
+        return command
 
     def _render_output(
         self,
@@ -114,29 +239,63 @@ class FdTool(WorkspaceTool):
         command: list[str],
         exit_code: int,
     ) -> dict[str, object]:
-        separator = "\0" if "\0" in stdout else None
-        paths = stdout.rstrip("\0\r\n").split(separator) if stdout else []
-        output: list[str] = []
-        output_chars = 0
+        if exit_code not in {0, 1}:
+            error, truncated = bound_text(
+                self._combined_error(stdout, stderr), self.max_output_chars
+            )
+            result = self._error(
+                error,
+                command=command,
+                exit_code=exit_code,
+            )
+            if truncated:
+                result["truncated"] = True
+            return result
+
+        items = split_nul_paths(stdout)
+
+        if self.filter_pattern is not None:
+            regex = re.compile(self.filter_pattern)
+            items = [item for item in items if regex.search(item)]
+        if self.sort == "path":
+            items.sort()
+        if self.limit is not None:
+            if self.take == "last":
+                items = items[-self.limit :]
+            else:
+                items = items[: self.limit]
+
+        shaped: list[object]
+        if self.details:
+            search_root = self._resolve_search_root()
+            shaped = [path_detail(item, search_root) for item in items]
+        else:
+            shaped = list(items)
+
+        output: list[object] = []
         truncated = False
-        for path in paths:
-            path = path.rstrip("\r")
-            added_chars = len(path) + 1
-            if output_chars + added_chars > self.max_output_chars:
+        for item in shaped:
+            candidate = self._success(
+                command=command,
+                output=[*output, item],
+                exit_code=exit_code,
+            )
+            if len(json.dumps(candidate, ensure_ascii=False)) > self.max_output_chars:
                 truncated = True
                 break
-            output.append(path)
-            output_chars += added_chars
-        result = self._success(
-            command=command,
-            output=output,
-            exit_code=exit_code,
-        )
+            output.append(item)
+
+        result = self._success(command=command, output=output, exit_code=exit_code)
         if stderr.strip():
-            result["stderr"] = stderr.rstrip("\r\n")
-        if truncated:
+            diagnostic, diagnostic_truncated = bound_text(
+                stderr.rstrip("\r\n"), self.max_output_chars
+            )
+            result["stderr"] = diagnostic
+            if diagnostic_truncated:
+                result["truncated"] = True
+        if truncated or len(output) < len(shaped):
             result["truncated"] = True
-            result["summary"] = f"showing {len(output)} paths"
+            result["summary"] = f"showing {len(output)} results"
         return result
 
     @staticmethod

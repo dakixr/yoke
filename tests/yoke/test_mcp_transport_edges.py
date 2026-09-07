@@ -73,7 +73,7 @@ def test_read_only_ripgrep_ignores_config_without_changing_agent_tool(
     monkeypatch.setenv("RIPGREP_CONFIG_PATH", str(tmp_path / "untrusted-rg-config"))
     monkeypatch.setattr("yoke.agent.tools.rg._resolve_rg_binary", lambda: "rg")
     monkeypatch.setattr("yoke.agent.tools.rg.subprocess.run", run)
-    tool = tool_class.bind(root=tmp_path).parse_arguments({"raw_args": "needle"})
+    tool = tool_class.bind(root=tmp_path).parse_arguments({"patterns": ["needle"]})
 
     assert tool.execute()["ok"] is True
     assert len(calls) == 1
