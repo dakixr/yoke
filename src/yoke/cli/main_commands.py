@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Annotated
+from typing import Literal
 
 import typer
 
@@ -266,6 +267,21 @@ def register_commands(app: typer.Typer) -> None:
                 help="Output format: markdown or json.",
             ),
         ] = "markdown",
+        tail: Annotated[
+            int | None,
+            typer.Option(
+                "--tail",
+                min=1,
+                help="Keep the last N user turns and their assistant/tool activity.",
+            ),
+        ] = None,
+        tool_detail: Annotated[
+            str,
+            typer.Option(
+                "--tool-detail",
+                help="Tool call/result detail: compact or full.",
+            ),
+        ] = "compact",
         max_chars: Annotated[
             int,
             typer.Option(
@@ -274,7 +290,7 @@ def register_commands(app: typer.Typer) -> None:
                 max=2_000_000,
                 help="Maximum approximate handoff size in characters.",
             ),
-        ] = 240_000,
+        ] = 64_000,
     ) -> None:
         """Print portable active-branch context for another agent."""
         import click
@@ -286,8 +302,20 @@ def register_commands(app: typer.Typer) -> None:
         if normalized_format not in {"markdown", "json"}:
             click.echo("Error: --format must be markdown or json.", err=True)
             raise typer.Exit(2)
+        normalized_tool_detail = tool_detail.strip().casefold()
+        if normalized_tool_detail not in {"compact", "full"}:
+            click.echo("Error: --tool-detail must be compact or full.", err=True)
+            raise typer.Exit(2)
+        resolved_tool_detail: Literal["compact", "full"] = (
+            "full" if normalized_tool_detail == "full" else "compact"
+        )
         try:
-            handoff = build_session_handoff(session_id, max_chars=max_chars)
+            handoff = build_session_handoff(
+                session_id,
+                max_chars=max_chars,
+                tail=tail,
+                tool_detail=resolved_tool_detail,
+            )
         except (OSError, ValueError) as exc:
             click.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc

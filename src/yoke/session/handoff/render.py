@@ -26,17 +26,18 @@ def render_session_handoff_markdown(handoff: SessionHandoff) -> str:
             f"- Active skills: {', '.join(f'`{name}`' for name in handoff.active_skills)}"
         )
     context_line = (
-        f"- Context source: {handoff.retained_entries} active-branch entries retained "
+        f"- Context source: {handoff.retained_entries} active-branch entries read "
         f"from a {handoff.total_entries}-entry session"
     )
+    if handoff.tail is not None:
+        context_line += f", last {handoff.tail} user turns selected"
     if handoff.omitted_messages:
-        context_line += (
-            f", {handoff.omitted_messages} rendered messages omitted by the size bound"
-        )
+        context_line += f", {handoff.omitted_messages} rendered messages omitted"
     lines.append(context_line)
+    lines.append(f"- Tool detail: `{handoff.tool_detail}`")
     if handoff.truncated:
         lines.append(
-            "- Note: this handoff is bounded. Prefer the retained recent context and compaction summary."
+            "- Note: this handoff is bounded. Tool detail or older messages may be abbreviated."
         )
     lines.extend(
         [

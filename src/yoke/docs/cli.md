@@ -357,16 +357,29 @@ yoke --fork 20240421-143022-abc1
 
 # Print portable context for another agent
 yoke session-handoff 20240421-143022-abc1
+
+# Keep only the last three user turns and their assistant/tool activity
+yoke session-handoff 20240421-143022-abc1 --tail 3
+
+# Include full persisted tool arguments and results
+yoke session-handoff 20240421-143022-abc1 --tool-detail full
 ```
 
 `yoke session-handoff <session-id>` reads the persisted active branch directly;
 it does not contact `yoke serve` or require HTTP authentication. The default
 Markdown output includes the session title and working directory, saved model
-selection, active skills, compaction-aware conversation state, tool
-calls/results, and image labels or local paths where useful. Historical context
-that Yoke already compacted is represented by the persisted handoff instead of
-replaying superseded messages. Large tool results and the overall output are
-bounded so one historical command cannot dominate the continuation context.
+selection, active skills, compaction-aware conversation state, compact tool
+calls/results, and image labels or local paths where useful. Compact tool detail
+keeps small head/tail excerpts instead of letting command output dominate the
+continuation context. Use `--tool-detail full` when exact persisted tool
+arguments/results matter; the overall `--max-chars` bound still applies.
+Historical context that Yoke already compacted is represented by the persisted
+handoff instead of replaying superseded messages.
+
+Use `--tail <n>` to keep the last `n` user turns together with the assistant and
+tool activity caused by those turns. A persisted compaction summary remains in
+the handoff, so a short tail keeps the session's earlier working context without
+replaying its old transcript.
 
 The bounded reader uses the index only when its summary version, entry count,
 and journal file signature are current. A stale index falls back to the

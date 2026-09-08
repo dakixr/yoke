@@ -6,4 +6,5 @@ from .models import SessionHandoff as SessionHandoff
 from .models import SessionHandoffImage as SessionHandoffImage
 from .models import SessionHandoffMessage as SessionHandoffMessage
 from .models import SessionHandoffToolCall as SessionHandoffToolCall
+from .models import ToolDetail as ToolDetail
 from .render import render_session_handoff_markdown as render_session_handoff_markdown

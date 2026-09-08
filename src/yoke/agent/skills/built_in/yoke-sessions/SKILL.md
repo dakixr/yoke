@@ -108,6 +108,10 @@ answer first and then report the verification failure.
 
 - Use `yoke session-handoff <id>` for readable Markdown context.
 - Use `yoke session-handoff <id> --format json` for structured automation.
+- Tool detail is compact by default. Use `--tool-detail full` only when exact
+  persisted tool arguments or results are needed.
+- Use `--tail <n>` for the last `n` user turns plus their assistant/tool
+  activity. The persisted compaction summary remains available as prior context.
 - Use `--max-chars 10000` when only metadata is needed.
 - Surface missing, invalid, or malformed session errors.
 - Use raw session JSONL only when explicitly debugging persistence itself.

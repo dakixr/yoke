@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from yoke.agent.models import CompactionHandoff
@@ -165,3 +166,166 @@ def test_session_handoff_falls_back_when_jsonl_is_newer_than_index(
         "Answer appended before index update",
     ]
     assert index_path.read_bytes() == stale_index
+
+
+def test_session_handoff_compacts_tool_detail_by_default_and_full_opts_in(
+    tmp_path: Path,
+) -> None:
+    arguments = '{"query":"' + ("A" * 1_000) + 'TAIL"}'
+    tool_result = "RESULT-BEGIN\n" + ("B" * 3_000) + "\nRESULT-TAIL"
+    tree = SessionTree.from_messages(
+        [
+            Message.user("Inspect the failing command."),
+            Message(
+                role="assistant",
+                content="I will inspect it.",
+                tool_calls=[
+                    ToolCall(
+                        id="call-long",
+                        function=ToolFunction(
+                            name="inspect_command",
+                            arguments=arguments,
+                        ),
+                    )
+                ],
+            ),
+            Message.tool("call-long", tool_result),
+            Message.assistant("The failure is understood."),
+        ]
+    )
+    store = SessionStore(tmp_path / "sessions")
+    store.save(
+        "handoff-tool-detail",
+        [],
+        conversation_entries=list(tree.entries),
+        leaf_id=tree.leaf_id,
+        root=tmp_path,
+    )
+
+    compact = build_session_handoff("handoff-tool-detail", store=store)
+    full = build_session_handoff(
+        "handoff-tool-detail",
+        store=store,
+        tool_detail="full",
+    )
+
+    compact_call = compact.messages[1].tool_calls[0]
+    compact_result = compact.messages[2]
+    assert compact.tool_detail == "compact"
+    assert compact_call.truncated is True
+    assert len(compact_call.arguments) <= 256
+    assert compact_call.arguments.startswith('{"query":"')
+    assert compact_call.arguments.endswith('TAIL"}')
+    assert compact_result.truncated is True
+    assert len(compact_result.content) <= 512
+    assert compact_result.content.startswith("RESULT-BEGIN")
+    assert compact_result.content.endswith("RESULT-TAIL")
+
+    full_call = full.messages[1].tool_calls[0]
+    full_result = full.messages[2]
+    assert full.tool_detail == "full"
+    assert full_call.arguments == arguments
+    assert full_call.truncated is False
+    assert full_result.content == tool_result
+    assert full_result.truncated is False
+
+
+def test_session_handoff_tail_keeps_whole_recent_user_turns_and_summary(
+    tmp_path: Path,
+) -> None:
+    tree = SessionTree.from_messages(
+        [Message.user("Old request"), Message.assistant("Old answer")]
+    )
+    handoff = CompactionHandoff(
+        summary_text="Authentication was moved into middleware.",
+        reason="threshold",
+        boundary="assistant",
+        summarized_messages=2,
+        retained_user_messages=1,
+        retained_messages=[Message.user("Preserve the redirect contract.")],
+    )
+    tree.append_snapshot(
+        MemorySnapshot(
+            id="checkpoint-tail",
+            summary_text=handoff.summary_text,
+            compaction_handoff=handoff,
+        )
+    )
+    tree.append_message(Message.user("Run the login tests."))
+    tree.append_message(
+        Message(
+            role="assistant",
+            content="Running them.",
+            tool_calls=[
+                ToolCall(
+                    id="call-tests",
+                    function=ToolFunction(
+                        name="exec_command", arguments="pytest login"
+                    ),
+                )
+            ],
+        )
+    )
+    tree.append_message(Message.tool("call-tests", "2 failed, 10 passed"))
+    tree.append_message(Message.assistant("Two redirect tests fail."))
+    tree.append_message(Message.user("Fix only the callback test."))
+    tree.append_message(Message.assistant("The callback test is fixed."))
+
+    store = SessionStore(tmp_path / "sessions")
+    store.save(
+        "handoff-tail",
+        [],
+        conversation_entries=list(tree.entries),
+        leaf_id=tree.leaf_id,
+        root=tmp_path,
+    )
+
+    result = build_session_handoff("handoff-tail", store=store, tail=1)
+    contents = [message.content for message in result.messages]
+
+    assert result.tail == 1
+    assert "Authentication was moved into middleware." in contents
+    assert "Fix only the callback test." in contents
+    assert "The callback test is fixed." in contents
+    assert "Preserve the redirect contract." not in contents
+    assert "Run the login tests." not in contents
+    assert "Running them." not in contents
+    assert "2 failed, 10 passed" not in contents
+    assert "Two redirect tests fail." not in contents
+
+
+def test_session_handoff_cli_exposes_tail_and_tool_detail(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    tree = SessionTree.from_messages(
+        [Message.user("First"), Message.assistant("One"), Message.user("Second")]
+    )
+    SessionStore().save(
+        "handoff-cli-options",
+        [],
+        conversation_entries=list(tree.entries),
+        leaf_id=tree.leaf_id,
+        root=tmp_path,
+    )
+
+    exit_code = main(
+        [
+            "session-handoff",
+            "handoff-cli-options",
+            "--tail",
+            "1",
+            "--tool-detail",
+            "full",
+            "--format",
+            "json",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["tail"] == 1
+    assert payload["tool_detail"] == "full"
+    assert [message["content"] for message in payload["messages"]] == ["Second"]
+    assert captured.err == ""

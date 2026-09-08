@@ -6,7 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-DEFAULT_HANDOFF_MAX_CHARS = 240_000
+DEFAULT_HANDOFF_MAX_CHARS = 64_000
+ToolDetail = Literal["compact", "full"]
 
 
 class SessionHandoffImage(BaseModel):
@@ -57,4 +58,6 @@ class SessionHandoff(BaseModel):
     omitted_messages: int = 0
     truncated: bool = False
     max_chars: int = DEFAULT_HANDOFF_MAX_CHARS
+    tail: int | None = None
+    tool_detail: ToolDetail = "compact"
     messages: list[SessionHandoffMessage] = Field(default_factory=list)

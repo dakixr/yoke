@@ -21,14 +21,15 @@ from .models import SessionHandoff
 from .models import SessionHandoffImage
 from .models import SessionHandoffMessage
 from .models import SessionHandoffToolCall
+from .models import ToolDetail
 from .reader import read_handoff_context_window
 from .render import render_handoff_message
 
 MIN_HANDOFF_ENTRY_LIMIT = 100
 MAX_HANDOFF_ENTRY_LIMIT = 1_000
 MESSAGE_TEXT_LIMIT = 60_000
-TOOL_RESULT_TEXT_LIMIT = 16_000
-TOOL_ARGUMENT_LIMIT = 6_000
+COMPACT_TOOL_RESULT_TEXT_LIMIT = 512
+COMPACT_TOOL_ARGUMENT_LIMIT = 256
 
 
 def build_session_handoff(
@@ -36,10 +37,16 @@ def build_session_handoff(
     *,
     store: SessionStore | None = None,
     max_chars: int = DEFAULT_HANDOFF_MAX_CHARS,
+    tail: int | None = None,
+    tool_detail: ToolDetail = "compact",
 ) -> SessionHandoff:
     """Build a bounded, compaction-aware handoff without running a Yoke server."""
     if max_chars < 10_000:
         raise ValueError("max_chars must be at least 10000.")
+    if tail is not None and tail < 1:
+        raise ValueError("tail must be at least 1.")
+    if tool_detail not in {"compact", "full"}:
+        raise ValueError("tool_detail must be compact or full.")
     session_store = store or SessionStore()
     if not session_store.exists(session_id):
         raise ValueError(f"Session not found: {session_id}")
@@ -50,14 +57,17 @@ def build_session_handoff(
         session_store,
         session_id,
         max_chars=max_chars,
+        tail=tail,
     )
     if fallback_record is not None:
         record = fallback_record
     elif record is None:
         record = session_store.load(session_id)
 
-    messages = _handoff_messages(entries)
-    bounded, omitted_messages = _bound_messages(messages, max_chars=max_chars)
+    messages = _handoff_messages(entries, tool_detail=tool_detail)
+    messages, tail_omitted = _tail_user_turns(messages, tail=tail)
+    bounded, size_omitted = _bound_messages(messages, max_chars=max_chars)
+    omitted_messages = tail_omitted + size_omitted
     return SessionHandoff(
         session_id=session_id,
         title=record.title,
@@ -77,6 +87,8 @@ def build_session_handoff(
             or any(message.truncated for message in bounded)
         ),
         max_chars=max_chars,
+        tail=tail,
+        tool_detail=tool_detail,
         messages=bounded,
     )
 
@@ -86,10 +98,15 @@ def _context_entries(
     session_id: str,
     *,
     max_chars: int,
+    tail: int | None,
 ) -> tuple[list[ConversationEntry], int, bool, SessionRecord | None]:
-    entry_limit = min(
-        MAX_HANDOFF_ENTRY_LIMIT,
-        max(MIN_HANDOFF_ENTRY_LIMIT, max_chars // 1_000),
+    entry_limit = (
+        MAX_HANDOFF_ENTRY_LIMIT
+        if tail is not None
+        else min(
+            MAX_HANDOFF_ENTRY_LIMIT,
+            max(MIN_HANDOFF_ENTRY_LIMIT, max_chars // 1_000),
+        )
     )
     window = read_handoff_context_window(
         store,
@@ -109,6 +126,8 @@ def _context_entries(
 
 def _handoff_messages(
     entries: Sequence[ConversationEntry],
+    *,
+    tool_detail: ToolDetail,
 ) -> list[SessionHandoffMessage]:
     latest_checkpoint = next(
         (
@@ -125,18 +144,26 @@ def _handoff_messages(
         if entry.kind == "instruction":
             continue
         if entry.kind == "memory_snapshot":
-            _append_snapshot_messages(result, entry)
+            _append_snapshot_messages(result, entry, tool_detail=tool_detail)
             continue
         if entry.kind == "compaction_summary":
             continue
         if entry.message is not None:
-            result.append(_handoff_message(entry.message, source="conversation"))
+            result.append(
+                _handoff_message(
+                    entry.message,
+                    source="conversation",
+                    tool_detail=tool_detail,
+                )
+            )
     return result
 
 
 def _append_snapshot_messages(
     result: list[SessionHandoffMessage],
     entry: ConversationEntry,
+    *,
+    tool_detail: ToolDetail,
 ) -> None:
     try:
         snapshot = MemorySnapshot.model_validate(entry.metadata)
@@ -144,14 +171,30 @@ def _append_snapshot_messages(
         snapshot = None
     if snapshot is None:
         if entry.message is not None:
-            result.append(_handoff_message(entry.message, source="compaction_summary"))
+            result.append(
+                _handoff_message(
+                    entry.message,
+                    source="compaction_summary",
+                    tool_detail=tool_detail,
+                )
+            )
         return
     handoff = snapshot.compaction_handoff
     summary_message = entry.message or Message.assistant(snapshot.summary_text)
-    result.append(_handoff_message(summary_message, source="compaction_summary"))
+    result.append(
+        _handoff_message(
+            summary_message,
+            source="compaction_summary",
+            tool_detail=tool_detail,
+        )
+    )
     if handoff is not None:
         result.extend(
-            _handoff_message(message, source="compaction_retained")
+            _handoff_message(
+                message,
+                source="compaction_retained",
+                tool_detail=tool_detail,
+            )
             for message in handoff.retained_messages
         )
 
@@ -160,18 +203,28 @@ def _handoff_message(
     message: Message,
     *,
     source: Literal["conversation", "compaction_summary", "compaction_retained"],
+    tool_detail: ToolDetail,
 ) -> SessionHandoffMessage:
     content, images = _message_content(message)
-    text_limit = (
-        TOOL_RESULT_TEXT_LIMIT if message.role == "tool" else MESSAGE_TEXT_LIMIT
-    )
-    content, content_truncated = _truncate_text(content, text_limit)
+    if message.role == "tool" and tool_detail == "full":
+        content_truncated = False
+    else:
+        text_limit = (
+            COMPACT_TOOL_RESULT_TEXT_LIMIT
+            if message.role == "tool"
+            else MESSAGE_TEXT_LIMIT
+        )
+        content, content_truncated = _truncate_text(content, text_limit)
     tool_calls: list[SessionHandoffToolCall] = []
     for call in message.tool_calls:
-        arguments, arguments_truncated = _truncate_text(
-            call.function.arguments,
-            TOOL_ARGUMENT_LIMIT,
-        )
+        if tool_detail == "full":
+            arguments = call.function.arguments
+            arguments_truncated = False
+        else:
+            arguments, arguments_truncated = _truncate_text(
+                call.function.arguments,
+                COMPACT_TOOL_ARGUMENT_LIMIT,
+            )
         tool_calls.append(
             SessionHandoffToolCall(
                 id=call.id,
@@ -190,6 +243,29 @@ def _handoff_message(
         source=source,
         truncated=content_truncated or any(call.truncated for call in tool_calls),
     )
+
+
+def _tail_user_turns(
+    messages: Sequence[SessionHandoffMessage],
+    *,
+    tail: int | None,
+) -> tuple[list[SessionHandoffMessage], int]:
+    if tail is None:
+        return list(messages), 0
+    user_indices = [
+        index
+        for index, message in enumerate(messages)
+        if message.source != "compaction_summary" and message.role == "user"
+    ]
+    if len(user_indices) <= tail:
+        return list(messages), 0
+    start = user_indices[-tail]
+    selected = [
+        message
+        for index, message in enumerate(messages)
+        if message.source == "compaction_summary" or index >= start
+    ]
+    return selected, len(messages) - len(selected)
 
 
 def _message_content(message: Message) -> tuple[str, list[SessionHandoffImage]]:
