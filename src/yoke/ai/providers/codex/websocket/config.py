@@ -9,6 +9,7 @@ from urllib.parse import urlparse, urlunparse
 
 from pydantic import BaseModel
 
+from yoke._tls import tls_verification_enabled
 from yoke.agent.models import MessagePhase
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import (
@@ -205,4 +206,7 @@ def ssl_context_for_websocket_url(url: str) -> ssl.SSLContext | None:
     if not url.startswith("wss://"):
         return None
     context = ssl.create_default_context()
+    if not tls_verification_enabled():
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
     return context

@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 import httpx
 
+from yoke._tls import tls_verification_enabled
 from yoke.agent.models import Message
 from yoke.ai.providers.base import Provider, ProviderCancelledError, ProviderModelInfo
 from yoke.ai.providers.model_selection import (
@@ -72,6 +73,7 @@ class OpenCodeGoProvider(Provider):
                 "Content-Type": "application/json",
                 "x-opencode-session": self.config.session_id,
             },
+            verify=tls_verification_enabled(),
         )
 
     def _build_openai_provider(

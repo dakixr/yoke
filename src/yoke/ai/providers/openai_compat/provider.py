@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from pydantic import field_validator
 from pydantic import model_validator
 
+from yoke._tls import tls_verification_enabled
 from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import Message
 from yoke.ai.providers.base import Provider
@@ -172,6 +173,7 @@ class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
                 base_url=config.base_url.rstrip("/"),
                 timeout=config.timeout_seconds,
                 headers=self._headers,
+                verify=tls_verification_enabled(),
             ),
         )
 

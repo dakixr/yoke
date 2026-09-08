@@ -203,7 +203,7 @@ def test_web_search_closes_http_client(monkeypatch: Any) -> None:
 
     class FakeClient:
         def __init__(self, **kwargs: object) -> None:
-            assert "verify" not in kwargs
+            assert kwargs["verify"] is True
 
         def __enter__(self) -> FakeClient:
             return self

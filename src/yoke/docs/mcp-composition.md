@@ -212,9 +212,10 @@ array supplies explicit paths, optional source SHA-256 digests, and optional
 `expected_sha256` overwrite preconditions.
 
 Downloads require direct HTTPS URLs resolving to public addresses. The
-connection pins a validated address while retaining TLS hostname verification.
-Redirects, URL credentials, and environment proxies are disabled. Each download
-has a 64 MiB cap, network timeouts, and a 60-second streaming deadline. Signed
+connection pins a validated address while retaining TLS hostname verification
+unless `YOKE_DISABLE_TLS` disables verification process-wide. Redirects, URL
+credentials, and environment proxies are disabled. Each download has a 64 MiB
+cap, network timeouts, and a 60-second streaming deadline. Signed
 URLs never appear in result messages or logs. Temporary sibling files are
 committed atomically. Create-only is the default; replacing a file requires its
 expected digest. Imports return individual outcomes and are not a transaction.

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from pydantic import Field
 
+from yoke._tls import tls_verification_enabled
 from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.web.common import http_user_agent
 from yoke.agent.tools.web.common import ReadableHTMLParser
@@ -180,6 +181,7 @@ class WebFetchTool(LocalTool):
             follow_redirects=True,
             timeout=self.timeout_s,
             headers={"User-Agent": http_user_agent()},
+            verify=tls_verification_enabled(),
         )
         response.raise_for_status()
         content_type = response.headers.get("content-type", "").lower()

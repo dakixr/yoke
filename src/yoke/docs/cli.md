@@ -156,8 +156,12 @@ keyless search, fetch, and multi-source synthesis workflow.
 
 Provider retries, rate limits, connection recovery, and stale-continuity
 fallbacks appear as visible warning events in interactive and observed SDK
-runs. Provider and web clients use the operating system's standard TLS
-certificate validation. Codex request logs default to
+runs. Yoke-owned outbound HTTPS and WSS connections use the operating system's
+standard TLS certificate and hostname validation. Set `YOKE_DISABLE_TLS=1` to
+disable that verification for providers, web tools, remote MCP servers, Codex
+OAuth and quota requests, and MCP file downloads. Values `0`, `false`, `no`,
+and `off` keep verification enabled. Injected HTTP clients keep their own TLS
+configuration. Codex request logs default to
 `~/.yoke/providers/logs/`; `YOKE_CODEX_LOGS_DIR` overrides that location, with
 `YOKE_PROVIDER_LOGS_DIR` as the shared provider fallback. Yoke resolves these
 paths when it creates the provider config, so changes to `HOME` apply without
@@ -623,6 +627,8 @@ Configure global MCP servers in `~/.yoke/mcp.json` and workspace servers in
 `.yoke/mcp.json`. Streamable HTTP servers verify TLS certificates by default. For
 an internal server with a self-signed certificate, set `"verify": false` on that
 server. This disables TLS certificate verification only for that MCP server.
+`YOKE_DISABLE_TLS=1` overrides all streamable HTTP server settings and disables
+verification for every Yoke-owned outbound TLS connection.
 
 The `/mcp` menu uses `yoke.mcp.editing` for persisted configuration changes.
 Session-only changes stay in the session policy and do not write either file.

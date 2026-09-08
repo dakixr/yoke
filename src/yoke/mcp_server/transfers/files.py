@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import Field
 
+from yoke._tls import tls_verification_enabled
 from yoke.mcp_server.execution.models import Request
 
 MAX_FILE = 64 * 1024 * 1024
@@ -281,7 +282,12 @@ def download(url: str, handle: Any) -> None:
     ):
         raise ValueError("Download host must resolve to public addresses")
     # Do not forward credentials across redirects or use environment proxies.
-    with httpx.Client(timeout=30, follow_redirects=False, trust_env=False) as client:
+    with httpx.Client(
+        timeout=30,
+        follow_redirects=False,
+        trust_env=False,
+        verify=tls_verification_enabled(),
+    ) as client:
         with client.stream(
             "GET",
             httpx.URL(url).copy_with(host=addresses[0][4][0]),

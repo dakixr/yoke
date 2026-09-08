@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from yoke._tls import tls_verification_enabled
 from yoke.ai.providers.base import (
     ProviderError,
 )
@@ -220,6 +221,7 @@ def token_request(body: dict[str, str]) -> OAuthCredentials:
             data=body,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=60,
+            verify=tls_verification_enabled(),
         )
     except httpx.RequestError as exc:
         raise ProviderError(f"Codex token request failed: {exc}") from exc

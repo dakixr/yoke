@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from yoke._tls import tls_verification_enabled
 from yoke.ai.providers.base import (
     ProviderError,
 )
@@ -112,6 +113,7 @@ def _fetch_codex_oauth_usage(credentials: OAuthCredentials) -> dict[str, Any]:
             DEFAULT_USAGE_URL,
             headers=headers,
             timeout=30,
+            verify=tls_verification_enabled(),
         )
     except httpx.RequestError as exc:
         raise ProviderError(f"Codex OAuth usage request failed: {exc}") from exc

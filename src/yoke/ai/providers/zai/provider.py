@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from yoke._tls import tls_verification_enabled
 from yoke.agent.models import Message
 from yoke.ai.providers.base import (
     Provider,
@@ -73,6 +74,7 @@ class ZAIProvider(
                 "Content-Type": "application/json",
                 "Connection": "close",
             },
+            verify=tls_verification_enabled(),
         )
 
     def list_models(self) -> list[ProviderModelInfo]:

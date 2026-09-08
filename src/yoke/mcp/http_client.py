@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 
+from yoke._tls import tls_verification_enabled
 from yoke.mcp.client import JSON
 from yoke.mcp.client import MCP_PROTOCOL_VERSION
 from yoke.mcp.client import McpClientError
@@ -39,7 +40,9 @@ class StreamableHttpClient:
         self.url = server.url
         self._client = http_client or httpx.Client(
             timeout=server.tool_timeout_sec,
-            transport=httpx.HTTPTransport(verify=server.verify),
+            transport=httpx.HTTPTransport(
+                verify=server.verify and tls_verification_enabled()
+            ),
         )
         self._owns_client = http_client is None
         self._session_id: str | None = None

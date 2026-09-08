@@ -77,6 +77,12 @@ resolution. OpenCode Go requests include a stable `x-opencode-session` value.
 Pass `session_id=` to `build_builtin_provider()` when provider instances must
 retain the same OpenCode Go session identity after reconstruction.
 
+Yoke-owned outbound HTTPS and WSS connections verify TLS certificates and
+hostnames by default. Set `YOKE_DISABLE_TLS=1` to disable verification across
+providers and other Yoke-owned network clients. Values `0`, `false`, `no`, and
+`off` keep verification enabled. An injected HTTP client keeps its own TLS
+configuration.
+
 OpenAI-compatible, Responses, and Z.ai retries honor an explicit `Retry-After: 0`.
 They use exponential backoff only when no usable retry delay was supplied.
 

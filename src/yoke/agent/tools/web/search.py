@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from defusedxml import ElementTree
 
+from yoke._tls import tls_verification_enabled
 from yoke.agent.tools.web.common import domain_for
 from yoke.agent.tools.web.common import DuckDuckGoHTMLParser
 from yoke.agent.tools.web.common import http_user_agent
@@ -28,6 +29,7 @@ def web_search(
             follow_redirects=True,
             headers={"User-Agent": http_user_agent()},
             timeout=timeout_s,
+            verify=tls_verification_enabled(),
         )
         try:
             duckduckgo_failed = False
