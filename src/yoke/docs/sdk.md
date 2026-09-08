@@ -421,6 +421,15 @@ provider/model-specific concrete tools.
 `FdTool` and `RipgrepTool` accept only typed search fields. Native argument
 strings are intentionally not part of the SDK contract; use `exec_command` for
 shell composition or native CLI behavior outside the typed search surface.
+Tool execution still produces and persists the complete JSON result. Before a
+provider request, Yoke projects selected high-volume built-ins into a smaller
+model-facing form. `rg`, `fd`, `apply_patch`, and `web_search` use TOON 4.1 for
+tabular data; command-process tools keep JSON but omit duplicate bookkeeping.
+Custom message transforms run before this projection, so they continue to see
+the canonical JSON result. Projection provenance is stored on the exact
+tool-result entry, and hook-replaced results or custom subclasses do not inherit
+built-in projection implicitly. Legacy entries without projection provenance
+remain canonical JSON when resumed.
 
 Capabilities are implemented in `yoke.agent.capabilities`. Each
 `BaseCapability` resolves a high-level ability into one or more concrete tools

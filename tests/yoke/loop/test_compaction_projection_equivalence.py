@@ -28,7 +28,7 @@ Scenario = Callable[[], list[ConversationEntry]]
 def _tool_and_image_history() -> list[ConversationEntry]:
     call = ToolCall(
         id="call-1",
-        function=ToolFunction(name="read", arguments='{"path":"README.md"}'),
+        function=ToolFunction(name="fd", arguments='{"pattern":"README"}'),
     )
     tree = SessionTree.from_messages(
         [
@@ -42,11 +42,17 @@ def _tool_and_image_history() -> list[ConversationEntry]:
                 ]
             ),
             Message(role="assistant", content="checking", tool_calls=[call]),
-            Message.tool("call-1", '{"ok":true}'),
-            Message.assistant("checked"),
-            Message.user("latest request"),
         ]
     )
+    tree.append_message(
+        Message.tool(
+            "call-1",
+            '{"ok":true,"command":["fd","--print0"],"output":["README.md"],"exit_code":0}',
+        ),
+        metadata={"provider_result_projection": "fd"},
+    )
+    tree.append_message(Message.assistant("checked"))
+    tree.append_message(Message.user("latest request"))
     return list(tree.export_for_persistence().entries)
 
 
@@ -64,6 +70,18 @@ def _skill_and_checkpoint_history() -> list[ConversationEntry]:
         retained_messages=[Message.user("recent request")],
     )
     tree.append_message(Message.assistant("continued answer"))
+    call = ToolCall(
+        id="call-checkpoint",
+        function=ToolFunction(name="fd", arguments='{"pattern":"src"}'),
+    )
+    tree.append_message(Message(role="assistant", tool_calls=[call]))
+    tree.append_message(
+        Message.tool(
+            call.id,
+            '{"ok":true,"command":["fd","--print0"],"output":["src/yoke"],"exit_code":0}',
+        ),
+        metadata={"provider_result_projection": "fd"},
+    )
     tree.append_message(Message.user("latest request"))
     return list(tree.export_for_persistence().entries)
 
@@ -73,9 +91,32 @@ def _branched_history_with_stale_skill() -> list[ConversationEntry]:
     root = tree.current
     assert root is not None
     tree.append_system_event(Message.system("abandoned branch skill"))
+    abandoned_call = ToolCall(
+        id="call-branch",
+        function=ToolFunction(name="fd", arguments='{"pattern":"old"}'),
+    )
+    tree.append_message(Message(role="assistant", tool_calls=[abandoned_call]))
+    tree.append_message(
+        Message.tool(
+            abandoned_call.id,
+            '{"ok":true,"command":["fd","--print0"],"output":["old.txt"],"exit_code":0}',
+        )
+    )
     tree.append_message(Message.assistant("abandoned answer"))
     tree.checkout(root)
     tree.append_system_event(Message.system("active branch skill"))
+    active_call = ToolCall(
+        id="call-branch",
+        function=ToolFunction(name="fd", arguments='{"pattern":"active"}'),
+    )
+    tree.append_message(Message(role="assistant", tool_calls=[active_call]))
+    tree.append_message(
+        Message.tool(
+            active_call.id,
+            '{"ok":true,"command":["fd","--print0"],"output":["active.txt"],"exit_code":0}',
+        ),
+        metadata={"provider_result_projection": "fd"},
+    )
     tree.append_message(Message.assistant("active answer"))
     tree.append_message(Message.user("active follow-up"))
     return list(tree.export_for_persistence().entries)
@@ -111,6 +152,26 @@ def test_fast_generation_lookup_matches_established_projection(
     assert next_compaction_generation_from_active_path(
         context
     ) == next_compaction_generation(context)
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_provider_projection_is_active_in_equivalence_scenarios(
+    scenario: Scenario,
+) -> None:
+    manager, context = _context(scenario())
+    provider_messages = manager.messages_for_provider(context)
+    tool_contents = [
+        message.plain_text_content
+        for message in provider_messages
+        if message.role == "tool"
+    ]
+
+    assert any(
+        content is not None
+        and content.startswith("ok: true\npaths[1]:")
+        and '"command"' not in content
+        for content in tool_contents
+    )
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)

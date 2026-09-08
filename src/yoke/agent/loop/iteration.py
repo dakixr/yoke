@@ -147,11 +147,12 @@ class RuntimeAgentIterationMixin:
         # context such as attach_image uses a user-role message, so interleaving
         # it after the first result of a multi-call batch leaves the remaining
         # calls open and violates the provider/tool sequence.
-        for tool_call, arguments, result in tool_results:
+        for tool_call, arguments, result, projection in tool_results:
             self.context_manager.append_tool_result(
                 context,
                 tool_call_id=tool_call.id,
                 result=result,
+                provider_result_projection=projection,
             )
 
         # Persist the valid, fully-closed tool batch before constructing any
@@ -160,7 +161,7 @@ class RuntimeAgentIterationMixin:
         if tool_results and after_tool_result_appended is not None:
             after_tool_result_appended(context)
 
-        for tool_call, arguments, result in tool_results:
+        for tool_call, arguments, result, _ in tool_results:
             self._append_tool_context_messages(
                 context,
                 tool_name=tool_call.function.name,

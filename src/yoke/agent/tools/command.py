@@ -120,6 +120,7 @@ class ExecCommandTool(ManagedCommandTool):
     )
 
     name = "exec_command"
+    provider_result_projection = "command"
     description = (
         "Run either a shell command or direct argv process, returning output "
         "or a session ID for ongoing interaction. Use write_stdin with the "
@@ -230,6 +231,7 @@ class WriteStdinTool(ManagedCommandTool):
     """Poll or interact with a running command session."""
 
     name = "write_stdin"
+    provider_result_projection = "command"
     description = (
         "Write characters to an existing command session, or poll it with an "
         "empty chars value, and return recent output."

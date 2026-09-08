@@ -147,6 +147,24 @@ class Message(BaseModel):
     reasoning_signature: str | None = None
     usage: TokenUsage | None = None
 
+    @property
+    def _provider_result_projection(self) -> str | None:
+        """Return runtime-only tool-result projection provenance."""
+        attributes = cast(dict[str, object], object.__getattribute__(self, "__dict__"))
+        value = attributes.get("_yoke_provider_result_projection")
+        return value if isinstance(value, str) and value else None
+
+    @_provider_result_projection.setter
+    def _provider_result_projection(self, value: str | None) -> None:
+        """Set projection provenance without affecting equality or serialization."""
+        if value is None:
+            attributes = cast(
+                dict[str, object], object.__getattribute__(self, "__dict__")
+            )
+            attributes.pop("_yoke_provider_result_projection", None)
+            return
+        object.__setattr__(self, "_yoke_provider_result_projection", value)
+
     @classmethod
     def system(cls, content: str) -> Message:
         """Create a system message."""

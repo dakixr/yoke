@@ -29,7 +29,12 @@ class SessionTreeMutations:
     _leaf_id: str | None
     _scope: str
 
-    def append_message(self, message: Message) -> EntryRef:
+    def append_message(
+        self,
+        message: Message,
+        *,
+        metadata: dict[str, object] | None = None,
+    ) -> EntryRef:
         """Append one user, assistant, or tool message."""
         if not isinstance(message, Message):
             raise TypeError("append_message requires a Message value.")
@@ -37,10 +42,13 @@ class SessionTreeMutations:
             raise InvalidMessageError("System messages must use append_system_event().")
         _validate_role_tool_fields(message)
         self._validate_tool_sequence(message)
+        merged_metadata = _message_metadata(message)
+        if metadata:
+            merged_metadata.update(metadata)
         return self._append_entry(
             _kind_for_message(message),
             message=message,
-            metadata=_message_metadata(message),
+            metadata=merged_metadata,
         )
 
     def append_tool_context(
@@ -225,10 +233,13 @@ class SessionTreeMutations:
         message: Message | None = None,
         metadata: dict[str, object] | None = None,
     ) -> ConversationEntry:
+        copied_message = message.model_copy(deep=True) if message is not None else None
+        if copied_message is not None:
+            copied_message._provider_result_projection = None
         return ConversationEntry(
             kind=kind,
             parent_id=parent_id,
-            message=(message.model_copy(deep=True) if message is not None else None),
+            message=copied_message,
             metadata=deepcopy(metadata or {}),
         )
 
@@ -301,8 +312,14 @@ def _generation_from_entry(entry: ConversationEntry) -> int | None:
 def _message_metadata(message: Message) -> dict[str, object]:
     from yoke.agent.usage import compact_usage_payload
 
+    metadata: dict[str, object] = {}
     usage = compact_usage_payload(message.usage)
-    return {"usage": usage} if usage is not None else {}
+    if usage is not None:
+        metadata["usage"] = usage
+    projection = message._provider_result_projection
+    if isinstance(projection, str) and projection:
+        metadata["provider_result_projection"] = projection
+    return metadata
 
 
 def _copy_retained_messages(

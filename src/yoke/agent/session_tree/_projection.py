@@ -342,10 +342,27 @@ def _normal_messages(
     entries: list[ConversationEntry], *, defensive: bool = True
 ) -> list[Message]:
     return [
-        _message_value(entry.message, defensive=defensive)
+        _entry_message_value(entry, defensive=defensive)
         for entry in entries
         if entry.kind not in _RUNTIME_HIDDEN_KINDS and entry.message is not None
     ]
+
+
+def _entry_message_value(
+    entry: ConversationEntry,
+    *,
+    defensive: bool,
+) -> Message:
+    """Return one entry message with runtime-only provider projection provenance."""
+    assert entry.message is not None  # noqa: S101
+    message = _message_value(entry.message, defensive=defensive)
+    if entry.kind == "tool_result":
+        projection = entry.metadata.get("provider_result_projection")
+        resolved = projection if isinstance(projection, str) and projection else None
+        if resolved is not None and not defensive:
+            message = message.model_copy(deep=False)
+        message._provider_result_projection = resolved
+    return message
 
 
 def _message_value(message: Message, *, defensive: bool) -> Message:

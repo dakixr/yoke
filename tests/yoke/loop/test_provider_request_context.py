@@ -11,6 +11,8 @@ from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.agent.models import Message
 from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import MessageTextContentPart
+from yoke.agent.models import ToolCall
+from yoke.agent.models import ToolFunction
 from yoke.ai.providers.base import emit_provider_event
 from yoke.ai.providers.base import ProviderRequestContext
 
@@ -117,6 +119,71 @@ def test_compaction_reuses_scope_then_resets_reduced_epoch() -> None:
         "assistant",
         "user",
     ]
+
+
+def test_messages_only_forced_compaction_preserves_tool_result_projection() -> None:
+    class ProjectionRecordingProvider(ContextRecordingProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.requests: list[list[Message]] = []
+
+        def complete_with_context(
+            self,
+            messages: list[Message],
+            tools: list[dict[str, object]],
+            *,
+            request_context: ProviderRequestContext,
+        ) -> Message:
+            del tools
+            self.cache_scopes.append(request_context.cache_scope)
+            self.requests.append(
+                [message.model_copy(deep=True) for message in messages]
+            )
+            return Message.assistant("compacted history")
+
+    call = ToolCall(
+        id="call-projected",
+        function=ToolFunction(name="fd", arguments="{}"),
+    )
+    canonical = (
+        '{"ok":true,"command":["fd","--print0"],"output":["a.py"],"exit_code":0}'
+    )
+    tool_result = Message.tool(call.id, canonical)
+    tool_result._provider_result_projection = "fd"
+    provider = ProjectionRecordingProvider()
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        messages=[
+            Message.user("find files"),
+            Message(role="assistant", tool_calls=[call]),
+            tool_result,
+            Message.user("summarize what you found"),
+        ],
+    )
+
+    compacted = force_compact_agent(agent, agent.messages)
+
+    assert compacted is not None
+    assert provider.requests
+    summary_request = provider.requests[0]
+    projected_result = next(
+        message for message in summary_request if message.role == "tool"
+    )
+    assert projected_result.content == "ok: true\npaths[1]: a.py"
+    prepared_result = next(
+        message
+        for message in compacted.preparation.messages_to_summarize
+        if message.role == "tool"
+    )
+    assert prepared_result.content == "ok: true\npaths[1]: a.py"
+    persisted_result = next(
+        entry for entry in compacted.conversation_entries if entry.kind == "tool_result"
+    )
+    assert persisted_result.metadata["provider_result_projection"] == "fd"
+    assert persisted_result.message is not None
+    assert persisted_result.message.content == canonical
+    assert persisted_result.message._provider_result_projection is None
 
 
 def test_compaction_handoff_uses_the_normal_provider_capability_projection(

@@ -38,6 +38,7 @@ from yoke.agent.skills.context import skill_message_conversation_entry
 from yoke.agent.skills.context import skill_name_from_message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
+from yoke.agent.tool_result_projection import project_tool_results_for_provider
 from yoke.agent.usage import UsageAccounting
 from yoke.agent.usage import effective_usage_accounting
 
@@ -201,13 +202,26 @@ class ContextManager:
         *,
         tool_call_id: str,
         result: dict[str, object],
+        provider_result_projection: str | None = None,
     ) -> Message:
         """Append a tool result message to the context and return it."""
         message = Message.tool(
             tool_call_id=tool_call_id,
             content=json.dumps(result, ensure_ascii=False, separators=(",", ":")),
         )
-        self.append_message(context, message)
+        message._provider_result_projection = provider_result_projection
+        metadata = message_entry_metadata(message)
+        if provider_result_projection is not None:
+            metadata["provider_result_projection"] = provider_result_projection
+        branching = append_conversation_entry(
+            context,
+            ConversationEntry(
+                kind="tool_result",
+                message=message.model_copy(deep=True),
+                metadata=metadata,
+            ),
+        )
+        update_message_projection(context, message, branching=branching)
         return message
 
     def prepare_compaction(
@@ -355,7 +369,7 @@ class ContextManager:
             messages,
             drop_incomplete_assistant=True,
         )
-        return normalized
+        return project_tool_results_for_provider(normalized)
 
     def transcript_messages(self, context: AgentContext) -> list[Message]:
         """Return the compact runtime transcript from canonical history."""

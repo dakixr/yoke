@@ -36,6 +36,7 @@ class LocalTool(BaseModel, ABC):
     description: ClassVar[str]
     is_yoke_tool: ClassVar[bool] = False
     execute_in_process: ClassVar[bool] = False
+    provider_result_projection: ClassVar[str | None] = None
     _context: dict[str, object] = PrivateAttr(default_factory=dict)
 
     @classmethod

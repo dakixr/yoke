@@ -49,6 +49,7 @@ class FdTool(WorkspaceTool):
 
     is_yoke_tool = True
     name = "fd"
+    provider_result_projection = "fd"
     description = (
         "Find files and directories using typed fd options. Do not write shell "
         "pipelines or fd execution flags here. Use limit/sort/filter_pattern for "

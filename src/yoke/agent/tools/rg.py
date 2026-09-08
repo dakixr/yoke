@@ -40,6 +40,7 @@ class RipgrepTool(WorkspaceTool):
     is_yoke_tool = True
     read_rg_config: ClassVar[bool] = True
     name = "rg"
+    provider_result_projection = "rg"
     description = (
         "Search file contents or list files using typed ripgrep options. Do not "
         "write shell pipelines here. Use limit/sort for bounded results and "

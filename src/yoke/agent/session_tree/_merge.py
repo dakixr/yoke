@@ -9,6 +9,8 @@ from yoke.agent.models import ConversationEntry
 from ._topology import active_path
 from ._topology import copy_and_validate
 
+_PROVIDER_RESULT_PROJECTION_METADATA_KEY = "provider_result_projection"
+
 
 def reconcile_entries(
     existing_entries: list[ConversationEntry],
@@ -33,7 +35,7 @@ def reconcile_entries(
             update={"parent_id": expected_parent},
             deep=True,
         )
-        if existing == candidate:
+        if _same_canonical_entry(existing, candidate):
             mapping[source.id] = existing.id
     return _merge_with_mapping(
         existing_entries,
@@ -99,6 +101,15 @@ def _same_legacy_intent(left: ConversationEntry, right: ConversationEntry) -> bo
     if left.message is not None or right.message is not None:
         return left.kind == right.kind and left.message == right.message
     return left.kind == right.kind and left.metadata == right.metadata
+
+
+def _same_canonical_entry(left: ConversationEntry, right: ConversationEntry) -> bool:
+    """Compare canonical identity while ignoring provider-only rendering hints."""
+    left_copy = left.model_copy(deep=True)
+    right_copy = right.model_copy(deep=True)
+    left_copy.metadata.pop(_PROVIDER_RESULT_PROJECTION_METADATA_KEY, None)
+    right_copy.metadata.pop(_PROVIDER_RESULT_PROJECTION_METADATA_KEY, None)
+    return left_copy == right_copy
 
 
 def _unique_id(existing: dict[str, ConversationEntry]) -> str:

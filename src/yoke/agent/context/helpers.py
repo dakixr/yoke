@@ -77,7 +77,7 @@ def _append_entry_intent(tree: SessionTree, entry: ConversationEntry) -> None:
     if entry.message.role == "system":
         tree.append_system_event(entry.message, metadata=entry.metadata)
         return
-    tree.append_message(entry.message)
+    tree.append_message(entry.message, metadata=entry.metadata)
 
 
 def update_message_projection(
@@ -95,7 +95,7 @@ def update_message_projection(
         instruction.model_copy(deep=True) for instruction in context.instructions
     ]
     context.messages.extend(
-        entry.message.model_copy(deep=True)
+        _runtime_message(entry)
         for entry in entries or []
         if entry.kind != "memory_snapshot" and entry.message is not None
     )
@@ -205,6 +205,18 @@ def recent_log_messages(context: AgentContext) -> list[Message]:
         leaf_id=context.conversation_log.leaf_id,
     )
     return [message.model_copy(deep=True) for message in projection.provider_messages]
+
+
+def _runtime_message(entry: ConversationEntry) -> Message:
+    """Return one runtime message with non-persisted projection provenance."""
+    assert entry.message is not None  # noqa: S101
+    message = entry.message.model_copy(deep=True)
+    if entry.kind == "tool_result":
+        projection = entry.metadata.get("provider_result_projection")
+        message._provider_result_projection = (
+            projection if isinstance(projection, str) and projection else None
+        )
+    return message
 
 
 def resolve_instructions(

@@ -167,7 +167,8 @@ def finalize_tool_result(
     context: AgentContext,
     emit,
     after_tool_call: AfterToolCallHook | None,
-) -> dict[str, object]:
+    provider_result_projection: str | None = None,
+) -> tuple[dict[str, object], str | None]:
     """Apply post-processing to a tool result and emit completion."""
     finalized = dict(result)
     try:
@@ -187,6 +188,7 @@ def finalize_tool_result(
         )
         if hook_result is not None and hook_result.result is not None:
             finalized = hook_result.result
+            provider_result_projection = None
     emit(
         "tool_execution_end",
         {
@@ -198,7 +200,7 @@ def finalize_tool_result(
             "result": finalized,
         },
     )
-    return finalized
+    return finalized, provider_result_projection
 
 
 def cancelled_tool_result() -> dict[str, object]:

@@ -28,6 +28,7 @@ class ApplyPatchTool(WorkspaceTool):
     """Tool that applies codex-style file patches inside the workspace."""
 
     name = "apply_patch"
+    provider_result_projection = "apply_patch"
     description = (
         "Apply a codex-style patch to files in the workspace. "
         "Provide the full patch text in `input` using the "

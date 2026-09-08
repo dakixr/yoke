@@ -116,6 +116,7 @@ class WebSearchTool(LocalTool):
     """Run a keyless web search and return links and snippets."""
 
     name = "web_search"
+    provider_result_projection = "web_search"
     description = (
         "Run a quick keyless web search and return raw result links/snippets. "
         "Use web_research for synthesized multi-source answers."

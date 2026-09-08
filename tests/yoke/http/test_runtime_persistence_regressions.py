@@ -191,6 +191,58 @@ def test_instruction_leaf_is_preserved_and_reanchored_after_provider_call(
     assert active[persisted.leaf_id or ""].kind == "assistant"
 
 
+def test_projected_tool_result_resumes_without_duplicate_reconciliation(
+    tmp_path: Path,
+) -> None:
+    call = ToolCall(
+        id="projected-call",
+        function=ToolFunction(name="fd", arguments="{}"),
+    )
+    canonical = (
+        '{"ok":true,"command":["fd","--print0"],"output":["a.py"],"exit_code":0}'
+    )
+    tool_result = Message.tool(call.id, canonical)
+    tool_result._provider_result_projection = "fd"
+
+    store, provider, wait_data = _run_saved_turn(
+        tmp_path,
+        [
+            Message.user("find files"),
+            Message(role="assistant", content=None, tool_calls=[call]),
+            tool_result,
+        ],
+    )
+
+    assert wait_data["state"] == "idle"
+    assert len(provider.requests) == 1
+    request = provider.requests[0]
+    assert [message["role"] for message in request] == [
+        "user",
+        "assistant",
+        "tool",
+        "user",
+    ]
+    assert request[2]["content"] == "ok: true\npaths[1]: a.py"
+
+    persisted = store.load("session-a")
+    assert [entry.kind for entry in persisted.conversation_entries] == [
+        "user",
+        "assistant_tool_calls",
+        "tool_result",
+        "user",
+        "assistant",
+    ]
+    projected_entries = [
+        entry for entry in persisted.conversation_entries if entry.kind == "tool_result"
+    ]
+    assert len(projected_entries) == 1
+    projected_entry = projected_entries[0]
+    assert projected_entry.metadata["provider_result_projection"] == "fd"
+    assert projected_entry.message is not None
+    assert projected_entry.message.content == canonical
+    assert projected_entry.message._provider_result_projection is None
+
+
 def test_dangling_tool_recovery_remains_in_append_suffix(tmp_path: Path) -> None:
     call = ToolCall(
         id="unfinished-call",

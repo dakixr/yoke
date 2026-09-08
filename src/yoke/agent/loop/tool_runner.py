@@ -21,6 +21,24 @@ from yoke.agent.models import AgentContext
 from yoke.agent.models import ToolCall
 from yoke.agent.tools import LocalTool
 
+ToolExecutionResult = tuple[
+    ToolCall,
+    dict[str, object],
+    dict[str, object],
+    str | None,
+]
+
+
+def _provider_result_projection(
+    tools: dict[str, LocalTool], tool_name: str
+) -> str | None:
+    """Return only a projection explicitly declared by the concrete tool class."""
+    tool = tools.get(tool_name)
+    if tool is None:
+        return None
+    value = type(tool).__dict__.get("provider_result_projection")
+    return value if isinstance(value, str) else None
+
 
 def _execute_tool_call(
     *,
@@ -62,9 +80,9 @@ def execute_tool_calls(
     emit,
     stop_requested: StopRequested | None,
     after_tool_call: AfterToolCallHook | None,
-) -> tuple[list[tuple[ToolCall, dict[str, object], dict[str, object]]], bool]:
+) -> tuple[list[ToolExecutionResult], bool]:
     """Execute prepared tool calls and finalize results."""
-    results: list[tuple[ToolCall, dict[str, object], dict[str, object]]] = []
+    results: list[ToolExecutionResult] = []
     completed_ids: set[str] = set()
     runnable = [item for item in prepared_calls if isinstance(item, PreparedToolCall)]
     immediate = [
@@ -83,7 +101,7 @@ def execute_tool_calls(
                 tools=tools,
             )
             return order_results(prepared_calls, results), True
-        finalized = finalize_tool_result(
+        finalized, projection = finalize_tool_result(
             tools=tools,
             iteration=iteration,
             tool_call=item.tool_call,
@@ -92,8 +110,9 @@ def execute_tool_calls(
             context=context,
             emit=emit,
             after_tool_call=after_tool_call,
+            provider_result_projection=None,
         )
-        results.append((item.tool_call, {}, finalized))
+        results.append((item.tool_call, {}, finalized, projection))
         completed_ids.add(item.tool_call.id)
     if (
         tool_execution == "sequential"
@@ -129,7 +148,7 @@ def execute_tool_calls(
 def append_cancelled_tool_results(
     *,
     prepared_calls: list[PreparedToolCall | ImmediateToolResult],
-    results: list[tuple[ToolCall, dict[str, object], dict[str, object]]],
+    results: list[ToolExecutionResult],
     completed_ids: set[str],
     iteration: int,
     context: AgentContext,
@@ -142,7 +161,7 @@ def append_cancelled_tool_results(
         if item.tool_call.id in completed_ids:
             continue
         arguments = item.arguments if isinstance(item, PreparedToolCall) else {}
-        finalized = finalize_tool_result(
+        finalized, projection = finalize_tool_result(
             tools=tools,
             iteration=iteration,
             tool_call=item.tool_call,
@@ -151,19 +170,20 @@ def append_cancelled_tool_results(
             context=context,
             emit=emit,
             after_tool_call=after_tool_call,
+            provider_result_projection=None,
         )
-        results.append((item.tool_call, arguments, finalized))
+        results.append((item.tool_call, arguments, finalized, projection))
         completed_ids.add(item.tool_call.id)
 
 
 def order_results(
     prepared_calls: list[PreparedToolCall | ImmediateToolResult],
-    results: list[tuple[ToolCall, dict[str, object], dict[str, object]]],
-) -> list[tuple[ToolCall, dict[str, object], dict[str, object]]]:
+    results: list[ToolExecutionResult],
+) -> list[ToolExecutionResult]:
     """Return tool results in original provider order."""
     ordered = {
-        tool_call.id: (tool_call, arguments, result)
-        for tool_call, arguments, result in results
+        tool_call.id: (tool_call, arguments, result, projection)
+        for tool_call, arguments, result, projection in results
     }
     return [
         ordered[item.tool_call.id]
@@ -177,14 +197,14 @@ def _execute_sequential(
     tools: dict[str, LocalTool],
     prepared_calls: list[PreparedToolCall | ImmediateToolResult],
     runnable: list[PreparedToolCall],
-    results: list[tuple[ToolCall, dict[str, object], dict[str, object]]],
+    results: list[ToolExecutionResult],
     completed_ids: set[str],
     iteration: int,
     context: AgentContext,
     emit,
     stop_requested: StopRequested | None,
     after_tool_call: AfterToolCallHook | None,
-) -> tuple[list[tuple[ToolCall, dict[str, object], dict[str, object]]], bool]:
+) -> tuple[list[ToolExecutionResult], bool]:
     for prepared in runnable:
         if is_stopped(stop_requested):
             append_cancelled_tool_results(
@@ -203,7 +223,7 @@ def _execute_sequential(
             prepared=prepared,
             stop_requested=stop_requested,
         )
-        finalized = finalize_tool_result(
+        finalized, projection = finalize_tool_result(
             tools=tools,
             iteration=iteration,
             tool_call=prepared.tool_call,
@@ -212,8 +232,11 @@ def _execute_sequential(
             context=context,
             emit=emit,
             after_tool_call=after_tool_call,
+            provider_result_projection=_provider_result_projection(
+                tools, prepared.tool_call.function.name
+            ),
         )
-        results.append((prepared.tool_call, prepared.arguments, finalized))
+        results.append((prepared.tool_call, prepared.arguments, finalized, projection))
         completed_ids.add(prepared.tool_call.id)
         if stopped:
             append_cancelled_tool_results(
@@ -235,14 +258,14 @@ def _execute_parallel(
     tools: dict[str, LocalTool],
     prepared_calls: list[PreparedToolCall | ImmediateToolResult],
     runnable: list[PreparedToolCall],
-    results: list[tuple[ToolCall, dict[str, object], dict[str, object]]],
+    results: list[ToolExecutionResult],
     completed_ids: set[str],
     iteration: int,
     context: AgentContext,
     emit,
     stop_requested: StopRequested | None,
     after_tool_call: AfterToolCallHook | None,
-) -> tuple[list[tuple[ToolCall, dict[str, object], dict[str, object]]], bool]:
+) -> tuple[list[ToolExecutionResult], bool]:
     invocation_pairs: list[
         tuple[ToolProcessInvocation | InProcessToolInvocation, PreparedToolCall]
     ] = []
@@ -275,7 +298,7 @@ def _execute_parallel(
             for invocation in done:
                 prepared = pending.pop(invocation)
                 raw_result = invocation.result()
-                finalized = finalize_tool_result(
+                finalized, projection = finalize_tool_result(
                     tools=tools,
                     iteration=iteration,
                     tool_call=prepared.tool_call,
@@ -284,8 +307,13 @@ def _execute_parallel(
                     context=context,
                     emit=emit,
                     after_tool_call=after_tool_call,
+                    provider_result_projection=_provider_result_projection(
+                        tools, prepared.tool_call.function.name
+                    ),
                 )
-                results.append((prepared.tool_call, prepared.arguments, finalized))
+                results.append(
+                    (prepared.tool_call, prepared.arguments, finalized, projection)
+                )
                 completed_ids.add(prepared.tool_call.id)
     finally:
         for invocation, _ in invocation_pairs:

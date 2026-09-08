@@ -21,6 +21,7 @@ class PythonExecTool(ManagedCommandTool):
 
     is_yoke_tool = True
     name = "python_exec"
+    provider_result_projection = "command"
     description = (
         "Execute arbitrary Python code with the current Python interpreter in "
         "the workspace root. Returns output or a session ID for ongoing "

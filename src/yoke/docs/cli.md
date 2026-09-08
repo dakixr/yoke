@@ -819,6 +819,15 @@ match, file-list, files-with-matches, and count modes; match results include
 line numbers and submatches. Both tools report subprocess failures with
 `ok: false`, a diagnostic `error`, and the exit code. A no-match exit remains a
 successful search. `max_output_chars` accepts values from 1 through 200,000.
+Yoke keeps those complete JSON results in the session, but sends a smaller
+provider-only projection back to the model. Search rows are flattened and use
+TOON 4.1 tabular notation where it reduces repetition; the persisted result,
+tool inspector, handoff, and audit paths retain the original JSON.
+Projection eligibility is recorded with the specific tool-result entry, so
+resuming a session or changing the active tool registry cannot reinterpret old
+results. For `rg`, a single submatch is flattened into match text and offset
+columns; rows with multiple submatches remain canonical JSON so no match detail
+is lost.
 The portable `ls`, `find`, and `grep` tools mark a result as truncated only when
 a matching entry or line was actually omitted, not merely when the result
 reaches its limit.
@@ -843,6 +852,14 @@ through yoke's `python`/`python3` shims. Native PowerShell pipelines use UTF-8
 without a BOM. Windows PowerShell also judges native command success by
 `LASTEXITCODE`, so harmless stderr from a successful command does not become a
 false tool failure. Terminating PowerShell exceptions still propagate.
+The provider-only command projection keeps output plus actionable state such as
+a live `session_id`, nonzero exit status, errors, cancellation, timeout, and a
+compact truncation marker. Duplicate runtime bookkeeping such as
+`returncode`, elapsed/wall time, chunk IDs, and full truncation accounting stays
+available in the canonical session result without consuming model context.
+Truncated command projections still identify that the retained output is the
+tail and preserve the visible/total line counts and partial-line state needed
+to interpret that tail correctly.
 
 The `python_exec` tool uses yoke's current interpreter by default, preferring the parent shell's active `VIRTUAL_ENV` or `CONDA_PREFIX`. Pass `python_executable` to run a single call with a specific interpreter, for example a worktree-local `.venv` Python. Child subprocesses launched by that code inherit `YOKE_PYTHON_EXECUTABLE`; use that environment variable or `sys.executable` when a nested process must use the same interpreter. It waits 30 seconds by default, honors an explicit initial wait up to 300 seconds, then returns a session ID for code that is still running. Use `write_stdin` with that session ID to poll incremental unbuffered output.
 

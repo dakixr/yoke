@@ -609,6 +609,31 @@ def test_reconcile_merges_branch_and_selects_it() -> None:
     } == {"alternative", "original", "root"}
 
 
+def test_reconcile_ignores_provider_only_projection_metadata() -> None:
+    call = ToolCall(
+        id="call-projection",
+        function=ToolFunction(name="fd", arguments="{}"),
+    )
+    tree = SessionTree.from_messages(
+        [
+            Message.user("root"),
+            Message(role="assistant", tool_calls=[call]),
+            Message.tool(call.id, '{"ok":true}'),
+        ]
+    )
+    incoming = [entry.model_copy(deep=True) for entry in tree.entries]
+    incoming_result = next(entry for entry in incoming if entry.kind == "tool_result")
+    incoming_result.metadata["provider_result_projection"] = "fd"
+
+    tree.reconcile(incoming, leaf_id=incoming[-1].id)
+
+    assert len(tree.entries) == 3
+    persisted_result = next(
+        entry for entry in tree.entries if entry.kind == "tool_result"
+    )
+    assert "provider_result_projection" not in persisted_result.metadata
+
+
 def test_authoritative_reconcile_does_not_match_by_message_equality() -> None:
     tree = SessionTree.from_messages([Message.user("same")])
     independent = SessionTree.from_messages(
