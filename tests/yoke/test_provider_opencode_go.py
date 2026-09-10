@@ -55,9 +55,16 @@ def test_opencode_go_muse_spark_contributor_catalog_and_request() -> None:
     assert [item.id for item in provider.list_models()] == [
         "muse-spark-1.3-contributor",
         "glm-5.3-flash",
+        "deepseek-flash",
         "deepseek-v4-flash",
     ]
-    assert provider.list_models()[2].context_window_tokens == 400_000
+    deepseek_41 = provider.list_models()[2]
+    assert deepseek_41.display_name == "DeepSeek V4.1 Flash"
+    assert deepseek_41.context_window_tokens == 400_000
+    assert deepseek_41.thinking_levels == ("low", "high", "max")
+    assert deepseek_41.default_thinking_level == "high"
+    assert deepseek_41.supports_image_inputs is True
+    assert provider.list_models()[3].context_window_tokens == 400_000
     assert captured["url"] == "https://opencode.ai/zen/go/v1/responses"
     assert payload["model"] == "muse-spark-1.3-contributor"
     assert payload["reasoning"] == {
@@ -161,6 +168,42 @@ def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
     assert payload["model"] == "glm-5.3-flash"
     assert payload["reasoning_effort"] == "high"
     assert message.content == "glm-ok"
+
+
+def test_opencode_go_deepseek_41_flash_uses_chat_completions() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "deepseek-ok"}}
+                ]
+            },
+        )
+
+    provider = OpenCodeGoProvider(
+        OpenCodeGoConfig(
+            api_key="test",
+            model="deepseek-flash",
+            reasoning_effort="low",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    try:
+        message = provider.complete([Message.user("hello")], [])
+    finally:
+        provider.close()
+
+    payload = cast(dict[str, object], captured["payload"])
+    assert captured["url"] == "https://opencode.ai/zen/go/v1/chat/completions"
+    assert payload["model"] == "deepseek-flash"
+    assert payload["reasoning_effort"] == "low"
+    assert message.content == "deepseek-ok"
 
 
 def test_opencode_go_generated_session_id_is_stable_across_requests() -> None:
