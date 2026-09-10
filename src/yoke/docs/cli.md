@@ -848,7 +848,8 @@ successful search. `max_output_chars` accepts values from 1 through 200,000.
 Yoke keeps those complete JSON results in the session, but sends a smaller
 provider-only projection back to the model. Search rows are flattened and use
 TOON 4.1 tabular notation where it reduces repetition; the persisted result,
-tool inspector, handoff, and audit paths retain the original JSON.
+CLI tool inspector, handoff, and audit paths retain the original JSON. The web
+Tool activity detail reuses the recorded provider projection when one applied.
 Projection eligibility is recorded with the specific tool-result entry, so
 resuming a session or changing the active tool registry cannot reinterpret old
 results. For `rg`, a single submatch is flattened into match text and offset

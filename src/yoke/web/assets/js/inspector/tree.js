@@ -1,331 +1,268 @@
-import { html, useLayoutEffect, useRef, useState } from "../../vendor/htm-preact.js";
+import { html, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
-import { defaultTreeEntries, displayTreeEntries, TREE_GRAPH_ROW_HEIGHT, treeGraphLayout } from "./tree-graph.js";
-import { isTreeNavigationKey, treeKeyboardTarget } from "./tree-keyboard.js";
+import { store } from "../state/store.js";
+import { useInspectorPreferences } from "./state/preferences.js";
+import { treeGraphLayout } from "./tree-graph.js";
+import { treeKeyboardAction, treeKeyboardTarget } from "./tree-keyboard.js";
+import { TreeDestination } from "./tree/destination.js";
+import { TreeDetail } from "./tree/detail.js";
+import { TreeHistory, keepTreeEntryVisible } from "./tree/history.js";
+import { nextTreeMatch, treeMatches, treeView } from "./tree/model.js";
+
+const DEFAULTS = { showTechnical: false, search: "", scrollTop: null, mobilePane: "list", selectedID: null };
 
 export function TreeInspector({ sessionID, data }) {
+  return html`<${TreeSession} key=${sessionID} sessionID=${sessionID} data=${data} />`;
+}
+
+function TreeSession({ sessionID, data }) {
   const tree = data?.tree;
-  const preview = data?.treePreview;
+  const [preferences, patchPreferences] = useInspectorPreferences(sessionID, "tree", DEFAULTS);
+  const [, render] = useState(0);
   const [summary, setSummary] = useState("");
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [previewingID, setPreviewingID] = useState(null);
-  const [navigating, setNavigating] = useState(false);
-  const [showTechnical, setShowTechnical] = useState(false);
-  const [focusedEntryID, setFocusedEntryID] = useState(null);
+  const [revealing, setRevealing] = useState(false);
+  const [focusedID, setFocusedID] = useState(null);
   const historyRef = useRef(null);
-  const entryButtonRefs = useRef(new Map());
+  const buttonRefs = useRef(new Map());
   const openedRef = useRef(null);
-  const messageEntries = defaultTreeEntries(tree?.entries);
-  const visibleEntries = tree ? (showTechnical ? tree.entries : messageEntries) : [];
-  const displayEntries = tree ? displayTreeEntries(tree.entries, visibleEntries) : [];
-  const graph = treeGraphLayout(displayEntries);
-  const nodeByID = new Map(graph.nodes.map((node) => [node.id, node]));
-  const entryByID = new Map(displayEntries.map((entry) => [entry.id, entry]));
-  const selectedEntry = preview ? entryByID.get(preview.targetID) || tree?.entries?.find((entry) => entry.id === preview.targetID) : null;
-  const hiddenTechnicalCount = tree ? tree.entries.length - messageEntries.length : 0;
-  const effectiveFocusID = focusedEntryID && entryByID.has(focusedEntryID)
-    ? focusedEntryID
-    : preview?.targetID && entryByID.has(preview.targetID)
-      ? preview.targetID
-      : displayEntries.find((entry) => entry.current)?.id || displayEntries.at(-1)?.id || null;
+  const focusRef = useRef(null);
+  const jumpGeneration = useRef(0);
+  const aliveRef = useRef(true);
+  const latestRef = useRef(null);
+  const destination = useMemo(() => new TreeDestination({
+    preview: (id) => controller.treePreview(sessionID, id),
+    clearPreview: () => controller.clearTreePreview(sessionID),
+    navigate: (id, note) => controller.navigateTree(sessionID, id, note),
+    changed: () => render((value) => value + 1),
+  }), [sessionID]);
+  const view = useMemo(() => treeView(tree, preferences.showTechnical), [tree, preferences.showTechnical]);
+  const graph = useMemo(() => treeGraphLayout(view.rows), [view.rows]);
+  const matches = useMemo(() => treeMatches(view.rows, preferences.search), [view.rows, preferences.search]);
+  const state = destination.state;
+  const selected = view.rows.find((entry) => entry.id === state.targetID) || view.entries.find((entry) => entry.id === state.targetID);
+  const parent = selected ? view.entries.find((entry) => entry.id === (selected.graphParentID || selected.parentID)) : null;
+  const focusID = view.rows.some((entry) => entry.id === focusedID) ? focusedID
+    : view.rows.find((entry) => entry.current)?.id || view.rows.at(-1)?.id;
+  const ready = Boolean(selected && destination.ready(tree, data?.treePreview));
+  latestRef.current = { tree, sharedPreview: data?.treePreview, summary, view };
 
-  useLayoutEffect(() => {
-    const node = historyRef.current;
-    if (!node || !displayEntries.length || openedRef.current === sessionID) return;
-    openedRef.current = sessionID;
-    const focusID = displayEntries.find((entry) => entry.current)?.id || displayEntries.at(-1)?.id || null;
+  const focusEntry = (id, { focus = true } = {}) => {
+    if (!id) return;
+    focusRef.current = id;
+    setFocusedID(id);
     requestAnimationFrame(() => {
-      scrollToHead(node, { behavior: "auto" });
-      const button = focusID ? entryButtonRefs.current.get(focusID) : null;
-      if (!button) return;
-      button.focus({ preventScroll: true });
-      keepTreeEntryVisible(node, button);
+      if (!aliveRef.current || focusRef.current !== id) return;
+      const button = buttonRefs.current.get(id);
+      if (focus) button?.focus({ preventScroll: true });
+      keepTreeEntryVisible(historyRef.current, button);
     });
-  }, [sessionID, displayEntries.length]);
+  };
+
+  const choose = (id, { detail = true, focus = true } = {}) => {
+    if (!id || destination.state.moving) return;
+    ++jumpGeneration.current;
+    setRevealing(false);
+    setSummary("");
+    patchPreferences({ selectedID: id, ...(detail ? { mobilePane: "detail" } : {}) });
+    focusEntry(id, { focus });
+    void destination.select(id, latestRef.current.tree);
+  };
+
+  const clear = () => {
+    if (destination.state.moving) return;
+    ++jumpGeneration.current;
+    setRevealing(false);
+    destination.clear();
+    setSummary("");
+    patchPreferences({ selectedID: null, mobilePane: "list" });
+    focusEntry(focusRef.current || focusID);
+  };
+
+  const continueHere = async (event) => {
+    const current = store.getState();
+    if (current.ui.selectedSessionID !== sessionID || current.ui.inspector?.mode !== "tree") return;
+    const currentData = current.sessionData[sessionID];
+    if (!currentData?.tree?.entries.some((entry) => entry.id === destination.state.targetID)) return;
+    const result = await destination.continue(currentData?.tree, currentData?.treePreview, latestRef.current.summary, { repeat: Boolean(event?.repeat) });
+    if (!result || !aliveRef.current) return;
+    setSummary("");
+    patchPreferences({ selectedID: null, mobilePane: "list" });
+    focusEntry(latestRef.current.tree?.leafID);
+  };
 
   useLayoutEffect(() => {
-    if (!preview?.targetID || !effectiveFocusID) return;
-    const frame = requestAnimationFrame(() => {
-      const button = entryButtonRefs.current.get(effectiveFocusID);
-      if (button) keepTreeEntryVisible(historyRef.current, button);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [preview?.targetID, effectiveFocusID]);
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      ++jumpGeneration.current;
+      destination.dispose();
+    };
+  }, [destination]);
 
-  if (!tree) return html`<div class="inspector-loading">Loading conversation graph…</div>`;
+  useLayoutEffect(() => {
+    if (preferences.mobilePane !== "detail" || !selected || !window.matchMedia("(max-width: 820px)").matches) return;
+    const frame = requestAnimationFrame(() => historyRef.current?.parentElement?.querySelector(".tree-detail__back")?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [preferences.mobilePane, Boolean(selected)]);
+
+  // A revision change invalidates even a completed preview. Fetch again, never
+  // silently authorize the new revision using consequences from the old one.
+  useLayoutEffect(() => {
+    if (!tree || !state.targetID || state.moving || state.revision === tree.revision) return;
+    if (!tree.entries.some((entry) => entry.id === state.targetID)) {
+      clear();
+      return;
+    }
+    void destination.select(state.targetID, tree);
+  }, [tree?.revision, state.targetID, state.moving, destination]);
+
+  useLayoutEffect(() => {
+    if (!tree || openedRef.current === sessionID) return;
+    openedRef.current = sessionID;
+    const generation = jumpGeneration.current;
+    const openingFocus = document.activeElement;
+    const restore = async () => {
+      try {
+        const loaded = await controller.revealTreeHead(sessionID);
+        if (!aliveRef.current || generation !== jumpGeneration.current || !loaded) return;
+        const id = preferences.selectedID && loaded.entries.some((entry) => entry.id === preferences.selectedID)
+          ? preferences.selectedID : loaded.leafID;
+        if (preferences.selectedID && id === preferences.selectedID) void destination.select(id, loaded);
+        focusEntry(id, { focus: document.activeElement === openingFocus });
+        requestAnimationFrame(() => {
+          if (aliveRef.current && generation === jumpGeneration.current && preferences.scrollTop != null && historyRef.current) {
+            historyRef.current.scrollTop = preferences.scrollTop;
+          }
+        });
+      } catch (error) {
+        if (aliveRef.current) controller.notice(error?.message || String(error));
+      }
+    };
+    void restore();
+  }, [sessionID, Boolean(tree)]);
+
+  const jumpCurrent = async () => {
+    if (destination.state.moving) return;
+    const generation = ++jumpGeneration.current;
+    destination.clear();
+    setSummary("");
+    patchPreferences({ selectedID: null, mobilePane: "list" });
+    setRevealing(true);
+    try {
+      const loaded = await controller.revealTreeHead(sessionID);
+      if (!aliveRef.current || generation !== jumpGeneration.current || !loaded) return;
+      patchPreferences({ mobilePane: "list", selectedID: loaded.leafID });
+      setSummary("");
+      focusEntry(loaded.leafID);
+      void destination.select(loaded.leafID, loaded);
+    } catch (error) {
+      if (aliveRef.current && generation === jumpGeneration.current) controller.notice(error?.message || String(error));
+    } finally {
+      if (aliveRef.current && generation === jumpGeneration.current) setRevealing(false);
+    }
+  };
 
   const loadOlder = async () => {
     if (loadingOlder) return;
     const scroller = historyRef.current;
     const beforeHeight = scroller?.scrollHeight || 0;
     const beforeTop = scroller?.scrollTop || 0;
+    const generation = jumpGeneration.current;
     setLoadingOlder(true);
     try {
       await controller.loadMoreTree(sessionID);
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (!scroller) return;
-        scroller.scrollTop = beforeTop + Math.max(0, scroller.scrollHeight - beforeHeight);
-      }));
+      requestAnimationFrame(() => {
+        if (!aliveRef.current || !scroller) return;
+        if (generation === jumpGeneration.current) scroller.scrollTop = beforeTop + Math.max(0, scroller.scrollHeight - beforeHeight);
+        else keepTreeEntryVisible(scroller, buttonRefs.current.get(focusRef.current));
+      });
     } catch (error) {
-      controller.notice(error?.message || String(error));
+      if (aliveRef.current) controller.notice(error?.message || String(error));
     } finally {
-      setLoadingOlder(false);
+      if (aliveRef.current) setLoadingOlder(false);
     }
   };
 
-  const previewEntry = async (entryID) => {
-    if (previewingID || navigating) return;
-    if (entryID === tree.leafID) {
-      controller.clearTreePreview(sessionID);
-      return;
-    }
-    setPreviewingID(entryID);
-    setSummary("");
-    try {
-      await controller.treePreview(sessionID, entryID);
-    } catch (error) {
-      controller.notice(error?.message || String(error));
-    } finally {
-      setPreviewingID(null);
-    }
-  };
-
-  const navigateToPreview = async () => {
-    if (!preview || preview.current || navigating) return;
-    setNavigating(true);
-    try {
-      const result = await controller.navigateTree(sessionID, preview.targetID, summary || null);
-      if (result) {
-        setSummary("");
-        requestAnimationFrame(() => requestAnimationFrame(() => scrollToHead(historyRef.current, { behavior: "smooth" })));
-      }
-    } catch (error) {
-      controller.notice(error?.message || String(error));
-    } finally {
-      setNavigating(false);
-    }
-  };
-
-  const toggleTechnical = (next) => {
-    const scroller = historyRef.current;
-    const head = scroller?.querySelector(".tree-entry.is-current");
-    const headOffset = head && scroller ? head.getBoundingClientRect().top - scroller.getBoundingClientRect().top : null;
-    setShowTechnical(next);
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!scroller) return;
-      const nextHead = scroller.querySelector(".tree-entry.is-current");
-      if (nextHead && headOffset != null) {
-        scroller.scrollTop += nextHead.getBoundingClientRect().top - scroller.getBoundingClientRect().top - headOffset;
-      }
-    }));
-  };
-
-  const focusTreeEntry = (entryID) => {
-    if (!entryID) return;
-    setFocusedEntryID(entryID);
+  const toggleTechnical = (showTechnical) => {
+    const anchor = buttonRefs.current.get(focusID)?.closest(".tree-entry");
+    const top = anchor?.getBoundingClientRect().top;
+    if (state.targetID && !treeView(tree, showTechnical).rows.some((entry) => entry.id === state.targetID)) clear();
+    patchPreferences({ showTechnical });
     requestAnimationFrame(() => {
-      const button = entryButtonRefs.current.get(entryID);
-      if (!button) return;
-      button.focus({ preventScroll: true });
-      keepTreeEntryVisible(historyRef.current, button);
+      const next = buttonRefs.current.get(focusID)?.closest(".tree-entry");
+      if (next && top != null && historyRef.current) historyRef.current.scrollTop += next.getBoundingClientRect().top - top;
     });
   };
 
   const onEntryKeyDown = (event, entry) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      void previewEntry(entry.id);
-      return;
-    }
-    if (event.key === "Escape" && preview) {
-      event.preventDefault();
-      event.stopPropagation();
-      controller.clearTreePreview(sessionID);
-      return;
-    }
-    if (!isTreeNavigationKey(event.key)) return;
+    const action = treeKeyboardAction(event);
+    if (!action || (action === "clear" && !destination.state.targetID)) return;
     event.preventDefault();
-    const targetID = treeKeyboardTarget(displayEntries, entry.id, event.key);
-    if (targetID) focusTreeEntry(targetID);
+    event.stopPropagation();
+    if (action === "clear") clear();
+    if (action === "continue" && destination.state.targetID === entry.id) void continueHere(event);
+    if (action === "choose") choose(entry.id);
+    if (action === "select") {
+      const id = treeKeyboardTarget(view.rows, focusRef.current || entry.id, event.key);
+      choose(id, { detail: false, focus: true });
+    }
   };
 
-  return html`<div class=${`tree-inspector ${preview ? "has-preview" : ""}`}>
+  const find = (direction) => {
+    const id = nextTreeMatch(matches, destination.state.targetID, direction);
+    if (id) choose(id, { detail: false, focus: false });
+  };
+
+  if (!tree) return html`<div class="inspector-loading">Loading conversation graph…</div>`;
+  return html`<div class=${`tree-inspector ${preferences.mobilePane === "detail" && selected ? "is-detail" : ""}`} onKeyDown=${(event) => {
+    if (event.key === "Escape" && destination.state.targetID && !event.defaultPrevented) {
+      event.preventDefault();
+      event.stopPropagation();
+      clear();
+    }
+  }}>
     <div class="tree-toolbar">
-      <div class="tree-toolbar__identity">
-        <div class="tree-toolbar__title"><span class="tree-head-dot"></span>Conversation HEAD</div>
-        <div class="tree-toolbar__count" title=${`Tree revision ${tree.revision}`}>
-          ${messageEntries.length} messages · ${tree.totalEntries || tree.entries.length} total nodes
-        </div>
-      </div>
       <div class="tree-toolbar__actions">
-        <span class="tree-keyboard-hint"><kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>←</kbd> parent · <kbd>→</kbd> child · <kbd>Enter</kbd> target</span>
         <div class="tree-mode-toggle" role="group" aria-label="Tree node visibility">
-          <button class=${!showTechnical ? "is-active" : ""} aria-pressed=${!showTechnical} onClick=${() => toggleTechnical(false)}>Messages</button>
-          <button class=${showTechnical ? "is-active" : ""} aria-pressed=${showTechnical} onClick=${() => toggleTechnical(true)}>All nodes${hiddenTechnicalCount ? html` <span>${hiddenTechnicalCount}</span>` : null}</button>
+          <button disabled=${state.moving} class=${!preferences.showTechnical ? "is-active" : ""} aria-pressed=${!preferences.showTechnical} onClick=${() => toggleTechnical(false)}>Messages</button>
+          <button disabled=${state.moving} class=${preferences.showTechnical ? "is-active" : ""} aria-pressed=${preferences.showTechnical} onClick=${() => toggleTechnical(true)}>All nodes</button>
         </div>
-        <button class="tree-jump-head" onClick=${() => scrollToHead(historyRef.current, { behavior: "smooth" })}>↓ HEAD</button>
-        ${tree.cursor?.next ? html`
-          <button class="secondary-action tree-load-more" disabled=${loadingOlder || navigating} onClick=${loadOlder}>
-            ${loadingOlder ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
-            <span>${loadingOlder ? "Loading" : "Older"}</span>
-          </button>
-        ` : null}
+        <button disabled=${state.moving} onClick=${jumpCurrent}>${revealing ? "Finding current…" : "Current"}</button>
+        <button disabled=${state.moving || !view.latestID} onClick=${() => {
+          // Latest may itself be technical. Reveal it without disguising it as a message.
+          if (!view.rows.some((entry) => entry.id === view.latestID)) patchPreferences({ showTechnical: true });
+          choose(view.latestID, { detail: false, focus: true });
+          patchPreferences({ mobilePane: "list" });
+        }}>Latest</button>
+        ${selected ? html`<button class="tree-open-detail" onClick=${() => patchPreferences({ mobilePane: "detail" })}>Review destination</button>` : null}
+        ${tree.cursor?.next ? html`<button disabled=${loadingOlder || state.moving} onClick=${loadOlder}>${loadingOlder ? "Loading older…" : "Older"}</button>` : null}
+        <details class="tree-help"><summary>Keyboard help</summary><div>
+          <p><kbd>↑</kbd> <kbd>↓</kbd> select a destination. <kbd>←</kbd> parent, <kbd>→</kbd> child.</p>
+          <p><kbd>Home</kbd> / <kbd>End</kbd> first / last loaded row. <kbd>Page Up</kbd> / <kbd>Page Down</kbd> skip five rows.</p>
+          <p><kbd>Enter</kbd> continues only after the selected preview loads. <kbd>Space</kbd> selects. <kbd>Escape</kbd> clears.</p>
+          <p>Brighter lines mark active context. The double-ring node is current HEAD. Latest is the last chronological event, which may be on another branch.</p>
+        </div></details>
       </div>
+      <div class="tree-find">
+        <input type="search" aria-label="Find message, label or node ID in loaded rows" placeholder="Find message or label" value=${preferences.search} onInput=${(event) => patchPreferences({ search: event.currentTarget.value })} onKeyDown=${(event) => {
+          if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (!event.repeat) find(event.shiftKey ? -1 : 1); }
+        }} />
+        ${preferences.search.trim() ? html`<span role="status">${matches.length} ${matches.length === 1 ? "match" : "matches"}</span><button disabled=${!matches.length || state.moving} onClick=${() => find(-1)} aria-label="Previous match">↑</button><button disabled=${!matches.length || state.moving} onClick=${() => find(1)} aria-label="Next match">↓</button>` : null}
+      </div>
+      <p class="tree-toolbar__count" title=${`${view.messageCount} messages, ${view.hiddenCount} hidden technical nodes${view.anchorCount ? ", current technical position retained" : ""}. Search covers shown rows only.`}>
+        <span>Oldest to newest</span>
+        <span>${view.rows.length} shown${tree.entries.length < (tree.totalEntries ?? tree.entries.length) ? ` / ${tree.entries.length} loaded / ${tree.totalEntries} total` : ` / ${tree.totalEntries ?? tree.entries.length} nodes`}${preferences.search.trim() ? " · Search shown rows" : ""}</span>
+      </p>
     </div>
-
     <div class="tree-workspace">
-      <section class="tree-history" ref=${historyRef} aria-label="Conversation graph">
-        <div class="tree-history__columns" style=${`--tree-graph-width:${graph.graphWidth}px`}>
-          <span>Graph</span><span>Conversation</span><span>When</span>
-        </div>
-        ${displayEntries.length ? html`<div class="tree-graph-rows" style=${`--tree-graph-width:${graph.graphWidth}px;--tree-row-height:${TREE_GRAPH_ROW_HEIGHT}px`}>
-          <svg class="tree-graph-canvas" width=${graph.graphWidth} height=${graph.height} viewBox=${`0 0 ${graph.graphWidth} ${graph.height}`} aria-hidden="true">
-            ${graph.nodes.filter((node) => node.externalParent).map((node) => html`
-              <path class=${`tree-graph-edge tree-lane-color--${node.lane % 6}`} d=${`M ${node.x} ${Math.max(0, node.y - TREE_GRAPH_ROW_HEIGHT / 2)} L ${node.x} ${node.y}`} />
-            `)}
-            ${graph.edges.map((edge) => html`<path key=${`${edge.parentID}:${edge.childID}`} class=${`tree-graph-edge tree-lane-color--${edge.lane % 6} ${edge.active ? "is-active" : "is-abandoned"}`} d=${edge.path} />`)}
-            ${graph.nodes.map((node) => html`
-              <g key=${node.id} class=${`tree-graph-node tree-lane-color--${node.lane % 6} ${node.current ? "is-current" : ""} ${node.active ? "is-active" : "is-abandoned"} ${preview?.targetID === node.id ? "is-target" : ""}`}>
-                ${node.current ? html`<circle class="tree-graph-node__halo" cx=${node.x} cy=${node.y} r="9"></circle>` : null}
-                ${preview?.targetID === node.id && !node.current ? html`<circle class="tree-graph-node__target" cx=${node.x} cy=${node.y} r="8"></circle>` : null}
-                <circle class="tree-graph-node__dot" cx=${node.x} cy=${node.y} r=${node.current ? 4.8 : 3.7}></circle>
-              </g>
-            `)}
-          </svg>
-          <div class="tree-list" role="list" aria-label="Conversation tree nodes">
-            ${displayEntries.map((entry) => {
-              const previewing = previewingID === entry.id;
-              const selected = preview?.targetID === entry.id;
-              const kind = !showTechnical && entry.kind === "assistant_tool_calls" ? "assistant" : entry.kind;
-              const graphNode = nodeByID.get(entry.id);
-              return html`<div
-                key=${entry.id}
-                role="listitem"
-                class=${`tree-entry ${entry.current ? "is-current" : ""} ${entry.active ? "is-active" : "is-abandoned"} ${selected ? "is-selected" : ""} ${effectiveFocusID === entry.id ? "is-keyboard-focus" : ""}`}
-              >
-                <div class="tree-entry__graph-cell" aria-hidden="true"></div>
-                <button
-                  ref=${(node) => {
-                    if (node) entryButtonRefs.current.set(entry.id, node);
-                    else entryButtonRefs.current.delete(entry.id);
-                  }}
-                  class="tree-entry__summary"
-                  disabled=${navigating}
-                  aria-busy=${previewing ? "true" : null}
-                  tabindex=${effectiveFocusID === entry.id ? 0 : -1}
-                  aria-current=${entry.current ? "true" : null}
-                  aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Enter Space Escape"
-                  title=${entry.current ? "Current conversation HEAD" : "Select as a possible conversation HEAD"}
-                  onFocus=${() => setFocusedEntryID(entry.id)}
-                  onKeyDown=${(event) => onEntryKeyDown(event, entry)}
-                  onClick=${() => previewEntry(entry.id)}
-                >
-                  <span class="tree-entry__identity">
-                    <span class="tree-kind">${kindLabel(kind)}</span>
-                    ${entry.current ? html`<span class="tree-ref tree-ref--head">HEAD</span>` : selected ? html`<span class="tree-ref tree-ref--target">TARGET</span>` : entry.active ? html`<span class="tree-ref">current path</span>` : html`<span class=${`tree-ref tree-lane-color--${graphNode?.lane % 6 || 0}`}>branch</span>`}
-                    ${entry.label ? html`<span class="tree-label">${entry.label}</span>` : null}
-                    ${previewing ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
-                  </span>
-                  <span class="tree-preview-text">${entry.preview || technicalPreview(entry)}</span>
-                </button>
-                <div class="tree-entry__right">
-                  <time title=${entry.createdAt || ""}>${formatTreeTime(entry.createdAt)}</time>
-                  <button class="tree-label-action" title="Label this node" disabled=${navigating} onClick=${() => {
-                    const label = window.prompt("Node label", entry.label || "");
-                    if (label !== null) void controller.labelTreeEntry(sessionID, entry.id, label);
-                  }}>Label</button>
-                </div>
-              </div>`;
-            })}
-          </div>
-        </div>` : html`<div class="tree-empty">
-          No user or assistant messages in this loaded window.${tree.cursor?.next ? " Load older nodes to continue." : ""}
-        </div>`}
-      </section>
-
-      ${preview ? html`<aside class="navigation-preview">
-        <div class="navigation-preview__head">
-          <div>
-            <div class="inspector-section-title">Move conversation HEAD</div>
-            <div class="navigation-preview__target">Future prompts will continue from the selected node.</div>
-          </div>
-          <button class="navigation-preview__close" title="Clear target" onClick=${() => controller.clearTreePreview(sessionID)}>×</button>
-        </div>
-
-        <div class="navigation-target-card">
-          <div class="navigation-target-card__meta">
-            <span class="tree-ref tree-ref--target">TARGET</span>
-            <span>${kindLabel(selectedEntry?.kind || "node")}</span>
-            ${selectedEntry?.label ? html`<span>${selectedEntry.label}</span>` : null}
-          </div>
-          <strong>${selectedEntry?.preview || selectedEntry?.id || preview.targetID}</strong>
-        </div>
-
-        ${preview.abandonedTotal ? html`<div class="navigation-impact navigation-impact--warn">
-          <strong>${preview.abandonedTotal} active ${preview.abandonedTotal === 1 ? "node" : "nodes"} will become abandoned</strong>
-          <span>Nothing is deleted. The old path remains visible in the graph and can be checked out again later.</span>
-        </div>` : html`<div class="navigation-impact">
-          <strong>No active work will be abandoned</strong>
-          <span>HEAD moves directly to this point in the current path.</span>
-        </div>`}
-
-        ${preview.editorText ? html`<div class="navigation-restored-editor"><span class="field-label">Prompt restored to composer</span><pre>${preview.editorText}</pre></div>` : null}
-
-        ${preview.abandoned?.length ? html`<details class="navigation-abandoned">
-          <summary>Review abandoned path${preview.abandonedTruncated ? ` · showing ${preview.abandoned.length}/${preview.abandonedTotal}` : ` · ${preview.abandoned.length}`}</summary>
-          <ul>${preview.abandoned.map((item) => html`<li><strong>${kindLabel(item.kind)}</strong><span>${item.preview || item.id}</span></li>`)}</ul>
-        </details>` : null}
-
-        ${preview.abandonedTotal ? html`<label class="stacked-label navigation-summary">Handoff note for the branch you leave <span>optional</span><textarea rows="3" value=${summary} disabled=${navigating} placeholder="Preserve anything the new branch should remember…" onInput=${(event) => setSummary(event.currentTarget.value)}></textarea></label>` : null}
-
-        <div class="navigation-preview__footer">
-          <button onClick=${() => controller.clearTreePreview(sessionID)} disabled=${navigating}>Cancel</button>
-          <button class="primary navigation-preview__action" disabled=${preview.current || navigating} onClick=${navigateToPreview}>
-            ${navigating ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
-            <span>${navigating ? "Moving HEAD" : "Move HEAD here"}</span>
-          </button>
-        </div>
-      </aside>` : null}
+      <${TreeHistory} graph=${graph} rows=${view.rows} latestID=${view.latestID} selectedID=${state.targetID} focusID=${focusID} matches=${matches}
+        pending=${state.pending} moving=${state.moving} historyRef=${historyRef} buttonRefs=${buttonRefs} onSelect=${choose}
+        onFocus=${(id) => { focusRef.current = id; setFocusedID(id); }} onKeyDown=${onEntryKeyDown}
+        onScroll=${(event) => patchPreferences({ scrollTop: event.currentTarget.scrollTop })} />
+      <${TreeDetail} sessionID=${sessionID} entry=${selected} parent=${parent} messages=${data?.messages} state=${{ ...state, preview: state.revision === tree.revision ? state.preview : null }} ready=${ready}
+        summary=${summary} setSummary=${setSummary} onContinue=${continueHere} onClear=${clear} onRetry=${() => destination.select(state.targetID, tree)}
+        onBack=${() => { patchPreferences({ mobilePane: "list" }); focusEntry(state.targetID || focusID); }} />
     </div>
   </div>`;
-}
-
-function scrollToHead(scroller, { behavior = "smooth" } = {}) {
-  if (!scroller) return;
-  const head = scroller.querySelector(".tree-entry.is-current");
-  if (head) {
-    head.scrollIntoView({ block: "center", behavior });
-    return;
-  }
-  scroller.scrollTo({ top: scroller.scrollHeight, behavior });
-}
-
-function keepTreeEntryVisible(scroller, button) {
-  if (!scroller || !button) return;
-  const row = button.closest(".tree-entry") || button;
-  const scrollerRect = scroller.getBoundingClientRect();
-  const columnsBottom = scroller.querySelector(".tree-history__columns")?.getBoundingClientRect().bottom || scrollerRect.top;
-  const rowRect = row.getBoundingClientRect();
-  const visibleTop = Math.max(scrollerRect.top, columnsBottom);
-  const visibleBottom = scrollerRect.bottom;
-  if (rowRect.top < visibleTop) scroller.scrollTop -= visibleTop - rowRect.top;
-  else if (rowRect.bottom > visibleBottom) scroller.scrollTop += rowRect.bottom - visibleBottom;
-}
-
-function kindLabel(kind) {
-  const normalized = String(kind || "node").replace(/^assistant_tool_calls$/, "assistant").replace(/_/g, " ");
-  if (normalized === "user") return "You";
-  if (normalized === "assistant") return "Assistant";
-  return normalized;
-}
-
-function technicalPreview(entry) {
-  return entry.label || `${kindLabel(entry.kind)} · ${entry.id}`;
-}
-
-function formatTreeTime(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }

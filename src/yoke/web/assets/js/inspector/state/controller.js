@@ -2,6 +2,10 @@
 
 import { ApiError, api } from "../../api/client.js";
 import { store } from "../../state/store.js";
+import { beginInspectorSelection } from "./navigation.js";
+import { ProcessInspectorState } from "./processes.js";
+import { ToolActivityState } from "./tool-activity.js";
+import { revealTreeHead } from "./tree-window.js";
 
 const TREE_PAGE_SIZE = 80;
 
@@ -12,8 +16,8 @@ export class InspectorStateController {
     this.notice = notice;
     this.selectionVersion = 0;
     this.requestGenerations = new Map();
-    this.toolDetailRequests = new Map();
-    this.processOutputRequests = new Map();
+    this.toolActivity = new ToolActivityState(this);
+    this.processes = new ProcessInspectorState(this);
     this.treeMutationChains = new Map();
     this.treeMutationGeneration = new Map();
     this.treePendingLabels = new Map();
@@ -25,8 +29,8 @@ export class InspectorStateController {
     this.discardPendingTreeLabels();
     this.invalidateSelection();
     this.requestGenerations.clear();
-    this.toolDetailRequests.clear();
-    this.processOutputRequests.clear();
+    this.toolActivity.invalidate();
+    this.processes.invalidate();
     this.treeMutationChains.clear();
     this.treeMutationGeneration.clear();
     this.treePendingLabels.clear();
@@ -66,24 +70,7 @@ export class InspectorStateController {
   }
 
   beginSelection(mode, payload = {}) {
-    const sessionID = store.getState().ui.selectedSessionID;
-    if (!sessionID) return null;
-    this.invalidateSelection();
-    const selectionVersion = this.selectionVersion;
-    store.setState((state) => {
-      const next = { ...state, ui: { ...state.ui, inspector: { mode, ...payload } } };
-      if (mode !== "tool" || !payload.callID) return next;
-      const current = state.sessionData[sessionID] || {};
-      if (current.toolDetail?.id === payload.callID) return next;
-      return {
-        ...next,
-        sessionData: {
-          ...state.sessionData,
-          [sessionID]: { ...current, toolDetail: null },
-        },
-      };
-    });
-    return { sessionID, mode, selectionVersion };
+    return beginInspectorSelection(this, mode, payload);
   }
 
   close() {
@@ -336,163 +323,40 @@ export class InspectorStateController {
   }
 
   async listToolCalls(sessionID) {
-    const request = this.nextRequest(sessionID, "tool:list");
-    const selection = this.selectedRequest(sessionID, "tool");
-    const response = await api.toolCalls(sessionID, { limit: 100 });
-    if (!this.ownsRequest(request) || !this.ownsSelection(sessionID, "tool", selection)) return null;
-    this.setSessionField(sessionID, "toolCalls", response.data);
-    return response.data;
+    return this.toolActivity.list(sessionID);
   }
 
   async loadToolCall(sessionID, callID) {
-    const requestOwner = this.nextRequest(sessionID, "tool:detail");
-    const selection = this.selectedRequest(sessionID, "tool");
-    const requestKey = `${sessionID}\u0000${callID}`;
-    const lifecycleEpoch = this.lifecycleEpoch();
-    let request = this.toolDetailRequests.get(requestKey);
-    if (!request) {
-      request = loadToolDetail(sessionID, callID, () => this.lifecycleEpoch() === lifecycleEpoch);
-      this.toolDetailRequests.set(requestKey, request);
-      void request.finally(() => {
-        if (this.toolDetailRequests.get(requestKey) === request) this.toolDetailRequests.delete(requestKey);
-      }).catch(() => {});
-    }
-    const { detail, output } = await request;
-    if (
-      !this.ownsRequest(requestOwner) ||
-      !this.ownsSelection(sessionID, "tool", selection)
-    ) return null;
-    const inspector = store.getState().ui.inspector;
-    if (inspector?.mode === "tool" && inspector.callID && inspector.callID !== callID) return null;
-    this.setSessionField(sessionID, "toolDetail", {
-      ...detail.data,
-      outputChunks: output.data,
-      outputCursor: output.cursor,
-    });
-    return detail.data;
+    return this.toolActivity.load(sessionID, callID);
   }
 
   async selectToolCall(sessionID, callID) {
-    this.invalidateSelection();
-    store.setState((state) => {
-      const inspector = state.ui.inspector;
-      if (inspector?.mode !== "tool") return state;
-      const current = state.sessionData[sessionID] || {};
-      return {
-        ...state,
-        ui: { ...state.ui, inspector: { ...inspector, callID } },
-        sessionData: {
-          ...state.sessionData,
-          [sessionID]: current.toolDetail?.id === callID
-            ? current
-            : { ...current, toolDetail: null },
-        },
-      };
-    });
-    return this.loadToolCall(sessionID, callID);
+    return this.toolActivity.select(sessionID, callID);
   }
 
   async loadProcess(processID) {
-    const sessionID = store.getState().ui.selectedSessionID;
-    const request = this.nextRequest(sessionID || "", "process:selection");
-    const selection = sessionID ? this.selectedRequest(sessionID, "process") : null;
-    const detail = await api.process(processID);
-    if (!this.ownsRequest(request)) return;
-    const detailSessionID = detail.data.sessionID;
-    if (!detailSessionID) return;
-    if (selection !== null && !this.ownsSelection(sessionID, "process", selection)) return;
-    this.setSessionField(detailSessionID, "processDetail", detail.data);
+    return this.processes.load(processID);
   }
 
   async refreshProcessOutput(processID) {
-    const lifecycleEpoch = this.lifecycleEpoch();
-    const located = this.findProcessDetail(processID);
-    if (!located) return;
-    const selection = this.selectedRequest(located.sessionID, "process");
-    let request = this.processOutputRequests.get(processID);
-    if (!request) {
-      const afterSeq = located.detail.output?.latestSeq || 0;
-      request = api.processOutput(processID, afterSeq, 500);
-      this.processOutputRequests.set(processID, request);
-      void request.finally(() => {
-        if (this.processOutputRequests.get(processID) === request) {
-          this.processOutputRequests.delete(processID);
-        }
-      }).catch(() => {});
-    }
-    const response = await request;
-    const { sessionID } = located;
-    if (
-      this.lifecycleEpoch() !== lifecycleEpoch ||
-      !this.ownsSelection(sessionID, "process", selection)
-    ) return;
-    const current = store.getState().sessionData[sessionID]?.processDetail;
-    if (current?.processID !== processID) return;
-    const currentSeq = current.output?.latestSeq || 0;
-    if (response.cursor.truncatedBefore > currentSeq) {
-      await this.refreshProcess(processID);
-      if (this.lifecycleEpoch() !== lifecycleEpoch) return;
-      return;
-    }
-    const chunks = response.data.filter((chunk) => chunk.seq > currentSeq);
-    if (!chunks.length && response.cursor.next <= currentSeq) return;
-    const appended = chunks.map((chunk) => chunk.text).join("");
-    this.setSessionField(sessionID, "processDetail", {
-      ...current,
-      output: {
-        ...current.output,
-        tail: `${current.output?.tail || ""}${appended}`,
-        latestSeq: Math.max(currentSeq, response.cursor.next || 0),
-      },
-    });
+    return this.processes.refreshOutput(processID);
   }
 
   findProcessDetail(processID) {
-    for (const [sessionID, data] of Object.entries(store.getState().sessionData)) {
-      if (data?.processDetail?.processID === processID) return { sessionID, detail: data.processDetail };
-    }
-    return null;
+    return this.processes.find(processID);
   }
 
   async refreshProcess(processID) {
-    const located = this.findProcessDetail(processID);
-    if (!located) return;
-    const request = this.nextRequest(located.sessionID, `process:detail:${processID}`);
-    const selection = this.selectedRequest(located.sessionID, "process");
-    const detail = await api.process(processID);
-    if (
-      !this.ownsRequest(request) ||
-      !this.ownsSelection(located.sessionID, "process", selection)
-    ) return;
-    const sessionID = detail.data.sessionID;
-    if (!sessionID) return;
-    const current = store.getState().sessionData[sessionID]?.processDetail;
-    if (current?.processID !== processID) return;
-    const currentSeq = current.output?.latestSeq || 0;
-    const incomingSeq = detail.data.output?.latestSeq || 0;
-    this.setSessionField(sessionID, "processDetail", incomingSeq < currentSeq
-      ? { ...detail.data, output: current.output }
-      : detail.data);
+    return this.processes.refresh(processID);
   }
-}
 
-async function loadToolDetail(sessionID, callID, ownsLifecycle) {
-  const known = store.getState().sessionData[sessionID]?.toolCalls?.find((call) => call.id === callID);
-  if (known?.retention === "runtime") {
-    const [detail, output] = await Promise.all([
-      api.toolCall(sessionID, callID),
-      api.toolOutput(sessionID, callID),
-    ]);
-    if (!ownsLifecycle()) return { detail, output };
-    return { detail, output };
+  loadMoreToolCalls(sessionID) { return this.toolActivity.loadOlder(sessionID); }
+
+  showLatestToolCalls(sessionID) { return this.toolActivity.list(sessionID, { replace: true }); }
+
+  revealTreeHead(sessionID) {
+    return revealTreeHead(this, sessionID);
   }
-  const detail = await api.toolCall(sessionID, callID);
-  if (!ownsLifecycle()) return { detail, output: { data: [], cursor: { next: 0, truncatedBefore: 0 } } };
-  if (detail.data?.retention === "session") {
-    return { detail, output: { data: [], cursor: { next: 0, truncatedBefore: 0 } } };
-  }
-  const output = await api.toolOutput(sessionID, callID);
-  return { detail, output };
 }
 
 function treeRevision(tree) {

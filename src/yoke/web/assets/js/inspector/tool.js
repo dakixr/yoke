@@ -1,266 +1,142 @@
-import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
+import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
-import { ToolFieldCard } from "./tool-fields.js";
-import { buildArgumentFields, buildResultFields, sortToolCallsChronologically } from "./tool-logic.js";
+import { useInspectorPreferences } from "./state/preferences.js";
+import { ActivityDetail } from "./activity/detail.js";
+import { ActivityList } from "./activity/list.js";
+import { filterCalls, newCallCount } from "./activity/logic.js";
 
-export function ToolInspector({ sessionID, inspector, data }) {
-  const calls = data?.toolCalls;
-  const detail = data?.toolDetail;
-  const [search, setSearch] = useState("");
-  const [raw, setRaw] = useState(false);
-  const [wrap, setWrap] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const listRef = useRef(null);
-  const followingRef = useRef(true);
-  const initializedScrollRef = useRef(false);
+const DEFAULTS = {
+  search: "", wrap: true, callID: null,
+  pane: "list", following: true, scrollTop: 0, anchorID: null, anchorOffset: 0,
+  lastObservedID: null, lastObservedSequence: null, newCalls: 0, detailPositions: {},
+};
 
-  const visible = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    const sorted = sortToolCallsChronologically(calls);
-    if (!query) return sorted;
-    return sorted.filter((call) => toolSearchText(call).includes(query));
-  }, [calls, search]);
+export function ToolInspector(props) {
+  return html`<${ActivityInspector} key=${props.sessionID} ...${props} />`;
+}
+
+function ActivityInspector({ sessionID, inspector, data }) {
+  const [preferences, patchPreferences] = useInspectorPreferences(sessionID, "tool", DEFAULTS);
+  const [busy, setBusy] = useState("");
+  const [listError, setListError] = useState("");
+  const [detailError, setDetailError] = useState(null);
+  const restoredSelection = useRef(false);
+  const previousSelection = useRef(preferences.callID);
+  const backRef = useRef(null);
+  // Shared state already supplies canonical session order. Do not reinterpret
+  // start timestamps here: a pending call can acquire its timestamp later.
+  const calls = useMemo(() => data?.toolCalls || [], [data?.toolCalls]);
+  const visible = useMemo(() => filterCalls(calls, preferences.search), [calls, preferences.search]);
+  const selectedID = inspector.callID || preferences.callID;
+  const currentListError = listError || (!data?.toolCalls ? data?.inspectorErrors?.tool : "") || "";
+  const currentDetailError = detailError?.id === selectedID ? detailError.message : data?.toolDetailError;
+  // Never render stale detail under a newly selected row.
+  const detail = selectedID && data?.toolDetail?.id === selectedID ? data.toolDetail : null;
+
+  useLayoutEffect(() => {
+    if (preferences.pane === "detail" && backRef.current?.offsetParent) backRef.current.focus({ preventScroll: true });
+  }, [preferences.pane, selectedID]);
 
   useEffect(() => {
-    followingRef.current = true;
-    initializedScrollRef.current = false;
-  }, [sessionID, search]);
-
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list || !visible.length) return undefined;
-    const frame = requestAnimationFrame(() => {
-      if (!initializedScrollRef.current || followingRef.current) {
-        list.scrollTop = list.scrollHeight;
-      }
-      initializedScrollRef.current = true;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [sessionID, visible.length, search]);
-
-  useEffect(() => {
-    const requested = inspector.callID || null;
-    if (requested) {
-      if (detail?.id !== requested) {
-        void controller.loadToolCall(sessionID, requested).catch((error) => controller.notice(error?.message || String(error)));
-      }
-      return;
+    if (restoredSelection.current) return;
+    restoredSelection.current = true;
+    if (!inspector.callID && preferences.callID) {
+      void controller.selectToolCall(sessionID, preferences.callID).catch((error) => setDetailError({ id: preferences.callID, message: error?.message || String(error) }));
     }
-    if (detail) return;
-    if (!calls?.length) return;
-    const newest = visible.at(-1) || sortToolCallsChronologically(calls).at(-1);
-    if (newest) void controller.selectToolCall(sessionID, newest.id).catch((error) => controller.notice(error?.message || String(error)));
-  }, [sessionID, inspector.callID, calls, detail?.id]);
+  }, [sessionID]);
 
   useEffect(() => {
-    if (!detail?.id || !["running", "pending"].includes(detail.status)) return;
-    const timer = window.setInterval(() => {
-      void controller.loadToolCall(sessionID, detail.id).catch(() => {});
+    if (!inspector.callID) return;
+    const changed = previousSelection.current !== inspector.callID;
+    previousSelection.current = inspector.callID;
+    patchPreferences({ callID: inspector.callID, ...(changed ? { pane: "detail" } : {}) });
+  }, [inspector.callID]);
+
+  useEffect(() => {
+    const newestID = calls.at(-1)?.id;
+    if (!newestID || newestID === preferences.lastObservedID) return;
+    patchPreferences((previous) => ({
+      lastObservedID: newestID,
+      lastObservedSequence: calls.at(-1)?.sequence ?? null,
+      newCalls: previous.following ? 0 : previous.newCalls + newCallCount(calls, previous.lastObservedID, previous.lastObservedSequence),
+    }));
+  }, [calls]);
+
+  useEffect(() => {
+    if (!inspector.callID || detail) return;
+    let active = true;
+    setDetailError(null);
+    void controller.loadToolCall(sessionID, inspector.callID).catch((error) => {
+      if (active) setDetailError({ id: inspector.callID, message: error?.message || String(error) });
+    });
+    return () => { active = false; };
+  }, [sessionID, inspector.callID, detail?.id]);
+
+  useEffect(() => {
+    if (!detail || !["running", "pending"].includes(detail.status)) return;
+    let active = true;
+    let pending = false;
+    const timer = window.setInterval(async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        await controller.loadToolCall(sessionID, detail.id);
+        if (active) setDetailError(null);
+      } catch (error) {
+        if (active) setDetailError({ id: detail.id, message: `Live update failed; retrying. ${error?.message || String(error)}` });
+      } finally {
+        pending = false;
+      }
     }, 600);
-    return () => window.clearInterval(timer);
+    return () => { active = false; window.clearInterval(timer); };
   }, [sessionID, detail?.id, detail?.status]);
 
-  if (!calls) return html`<div class="inspector-loading">Loading tool activity…</div>`;
-
-  const refresh = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    try {
-      await controller.listToolCalls(sessionID);
-      if (detail?.id) await controller.loadToolCall(sessionID, detail.id);
-    } catch (error) {
-      controller.notice(error?.message || String(error));
-    } finally {
-      setRefreshing(false);
-    }
+  const request = async (kind, action) => {
+    if (busy) return;
+    setBusy(kind);
+    setListError("");
+    try { await action(); }
+    catch (error) { setListError(error?.message || String(error)); }
+    finally { setBusy(""); }
+  };
+  const refresh = () => request("refresh", () => controller.listToolCalls(sessionID));
+  const select = (callID) => {
+    patchPreferences({ callID, pane: "detail", ...(callID !== calls.at(-1)?.id ? { following: false } : {}) });
+    setDetailError(null);
+    void controller.selectToolCall(sessionID, callID).catch((error) => setDetailError({ id: callID, message: error?.message || String(error) }));
+  };
+  const retryDetail = () => {
+    setDetailError(null);
+    void controller.loadToolCall(sessionID, selectedID).catch((error) => setDetailError({ id: selectedID, message: error?.message || String(error) }));
   };
 
-  return html`<div class="tool-inspector-split">
-    <aside class="tool-sidebar">
-      <div class="tool-sidebar__header">
-        <div>
-          <strong>Tool calls</strong>
-          <span>${calls.length} retained${visible.length !== calls.length ? ` · ${visible.length} matching` : ""}</span>
-        </div>
-        <button class="tool-refresh" disabled=${refreshing} title="Refresh tool activity" onClick=${refresh}>
-          ${refreshing ? html`<span class="pending-spinner" aria-hidden="true"></span>` : html`<span aria-hidden="true">↻</span>`}
-        </button>
-      </div>
-      <label class="tool-search">
-        <span aria-hidden="true">⌕</span>
-        <input value=${search} placeholder="Search calls" aria-label="Search tool calls" onInput=${(event) => setSearch(event.currentTarget.value)} />
-        ${search ? html`<button aria-label="Clear tool search" onClick=${() => setSearch("")}>×</button>` : null}
-      </label>
-      <div
-        class="tool-call-sidebar-list"
-        role="list"
-        aria-label="Tool calls"
-        ref=${listRef}
-        onScroll=${(event) => {
-          const list = event.currentTarget;
-          const remaining = list.scrollHeight - list.clientHeight - list.scrollTop;
-          followingRef.current = remaining <= 36;
-        }}
-      >
-        ${visible.map((call) => html`<button
-          key=${call.id}
-          role="listitem"
-          class=${`tool-sidebar-row ${inspector.callID === call.id ? "is-selected" : ""}`}
-          onClick=${() => controller.selectToolCall(sessionID, call.id)}
-        >
-          <span class=${`tool-sidebar-row__glyph tool-sidebar-row__glyph--${call.status}`} aria-hidden="true">${statusGlyph(call.status)}</span>
-          <span class="tool-sidebar-row__main">
-            <span class="tool-sidebar-row__topline"><strong>${call.toolName}</strong><span>${formatDuration(call.time?.durationMs)}</span></span>
-            <span class="tool-sidebar-row__summary">${argumentSummary(call.arguments?.raw) || call.id}</span>
-          </span>
-          <span class="tool-sidebar-row__status">${statusLabel(call.status)}</span>
-        </button>`)}
-        ${!visible.length ? html`<div class="tool-sidebar-empty">${calls.length ? "No tool calls match this search." : "No tool calls yet."}</div>` : null}
-      </div>
-    </aside>
+  if (!data?.toolCalls && !selectedID) return html`<div class="activity-empty" aria-live="polite">
+    <strong>${currentListError ? "Could not load tool activity" : "Loading tool activity…"}</strong>
+    <p>${currentListError || "Calls will appear in start order."}</p>
+    <button disabled=${Boolean(busy)} onClick=${refresh}>${busy ? "Loading…" : "Retry loading"}</button>
+  </div>`;
 
-    <section class="tool-detail-pane">
-      ${detail ? html`<${ToolDetail} detail=${detail} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />` : inspector.callID ? html`
-        <div class="tool-detail-empty"><div><strong>Loading tool call…</strong><span>${inspector.callID}</span></div></div>
-      ` : html`
-        <div class="tool-detail-empty"><div><strong>No tool call selected</strong><span>Select a call from the sidebar to inspect arguments, output, and context.</span></div></div>
-      `}
+  return html`<div class=${`tool-activity ${preferences.pane === "detail" && selectedID ? "has-mobile-detail" : ""}`}>
+    <${ActivityList} calls=${calls} visible=${visible} total=${data?.toolCallsTotal} cursor=${data?.toolCallsCursor}
+      selectedID=${selectedID} detail=${detail} preferences=${preferences} patchPreferences=${patchPreferences}
+      busy=${busy} error=${currentListError} onRefresh=${refresh} onSelect=${select}
+      loading=${!data?.toolCalls && !currentListError} windowChanged=${data?.toolCallsWindowChanged}
+      onLoadEarlier=${() => {
+        patchPreferences({ following: false });
+        return request("earlier", () => controller.loadMoreToolCalls(sessionID));
+      }}
+      onLatest=${() => request("latest", async () => {
+        await controller.showLatestToolCalls(sessionID);
+        patchPreferences({ following: true, newCalls: 0, search: "", anchorID: null });
+      })}
+    />
+    <section class="activity-detail-pane" aria-label="Selected tool call">
+      <div class="activity-mobile-back"><button ref=${backRef} onClick=${() => patchPreferences({ pane: "list" })}>Back to tool activity</button></div>
+      ${currentDetailError ? html`<div class="activity-request-error" role="alert"><span>${currentDetailError}</span><button onClick=${retryDetail}>Retry detail</button></div>` : null}
+      ${detail ? html`<${ActivityDetail} key=${`${sessionID}:${detail.id}`} detail=${detail} preferences=${preferences} patchPreferences=${patchPreferences} />`
+        : html`<div class="activity-empty" aria-live="polite"><strong>${selectedID ? currentDetailError ? "Tool call unavailable" : "Loading selected call…" : "Select a tool call"}</strong>
+          <p>${selectedID ? "The selected row stays highlighted while its detail loads." : "Inspect the exact call arguments and returned result. New calls never change your selection."}</p>
+        </div>`}
     </section>
   </div>`;
-}
-
-function ToolDetail({ detail, raw, wrap, setRaw, setWrap }) {
-  const filePath = typeof detail.arguments?.executed?.path === "string" ? detail.arguments.executed.path : null;
-  const outputText = (detail.outputChunks || []).map((chunk) => chunk.text).join("");
-  const running = detail.status === "running" || detail.status === "pending";
-  const context = [...(detail.context || []), ...(detail.afterContext || [])];
-  const args = buildArgumentFields(detail.arguments);
-  const result = buildResultFields(detail.result, outputText);
-  if (raw) {
-    return html`<div class="tool-detail-document">
-      <${ToolDetailHeader} detail=${detail} filePath=${filePath} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />
-      <pre class=${`tool-raw-document ${wrap ? "is-wrapped" : ""}`}>${JSON.stringify(detail, null, 2)}</pre>
-    </div>`;
-  }
-  return html`<div class="tool-detail-document">
-    <${ToolDetailHeader} detail=${detail} filePath=${filePath} raw=${raw} wrap=${wrap} setRaw=${setRaw} setWrap=${setWrap} />
-
-    ${outputText || running ? html`<section class="tool-detail-output">
-      <div class="tool-detail-section-head">
-        <span>Output</span>
-        <span>${running ? html`<span class="tool-live-dot"></span>LIVE · ` : ""}${detail.output?.retainedChars || outputText.length} chars${detail.output?.truncated ? " · truncated" : ""}</span>
-      </div>
-      <pre class=${wrap ? "is-wrapped" : ""}>${outputText || "Waiting for output…"}</pre>
-    </section>` : null}
-
-    <${ToolFieldCard}
-      title="Arguments"
-      note=${argumentsNote(args)}
-      fields=${args.fields}
-      text=${args.text}
-      wrap=${wrap}
-      copyValue=${argumentsCopyValue(detail)}
-    />
-    <${ToolFieldCard}
-      title="Result"
-      note=${resultNote(detail, result, outputText)}
-      fields=${result.fields}
-      text=${result.text}
-      wrap=${wrap}
-      copyValue=${detail.result != null ? JSON.stringify(detail.result, null, 2) : null}
-    />
-
-    ${context.length ? html`<section class="tool-context-document">
-      <div class="tool-detail-section-head"><span>Context</span><span>${context.length} messages</span></div>
-      <div class="tool-context-list">${context.map((item, index) => html`
-        <div key=${index} class="tool-context-row">
-          <span>${item.role === "assistant" ? "asst" : "usr"}</span>
-          <p>${item.text || "(empty)"}</p>
-        </div>`)}
-      </div>
-    </section>` : null}
-  </div>`;
-}
-
-function ToolDetailHeader({ detail, filePath, raw, wrap, setRaw, setWrap }) {
-  return html`<header class="tool-detail-header">
-    <div class="tool-detail-heading">
-      <span class=${`tool-detail-status-dot tool-detail-status-dot--${detail.status}`} aria-hidden="true"></span>
-      <div>
-        <span class="tool-detail-eyebrow">${detail.id}${detail.turnID != null ? ` · turn ${detail.turnID}` : ""}${detail.iteration != null ? ` · iteration ${detail.iteration}` : ""}</span>
-        <h2>${detail.toolName}</h2>
-      </div>
-    </div>
-    <div class="tool-detail-actions">
-      <span class=${`status-pill status-pill--${detail.status}`}>${statusLabel(detail.status)}</span>
-      <button class=${raw ? "is-active" : ""} aria-pressed=${raw} onClick=${() => setRaw((value) => !value)}>${raw ? "Pretty" : "Raw"}</button>
-      <button class=${wrap ? "is-active" : ""} aria-pressed=${wrap} onClick=${() => setWrap((value) => !value)}>${wrap ? "Wrap on" : "Wrap off"}</button>
-      ${filePath ? html`<button onClick=${() => controller.openInspector("file", { path: filePath })}>Open file</button>` : null}
-    </div>
-    <div class="tool-detail-meta">
-      <span><b>Started</b>${formatDateTime(detail.time?.started)}</span>
-      <span><b>Duration</b>${formatDuration(detail.time?.durationMs)}</span>
-      <span><b>Retention</b>${detail.retention || "—"}</span>
-    </div>
-  </header>`;
-}
-
-function argumentsNote(args) {
-  if (!args.fields.length) return args.text ? "unparsed" : "";
-  const adjusted = args.fields.filter((field) => field.tag).length;
-  const label = `${args.fields.length} field${args.fields.length === 1 ? "" : "s"}`;
-  return adjusted ? `${label} · ${adjusted} adjusted by the tool` : label;
-}
-
-function argumentsCopyValue(detail) {
-  const executed = detail.arguments?.executed;
-  if (executed) return JSON.stringify(executed, null, 2);
-  return typeof detail.arguments?.raw === "string" ? detail.arguments.raw : null;
-}
-
-function resultNote(detail, result, outputText) {
-  if (detail.result == null) return "";
-  const hidden = Object.keys(detail.result).length - result.fields.length;
-  return hidden > 0 && outputText ? "output shown above" : "";
-}
-
-function toolSearchText(call) {
-  return [call.toolName, call.id, call.status, call.arguments?.raw, call.arguments?.executed, call.result]
-    .filter((value) => value != null)
-    .map((value) => typeof value === "string" ? value : JSON.stringify(value))
-    .join(" ")
-    .toLowerCase();
-}
-
-function statusGlyph(status) {
-  if (status === "running" || status === "pending") return "…";
-  if (status === "failed" || status === "cancelled") return "×";
-  return "✓";
-}
-
-function statusLabel(status) {
-  if (status === "ok") return "completed";
-  return status || "unknown";
-}
-
-function argumentSummary(raw) {
-  if (!raw) return "";
-  const one = String(raw).replace(/\s+/g, " ").trim();
-  return one.length > 86 ? `${one.slice(0, 83)}…` : one;
-}
-
-function formatDuration(milliseconds) {
-  if (!Number.isFinite(milliseconds)) return "—";
-  if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
-  const seconds = milliseconds / 1000;
-  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${String(Math.floor(seconds % 60)).padStart(2, "0")}s`;
-}
-
-function formatDateTime(value) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
 }

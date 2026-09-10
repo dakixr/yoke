@@ -119,7 +119,18 @@ def query_tool_trace_messages(
     entries = storage.read_entries(host, session_id, snapshot, entry_ids)
     if entries is None:
         return None
-    return [entry.message for entry in entries if entry.message is not None]
+    messages: list[Message] = []
+    for entry in entries:
+        if entry.message is None:
+            continue
+        message = entry.message
+        if entry.kind == "tool_result":
+            projection = entry.metadata.get("provider_result_projection")
+            if isinstance(projection, str) and projection:
+                message = message.model_copy(deep=False)
+                message._provider_result_projection = projection
+        messages.append(message)
+    return messages
 
 
 def query_tree_page(

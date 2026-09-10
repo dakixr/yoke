@@ -13,6 +13,15 @@ export function isTreeNavigationKey(key) {
   return NAVIGATION_KEYS.has(key);
 }
 
+export function treeKeyboardAction(event) {
+  if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return null;
+  if (event.key === "Escape") return "clear";
+  if (isTreeNavigationKey(event.key)) return "select";
+  if (event.key === "Enter") return event.repeat ? "ignore" : "continue";
+  if (event.key === " ") return event.repeat ? "ignore" : "choose";
+  return null;
+}
+
 export function treeKeyboardTarget(entries, currentID, key, { pageSize = 5 } = {}) {
   const rows = entries || [];
   if (!rows.length) return null;

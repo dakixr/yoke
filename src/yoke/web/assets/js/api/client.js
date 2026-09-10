@@ -157,8 +157,8 @@ export class YokeApi {
   patchMcp(id, server, body) {
     return this.json(`/api/v1/session/${encodeURIComponent(id)}/mcp/${encodeURIComponent(server)}`, "PATCH", body);
   }
-  toolCalls(id, { status, turnID, limit = 100, cursor } = {}) {
-    return this.request(`/api/v1/session/${encodeURIComponent(id)}/tool-call${queryString({ status, turnID, limit, cursor })}`);
+  toolCalls(id, { status, turnID, limit = 100, cursor, order } = {}) {
+    return this.request(`/api/v1/session/${encodeURIComponent(id)}/tool-call${queryString({ status, turnID, limit, cursor, order })}`);
   }
   toolCall(id, callID) {
     return this.request(`/api/v1/session/${encodeURIComponent(id)}/tool-call/${encodeURIComponent(callID)}`);

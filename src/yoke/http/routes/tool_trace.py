@@ -37,6 +37,13 @@ def list_tool_calls(
     turn_id: int | None = Query(default=None, alias="turnID"),
     limit: int = Query(default=100, ge=1, le=200),
     cursor: str | None = Query(default=None),
+    order: Literal["oldest", "latest"] = Query(
+        default="oldest",
+        description=(
+            "Select the oldest or newest window. Rows always follow canonical "
+            "transcript order. In latest mode, cursor.next pages toward older calls."
+        ),
+    ),
 ) -> ToolCallListResponse:
     return _service(request).list_calls(
         session_id,
@@ -44,6 +51,7 @@ def list_tool_calls(
         turn_id=turn_id,
         limit=limit,
         cursor=cursor,
+        order=order,
     )
 
 

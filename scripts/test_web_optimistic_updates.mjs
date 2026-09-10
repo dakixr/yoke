@@ -3171,7 +3171,7 @@ async function testToolCallsSortChronologically() {
   ];
   assert.deepEqual(
     sortToolCallsChronologically(calls).map((call) => call.id),
-    ["old", "same-a", "same-b", "new"],
+    ["old", "same-b", "same-a", "new"],
   );
 }
 

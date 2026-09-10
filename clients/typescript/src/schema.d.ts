@@ -2070,10 +2070,20 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             /**
+             * Resultprojection
+             * @description Redacted tool result after the same opt-in projection used for provider context. Null when this result had no provider projection.
+             */
+            resultProjection?: string | null;
+            /**
              * Retention
              * @enum {string}
              */
             retention: "runtime" | "session";
+            /**
+             * Sequence
+             * @description One-based call ordinal in canonical transcript/live merge order, before filtering.
+             */
+            sequence?: number | null;
             /**
              * Status
              * @enum {string}
@@ -2090,6 +2100,11 @@ export interface components {
             cursor: components["schemas"]["CursorInfo"];
             /** Data */
             data: components["schemas"]["ToolCallInfo"][];
+            /**
+             * Total
+             * @description Number of calls matching the filters before paging.
+             */
+            total: number;
         };
         /** ToolCallResponse */
         ToolCallResponse: {
@@ -3869,6 +3884,8 @@ export interface operations {
                 turnID?: number | null;
                 limit?: number;
                 cursor?: string | null;
+                /** @description Select the oldest or newest window. Rows always follow canonical transcript order. In latest mode, cursor.next pages toward older calls. */
+                order?: "oldest" | "latest";
             };
             header?: never;
             path: {

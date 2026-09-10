@@ -1,4 +1,4 @@
-"""Compact canonical tool results only when building provider context."""
+"""Compact canonical tool results into their model-facing representation."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def project_tool_results_for_provider(
 
 
 def project_tool_result_content(projection_kind: str, content: str) -> str:
-    """Project one canonical JSON result for the model, or return it unchanged."""
+    """Project one canonical JSON result for model-facing use, or leave it unchanged."""
     projector = _PROJECTORS.get(projection_kind)
     if projector is None:
         return content

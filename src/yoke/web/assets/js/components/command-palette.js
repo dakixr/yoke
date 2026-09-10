@@ -1,5 +1,6 @@
 import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { trapFocus } from "../lib/focus.js";
+import { useModalFocus } from "../lib/modal-focus.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
 
@@ -12,6 +13,7 @@ export function CommandPalette() {
   const [activeIndex, setActiveIndex] = useState(0);
   const dialog = useRef(null);
   const input = useRef(null);
+  useModalFocus(dialog, open);
   useEffect(() => {
     if (!open) return;
     setQuery("");
@@ -69,7 +71,7 @@ export function CommandPalette() {
     trapFocus(dialog.current, event);
   };
   return html`<div class="modal-backdrop" onMouseDown=${(event) => event.target === event.currentTarget && controller.togglePalette(false)}>
-    <div class="command-palette" role="dialog" aria-modal="true" aria-label="Command palette" ref=${dialog} onKeyDown=${onKeyDown}>
+    <div class="command-palette" role="dialog" aria-modal="true" aria-label="Command palette" tabindex="-1" ref=${dialog} onKeyDown=${onKeyDown}>
       <div class="command-search"><span>⌕</span><input ref=${input} value=${query} placeholder="Search sessions or commands" onInput=${(event) => setQuery(event.currentTarget.value)} /></div>
       <div class="command-results">
         ${sessionResults.length ? html`<div class="command-group"><div class="command-group__label">Sessions</div>${sessionResults.map((id, index) => html`<button class=${activeIndex === index ? "is-active" : ""} data-palette-index=${index} onMouseEnter=${() => setActiveIndex(index)} onClick=${() => activate(index)}><span><strong>${sessions[id]?.title || id}</strong><small>${sessions[id]?.location?.directory || ""}</small></span><span>↵</span></button>`)}</div>` : null}

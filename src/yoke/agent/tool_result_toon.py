@@ -1,4 +1,4 @@
-"""Small TOON 4.1 encoder for provider-only tool result projections."""
+"""Small TOON 4.1 encoder for model-facing tool result projections."""
 
 from __future__ import annotations
 

@@ -14,8 +14,8 @@ from yoke.agent.observability import ToolTraceEntry
 from yoke.agent.observability import ToolTraceStore
 from yoke.agent.observability.tool_transcript import entries_from_messages
 from yoke.agent.observability.tool_transcript import merge_trace_entries
+from yoke.agent.tool_result_projection import project_tool_result_content
 from yoke.http.errors import ApiError
-from yoke.http.models.common import CursorInfo
 from yoke.http.models.tool_trace import ToolCallInfo
 from yoke.http.models.tool_trace import ToolCallListResponse
 from yoke.http.models.tool_trace import ToolCallResponse
@@ -26,12 +26,10 @@ from yoke.http.models.tool_trace import ToolTraceArguments
 from yoke.http.models.tool_trace import ToolTraceContextInfo
 from yoke.http.models.tool_trace import ToolTraceOutputInfo
 from yoke.http.models.tool_trace import ToolTraceTime
-from yoke.http.services.cursor import decode_cursor
-from yoke.http.services.cursor import encode_cursor
-from yoke.http.services.cursor import query_fingerprint
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
+from yoke.http.services.tool_trace.window import call_window
 from yoke.session import SessionStore
 
 
@@ -87,50 +85,74 @@ class ToolTraceService:
         turn_id: int | None,
         limit: int,
         cursor: str | None,
+        order: Literal["oldest", "latest"] = "oldest",
     ) -> ToolCallListResponse:
-        entries, live_ids = self._entries(session_id, turn_id=turn_id)
-        if status is not None:
-            entries = [entry for entry in entries if entry.status == status]
-        if turn_id is not None:
-            entries = [entry for entry in entries if entry.turn_id == turn_id]
-        fingerprint = query_fingerprint((session_id, status, turn_id))
-        start = 0
-        if cursor is not None:
-            anchor = decode_cursor(cursor, expected_query=fingerprint)
-            for index, entry in enumerate(entries):
-                if entry.tool_call_id == anchor:
-                    start = index + 1
-                    break
-            else:
-                raise ApiError(
-                    400, "invalid_cursor_anchor", "Cursor anchor no longer exists."
-                )
-        page = entries[start : start + limit]
-        next_cursor = None
-        if start + limit < len(entries) and page:
-            next_cursor = encode_cursor(
-                query=fingerprint,
-                anchor_id=page[-1].tool_call_id,
-            )
-        return ToolCallListResponse(
-            data=[
-                self._project(session_id, entry, entry.tool_call_id in live_ids)
-                for entry in page
-            ],
-            cursor=CursorInfo(previous=None, next=next_cursor),
+        self._require_exists(session_id)
+        runtime = self.registry.get_if_loaded(session_id)
+        current_turn = (
+            order == "oldest"
+            and turn_id is not None
+            and runtime is not None
+            and runtime.latest_turn_id() == turn_id
+        )
+        if current_turn and runtime is not None:
+            # Chat polls this path. Keep its cost independent of saved history.
+            entries = runtime.tool_trace_store().snapshot()
+            live_ids = {entry.tool_call_id for entry in entries}
+        else:
+            entries, live_ids = self._entries(session_id)
+        return call_window(
+            entries,
+            session_id=session_id,
+            status=status,
+            turn_id=turn_id,
+            limit=limit,
+            cursor=cursor,
+            order=order,
+            global_sequences=not current_turn,
+            project=lambda entry, sequence: self._project(
+                session_id, entry, entry.tool_call_id in live_ids, sequence=sequence
+            ),
         )
 
     def call(self, session_id: str, call_id: str) -> ToolCallResponse:
         self._require_exists(session_id)
         runtime = self.registry.get_if_loaded(session_id)
-        if runtime is not None:
-            live = runtime.tool_trace_store().get(call_id)
-            if live is not None:
-                return ToolCallResponse(data=self._project(session_id, live, True))
-        entry = self._persisted_entry(session_id, call_id)
+        live_store = runtime.tool_trace_store() if runtime is not None else None
+        live = live_store.get(call_id) if live_store is not None else None
+        if live is not None:
+            # Running detail is polled often. Its list row already carries the
+            # optional global sequence; do not scan history just to repeat it.
+            return ToolCallResponse(
+                data=self._project(
+                    session_id,
+                    live,
+                    True,
+                    include_result_projection=True,
+                )
+            )
+        persisted, by_id = self._persisted_trace_snapshot(session_id)
+        entry = by_id.get(call_id)
         if entry is None:
             raise ApiError(404, "tool_call_not_found", "Tool call was not found.")
-        return ToolCallResponse(data=self._project(session_id, entry, False))
+        # Find the ordinal without deep-copying and merging every historical payload.
+        sequence = next(
+            (
+                index
+                for index, item in enumerate(persisted, start=1)
+                if item.tool_call_id == call_id
+            ),
+            None,
+        )
+        return ToolCallResponse(
+            data=self._project(
+                session_id,
+                entry,
+                False,
+                sequence=sequence,
+                include_result_projection=True,
+            )
+        )
 
     def output(
         self,
@@ -164,19 +186,10 @@ class ToolTraceService:
     def _entries(
         self,
         session_id: str,
-        *,
-        turn_id: int | None = None,
     ) -> tuple[list[ToolTraceEntry], set[str]]:
         self._require_exists(session_id)
         runtime = self.registry.get_if_loaded(session_id)
         live = runtime.tool_trace_store().snapshot() if runtime is not None else []
-        if (
-            turn_id is not None
-            and runtime is not None
-            and runtime.latest_turn_id() == turn_id
-        ):
-            current = [entry for entry in live if entry.turn_id == turn_id]
-            return current, {entry.tool_call_id for entry in current}
         completed = self._persisted_entries(session_id)
         return merge_trace_entries(completed, live), {
             entry.tool_call_id for entry in live
@@ -257,6 +270,9 @@ class ToolTraceService:
         session_id: str,
         entry: ToolTraceEntry,
         live: bool,
+        *,
+        sequence: int | None = None,
+        include_result_projection: bool = False,
     ) -> ToolCallInfo:
         latest_seq = 0
         truncated = False
@@ -278,12 +294,21 @@ class ToolTraceService:
         public_executed = (
             cast(dict[str, object], executed) if isinstance(executed, dict) else None
         )
+        result_projection = (
+            _public_result_projection(
+                entry.provider_result_projection,
+                public_result,
+            )
+            if include_result_projection
+            else None
+        )
         return ToolCallInfo(
             id=entry.tool_call_id,
             tool_name=entry.tool_name,
             status=_status(entry.status),
             iteration=entry.iteration,
             turn_id=entry.turn_id,
+            sequence=sequence,
             arguments=ToolTraceArguments(
                 raw=_redact_raw_arguments(entry.raw_arguments),
                 executed=public_executed,
@@ -298,6 +323,7 @@ class ToolTraceService:
                 ),
             ),
             result=public_result,
+            result_projection=result_projection,
             output=ToolTraceOutputInfo(
                 retained_chars=sum(
                     len(chunk.text) for chunk in entry.output_chunks or []
@@ -345,6 +371,16 @@ def _redact_raw_arguments(value: str | None) -> str | None:
         return value
     redacted = redact_public_value(parsed)
     return json.dumps(redacted, ensure_ascii=False, separators=(",", ":"))
+
+
+def _public_result_projection(
+    projection_kind: str | None,
+    result: dict[str, object] | None,
+) -> str | None:
+    if not projection_kind or result is None:
+        return None
+    canonical = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+    return project_tool_result_content(projection_kind, canonical)
 
 
 def _empty_output() -> ToolOutputResponse:

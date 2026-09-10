@@ -47,6 +47,7 @@ class ToolTraceEntry:
     raw_arguments: str | None = None
     executed_arguments: dict[str, object] | None = None
     result: dict[str, object] | None = None
+    provider_result_projection: str | None = None
     iteration: int | None = None
     turn_id: int | None = None
     started_at: float | None = None
@@ -168,6 +169,9 @@ class ToolTraceStore:
             if isinstance(executed_arguments, dict)
             else None
         )
+        provider_result_projection = _payload_text(
+            payload, "provider_result_projection"
+        )
         with self._lock:
             turn_id = _payload_int(payload, "turn_id")
             if turn_id in self._retired_turn_ids:
@@ -184,6 +188,7 @@ class ToolTraceStore:
                 else entry.executed_arguments
             )
             entry.result = copied_result
+            entry.provider_result_projection = provider_result_projection
             entry.status = "ok" if payload.get("ok", False) else "failed"
             subscribers = self._changed_locked()
         self._notify(subscribers)

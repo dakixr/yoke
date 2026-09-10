@@ -3153,6 +3153,18 @@
             ],
             "title": "Result"
           },
+          "resultProjection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Redacted tool result after the same opt-in projection used for provider context. Null when this result had no provider projection.",
+            "title": "Resultprojection"
+          },
           "retention": {
             "enum": [
               "runtime",
@@ -3160,6 +3172,18 @@
             ],
             "title": "Retention",
             "type": "string"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One-based call ordinal in canonical transcript/live merge order, before filtering.",
+            "title": "Sequence"
           },
           "status": {
             "enum": [
@@ -3217,11 +3241,17 @@
             },
             "title": "Data",
             "type": "array"
+          },
+          "total": {
+            "description": "Number of calls matching the filters before paging.",
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
           "data",
-          "cursor"
+          "cursor",
+          "total"
         ],
         "title": "ToolCallListResponse",
         "type": "object"
@@ -6542,6 +6572,22 @@
                 }
               ],
               "title": "Cursor"
+            }
+          },
+          {
+            "description": "Select the oldest or newest window. Rows always follow canonical transcript order. In latest mode, cursor.next pages toward older calls.",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "oldest",
+              "description": "Select the oldest or newest window. Rows always follow canonical transcript order. In latest mode, cursor.next pages toward older calls.",
+              "enum": [
+                "oldest",
+                "latest"
+              ],
+              "title": "Order",
+              "type": "string"
             }
           }
         ],

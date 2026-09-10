@@ -82,6 +82,10 @@ uv run ruff format .
 uv run ty check
 uv run pyright
 node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
+node --experimental-default-type=module scripts/test_web_inspector_state.mjs
+node --experimental-default-type=module scripts/test_web_tool_activity.mjs
+node --experimental-default-type=module scripts/test_web_tree_navigation.mjs
+node --experimental-default-type=module scripts/test_web_inspector_support.mjs
 cd clients/typescript && npm ci && npm run check
 ```
 
@@ -90,3 +94,8 @@ run in CI. Native `fd` execution tests skip when `fd` is not installed; search
 registration tests exercise both native and portable fallback configurations.
 
 Documentation lives in `src/yoke/docs`.
+
+With Chrome installed, `node scripts/test_web_inspector_browser.mjs` checks the
+assembled inspectors at desktop and phone widths using isolated API fixtures.
+See [`web-inspectors.md`](src/yoke/docs/web-inspectors.md) for behavior and test
+details.

@@ -198,6 +198,7 @@ def finalize_tool_result(
             "ok": finalized.get("ok", False),
             "executed_arguments": arguments,
             "result": finalized,
+            "provider_result_projection": provider_result_projection,
         },
     )
     return finalized, provider_result_projection

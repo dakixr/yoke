@@ -48,7 +48,15 @@ jobs:
           cache-dependency-path: clients/typescript/package-lock.json
 
       - name: Validate browser behavior
-        run: node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
+        run: |
+          node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
+          node --experimental-default-type=module scripts/test_web_inspector_state.mjs
+          node --experimental-default-type=module scripts/test_web_tool_activity.mjs
+          node --experimental-default-type=module scripts/test_web_tree_navigation.mjs
+          node --experimental-default-type=module scripts/test_web_inspector_support.mjs
+
+      - name: Validate assembled inspector views
+        run: node --experimental-default-type=module scripts/test_web_inspector_browser.mjs
 
       - name: Validate TypeScript contract
         working-directory: clients/typescript

@@ -125,7 +125,7 @@ function InspectMenu({ capabilities, inspector }) {
     void controller.openInspector(mode);
   };
   return html`<details ref=${detailsRef} class="inspect-menu">
-    <summary class=${`header-action ${inspector ? "is-active" : ""}`}>
+    <summary data-inspector-opener class=${`header-action ${inspector ? "is-active" : ""}`}>
       <span>${inspector ? `Inspect · ${inspectorLabel(inspector.mode)}` : "Inspect"}</span>
       <span class="menu-caret" aria-hidden="true"></span>
     </summary>
@@ -136,7 +136,7 @@ function InspectMenu({ capabilities, inspector }) {
       <button onClick=${() => inspect("tools")}>Tools</button>
       ${capabilities?.features?.skills ? html`<button onClick=${() => inspect("skills")}>Skills</button>` : null}
       ${capabilities?.features?.mcp ? html`<button onClick=${() => inspect("mcp")}>MCP</button>` : null}
-      <button onClick=${() => inspect("context")}>Session info</button>
+      <button onClick=${() => inspect("context")}>Context and session info</button>
     </div>
   </details>`;
 }

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import cast
 
+from yoke.agent.loop.tool_core import finalize_tool_result
+from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
@@ -48,6 +50,7 @@ def test_tool_trace_store_owns_event_data_and_returned_entries() -> None:
             "tool_name": "rg",
             "executed_arguments": executed_arguments,
             "result": result,
+            "provider_result_projection": "rg",
             "ok": True,
         }
     )
@@ -72,6 +75,7 @@ def test_tool_trace_store_owns_event_data_and_returned_entries() -> None:
     assert stored is not None
     assert stored.executed_arguments == {"options": {"paths": ["one.txt"]}}
     assert stored.result == {"data": {"matches": [1]}}
+    assert stored.provider_result_projection == "rg"
     assert stored.context == [ToolTraceContext(role="user", text="find it")]
 
 
@@ -94,3 +98,50 @@ def test_merge_trace_entries_does_not_alias_update_data() -> None:
 
     assert merged[0].result == {"data": {"matches": [1]}}
     assert merged[0].context == [ToolTraceContext(role="user", text="find it")]
+
+
+def test_tool_transcript_keeps_provider_result_projection_provenance() -> None:
+    tool_call = ToolCall(
+        id="call-projected",
+        function=ToolFunction(name="fd", arguments='{"pattern":"*.py"}'),
+    )
+    result = Message.tool(
+        tool_call.id,
+        '{"ok":true,"command":["fd","*.py"],"output":["a.py"],"exit_code":0}',
+    )
+    result._provider_result_projection = "fd"
+
+    entries = entries_from_messages(
+        [
+            Message.user("find python"),
+            Message(role="assistant", tool_calls=[tool_call]),
+            result,
+        ]
+    )
+
+    assert entries[0].provider_result_projection == "fd"
+
+
+def test_tool_completion_event_carries_provider_projection_provenance() -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    tool_call = ToolCall(
+        id="call-event",
+        function=ToolFunction(name="exec_command", arguments="{}"),
+    )
+
+    finalized, projection = finalize_tool_result(
+        tools={},
+        iteration=1,
+        tool_call=tool_call,
+        arguments={},
+        result={"ok": True, "output": "done"},
+        context=AgentContext(),
+        emit=lambda event, payload: events.append((event, payload)),
+        after_tool_call=None,
+        provider_result_projection="command",
+    )
+
+    assert finalized == {"ok": True, "output": "done"}
+    assert projection == "command"
+    assert events[0][0] == "tool_execution_end"
+    assert events[0][1]["provider_result_projection"] == "command"

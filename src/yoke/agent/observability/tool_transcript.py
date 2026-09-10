@@ -71,6 +71,7 @@ def entries_from_messages(messages: list[Message]) -> list[ToolTraceEntry]:
             order.append(message.tool_call_id)
         result = _parse_result(message.plain_text_content)
         entry.result = result
+        entry.provider_result_projection = message._provider_result_projection
         entry.status = "ok" if result.get("ok", True) else "failed"
         last_tool_call_id = message.tool_call_id
     return [entries[tool_call_id] for tool_call_id in order]
@@ -100,7 +101,11 @@ def _overlay_entry(base: ToolTraceEntry, update: ToolTraceEntry) -> ToolTraceEnt
     entry.executed_arguments = (
         copied_update.executed_arguments or entry.executed_arguments
     )
-    entry.result = copied_update.result or entry.result
+    if copied_update.result is not None:
+        entry.result = copied_update.result
+        entry.provider_result_projection = copied_update.provider_result_projection
+    elif copied_update.provider_result_projection is not None:
+        entry.provider_result_projection = copied_update.provider_result_projection
     entry.iteration = copied_update.iteration or entry.iteration
     entry.turn_id = copied_update.turn_id or entry.turn_id
     entry.started_at = copied_update.started_at or entry.started_at

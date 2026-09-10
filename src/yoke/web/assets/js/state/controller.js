@@ -3,6 +3,7 @@
 import { ApiError, api } from "../api/client.js";
 import { SseClient } from "../api/sse.js";
 import { InspectorStateController } from "../inspector/state/controller.js";
+import { backInspector, loadInspectorFile, openInspector } from "../inspector/state/navigation.js";
 import { randomUUID } from "../lib/id.js";
 import { currentRoute, draftPath, navigate, sessionPath } from "../router/router.js";
 import { effectiveAssistantPhase, projectedMessageText } from "../lib/messages.js";
@@ -2177,36 +2178,21 @@ export class AppController {
   }
 
   showShortcutHelp() {
-    this.notice("⌘K / Ctrl+K commands · ⇧⌘O / ⇧Ctrl+O new session · ⌘B / Ctrl+B sessions · Alt+↑/↓ switch session · ⌘Enter / Ctrl+Enter background new session · Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image");
+    this.notice("⌘K / Ctrl+K commands · ⇧⌘O / ⇧Ctrl+O new session · ⌘B / Ctrl+B sessions · Alt+↑/↓ switch session · ⌘Enter / Ctrl+Enter background new session · Enter send/steer · Tab queue · ⇧Tab effort · Esc Esc stop · ⇧Enter/Ctrl+J/Esc Enter newline · Ctrl+U remove image. In Tree: arrows choose a destination, Enter continues after its preview loads, Escape clears the destination first. Tab stays inside the inspector.");
     return true;
   }
 
   async openInspector(mode, payload = {}) {
-    this.clearNotice();
-    const selection = this.inspectorState.beginSelection(mode, payload);
-    if (!selection) return;
-    const { sessionID, selectionVersion } = selection;
-    if (mode === "tree") await this.refreshTree(sessionID);
-    if (mode === "process") await this.refreshProcesses(sessionID);
-    if (mode === "tool") {
-      const detail = payload.callID
-        ? this.loadToolCall(sessionID, payload.callID)
-        : Promise.resolve(null);
-      await Promise.all([this.listToolCalls(sessionID), detail]);
-    }
-    if (mode === "tools") await this.refreshTools(sessionID);
-    if (mode === "skills") await this.refreshSkills(sessionID);
-    if (mode === "mcp") await this.refreshMcp(sessionID);
-    if (mode === "context") {
-      const response = await api.context(sessionID);
-      if (this.inspectorState.ownsSelection(sessionID, mode, selectionVersion)) {
-        this.setSessionField(sessionID, "context", response.data);
-      }
-    }
-    if (mode === "file" && payload.path) {
-      await this.loadFile(sessionID, payload.path, selectionVersion);
-    }
+    return openInspector(this, mode, payload);
   }
+
+  backInspector() { return backInspector(this); }
+
+  loadMoreToolCalls(sessionID) { return this.inspectorState.loadMoreToolCalls(sessionID); }
+
+  showLatestToolCalls(sessionID) { return this.inspectorState.showLatestToolCalls(sessionID); }
+
+  revealTreeHead(sessionID) { return this.inspectorState.revealTreeHead(sessionID); }
 
   closeInspector() {
     this.inspectorState.close();
@@ -2237,13 +2223,7 @@ export class AppController {
   }
 
   async loadFile(sessionID, path, selectionVersion = null) {
-    const session = store.getState().sessions[sessionID];
-    if (!session) return;
-    const lifecycleEpoch = this.lifecycleEpoch;
-    const content = await api.fsRead(session.location.directory, path);
-    if (!this.ownsLifecycle(lifecycleEpoch)) return;
-    if (!this.inspectorState.ownsSelection(sessionID, "file", selectionVersion)) return;
-    this.setSessionField(sessionID, "fileDetail", { path, content });
+    return loadInspectorFile(this, sessionID, path, selectionVersion);
   }
 
   async treePreview(sessionID, targetID) {
@@ -2278,7 +2258,7 @@ export class AppController {
     if (sessionID) {
       await this.refreshProcesses(sessionID);
       if (!this.ownsLifecycle(lifecycleEpoch)) return;
-      await this.loadProcess(processID);
+      await this.refreshProcess(processID);
     }
   }
 
@@ -2290,7 +2270,7 @@ export class AppController {
     if (sessionID) {
       await this.refreshProcesses(sessionID);
       if (!this.ownsLifecycle(lifecycleEpoch)) return;
-      await this.loadProcess(processID);
+      await this.refreshProcess(processID);
     }
   }
 

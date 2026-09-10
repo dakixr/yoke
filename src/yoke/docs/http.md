@@ -537,75 +537,104 @@ always show their role/time metadata. Within each assistant turn, only the last
 assistant row containing text shows assistant role/time metadata, so intermediate
 commentary and tool-calling rows do not repeat the same rail.
 
-Web inspectors open in a large centered modal workspace instead of consuming a
-right sidebar. A shared top switcher moves between Tree, tool activity,
-processes, tools, skills, MCP, and session info without closing the inspector;
-small screens use the same workspace fullscreen. The layout borrows the CLI
-inspectors' dense pane hierarchy, status treatment, and shortcut footer while
-remaining native browser UI.
+Web inspectors share a modal with Tool activity, Tree, Processes, Context, and
+Configuration views. Tools, Skills, and MCP servers sit within Configuration.
+Small screens use a fullscreen list or detail view with a Back control rather
+than two short stacked scrolling panes. Selection, filters, and reading positions
+stay with each session and view while the browser application remains open.
+The modal contains keyboard focus, makes the background inert, and restores
+focus to its opener when closed. The command palette can open above it without
+unlocking the background. View-local keyboard help replaces the permanent
+shortcut footer. See [Web inspectors](web-inspectors.md) for the interaction and
+verification details.
 
-Tool activity uses the same split-pane model as the CLI inspector: a dense,
-searchable call list stays on the left while the selected call's detail remains
-visible on the right. Calls are chronological from top to bottom. The list opens
-at the bottom with the newest call selected and follows new calls while the user
-stays near the tail; scrolling upward suspends that automatic following until
-the user returns to the bottom. A call opened from
-the chat timeline becomes the inspector's explicit selection, even when that
-historical call is older than the newest retained sidebar page. Choosing another
-call replaces that selection. Detail requests are race-safe, so a slower response
-from an earlier chat or sidebar click cannot replace the latest selection.
-Background tool refreshes follow the selected call ID rather than whichever
-detail happened to finish last. Duplicate requests for the same selected call
-are coalesced, and persisted calls do not request the live-output endpoint. The
-HTTP tool-trace service caches reconstructed persisted traces for the most
-recently inspected session, keyed by session-file revision, so moving between
-historical calls reuses the same parsed trace map until the session advances or
-its HEAD changes. Status, turn/iteration, duration, arguments, retained output,
-result, and surrounding context are shown as one readable detail document, with
-raw JSON and wrapping controls available when needed.
+Tool activity requests the latest 100 calls, displays them oldest to newest, and
+selects the latest call on first opening. Load earlier follows the retained
+cursor toward older history. Search and status filters explicitly apply to the
+loaded window. Canonical sequence, not an opaque call ID or completion time,
+determines call order. Saved calls without timestamps say the time was not
+recorded; the browser does not invent a timestamp. Row start times and durations
+are separate. Completing a call does not move it within the list.
+
+New calls do not replace a selected older call. Reading earlier history pauses
+following and exposes a new-call count; Latest explicitly returns the list to
+the newest window. A call opened from chat can remain selected outside the
+loaded page or current filters, with a separate highlighted row explaining that
+state. Switching views restores both the selection and detail. Stale responses
+cannot overwrite a newer selection. Same-call detail requests are coalesced,
+and saved calls do not request the runtime-output endpoint.
+
+Tool activity shows the model-sent arguments as a function-style call and the
+tool result below it. It does not expose executed-argument normalization or add
+an intent summary. The detail endpoint keeps the canonical redacted `result`
+for compatibility and can also return `resultProjection`, the redacted result
+after the same opt-in projector used for provider context on that specific
+tool-result occurrence. The browser prefers `resultProjection` when present.
+Commands therefore omit runtime bookkeeping, while rg, fd, apply_patch, and
+web search can use the existing TOON 4.1 projections. If a result did not opt
+into projection, or a hook disabled it, `resultProjection` stays null and the
+browser shows the canonical public result.
+
+`GET /api/v1/session/{sessionID}/tool-call` accepts `order=oldest|latest`.
+The default remains `oldest` for existing clients. Both modes return rows in
+ascending canonical order. `latest` chooses the newest bounded window and its
+`cursor.next` loads the preceding window. Keep the same order and filters when
+following a cursor. `total` counts calls matching the filters before pagination;
+each call's optional `sequence` is its one-based position before filtering.
+Missing wall times remain null. Latest-mode cursors are bound to their order,
+session, and filters, while existing oldest-mode cursors remain compatible.
+The default-order current-turn feed and individual runtime details can omit
+global sequence to keep polling independent of saved-history size. The browser
+keeps an already-loaded row's sequence when its runtime detail omits it.
+List responses leave `resultProjection` null so history pagination does not
+pay the projection cost or duplicate projected result text. Individual detail
+responses compute it after public secret redaction. Projection provenance is
+retained from the exact persisted tool-result entry or live completion event;
+the HTTP service does not infer it from the tool name.
+
+The HTTP tool-trace service caches reconstructed saved traces for the most
+recently inspected session, keyed by session-file revision. Moving between
+historical calls reuses that parsed trace map until the session advances or
+HEAD changes. Chronology metadata is confined to inspection; it does not change
+provider-facing messages or their order.
 
 Reconstructed tool context stops at the next user turn, so a later response is
 not attributed to an earlier tool call. Live trace snapshots and merged entries
 copy nested arguments, results, and context rather than exposing mutable store
 state to callers.
 
-Arguments and results render as fields rather than JSON dumps. Scalars collapse
-into a compact chip row, long strings and nested structures get their own
-labelled blocks, tall payloads clamp behind an expander, and each card can be
-copied as JSON. The model-sent and normalized executed arguments are merged into
-a single arguments card: fields the tool filled in are tagged `default`, fields
-it rewrote are tagged `adjusted` with the sent value in the tooltip, and fields
-the model sent that never reached the tool are tagged `dropped`. Result payload
-already shown by the output pane is not repeated in the result card.
+Canonical results remain stored for observability and compatibility even when
+the browser renders the provider-facing projection. Running calls can display
+retained live output before a final result exists. Output retention and
+partial-page limits remain explicit in the HTTP trace resources.
 
-The Tree inspector is optimized around moving the current conversation HEAD.
-It defaults to user messages and final assistant messages. Mid-turn assistant
-commentary, tool, control, and other technical nodes remain available behind
-the `All nodes` view. Legacy assistant rows without an explicit phase are
-treated as final messages. Tree API rows expose assistant `phase` so the browser
-does not infer commentary from text or topology. History renders
-oldest at the top and the current HEAD toward the bottom as a git-style graph
-with a dedicated active lane, reusable colored branch lanes, circular nodes,
-and curved fork connectors. Active-path edges remain visually dominant while
-abandoned branches recede, and hidden technical nodes are bridged so
-message-only mode preserves the real topology. Opening Tree anchors on HEAD,
-`Jump to HEAD` returns there at any time, and loading older pages preserves the
-visible history position. Opening Tree also places browser focus on HEAD so its
-keyboard navigation works immediately without first clicking a row. Tree rows
-use roving keyboard focus: Up/Down move
-chronologically, Home/End and PageUp/PageDown cover long histories, Left moves
-to the visible parent, Right moves to a visible child, and Enter/Space selects
-the focused node as a checkout target. Keyboard movement keeps the focused row
-inside the scroll viewport.
+Tree is navigation-first. Click a row or use arrows to choose a destination and
+update its preview without moving HEAD. Enter or Continue from here performs the
+move only after the selected destination's preview has loaded. Repeated Enter,
+out-of-order previews, and changed revisions cannot authorize a stale move.
+Escape clears the destination before closing the inspector. Up/Down choose the
+adjacent chronological row, Left chooses a visible parent, Right a visible
+child, Home/End the first or last loaded row, and PageUp/PageDown skip rows.
+Space selects without committing. Search locates shown messages, labels, and
+IDs without removing graph rows or changing their topology.
 
-Clicking any non-current row selects it as a `TARGET` and opens a checkout-style
-confirmation pane. The pane states how many active nodes will become abandoned,
-makes clear that abandoned work is retained and can be checked out again,
-shows any prompt text restored to the composer, and keeps the abandoned-path
-details collapsible. An optional branch handoff note can be persisted before
-the explicit `Move HEAD here` action. After checkout the preview closes and the
-graph follows the new HEAD. The browser still requests bounded tree pages to
-keep DOM and topology work controlled on large sessions.
+Messages mode shows user and final assistant messages, plus an exceptional
+current-position anchor when HEAD is technical. All nodes reveals intermediate
+commentary, tools, and controls. Hidden technical parents are bridged to preserve
+the graph. Current loads the real HEAD when it is outside the current window;
+Latest reveals the newest chronological node, which may be on another branch.
+The graph distinguishes current position, selected destination, and latest
+event. Loading older history preserves the visible position, and timestamps
+remain visible on narrow screens.
+
+The stable destination pane shows message text when available, clearly labels
+short previews, and describes what leaves active context. Continuing from an
+ancestor removes its later active descendants from active context without
+deleting them. Prompt restoration, the path being left, and an optional handoff
+note remain available without obscuring the fixed Continue from here action.
+Labels are edited inline. After a successful move the graph returns to the new
+HEAD and clears the previous destination. Existing revision checks remain in
+the navigation API.
 
 Checkpointed tool-calling assistant messages also reconcile with their live
 mid-turn commentary row. Providers may persist that message with a null phase

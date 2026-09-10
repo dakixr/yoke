@@ -1273,6 +1273,7 @@ class SessionRuntime:
         else:
             redacted = redact_public_value(payload)
             data = dict(redacted) if isinstance(redacted, dict) else {"value": redacted}
+            data.pop("provider_result_projection", None)
         if event != "context_usage":
             data["turnID"] = execution.turn_id
             data["inputID"] = execution.admission.id
