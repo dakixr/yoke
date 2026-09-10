@@ -19,6 +19,7 @@ from yoke.ai.providers.resolution import BUILTIN_PROVIDER_NAMES
 from yoke.ai.providers.resolution import build_builtin_provider
 from yoke.ai.providers.resolution import list_provider_models
 from yoke.ai.providers.resolution import parse_provider_ref
+from yoke.ai.providers.resolution import UnknownModelError
 from yoke.cli.config.default_model import load_effective_yoke_config
 from yoke.cli.config.default_model import parse_config_default_model
 
@@ -44,6 +45,8 @@ _BUILTIN_MODEL_LISTERS: dict[str, BuiltinModelLister] = {}
 def prepare_provider_args(args: CLIArgs) -> None:
     """Apply default model config and split provider-qualified models."""
     model_was_explicit = args.model is not None
+    if model_was_explicit and args.model_source is None:
+        args.model_source = "cli"
     config = None
     if not model_was_explicit:
         config = load_effective_yoke_config(root=Path(args.root), home=Path.home())
@@ -129,6 +132,8 @@ def _build_builtin_provider(provider_name: str, args: CLIArgs) -> Provider:
             session_id=args.session,
             home=Path.home(),
         )
+    except UnknownModelError:
+        raise
     except Exception as exc:
         raise ValueError(
             f"Could not initialize provider `{provider_name}`: {exc}"
@@ -158,6 +163,7 @@ def _apply_config_default_model(args: CLIArgs, config: PiConfig) -> None:
     if default_model is None:
         return
     args.model = f"{default_model.provider_name}:{default_model.model_name}"
+    args.model_source = "config"
 
 
 def _apply_config_default_reasoning_effort(args: CLIArgs, config: PiConfig) -> None:
@@ -187,7 +193,7 @@ def _normalize_provider_model_args(args: CLIArgs) -> None:
 
 
 def _apply_compatible_model_reasoning_effort(args: CLIArgs) -> None:
-    """Use the selected model's default when the requested effort is invalid."""
+    """Validate the requested model and reconcile its reasoning effort."""
     if args.model is None:
         return
     provider_name = args.provider_name or _resolve_provider_name(args)
@@ -201,7 +207,9 @@ def _apply_compatible_model_reasoning_effort(args: CLIArgs) -> None:
         return
     selected = next((model for model in models if model.id == args.model), None)
     if selected is None:
-        return
+        raise UnknownModelError(
+            provider_name, args.model, [model.id for model in models]
+        )
     args.reasoning_effort = compatible_reasoning_effort_for_model(
         selected,
         args.reasoning_effort,

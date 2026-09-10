@@ -297,8 +297,12 @@ def test_cli_closes_runtime_it_constructs(tmp_path: Path, monkeypatch) -> None:
 
     agent = CloseTrackingAgent()
     monkeypatch.setattr(
-        "yoke.cli.runtime.cli.build_cli_agent_from_args",
-        lambda _args: SimpleNamespace(agent=agent, tool_report=None),
+        "yoke.cli.runtime.startup.build_cli_agent_from_args",
+        lambda _args, *, recover_model: SimpleNamespace(
+            agent=agent,
+            tool_report=None,
+            startup_warning=None,
+        ),
     )
 
     exit_code = run_cli(

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from typing import Literal
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.skills import ActiveSkill
@@ -15,6 +16,8 @@ from yoke.agent.skills import load_skill_registry
 from yoke.agent.skills.paths import default_skill_dirs
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.model_selection import current_model_id_from_config
+from yoke.ai.providers.resolution import UnknownModelError
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools import ToolRegistrationResult
 from yoke.agent.budget import build_provider_context_manager
@@ -53,6 +56,7 @@ class CLIArgs:
     root: str = os.getcwd()
     skills: tuple[str, ...] = ()
     images: tuple[str, ...] = ()
+    model_source: Literal["cli", "config", "session"] | None = None
 
 
 @dataclass(slots=True)
@@ -61,6 +65,7 @@ class BuiltCLIAgent:
 
     agent: RuntimeAgent
     tool_report: ToolLoadReport
+    startup_warning: str | None = None
 
 
 def build_agent_from_args(args: CLIArgs) -> RuntimeAgent:
@@ -68,19 +73,22 @@ def build_agent_from_args(args: CLIArgs) -> RuntimeAgent:
     return build_cli_agent_from_args(args).agent
 
 
-def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
-    """build_cli_agent_from_args."""
-    prepare_provider_args(args)
-    skill_registry = _load_cli_skill_registry(Path(args.root))
-    initial_active_skills = _activate_cli_skills(skill_registry, args.skills)
-    provider = build_provider_from_args(args)
+def build_cli_agent_from_args(
+    args: CLIArgs, *, recover_model: bool = False
+) -> BuiltCLIAgent:
+    """Build a CLI runtime, optionally recovering an inherited stale model."""
+    provider, warning = _build_startup_provider(args, recover_model=recover_model)
     try:
-        return _build_cli_agent(
+        skill_registry = _load_cli_skill_registry(Path(args.root))
+        initial_active_skills = _activate_cli_skills(skill_registry, args.skills)
+        built = _build_cli_agent(
             args,
             provider=provider,
             skill_registry=skill_registry,
             initial_active_skills=initial_active_skills,
         )
+        built.startup_warning = warning
+        return built
     except BaseException:
         close = getattr(provider, "close", None)
         if callable(close):
@@ -89,6 +97,54 @@ def build_cli_agent_from_args(args: CLIArgs) -> BuiltCLIAgent:
             except BaseException:
                 pass
         raise
+
+
+def _build_startup_provider(
+    args: CLIArgs, *, recover_model: bool
+) -> tuple[Provider, str | None]:
+    try:
+        prepare_provider_args(args)
+        return build_provider_from_args(args), None
+    except UnknownModelError as exc:
+        if (
+            not recover_model
+            or args.headless
+            or args.model_source not in {"config", "session"}
+            or args.model != exc.model_id
+            or args.provider_name not in {None, exc.provider_name}
+        ):
+            raise
+        # Retry exactly once, on the same provider. Do not reload the stale
+        # config or carry its model-specific reasoning effort into the default.
+        fallback_args = replace(
+            args, provider_name=exc.provider_name, model=None, reasoning_effort=None
+        )
+        provider = build_provider_from_args(fallback_args)
+        config = getattr(provider, "config", None)
+        model = current_model_id_from_config(config)
+        effort = getattr(config, "reasoning_effort", None)
+        args.provider_name = exc.provider_name
+        args.model = model
+        args.reasoning_effort = effort if isinstance(effort, str) else None
+        replacement = (
+            f"{exc.provider_name}:{model}"
+            if model is not None
+            else f"the default model for {exc.provider_name}"
+        )
+        if args.model_source == "config":
+            warning = (
+                f"Configured model {exc.provider_name}:{exc.model_id} is no longer "
+                f"available. Started with {replacement}. The configured default "
+                "was not changed. Use /model or `yoke models set` to choose another "
+                "model."
+            )
+        else:
+            warning = (
+                f"Saved model {exc.provider_name}:{exc.model_id} is no longer "
+                f"available. Resumed with {replacement}. Use /model to choose "
+                "another model."
+            )
+        return provider, warning
 
 
 def _build_cli_agent(

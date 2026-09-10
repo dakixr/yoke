@@ -20,6 +20,7 @@ from yoke.ai.providers.base import ModelCatalogProvider
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.model_selection import set_config_model_from_catalog
+from yoke.ai.providers.model_selection import UnknownModelError
 
 
 @dataclass(slots=True, frozen=True)
@@ -158,6 +159,8 @@ def create_custom_provider(
         )
         try:
             provider = plugin.factory(context)
+        except UnknownModelError:
+            raise
         except Exception as exc:
             raise ValueError(
                 f"Could not initialize provider `{plugin.name}` "

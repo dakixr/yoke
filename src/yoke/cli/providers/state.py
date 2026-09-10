@@ -23,6 +23,7 @@ def apply_session_provider_defaults(
 ) -> None:
     """Fill unset CLI args from persisted session provider state."""
     if getattr(args, "model", None) is None and session_state.model_id:
+        args.model_source = "session"
         if session_state.provider_name:
             args.model = f"{session_state.provider_name}:{session_state.model_id}"
         else:

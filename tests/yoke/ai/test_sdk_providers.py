@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import httpx
 import pytest
+
+from yoke.ai.providers.model_selection import UnknownModelError
 from typing import cast
 
 from yoke.agent.models import Message
@@ -102,7 +104,7 @@ def test_build_builtin_provider_rejects_unknown_model(
 ) -> None:
     monkeypatch.setenv("ZAI_API_KEY", "test-key")
 
-    with pytest.raises(ValueError, match="Unknown model 'glm-missing'"):
+    with pytest.raises(UnknownModelError, match="Unknown model 'glm-missing'"):
         build_builtin_provider("zai:glm-missing:thinking")
 
 

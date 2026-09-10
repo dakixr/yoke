@@ -17,7 +17,6 @@ from yoke.agent.state import capture_agent_state
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.config import CLIArgs
 from yoke.cli.config import RUN_ERRORS
-from yoke.cli.config import build_cli_agent_from_args
 from yoke.cli.image_input import build_user_message
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
@@ -25,10 +24,8 @@ from yoke.cli.render import print_agent_output
 from yoke.cli.render import print_error
 from yoke.cli.runtime.base import ActiveSession
 from yoke.cli.runtime.base import AgentRunner
-from yoke.cli.runtime.base import ToolReportAgent
 from yoke.cli.runtime.base import execute_turn
 from yoke.cli.runtime.lifetime import close_cli_owned_agent
-from yoke.cli.runtime.lifetime import register_cli_owned_agent
 from yoke.cli.runtime.session import create_active_session
 from yoke.cli.runtime.session import apply_session_defaults_to_args
 from yoke.cli.runtime.session import bind_agent_provider_session
@@ -40,6 +37,9 @@ from yoke.cli.runtime.title import session_usage_metric_context
 from yoke.cli.runtime.title import start_session_title_generation
 from yoke.cli.runtime.title import wait_for_session_title
 from yoke.cli.runtime.resume import project_resumed_session
+from yoke.cli.runtime.startup import can_recover_resumed_provider
+from yoke.cli.runtime.startup import apply_startup_session_defaults
+from yoke.cli.runtime.startup import resolve_runtime_agent as _resolve_runtime_agent
 from yoke.cli.session import SessionStore
 
 
@@ -106,7 +106,10 @@ def run_cli(
     error_console = build_console(error_stream)
     tool_report: ToolLoadReport | None = None
     try:
-        active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
+        apply_startup_session_defaults(args)
+        active_agent, tool_report = _resolve_runtime_agent(
+            args, agent=agent, stderr=error_stream
+        )
         mode = resolve_cli_mode(args, input_func=input_func)
     except ValueError as exc:
         print_error(error_console, str(exc))
@@ -220,9 +223,11 @@ def run_resume_cli(
     args.root = str(session_root)
     apply_session_defaults_to_args(args, record)
     try:
-        active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
+        active_agent, tool_report = _resolve_runtime_agent(
+            args, agent=agent, stderr=error_stream
+        )
     except ValueError as exc:
-        if not _is_unsupported_resumed_provider_error(exc):
+        if not can_recover_resumed_provider(args, exc):
             print_error(error_console, str(exc))
             return 1
         print_error(
@@ -231,8 +236,12 @@ def run_resume_cli(
         )
         args.provider_name = None
         args.model = None
+        args.reasoning_effort = None
+        args.model_source = None
         try:
-            active_agent, tool_report = _resolve_runtime_agent(args, agent=agent)
+            active_agent, tool_report = _resolve_runtime_agent(
+                args, agent=agent, stderr=error_stream
+            )
         except ValueError as fallback_exc:
             print_error(error_console, str(fallback_exc))
             return 1
@@ -273,24 +282,6 @@ def run_resume_cli(
         )
     finally:
         wait_for_session_title(active_session)
-
-
-def _is_unsupported_resumed_provider_error(exc: ValueError) -> bool:
-    """Return whether a resume failed because its saved provider is gone."""
-    return str(exc).startswith("Unsupported provider ")
-
-
-def _resolve_runtime_agent(
-    args: CLIArgs,
-    *,
-    agent: AgentRunner | None,
-) -> tuple[AgentRunner, ToolLoadReport | None]:
-    if agent is None:
-        built_agent = build_cli_agent_from_args(args)
-        register_cli_owned_agent(built_agent.agent)
-        return built_agent.agent, built_agent.tool_report
-    tool_report = agent.tool_report if isinstance(agent, ToolReportAgent) else None
-    return agent, tool_report
 
 
 def _run_headless_mode(

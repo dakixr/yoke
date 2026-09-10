@@ -9,6 +9,25 @@ from typing import cast
 from yoke.ai.providers.base import ProviderModelInfo
 
 
+class UnknownModelError(ValueError):
+    """A requested model is absent from a provider's advertised catalog."""
+
+    def __init__(
+        self,
+        provider_name: str,
+        model_id: str,
+        available_models: Sequence[str],
+    ) -> None:
+        self.provider_name = provider_name
+        self.model_id = model_id
+        self.available_models = tuple(sorted(available_models))
+        choices = ", ".join(self.available_models) or "none"
+        super().__init__(
+            f"Unknown model {model_id!r} for provider "
+            f"{provider_name!r}. Available: {choices}."
+        )
+
+
 def default_reasoning_effort_for_model(
     model: ProviderModelInfo,
 ) -> str | None:
@@ -78,11 +97,7 @@ def set_config_model_from_catalog(
     available = {model.id: model for model in models}
     selected = available.get(normalized_model)
     if selected is None:
-        options = ", ".join(sorted(available))
-        raise ValueError(
-            f"Unknown model {normalized_model!r} for provider "
-            f"{provider_name!r}. Available: {options}."
-        )
+        raise UnknownModelError(provider_name, normalized_model, tuple(available))
     if hasattr(config, "reasoning_effort"):
         cast_config = cast(Any, config)
         cast_config.reasoning_effort = compatible_reasoning_effort_for_model(

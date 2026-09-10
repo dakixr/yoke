@@ -14,6 +14,7 @@ from rich.text import Text
 from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
 from yoke.ai.providers.resolution import list_provider_models
 from yoke.ai.providers.resolution import parse_provider_ref
+from yoke.ai.providers.resolution import UnknownModelError
 from yoke.cli.config import CLIArgs
 from yoke.cli.config import load_effective_yoke_config
 from yoke.cli.path_display import format_root_label
@@ -84,6 +85,10 @@ def set_default_model(
         home=Path.home(),
     )
     selected = next((model for model in models or () if model.id == model_name), None)
+    if models is not None and selected is None:
+        raise UnknownModelError(
+            provider_name, model_name, [model.id for model in models]
+        )
     resolved_effort = (
         compatible_reasoning_effort_for_model(selected, provider_ref.reasoning_effort)
         if selected is not None

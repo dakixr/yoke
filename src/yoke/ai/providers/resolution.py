@@ -15,6 +15,7 @@ from yoke.ai.providers.plugins import available_custom_provider_names
 from yoke.ai.providers.plugins import create_custom_provider
 from yoke.ai.providers.plugins import list_custom_provider_models
 from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
+from yoke.ai.providers.model_selection import UnknownModelError as UnknownModelError
 from yoke.ai.providers.resolution_environment import (
     credential_issue as find_credential_issue,
 )
@@ -358,10 +359,10 @@ def _resolve_provider_selection(
         return provider_ref
     selected = next((model for model in models if model.id == provider_ref.model), None)
     if selected is None:
-        choices = ", ".join(sorted(model.id for model in models)) or "none"
-        raise ValueError(
-            f"Unknown model {provider_ref.model!r} for provider "
-            f"{provider_ref.provider_name!r}. Available: {choices}."
+        raise UnknownModelError(
+            provider_ref.provider_name,
+            provider_ref.model,
+            [model.id for model in models],
         )
     return ProviderRef(
         provider_name=provider_ref.provider_name,

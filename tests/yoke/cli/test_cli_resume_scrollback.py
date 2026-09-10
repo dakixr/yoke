@@ -78,7 +78,10 @@ def test_resume_falls_back_when_saved_provider_is_unsupported(
     agent = FakeAgent(outputs=["resumed"])
     calls: list[str | None] = []
 
-    def fake_resolve_runtime_agent(args: CLIArgs, *, agent: Any) -> tuple[Any, None]:
+    def fake_resolve_runtime_agent(
+        args: CLIArgs, *, agent: Any, stderr: Any = None
+    ) -> tuple[Any, None]:
+        del stderr
         calls.append(args.model)
         if args.model == "codex-websockets:legacy-model":
             raise ValueError(

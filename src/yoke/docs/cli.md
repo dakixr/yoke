@@ -139,6 +139,26 @@ otherwise Yoke uses that model's advertised default. This applies at startup,
 session resume, SDK construction, and `/model` switches, so an effort saved for
 one model or provider cannot make another model unavailable.
 
+When a configured default model or a resumed session's model is no longer in
+the provider catalog, the interactive CLI retries once with that same provider's
+current default model and thinking effort. A warning identifies the old and new
+models and points to `/model`. Config files are not rewritten. Use `yoke models
+set` to save a replacement default. Authentication, network, and other provider
+initialization errors do not trigger model recovery, and fresh startup does not
+switch to another provider when the configured provider is unavailable.
+
+Saved model selection applies to `yoke resume`, an existing `--session`, and
+`--fork`. Named sessions use their saved workspace root; forks keep the requested
+destination root. Yoke checks the selection before creating a fork or changing
+saved session metadata, so a strict selection failure leaves the source intact.
+
+Explicit `--model` selections and all `--headless` runs remain strict: an unknown
+model exits with an error instead of choosing a replacement. This also applies
+to explicit overrides during resume. SDK and HTTP construction do not enable
+interactive model recovery. `yoke models set` rejects unknown IDs before writing
+config when the provider exposes a catalog, including an empty catalog. Providers
+without a catalog can still accept arbitrary model IDs.
+
 Global custom providers are Python modules under `~/.yoke/providers/`. A
 plugin defines `register_provider(context)` and may define
 `list_provider_models(context)`; the alternate `CONFIG_CLASS` plus
