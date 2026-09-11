@@ -147,10 +147,10 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
               <button class="section-toggle" aria-expanded=${settledOpen} onClick=${() => setSettledOpen(!settledOpen)}>
                 <span>Settled (${settledTotal})</span>
                 <span class="section-toggle__line" aria-hidden="true"></span>
-                <span class=${`section-toggle__chevron ${settledOpen ? "is-open" : ""}`} aria-hidden="true">⌄</span>
+                <svg class=${`section-toggle__chevron ${settledOpen ? "is-open" : ""}`} aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </button>
               ${settledOpen ? scopedArchived.map((session) => html`
-                <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} settled onOpenMenu=${openSessionMenu} />
+                <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} settled settleSupported=${capabilities?.features?.sessionArchive} connected=${connected} onOpenMenu=${openSessionMenu} />
               `) : null}
               ${settledOpen && archivedCursor ? html`<button class="sidebar-more" onClick=${() => controller.loadMoreSessions(true)}>＋ Show more settled</button>` : null}
             </section>
@@ -181,27 +181,30 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
   const projectName = location?.name || compactPath(directory);
   const branch = location?.git?.branch || compactPath(directory);
   const model = session.selection?.model || session.selection?.provider || "";
-  const age = shortAge(
-    settled
-      ? session.archivedAt
-      : session.time?.lastUserMessage || session.time?.created || session.time?.updated,
-  );
+  const isSettled = Boolean(session.archivedAt);
+  const ageTime = isSettled ? session.archivedAt : session.time?.lastUserMessage || session.time?.created || session.time?.updated;
+  const age = shortAge(ageTime);
   const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
   const working = active?.state === "running" && attentionCount === 0;
   const busy = active?.state && active.state !== "idle" && active.state !== "error";
-  const quickSettle = Boolean(settleSupported && !settled && !busy && !hasPendingQueue(session.queue));
+  const quickSettle = Boolean(settleSupported && !busy && (isSettled || !hasPendingQueue(session.queue)));
+  const ageKind = isSettled ? "Settled" : session.time?.lastUserMessage ? "Last message" : "Session created";
+  const ageTitle = ageTime ? `${ageKind}: ${new Date(ageTime).toLocaleString()}` : "";
   const menuKeys = (event) => {
     if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) onOpenMenu?.(event, session);
   };
   if (settled) {
     const status = sessionStatusDescriptor({ runtime: active, attention, done, queue: session.queue, age });
     return html`
+      <div class=${`session-card-wrap session-card-wrap--slim ${quickSettle ? "has-quick-action" : ""}`}>
       <button class=${`session-row session-row--slim is-settled ${selected ? "is-selected" : ""}`} aria-current=${selected ? "page" : undefined} onClick=${() => controller.selectSession(session.id)} onContextMenu=${(event) => onOpenMenu?.(event, session)} onKeyDown=${menuKeys}>
         <span class="session-project-glyph" aria-hidden="true">▱</span>
         <span class="session-row__title">${session.title || session.id}</span>
         ${session.pinned ? html`<span class="session-pin" aria-label="Pinned" title="Pinned">PIN</span>` : null}
-        <span class=${`session-row__meta status--${status.kind}`}>${status.label}</span>
+        <span class=${`session-row__meta status--${status.kind}`} title=${ageTitle}>${status.label}</span>
       </button>
+      ${quickSettle ? html`<${SettleAction} session=${session} connected=${connected} />` : null}
+      </div>
     `;
   }
   return html`
@@ -217,31 +220,37 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
           <span class="session-project-glyph" aria-hidden="true">▱</span>
           <span class="session-card__project" title=${directory}>${projectName}</span>
           ${(pinned || session.pinned) ? html`<span class="session-pin" aria-label="Pinned" title="Pinned">PIN</span>` : null}
-          <span class="session-card__status-slot"><${SessionStatus} runtime=${active} attention=${attention} done=${done} queue=${session.queue} age=${age} /></span>
+          <span class="session-card__status-slot" title=${ageTitle}><${SessionStatus} runtime=${active} attention=${attention} done=${done} queue=${session.queue} age=${age} /></span>
         </span>
         <span class="session-row__title">${session.title || session.id}</span>
         <span class="session-card__bottom">
+          ${isSettled ? html`<span class="session-settled-label" title=${ageTitle}>Settled</span>` : null}
           <span class="session-card__branch" title=${directory}>${outsideScope ? `Current · ${branch}` : branch}</span>
           ${model ? html`<span class="session-card__model" title=${model}>${model}</span>` : null}
         </span>
       </button>
-      ${quickSettle ? html`
-        <button
-          class="session-quick-action"
-          type="button"
-          aria-label=${`Settle ${session.title || "session"}`}
-          disabled=${!connected}
-          onClick=${(event) => {
-            event.stopPropagation();
-            controller.patchSession(session.id, { archived: true }).catch((error) => controller.notice(error?.message || String(error)));
-          }}
-        >
-          <svg aria-hidden="true" viewBox="0 0 16 16" width="13" height="13"><path d="m3 8.2 3 3L13 4.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-          <span>Settle</span>
-        </button>
-      ` : null}
+      ${quickSettle ? html`<${SettleAction} session=${session} connected=${connected} />` : null}
     </div>
   `;
+}
+
+function SettleAction({ session, connected }) {
+  const settled = Boolean(session.archivedAt);
+  const label = settled ? "Unsettle" : "Settle";
+  return html`<button
+    class=${`session-quick-action ${settled ? "is-unsettle" : ""}`}
+    type="button"
+    title=${`${label} session`}
+    aria-label=${`${label} ${session.title || "session"}`}
+    disabled=${!connected}
+    onClick=${(event) => {
+      event.stopPropagation();
+      controller.patchSession(session.id, { archived: !settled }).catch((error) => controller.notice(error?.message || String(error)));
+    }}
+  >
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="13" height="13"><path d=${settled ? "M6 3 2.5 6.5 6 10M3 6.5h6a4 4 0 0 1 0 8" : "m3 8.2 3 3L13 4.7"} fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    ${settled ? null : html`<span>Settle</span>`}
+  </button>`;
 }
 
 function SessionStatus({ runtime, attention, done, queue, age }) {

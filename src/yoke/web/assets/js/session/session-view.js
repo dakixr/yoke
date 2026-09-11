@@ -6,6 +6,7 @@ import { DraftComposer, SessionComposer } from "./composer.js";
 import { HumanInput } from "./human-input.js";
 import { QueueEditor } from "./queue.js";
 import { Timeline } from "./timeline.js";
+import { hasPendingQueue } from "../components/sidebar-status.js";
 
 export function MainView() {
   const newSession = useStore((state) => state.ui.newSession);
@@ -53,6 +54,7 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
   const location = useStore((state) => state.locations[session.location.directory]);
   const [compacting, setCompacting] = useState(false);
   const busy = runtime?.state && runtime.state !== "idle" && runtime.state !== "error";
+  const settleDisabled = !connected || Boolean(busy) || (!session.archivedAt && hasPendingQueue(session.queue));
   const rename = async () => {
     const title = window.prompt("Session title", session.title || "");
     if (title === null) return;
@@ -75,7 +77,7 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
       <button class="icon-button mobile-only" aria-label="Open sessions" onClick=${() => controller.toggleSidebar()}>☰</button>
       <div class="session-header__text">
         <div class="session-header__title-row"><h1 title=${session.title || session.id}>${session.title || session.id}</h1>${session.pinned ? html`<span class="pin-mark" title="Pinned">◆</span>` : null}${attentionCount ? html`<span class="header-attention" role="status">${attentionCount} ${attentionCount === 1 ? "action" : "actions"} required</span>` : null}</div>
-        <div class="session-header__location" title=${session.location.directory}>${location?.name || lastPath(session.location.directory)}${location?.git?.branch ? ` · ${location.git.branch}` : ""}</div>
+        <div class="session-header__location" title=${session.location.directory}>${location?.name || lastPath(session.location.directory)}${location?.git?.branch ? ` · ${location.git.branch}` : ""}${session.archivedAt ? html`<span class="session-settled-label"> · Settled</span>` : null}</div>
       </div>
     </div>
     <div class="session-header__actions">
@@ -85,14 +87,14 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
       <button class="header-action desktop-session-action" disabled=${!connected || Boolean(busy) || compacting} onClick=${compact}>
         ${compacting ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}<span>${compacting ? "Compacting" : "Compact"}</span>
       </button>
-      ${capabilities?.features?.sessionArchive ? html`<button class="header-action desktop-session-action" disabled=${!connected || Boolean(busy)} onClick=${archive}>${session.archivedAt ? "Reopen" : "Settle"}</button>` : null}
+      ${capabilities?.features?.sessionArchive ? html`<button class="header-action desktop-session-action" title=${session.archivedAt ? "Unsettle session" : "Settle session"} disabled=${settleDisabled} onClick=${archive}>${session.archivedAt ? "Unsettle" : "Settle"}</button>` : null}
       <details class="session-more-menu">
         <summary class="header-action">More ▾</summary>
         <div class="session-more-menu__popup">
           <button disabled=${!connected} onClick=${() => closeDetailsAnd(rename)}>Rename</button>
           <button disabled=${!connected} onClick=${() => closeDetailsAnd(() => controller.patchSession(session.id, { pinned: !session.pinned }).catch((error) => controller.notice(error?.message || String(error))))}>${session.pinned ? "Unpin" : "Pin"}</button>
           <button disabled=${!connected || Boolean(busy) || compacting} onClick=${() => closeDetailsAnd(compact)}>${compacting ? "Compacting…" : "Compact"}</button>
-          ${capabilities?.features?.sessionArchive ? html`<button disabled=${!connected || Boolean(busy)} onClick=${() => closeDetailsAnd(archive)}>${session.archivedAt ? "Reopen" : "Settle"}</button>` : null}
+          ${capabilities?.features?.sessionArchive ? html`<button disabled=${settleDisabled} onClick=${() => closeDetailsAnd(archive)}>${session.archivedAt ? "Unsettle" : "Settle"}</button>` : null}
         </div>
       </details>
     </div>

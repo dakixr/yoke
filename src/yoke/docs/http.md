@@ -180,6 +180,16 @@ queue state is not reported as empty. Session-list and single-session refreshes
 keep a newer locally known queue revision instead of letting an older summary
 overwrite the sidebar card. Settling is rejected while the runtime is busy or
 any queued prompt remains, including paused prompts.
+The browser labels the inverse action `Unsettle` in the sidebar, session header,
+and mobile and context menus. Settled rows have a curved-return quick action
+with an `Unsettle session` tooltip. Quick actions appear on hover or keyboard
+focus, and remain visible on touch devices. Search results retain a `Settled`
+label and offer Unsettle rather than Settle for already-settled sessions.
+The conversation header also retains the state label when viewing a settled
+session. Settled ages use the settlement timestamp in both search and the shelf;
+timestamp tooltips identify the event and show its date and time.
+The Settled shelf chevron rotates inside a fixed square SVG box, keeping its
+center stationary when the shelf opens or closes.
 Sending a prompt to a settled session reopens it automatically as part of the
 same prompt-admission request; the browser mirrors that reopen optimistically
 and restores the settled state if admission fails.

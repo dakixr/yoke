@@ -2,11 +2,13 @@ import { html, useEffect, useRef } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { copyText } from "../lib/clipboard.js";
 import { hasPendingQueue } from "./sidebar-status.js";
+import { useStore } from "../state/hooks.js";
 
 const MENU_WIDTH = 208;
 
 export function SessionContextMenu({ session, location, runtime, capabilities, position, onClose }) {
   const menuRef = useRef(null);
+  const connected = useStore((state) => state.connection.current);
   const busy = runtime?.state && runtime.state !== "idle" && runtime.state !== "error";
   const pending = hasPendingQueue(session.queue);
   const directory = session.location?.directory || "";
@@ -82,8 +84,8 @@ export function SessionContextMenu({ session, location, runtime, capabilities, p
         <span>${session.pinned ? "Unpin session" : "Pin session"}</span>
       </button>
       ${capabilities?.features?.sessionArchive ? html`
-        <button role="menuitem" disabled=${Boolean(busy || (!session.archivedAt && pending))} onClick=${() => void run(() => controller.patchSession(session.id, { archived: !session.archivedAt }))}>
-          <span>${session.archivedAt ? "Reopen session" : "Settle session"}</span>
+        <button role="menuitem" disabled=${!connected || Boolean(busy || (!session.archivedAt && pending))} onClick=${() => void run(() => controller.patchSession(session.id, { archived: !session.archivedAt }))}>
+          <span>${session.archivedAt ? "Unsettle session" : "Settle session"}</span>
         </button>
       ` : null}
       <div class="context-menu-separator" role="separator"></div>

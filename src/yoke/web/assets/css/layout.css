@@ -38,6 +38,9 @@
 .session-card__status-slot { display: inline-flex; min-width: 0; flex: none; transition: opacity 100ms ease; }
 .session-quick-action { position: absolute; z-index: 2; top: 7px; right: 7px; display: inline-flex; height: 20px; align-items: center; gap: 4px; padding: 0 3px; border-radius: 4px; color: var(--sidebar-muted); background: var(--sidebar-active); font-size: 11.5px; font-weight: 560; opacity: 0; pointer-events: none; transition: opacity 100ms ease, color 100ms ease; }
 .session-quick-action:hover, .session-quick-action:focus-visible { color: var(--sidebar-text); }
+.session-quick-action.is-unsettle { width: 28px; height: 28px; top: 3px; justify-content: center; }
+.session-card-wrap--slim.has-quick-action .session-row--slim { padding-right: 39px; }
+.session-settled-label { flex: none; color: var(--sidebar-muted); font-size: 10.5px; }
 .session-card-wrap.has-quick-action:hover .session-card__status-slot { opacity: 0; }
 .session-card-wrap.has-quick-action:hover .session-pin { opacity: 0; }
 .session-card-wrap:has(.session-quick-action:focus-visible) .session-card__status-slot { opacity: 0; }
@@ -71,7 +74,7 @@
 .section-toggle { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 8px; padding: 4px 9px; color: var(--sidebar-muted); font-size: 10.5px; font-weight: 650; text-align: left; }
 .section-toggle:hover { color: var(--sidebar-text); }
 .section-toggle__line { height: 1px; min-width: 18px; flex: 1; background: var(--sidebar-border); }
-.section-toggle__chevron { flex: none; transition: transform 120ms ease; }
+.section-toggle__chevron { display: block; width: 16px; height: 16px; flex: none; transform-origin: center; transition: transform 120ms ease; }
 .section-toggle__chevron.is-open { transform: rotate(180deg); }
 .sidebar-more { width: 100%; min-height: 34px; padding: 7px 9px; border-radius: 6px; color: var(--sidebar-muted); font-size: 10.5px; text-align: left; }
 .sidebar-more:hover { color: var(--sidebar-text); }
@@ -132,7 +135,10 @@
 }
 
 @media (hover: none) {
-  .session-quick-action { display: none; }
+  .session-quick-action { opacity: 1; pointer-events: auto; }
+  .session-card-wrap.has-quick-action .session-card__top { padding-right: 58px; }
+  .session-quick-action.is-unsettle { width: 44px; height: 44px; top: 0; right: 3px; }
+  .session-card-wrap--slim.has-quick-action .session-row--slim { padding-right: 55px; }
 }
 
 @media (max-width: 600px) {
