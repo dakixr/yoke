@@ -1,5 +1,7 @@
 // @ts-check
 
+import { callOutcome } from "../lib/tool-outcome.js";
+
 function copySessionData(state, sessionID) {
   return { ...(state.sessionData[sessionID] || {}) };
 }
@@ -275,14 +277,19 @@ export function reducePublicEvent(state, event) {
     const callID = toolCallID(event);
     if (callID) {
       const current = data.liveTools?.[callID];
-      const cancelled = Boolean(event.data?.result?.cancelled);
+      const name = event.data?.tool_name || event.data?.toolName || current?.name || "tool";
+      const outcome = callOutcome({
+        toolName: name,
+        status: event.data?.ok === false ? "failed" : "completed",
+        result: event.data?.result,
+      });
       data.liveTools = {
         ...(data.liveTools || {}),
         [callID]: {
           callID,
           sequence: current?.sequence ?? nextLiveSequence(data),
-          status: cancelled ? "cancelled" : event.data?.ok === false ? "failed" : "completed",
-          name: event.data?.tool_name || event.data?.toolName || current?.name || "tool",
+          status: outcome.state,
+          name,
           arguments: current?.arguments || "",
           iteration: event.data?.iteration ?? current?.iteration ?? null,
           turnID: event.data?.turnID ?? current?.turnID ?? null,

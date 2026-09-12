@@ -520,7 +520,12 @@ activity cannot keep it visible after the runtime returns to idle.
 The transcript renders each tool call as one row. Persisted tool results are
 folded into the originating call row when both are present in the loaded
 window, while an orphaned result at a pagination boundary remains visible until
-its call is loaded. Consecutive tool-only assistant batches are visually joined
+its call is loaded. Chat rows use the same outcome checks as Tool activity for
+live events and saved results, so failures and cancellations keep their labels
+and glyphs after persistence or reload. Failure checks include `ok: false`, MCP
+`isError`, timeouts, and nonzero exit codes. Search exit code 1 remains successful
+for `rg`, `grep`, and `fd` when the result does not explicitly report failure.
+Consecutive tool-only assistant batches are visually joined
 into one dense run, so sequential batches no longer inherit full assistant-turn
 spacing between them. Commentary that launches tools also stays joined to an
 immediately following tool-only batch, so one continuous tool run does not gain

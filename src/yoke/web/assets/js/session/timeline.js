@@ -1,4 +1,5 @@
 import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
+import { callOutcome } from "../lib/tool-outcome.js";
 import { workingDuration } from "../lib/duration.js";
 import { assistantMetadataMessageIDs, compactToolBatchMessageIDs, projectedMessageText } from "../lib/messages.js";
 import { controller } from "../state/controller.js";
@@ -206,7 +207,9 @@ function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolR
         ${message.toolCalls.map((call) => {
           const live = liveToolsByID[call.id] || null;
           const result = toolResults.get(call.id) || null;
-          const status = live?.status || (result ? "completed" : "pending");
+          const status = result
+            ? callOutcome({ toolName: call.name, status: "completed", result: result.result }).state
+            : live?.status || "pending";
           const resultSummary = result ? compactResult(result.result) : "";
           return html`
             <button key=${call.id} data-tool-call-id=${call.id} class=${`tool-line tool-line--${status}`} onClick=${() => sessionID && controller.openInspector("tool", { callID: call.id })}>
@@ -225,9 +228,10 @@ function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolR
 
 function ToolMessage({ sessionID, message, toolName = null }) {
   const summary = compactResult(message.result);
+  const status = callOutcome({ toolName, status: "completed", result: message.result }).state;
   return html`<div class="tool-result-row">
-    <button class="tool-line" data-tool-call-id=${message.callID} onClick=${() => message.callID && controller.openInspector("tool", { callID: message.callID })}>
-      <span class="tool-line__glyph">✓</span><span>${toolName ? humanToolName(toolName) : "Tool"} completed</span>${summary ? html`<span class="tool-line__summary">${summary}</span>` : null}
+    <button class=${`tool-line tool-line--${status}`} data-tool-call-id=${message.callID} onClick=${() => message.callID && controller.openInspector("tool", { callID: message.callID })}>
+      <span class="tool-line__glyph">${toolGlyph(status)}</span><span>${toolName ? humanToolName(toolName) : "Tool"}</span><span class="tool-line__state">${toolStatusLabel(status)}</span>${summary ? html`<span class="tool-line__summary">${summary}</span>` : null}
     </button>
   </div>`;
 }

@@ -10,7 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEB = path.join(ROOT, "src/yoke/web");
 const OUTPUT = path.join(ROOT, ".agents_local/inspector-ux/browser");
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const contentTypes = { ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
+const contentTypes = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
 const httpRequests = [];
 const fixtureHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Inspector browser fixture</title><link rel="stylesheet" href="/assets/css/base.css"><link rel="stylesheet" href="/assets/css/layout.css"><link rel="stylesheet" href="/assets/css/session.css"><link rel="stylesheet" href="/assets/css/inspector.css"><script type="importmap">{"imports":{"preact":"/assets/vendor/preact.module.js","preact/hooks":"/assets/vendor/hooks.module.js"}}</script></head><body><div id="app"></div><script type="module" src="/__fixture.js"></script></body></html>`;
 
@@ -247,6 +247,40 @@ try {
     await client.wait("!document.querySelector('.inspector')");
     assert.equal(await client.evaluate("document.activeElement.id"), "fixture-opener");
     assert.equal(await client.evaluate("Boolean(document.querySelector('#background-input').closest('[inert]'))"), false);
+  });
+  await test("chat displays saved failures and cancellations on desktop and mobile", async () => {
+    await client.evaluate(`(async () => {
+      const { html, render } = await import('/assets/vendor/htm-preact.js');
+      const { Timeline } = await import('/assets/js/session/timeline.js');
+      const root = document.createElement('div');
+      root.id = 'chat-qa';
+      document.getElementById('app').hidden = true;
+      document.body.append(root);
+      const outcomes = [
+        ['failed', 'exec_command', { ok: true, exit_code: 2 }],
+        ['cancelled', 'read', { ok: false, cancelled: true }],
+        ['completed', 'rg', { ok: true, exit_code: 1 }],
+      ];
+      const messages = outcomes.flatMap(([id, name, result]) => [
+        { id: 'a-' + id, type: 'assistant', toolCalls: [{ id, name, arguments: '{}' }] },
+        { id: 't-' + id, type: 'tool', callID: id, result: JSON.stringify(result) },
+      ]);
+      render(html\`<\${Timeline} sessionID="chat-qa" data=\${{ loaded: true, messages }} />\`, root);
+    })()`);
+    await client.wait("document.querySelectorAll('#chat-qa [data-tool-call-id]').length === 3");
+    for (const width of [1440, 390]) {
+      await client.send("Emulation.setDeviceMetricsOverride", { width, height: 844, deviceScaleFactor: 1, mobile: width < 500 });
+      const rows = await client.evaluate(`Array.from(document.querySelectorAll('#chat-qa [data-tool-call-id]'), row => ({
+        id: row.dataset.toolCallId, state: row.querySelector('.tool-line__state').textContent,
+        glyph: row.querySelector('.tool-line__glyph').textContent,
+        color: getComputedStyle(row.querySelector('.tool-line__state')).color,
+      }))`);
+      assert.deepEqual(rows.map(({ id, state, glyph }) => [id, state, glyph]), [
+        ['failed', 'failed', '×'], ['cancelled', 'cancelled', '·'], ['completed', 'done', '✓'],
+      ]);
+      assert.notEqual(rows[0].color, rows[2].color);
+      await client.screenshot(`chat-tool-outcomes-${width}`);
+    }
   });
   assert.deepEqual(await client.evaluate("audit.unexpected"), []);
   assert.deepEqual(client.errors, []);

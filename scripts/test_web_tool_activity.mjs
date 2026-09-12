@@ -190,6 +190,69 @@ test("rendered detail is call plus result and keeps off-window selection", async
   assert.equal(globalThis.activityPreferences.pane, "list");
 });
 
+test("chat preserves tool outcomes through live, saved, reloaded, and orphaned rows", async () => {
+  // Reuse the isolated HTM/hook loader installed by the detail rendering test.
+  globalThis.sessionStorage = { getItem: () => null };
+  const { Timeline } = await import("../src/yoke/web/assets/js/session/timeline.js");
+  const { reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
+  const render = (node) => {
+    if (Array.isArray(node)) return node.map(render).flat();
+    if (!node || typeof node !== "object") return node;
+    if (typeof node.type === "function") return render(node.type(node.props));
+    return { ...node, children: render(node.props.children || []) };
+  };
+  const nodes = (tree) => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === "object" ? [tree, ...nodes(tree.children)] : [];
+  const content = (tree) => Array.isArray(tree) ? tree.map(content).join("") : tree && typeof tree === "object" ? content(tree.children) : tree == null || typeof tree === "boolean" ? "" : String(tree);
+  const cases = [
+    ["read", { ok: false, error: "Permission denied" }, "failed"],
+    ["mcp.read", { isError: true }, "failed"],
+    ["exec_command", { ok: true, exit_code: 2 }, "failed"],
+    ["exec_command", { ok: true, exitCode: "1" }, "failed"],
+    ["exec_command", { ok: true, returncode: -9 }, "failed"],
+    ["exec_command", { ok: true, timed_out: true }, "failed"],
+    ["read", { ok: false, cancelled: true }, "cancelled"],
+    ["read", { ok: true, content: "error is just file content" }, "completed"],
+    ["rg", { ok: true, exit_code: 1 }, "completed"],
+    ["grep", { ok: true, exit_code: 1 }, "completed"],
+    ["fd", { ok: true, exit_code: 1 }, "completed"],
+    ["rg", { ok: false, exit_code: 1 }, "failed"],
+    ["rg", { ok: true, exit_code: 2 }, "failed"],
+  ];
+  const check = (data, expected, context) => {
+    const tree = render(Timeline({ sessionID: "s", data }));
+    const rows = nodes(tree).filter((node) => node.props["data-tool-call-id"] === "c");
+    assert.equal(rows.length, 1, context);
+    assert.ok(rows[0].props.class.includes(`tool-line--${expected}`), context);
+    const glyph = nodes(rows[0]).find((node) => node.props.class === "tool-line__glyph");
+    const label = nodes(rows[0]).find((node) => node.props.class === "tool-line__state");
+    assert.equal(content(glyph), { failed: "×", cancelled: "·", completed: "✓", running: "↳", pending: "↳" }[expected], context);
+    assert.equal(content(label), { failed: "failed", cancelled: "cancelled", completed: "done", running: "working", pending: "queued" }[expected], context);
+  };
+  for (const [name, result, expected] of cases) {
+    const assistant = { id: "a", type: "assistant", toolCalls: [{ id: "c", name, arguments: "{}" }] };
+    const saved = { id: "t", type: "tool", callID: "c", result: JSON.stringify(result) };
+    const started = reducePublicEvent({ sessionData: { s: {} } }, {
+      type: "session.tool.started", sessionID: "s", data: { tool_call_id: "c", tool_name: name },
+    });
+    check(started.sessionData.s, "running", `${name} running`);
+    check({ messages: [assistant] }, "pending", `${name} queued`);
+    const ended = reducePublicEvent(started, {
+      type: "session.tool.ended", sessionID: "s", data: { tool_call_id: "c", ok: result.ok ?? true, result },
+    });
+    const liveTools = ended.sessionData.s.liveTools;
+    check({ liveTools }, expected, `${name} live tail`);
+    check({ messages: [assistant], liveTools }, expected, `${name} live call`);
+    check({ messages: [assistant, saved], liveTools }, expected, `${name} persisted`);
+    check({ messages: [assistant, saved], liveTools: started.sessionData.s.liveTools }, expected, `${name} saved result beats stale running event`);
+    check({ messages: [assistant, saved] }, expected, `${name} reload`);
+    // Orphaned results lack the tool name needed for the no-match exception.
+    if (!["rg", "grep", "fd"].includes(name)) check({ messages: [saved] }, expected, `${name} orphan`);
+  }
+  for (const result of ["plain text", "{invalid", "null", "[]", "", null]) {
+    check({ messages: [{ id: "t", type: "tool", callID: "c", result }] }, "completed", "unstructured result remains readable");
+  }
+});
+
 for (const { name, run } of tests) {
   await run();
   console.log(`ok - ${name}`);
