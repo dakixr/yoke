@@ -130,6 +130,15 @@ before it propagates cancellation. Transcript properties and prompt results
 return snapshots, so changing their lists does not change agent state. Use
 `run_many()` for independent work.
 
+For agent-authored orchestration, load the
+[`yoke-subagents` skill](../agent/skills/built_in/yoke-subagents/SKILL.md).
+Start with its self-contained examples for one worker, two independent audits,
+or a single role persisted across processes. Small jobs need neither task JSON
+nor handoff files; one durable role only adds a state file. Larger fan-out and
+coder/reviewer examples add contracts, traces, and retained results under
+`.agents_local/`. Review acceptance still leaves changed-path verification and
+final test execution to the parent.
+
 Synchronous event and tool hooks run in the worker thread. They must be
 thread-safe and must not recursively prompt, close, save, restore, reset, or
 fork the same agent.

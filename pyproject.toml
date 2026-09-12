@@ -1,6 +1,6 @@
 [project]
 name = "yoke"
-version = "2.7.5"
+version = "2.7.6"
 description = "Native Python coding agent CLI and SDK."
 readme = "README.md"
 authors = [
@@ -46,6 +46,10 @@ pythonpath = ["src"]
 pythonVersion = "3.12"
 extraPaths = ["src"]
 include = ["src/yoke", "tests"]
+
+[tool.ty.environment]
+# The skill folder is data, while its scripts form a standalone Python package.
+root = ["src", ".", "src/yoke/agent/skills/built_in/yoke-subagents"]
 
 [build-system]
 requires = ["uv_build>=0.8.4,<0.9.0"]

@@ -1,412 +1,219 @@
-# Orchestration Pattern Templates
+# Orchestration patterns
 
-These templates are branch-specific reference. Copy only the shapes the current
-task needs, then keep prompts scoped and artifacts under `.agents_local/`.
+Start with the smallest case below. Each Python block is a complete script,
+with no sibling helpers or task schemas. Save only the one needed under
+`.agents_local/`, then run it with the repository's Yoke-enabled Python.
+Choose `SELECTION` from local provider status and set `ROOT` to the repository's
+absolute path. Replace the example prompts and paths with the actual task.
 
-Treat these as ideas, not fixed scripts. Mix, change, simplify, or invent a new
-pattern when that better serves the user's objective. The goal is useful
-orchestration, not adherence to a template.
+The guarded entrypoint matters: Yoke's tool subprocesses re-import the launcher.
+Run these as files rather than piping them to Python's stdin.
 
-All orchestration entry points are async. Use `Agent.prompt_async()` for one
-stateful role and `run_many()` for independent fan-out. Launch scripts with
-`asyncio.run(main())`; do not rebuild thread-pool orchestration around the
-synchronous API.
+## One worker, with optional follow-ups
 
-Every template assumes an `OBSERVER`. For inline orchestration, use
-`ConsoleObserver("actions")`. For a file-based orchestration, preserve a full
-trace without flooding the console:
-
-```python
-OBSERVER = CompositeObserver(
-    ConsoleObserver("actions"),
-    JsonlObserver(OUTPUT_DIR / "yoke_subagents.trace.jsonl", "full"),
-)
-```
-
-## Quick Audit
-
-Use quick audit for lightweight independent perspectives when full planning is
-too much machinery. Keep agents read-only and ask each one for evidence,
-confidence, and recommended next action.
+Keep trivial work in the parent. Use one delegated agent when its separate
+context or perspective helps. Pass one prompt for a single answer, or several
+prompts to reuse that agent's conversation sequentially. Save as `ask.py`:
 
 ```python
-AUDIT_ANGLES = ["correctness", "tests", "risk"]
+import asyncio
+from pathlib import Path
+import sys
+
+from yoke.ai import Agent, RunConfig, build_builtin_provider
 
 
-async def quick_audit(user_request: str) -> list[dict[str, object]]:
-    tasks = [
-        BatchTask(
-            id=angle,
-            prompt=(
-                "Review this request from one angle only. Return concise "
-                "findings with evidence and next action.\n\n"
-                f"Angle: {angle}\nRequest:\n{user_request}"
-            ),
-        )
-        for angle in AUDIT_ANGLES
-    ]
-    batch = await run_many(
-        tasks,
-        agent_factory=lambda task: read_only_agent(),
-        max_concurrency=len(tasks),
-        observer=OBSERVER,
-    )
-    return [batch_item_payload(item, key="angle") for item in batch.items]
-```
-
-## Research
-
-Use research when the user asks an open question that needs evidence before a
-plan or patch. Choose codebase research, online research, or mixed research.
-
-```python
-RESEARCH_MODES = ["codebase", "web", "mixed"]
-
-
-def research_agent(selection: str = DEFAULT_SELECTION) -> Agent:
-    return Agent(
+async def ask(root: Path, selection: str, prompts: list[str]) -> None:
+    if not prompts:
+        raise ValueError("Supply at least one prompt")
+    async with Agent(
         provider=build_builtin_provider(selection),
         config=RunConfig(
-            root=Path.cwd(),
-            sys_prompt="Stay read-only and support claims with sources.",
-            tools=[
-                "file.read",
-                "file.search",
-                "web.fetch",
-                "web.search",
-                "web.research",
-            ],
+            root=root,
+            tools=["file.read", "file.search"],
+            sys_prompt="Stay read-only. Cite file:line evidence and report blockers.",
         ),
-    )
+    ) as worker:
+        for prompt in prompts:
+            result = await worker.prompt_async(prompt)
+            print(result.output, flush=True)
 
 
-async def research(user_question: str) -> list[dict[str, object]]:
-    tasks = [
-        BatchTask(
-            id=mode,
-            prompt=(
-                "Research this question from the assigned perspective. Return "
-                "concise evidence, sources or file paths, confidence, and next "
-                f"action.\n\nMode: {mode}\nQuestion:\n{user_question}"
+if __name__ == "__main__":
+    if len(sys.argv) < 4:
+        raise SystemExit("usage: ask.py ROOT SELECTION PROMPT [PROMPT ...]")
+    asyncio.run(ask(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3:]))
+```
+
+```bash
+uv run python "$ROOT/.agents_local/ask.py" "$ROOT" "$SELECTION" \
+  "Read parser.py and SPEC.md. Identify contract violations with evidence." \
+  "Which finding most needs a regression test? Give the input and expected result."
+```
+
+Both prompts use one conversation. The parent checks the answer and runs any
+validation. No state file is needed unless this role must survive the process.
+
+## Two independent workers
+
+Prefer complementary prompts for independent questions. Repeat the same question
+only when independent replication or disagreement is the point. Save as `audit.py`;
+each supplied prompt gets its own agent and provider:
+
+```python
+import asyncio
+from pathlib import Path
+import sys
+
+from yoke.ai import Agent, BatchTask, RunConfig
+from yoke.ai import build_builtin_provider, run_many
+
+
+async def audit(root: Path, selection: str, prompts: list[str]) -> None:
+    if not 1 <= len(prompts) <= 4:
+        raise ValueError("This small example accepts 1-4 prompts")
+
+    def factory(_task: BatchTask) -> Agent:
+        return Agent(
+            provider=build_builtin_provider(selection),
+            config=RunConfig(
+                root=root,
+                tools=["file.read", "file.search"],
+                sys_prompt="Stay read-only. Cite file:line evidence and report blockers.",
             ),
         )
-        for mode in RESEARCH_MODES
-    ]
-    batch = await run_many(
-        tasks,
-        agent_factory=lambda task: research_agent(),
-        max_concurrency=len(tasks),
-        observer=OBSERVER,
-    )
-    return [batch_item_payload(item, key="mode") for item in batch.items]
-```
-
-## Discovery
-
-Use discovery when the main agent does not know the task boundaries. This is a
-single stateful role, so call `prompt_async()` directly and close it with an
-async context manager.
-
-```python
-class DiscoveryItem(BaseModel):
-    id: str = Field(description="Stable identifier for the item.")
-    path: str = Field(description="Primary file or directory path.")
-    summary: str
-    suggested_task: str
-
-
-class DiscoveryPlan(BaseModel):
-    items: list[DiscoveryItem]
-    risks: list[str] = Field(default_factory=list)
-
-
-async def discover(user_request: str) -> DiscoveryPlan:
-    prompt = (
-        "Explore the repository for this broad request and identify concrete "
-        "work items. Return only structured data.\n\n"
-        f"User request:\n{user_request}"
-    )
-    async with read_only_agent() as worker:
-        result = await worker.prompt_async(
-            prompt, output_type=DiscoveryPlan, observer=OBSERVER
-        )
-    if result.structured is None:
-        raise RuntimeError("Discovery did not return structured output")
-    return result.structured
-```
-
-## Planning
-
-Use planning to convert discoveries into focused, non-overlapping tasks.
-
-```python
-class TaskSpec(BaseModel):
-    id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-    scope: str
-    prompt: str
-    selection: str = DEFAULT_SELECTION
-
-
-class TaskPlan(BaseModel):
-    tasks: list[TaskSpec]
-    assumptions: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
-
-
-async def plan_tasks(
-    user_request: str, discoveries: object
-) -> TaskPlan:
-    prompt = (
-        "Create a bounded, non-overlapping task plan for subagents. "
-        "Prefer one task per file, route group, package, or concern. "
-        "Do not exceed 64 tasks.\n\n"
-        f"User request:\n{user_request}\n\n"
-        f"Discovery outputs:\n{json_payload(discoveries)}"
-    )
-    async with read_only_agent() as worker:
-        result = await worker.prompt_async(
-            prompt, output_type=TaskPlan, observer=OBSERVER
-        )
-    if result.structured is None:
-        raise RuntimeError("Planning did not return structured output")
-    task_ids = [task.id for task in result.structured.tasks]
-    if len(task_ids) > 64:
-        raise ValueError("Task plan exceeds the 64-task cap")
-    if len(task_ids) != len(set(task_ids)):
-        raise ValueError("Task IDs must be unique")
-    return result.structured
-```
-
-## Fan-Out
-
-Use fan-out when tasks can be performed independently. Ask every worker for
-evidence, changed files, validation, and risks. Inspect every item status before
-trusting the batch.
-
-```python
-class TaskResult(BaseModel):
-    id: str
-    scope: str
-    summary: str
-    evidence: list[str] = Field(default_factory=list)
-    changed_files: list[str] = Field(default_factory=list)
-    validation: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
-
-
-async def fan_out(
-    tasks: list[TaskSpec], user_request: str
-) -> dict[str, object]:
-    if len(tasks) > 64:
-        raise ValueError("Fan-out exceeds the 64-task cap")
-    task_by_id = {task.id: task for task in tasks}
-    if len(task_by_id) != len(tasks):
-        raise ValueError("Task IDs must be unique")
-    batch_tasks = [
-        BatchTask(
-            id=task.id,
-            prompt=(
-                "Complete only this assigned task. Return structured findings "
-                "with evidence, changed files, validation, and risks.\n\n"
-                f"Overall request:\n{user_request}\n\n"
-                f"Task id: {task.id}\nScope: {task.scope}\n\n{task.prompt}"
-            ),
-        )
-        for task in tasks
-    ]
-
-    def worker_factory(batch_task: BatchTask) -> Agent:
-        return agent(task_by_id[batch_task.id].selection)
 
     batch = await run_many(
-        batch_tasks,
-        agent_factory=worker_factory,
-        max_concurrency=min(MAX_CONCURRENCY, len(batch_tasks) or 1),
-        output_type=TaskResult,
+        [BatchTask(id=f"audit-{i}", prompt=p) for i, p in enumerate(prompts, 1)],
+        agent_factory=factory,
+        max_concurrency=2,
         max_attempts=1,
-        on_progress=log_progress,
-        observer=OBSERVER,
     )
-    results: list[dict[str, object]] = []
     for item in batch.items:
-        spec = task_by_id[item.task.id]
-        if item.result is None:
-            results.append(
-                {
-                    "id": spec.id,
-                    "selection": spec.selection,
-                    "status": item.status,
-                    "error": repr(item.error),
-                }
-            )
-            continue
-        results.append(
-            {
-                "id": spec.id,
-                "selection": spec.selection,
-                "status": item.status,
-                "structured": (
-                    item.result.structured.model_dump()
-                    if item.result.structured
-                    else None
-                ),
-                "output": item.result.output,
-            }
+        print(f"{item.task.id}: {item.status}", flush=True)
+        print(
+            item.result.output if item.result is not None else repr(item.error),
+            flush=True,
         )
-    return {
-        "items": results,
-        "progress_errors": [repr(error) for error in batch.progress_errors],
-    }
+    if batch.failed_count:
+        raise RuntimeError("Some audits failed; keep successful answers and report gaps")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 4:
+        raise SystemExit("usage: audit.py ROOT SELECTION PROMPT [PROMPT ...]")
+    asyncio.run(audit(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3:]))
 ```
 
-## Coder/Reviewer Pair
+```bash
+uv run python "$ROOT/.agents_local/audit.py" "$ROOT" "$SELECTION" \
+  "Audit parser.py against SPEC.md. Return confirmed defects and their evidence." \
+  "Inspect test_parser.py against SPEC.md. Identify missing contract coverage."
+```
 
-Use one coder and one reviewer per task. Re-prompt the same instances
-sequentially so they retain task context. Make reviewer agents durable when a
-review loop may span main-agent fixes or process interruptions.
+`run_many()` closes every worker. A completed call can still report a blocker;
+the parent reads both answers before synthesizing them. Plain text is sufficient
+here. Use `output_type` only when another step needs machine-readable results.
+
+## One durable role
+
+Durable means the same role remembers after this Python process exits. It does
+not require a coder/reviewer pair. Save as `durable.py`:
 
 ```python
-class PairReview(BaseModel):
-    verdict: Literal["ok", "nok"]
-    feedback: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
+import asyncio
+from hashlib import sha256
+from pathlib import Path
+import sys
+
+from yoke.ai import Agent, RunConfig, build_builtin_provider
 
 
-async def run_coder_reviewer_pair(
-    task: TaskSpec,
-    user_request: str,
-) -> dict[str, object]:
-    coder = Agent(
-        provider=build_builtin_provider(task.selection),
-        config=RunConfig(
-            root=Path.cwd(),
-            tools=["file.read", "file.search", "file.write"],
-        ),
-        observer=OBSERVER,
-    )
-    reviewer = Agent(
+async def continue_role(root: Path, selection: str, state: Path, prompt: str) -> None:
+    state = state.resolve()
+    async with Agent(
         provider=build_builtin_provider(
-            task.selection,
-            session_id=f"{task.id}-reviewer",
+            selection, session_id=sha256(str(state).encode()).hexdigest()
         ),
-        config=RunConfig(root=Path.cwd(), tools=["file.read", "file.search"]),
-        state_path=OUTPUT_DIR / f"{task.id}.reviewer.json",
+        config=RunConfig(
+            root=root,
+            tools=["file.read", "file.search"],
+            sys_prompt="Stay read-only. Retain decisions; re-read files when asked to review changes.",
+        ),
+        state_path=state,
         autosave=True,
-        observer=OBSERVER,
-    )
+    ) as worker:
+        print("Resuming" if worker.has_state else "Starting", state, flush=True)
+        result = await worker.prompt_async(prompt)
+        print(result.output, flush=True)
 
-    async with coder, reviewer:
-        coder_result = await coder.prompt_async(
-            "Complete only this task. Report changed files and validation.\n\n"
-            f"Overall request:\n{user_request}\n\nTask:\n{task.prompt}",
-        )
-        coder_output = coder_result.output
-        for _iteration in range(1, 4):
-            review = await reviewer.prompt_async(
-                "Review for correctness, scope, tests, and risks. Return ok "
-                f"only when ready to merge.\n\nCoder output:\n{coder_output}",
-                output_type=PairReview,
-            )
-            if review.structured and review.structured.verdict == "ok":
-                return {
-                    "task": task.id,
-                    "status": "accepted",
-                    "output": coder_output,
-                }
-            feedback = (
-                review.structured.feedback
-                if review.structured
-                else [review.output]
-            )
-            revision = await coder.prompt_async(
-                "Revise using this feedback and keep scope.\n\n"
-                f"Feedback:\n{json.dumps(feedback, indent=2)}",
-            )
-            coder_output = revision.output
-        return {
-            "task": task.id,
-            "status": "needs_main_agent",
-            "output": coder_output,
-        }
+
+if __name__ == "__main__":
+    if len(sys.argv) != 5:
+        raise SystemExit("usage: durable.py ROOT SELECTION STATE PROMPT")
+    asyncio.run(continue_role(
+        Path(sys.argv[1]).resolve(), sys.argv[2], Path(sys.argv[3]), sys.argv[4]
+    ))
 ```
 
-## Review and Coverage
+Choose a fresh state path for a new job. Keep this path for its later turns:
 
-Use review when correctness matters or discovery may be incomplete.
-
-```python
-class ReviewResult(BaseModel):
-    passed: bool
-    missing_coverage: list[str] = Field(default_factory=list)
-    conflicts: list[str] = Field(default_factory=list)
-    unsupported_claims: list[str] = Field(default_factory=list)
-    recommendations: list[str] = Field(default_factory=list)
-
-
-async def review_results(
-    user_request: str,
-    discoveries: object,
-    results: object,
-) -> ReviewResult:
-    prompt = (
-        "Review these subagent results for coverage, correctness, conflicts, "
-        "and unsupported claims. Compare against discovery outputs.\n\n"
-        f"User request:\n{user_request}\n\n"
-        f"Discoveries:\n{json_payload(discoveries)}\n\n"
-        f"Results:\n{json_payload(results)}"
-    )
-    async with read_only_agent() as worker:
-        result = await worker.prompt_async(
-            prompt, output_type=ReviewResult, observer=OBSERVER
-        )
-    if result.structured is None:
-        raise RuntimeError("Review did not return structured output")
-    return result.structured
+```bash
+STATE="$ROOT/.agents_local/parser-review-unique/reviewer.json"
+uv run python "$ROOT/.agents_local/durable.py" "$ROOT" "$SELECTION" "$STATE" \
+  "Review parser.py against SPEC.md. Remember that blank records must be preserved."
+# After the parent edits parser.py, run a new process with the same state path:
+uv run python "$ROOT/.agents_local/durable.py" "$ROOT" "$SELECTION" "$STATE" \
+  "Re-read parser.py. Does the new version satisfy the requirement we discussed?"
 ```
 
-## Merge Handoff
+`state_path` loads an existing snapshot; `autosave` saves after successful turns.
+The state-derived session ID also stays stable for OpenCode Go. Use one writer
+per state file and the same root, selection, tools, and instructions on resume.
+This example starts fresh if the file is absent. When absence must be an error,
+use `Agent.load(state, provider=..., config=..., autosave=True)` instead.
+Conversation state is not a filesystem snapshot, and interrupted work may not
+be saved. One JSON state file is enough; no task manifest or handoff is required.
+That file is neither small nor sanitized: it can contain prompts, responses,
+tool results, paths, and proprietary source context, and can grow quickly across
+turns. Treat it as sensitive conversation data.
 
-Use merge to produce the final handoff for the main agent.
+## When the larger examples earn their cost
 
-```python
-async def merge_handoff(user_request: str, payload: object) -> str:
-    prompt = (
-        "Synthesize a final handoff for the main agent. Include summary, "
-        "validated findings, conflicts, risks, changed files, and next actions.\n\n"
-        f"User request:\n{user_request}\n\n"
-        f"Payload:\n{json_payload(payload)}"
-    )
-    async with read_only_agent() as worker:
-        result = await worker.prompt_async(prompt, observer=OBSERVER)
-    return result.output
+Use [scripts/fan_out.py](scripts/fan_out.py) for structured read-only batches
+that need retained results and traces, and [scripts/review_pair.py](scripts/review_pair.py)
+for scoped implementation with repeated review and explicit resume contracts.
+Read the chosen script before adapting it. Both take explicit `--root` and
+`--selection`. Fan-out takes `--tasks` with a JSON list; the pair takes `--task`
+with one object:
+
+```json
+{
+  "id": "parser-fix",
+  "request": "Make parser.py satisfy SPEC.md without changing the specification.",
+  "scope": ["parser.py", "test_parser.py"],
+  "acceptance": ["Preserve blank records and add a regression test."],
+  "validation": "Parent runs tests; report the commands to execute.",
+  "mode": "codebase"
+}
 ```
 
-## Shared Batch Helpers
+In the pair, `scope` lists owned write paths. In an audit it lists source paths;
+`mode` chooses local, web, or mixed tools without creating more tasks. Supply
+only independent tasks. Implementation fan-out needs an adapted factory with
+explicit write tools, non-overlapping paths, and reported changes.
 
-Keep item and progress handling explicit so failures cannot disappear inside a
-successful overall batch.
+The larger scripts retain results, a short handoff index, trace, and phase log.
+The pair also saves a contract, role snapshots, and review history. It caps each
+invocation at three reviews and returns unresolved feedback after final rejection.
+Repeat its command with the same `--run-id` and `--resume` for the same contract.
+Resume starts a new bounded loop, not an exactly-once job. It replaces current
+result/history summaries, appends traces, and preserves conversations. Copy an
+old summary first if needed. Rejected resume input preserves valid results and
+writes `resume-error.json`. Review approval still needs parent validation.
 
-```python
-def batch_item_payload(item, *, key: str) -> dict[str, object]:
-    payload: dict[str, object] = {
-        key: item.task.id,
-        "status": item.status,
-        "attempts": item.attempts,
-    }
-    if item.result is not None:
-        payload["output"] = item.result.output
-    else:
-        payload["error"] = repr(item.error)
-    return payload
-
-
-def log_progress(progress: BatchProgress) -> None:
-    LOGGER.info(
-        "Task finish id=%s status=%s progress=%d/%d attempts=%d",
-        progress.task_id,
-        progress.status,
-        progress.completed,
-        progress.total,
-        progress.attempts,
-    )
-```
+Copy `scripts/` intact when adapting those larger examples; their sibling imports
+must work under `__mp_main__`. The small examples above have no such dependencies.
+For discovery, planning, or synthesis, adapt the one-worker prompt rather than
+adding another workflow. Explicitly pass relevant `RunConfig.skills`; workers
+do not inherit the parent's conversation or loaded skills.

@@ -1,190 +1,93 @@
 ---
 name: yoke-subagents
-description: Orchestrate multi-agent task workflows with the yoke SDK: research, discovery-driven investigation, fan-out analysis, multi-file implementation, coder/reviewer loops, merge handoffs, or durable role agents.
+description: Delegate work through Yoke SDK agents. Use for one delegated question or follow-up conversation, parallel tasks, or persistent roles. Use yoke-sessions for separate CLI conversations.
 ---
 
-# Yoke Subagent Orchestration
+# Yoke subagents
 
-Do not look for a subagent tool. The orchestration script creates SDK `Agent`
-instances directly.
+Create SDK `Agent` instances through Python, rather than looking for a subagent
+tool. Keep small single-threaded work in the parent. Use `yoke-sessions` for a
+separate CLI process, saved CLI conversation, or interactive terminal task.
 
-Use this skill selectively. It is an orchestration workflow for tasks where
-parallel viewpoints, durable roles, or review/merge handoffs are worth the
-overhead; it is not the default path for small single-threaded work.
+## Choose a workflow
 
-Use `yoke-sessions` instead when the user requests a separate yoke CLI process,
-a persisted CLI conversation, or interactive terminal behavior.
+| Need | Execution |
+| --- | --- |
+| A small task the parent can finish directly | Stay in the parent; skip orchestration setup. |
+| One delegated question or follow-up conversation | One `Agent`, with sequential `prompt_async()` calls. |
+| Independent audits, research questions, or partitioned implementation | `run_many()` with a fresh agent and provider per attempt. |
+| One role that must remember across processes | One `Agent` with `state_path` and `autosave=True`. |
+| Parent implementation with repeated external review | One reviewer `Agent`; reuse it sequentially or persist it when its judgment must survive a process. |
+| Both implementation and repeated review need delegation | One coder/reviewer pair per exclusive scope. |
 
-## Core Process
+Start with the small, self-contained examples in [PATTERNS.md](PATTERNS.md).
+Read [SDK_SURFACE.md](SDK_SURFACE.md) before using unfamiliar provider,
+capability, persistence, or cancellation options. Adapt examples to the task;
+discovery, planning, and merge agents are optional, not mandatory stages.
 
-1. Before writing the orchestrator, use `print_builtin_provider_status()` as a
-   local context-gathering helper, then validate every selected
-   provider/model/thinking string with `build_builtin_provider(selection)`.
-   Give each preflight provider to a short-lived `Agent` and close that agent so
-   provider resources are released. Do not put the status helper in the
-   orchestration script; it validates local selection construction, not remote
-   service reachability.
-   When adding or changing a provider, separately probe a representative real
-   agent turn with function tools and complete the tool-result round trip.
-   When a durable role uses OpenCode Go, pass a stable `session_id` to
-   `build_builtin_provider()` each time that role is reconstructed.
-2. Choose the smallest orchestration shape that fits the request.
-3. Prefer public SDK `run_many()` for independent bounded fan-out. For small
-   orchestrations (1-4 subagents, no complex state), run the code
-   inline without creating a file. For larger or reusable orchestrations, write
-   an import-side-effect-free script under `.agents_local/` with an async
-   `main()` launched by `asyncio.run(main())`, guarded by
-   `if __name__ == "__main__"`.
-4. Attach a `ConsoleObserver("actions")` to every direct agent prompt or
-   `run_many()` call so the parent can see commentary, final messages, compact
-   tool-call signatures, and failures while work is active. For file-based
-   orchestrations, combine it with a `JsonlObserver("full")` under
-   `.agents_local/` for a durable structured trace. Keep orchestration phase,
-   provider, artifact, and final-status logging as a separate script log.
-5. For file-based orchestrations, run the script with `exec_command`; poll with
-   `write_stdin` until it completes. Use `argv` instead of `cmd` when no shell
-   syntax is needed. `exec_command.yield_time_ms` is capped at 300,000 ms and
-   honors that requested initial wait. `write_stdin.yield_time_ms` may be as
-   high as 3,600,000 ms when a long poll is useful. Keep progress visible.
-6. Read the final handoff and raw JSON artifacts. Verify conflicts or errors
-   before trusting the subagent results.
-7. The main agent applies final edits, resolves conflicts, runs validation, and
-   reports the final outcome.
-8. Let `run_many()` close independent one-shot agents. Use `async with agent`
-   for sequential or durable roles so provider and tool resources are released.
+## Execute
 
-## Completion Criteria
+1. Gather local provider choices before writing the orchestrator:
+   `from yoke.ai.utils import print_builtin_provider_status; print_builtin_provider_status()`.
+   Check requested model and thinking effort against the advertised catalog,
+   then construct with `build_builtin_provider(selection)` when creating each
+   worker. A separate preflight agent is optional; close it if you create one.
+   Construction can silently replace an invalid effort with the model default.
+   These checks do not prove remote service health.
+2. Give every worker a task contract: objective, source paths, acceptance
+   criteria, read-only or owned write paths, validation owner, and dependencies
+   when present. A short prompt is enough for simple work; JSON is optional.
+   Pass the same contract to its reviewer. Use unique filename-safe IDs for batch
+   items and names derived into artifacts or state paths.
+   Choose local, web, or mixed research explicitly; local-only tasks get no web tools.
+3. Set `RunConfig(root=..., tools=...)` explicitly. Start audits with
+   `file.read` and `file.search`. Add writes, shell, or network capabilities only
+   for assigned work that needs them. The examples leave test execution to the parent.
+4. Use a small guarded Python file under `.agents_local/` for workers that call
+   tools. Yoke spawns tool processes that re-import the launcher; stdin scripts
+   can fail even when their Python is valid. An existing import-safe host or
+   tool-free inline call needs no extra file. Keep setup inside `main()`.
+5. For small jobs, print or consume `result.output` directly so the final answer
+   is lossless. Add `ConsoleObserver("actions")` when live tool visibility matters;
+   its rendered messages are previews and may be truncated. A durable role only
+   adds its state file. For multi-stage orchestration, retain raw results, a
+   handoff, and a full `JsonlObserver` trace under `.agents_local/<run-id>/`. Add
+   a phase log when it helps diagnose the run. Traces and snapshots can contain
+   sensitive content despite redaction.
+6. Run with the repository's Python environment using `exec_command`. Prefer
+   `argv` when no shell syntax is needed. On Mooncake MCP, wait with `process_read`
+   and send input with `process_io`; follow returned cursors and continuation hints.
+   Native Yoke uses `write_stdin`. Read the active tool schema for wait limits.
+7. Inspect every terminal result, blocker, and `progress_errors` when configured.
+   Let `run_many()` close one-shot agents. Use nested `async with` blocks for
+   roles so earlier agents close even if a later constructor fails.
 
-The orchestration is not complete until all applicable criteria are satisfied:
+## Implementation and state
 
-- Provider status was gathered before authoring the script and every selected
-  provider/model/thinking string was constructed successfully with
-  `build_builtin_provider(selection)`. Every provider created only for this
-  preflight check was released by closing its short-lived owning agent.
-- Live subagent work used an `actions` console observer. Reusable or file-based
-  orchestration also retained a full JSONL trace under `.agents_local/`.
-- The orchestrator finished without unhandled exceptions, or every failure is
-  captured in the handoff with a clear blocker.
-- The final handoff artifact and any raw task JSON were written under
-  `.agents_local/`.
-- A review or merge pass checked coverage, conflicts, unsupported claims, and
-  task errors before the main agent acted on the results.
-- Caps were respected unless the user explicitly asked otherwise.
-- For implementation work, file ownership was non-overlapping, changed files
-  were reported, and the main agent ran final validation.
-- Async fan-out used a fresh agent factory, bounded concurrency, stable unique
-  task IDs, and inspected every per-item terminal status.
+Assign non-overlapping write paths before dispatch. `RunConfig.root` is a path
+base, not a sandbox; prompts do not enforce filesystem ownership. Compare actual
+changes with assigned paths afterward. Use isolated worktrees or stronger
+isolation when shared-workspace writes cannot be coordinated safely.
 
-## Provider Selection
+Keep write-capable batches at `max_attempts=1` unless retries have explicit
+recovery or are idempotent. This does not guarantee exactly-once work:
+structured-output correction can re-enter the agent even within one batch attempt.
 
-Use provider/model/thinking selections as strings:
+For persistence, start with the one-role example in [PATTERNS.md](PATTERNS.md).
+Existing state files load automatically. Reuse one path for the same intended
+role, choose a new path for unrelated work, and keep one writer per state file.
+Read [SDK_SURFACE.md](SDK_SURFACE.md) for interruption and restore caveats.
 
-```text
-provider:model:thinking_effort
-```
-Yoke's built-ins are `codex`, `opencode-go`, and `zai`, plus global custom
-provider plugins. Prefer capability IDs in orchestration configs so each
-worker's provider/model receives only compatible concrete tools. In particular,
-`image.generate` is Codex-only, image attachment follows model metadata, and
-`web.research` uses Codex hosted search while retaining the local workflow for
-other providers.
+## Completion gate
 
-See [`SDK_SURFACE.md`](SDK_SURFACE.md) for imports, provider helper behavior,
-capability IDs, durable agent state, and reusable script helpers.
+Account for every dispatched task, including failed or blocked work. Check
+evidence, missing coverage, and conflicting findings before acting. For code,
+report actual changed paths and the parent's executed validation with outcomes.
+Review acceptance applies only to the revision inspected. At the review cap,
+return unresolved findings without making another unreviewed edit. Partial
+results remain partial even when the orchestration process exits successfully.
 
-## Orchestration Shapes
-
-1. **Quick audit** — ask 2-4 read-only subagents for independent perspectives
-   when full discovery/planning/merge machinery would be too heavy.
-2. **Research** — answer an open question with codebase evidence, online
-   sources, or both.
-3. **Discovery** — find concrete work items when the task boundary is unknown.
-4. **Planning** — convert discoveries into bounded, non-overlapping task specs.
-5. **Fan-out** — run independent tasks concurrently and collect structured
-   evidence, changes, validation, and risks.
-6. **Coder/reviewer pairs** — iterate scoped implementation work until a
-   reviewer returns `ok`, a max iteration cap is hit, or the main agent must
-   intervene.
-7. **Review and coverage** — check results against the request and discovery
-   outputs for missing coverage, conflicts, and unsupported claims.
-8. **Merge handoff** — synthesize a compact report for the main agent with
-   findings, changed files, risks, blockers, and next actions.
-
-See [`PATTERNS.md`](PATTERNS.md) for async code templates for every shape. Do not
-copy older `ThreadPoolExecutor` or synchronous `worker.prompt(...)` fan-out
-patterns into new orchestrators.
-
-## Durable Role Agents
-
-Use durable SDK agents when a role accumulates judgment over multiple turns,
-such as reviewer -> main agent fix -> reviewer, planner -> fan-out -> planner,
-or merge agent -> conflict resolution -> merge agent.
-
-Bind each long-lived role to its own state file under `.agents_local/`. Validate
-that task IDs are unique filename-safe slugs before deriving paths from them:
-
-```python
-# inside Agent(...)
-state_path=OUTPUT_DIR / f"{task.id}.reviewer.json",
-autosave=True,
-```
-
-For an OpenCode Go role, build its provider with the same filename-safe role ID:
-
-```python
-provider=build_builtin_provider(selection, session_id=f"{task.id}-reviewer")
-```
-
-Do not persist throwaway one-shot fan-out agents by default. Persistence is most
-useful for roles that preserve prior objections, accepted tradeoffs, review
-criteria, and task-specific context across crashes or later continuation.
-
-## Write Safety
-
-Subagents may perform real implementation work when the task can be partitioned
-safely and the user has not asked for a read-only audit.
-
-- Assign each implementation subagent an exclusive file or directory scope.
-- Require each implementation subagent to report changed files and validation.
-- Default write-capable `run_many()` work to `max_attempts=1`. A retry creates a
-  fresh agent but cannot undo files changed by the previous attempt. Retry
-  write-capable work only when the task is idempotent or has explicit recovery.
-
-## Async Fan-Out
-
-Use `Agent.prompt_async()` for an asyncio-compatible call on one stateful agent.
-Concurrent calls on that agent serialize intentionally. Use `run_many()` for
-parallel independent tasks because it creates and closes one agent per task,
-isolates errors, preserves input order, and aggregates provider-reported usage.
-The factory must return a fresh agent for every task and retry attempt; reused
-instances are rejected. Every fresh agent must also own a fresh provider
-instance; shared providers are rejected because they can contain mutable
-conversation state and one owner can close another owner's resources. Factories
-may be synchronous or asynchronous;
-synchronous factories run outside the event loop. Retry-policy failures stay in
-their item result. Inspect `progress_errors` as part of the handoff when a
-progress callback is configured.
-
-Pass an observer directly to `run_many()` instead of adding ad hoc event
-callbacks to every factory-created agent. Batch observation automatically adds
-the task ID and retry attempt to each event. Use `messages` only when tool-call
-visibility is unnecessary, and use `full` for JSONL diagnostics rather than
-routine console output. Built-in renderers redact credential-like argument
-keys; prompts, proprietary content, paths, and tool results can still be
-sensitive, so treat full traces as sensitive artifacts.
-
-Do not add generic agent or batch timeouts to orchestration templates. Agents
-can legitimately run for a long time; monitor progress and cancel explicitly
-when work is genuinely stalled. If a task has a real domain deadline, remember
-that SDK timeouts are cooperative. Yoke signals the synchronous runtime and
-returns the timeout or cancellation to the async caller immediately. The sync
-worker may continue in the background until it observes the signal. Closing the
-agent waits for active work, and cancelling `run_many()` waits for batch worker
-cleanup.
-
-## Caps
-
-Use caps by default:
-
-- No more than 16 concurrent subagents unless the user explicitly asks.
-- No more than 64 subagent tasks in one script unless the user explicitly asks.
+Default policy is at most 16 concurrent subagents and 64 dispatched tasks per
+orchestration, unless the user requests otherwise. These are skill defaults,
+not SDK limits. Monitor progress instead of adding arbitrary timeouts; cancel
+stalled work explicitly. Read the cancellation caveats before using a real deadline.
