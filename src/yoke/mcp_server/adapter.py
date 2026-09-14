@@ -5,8 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import logging
-import time
 from pathlib import Path
 
 from mcp.types import CallToolResult
@@ -15,6 +13,8 @@ from mcp.types import TextContent
 from mcp.types import Tool
 from pydantic import ValidationError
 
+from yoke._version import __version__
+from yoke.mcp_server.diagnostics import CallDiagnostics
 from yoke.mcp_server.execution.service import ExecutionService
 from yoke.mcp_server.results.encoding import encode
 from yoke.mcp_server.config import MCPServerConfig
@@ -22,8 +22,6 @@ from yoke.mcp_server.process_runtime import ProcessRuntime
 from yoke.mcp.manager import McpManager
 from yoke.mcp_server.registry import effective_tool_registry
 from yoke.mcp_server.registry import ExposedTool
-
-logger = logging.getLogger(__name__)
 
 
 class ToolAdapter:
@@ -42,7 +40,7 @@ class ToolAdapter:
         self.execution = ExecutionService(config, runtime, downstream_manager)
 
     def list_tools(self) -> list[Tool]:
-        """Return exact Pydantic schemas with stable external tool names."""
+        """Return client-compatible schemas with stable external tool names."""
         tools = {spec.name: self._mcp_tool(spec) for spec in self._registry.values()}
         tools.update(self.execution.tools())
         return list(tools.values())
@@ -51,43 +49,81 @@ class ToolAdapter:
         self, name: str, arguments: dict[str, object] | None
     ) -> CallToolResult:
         """Validate, bind, execute, and encode one tool call."""
-        started = time.monotonic()
+        known = name in self._registry or self.execution.accepts(name)
+        call = CallDiagnostics(name if known else "<unknown>", arguments or {})
+        try:
+            response = await self._call_tool(name, arguments or {}, call)
+        except ValidationError as exc:
+            if call.stage == "input_validation":
+                response = _encode_json_result(call.invalid_arguments(exc))
+            else:
+                call.exception_type = type(exc).__name__
+                response = _encode_json_result(
+                    call.error(
+                        "TOOL_EXECUTION_ERROR",
+                        "Tool raised a validation error after dispatch.",
+                    )
+                )
+        except Exception as exc:
+            call.exception_type = type(exc).__name__
+            code = "TOOL_EXECUTION_ERROR"
+            message = str(exc)
+            if call.stage == "result_encoding":
+                code = "INVALID_TOOL_RESULT"
+                message = "Invalid internal tool result: " + message
+            elif isinstance(exc, PermissionError):
+                code = "OS_PERMISSION_DENIED"
+            response = _encode_json_result(call.error(code, message))
+        except BaseException:
+            call.ok = False
+            call.outcome = "interrupted"
+            raise
+        finally:
+            call.finish()
+        response.meta = {
+            **(response.meta or {}),
+            "yoke/request_id": call.request_id,
+            "yoke/version": __version__,
+        }
+        return response
+
+    async def _call_tool(
+        self, name: str, arguments: dict[str, object], call: CallDiagnostics
+    ) -> CallToolResult:
         if self.execution.accepts(name):
-            try:
-                result = await self.execution.dispatch(name, arguments or {})
-                if name == "exec_python":
-                    result = self._decorate_process_result(result)
-                raw_budget = (arguments or {}).get("max_output_tokens")
-                budget = (
-                    min(64000, raw_budget * 4) if isinstance(raw_budget, int) else 32000
-                )
-                if name == "result_read":
-                    budget = 150000
-                elif name == "process_read":
-                    budget = 400000
-                elif name == "export_file":
-                    budget = 3 * 1024 * 1024
-                encoded = encode(
-                    result,
-                    self.execution.store,
-                    budget=budget,
-                    legacy_text=self.config.legacy_result_text,
-                    batch=name == "batch_read" and bool(result.get("ok")),
-                )
-            except ValidationError as exc:
-                return self._error(_validation_message(exc))
-            except Exception as exc:
-                return self._error(str(exc))
-            self._log_call(
-                name,
-                round((time.monotonic() - started) * 1000),
-                bool(result.get("ok", True)),
+            self.execution.validate_arguments(name, arguments)
+            call.begin_execution()
+            result = await self.execution.dispatch(name, arguments)
+            if name == "exec_python":
+                result = self._decorate_process_result(result)
+            call.observe(result)
+            raw_budget = arguments.get("max_output_tokens")
+            budget = (
+                min(64000, raw_budget * 4) if isinstance(raw_budget, int) else 32000
             )
+            if name == "result_read":
+                budget = 150000
+            elif name == "process_read":
+                budget = 400000
+            elif name == "export_file":
+                budget = 3 * 1024 * 1024
+            call.stage = "result_encoding"
+            encoded = encode(
+                result,
+                self.execution.store,
+                budget=budget,
+                legacy_text=self.config.legacy_result_text,
+                batch=name == "batch_read" and bool(result.get("ok")),
+            )
+            call.stage = "complete" if call.ok else "execution"
             return encoded
         spec = self._registry.get(name)
         if spec is None:
-            return self._error(f"Unknown tool: {name}")
-        parsed_arguments = self._with_runtime_defaults(name, arguments or {})
+            call.stage = "tool_lookup"
+            return _encode_json_result(
+                call.error("UNKNOWN_TOOL", f"Unknown tool: {name}")
+            )
+        parsed_arguments = self._with_runtime_defaults(name, arguments)
         binding: dict[str, object] = {
             "root": self.config.root,
             "command_process_manager": self.runtime.manager,
@@ -97,26 +133,15 @@ class ToolAdapter:
         prototype = spec.tool_class.bind(
             **binding,
         )
-        try:
-            tool = prototype.parse_arguments(parsed_arguments)
-        except ValidationError as exc:
-            return self._error(_validation_message(exc))
-        result: dict[str, object]
-        try:
-            result = await self.runtime.execute(name, tool)
-        except Exception as exc:  # pragma: no cover - final adapter boundary
-            logger.exception("MCP tool execution crashed", extra={"tool": name})
-            result = {"ok": False, "error": str(exc)}
+        tool = prototype.parse_arguments(parsed_arguments)
+        call.begin_execution()
+        result = await self.runtime.execute(name, tool)
         if name in {"exec_command", "process_io"}:
             result = self._decorate_process_result(result)
-        try:
-            encoded = _encode_tool_result(spec, result)
-        except (TypeError, ValueError) as exc:
-            logger.exception("MCP tool result encoding crashed", extra={"tool": name})
-            result = {"ok": False, "error": f"Invalid internal tool result: {exc}"}
-            encoded = _encode_json_result(result)
-        duration_ms = round((time.monotonic() - started) * 1000)
-        self._log_call(name, duration_ms, bool(result.get("ok", False)))
+        call.observe(result)
+        call.stage = "result_encoding"
+        encoded = _encode_tool_result(spec, result)
+        call.stage = "complete" if call.ok else "execution"
         return encoded
 
     def _mcp_tool(self, spec: ExposedTool) -> Tool:
@@ -181,16 +206,6 @@ class ToolAdapter:
             result["recommended_wait_ms"] = self.config.max_remote_wait_ms
         return result
 
-    def _log_call(self, name: str, duration_ms: int, ok: bool) -> None:
-        logger.info(
-            "MCP tool call",
-            extra={"tool": name, "duration_ms": duration_ms, "ok": ok},
-        )
-
-    @staticmethod
-    def _error(message: str) -> CallToolResult:
-        return _encode_json_result({"ok": False, "error": message})
-
 
 def _encode_tool_result(spec: ExposedTool, result: dict[str, object]) -> CallToolResult:
     if not bool(result.get("ok", True)) or spec.result_kind == "json":
@@ -225,14 +240,6 @@ def _encode_json_result(result: dict[str, object]) -> CallToolResult:
         structured_content=result,
         is_error=not bool(result.get("ok", True)),
     )
-
-
-def _validation_message(exc: ValidationError) -> str:
-    parts = []
-    for error in exc.errors(include_url=False):
-        location = ".".join(str(part) for part in error["loc"])
-        parts.append(f"{location}: {error['msg']}")
-    return "Invalid tool arguments: " + "; ".join(parts)
 
 
 def result_target_path(arguments: dict[str, object]) -> Path | None:

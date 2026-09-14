@@ -17,16 +17,14 @@ from yoke.mcp_server.config import env_int
 from yoke.mcp_server.config import env_paths
 from yoke.mcp_server.config import load_login_shell_environment
 from yoke.mcp_server.server import create_service
+from yoke.mcp_server.diagnostics import configure_logging
 
 
 def main() -> None:
     """Load configuration and run one async ASGI worker."""
     load_login_shell_environment()
     config = parse_config()
-    logging.basicConfig(
-        level=config.log_level.upper(),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging(config.log_level)
     service = create_service(config)
     logging.getLogger(__name__).info(
         "Starting Yoke MCP on %s:%s with root %s",

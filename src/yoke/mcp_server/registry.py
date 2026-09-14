@@ -9,13 +9,13 @@ from mcp.types import ToolAnnotations
 
 from yoke.agent.tools.apply_patch import ApplyPatchTool
 from yoke.agent.tools.base import LocalTool
-from yoke.agent.tools.command import ExecCommandTool
 from yoke.agent.tools.command import WriteStdinTool
 from yoke.agent.tools.mcp import McpCallTool
 from yoke.agent.tools.mcp import McpInspectTool
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.agent.tools.read import ReadTool
 from yoke.mcp_server.files import MCPViewImageTool
+from yoke.mcp_server.commands import MCPExecCommandTool
 from yoke.mcp_server.search import MCPFdTool
 from yoke.mcp_server.search import MCPRipgrepTool
 from yoke.mcp_server.skills import MCPSkillTool
@@ -107,10 +107,15 @@ TOOL_REGISTRY = {
             "Execute command",
             "Execute a shell command on the server for builds, tests, Git, "
             "service inspection, package managers, and other terminal tasks. "
+            'Use cmd for shell text, for example {"cmd":"pwd"}, or argv for '
+            'direct arguments, for example {"argv":["pwd"]}. Provide exactly '
+            "one. cmd must be a string, never an array. On INVALID_ARGUMENT, "
+            "correct the arguments and retry. No command started; do not report "
+            "a permission denial without an actual denial response. "
             "Returns final output if it finishes within the yield window, "
             "otherwise a process session ID. Continue long-running work with "
             "process_read instead of restarting the command.",
-            ExecCommandTool,
+            MCPExecCommandTool,
             EXECUTION,
         ),
         ExposedTool(

@@ -81,7 +81,12 @@ def create_service(config: MCPServerConfig) -> MCPService:
         instructions=(
             "Inspect before modifying. "
             "Use mcp_inspect before mcp_call when accessing configured downstream MCP servers. "
-            "Use apply_patch for file changes and process_io for commands that return a live session ID."
+            "Use apply_patch for file changes. Use exec_command with cmd as shell text "
+            "or argv as an argument array, never an array under cmd. Correct invalid "
+            "arguments and retry the authorized operation; an input error is not a "
+            "permission denial. Report only actions actually attempted and results "
+            "actually verified. Use process_read for commands that return a live "
+            "session ID, and process_io to send terminal input."
         ),
         lifespan=lifespan,
         on_list_tools=list_tools,

@@ -64,6 +64,46 @@ processes and handles are never persisted and are terminated when the service
 stops. Run one ASGI worker unless process ownership is moved to a separate
 executor.
 
+## Command arguments and error recovery
+
+Use `exec_command` with exactly one execution mode:
+
+```json
+{"cmd":"pwd"}
+```
+
+```json
+{"argv":["git","status","--short"],"workdir":"/srv/projects/my-app"}
+```
+
+`cmd` is shell text, never an array. `argv` is a non-empty array of non-empty
+strings and bypasses shell parsing. `command` remains a deprecated alias for
+`cmd`. Supplying both aliases, both modes, or an unknown argument such as
+`timeout` returns `INVALID_ARGUMENT`; it no longer silently ignores a typo.
+The MCP descriptor is a plain object with named fields, without a root-level
+union. Cross-field rules, including exactly one non-null command mode, are
+checked by the runtime. The ordinary agent command schema is unchanged.
+
+Argument errors return `stage: "input_validation"`, `execution_started: false`,
+a `request_id`, field-level details without input values, and a corrective
+example. Correct the call and retry the intended authorized operation. Do not
+translate an argument error into a permission denial or claim a command was
+attempted when it never started. Arrays are never silently joined into shell
+text. A client may reject an invalid call before sending it to the server;
+such a rejection can only be found in that client's transcript.
+
+Execution failures are different. `COMMAND_EXIT_NONZERO` retains the command's
+exit code; `COMMAND_TIMEOUT` and `COMMAND_CANCELLED` describe managed process
+outcomes. A caught OS `PermissionError` is `OS_PERMISSION_DENIED`. Other errors
+use `TOOL_ERROR` or `TOOL_EXECUTION_ERROR`, not a guessed permission reason.
+`execution_started: null` means dispatch occurred but the adapter cannot prove
+whether a process started or partial work happened. Inspect the result before
+retrying. Result-encoding failures use `INVALID_TOOL_RESULT`. Never treat an
+error after dispatch as proof that retrying cannot duplicate work.
+
+Every reply also carries `yoke/request_id` and `yoke/version` in MCP `_meta`,
+including image replies, without changing successful structured payloads.
+
 ## Configuration
 
 CLI flags have environment equivalents:
@@ -211,9 +251,37 @@ The server does not use a command denylist. OS permissions, narrow sudo rules,
 network policy, authentication, and MCP action confirmations are the security
 boundaries.
 
-The MCP adapter logs tool name, duration, and success status only. It does not
-log tool arguments or file contents. Uvicorn access logging is disabled so
-OAuth query parameters are not copied into ordinary HTTP access logs.
+The MCP entry point writes JSON logs. Each received tool request has paired
+`tool_call_started` and `tool_call_finished` events, including early validation
+errors, unknown tools, exceptions, and cancellations. Events include request ID,
+tool name, Yoke version, server PID, stage, outcome, execution-start evidence,
+error code, and duration. A running command's first request ends with the
+`running` outcome; its process handle continues through `process_read`.
+
+Call logs include argument count and the types of `cmd`, `argv`, and `command`,
+never their values. Unknown tool names are redacted. The formatter does not
+render exception strings or tracebacks. Command bodies, outputs, environment
+values, tokens, and file contents are not copied into call logs. Uvicorn access
+logging remains disabled so OAuth query parameters stay out of access logs.
+
+## Updating a connected deployment
+
+Build and test a pinned release, retain the previous release for rollback, and
+check for live managed commands before restarting. A restart terminates live
+commands and loses their process handles. Do not restart over an active
+validation job merely to update metadata.
+
+After deployment, verify health and authenticated `initialize`, `tools/list`,
+and `tools/call` through the actual endpoint. Check the returned Yoke version,
+command schema, invalid-argument recovery, successful command execution, and
+paired journal events. Health alone does not prove the command contract works.
+
+For a developer-mode ChatGPT connection, open the connection in ChatGPT Plugins,
+select Refresh, confirm the tool metadata changed, and test in a new
+conversation. A server-side update does not guarantee that an existing chat's
+cached descriptor was refreshed. Published plugins instead require their
+reviewed metadata snapshot to be updated. See the official
+[connection testing instructions](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata).
 
 ## Example systemd topology
 

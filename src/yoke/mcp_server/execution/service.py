@@ -99,6 +99,12 @@ class ExecutionService:
             }
         return {}
 
+    def validate_arguments(self, name: str, arguments: dict[str, Any]) -> None:
+        """Preflight outer arguments before dispatch can perform any work."""
+        if name in ACTIONS:
+            values = self._limit_remote_wait(name, {**self.defaults(name), **arguments})
+            ACTIONS[name].model.model_validate(values)
+
     async def dispatch(
         self,
         name: str,
