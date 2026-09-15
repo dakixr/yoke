@@ -10,6 +10,7 @@ from typing import Literal
 
 import typer
 
+from yoke.cli.commands.resume import register_resume_command
 from yoke.cli.main_core import CWD
 from yoke.cli.main_core import _run_lazy_typer_app
 from yoke.cli.main_core import build_cli_args
@@ -205,54 +206,7 @@ def register_commands(app: typer.Typer) -> None:
         "help_option_names": [],
     }
 
-    @app.command()
-    def resume(
-        session_id: Annotated[
-            str | None,
-            typer.Argument(help="Session id to resume. Omit to choose from this root."),
-        ] = None,
-        all_sessions: Annotated[
-            bool,
-            typer.Option(
-                "--all",
-                help=(
-                    "Show sessions from all workspace roots when choosing a session."
-                ),
-            ),
-        ] = False,
-        model: Annotated[
-            str | None,
-            typer.Option(
-                "--model",
-                help=(
-                    "Model selection as `provider-name:model-name[:thinking-effort]`. "
-                    "Including the provider overrides the resumed provider as well."
-                ),
-            ),
-        ] = None,
-        root: Annotated[
-            Path,
-            typer.Option(
-                "--root",
-                help="Workspace root for filtering/resuming sessions.",
-                file_okay=False,
-                dir_okay=True,
-                resolve_path=True,
-            ),
-        ] = CWD,
-    ) -> None:
-        from yoke.cli.runtime import run_resume_cli
-
-        raise typer.Exit(
-            run_resume_cli(
-                build_cli_args(
-                    model=model,
-                    root=root,
-                ),
-                session_id,
-                all_sessions=all_sessions,
-            )
-        )
+    register_resume_command(app)
 
     @app.command("session-handoff")
     def session_handoff(

@@ -1,6 +1,6 @@
 [project]
 name = "yoke"
-version = "2.7.6"
+version = "2.7.7"
 description = "Native Python coding agent CLI and SDK."
 readme = "README.md"
 authors = [
@@ -32,6 +32,7 @@ yoke-mcp = "yoke.mcp_server.cli:main"
 
 [dependency-groups]
 dev = [
+    "playwright>=1.62.0",
     "pyright>=1.1",
     "pytest>=7.4",
     "ruff>=0.8",

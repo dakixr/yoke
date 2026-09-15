@@ -20,6 +20,7 @@ from yoke.agent.tools import (
     LocalTool,
     PythonExecTool,
     ReadTool,
+    WriteTool,
     WriteStdinTool,
     COMMAND_TOOL_NAME,
 )
@@ -70,6 +71,41 @@ def test_tools_expose_pydantic_definitions(tmp_path: Path) -> None:
     assert "old_text" not in definitions["edit"]["parameters"]["properties"]
     assert "occurrence" in definitions["edit"]["parameters"]["properties"]
     assert "replaceAll" in definitions["edit"]["parameters"]["properties"]
+
+
+def test_bound_write_tool_does_not_recreate_a_deleted_workspace(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    tool = WriteTool.bind(root=root).parse_arguments(
+        {"path": "nested/file.txt", "content": "no", "createDirs": True}
+    )
+    root.rmdir()
+    result = as_dict(tool.execute())
+    assert result["ok"] is False
+    assert "Workspace root does not exist" in str(result["error"])
+    assert not root.exists()
+
+
+def test_write_tool_does_not_recreate_root_deleted_after_path_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    tool = WriteTool.bind(root=root).parse_arguments(
+        {"path": "nested/file.txt", "content": "no", "createDirs": True}
+    )
+    original = WriteTool._resolve_path
+
+    def raced(self: WriteTool, raw_path_value: str, *, allow_missing: bool = False):
+        path = original(self, raw_path_value, allow_missing=allow_missing)
+        root.rmdir()
+        return path
+
+    monkeypatch.setattr(WriteTool, "_resolve_path", raced)
+    result = as_dict(tool.execute())
+    assert result["ok"] is False
+    assert "Workspace root does not exist" in str(result["error"])
+    assert not root.exists()
 
 
 def test_attach_image_keeps_base64_out_of_tool_result(tmp_path: Path) -> None:

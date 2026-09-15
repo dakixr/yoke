@@ -81,7 +81,7 @@ const { slashMenuScrollDelta } = await import("../src/yoke/web/assets/js/session
 const { formatTurnSummary } = await import("../src/yoke/web/assets/js/session/turn-summary.js");
 const { installKeybindings } = await import("../src/yoke/web/assets/js/lib/keyboard.js");
 const { visualSessionOrder } = await import("../src/yoke/web/assets/js/state/session-order.js");
-const { readDrafts, readSessionComposerDrafts } = await import("../src/yoke/web/assets/js/state/local-state.js");
+const { readDone, readDrafts, readSessionComposerDrafts } = await import("../src/yoke/web/assets/js/state/local-state.js");
 const {
   clearAllSessionComposerDrafts,
   clearSessionComposerDraft,
@@ -2946,6 +2946,19 @@ async function testDoneTracksCompletedTurnsOnly() {
   assert.equal(next.ui.doneUnreviewed[id], false, "reload must clear persisted Done for active work");
 }
 
+async function testManualUnreadMarksDoneAndPersists() {
+  const id = "manual-unread";
+  installSession(id);
+
+  controller.markSessionUnread(id);
+  assert.equal(store.getState().ui.doneUnreviewed[id], true);
+  assert.equal(readDone()[id], true);
+
+  controller.selectSession(id, { navigate: false });
+  assert.equal(store.getState().ui.doneUnreviewed[id], false);
+  assert.equal(readDone()[id], false);
+}
+
 async function testResyncReplaysCompletionForPreviouslyActiveSession() {
   const id = "resync-completed-background";
   const summary = sessionSummary(id);
@@ -3268,6 +3281,7 @@ const tests = [
   testHumanInputEventsKeepAttentionCountsInSync,
   testSettledTotalDoesNotDependOnLoadedPage,
   testDoneTracksCompletedTurnsOnly,
+  testManualUnreadMarksDoneAndPersists,
   testResyncReplaysCompletionForPreviouslyActiveSession,
   testBroadSameServerResyncKeepsCurrentLifecycleMutation,
   testSidebarStatusPrioritizesCurrentWork,

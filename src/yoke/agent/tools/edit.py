@@ -291,7 +291,7 @@ class EditTool(WorkspaceTool):
         json_normalized = False
         if path.suffix.lower() == ".json":
             content, json_normalized = self._normalize_json(content)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_parent_directory(path)
         path.write_text(content, encoding="utf-8")
         result = self._success(
             bytes_written=len(content.encode("utf-8")),

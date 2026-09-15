@@ -38,6 +38,7 @@ from yoke.cli.runtime import persist_session_state
 from yoke.cli.runtime import session_usage_metric_context
 from yoke.cli.runtime import start_session_title_generation
 from yoke.cli.runtime import sync_agent_skill_state_to_session
+from yoke.session.workspace import WorkspaceUnavailable, require_workspace
 
 
 def run_basic_interactive_cli(
@@ -167,6 +168,7 @@ def _start_basic_turn(
 
     def run_turn() -> None:
         try:
+            require_workspace(active_session.root, session_id=active_session.id)
             start_session_title_generation(
                 active_session,
                 agent,
@@ -188,7 +190,7 @@ def _start_basic_turn(
             if result.status == "stopped":
                 result_queue.put(TurnStopped(result=result))
                 return
-        except RUN_ERRORS as exc:
+        except (*RUN_ERRORS, WorkspaceUnavailable) as exc:
             result_queue.put(
                 TurnFailure(
                     error=exc,

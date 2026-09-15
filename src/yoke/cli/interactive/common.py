@@ -118,6 +118,7 @@ class TurnFailure:
     messages: list[Message] | None = None
     conversation_entries: list[ConversationEntry] | None = None
     agent: AgentRunner | None = None
+    rejected_prompt: tuple[PendingPrompt, int] | None = None
 
 
 @dataclass(slots=True)
@@ -147,6 +148,7 @@ class PendingPrompt:
         default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
     )
     paused: bool = False
+    attachments: list[dict[str, str]] = field(default_factory=list)
 
     def copy_for_queue(self) -> PendingPrompt:
         """Return a mutable copy preserving queue metadata."""
@@ -157,6 +159,7 @@ class PendingPrompt:
             id=self.id,
             created_at=self.created_at,
             paused=self.paused,
+            attachments=[dict(attachment) for attachment in self.attachments],
         )
 
 
@@ -234,6 +237,7 @@ class PromptCliState:
     turn_handoff_active: bool = False
     active_stop_request: Event | None = None
     active_user_message: Message | None = None
+    starting_prompt: tuple[PendingPrompt, int] | None = None
     continuation_entries: list[ConversationEntry] | None = None
     active_turn_id: int = 0
     abandoned_turn_ids: set[int] | None = None

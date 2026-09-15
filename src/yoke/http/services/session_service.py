@@ -11,7 +11,6 @@ from typing import Literal
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.session_tree import SessionTree
-from yoke.agent.session_tree.projections import ConversationProjection
 from yoke.http.errors import ApiError
 from yoke.http.models.common import CursorInfo
 from yoke.http.models.common import LocationInfo
@@ -54,11 +53,15 @@ from yoke.session import SessionRecord
 from yoke.cli.session.models import SessionIndexEntry
 from yoke.session import SessionStore
 from yoke.session import SessionTreeIndex
-from yoke.session import fork_session_title
 from yoke.session import new_unique_session_id
 from yoke.session.queue import load_prompt_queue_snapshot
 from yoke.session.queue import load_prompt_queue_snapshots
 from yoke.session.queue import PersistedPromptQueue
+from yoke.session.workspace import (
+    inspect_workspace,
+    require_workspace,
+    WorkspaceUnavailable,
+)
 
 
 SessionOrder = Literal[
@@ -155,9 +158,12 @@ class SessionService:
         return self.session_info(self._require_record(session_id))
 
     def create_session(self, request: SessionCreateRequest) -> SessionInfo:
-        root = str(Path(request.location.directory).resolve())
         session_id = request.id or new_unique_session_id(self.store.exists)
         if self.store.exists(session_id):
+            try:
+                root = str(Path(request.location.directory).expanduser().resolve())
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise WorkspaceUnavailable(request.location.directory) from exc
             existing = self.store.summary_record(session_id)
             if existing is None:
                 raise ApiError(404, "session_not_found", "Session was not found.")
@@ -175,6 +181,7 @@ class SessionService:
                 else self.session_info(existing)
             )
         selection = request.selection
+        root = str(require_workspace(request.location.directory))
         record = self.store.save(
             session_id,
             [],
@@ -253,94 +260,9 @@ class SessionService:
         )
 
     def fork_session(self, session_id: str, request: SessionForkRequest) -> SessionInfo:
-        source_summary = self.store.summary_record(session_id)
-        if source_summary is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
-        fork_id = request.id or new_unique_session_id(self.store.exists)
-        if self.store.exists(fork_id):
-            raise ApiError(409, "session_identity_conflict", "Fork id already exists.")
-        if request.from_entry_id is None:
-            forked = self.store.fork(
-                session_id,
-                new_session_id_value=fork_id,
-                title=request.title,
-                materialize_result=False,
-            )
-            self.message_index.clone_sidecar(session_id, fork_id)
-            self._publish(
-                forked,
-                "session.created",
-                {"sessionID": forked.id, "sourceSessionID": session_id},
-            )
-            fork_entry = self.store.index_entry(fork_id)
-            return (
-                self.session_info_from_index(fork_entry)
-                if fork_entry is not None
-                else self.session_info(forked)
-            )
+        from yoke.http.services.session_forks import fork_session
 
-        indexed_target = self.message_index.navigation_target(
-            session_id,
-            request.from_entry_id,
-        )
-        if indexed_target is not None:
-            forked = self.store.fork(
-                session_id,
-                new_session_id_value=fork_id,
-                title=request.title,
-                selected_leaf_id=indexed_target.id,
-                materialize_result=False,
-            )
-            self.message_index.clone_sidecar(session_id, fork_id)
-            self._publish(
-                forked,
-                "session.created",
-                {
-                    "sessionID": forked.id,
-                    "sourceSessionID": session_id,
-                    "fromEntryID": request.from_entry_id,
-                },
-            )
-            fork_entry = self.store.index_entry(fork_id)
-            return (
-                self.session_info_from_index(fork_entry)
-                if fork_entry is not None
-                else self.session_info(forked)
-            )
-
-        source = self._require_record(session_id)
-        tree = SessionTree.restore(source.conversation_entries, source.leaf_id)
-        try:
-            target = tree.ref_from_persisted_id(request.from_entry_id)
-        except ValueError as exc:
-            raise ApiError(404, "entry_not_found", "Tree entry was not found.") from exc
-        tree.checkout(target)
-        exported = tree.export_for_persistence()
-        transcript = tree.project(ConversationProjection()).transcript_messages
-        forked = self.store.save(
-            fork_id,
-            list(transcript),
-            conversation_entries=list(exported.entries),
-            leaf_id=exported.leaf_id,
-            active_skills=source.active_skills,
-            skill_dirs=source.skill_dirs,
-            root=source.root,
-            title=request.title or fork_session_title(source.title),
-            provider_name=source.provider_name,
-            model_id=source.model_id,
-            reasoning_effort=source.reasoning_effort,
-            context_window_tokens=source.context_window_tokens,
-        )
-        self._publish(
-            forked,
-            "session.created",
-            {
-                "sessionID": forked.id,
-                "sourceSessionID": session_id,
-                "fromEntryID": request.from_entry_id,
-            },
-        )
-        return self.session_info(forked)
+        return fork_session(self, session_id, request)
 
     def messages(
         self,
@@ -817,6 +739,7 @@ class SessionService:
             pinned=record.pinned,
             archived_at=record.archived_at,
             location=LocationInfo(directory=record.root or ""),
+            workspace=inspect_workspace(record.root),
             time=SessionTime(
                 created=record.created_at,
                 updated=record.updated_at,
@@ -850,6 +773,7 @@ class SessionService:
             pinned=entry.pinned,
             archived_at=entry.archived_at,
             location=LocationInfo(directory=entry.root or ""),
+            workspace=inspect_workspace(entry.root),
             time=SessionTime(
                 created=entry.created_at,
                 updated=entry.updated_at,

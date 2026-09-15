@@ -4,28 +4,39 @@ from __future__ import annotations
 
 from datetime import UTC
 from datetime import datetime
-import hashlib
-import json
 import secrets
 from typing import Literal
 
 from yoke.http.errors import ApiError
 from yoke.http.models.prompt import PromptAdmissionReceipt
 from yoke.http.models.prompt import PromptAdmissionRequest
-from yoke.http.models.prompt import PromptAttachment
 from yoke.http.models.prompt import PromptInput
 from yoke.http.models.prompt import QueueData
-from yoke.http.models.prompt import QueueItem
 from yoke.http.models.prompt import QueuePatchRequest
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.upload_service import UploadService
 from yoke.session import SessionStore
+from yoke.session.workspace import (
+    WorkspaceBusy,
+    inspect_workspace,
+    require_session_workspace,
+    workspace_lease,
+)
+from yoke.session.workspace_inputs import reconcile_workspace_inputs
 from yoke.session.admissions import AdmissionAttachment
 from yoke.session.admissions import AdmissionRecord
 from yoke.session.admissions import AdmissionStore
 from yoke.session.queue import PersistedPendingInput
-from yoke.session.queue import PersistedPromptQueue
 from yoke.session.queue import prompt_queue_transaction
+from yoke.http.services.prompt_queue import (
+    apply_operation as _apply_operation,
+    fingerprint as _fingerprint,
+    legacy_fingerprint as _legacy_fingerprint,
+    next_eligible_index as _next_eligible_index,
+    prompt_from_admission as _prompt_from_admission,
+    queue_data as _queue_data,
+    receipt as _receipt,
+)
 
 
 class PendingInputService:
@@ -55,6 +66,9 @@ class PendingInputService:
         fingerprint = _fingerprint(session_id, request.prompt, request.delivery)
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
             snapshot = self.admissions.load(session_id)
+            reconcile_workspace_inputs(
+                self.admissions, session_id, transaction, snapshot=snapshot
+            )
             existing = snapshot.records.get(input_id)
             if existing is not None:
                 legacy_match = (
@@ -76,6 +90,10 @@ class PendingInputService:
                     )
                 return _receipt(existing)
 
+            # Relocation uses this queue lock too. Load the binding inside it,
+            # after identity replay but before unarchiving, pinning or admission.
+            record = self._require_session(session_id)
+            require_session_workspace(record)
             if record.archived_at is not None:
                 record = self.store.set_archived(
                     session_id,
@@ -154,13 +172,26 @@ class PendingInputService:
             return _receipt(admission)
 
     def queue(self, session_id: str) -> QueueData:
-        self._require_session(session_id)
+        record = self._require_session(session_id)
+        if not inspect_workspace(record.root).available:
+            try:
+                with workspace_lease(self.store, session_id, exclusive=True):
+                    return self._queue_snapshot(session_id, orphaned=True)
+            except WorkspaceBusy:
+                pass  # A live worker may still own its promoted input.
+        return self._queue_snapshot(session_id)
+
+    def _queue_snapshot(self, session_id: str, *, orphaned: bool = False) -> QueueData:
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
+            reconcile_workspace_inputs(
+                self.admissions, session_id, transaction, orphaned=orphaned
+            )
             return _queue_data(transaction.snapshot)
 
     def patch_queue(self, session_id: str, request: QueuePatchRequest) -> QueueData:
         record = self._require_session(session_id)
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
+            reconcile_workspace_inputs(self.admissions, session_id, transaction)
             queue = transaction.snapshot
             if queue.revision != request.expected_revision:
                 raise ApiError(
@@ -250,6 +281,7 @@ class PendingInputService:
         """Atomically promote the next eligible input for one runtime drain."""
         record = self._require_session(session_id)
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
+            reconcile_workspace_inputs(self.admissions, session_id, transaction)
             queue = transaction.snapshot
             index = _next_eligible_index(queue.prompts, allow_queue=allow_queue)
             if index is None:
@@ -286,7 +318,8 @@ class PendingInputService:
     def unsettled_promoted(self, session_id: str) -> AdmissionRecord | None:
         """Return the oldest promoted input that has no terminal runtime outcome."""
         self._require_session(session_id)
-        with prompt_queue_transaction(self.store.directory, session_id):
+        with prompt_queue_transaction(self.store.directory, session_id) as transaction:
+            reconcile_workspace_inputs(self.admissions, session_id, transaction)
             admissions = self.admissions.load(session_id)
             promoted = [
                 item
@@ -370,168 +403,3 @@ class PendingInputService:
                 name=attachment.name,
                 mime=attachment.mime,
             )
-
-
-def _fingerprint(session_id: str, prompt: PromptInput, delivery: str) -> str:
-    raw = json.dumps(
-        {
-            "sessionID": session_id,
-            "prompt": prompt.model_dump(mode="json", by_alias=True),
-            "delivery": delivery,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _legacy_fingerprint(session_id: str, prompt: str, delivery: str) -> str:
-    raw = json.dumps(
-        {"sessionID": session_id, "prompt": prompt, "delivery": delivery},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _receipt(record: AdmissionRecord) -> PromptAdmissionReceipt:
-    return PromptAdmissionReceipt(
-        id=record.id,
-        session_id=record.session_id,
-        prompt=_prompt_from_admission(record),
-        delivery=record.delivery,
-        state=record.state,
-        admitted_seq=record.admitted_seq,
-        promoted_seq=record.promoted_seq,
-        time_created=record.time_created,
-    )
-
-
-def _prompt_from_admission(record: AdmissionRecord) -> PromptInput:
-    return PromptInput(
-        text=record.prompt,
-        attachments=[
-            PromptAttachment(uri=item.uri, name=item.name, mime=item.mime)
-            for item in record.attachments
-        ],
-    )
-
-
-def _queue_data(queue: PersistedPromptQueue) -> QueueData:
-    return QueueData(
-        revision=queue.revision,
-        items=[
-            QueueItem(
-                id=item.id,
-                prompt=PromptInput(
-                    text=item.prompt,
-                    attachments=[
-                        PromptAttachment.model_validate(value)
-                        for value in item.attachments
-                    ],
-                ),
-                delivery="steer" if item.kind == "steering" else "queue",
-                paused=item.paused,
-                created_at=item.created_at,
-            )
-            for item in queue.prompts
-        ],
-    )
-
-
-def _item_index(items: list[PersistedPendingInput], input_id: str) -> int:
-    for index, item in enumerate(items):
-        if item.id == input_id:
-            return index
-    raise ApiError(404, "queue_item_not_found", "Queue item was not found.")
-
-
-def _apply_operation(items, admissions, operation) -> None:  # noqa: ANN001
-    index = _item_index(items, operation.id)
-    item = items[index]
-    admission = admissions.get(item.id)
-    if admission is None or admission.state != "admitted":
-        raise ApiError(
-            409, "queue_item_not_editable", "Queue item is no longer editable."
-        )
-    if operation.op == "update":
-        item.prompt = operation.prompt.text
-        item.attachments = [
-            {
-                "uri": attachment.uri,
-                "name": attachment.name,
-                "mime": attachment.mime,
-            }
-            for attachment in operation.prompt.attachments
-        ]
-        admission.prompt = operation.prompt.text
-        admission.attachments = [
-            AdmissionAttachment(
-                uri=attachment.uri,
-                name=attachment.name,
-                mime=attachment.mime,
-            )
-            for attachment in operation.prompt.attachments
-        ]
-        admission.fingerprint = _fingerprint(
-            admission.session_id,
-            operation.prompt,
-            admission.delivery,
-        )
-        return
-    if operation.op == "setDelivery":
-        item.kind = "steering" if operation.delivery == "steer" else "queued"
-        admission.delivery = operation.delivery
-        admission.fingerprint = _fingerprint(
-            admission.session_id,
-            PromptInput(
-                text=admission.prompt,
-                attachments=[
-                    PromptAttachment(uri=item.uri, name=item.name, mime=item.mime)
-                    for item in admission.attachments
-                ],
-            ),
-            admission.delivery,
-        )
-        return
-    if operation.op == "setPaused":
-        item.paused = operation.paused
-        return
-    if operation.op == "remove":
-        items.pop(index)
-        admission.state = "removed"
-        return
-    if operation.op == "moveToStart":
-        items.pop(index)
-        items.insert(0, item)
-        return
-    if operation.op == "moveBefore":
-        target = _item_index(items, operation.before_id)
-        items.pop(index)
-        if index < target:
-            target -= 1
-        items.insert(target, item)
-        return
-    if operation.op == "moveAfter":
-        target = _item_index(items, operation.after_id)
-        items.pop(index)
-        if index < target:
-            target -= 1
-        items.insert(target + 1, item)
-        return
-    raise ApiError(400, "invalid_queue_operation", "Unsupported queue operation.")
-
-
-def _next_eligible_index(
-    items: list[PersistedPendingInput],
-    *,
-    allow_queue: bool,
-) -> int | None:
-    for index, item in enumerate(items):
-        if item.kind == "steering" and not item.paused:
-            return index
-    if allow_queue:
-        for index, item in enumerate(items):
-            if not item.paused:
-                return index
-    return None

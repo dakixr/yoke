@@ -222,7 +222,7 @@ turn.
 - Press `Ctrl+X` then `Q`, or run `/queue`, to open the fullscreen queue manager.
 - In the queue manager, you can edit, delete, promote, pause, reorder, or mark queued prompts as steering prompts. While the queue manager or its item editor is open, output from an active turn is deferred until you close the manager, so tool calls and response text cannot overwrite your edit.
 - Queued prompts and pending image attachments are persisted with the session, so they survive exit/resume. Steering prompts run before normal queued prompts, and active steering requests stop the current turn first.
-- Starting a queued prompt removes it from persisted queue state immediately, so consumed prompts cannot reappear after a crash or later resume.
+- After workspace validation, starting a queued prompt removes it from persisted queue state immediately, so consumed prompts cannot reappear after a crash or later resume. An unavailable workspace leaves pending prompts queued.
 - A `/skill` command queued with `Tab` stays inactive until it reaches its queue position. Yoke then activates the skill once and does not send the command to the model.
 - While slash-command completions are open, use `Up`/`Down` to move between
   options; `Left`/`Right` keep moving the cursor through the whole prompt,
@@ -378,8 +378,14 @@ yoke resume --all
 # Resume a specific session by id
 yoke resume 20240421-143022-abc1
 
+# Explicitly relocate that session to an existing workspace, keeping its ID
+yoke resume 20240421-143022-abc1 --relocate /new/path/to/project
+
 # Start directly from a forked session
 yoke --fork 20240421-143022-abc1
+
+# Fork into a different existing workspace without changing the source session
+yoke --root /new/path/to/project --fork 20240421-143022-abc1
 
 # Print portable context for another agent
 yoke session-handoff 20240421-143022-abc1
@@ -390,6 +396,51 @@ yoke session-handoff 20240421-143022-abc1 --tail 3
 # Include full persisted tool arguments and results
 yoke session-handoff 20240421-143022-abc1 --tool-detail full
 ```
+
+### Recovering a missing workspace
+
+A saved session's working directory must still exist and be a readable directory
+before Yoke constructs its provider or starts work. This applies to both
+`yoke resume ID` and an existing `yoke --session ID`. If the directory has moved
+or disappeared, Yoke reports the unavailable workspace and the explicit
+`yoke resume ID --relocate /new/path` recovery command. It does not create the
+missing directory, silently use the shell's current directory, or select a
+different project. `resume --root` filters the session selector; it is not
+permission to relocate an existing session.
+
+Existing sessions with no saved root also require explicit relocation. They do
+not inherit the invocation directory, even for older records. Fresh sessions
+still inherit the invocation working directory unless `--root` selects another.
+
+Restore the saved directory and resume normally, or use `--relocate` with an
+existing destination directory. Relocation updates the workspace of the same
+session ID. It does not move project files, create a new conversation, or erase
+the original transcript and branches. Relocating to the current valid directory
+is an idempotent no-op. Invalid destinations leave the saved session unchanged.
+
+Relocation requires exclusive access across CLI and HTTP processes. Stop active
+turns, operations and live child processes, then remove pending queue items,
+including paused work, before relocating. Work already using a session holds a
+shared workspace lease so another process cannot move its workspace underneath
+it. A missing directory must not consume a pending prompt merely because it
+became unavailable between admission and execution.
+
+If a directory disappears after a prompt has left the queue but before execution,
+the CLI saves that input paused in `/queue`, including its original identity and
+images. Direct submissions rejected at that point use the same durable queue
+recovery. Restoring the directory does not automatically run a paused input;
+explicitly unpause it or remove it before relocating.
+
+History and cached activated-skill instructions remain historical facts.
+The next runtime rediscovers workspace configuration, tools, available skills
+and MCP from the destination. It does not replace old skill instructions in the
+conversation with a newly found file of the same name. A fork with an explicit
+valid destination is a separate option when the source workspace is missing.
+It creates a new session ID and leaves the source untouched. A fork that would
+inherit an unavailable workspace fails before creating the new session.
+
+Saved history remains readable without a live workspace. Use the browser to
+inspect it, or print a portable handoff with `yoke session-handoff ID`.
 
 `yoke session-handoff <session-id>` reads the persisted active branch directly;
 it does not contact `yoke serve` or require HTTP authentication. The default

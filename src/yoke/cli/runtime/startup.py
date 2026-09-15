@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from rich.text import Text
 
@@ -16,21 +15,30 @@ from yoke.cli.runtime.base import AgentRunner
 from yoke.cli.runtime.base import ToolReportAgent
 from yoke.cli.runtime.lifetime import register_cli_owned_agent
 from yoke.cli.runtime.session import apply_session_defaults_to_args
+from yoke.cli.runtime.workspaces import retain_workspace_lease, session_workspace
 from yoke.cli.session import SessionStore
+from yoke.session.workspace import require_workspace
 
 
 def apply_startup_session_defaults(args: CLIArgs) -> None:
     """Read continuation defaults without creating or modifying a session."""
     source_id = args.fork_session_id or args.session
     if source_id is None:
+        args.root = str(require_workspace(args.root))
         return
-    record = SessionStore().load(source_id)
-    if record.created_at is None and not record.conversation_entries:
+    store = SessionStore()
+    retain_workspace_lease(store, source_id)
+    record = store.load(source_id)
+    if not store.exists(source_id):
         if args.fork_session_id is not None:
             raise ValueError(f"Session not found: {source_id}")
+        args.root = str(require_workspace(args.root))
         return
-    if args.fork_session_id is None and record.root:
-        args.root = str(Path(record.root).resolve())
+    args.root = str(
+        require_workspace(args.root)
+        if args.fork_session_id is not None
+        else session_workspace(record)
+    )
     # An explicit model selection includes its own optional thinking effort.
     # Do not replace it with either part of the saved selection.
     if args.model is None:

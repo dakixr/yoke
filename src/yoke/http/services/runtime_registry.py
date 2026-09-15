@@ -21,6 +21,7 @@ from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.session import SessionRecord
 from yoke.session import SessionStore
+from yoke.session.workspace import workspace_lease, require_session_workspace
 
 if TYPE_CHECKING:
     from yoke.agent.provider_selection import ProviderSessionState
@@ -74,6 +75,7 @@ class SessionRuntimeRegistry:
         )
         self._lock = Lock()
         self._runtimes: dict[str, SessionRuntime] = {}
+        self._workspace_tasks: set[asyncio.Task[SessionRecord]] = set()
         self._executor_closed = False
 
     def get_or_start(self, session_id: str) -> SessionRuntime:
@@ -166,6 +168,31 @@ class SessionRuntimeRegistry:
         """Schedule manual compaction for one session."""
         return await self.get_or_start(session_id).compact()
 
+    async def relocate(
+        self, session_id: str, directory: str, *, expected_root: str | None = None
+    ) -> SessionRecord:
+        """Rebind an idle session and invalidate its root-dependent resources."""
+        from yoke.http.services.session_runtime.workspace import (
+            relocate_runtime_workspace,
+        )
+
+        task = asyncio.create_task(
+            relocate_runtime_workspace(
+                self.get_or_start(session_id), directory, expected_root=expected_root
+            ),
+            name=f"yoke-http-relocate-{session_id}",
+        )
+        # The server owns the mutation once started. A disconnected browser must
+        # not release the runtime gate while the filesystem worker still writes.
+        self._workspace_tasks.add(task)
+        task.add_done_callback(self._workspace_task_done)
+        return await asyncio.shield(task)
+
+    def _workspace_task_done(self, task: asyncio.Task[SessionRecord]) -> None:
+        self._workspace_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()  # Observe failures even when the requester disconnected.
+
     async def regenerate_title(self, session_id: str) -> str:
         """Generate a fresh title from the persisted conversation."""
         loop = asyncio.get_running_loop()
@@ -189,9 +216,14 @@ class SessionRuntimeRegistry:
         return result.title
 
     def _regenerate_title_sync(self, session_id: str) -> _TitleGenerationResult:
+        with workspace_lease(self.store, session_id):
+            return self._regenerate_title_at_workspace(session_id)
+
+    def _regenerate_title_at_workspace(self, session_id: str) -> _TitleGenerationResult:
         record = self.read_cache.get(session_id).record
         if not record.messages:
             return _TitleGenerationResult(status="empty")
+        require_session_workspace(record)
         return _TitleGenerationResult(
             status="generated",
             title=generate_http_session_title(

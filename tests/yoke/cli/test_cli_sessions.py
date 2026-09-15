@@ -15,6 +15,7 @@ from yoke.agent.context import CompactionPolicy, ContextManager
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
+from yoke.agent.session_tree import InvalidCurrentError
 from yoke.agent.skills.models import ActiveSkill
 from yoke.ai.providers.base import Provider
 from yoke.cli.interactive import session_commands
@@ -80,6 +81,37 @@ def test_session_store_migrates_legacy_session_stream(tmp_path: Path) -> None:
         '{"type":"yoke_session","version":2}\n'
     )
     assert store.load("legacy-stream") == loaded
+
+
+def test_index_derived_session_record_does_not_project_unloaded_history(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "sessions")
+    saved = store.save(
+        "indexed-summary",
+        [Message.user("hello"), Message.assistant("world")],
+        root=tmp_path,
+    )
+
+    summary = store.list()[0]
+
+    assert summary.id == saved.id
+    assert summary.leaf_id == saved.leaf_id
+    assert summary.conversation_entries == []
+    assert summary.messages == []
+    assert [
+        message.plain_text_content for message in store.load(saved.id).messages
+    ] == [
+        "hello",
+        "world",
+    ]
+
+
+def test_full_session_record_still_rejects_a_leaf_without_history() -> None:
+    corrupt = SessionRecord(id="corrupt", leaf_id="missing")
+
+    with pytest.raises(InvalidCurrentError, match="empty session tree"):
+        _ = corrupt.messages
 
 
 def test_session_store_does_not_rewrite_unsupported_legacy_schema(

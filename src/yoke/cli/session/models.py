@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import PrivateAttr
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -32,10 +33,13 @@ class SessionRecord(BaseModel):
     reasoning_effort: str | None = None
     context_window_tokens: int | None = None
     context_usage: dict[str, object] | None = None
+    _history_loaded: bool = PrivateAttr(default=True)
 
     @property
     def messages(self) -> list[Message]:
         """Transcript messages in the session."""
+        if not self._history_loaded:
+            return []
         return transcript_messages_from_entries(
             self.conversation_entries,
             leaf_id=self.leaf_id,
@@ -68,7 +72,7 @@ class SessionIndexEntry(BaseModel):
 
     def to_record(self) -> SessionRecord:
         """Convert the index entry into a partial session record."""
-        return SessionRecord(
+        record = SessionRecord(
             id=self.id,
             root=self.root,
             title=self.title,
@@ -86,6 +90,8 @@ class SessionIndexEntry(BaseModel):
             active_skills=[skill.model_copy(deep=True) for skill in self.active_skills],
             skill_dirs=list(self.skill_dirs),
         )
+        record._history_loaded = False
+        return record
 
 
 class SessionIndex(BaseModel):

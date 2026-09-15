@@ -49,6 +49,8 @@ jobs:
 
       - name: Validate browser behavior
         run: |
+          node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs
+          node --experimental-default-type=module scripts/test_web_workspace_races.mjs
           node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
           node --experimental-default-type=module scripts/test_web_inspector_state.mjs
           node --experimental-default-type=module scripts/test_web_tool_activity.mjs
@@ -82,6 +84,8 @@ jobs:
       - name: Validate Windows session startup paths
         run: >-
           uv run pytest -q
+          tests/yoke/test_file_io.py
+          tests/yoke/test_session_workspace.py
           tests/yoke/bootstrap/test_plugin_loader.py
           tests/yoke/cli/test_session_index_cache.py
           tests/yoke/cli/test_prompt_queue_persistence.py

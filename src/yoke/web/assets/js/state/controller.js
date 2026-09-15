@@ -30,7 +30,9 @@ import {
   restoreSessionSummary,
 } from "./optimistic-projections.js";
 import { adjacentVisualSessionID } from "./session-order.js";
+import { patchSession } from "./session/metadata.js";
 import { store } from "./store.js";
+import { WorkspaceController } from "./workspace/controller.js";
 
 const MESSAGE_REFRESH_MS = 180;
 const SUMMARY_REFRESH_MS = 250;
@@ -55,6 +57,7 @@ export class AppController {
     this.queueMutationGeneration = new Map();
     this.queuePendingMutations = new Map();
     this.humanInputGeneration = new Map();
+    this.searchGeneration = 0;
     this.selectionGeneration = new Map();
     this.selectionMutationChains = new Map();
     this.pendingSelections = new Map();
@@ -75,6 +78,7 @@ export class AppController {
     this.lifecycle = new BrowserLifecycle(this);
     this.refreshTimers = this.lifecycle.scheduler.timers;
     this.refreshTimerTasks = this.lifecycle.scheduler.tasks;
+    this.workspace = new WorkspaceController(this);
   }
 
   get lifecycleEpoch() { return this.lifecycle?.epoch || 0; }
@@ -331,6 +335,9 @@ export class AppController {
   scheduleEventRefresh(event) {
     const id = event.sessionID;
     if (!id) return;
+    if (event.type === "session.workspace.relocated") {
+      this.workspace.relocated(event, SUMMARY_REFRESH_MS);
+    }
     if (["session.created", "session.updated"].includes(event.type)) {
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
       this.schedule("lists", SUMMARY_REFRESH_MS, () => this.refreshSessionLists());
@@ -372,6 +379,9 @@ export class AppController {
     }
     if (event.type === "session.runtime.failed") {
       this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
+      this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
+    }
+    if (event.type === "session.active.changed" && (event.data?.lastError || event.data?.state === "error")) {
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
     }
     if (event.type === "session.tree.updated") {
@@ -524,12 +534,14 @@ export class AppController {
   }
 
   async refreshSessionLists() {
+    const ownsWorkspace = this.workspace.guard();
     const lifecycleEpoch = this.lifecycleEpoch;
     const [current, archived] = await Promise.all([
       api.listSessions({ archived: false, limit: 100, order: "lastUserDesc" }),
       api.listSessions({ archived: true, limit: 30, order: "lastUserDesc" }),
     ]);
-    if (this.lifecycleEpoch !== lifecycleEpoch) return;
+    if (this.lifecycleEpoch !== lifecycleEpoch || !ownsWorkspace()) return;
+    for (const session of [...current.data, ...archived.data]) this.workspace.observe(session.id, session);
     store.setState((state) => {
       let next = installSessionLists(
         state,
@@ -562,6 +574,7 @@ export class AppController {
   }
 
   async loadMoreSessions(archived = false) {
+    const ownsWorkspace = this.workspace.guard();
     const state = store.getState();
     const cursor = archived ? state.archivedCursor : state.sessionsCursor;
     if (!cursor) return;
@@ -572,7 +585,8 @@ export class AppController {
       order: "lastUserDesc",
       cursor,
     });
-    if (!this.ownsLifecycle(lifecycleEpoch)) return;
+    if (!this.ownsLifecycle(lifecycleEpoch) || !ownsWorkspace()) return;
+    for (const session of response.data) this.workspace.observe(session.id, session);
     store.setState((current) => {
       const sessions = { ...current.sessions };
       for (const item of response.data) {
@@ -605,9 +619,11 @@ export class AppController {
   }
 
   async refreshSessionSummary(sessionID) {
+    const ownsWorkspace = this.workspace.guard();
     const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.getSession(sessionID);
-    if (this.lifecycleEpoch !== lifecycleEpoch) return;
+    if (this.lifecycleEpoch !== lifecycleEpoch || !ownsWorkspace()) return;
+    this.workspace.observe(sessionID, response.data);
     store.setState((state) => {
       let summary = response.data;
       const localLastUserMessage = state.sessions[sessionID]?.time?.lastUserMessage || null;
@@ -638,6 +654,7 @@ export class AppController {
   }
 
   async resolveVisibleLocations() {
+    const ownsWorkspace = this.workspace.guard();
     const lifecycleEpoch = this.lifecycleEpoch;
     const state = store.getState();
     const directories = [...new Set(
@@ -653,13 +670,13 @@ export class AppController {
         if (store.getState().locations[directory]) continue;
         try {
           const response = await api.resolveLocation(directory);
-          if (!this.ownsLifecycle(lifecycleEpoch)) return;
+          if (!this.ownsLifecycle(lifecycleEpoch) || !ownsWorkspace()) return;
           store.setState((current) => ({
             ...current,
             locations: { ...current.locations, [directory]: response.data },
           }));
         } catch {
-          if (!this.ownsLifecycle(lifecycleEpoch)) return;
+          if (!this.ownsLifecycle(lifecycleEpoch) || !ownsWorkspace()) return;
           store.setState((current) => ({
             ...current,
             locations: {
@@ -676,6 +693,8 @@ export class AppController {
   }
 
   async searchSessions(query) {
+    const generation = ++this.searchGeneration;
+    const ownsWorkspace = this.workspace.guard();
     const lifecycleEpoch = this.lifecycleEpoch;
     const value = query.trim();
     store.setState((state) => ({ ...state, ui: { ...state.ui, search: query, searching: Boolean(value) } }));
@@ -683,8 +702,37 @@ export class AppController {
       store.setState((state) => ({ ...state, ui: { ...state.ui, searchResults: [], searching: false } }));
       return;
     }
-    const response = await api.listSessions({ search: value, limit: 100, order: "lastUserDesc" });
-    if (!this.ownsLifecycle(lifecycleEpoch)) return;
+    let response;
+    try {
+      response = await api.listSessions({ search: value, limit: 100, order: "lastUserDesc" });
+    } catch (error) {
+      if (
+        this.ownsLifecycle(lifecycleEpoch)
+        && generation === this.searchGeneration
+        && store.getState().ui.search === query
+      ) {
+        store.setState((state) => ({ ...state, ui: { ...state.ui, searching: false } }));
+      }
+      throw error;
+    }
+    if (!this.ownsLifecycle(lifecycleEpoch) || generation !== this.searchGeneration) return;
+    if (!ownsWorkspace()) {
+      // A relocation or typed workspace failure retired the binding snapshot
+      // used by this request. Retry the still-current query instead of leaving
+      // the sidebar in a permanent loading state.
+      if (store.getState().ui.search === query) {
+        void this.searchSessions(query).catch(() => {});
+      }
+      return;
+    }
+    for (const session of response.data) this.workspace.observe(session.id, session);
+    if (!this.ownsLifecycle(lifecycleEpoch) || generation !== this.searchGeneration) return;
+    if (!ownsWorkspace()) {
+      if (store.getState().ui.search === query) {
+        void this.searchSessions(query).catch(() => {});
+      }
+      return;
+    }
     store.setState((state) => {
       const sessions = { ...state.sessions };
       for (const item of response.data) {
@@ -764,7 +812,17 @@ export class AppController {
     if (shouldNavigate) navigate(sessionPath(sessionID));
   }
 
+  markSessionUnread(sessionID) {
+    const done = { ...store.getState().ui.doneUnreviewed, [sessionID]: true };
+    writeDone(done);
+    store.setState((state) => ({
+      ...state,
+      ui: { ...state.ui, doneUnreviewed: done },
+    }));
+  }
+
   async loadSession(sessionID, { force = false } = {}) {
+    const ownsWorkspace = this.workspace.guard();
     const existing = store.getState().sessionData[sessionID];
     if (existing?.loading) return;
     if (existing?.loaded && existing?.messageSnapshotLoaded && !force) return;
@@ -808,7 +866,7 @@ export class AppController {
         const activeTurnID = state.active[sessionID]?.turnID ?? null;
         const mergedSession = mergeServerSessionSummary(
           state.sessions[sessionID],
-          session.data,
+          ownsWorkspace() ? session.data : state.sessions[sessionID] || session.data,
           this.queueServerRevisions,
         );
         return {
@@ -1052,60 +1110,23 @@ export class AppController {
   }
 
   async refreshTools(sessionID) {
-    const session = store.getState().sessions[sessionID];
-    if (!session) return;
-    const request = this.inspectorState.nextRequest(sessionID, "config:tools");
-    const selection = this.inspectorState.selectedRequest(sessionID, "tools");
-    const response = await api.tools({ directory: session.location.directory, sessionID });
-    if (
-      !this.inspectorState.ownsRequest(request) ||
-      !this.inspectorState.ownsSelection(sessionID, "tools", selection)
-    ) return;
-    this.setSessionField(sessionID, "tools", response.data);
+    return this.workspace.refreshTools(sessionID);
   }
 
   async refreshSkills(sessionID) {
-    const request = this.inspectorState.nextRequest(sessionID, "config:skills");
-    const selection = this.inspectorState.selectedRequest(sessionID, "skills");
-    const response = await api.sessionSkills(sessionID);
-    if (
-      !this.inspectorState.ownsRequest(request) ||
-      !this.inspectorState.ownsSelection(sessionID, "skills", selection)
-    ) return;
-    this.setSessionField(sessionID, "skills", response.data);
+    return this.workspace.refreshSkills(sessionID);
   }
 
   async refreshMcp(sessionID) {
-    const request = this.inspectorState.nextRequest(sessionID, "config:mcp");
-    const selection = this.inspectorState.selectedRequest(sessionID, "mcp");
-    const response = await api.sessionMcp(sessionID, true);
-    if (
-      !this.inspectorState.ownsRequest(request) ||
-      !this.inspectorState.ownsSelection(sessionID, "mcp", selection)
-    ) return;
-    this.setSessionField(sessionID, "mcp", response.data);
+    return this.workspace.refreshMcp(sessionID);
   }
 
   async loadModels(directory, provider = null, search = null) {
-    const lifecycleEpoch = this.lifecycleEpoch;
-    const response = await api.models({ directory, provider, search });
-    if (!this.ownsLifecycle(lifecycleEpoch)) return [];
-    store.setState((state) => ({
-      ...state,
-      models: { ...(state.models || {}), [`${directory || ""}:${provider || ""}:${search || ""}`]: response.data },
-    }));
-    return response.data;
+    return this.workspace.loadModels(directory, provider, search);
   }
 
   async loadProviders(directory = null) {
-    const lifecycleEpoch = this.lifecycleEpoch;
-    const response = await api.providers(directory);
-    if (!this.ownsLifecycle(lifecycleEpoch)) return [];
-    store.setState((state) => ({
-      ...state,
-      providerCatalogs: { ...(state.providerCatalogs || {}), [directory || ""]: response.data },
-    }));
-    return response.data;
+    return this.workspace.loadProviders(directory);
   }
 
   setSessionField(sessionID, key, value) {
@@ -1436,6 +1457,7 @@ export class AppController {
 
   async submitPrompt(sessionID, { text, attachments = [], delivery = "steer" }) {
     if (!text.trim() && !attachments.length) return;
+    this.workspace.require(sessionID);
     const lifecycleEpoch = this.lifecycleEpoch;
     const before = store.getState();
     const previousSession = before.sessions[sessionID] || null;
@@ -1559,6 +1581,7 @@ export class AppController {
         }
         return next;
       });
+      this.workspace.handleError(error);
       await this.refreshQueue(sessionID).catch(() => {});
       throw error;
     }
@@ -1608,6 +1631,7 @@ export class AppController {
   }
 
   async compact(sessionID) {
+    this.workspace.require(sessionID);
     const lifecycleEpoch = this.lifecycleEpoch;
     const previous = store.getState().active[sessionID] || null;
     const startedAt = new Date().toISOString();
@@ -1715,76 +1739,11 @@ export class AppController {
   }
 
   async patchSession(sessionID, patch) {
-    const before = store.getState();
-    const previous = before.sessions[sessionID] || null;
-    const activeIndex = before.sessionOrder.indexOf(sessionID);
-    const archivedIndex = before.archivedOrder.indexOf(sessionID);
-    const generation = (this.optimisticSessionGeneration.get(sessionID) || 0) + 1;
-    const lifecycleEpoch = this.lifecycleEpoch;
-    this.optimisticSessionGeneration.set(sessionID, generation);
-    const mutation = { generation, patch, previous, activeIndex, archivedIndex, lifecycleEpoch };
-    this.sessionPendingMutations.set(
-      sessionID,
-      [...(this.sessionPendingMutations.get(sessionID) || []), mutation],
-    );
-    if (previous) {
-      const optimistic = optimisticSessionPatch(previous, patch);
-      store.setState((state) => installSessionSummary(state, optimistic));
-    }
-
-    const prior = this.sessionMutationChains.get(sessionID) || Promise.resolve();
-    const task = prior.catch(() => {}).then(async () => {
-      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-      try {
-        const response = await api.patchSession(sessionID, patch);
-        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-        const remaining = (this.sessionPendingMutations.get(sessionID) || [])
-          .filter((item) => item.generation !== generation);
-        if (remaining.length) this.sessionPendingMutations.set(sessionID, remaining);
-        else this.sessionPendingMutations.delete(sessionID);
-        let visible = response.data;
-        for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
-        const pendingSelection = this.pendingSelections.get(sessionID);
-        if (pendingSelection) visible = { ...visible, selection: pendingSelection };
-        store.setState((state) => installSessionSummary(state, visible));
-        return response.data;
-      } catch (error) {
-        if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-        const remaining = (this.sessionPendingMutations.get(sessionID) || [])
-          .filter((item) => item.generation !== generation);
-        if (remaining.length) this.sessionPendingMutations.set(sessionID, remaining);
-        else this.sessionPendingMutations.delete(sessionID);
-        try {
-          const response = await api.getSession(sessionID);
-          if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-          let visible = response.data;
-          for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
-          const pendingSelection = this.pendingSelections.get(sessionID);
-          if (pendingSelection) visible = { ...visible, selection: pendingSelection };
-          store.setState((state) => installSessionSummary(state, visible));
-        } catch {
-          if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-          if (previous) {
-            let visible = previous;
-            for (const item of remaining) visible = optimisticSessionPatch(visible, item.patch);
-            store.setState((state) => remaining.length
-              ? installSessionSummary(state, visible)
-              : restoreSessionSummary(state, visible, activeIndex, archivedIndex));
-          }
-        }
-        throw error;
-      }
-    });
-    const chained = task.finally(() => {
-      if (this.sessionMutationChains.get(sessionID) === chained) {
-        this.sessionMutationChains.delete(sessionID);
-      }
-    });
-    this.sessionMutationChains.set(sessionID, chained);
-    return chained;
+    return patchSession(this, sessionID, patch);
   }
 
   async regenerateTitle(sessionID) {
+    this.workspace.require(sessionID);
     const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.regenerateTitle(sessionID);
     if (!this.ownsLifecycle(lifecycleEpoch)) return null;
@@ -1801,11 +1760,11 @@ export class AppController {
     return response.data;
   }
 
-  async forkSession(sessionID) {
+  async forkSession(sessionID, location = null) {
     const lifecycleEpoch = this.lifecycleEpoch;
     this.pendingNotice("Forking session…");
     try {
-      const response = await api.forkSession(sessionID, {});
+      const response = await api.forkSession(sessionID, location ? { location } : {});
       if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       store.setState((state) => installSessionSummary(state, response.data, { moveToFront: true }));
       this.selectSession(response.data.id);
@@ -1927,6 +1886,7 @@ export class AppController {
   }
 
   async activateSkill(sessionID, skillName, prompt = null) {
+    this.workspace.require(sessionID);
     const lifecycleEpoch = this.lifecycleEpoch;
     this.inspectorState.invalidateRequest(sessionID, "config:skills");
     const skills = store.getState().sessionData[sessionID]?.skills;
@@ -2009,6 +1969,7 @@ export class AppController {
   }
 
   async setSelection(sessionID, provider, model, reasoningEffort) {
+    this.workspace.require(sessionID);
     const previous = store.getState().sessions[sessionID]?.selection || null;
     const previousContextUsage = store.getState().sessionData[sessionID]?.contextUsage || null;
     const generation = (this.selectionGeneration.get(sessionID) || 0) + 1;

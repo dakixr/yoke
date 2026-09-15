@@ -636,6 +636,23 @@ export interface paths {
         patch: operations["patchSessionQueue"];
         trace?: never;
     };
+    "/api/v1/session/{session_id}/relocate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Relocate Session */
+        post: operations["relocateSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/session/{session_id}/selection": {
         parameters: {
             query?: never;
@@ -916,6 +933,8 @@ export interface components {
         ActiveRuntimeInfo: {
             /** Activity */
             activity?: string | null;
+            /** Lasterror */
+            lastError?: string | null;
             /** Startedat */
             startedAt?: string | null;
             /**
@@ -1871,6 +1890,7 @@ export interface components {
             fromEntryID?: string | null;
             /** Id */
             id?: string | null;
+            location?: components["schemas"]["LocationInfo"] | null;
             /** Title */
             title?: string | null;
         };
@@ -1896,6 +1916,7 @@ export interface components {
             /** Title */
             title?: string | null;
             tree: components["schemas"]["SessionTreeSummary"];
+            workspace: components["schemas"]["WorkspaceStatus"];
         };
         /** SessionListResponse */
         SessionListResponse: {
@@ -1941,6 +1962,13 @@ export interface components {
              * @default 0
              */
             total: number;
+        };
+        /** SessionRelocateRequest */
+        SessionRelocateRequest: {
+            /** Directory */
+            directory: string;
+            /** Expecteddirectory */
+            expectedDirectory?: string | null;
         };
         /** SessionResponse */
         SessionResponse: {
@@ -2443,6 +2471,19 @@ export interface components {
         /** WaitResponse */
         WaitResponse: {
             data: components["schemas"]["ActiveRuntimeInfo"];
+        };
+        /**
+         * WorkspaceStatus
+         * @description A fresh filesystem observation, never persisted as session identity.
+         */
+        WorkspaceStatus: {
+            /** Message */
+            message?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "missing" | "not_directory" | "unreadable" | "unconfigured" | "invalid";
         };
     };
     responses: never;
@@ -3696,6 +3737,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueueResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    relocateSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionRelocateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
                 };
             };
             /** @description Validation Error */

@@ -39,6 +39,7 @@ from yoke.cli.runtime.selector.ui import select_list_item_interactive
 from yoke.cli.runtime.tree import get_session_tree
 from yoke.cli.runtime.tree import navigate_session_tree
 from yoke.cli.runtime.tree import set_entry_label
+from yoke.session.workspace import WorkspaceUnavailable, require_workspace
 
 
 def handle_slash_command(  # noqa: C901
@@ -64,6 +65,12 @@ def handle_slash_command(  # noqa: C901
     from yoke.cli.runtime import create_active_session
 
     normalized = command.strip().lower()
+    if normalized in {"/fork", "/new"}:
+        try:
+            require_workspace(active_session.root, session_id=active_session.id)
+        except WorkspaceUnavailable as exc:
+            print_scrollback_notice(console, str(exc))
+            return True, messages, active_session
     if normalized == "/ps":
         if on_process_inspector is None:
             print_process_table(console, agent)

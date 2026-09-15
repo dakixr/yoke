@@ -65,7 +65,7 @@ class PythonExecTool(ManagedCommandTool):
             result = self._manager().exec_argv(
                 argv=[python_executable, "-u", "-c", self.code],
                 display_command=f"{python_executable} -u -c <code>",
-                cwd=self.root,
+                cwd=self._require_live_root(),
                 env=env,
                 yield_time_ms=self.yield_time_ms,
                 timeout_seconds=self.timeout,

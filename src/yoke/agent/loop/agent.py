@@ -134,38 +134,54 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
     ) -> RuntimeAgent:
         """Create an independent runtime copy of this agent."""
         provider = fork_provider(self.provider) if isolate_provider else self.provider
-        context_manager = deepcopy(self.context_manager)
-        context_manager.instructions = [
-            message.model_copy(deep=True) for message in self._base_instructions
-        ]
-        context_manager.system_prompt = (
-            context_manager.instructions[0].plain_text_content
-            if context_manager.instructions
-            else None
-        )
-        forked = RuntimeAgent(
-            provider=provider,
-            tools=[copy_tool_for_fork(tool) for tool in self.tools.values()],
-            tool_factory=self._tool_factory,
-            tool_root=self._tool_root,
-            tool_home=self._tool_home,
-            command_process_manager=self.command_process_manager,
-            context_manager=context_manager,
-            tool_execution=self.tool_execution,
-            before_tool_call=self.before_tool_call,
-            after_tool_call=self.after_tool_call,
-            skill_registry=deepcopy(self.skill_registry),
-            available_skills=deepcopy(self.available_skills),
-            active_skills=deepcopy(self.active_skills),
-        )
-        if include_state and self._context is not None:
-            forked._context = self._context.model_copy(deep=True)
-            forked._sync_context_instructions(forked._context)
-        forked._seen_command_completion_events.update(
-            self._seen_command_completion_events
-        )
-        forked._seen_dropped_completion_events = self._seen_dropped_completion_events
-        return forked
+        forked: RuntimeAgent | None = None
+        try:
+            context_manager = deepcopy(self.context_manager)
+            context_manager.instructions = [
+                message.model_copy(deep=True) for message in self._base_instructions
+            ]
+            context_manager.system_prompt = (
+                context_manager.instructions[0].plain_text_content
+                if context_manager.instructions
+                else None
+            )
+            forked = RuntimeAgent(
+                provider=provider,
+                tools=[copy_tool_for_fork(tool) for tool in self.tools.values()],
+                tool_factory=self._tool_factory,
+                tool_root=self._tool_root,
+                tool_home=self._tool_home,
+                command_process_manager=self.command_process_manager,
+                context_manager=context_manager,
+                tool_execution=self.tool_execution,
+                before_tool_call=self.before_tool_call,
+                after_tool_call=self.after_tool_call,
+                skill_registry=deepcopy(self.skill_registry),
+                available_skills=deepcopy(self.available_skills),
+                active_skills=deepcopy(self.active_skills),
+            )
+            if include_state and self._context is not None:
+                forked._context = self._context.model_copy(deep=True)
+                forked._sync_context_instructions(forked._context)
+            forked._seen_command_completion_events.update(
+                self._seen_command_completion_events
+            )
+            forked._seen_dropped_completion_events = (
+                self._seen_dropped_completion_events
+            )
+            return forked
+        except BaseException:
+            # A directory can disappear during fork construction. Until return,
+            # the caller cannot own or retire this fork and its isolated provider.
+            if forked is not None:
+                with suppress(Exception):
+                    forked.close()
+            if provider is not self.provider:
+                close_provider = getattr(provider, "close", None)
+                if callable(close_provider):
+                    with suppress(Exception):
+                        close_provider()
+            raise
 
     @property
     def has_state(self) -> bool:

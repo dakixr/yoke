@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -16,7 +18,10 @@ def test_file_lock_closes_descriptor_and_preserves_error(
     acquired: list[int] = []
     released: list[int] = []
 
-    def acquire(descriptor: int) -> None:
+    def acquire(
+        descriptor: int, *, shared: bool = False, blocking: bool = True
+    ) -> None:
+        assert not shared and blocking
         acquired.append(descriptor)
         if failure_stage == "acquire":
             raise failure
@@ -39,3 +44,33 @@ def test_file_lock_closes_descriptor_and_preserves_error(
     assert released == ([] if failure_stage == "acquire" else acquired)
     with pytest.raises(OSError):
         os.fstat(acquired[0])
+
+
+def test_windows_reader_group_excludes_writers_until_last_cross_thread_reader(tmp_path):
+    """Exercise the Windows ownership algorithm with the host's native lock."""
+    path = tmp_path / "readers.lock"
+    entered, release = Event(), Event()
+
+    def second_reader():
+        with _file_io._windows_shared_file_lock(path, blocking=False):
+            entered.set()
+            assert release.wait(3)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            with _file_io._windows_shared_file_lock(path, blocking=False):
+                future = executor.submit(second_reader)
+                assert entered.wait(2)
+                with pytest.raises(OSError):
+                    with _file_io.file_lock(path, blocking=False):
+                        pytest.fail("writer entered while readers held the lease")
+            with pytest.raises(OSError):
+                with _file_io.file_lock(path, blocking=False):
+                    pytest.fail(
+                        "first reader incorrectly released the second reader's lease"
+                    )
+        finally:
+            release.set()
+        future.result(timeout=3)
+    with _file_io.file_lock(path, blocking=False):
+        pass

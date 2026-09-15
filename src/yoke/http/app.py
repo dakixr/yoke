@@ -19,6 +19,8 @@ from yoke.http.errors import ApiError
 from yoke.http.errors import api_error_handler
 from yoke.http.errors import error_response
 from yoke.http.errors import validation_error_handler
+from yoke.http.errors import workspace_error_handler
+from yoke.session.workspace import WorkspaceError
 from yoke.http.routes import health
 from yoke.http.routes import catalog
 from yoke.http.routes import command
@@ -35,6 +37,7 @@ from yoke.http.routes import skill
 from yoke.http.routes import tool_trace
 from yoke.http.routes import tool
 from yoke.http.routes import upload
+from yoke.http.routes import workspace
 from yoke.http.services.location_service import LocationService
 from yoke.http.services.mcp_service import McpService
 from yoke.http.services.catalog_service import CatalogService
@@ -167,6 +170,10 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     async def handle_api_error(request: Request, exc: ApiError):  # noqa: ANN202
         return await api_error_handler(request, exc)
 
+    @app.exception_handler(WorkspaceError)
+    async def handle_workspace_error(request: Request, exc: WorkspaceError):  # noqa: ANN202
+        return await workspace_error_handler(request, exc)
+
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(  # noqa: ANN202
         request: Request,
@@ -204,6 +211,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.include_router(tool_trace.router, prefix="/api/v1")
     app.include_router(tool.router, prefix="/api/v1")
     app.include_router(upload.router, prefix="/api/v1")
+    app.include_router(workspace.router, prefix="/api/v1")
     install_web_routes(app)
     return app
 

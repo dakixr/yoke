@@ -26,6 +26,11 @@ from yoke.cli.bootstrap.config import resolve_agent_config
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.config.providers import build_provider_from_args
 from yoke.cli.config.providers import prepare_provider_args
+from yoke.session.workspace import (
+    require_workspace,
+    inspect_workspace,
+    WorkspaceUnavailable,
+)
 
 if TYPE_CHECKING:
     from yoke.cli.bootstrap.types import ResolvedAgentConfig
@@ -77,6 +82,7 @@ def build_cli_agent_from_args(
     args: CLIArgs, *, recover_model: bool = False
 ) -> BuiltCLIAgent:
     """Build a CLI runtime, optionally recovering an inherited stale model."""
+    require_workspace(args.root, session_id=args.session)
     provider, warning = _build_startup_provider(args, recover_model=recover_model)
     try:
         skill_registry = _load_cli_skill_registry(Path(args.root))
@@ -89,13 +95,19 @@ def build_cli_agent_from_args(
         )
         built.startup_warning = warning
         return built
-    except BaseException:
+    except BaseException as exc:
         close = getattr(provider, "close", None)
         if callable(close):
             try:
                 close()
             except BaseException:
                 pass
+        # The directory may disappear between preflight and binding tools.
+        status = inspect_workspace(args.root)
+        if isinstance(exc, (OSError, ValueError)) and not status.available:
+            raise WorkspaceUnavailable(
+                args.root, session_id=args.session, status=status
+            ) from exc
         raise
 
 

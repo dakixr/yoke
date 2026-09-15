@@ -39,6 +39,7 @@ export class YokeApi {
   }
 
   async request(path, options = {}) {
+    const reportError = this.captureError?.(path);
     const response = await fetch(path, {
       ...options,
       headers: this.headers(options.headers || {}),
@@ -47,13 +48,15 @@ export class YokeApi {
       let payload = null;
       try { payload = await response.json(); } catch { /* response may be plain text */ }
       const error = payload?.error || {};
-      throw new ApiError(
+      const failure = new ApiError(
         response.status,
         error.code || "http_error",
         error.message || `${response.status} ${response.statusText}`,
         error.details || null,
         error.requestID || response.headers.get("x-request-id"),
       );
+      reportError?.(failure);
+      throw failure;
     }
     if (response.status === 204) return null;
     const type = response.headers.get("content-type") || "";
@@ -93,6 +96,9 @@ export class YokeApi {
   patchSession(id, body) { return this.json(`/api/v1/session/${encodeURIComponent(id)}`, "PATCH", body); }
   regenerateTitle(id) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/title/regenerate`, "POST", {}); }
   forkSession(id, body = {}) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/fork`, "POST", body); }
+  relocateSession(id, directory, expectedDirectory) {
+    return this.json(`/api/v1/session/${encodeURIComponent(id)}/relocate`, "POST", { directory, expectedDirectory });
+  }
   selectModel(id, body) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/selection`, "POST", body); }
   compact(id) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/compact`, "POST", { reason: "manual" }); }
   messages(id, { limit = 100, order = "desc", cursor } = {}) {

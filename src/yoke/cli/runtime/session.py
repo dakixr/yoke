@@ -29,7 +29,10 @@ from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
 from yoke.cli.session import SessionRecord
 from yoke.cli.session import SessionStore
 from yoke.cli.session import new_session_id
+from yoke.cli.session.utils import new_unique_session_id
 from yoke.cli.session.metadata import update_loaded_provider_state
+from yoke.cli.runtime.workspaces import retain_workspace_lease, session_workspace
+from yoke.session.workspace import require_workspace
 from yoke.cli.runtime.title import (
     ensure_local_session_title as ensure_local_session_title,
 )
@@ -48,7 +51,13 @@ def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
     store = SessionStore()
     has_explicit_session = args.session is not None
     if args.fork_session_id is not None:
-        record = store.fork(args.fork_session_id, root=root.resolve())
+        root = require_workspace(root)
+        retain_workspace_lease(store, args.fork_session_id)
+        fork_id = new_unique_session_id(store.exists)
+        retain_workspace_lease(store, fork_id)
+        record = store.fork(
+            args.fork_session_id, root=root, new_session_id_value=fork_id
+        )
         return ActiveSession(
             id=record.id,
             root=Path(record.root).resolve() if record.root else root.resolve(),
@@ -57,8 +66,13 @@ def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
             title=record.title,
         )
     session_id = args.session or new_session_id()
+    retain_workspace_lease(store, session_id)
     record = store.load(session_id)
-    resolved_root = root.resolve()
+    resolved_root = (
+        session_workspace(record)
+        if store.exists(session_id)
+        else require_workspace(root)
+    )
     if record.created_at is None and has_explicit_session:
         record = store.save(
             session_id,
@@ -72,7 +86,7 @@ def create_active_session(args: CLIArgs, *, root: Path) -> ActiveSession:
         )
     return ActiveSession(
         id=session_id,
-        root=Path(record.root).resolve() if record.root else resolved_root,
+        root=resolved_root,
         store=store,
         record=record,
         title=record.title,
@@ -87,9 +101,13 @@ def fork_active_session(
     title: str | None = None,
 ) -> ActiveSession:
     """Persist and switch to a fork of the current active session."""
+    require_workspace(active_session.root, session_id=active_session.id)
     persist_session_state(active_session, agent, messages)
+    fork_id = new_unique_session_id(active_session.store.exists)
+    retain_workspace_lease(active_session.store, fork_id)
     forked_record = active_session.store.fork(
         active_session.id,
+        new_session_id_value=fork_id,
         root=active_session.root,
         title=title,
     )

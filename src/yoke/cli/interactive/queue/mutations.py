@@ -23,6 +23,7 @@ from yoke.cli.interactive.queue.persistence import PromptQueueRevisionConflict
 from yoke.cli.interactive.queue.persistence import commit_prompt_queue
 from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
 from yoke.cli.runtime import ActiveSession
+from yoke.session.workspace import WorkspaceUnavailable, require_workspace
 
 QUEUE_MANAGER_CONFLICT_NOTICE = (
     "Queue changed while the manager was open. Reloaded the latest queue; "
@@ -205,6 +206,11 @@ def dequeue_prompt_with_position(
                     _install_loaded(state, active_session, loaded)
                     continue
                 return None
+            try:
+                require_workspace(active_session.root, session_id=active_session.id)
+            except WorkspaceUnavailable as exc:
+                state.status_message = str(exc)
+                return None
             selected = state.pending_prompts[index]
             replacement = [
                 prompt
@@ -223,6 +229,7 @@ def dequeue_prompt_with_position(
                 continue
             state.pending_prompts = replacement
             state.queue_revision = revision
+            state.starting_prompt = (selected, index)
             return DequeuedPrompt(selected, index)
 
 
@@ -235,6 +242,11 @@ def restore_dequeued_prompt(
 ) -> None:
     """Restore an unaccepted dequeued item at its authoritative position."""
     with state_lock:
+        if (
+            state.starting_prompt is not None
+            and state.starting_prompt[0].id == dequeued.prompt.id
+        ):
+            state.starting_prompt = None
         _ensure_session(state, active_session)
         while True:
             matching = next(

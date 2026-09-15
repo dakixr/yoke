@@ -10,68 +10,23 @@ import logging
 from threading import Lock
 
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.loop.forking import promote_runtime_fork
+from yoke.session.workspace import promote_session_turn as promote_runtime_fork
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tools.command_process_manager import CommandProcessManager
 from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import McpSessionServerPolicy
 from yoke.http.services.session_runtime.reaper import retire_resource
+from yoke.http.services.session_runtime.cleanup import AgentCleanup as _AgentCleanup
+from yoke.http.services.session_runtime.cleanup import RetiredProvider
+from yoke.http.services.session_runtime.workspace import ProcessWorkspaceLease
+from yoke.http.services.session_runtime.workspace import synchronize_resource_workspace
 from yoke.session import SessionRecord
+from yoke.session import SessionStore
+from yoke.session.workspace import require_session_workspace
 
 
 LOGGER = logging.getLogger(__name__)
 type SessionAgentFactory = Callable[[SessionRecord], object]
-
-
-class _AgentCleanup:
-    """Mutable state for one single-flight agent and provider cleanup."""
-
-    def __init__(self, owner: SessionRuntimeResources, agent: object) -> None:
-        self.owner = owner
-        self.agent = agent
-        self.agent_terminal = False
-        self.provider: object | None = None
-        self.failures = 0
-        self.completion: Future[None] | None = None
-
-    def attempt(self) -> bool:
-        """Attempt agent and provider cleanup on the owned retirement thread."""
-        if not self.agent_terminal:
-            close = getattr(self.agent, "close", None)
-            try:
-                if callable(close):
-                    close()
-                self.agent_terminal = True
-            except Exception:  # noqa: BLE001
-                self.failures += 1
-                terminal = isinstance(self.agent, RuntimeAgent) and self.agent.closed
-                if self.failures == 1:
-                    LOGGER.exception(
-                        "Failed to close HTTP agent for session %s.",
-                        self.owner.session_id,
-                    )
-                if not terminal:
-                    return False
-                self.agent_terminal = True
-        if self.provider is None:
-            self.provider = self.owner._remove_terminal_agent(self.agent)
-        if self.provider is not None:
-            close_provider = getattr(self.provider, "close", None)
-            try:
-                if callable(close_provider):
-                    close_provider()
-            except Exception:  # noqa: BLE001
-                self.failures += 1
-                if self.failures == 1:
-                    LOGGER.exception(
-                        "Failed to close an HTTP provider for session %s.",
-                        self.owner.session_id,
-                    )
-                return False
-            self.owner._remove_terminal_provider(self.provider)
-            self.provider = None
-        self.owner._finish_cleanup(self)
-        return True
 
 
 class SessionRuntimeResources:
@@ -84,11 +39,15 @@ class SessionRuntimeResources:
         agent_factory: SessionAgentFactory,
         executor: Executor,
         on_process_change: Callable[[], None],
+        store: SessionStore | None = None,
     ) -> None:
         self.session_id = session_id
         self.agent_factory = agent_factory
         self.executor = executor
         self.on_process_change = on_process_change
+        self.store = store
+        self._primary_root: str | None = None
+        self._process_lease: ProcessWorkspaceLease | None = None
         self.lock = Lock()
         self._primary_agent: RuntimeAgent | None = None
         self._process_unsubscribe: Callable[[], None] | None = None
@@ -120,6 +79,9 @@ class SessionRuntimeResources:
         load_active_entries: Callable[[], list[ConversationEntry]] | None = None,
     ) -> object:
         """Build the owned primary and optionally load its active path."""
+        if self.store is not None:
+            require_session_workspace(record)
+        synchronize_resource_workspace(self, record)
         with self.lock:
             if self._closing:
                 raise RuntimeError("HTTP runtime resources are closing.")
@@ -128,6 +90,7 @@ class SessionRuntimeResources:
                 if not isinstance(candidate, RuntimeAgent):
                     return candidate
                 self._primary_agent = candidate
+                self._primary_root = record.root
                 self._providers[id(candidate.provider)] = candidate.provider
                 object.__setattr__(
                     candidate.provider,
@@ -135,9 +98,13 @@ class SessionRuntimeResources:
                     self._mcp_session_policy,
                 )
                 candidate.refresh_tools(force=True)
-                self._process_unsubscribe = candidate.command_process_manager.subscribe(
-                    self.on_process_change
-                )
+                manager = candidate.command_process_manager
+                if self.store is not None:
+                    self._process_lease = ProcessWorkspaceLease(
+                        self.store, self.session_id, manager
+                    )
+                    self._process_lease.changed()
+                self._process_unsubscribe = manager.subscribe(self._process_changed)
                 if self._session_enabled_tool_names is not None:
                     candidate.set_session_enabled_tools(
                         self._session_enabled_tool_names
@@ -157,6 +124,38 @@ class SessionRuntimeResources:
                     active_skills=record.active_skills,
                 )
             return primary
+
+    def _process_changed(self) -> None:
+        watch = self._process_lease
+        if watch is not None:
+            watch.changed()
+        self.on_process_change()
+
+    def has_live_work(self) -> bool:
+        """Include retired turns and background processes, not only UI activity."""
+        with self.lock:
+            primary = self._primary_agent
+            return bool(self._turn_agents or self._cleanups) or bool(
+                primary
+                and any(
+                    item.status == "running"
+                    for item in primary.command_process_manager.snapshots()
+                )
+            )
+
+    def register_provider(self, provider: object) -> None:
+        """Own a replacement provider even if later metadata persistence fails."""
+        with self.lock:
+            self._providers[id(provider)] = provider
+            object.__setattr__(
+                provider, "_yoke_mcp_session_policy", self._mcp_session_policy
+            )
+
+    def retire_provider(self, provider: object) -> None:
+        """Close replaced providers only after their remaining agents retire."""
+        with self.lock:
+            self._providers[id(provider)] = provider
+            self._submit_cleanup_locked(RetiredProvider(provider))
 
     def prepare_turn(
         self,
@@ -393,5 +392,8 @@ class SessionRuntimeResources:
         ):
             return
         self._closed = True
+        if self._process_lease is not None:
+            self._process_lease.close()
+            self._process_lease = None
         if not completion.done():
             completion.set_result(None)

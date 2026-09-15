@@ -19,6 +19,7 @@ from yoke.agent.multimodal import format_image_label
 from yoke.agent.multimodal import next_image_label_index
 from yoke.agent.multimodal import resolve_image_path
 from yoke.agent.tools.base import LocalTool
+from yoke.agent.tools.base import _ensure_parent_directory
 from yoke.ai.providers.base import ProviderError
 
 MAX_REFERENCE_IMAGES = 5
@@ -93,7 +94,7 @@ class ImageGenerationTool(LocalTool):
             return {"ok": False, "error": str(exc)}
         if self._is_cancel_requested():
             return {"ok": False, "cancelled": True}
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_parent_directory(output_path, root=self.context.root.resolve())
         temporary_path: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(

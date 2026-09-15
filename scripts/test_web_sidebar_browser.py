@@ -1,4 +1,4 @@
-"""Run with uv run --with playwright python scripts/test_web_sidebar_browser.py.
+"""Run with uv run python scripts/test_web_sidebar_browser.py.
 
 Uses installed Chrome and isolated in-browser fixtures, never live sessions.
 """
@@ -69,6 +69,12 @@ def main():
             page.set_content("""<meta name="viewport" content="width=device-width, initial-scale=1"><script type="importmap">{"imports":{"preact":"/vendor/preact.module.js","preact/hooks":"/vendor/hooks.module.js"}}</script>
                 <link rel="stylesheet" href="/css/base.css"><link rel="stylesheet" href="/css/layout.css"><link rel="stylesheet" href="/css/session.css">""")
             page.evaluate(FIXTURE)
+            active_card = page.locator(".session-card").filter(has_text="active")
+            active_card.click(button="right")
+            mark_unread = page.get_by_role("menuitem", name="Mark as unread")
+            expect(mark_unread).to_be_visible()
+            mark_unread.click()
+            expect(active_card.locator(".status--done")).to_have_text("Done")
             chevron = page.locator(".section-toggle__chevron")
             expect(chevron).to_have_attribute("viewBox", "0 0 16 16")
             closed_box = chevron.bounding_box()

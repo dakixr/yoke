@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,6 +140,7 @@ def switch_agent_provider_model(
     reasoning_effort: str | None = None,
     session_id: str | None = None,
     home: Path | None = None,
+    retire_previous: Callable[[object], None] | None = None,
 ) -> ProviderSessionState:
     """Switch provider and model while preserving the current conversation."""
     normalized_provider = provider_name.strip().lower()
@@ -188,10 +190,13 @@ def switch_agent_provider_model(
             if callable(close_target):
                 close_target()
         raise
-    close_previous = getattr(previous_provider, "close", None)
-    if callable(close_previous):
-        with suppress(Exception):
-            close_previous()
+    if retire_previous is not None:
+        retire_previous(previous_provider)
+    else:
+        close_previous = getattr(previous_provider, "close", None)
+        if callable(close_previous):
+            with suppress(Exception):
+                close_previous()
     return capture_provider_session_state(agent)
 
 

@@ -40,7 +40,9 @@ from yoke.cli.runtime.resume import project_resumed_session
 from yoke.cli.runtime.startup import can_recover_resumed_provider
 from yoke.cli.runtime.startup import apply_startup_session_defaults
 from yoke.cli.runtime.startup import resolve_runtime_agent as _resolve_runtime_agent
+from yoke.cli.runtime.workspaces import load_resume_workspace, session_workspace
 from yoke.cli.session import SessionStore
+from yoke.session.workspace import require_workspace
 
 
 @dataclass(slots=True)
@@ -185,6 +187,7 @@ def run_resume_cli(
     session_id: str | None,
     *,
     all_sessions: bool = False,
+    relocate: Path | str | None = None,
     agent: AgentRunner | None = None,
     input_func=input,
     stdout: OutputStream | None = None,
@@ -197,7 +200,10 @@ def run_resume_cli(
     error_console = build_console(error_stream)
     tool_report: ToolLoadReport | None = None
     store = SessionStore()
-    root = Path(args.root).resolve()
+    root = Path(args.root)
+    if relocate is not None and session_id is None:
+        print_error(error_console, "--relocate requires an explicit session ID.")
+        return 1
     if session_id is None:
         try:
             session_id = select_session_id(
@@ -212,14 +218,11 @@ def run_resume_cli(
             return 1
         output_console.print(f"Resuming session {session_id}")
     try:
-        record = store.load(session_id)
+        record = load_resume_workspace(store, session_id, relocate=relocate)
+        session_root = session_workspace(record)
     except ValueError as exc:
         print_error(error_console, str(exc))
         return 1
-    if record.created_at is None and not record.conversation_entries:
-        print_error(error_console, f"Session not found: {session_id}")
-        return 1
-    session_root = Path(record.root).resolve() if record.root else root
     args.root = str(session_root)
     apply_session_defaults_to_args(args, record)
     try:
@@ -302,6 +305,7 @@ def _run_headless_mode(
     previous_yoke_headless = os.environ.get("YOKE_HEADLESS")
     os.environ["YOKE_HEADLESS"] = "1"
     try:
+        require_workspace(active_session.root, session_id=active_session.id)
         start_session_title_generation(
             active_session,
             active_agent,

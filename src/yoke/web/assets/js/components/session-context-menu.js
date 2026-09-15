@@ -9,6 +9,7 @@ const MENU_WIDTH = 208;
 export function SessionContextMenu({ session, location, runtime, capabilities, position, onClose }) {
   const menuRef = useRef(null);
   const connected = useStore((state) => state.connection.current);
+  const unread = useStore((state) => Boolean(state.ui.doneUnreviewed[session.id]));
   const busy = runtime?.state && runtime.state !== "idle" && runtime.state !== "error";
   const pending = hasPendingQueue(session.queue);
   const directory = session.location?.directory || "";
@@ -82,6 +83,9 @@ export function SessionContextMenu({ session, location, runtime, capabilities, p
       </button>
       <button role="menuitem" onClick=${() => void run(() => controller.patchSession(session.id, { pinned: !session.pinned }))}>
         <span>${session.pinned ? "Unpin session" : "Pin session"}</span>
+      </button>
+      <button role="menuitem" disabled=${unread || Boolean(busy)} onClick=${() => void run(() => controller.markSessionUnread(session.id))}>
+        <span>Mark as unread</span>
       </button>
       ${capabilities?.features?.sessionArchive ? html`
         <button role="menuitem" disabled=${!connected || Boolean(busy || (!session.archivedAt && pending))} onClick=${() => void run(() => controller.patchSession(session.id, { archived: !session.archivedAt }))}>

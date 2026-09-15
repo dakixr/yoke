@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEB = path.join(ROOT, "src/yoke/web");
-const OUTPUT = path.join(ROOT, ".agents_local/inspector-ux/browser");
+const OUTPUT = process.env.YOKE_BROWSER_TEST_OUTPUT || path.join(ROOT, ".agents_local/inspector-ux/browser");
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const contentTypes = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
 const httpRequests = [];
@@ -281,6 +281,66 @@ try {
       assert.notEqual(rows[0].color, rows[2].color);
       await client.screenshot(`chat-tool-outcomes-${width}`);
     }
+  });
+  await test("workspace deletion keeps transcript and draft, with explicit picker relocation", async () => {
+    await client.evaluate(`(async () => {
+      const { html, render } = await import('/assets/vendor/htm-preact.js');
+      const { MainView } = await import('/assets/js/session/session-view.js');
+      const { ApiError } = await import('/assets/js/api/client.js');
+      const { updateSessionComposerDraft } = await import('/assets/js/state/session-composer-drafts.js');
+      const old = document.getElementById('chat-qa'); render(null, old); old.remove();
+      const root = document.getElementById('app'); root.hidden = false;
+      let session = structuredClone(audit.store.getState().sessions[audit.sessionID]);
+      session.workspace = {status: 'available', message: null};
+      const queue = {revision: 0, items: []};
+      audit.api.queue = async () => ({data: queue});
+      audit.api.providers = async () => ({data: []});
+      audit.api.models = async () => ({data: []});
+      audit.api.getSession = async () => ({data: session});
+      audit.api.resolveLocation = async (directory) => ({data: {directory, name: 'Fixture workspace'}});
+      audit.api.recentLocations = async () => ({data: [{directory: '/fixture/new'}]});
+      audit.api.listSessions = async ({archived}) => ({data: archived ? [] : [session]});
+      audit.api.browseLocations = async () => ({data: {selectableDirectory: '/fixture/new', separator: '/', entries: []}});
+      audit.relocations = [];
+      audit.api.admitPrompt = async () => {
+        throw new ApiError(409, 'session_workspace_unavailable', 'Workspace was deleted.', {
+          sessionID: session.id, directory: session.location.directory, status: 'missing',
+        });
+      };
+      audit.api.relocateSession = async (id, directory, expectedDirectory) => {
+        audit.relocations.push({id, directory, expectedDirectory});
+        session = {...session, location: {directory}, workspace: {status: 'available', message: null}};
+        return {data: session};
+      };
+      audit.store.setState(state => ({...state, sessions: {[session.id]: session}, sessionOrder: [session.id],
+        sessionData: {[session.id]: {loaded: true, queue, messages: [
+          {id: 'saved-user', type: 'user', content: [{type: 'text', text: 'Readable saved transcript'}]},
+        ]}}, active: {}, ui: {...state.ui, newSession: false, inspector: null},
+      }));
+      updateSessionComposerDraft(session.id, {text: 'Keep this rejected draft', attachments: []});
+      render(html\`<div class="app-shell"><main class="workspace"><\${MainView} /></main></div>\`, root);
+    })()`);
+    await client.wait("document.querySelector('[aria-label=\"Send message\"]') && !document.querySelector('[aria-label=\"Send message\"]').disabled");
+    await client.evaluate("document.querySelector('[aria-label=\"Send message\"]').click()");
+    await client.wait("document.querySelector('.workspace-notice') && document.querySelector('[aria-label=\"Send message\"]').disabled");
+    assert.equal(await client.evaluate("document.querySelector('[aria-label=Prompt]').value"), "Keep this rejected draft");
+    assert.match(await client.evaluate("document.querySelector('.timeline').innerText"), /Readable saved transcript/);
+    assert.equal(await client.evaluate("Array.from(document.querySelectorAll('.session-header button')).find(b => b.textContent.trim() === 'Compact').disabled"), true);
+    await client.screenshot("workspace-unavailable-mobile");
+    await client.evaluate("Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Relocate workspace').click()");
+    await client.wait("document.querySelector('#draft-working-location')");
+    await delay(150);
+    await client.evaluate("document.querySelector('#draft-working-location').focus()");
+    await client.send("Input.insertText", { text: "/fixture/new/" });
+    await client.wait("Array.from(document.querySelectorAll('button')).some(b => b.textContent === 'Use folder')");
+    await client.evaluate("Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Use folder').click()");
+    assert.deepEqual(await client.evaluate("audit.relocations"), []);
+    await client.evaluate("Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Relocate this session').click()");
+    await client.wait("!document.querySelector('.workspace-notice') && !document.querySelector('[aria-label=\"Send message\"]').disabled");
+    assert.deepEqual(await client.evaluate("audit.relocations"), [{id: "inspector-fixture", directory: "/fixture/new", expectedDirectory: "/fixture/yoke"}]);
+    assert.equal(await client.evaluate("document.querySelector('[aria-label=Prompt]').value"), "Keep this rejected draft");
+    assert.match(await client.evaluate("document.querySelector('.timeline').innerText"), /Readable saved transcript/);
+    await client.screenshot("workspace-relocated-mobile");
   });
   assert.deepEqual(await client.evaluate("audit.unexpected"), []);
   assert.deepEqual(client.errors, []);

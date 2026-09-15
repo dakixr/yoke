@@ -44,7 +44,7 @@ class WriteTool(WorkspaceTool):
                         "to create it.",
                         path=self.path,
                     )
-                path.parent.mkdir(parents=True, exist_ok=True)
+                self._ensure_parent_directory(path)
             path.write_text(self.content, encoding="utf-8")
             return self._success(
                 path=self._display_path(path),

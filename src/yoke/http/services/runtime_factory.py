@@ -6,7 +6,6 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Sequence
 from contextlib import contextmanager
-from pathlib import Path
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
@@ -18,6 +17,7 @@ from yoke.cli.runtime.session import apply_session_defaults_to_args
 from yoke.http.services.session_runtime import close_owned_agent
 from yoke.session import fallback_session_title
 from yoke.session import SessionRecord
+from yoke.session.workspace import require_session_workspace
 
 
 # Every object returned by this factory is owned by its HTTP caller.
@@ -67,9 +67,7 @@ def generate_http_session_title(
 
 def build_http_session_agent(record: SessionRecord) -> RuntimeAgent:
     """Build the same configured agent used by the CLI for one saved session."""
-    if not record.root:
-        raise ValueError("Session does not have a workspace root.")
-    root = Path(record.root).resolve()
+    root = require_session_workspace(record)
     args = CLIArgs(session=record.id, root=str(root))
     apply_session_defaults_to_args(args, record)
     built = build_cli_agent_from_args(args)

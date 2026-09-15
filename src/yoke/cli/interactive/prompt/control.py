@@ -120,6 +120,11 @@ def create_prompt_toolkit_control(  # noqa: C901
                 turn_id = state.active_turn_id
                 state.active_stop_request = stop_event
                 state.active_user_message = active_user_message
+                starting_prompt = state.starting_prompt or (
+                    PendingPrompt(prompt, user_message=active_user_message),
+                    0,
+                )
+                state.starting_prompt = None
                 if not continuation or state.turn_start_time is None:
                     state.turn_start_time = time.monotonic()
                     state.turn_tool_count = 0
@@ -141,6 +146,7 @@ def create_prompt_toolkit_control(  # noqa: C901
                 turn_renderer_factory=turn_renderer_factory,
                 message_snapshot=turn_messages,
                 conversation_entries_snapshot=turn_entries,
+                starting_prompt=starting_prompt,
             )
 
         thread = Thread(target=run_turn, daemon=True)

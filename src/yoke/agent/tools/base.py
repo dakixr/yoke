@@ -162,16 +162,30 @@ class WorkspaceTool(LocalTool):
         """Return the resolved workspace root path."""
         return self._root
 
+    def _require_live_root(self) -> Path:
+        """Reject a workspace that disappeared after tool registration."""
+        root = self._root
+        if not root.exists() or not root.is_dir():
+            raise ValueError(
+                f"Workspace root does not exist or is not a directory: {root}"
+            )
+        return root
+
+    def _ensure_parent_directory(self, path: Path) -> None:
+        """Create missing descendants without ever recreating the workspace root."""
+        _ensure_parent_directory(path, root=self._require_live_root())
+
     def _resolve_path(
         self, raw_path_value: str, *, allow_missing: bool = False
     ) -> Path:
         if not raw_path_value.strip():
             raise ValueError("Path must be a non-empty path")
+        root = self._require_live_root()
         raw_path = Path(raw_path_value)
         candidate = (
             raw_path.resolve()
             if raw_path.is_absolute()
-            else (self.root / raw_path).resolve()
+            else (root / raw_path).resolve()
         )
         if not allow_missing and not candidate.exists():
             raise FileNotFoundError(raw_path_value)
@@ -235,8 +249,9 @@ class WorkspaceTool(LocalTool):
                     yield current_root / name
 
     def _iter_git_files(self, path: Path, *, glob: str) -> Iterable[Path] | None:
+        root = self._require_live_root()
         try:
-            path.relative_to(self.root)
+            path.relative_to(root)
         except ValueError:
             return None
         try:
@@ -244,7 +259,7 @@ class WorkspaceTool(LocalTool):
                 [  # noqa: S607
                     "git",
                     "-C",
-                    str(self.root),
+                    str(root),
                     "ls-files",
                     "--cached",
                     "--others",
@@ -266,7 +281,7 @@ class WorkspaceTool(LocalTool):
         seen: set[Path] = set()
         candidates: list[Path] = []
         for line in completed.stdout.splitlines():
-            candidate = (self.root / line).resolve()
+            candidate = (root / line).resolve()
             if not candidate.exists() or not candidate.is_file():
                 continue
             try:
@@ -280,7 +295,29 @@ class WorkspaceTool(LocalTool):
         return candidates
 
     def _git_pathspec(self, path: Path) -> str:
-        relative = path.relative_to(self.root)
+        relative = path.relative_to(self._require_live_root())
         if not relative.parts:
             return "."
         return str(relative)
+
+
+def _ensure_parent_directory(path: Path, *, root: Path) -> None:
+    """Create a target parent while treating the existing root as a hard anchor."""
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"Workspace root does not exist or is not a directory: {root}")
+    parent = path.parent
+    if parent.exists():
+        return
+    try:
+        relative = parent.relative_to(root)
+    except ValueError:
+        # Absolute paths outside the workspace remain supported. They cannot
+        # recreate the workspace root because their parent chain is independent.
+        parent.mkdir(parents=True, exist_ok=True)
+        return
+    current = root
+    for part in relative.parts:
+        current = current / part
+        # Deliberately omit parents=True. If the root disappears between the
+        # check above and this mkdir, creation fails rather than recreating it.
+        current.mkdir(exist_ok=True)

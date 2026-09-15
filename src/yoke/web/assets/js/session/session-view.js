@@ -7,6 +7,8 @@ import { HumanInput } from "./human-input.js";
 import { QueueEditor } from "./queue.js";
 import { Timeline } from "./timeline.js";
 import { hasPendingQueue } from "../components/sidebar-status.js";
+import { workspaceUnavailable } from "../state/workspace/status.js";
+import { WorkspaceNotice } from "./workspace-notice.js";
 
 export function MainView() {
   const newSession = useStore((state) => state.ui.newSession);
@@ -36,11 +38,12 @@ function SessionView() {
   const attentionCount = (data?.permissions?.length || 0) + (data?.questions?.length || 0);
   return html`<main class="main-view session-view">
     <${SessionHeader} session=${session} runtime=${runtime} attentionCount=${attentionCount} />
+    <${WorkspaceNotice} key=${sessionID} session=${session} runtime=${runtime} />
     <${Timeline} sessionID=${sessionID} data=${data} runtime=${runtime} />
     <div class="session-bottom">
       <div class="session-bottom__inner">
         <${HumanInput} sessionID=${sessionID} permissions=${data?.permissions || []} questions=${data?.questions || []} />
-        <${QueueEditor} sessionID=${sessionID} queue=${data?.queue} />
+        <${QueueEditor} sessionID=${sessionID} queue=${data?.queue} unavailable=${Boolean(workspaceUnavailable(session, runtime))} />
         <${SessionComposer} sessionID=${sessionID} session=${session} runtime=${runtime} data=${data} attentionCount=${attentionCount} />
       </div>
     </div>
@@ -53,6 +56,7 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
   const inspector = useStore((state) => state.ui.inspector);
   const location = useStore((state) => state.locations[session.location.directory]);
   const [compacting, setCompacting] = useState(false);
+  const unavailable = Boolean(workspaceUnavailable(session, runtime));
   const busy = runtime?.state && runtime.state !== "idle" && runtime.state !== "error";
   const settleDisabled = !connected || Boolean(busy) || (!session.archivedAt && hasPendingQueue(session.queue));
   const rename = async () => {
@@ -84,7 +88,7 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
       <button class="header-action desktop-session-action" disabled=${!connected} onClick=${rename}>Rename</button>
       <button class="header-action desktop-session-action" disabled=${!connected} onClick=${() => controller.patchSession(session.id, { pinned: !session.pinned }).catch((error) => controller.notice(error?.message || String(error)))}>${session.pinned ? "Unpin" : "Pin"}</button>
       <${InspectMenu} capabilities=${capabilities} inspector=${inspector} />
-      <button class="header-action desktop-session-action" disabled=${!connected || Boolean(busy) || compacting} onClick=${compact}>
+      <button class="header-action desktop-session-action" disabled=${unavailable || !connected || Boolean(busy) || compacting} onClick=${compact}>
         ${compacting ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}<span>${compacting ? "Compacting" : "Compact"}</span>
       </button>
       ${capabilities?.features?.sessionArchive ? html`<button class="header-action desktop-session-action" title=${session.archivedAt ? "Unsettle session" : "Settle session"} disabled=${settleDisabled} onClick=${archive}>${session.archivedAt ? "Unsettle" : "Settle"}</button>` : null}
@@ -93,7 +97,7 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
         <div class="session-more-menu__popup">
           <button disabled=${!connected} onClick=${() => closeDetailsAnd(rename)}>Rename</button>
           <button disabled=${!connected} onClick=${() => closeDetailsAnd(() => controller.patchSession(session.id, { pinned: !session.pinned }).catch((error) => controller.notice(error?.message || String(error))))}>${session.pinned ? "Unpin" : "Pin"}</button>
-          <button disabled=${!connected || Boolean(busy) || compacting} onClick=${() => closeDetailsAnd(compact)}>${compacting ? "Compacting…" : "Compact"}</button>
+          <button disabled=${unavailable || !connected || Boolean(busy) || compacting} onClick=${() => closeDetailsAnd(compact)}>${compacting ? "Compacting…" : "Compact"}</button>
           ${capabilities?.features?.sessionArchive ? html`<button disabled=${settleDisabled} onClick=${() => closeDetailsAnd(archive)}>${session.archivedAt ? "Unsettle" : "Settle"}</button>` : null}
         </div>
       </details>

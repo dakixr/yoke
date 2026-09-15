@@ -19,6 +19,7 @@ def retain_cancelled_worker(
     loop: asyncio.AbstractEventLoop,
     retire_agent: Callable[[object | None], object],
     release_slot: Callable[[], None],
+    release_resources: Callable[[], None] | None = None,
 ) -> None:
     """Reap a worker outcome and release its slot at physical completion.
 
@@ -28,12 +29,20 @@ def retain_cancelled_worker(
     """
 
     def completed(done: Future[T]) -> None:
+        cleanup: object = None
         try:
             outcome = done.result()
         except BaseException:  # executor cancellation has no owned outcome
             LOGGER.exception("Cancelled HTTP controller worker did not return.")
         else:
-            retire_agent(getattr(outcome, "agent", None))
+            cleanup = retire_agent(getattr(outcome, "agent", None))
+        finally:
+            release = release_resources
+            if release is not None:
+                if isinstance(cleanup, Future):
+                    cleanup.add_done_callback(lambda _done: release())
+                else:
+                    release()
         try:
             loop.call_soon_threadsafe(release_slot)
         except RuntimeError:

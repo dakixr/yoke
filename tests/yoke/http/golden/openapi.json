@@ -15,6 +15,17 @@
             ],
             "title": "Activity"
           },
+          "lastError": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lasterror"
+          },
           "startedAt": {
             "anyOf": [
               {
@@ -2574,6 +2585,16 @@
             ],
             "title": "Id"
           },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocationInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "title": {
             "anyOf": [
               {
@@ -2649,11 +2670,15 @@
           },
           "tree": {
             "$ref": "#/components/schemas/SessionTreeSummary"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceStatus"
           }
         },
         "required": [
           "id",
           "location",
+          "workspace",
           "time",
           "selection",
           "tree",
@@ -2758,6 +2783,32 @@
           }
         },
         "title": "SessionQueueSummary",
+        "type": "object"
+      },
+      "SessionRelocateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "directory": {
+            "minLength": 1,
+            "title": "Directory",
+            "type": "string"
+          },
+          "expectedDirectory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expecteddirectory"
+          }
+        },
+        "required": [
+          "directory"
+        ],
+        "title": "SessionRelocateRequest",
         "type": "object"
       },
       "SessionResponse": {
@@ -4221,6 +4272,39 @@
           "data"
         ],
         "title": "WaitResponse",
+        "type": "object"
+      },
+      "WorkspaceStatus": {
+        "description": "A fresh filesystem observation, never persisted as session identity.",
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "status": {
+            "enum": [
+              "available",
+              "missing",
+              "not_directory",
+              "unreadable",
+              "unconfigured",
+              "invalid"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "WorkspaceStatus",
         "type": "object"
       }
     }
@@ -6258,6 +6342,55 @@
           }
         },
         "summary": "Patch Queue"
+      }
+    },
+    "/api/v1/session/{session_id}/relocate": {
+      "post": {
+        "operationId": "relocateSession",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRelocateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Relocate Session"
       }
     },
     "/api/v1/session/{session_id}/selection": {

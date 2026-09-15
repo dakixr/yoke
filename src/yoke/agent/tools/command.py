@@ -186,7 +186,7 @@ class ExecCommandTool(ManagedCommandTool):
         try:
             if self._is_cancel_requested():
                 return self._cancelled_result()
-            cwd = self.root if self.workdir is None else self._resolve_workdir()
+            cwd = self._resolve_workdir()
             if self.argv is not None:
                 env = self._manager().base_environment()
                 prepare_python_env(env)
@@ -220,7 +220,7 @@ class ExecCommandTool(ManagedCommandTool):
 
     def _resolve_workdir(self) -> Path:
         if self.workdir is None:
-            return self.root
+            return self._require_live_root()
         cwd = self._resolve_path(self.workdir)
         if not cwd.is_dir():
             raise NotADirectoryError(str(cwd))

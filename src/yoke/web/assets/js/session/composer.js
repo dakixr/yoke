@@ -3,10 +3,10 @@ import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
 import {
   clearSessionComposerDraft,
-  getSessionComposerDraft,
-  subscribeSessionComposerDrafts,
   updateSessionComposerDraft,
 } from "../state/session-composer-drafts.js";
+import { workspaceUnavailable } from "../state/workspace/status.js";
+import { mergeRecoveredDraft, resizeComposerInput, useSessionComposerDraft } from "./composer/draft.js";
 import { LocationPicker } from "./location-picker.js";
 import { ModelSelectionControl } from "./model-picker.js";
 import {
@@ -21,6 +21,7 @@ const MAX_PROMPT_ATTACHMENTS = 20;
 export function SessionComposer({ sessionID, session, runtime, data, attentionCount = 0 }) {
   const capabilities = useStore((state) => state.capabilities);
   const connected = useStore((state) => state.connection.current);
+  const unavailable = Boolean(workspaceUnavailable(session, runtime));
   const overlayOpen = useStore((state) => Boolean(state.ui.inspector || state.ui.commandPaletteOpen));
   const draft = useSessionComposerDraft(sessionID);
   const text = draft.text || "";
@@ -60,7 +61,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   const canSteer = Boolean(capabilities?.features?.steering);
   const slashMenu = useSlashCompletions({
     text,
-    enabled: !attachments.length,
+    enabled: !attachments.length && !unavailable,
     sessionID,
     directory: session.location.directory,
     hasSession: true,
@@ -89,9 +90,10 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     if (shouldSubmit) void executeSlash(completion.text).catch((error) => controller.notice(error?.message || String(error)));
   };
   const submit = async (delivery) => {
-    if (!hasContent || busy || !connected) return;
+    if (!hasContent || busy || !connected || unavailable) return;
     const submittedText = text;
     const submittedAttachments = [...attachments];
+    let handedOff = false;
     setBusy(true);
     try {
       if (!attachments.length && await executeSlash(text)) return;
@@ -99,13 +101,14 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
       // trip. The composer must never show the same prompt at the same time as
       // the optimistic user row.
       clearSessionComposerDraft(sessionID);
+      handedOff = true;
       await controller.submitPrompt(sessionID, {
         text: submittedText,
         attachments: submittedAttachments,
         delivery,
       });
     } catch (error) {
-      updateSessionComposerDraft(sessionID, (current) => mergeRecoveredDraft(
+      if (handedOff) updateSessionComposerDraft(sessionID, (current) => mergeRecoveredDraft(
         current,
         submittedText,
         submittedAttachments,
@@ -137,7 +140,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     }
     if (event.key === "Tab" && event.shiftKey) {
       event.preventDefault();
-      void controller.cycleReasoningEffort();
+      if (!unavailable) void controller.cycleReasoningEffort();
       return;
     }
     if (event.key === "Enter" && performance.now() - escapePrefixAt.current <= 650) {
@@ -170,13 +173,13 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     }
   };
   const imageInput = useImageAttachmentInput({
-    enabled: Boolean(capabilities?.features?.images && connected),
+    enabled: Boolean(capabilities?.features?.images && connected && !unavailable),
     addFiles,
   });
 
   return html`<div class="composer-region">
     <div class="composer-meta-row">
-      <${ModelSelectionControl} directory=${session.location.directory} selection=${session.selection} sessionID=${sessionID} disabled=${!connected || running} />
+      <${ModelSelectionControl} key=${`${sessionID}:${session.location.directory}`} directory=${session.location.directory} selection=${session.selection} sessionID=${sessionID} disabled=${unavailable || !connected || running} />
       <${ContextWindowUsage} sessionID=${sessionID} directory=${session.location.directory} selection=${session.selection} usage=${data?.contextUsage ?? session.contextUsage} />
     </div>
     ${attentionCount ? html`<div class="composer-attention-note">Resolve the required ${attentionCount === 1 ? "action" : "actions"} above. You can still queue a follow-up here.</div>` : null}
@@ -215,7 +218,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
         aria-controls=${slashMenu.items.length || slashMenu.loading ? "slash-completion-menu" : undefined}
         aria-expanded=${Boolean(slashMenu.items.length || slashMenu.loading)}
         aria-activedescendant=${slashMenu.items[slashMenu.activeIndex] ? `slash-completion-menu-option-${slashMenu.activeIndex}` : undefined}
-        placeholder=${connected ? "Ask Yoke to work…" : "Reconnect to send work"}
+        placeholder=${unavailable ? "Draft kept. Restore or relocate the workspace to send." : connected ? "Ask Yoke to work…" : "Reconnect to send work"}
         disabled=${!connected}
         readOnly=${busy}
         aria-busy=${busy}
@@ -225,7 +228,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
       ></textarea>
       <div class="composer-footer">
         <div class="composer-footer__left">
-          ${capabilities?.features?.images ? html`<button class="quiet-button" type="button" disabled=${!connected || busy} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
+          ${capabilities?.features?.images ? html`<button class="quiet-button" type="button" disabled=${unavailable || !connected || busy} onClick=${() => fileInput.current?.click()}>＋ Image</button>` : null}
           <input ref=${fileInput} class="visually-hidden" type="file" accept="image/*" multiple onChange=${(event) => { void addFiles([...event.currentTarget.files]); event.currentTarget.value = ""; }} />
         </div>
         <div class="composer-actions">
@@ -244,7 +247,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
                 class="primary composer-icon-action composer-send-button"
                 aria-label="Steer now"
                 title="Steer now · Enter"
-                disabled=${!hasContent || busy || !connected}
+                disabled=${unavailable || !hasContent || busy || !connected}
                 onClick=${() => submit("steer")}
               ><${SendArrow} /></button>
             ` : null}
@@ -252,7 +255,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
               class=${canSteer ? "secondary-action composer-queue-button" : "primary composer-queue-button"}
               aria-label="Queue message"
               title="Queue message · Tab"
-              disabled=${!hasContent || busy || !connected}
+              disabled=${unavailable || !hasContent || busy || !connected}
               onClick=${() => submit("queue")}
             >Queue Msg</button>
           ` : html`
@@ -260,7 +263,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
               class="primary composer-icon-action composer-send-button"
               aria-label=${busy ? "Sending message" : "Send message"}
               title="Send · Enter"
-              disabled=${!hasContent || busy || !connected}
+              disabled=${unavailable || !hasContent || busy || !connected}
               onClick=${() => submit("steer")}
             >${busy ? html`<span class="pending-spinner" aria-hidden="true"></span>` : html`<${SendArrow} />`}</button>
           `}
@@ -269,44 +272,6 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     </div>
     </div>
   </div>`;
-}
-
-function mergeRecoveredDraft(current, submittedText, submittedAttachments) {
-  const currentText = current.text || "";
-  const currentAttachments = current.attachments || [];
-  if (!currentText.length && !currentAttachments.length) {
-    return { text: submittedText, attachments: submittedAttachments };
-  }
-  const text = submittedText && currentText
-    ? `${submittedText}\n\n${currentText}`
-    : submittedText || currentText;
-  const seen = new Set();
-  const attachments = [...submittedAttachments, ...currentAttachments].filter((attachment) => {
-    const key = attachment.uri || attachment.id || `${attachment.name || ""}:${attachment.size || ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  return { text, attachments };
-}
-
-function useSessionComposerDraft(sessionID) {
-  const [, rerender] = useState(0);
-  useEffect(() => subscribeSessionComposerDrafts(
-    () => rerender((value) => value + 1),
-  ), []);
-  return getSessionComposerDraft(sessionID);
-}
-
-function resizeComposerInput(input) {
-  if (!input) return;
-  input.style.height = "auto";
-  const styles = window.getComputedStyle(input);
-  const minHeight = Number.parseFloat(styles.minHeight) || 0;
-  const parsedMaxHeight = Number.parseFloat(styles.maxHeight);
-  const maxHeight = Number.isFinite(parsedMaxHeight) ? parsedMaxHeight : input.scrollHeight;
-  input.style.height = `${Math.ceil(Math.max(minHeight, Math.min(input.scrollHeight, maxHeight)))}px`;
-  input.style.overflowY = input.scrollHeight > maxHeight + 1 ? "auto" : "hidden";
 }
 
 export function DraftComposer({ draftID, draft }) {

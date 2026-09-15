@@ -19,6 +19,8 @@ from yoke.session import SessionRecord
 from yoke.session import SessionStore
 from yoke.session import fallback_session_title
 from yoke.session.admissions import AdmissionRecord
+from yoke.http.services.session_runtime.workspace import uses_workspace
+from yoke.session.workspace import workspace_lease
 
 
 LOGGER = logging.getLogger(__name__)
@@ -91,7 +93,7 @@ class SessionTitleAutomation:
             LOGGER.warning("Automatic session title generation failed: %s", exc)
 
         title = generated or fallback_session_title(admission.prompt)
-        with self.persistence_lock:
+        with workspace_lease(self.store, self.session_id), self.persistence_lock:
             current = self.store.summary_record(self.session_id)
             if current is None or current.title:
                 return
@@ -112,6 +114,7 @@ class SessionTitleAutomation:
             location=record.root,
         )
 
+    @uses_workspace
     def _generate_sync(self, admission: AdmissionRecord) -> str | None:
         snapshot = self.read_cache.get(self.session_id)
         record = snapshot.record

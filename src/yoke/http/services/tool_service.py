@@ -10,6 +10,7 @@ from yoke.http.models.tool import ToolInfo
 from yoke.http.models.tool import ToolListResponse
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
 from yoke.session import SessionStore
+from yoke.session.workspace import require_session_workspace
 
 
 class ToolService:
@@ -69,7 +70,7 @@ class ToolService:
         from yoke.cli.bootstrap.config import resolve_agent_config
 
         record = self._require_record(session_id)
-        root = Path(record.root or Path.cwd()).resolve()
+        root = require_session_workspace(record)
         report = resolve_agent_config(
             root=root,
             base_system_prompt=None,
@@ -83,7 +84,7 @@ class ToolService:
     def _root(self, *, directory: str | None, session_id: str | None) -> Path:
         if session_id is not None:
             record = self._require_record(session_id)
-            return Path(record.root or Path.cwd()).resolve()
+            return require_session_workspace(record)
         root = Path(directory or Path.cwd()).resolve()
         if not root.is_dir():
             raise ApiError(

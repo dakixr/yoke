@@ -121,6 +121,7 @@ export async function loadInspectorFile(host, sessionID, path, selectionVersion 
   if (!session) return;
   const request = host.inspectorState.nextRequest(sessionID, "file:detail");
   const content = await api.fsRead(session.location.directory, path);
+  if (store.getState().sessions[sessionID]?.location?.directory !== session.location.directory) return;
   if (!host.inspectorState.ownsRequest(request)) return;
   if (!host.inspectorState.ownsSelection(sessionID, "file", selectionVersion)) return;
   host.setSessionField(sessionID, "fileDetail", { path, content });

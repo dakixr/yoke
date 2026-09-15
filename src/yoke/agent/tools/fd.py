@@ -164,7 +164,7 @@ class FdTool(WorkspaceTool):
 
     def _resolve_search_root(self) -> Path:
         if self.root_dir is None:
-            return self.root
+            return self._require_live_root()
         try:
             root_dir = self._resolve_path(self.root_dir)
         except Exception as exc:

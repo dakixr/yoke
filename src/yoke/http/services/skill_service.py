@@ -13,6 +13,7 @@ from yoke.http.models.skill import SessionSkillResponse
 from yoke.http.models.skill import SkillInfo
 from yoke.http.models.skill import SkillListResponse
 from yoke.session import SessionStore
+from yoke.session.workspace import require_session_workspace, require_workspace
 
 
 class SkillService:
@@ -27,7 +28,7 @@ class SkillService:
         directory: str | None,
         search: str | None,
     ) -> SkillListResponse:
-        root = Path(directory or Path.cwd()).resolve()
+        root = require_workspace(directory if directory is not None else Path.cwd())
         registry = load_skill_registry(default_skill_dirs(root))
         items = [_skill_info(spec, active=False) for spec in registry.skills]
         if search:
@@ -46,7 +47,7 @@ class SkillService:
 
     def session_skills(self, session_id: str) -> SessionSkillResponse:
         record = self._require_record(session_id)
-        root = Path(record.root or Path.cwd()).resolve()
+        root = require_session_workspace(record)
         registry = load_skill_registry(default_skill_dirs(root))
         active_names = {skill.name for skill in record.active_skills}
         available = [

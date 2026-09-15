@@ -56,17 +56,17 @@ export function ModelSelectionControl({ directory, selection, sessionID = null, 
   }, [sessionID]);
 
   useEffect(() => {
-    if (!directory) return;
+    if (!directory || disabled) return;
     void controller.loadProviders(directory).catch(() => {});
-  }, [directory]);
+  }, [directory, disabled]);
 
   useEffect(() => {
-    if (!directory || !provider) return;
+    if (!directory || !provider || disabled) return;
     void controller.loadModels(directory, provider).catch(() => {});
-  }, [directory, provider]);
+  }, [directory, provider, disabled]);
 
   useEffect(() => {
-    if (!open || !directory) return;
+    if (!open || !directory || disabled) { setOpen(false); return; }
     let cancelled = false;
     setLoading(true);
     setError("");
@@ -78,7 +78,7 @@ export function ModelSelectionControl({ directory, selection, sessionID = null, 
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [directory, open]);
+  }, [directory, open, disabled]);
 
   useEffect(() => {
     if (!open) return;

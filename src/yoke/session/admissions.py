@@ -39,6 +39,7 @@ class AdmissionRecord(BaseModel):
     settled: bool = False
     settled_at: str | None = None
     outcome: Literal["completed", "stopped", "failed", "recovered"] | None = None
+    workspace_blocked: bool = False
 
 
 class AdmissionSnapshot(BaseModel):

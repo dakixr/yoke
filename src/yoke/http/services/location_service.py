@@ -15,6 +15,7 @@ from yoke.http.models.location import LocationBrowseEntry
 from yoke.http.models.location import LocationBrowseResult
 from yoke.http.models.location import ResolvedLocation
 from yoke.session import SessionStore
+from yoke.session.workspace import inspect_workspace
 
 
 class LocationService:
@@ -60,7 +61,8 @@ class LocationService:
             if root in seen:
                 continue
             seen.add(root)
-            result.append(LocationInfo(directory=root))
+            if inspect_workspace(root).available:
+                result.append(LocationInfo(directory=root))
         return result
 
     def browse(self, partial_path: str, *, limit: int) -> LocationBrowseResult:

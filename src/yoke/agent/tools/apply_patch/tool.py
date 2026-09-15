@@ -153,6 +153,7 @@ class ApplyPatchTool(WorkspaceTool):
         return content
 
     def _resolve_patch_path(self, raw_path: str, *, allow_missing: bool) -> Path:
+        root = self._require_live_root()
         path_text = raw_path.strip()
         if not path_text:
             raise ApplyPatchError("Patch paths must be non-empty")
@@ -163,7 +164,7 @@ class ApplyPatchTool(WorkspaceTool):
         elif windows_path.is_absolute() or bool(windows_path.drive):
             resolved = Path(windows_path).resolve()
         else:
-            resolved = (self.root / candidate_path).resolve()
+            resolved = (root / candidate_path).resolve()
         if not allow_missing and not resolved.exists():
             raise ApplyPatchError(f"File not found: {path_text}")
         return resolved
@@ -273,7 +274,7 @@ class ApplyPatchTool(WorkspaceTool):
         return changed_files, stdout
 
     def _write_text_atomically(self, path: Path, content: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_parent_directory(path)
         fd, temp_name = tempfile.mkstemp(
             dir=str(path.parent),
             prefix=f".{path.name}.",

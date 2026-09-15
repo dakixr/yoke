@@ -32,6 +32,125 @@ from the repository root with:
 
 ```bash
 node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
+node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs
+node --experimental-default-type=module scripts/test_web_workspace_races.mjs
+```
+
+## Workspace status and recovery
+
+Session identity and saved history do not depend on whether the working
+directory still exists. `SessionInfo.workspace` reports the current filesystem
+state as `{status, message}`. The status is `available`, `missing`,
+`not_directory`, `unreadable`, `unconfigured`, or `invalid`. It is live status,
+not a persisted replacement for `location.directory`.
+
+An existing session without a saved root is `unconfigured` and requires explicit
+relocation. There is no legacy fallback to the invocation directory. Fresh
+sessions still use the invocation working directory when no root is supplied.
+
+When a saved workspace is unavailable, transcript, tree and saved context reads
+remain usable. Rename, pin, archive, queue inspection and queue removal also
+remain available, subject to their usual busy-work restrictions. Execution,
+model selection, compaction and root-dependent catalogs reject the unavailable
+workspace. Yoke never creates the missing directory or silently uses the daemon's
+working directory instead. Runtime status includes `lastError` so clients can
+inspect a failure that happened after admission. Workspace validation runs at
+admission and again before execution. Filesystem deletion does not by itself
+consume pending queue work or change prompt idempotency semantics.
+
+An input rejected after admission is returned to the queue paused with the same
+ID and attachments. Recovery records its intent before writing the queue, so a
+failed write can be reconciled on the next queue read or operation. Orphaned
+promoted inputs are recovered only after acquiring exclusive workspace access,
+never while a live worker or a worker waiting for execution capacity owns them.
+Remove or explicitly unpause recovered inputs instead of silently retargeting
+them to a different directory.
+
+To recover the same session, restore its original directory or explicitly send:
+
+```http
+POST /api/v1/session/my-session/relocate
+Content-Type: application/json
+
+{"directory":"/new/project","expectedDirectory":"/old/project"}
+```
+
+The response is the usual `SessionResponse`, with the same session ID and updated
+location and workspace status. The destination must already exist and be a
+readable directory. Relocation changes session metadata, not project files.
+`expectedDirectory` is optional optimistic concurrency protection. Supply the
+directory you last read to reject a move after another client changed it.
+Relocating to the current valid directory is an idempotent no-op.
+
+Relocation rejects active turns, operations, live child processes and pending
+queue items, including paused items. Stop live work and remove queued work
+before trying again. An exclusive nonblocking workspace lease also prevents
+relocation while another CLI or HTTP process uses the session. The daemon retires
+root-bound runtime resources on relocation and rebuilds them for the new root.
+
+On Windows, nested readers in one process share a reference-counted native lock.
+Different processes conservatively serialize access to the same session while
+that lock is held. POSIX readers can share across processes. Both arrangements
+exclude relocation until the last execution or background-process owner releases
+its lease. Session-scoped MCP inspection holds the same lease through live MCP
+manager cleanup, so relocation cannot replace its workspace while inspection is
+using workspace-local server configuration.
+
+Relocation preserves saved branches, messages, compaction handoffs and cached
+activated-skill instructions. A fresh runtime rediscovers configuration, tools,
+available skills and MCP in the destination workspace. It does not rewrite
+historical provider-visible instructions to match files in the new directory.
+
+`POST /api/v1/session/{id}/fork` accepts optional `location: {directory}` alongside
+its existing fields. An explicit valid target supports forking even when the
+source workspace is unavailable. Omitting `location` inherits the source root,
+which must be available. Validation fails before creating a fork if that root
+is unavailable. A fork gets a new ID and never relocates or deletes the source.
+
+Workspace errors use the normal JSON error envelope:
+
+| HTTP status | `error.code` | Meaning |
+| --- | --- | --- |
+| 409 | `session_workspace_unavailable` | A saved workspace cannot be used. Details include `sessionID`, `directory` and workspace `status`. |
+| 400 | `workspace_unavailable` | A newly supplied directory is invalid or unavailable. |
+| 409 | `session_workspace_busy` | Relocation cannot acquire exclusive access, or the session has live or pending work. |
+| 409 | `session_workspace_conflict` | The saved directory no longer matches `expectedDirectory`. Read it again before deciding whether to move it. |
+
+The browser keeps the timeline and editable draft visible when the workspace is
+unavailable. Its notice offers **Retry workspace** after restoring the original
+directory, or **Relocate workspace** to open the existing directory picker.
+Choose a folder, then confirm **Relocate this session**. Selecting a folder alone
+does not move the session. Execution, model and compaction controls stay disabled
+until the workspace is available. Queue removal remains accessible. A typed
+`session_workspace_unavailable` response after live deletion shows the same
+notice; rejected prompts restore their text and image attachments.
+
+After a successful relocation, the browser clears root-dependent caches and
+refreshes tools, skills, MCP, models, providers and location metadata. Old
+in-flight catalog responses cannot restore the previous directory's data.
+Connected tabs handle `session.workspace.relocated` by invalidating outstanding
+directory requests and refreshing the session summary, lists and catalogs.
+Delayed rename or pin responses and failed-edit rollbacks keep the current
+workspace binding and request a fresh summary. The transcript and draft remain
+intact in both the initiating tab and other connected tabs.
+A catalog refresh failure does not turn a successful relocation or a readable
+transcript into a session-load failure. Reopen the relevant inspector or model
+picker to retry it.
+
+The TypeScript client preserves its typed `GET` and `POST` methods and adds
+convenience methods using the same authentication and error handling:
+
+```typescript
+const client = createYokeClient({ baseUrl, token });
+const relocated = await client.relocateSession("my-session", {
+  directory: "/new/project",
+  expectedDirectory: "/old/project",
+});
+if (relocated.error) throw relocated.error;
+
+const fork = await client.forkSession("my-session", {
+  location: { directory: "/another/project" },
+});
 ```
 
 ## Starting the daemon
@@ -170,8 +289,10 @@ into pinned sessions followed by the normal inbox without changing relative
 order inside either group. `Alt+Up` and `Alt+Down` follow that same visual order,
 so keyboard navigation matches the rows shown in the sidebar.
 Sidebar status uses current work before historical completion state. `Done`
-means an unreviewed successfully completed turn, and a later running, stopping,
-attention, error, or pending-queue state replaces it immediately. Queue counts
+means an unreviewed successfully completed turn or a session manually marked
+unread from its right-click menu. Opening the session clears `Done`. A later
+running, stopping, attention, error, or pending-queue state replaces it
+immediately. Queue counts
 separate runnable steer/queued prompts from paused prompts. Session-list pages
 load their queue summaries with one enumeration of the queue-sidecar directory,
 rather than one filesystem probe per visible session. If enumeration is denied

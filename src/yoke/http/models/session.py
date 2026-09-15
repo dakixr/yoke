@@ -10,6 +10,7 @@ from pydantic import Field
 from yoke.http.models.common import ApiModel
 from yoke.http.models.common import CursorInfo
 from yoke.http.models.common import LocationInfo
+from yoke.session.workspace import WorkspaceStatus
 
 
 class SessionSelection(ApiModel):
@@ -71,6 +72,7 @@ class SessionInfo(ApiModel):
     pinned: bool = False
     archived_at: str | None = None
     location: LocationInfo
+    workspace: WorkspaceStatus
     time: SessionTime
     selection: SessionSelection
     context_usage: dict[str, object] | None = None
@@ -111,6 +113,12 @@ class SessionForkRequest(ApiModel):
     id: str | None = None
     title: str | None = None
     from_entry_id: str | None = None
+    location: LocationInfo | None = None
+
+
+class SessionRelocateRequest(ApiModel):
+    directory: str = Field(min_length=1)
+    expected_directory: str | None = None
 
 
 class ActiveRuntimeInfo(ApiModel):
@@ -118,6 +126,7 @@ class ActiveRuntimeInfo(ApiModel):
     turn_id: int | None = None
     started_at: str | None = None
     activity: str | None = None
+    last_error: str | None = None
 
 
 class SessionActiveResponse(ApiModel):

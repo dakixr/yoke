@@ -37,6 +37,7 @@ from yoke.http.models.session import TreeNavigateResponse
 from yoke.http.models.session import TreeNavigationPreviewResponse
 from yoke.http.services.session_service import SessionService
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.session.workspace import workspace_lease
 
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -116,6 +117,10 @@ async def patch_session(
     fields = body.model_fields_set
 
     def mutate() -> SessionInfo:
+        with workspace_lease(_service(request).store, session_id):
+            return mutate_metadata()
+
+    def mutate_metadata() -> SessionInfo:
         return _service(request).patch_session(
             session_id,
             title_set="title" in fields,

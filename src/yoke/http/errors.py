@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from yoke.http.models.common import ErrorBody
 from yoke.http.models.common import ErrorEnvelope
+from yoke.session.workspace import WorkspaceError
 
 
 @dataclass(slots=True)
@@ -62,6 +63,19 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
         status_code=exc.status_code,
         code=exc.code,
         message=exc.message,
+        details=exc.details,
+    )
+
+
+async def workspace_error_handler(
+    request: Request, exc: WorkspaceError
+) -> JSONResponse:
+    """Keep predictable filesystem failures out of the ASGI exception path."""
+    return error_response(
+        request,
+        status_code=409 if exc.code.startswith("session_") else 400,
+        code=exc.code,
+        message=str(exc),
         details=exc.details,
     )
 

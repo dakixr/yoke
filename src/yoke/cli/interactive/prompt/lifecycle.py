@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.completion.menu import COMPLETION_MENU_STYLE
 from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
+from yoke.cli.runtime.workspaces import cli_workspaces
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
@@ -135,11 +136,16 @@ class PersistentPromptLifecycle:
                 self._config.prompt_session.app.invalidate()
 
     async def _process_submission(self, submission: _Submission) -> None:
+        owner = cli_workspaces.get()
+
         def callback() -> None:
-            self._config.process_submission(
-                submission.prompt,
-                submission.action,
-            )
+            # Executor threads do not inherit ContextVars. Carry only workspace
+            # ownership, without changing provider or conversation cache context.
+            token = cli_workspaces.set(owner)
+            try:
+                self._config.process_submission(submission.prompt, submission.action)
+            finally:
+                cli_workspaces.reset(token)
 
         if _requires_terminal_control(submission.prompt):
             from prompt_toolkit.application.run_in_terminal import run_in_terminal

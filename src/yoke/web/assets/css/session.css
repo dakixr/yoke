@@ -306,3 +306,13 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-working__mark { animation: none; background: color-mix(in srgb, var(--accent) 42%, transparent); }
 }
+.workspace-notice {
+  flex: 0 0 auto;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--attention-bg);
+  max-height: 45vh;
+  overflow: auto;
+}
+.workspace-notice p { margin: 6px 0; overflow-wrap: anywhere; }
+.workspace-notice__picker { max-width: 640px; }

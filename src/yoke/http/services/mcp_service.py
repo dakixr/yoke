@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import cast
@@ -15,6 +16,7 @@ from yoke.http.services.event_broker import EventService
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
 from yoke.session import SessionStore
+from yoke.session.workspace import require_session_workspace, workspace_lease
 
 if TYPE_CHECKING:
     from yoke.mcp.config import McpSessionPolicy
@@ -42,44 +44,53 @@ class McpService:
         session_id: str | None,
         include_tools: bool,
     ) -> McpListResponse:
-        root = self._root(directory=directory, session_id=session_id)
-        policy = self._policy(session_id)
-        from yoke.mcp.config import load_mcp_config
-
-        config = load_mcp_config(root=root, home=self.home, session_policy=policy)
-        inspected: dict[str, dict[str, object]] = {}
-        if include_tools and config.enabled_servers:
-            from yoke.mcp import McpManager
-
-            manager = McpManager.from_paths(
-                root=root,
-                home=self.home,
-                session_policy=policy,
-            )
-            try:
-                payload = manager.inspect(include_schemas=True)
-            finally:
-                manager.close()
-            servers = payload.get("servers") if isinstance(payload, dict) else None
-            if isinstance(servers, list):
-                for item in servers:
-                    if not isinstance(item, dict):
-                        continue
-                    name = item.get("name")
-                    if isinstance(name, str):
-                        inspected[name] = cast(dict[str, object], item)
-        data = [
-            self._server_info(
-                server,
-                root=root,
-                inspection=inspected.get(server.name),
-            )
-            for server in config.servers
-        ]
-        return McpListResponse(
-            location=LocationInfo(directory=str(root)),
-            data=data,
+        lease = (
+            workspace_lease(self.store, session_id)
+            if session_id is not None
+            else nullcontext()
         )
+        # Session-scoped inspection can own live MCP subprocesses. Keep the
+        # binding leased through manager cleanup so relocation cannot move the
+        # session underneath those resources.
+        with lease:
+            root = self._root(directory=directory, session_id=session_id)
+            policy = self._policy(session_id)
+            from yoke.mcp.config import load_mcp_config
+
+            config = load_mcp_config(root=root, home=self.home, session_policy=policy)
+            inspected: dict[str, dict[str, object]] = {}
+            if include_tools and config.enabled_servers:
+                from yoke.mcp import McpManager
+
+                manager = McpManager.from_paths(
+                    root=root,
+                    home=self.home,
+                    session_policy=policy,
+                )
+                try:
+                    payload = manager.inspect(include_schemas=True)
+                finally:
+                    manager.close()
+                servers = payload.get("servers") if isinstance(payload, dict) else None
+                if isinstance(servers, list):
+                    for item in servers:
+                        if not isinstance(item, dict):
+                            continue
+                        name = item.get("name")
+                        if isinstance(name, str):
+                            inspected[name] = cast(dict[str, object], item)
+            data = [
+                self._server_info(
+                    server,
+                    root=root,
+                    inspection=inspected.get(server.name),
+                )
+                for server in config.servers
+            ]
+            return McpListResponse(
+                location=LocationInfo(directory=str(root)),
+                data=data,
+            )
 
     def configured_server(
         self,
@@ -150,7 +161,7 @@ class McpService:
             record = self.store.summary_record(session_id)
             if record is None:
                 raise ApiError(404, "session_not_found", "Session was not found.")
-            return Path(record.root or Path.cwd()).resolve()
+            return require_session_workspace(record)
         root = Path(directory or Path.cwd()).resolve()
         if not root.is_dir():
             raise ApiError(
