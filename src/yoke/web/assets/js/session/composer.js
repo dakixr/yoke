@@ -285,6 +285,14 @@ export function DraftComposer({ draftID, draft }) {
   const escapePrefixAt = useRef(0);
   const value = draft || { text: "", location: recentLocations[0]?.directory || "", attachments: [] };
   const update = (patch) => controller.updateDraft(draftID, patch);
+  useLayoutEffect(() => {
+    resizeComposerInput(promptInput.current);
+  }, [value.text]);
+  useEffect(() => {
+    const resize = () => resizeComposerInput(promptInput.current);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
   const slashMenu = useSlashCompletions({
     text: value.text || "",
     enabled: !(value.attachments || []).length,
