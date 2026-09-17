@@ -7,6 +7,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from yoke.agent.models import AgentContext
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import BeforeToolCallHook
@@ -105,6 +106,14 @@ def _run_attempts[StructuredT](
     next_prompt = prompt
     next_user_message = user_message
     retry_instructions: list[Message] = []
+
+    def autosave_tool_checkpoint(context: AgentContext) -> None:
+        if not agent._autosave:
+            return
+        if agent._state_path is None:
+            raise RuntimeError("Autosave agent lost its bound state path")
+        agent._save_context_unlocked(agent._state_path, context)
+
     try:
         for attempt in range(attempts):
             retry_context = (
@@ -120,6 +129,9 @@ def _run_attempts[StructuredT](
                     stop_requested=stop_requested,
                     before_tool_call=before_tool_call,
                     after_tool_call=after_tool_call,
+                    after_tool_result_appended=(
+                        autosave_tool_checkpoint if agent._autosave else None
+                    ),
                 )
             try:
                 result = to_agent_result(runtime_result, output_type=output_type)

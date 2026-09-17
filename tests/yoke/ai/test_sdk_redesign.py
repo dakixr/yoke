@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -21,7 +22,11 @@ from yoke.ai import RunConfig
 from yoke.ai.skills import Skill
 from yoke.ai.types import StructuredOutputError
 from yoke.ai import complete
+from yoke.ai.providers import OpenAICompatibleConfig
+from yoke.ai.providers import OpenAICompatibleProvider
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import ProviderError
+from yoke.ai.providers.openai_compat.client import LazyHttpClient
 
 
 class RecordingProvider(Provider):
@@ -56,10 +61,12 @@ class FastWriteTool(WorkspaceTool):
     description = "Write a text file inside the test workspace."
     execute_in_process = True
     marker: ClassVar[object] = lambda: None
+    executions: ClassVar[int] = 0
     path: str
     text: str
 
     def execute(self) -> dict[str, object]:
+        type(self).executions += 1
         target = self._resolve_path(self.path, allow_missing=True)
         target.write_text(self.text, encoding="utf-8")
         return {"ok": True, "path": self.path}
@@ -213,6 +220,169 @@ def test_public_agent_prompt_executes_local_tools(tmp_path: Path) -> None:
 
     assert result.output == "done"
     assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "hello"
+
+
+def test_public_agent_recovers_transport_without_replaying_tool_and_autosaves(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "autosave.json"
+    clients: list[httpx.Client] = []
+    model_requests = 0
+    FastWriteTool.executions = 0
+
+    def make_client() -> httpx.Client:
+        generation = len(clients)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal model_requests
+            model_requests += 1
+            if model_requests == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": [
+                                        {
+                                            "id": "call-1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "fast_write",
+                                                "arguments": (
+                                                    '{"path":"hello.txt",'
+                                                    '"text":"hello"}'
+                                                ),
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    },
+                )
+            if generation == 0:
+                raise httpx.ReadError(
+                    "[WinError 10054] connection reset",
+                    request=request,
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"role": "assistant", "content": "done"}}]
+                },
+            )
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        clients.append(client)
+        return client
+
+    provider = OpenAICompatibleProvider(
+        OpenAICompatibleConfig(
+            api_key="test",
+            model="test",
+            max_retries=1,
+            retry_backoff_seconds=0,
+            max_retry_backoff_seconds=0,
+        ),
+        sleep=lambda _seconds: None,
+    )
+    provider._client = LazyHttpClient(None, make_client)
+    agent = Agent(
+        provider=provider,
+        config=RunConfig(
+            root=tmp_path,
+            tools=[FastWriteTool],
+            include_agents_file=False,
+        ),
+        state_path=state_path,
+        autosave=True,
+    )
+
+    try:
+        result = agent.prompt("Create a file.")
+    finally:
+        agent.close()
+
+    snapshot = AgentStateSnapshot.model_validate_json(
+        state_path.read_text(encoding="utf-8")
+    )
+    assert result.output == "done"
+    assert FastWriteTool.executions == 1
+    assert model_requests == 3
+    assert len(clients) == 2
+    assert [message.content for message in snapshot.state.messages][-1] == "done"
+
+
+def test_public_agent_autosaves_tool_checkpoint_before_provider_failure(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "autosave.json"
+    FastWriteTool.executions = 0
+
+    class FailsAfterToolProvider(RecordingProvider):
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            if not self.calls:
+                return super().complete(messages, tools)
+            raise ProviderError("offline")
+
+    provider = FailsAfterToolProvider(
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    function=ToolFunction(
+                        name="fast_write",
+                        arguments='{"path":"hello.txt","text":"hello"}',
+                    ),
+                )
+            ],
+        )
+    )
+    config = RunConfig(
+        root=tmp_path,
+        tools=[FastWriteTool],
+        include_agents_file=False,
+    )
+    agent = Agent(
+        provider=provider,
+        config=config,
+        state_path=state_path,
+        autosave=True,
+    )
+
+    with pytest.raises(ProviderError, match="offline"):
+        agent.prompt("Create a file.")
+    agent.close()
+
+    snapshot = AgentStateSnapshot.model_validate_json(
+        state_path.read_text(encoding="utf-8")
+    )
+    assert FastWriteTool.executions == 1
+    assert [message.role for message in snapshot.state.messages] == [
+        "user",
+        "assistant",
+        "tool",
+    ]
+
+    resumed = Agent(
+        provider=RecordingProvider(Message.assistant("recovered")),
+        config=config,
+        state_path=state_path,
+    )
+    try:
+        result = resumed.prompt("Continue from the current state.")
+    finally:
+        resumed.close()
+
+    assert result.output == "recovered"
+    assert FastWriteTool.executions == 1
 
 
 def test_public_agent_renders_inline_skill(tmp_path: Path) -> None:

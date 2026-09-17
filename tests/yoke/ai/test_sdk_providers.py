@@ -14,6 +14,7 @@ from yoke.ai.providers import OpenAICompatibleConfig
 from yoke.ai.providers import OpenAICompatibleProvider
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import CodexSubscriptionProvider
+from yoke.ai.providers.openai_compat.client import LazyHttpClient
 from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 from yoke.ai.providers.zai import ZAIProvider
 
@@ -76,6 +77,55 @@ def test_openai_compatible_provider_honors_zero_retry_after() -> None:
     assert message.content == "ok"
     assert calls == 2
     assert delays == [0.0]
+
+
+def test_openai_compatible_provider_rebuilds_owned_client_after_read_error() -> None:
+    clients: list[httpx.Client] = []
+
+    def make_client() -> httpx.Client:
+        generation = len(clients)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if generation == 0:
+                raise httpx.ReadError(
+                    "[WinError 10054] connection reset",
+                    request=request,
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"role": "assistant", "content": "recovered"}}
+                    ]
+                },
+            )
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        clients.append(client)
+        return client
+
+    provider = OpenAICompatibleProvider(
+        OpenAICompatibleConfig(
+            api_key="test",
+            model="test",
+            max_retries=1,
+            retry_backoff_seconds=0,
+            max_retry_backoff_seconds=0,
+        ),
+        sleep=lambda _seconds: None,
+    )
+    provider._client = LazyHttpClient(None, make_client)
+
+    try:
+        message = provider.complete([Message.user("hello")], [])
+        assert message.content == "recovered"
+        assert len(clients) == 2
+        assert clients[0].is_closed
+        assert not clients[1].is_closed
+    finally:
+        provider.close()
+
+    assert clients[1].is_closed
 
 
 def test_build_builtin_provider_accepts_selection_string(

@@ -6,6 +6,7 @@ import json
 from typing import cast
 
 import httpx
+import pytest
 
 from yoke.agent.models import Message
 from yoke.ai.providers.base import fork_provider
@@ -133,6 +134,63 @@ def test_opencode_go_responses_honors_zero_retry_after() -> None:
     assert message.content == "ok"
     assert calls == 2
     assert delays == [0.0]
+
+
+def test_opencode_go_responses_rebuilds_owned_client_after_read_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients: list[httpx.Client] = []
+
+    provider = OpenCodeGoProvider(
+        OpenCodeGoConfig(
+            api_key="test",
+            model="muse-spark-1.3-contributor",
+            max_retries=1,
+            retry_backoff_seconds=0,
+            max_retry_backoff_seconds=0,
+        ),
+        sleep=lambda _seconds: None,
+    )
+    provider._client.close()
+
+    def make_client() -> httpx.Client:
+        generation = len(clients)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if generation == 0:
+                raise httpx.ReadError(
+                    "[WinError 10054] connection reset",
+                    request=request,
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "recovered"}],
+                        }
+                    ]
+                },
+            )
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(provider, "_new_client", make_client)
+    provider._client = make_client()
+
+    try:
+        message = provider.complete([Message.user("hello")], [])
+        assert message.content == "recovered"
+        assert len(clients) == 2
+        assert clients[0].is_closed
+        assert not clients[1].is_closed
+    finally:
+        provider.close()
+
+    assert clients[1].is_closed
 
 
 def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:

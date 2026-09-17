@@ -25,6 +25,9 @@ class OpenAICompatibleRetryMixin:
     provider_name: str
     _sleep: Callable[[float], None]
 
+    def _reset_transport_for_retry(self) -> None:
+        """Discard provider-owned transport state before a network retry."""
+
     def _backoff_seconds(self, attempt: int) -> float:
         return min(
             self.config.retry_backoff_seconds * (2**attempt),
@@ -77,6 +80,7 @@ class OpenAICompatibleRetryMixin:
             return None
         provider_error = ProviderError(f"Provider request failed: {error}")
         if attempt < self.config.max_retries:
+            self._reset_transport_for_retry()
             self._retry_sleep(
                 provider_error,
                 attempt=attempt,

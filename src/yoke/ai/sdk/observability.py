@@ -22,6 +22,9 @@ _MESSAGE_EVENTS = {"assistant_message", "agent_end", "agent_error"}
 _ACTION_EVENTS = {
     *_MESSAGE_EVENTS,
     "batch_attempt_error",
+    "provider_rate_limited",
+    "provider_recovered",
+    "provider_retry",
     "tool_execution_start",
     "tool_execution_end",
 }

@@ -280,6 +280,7 @@ class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
                 if isinstance(exc, httpx.ReadTimeout):
                     raise last_error from exc
                 if attempt < self.config.max_retries:
+                    self._reset_transport_for_retry()
                     self._retry_sleep(
                         last_error,
                         attempt=attempt,
@@ -377,6 +378,11 @@ class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
         """Close the owned HTTP client, if this provider created it."""
         if self._owns_client:
             self._client.close()
+
+    def _reset_transport_for_retry(self) -> None:
+        """Rebuild owned connection state after a transient network failure."""
+        if self._owns_client:
+            self._client.reset()
 
     def _chat_completions_url(self) -> str:
         base_url = self.config.base_url.rstrip("/")

@@ -128,6 +128,36 @@ def test_console_observer_messages_hides_tool_calls() -> None:
     assert stream.getvalue() == "Reading now.\n"
 
 
+def test_console_observer_actions_shows_provider_retry_and_recovery() -> None:
+    stream = StringIO()
+    observer = ConsoleObserver("actions", stream=stream)
+
+    observer.observe(
+        AgentTraceEvent(
+            name="provider_retry",
+            payload={
+                "provider": "demo",
+                "model": "test",
+                "attempt": 1,
+                "max_retries": 8,
+                "wait_seconds": 1.0,
+                "message": "connection reset",
+            },
+        )
+    )
+    observer.observe(
+        AgentTraceEvent(
+            name="provider_recovered",
+            payload={"provider": "demo", "model": "test", "attempts": 1},
+        )
+    )
+
+    output = stream.getvalue()
+    assert "provider_retry" in output
+    assert "connection reset" in output
+    assert "provider_recovered" in output
+
+
 def test_jsonl_observer_writes_redacted_structured_events(
     tmp_path: Path,
 ) -> None:

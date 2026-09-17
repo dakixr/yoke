@@ -42,6 +42,10 @@ class LazyHttpClient:
 
     def abort(self) -> None:
         """Close an active request while keeping the lazy client reusable."""
+        self.reset()
+
+    def reset(self) -> None:
+        """Discard the current client so the next request builds a fresh one."""
         with self._lock:
             client = self._client
             self._client = None

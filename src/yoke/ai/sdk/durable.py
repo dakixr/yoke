@@ -7,8 +7,11 @@ from pathlib import Path
 import threading
 from typing import Any, Self
 
+from yoke.agent.models import AgentContext
 from yoke.agent.persistence import restore_agent_state
 from yoke.agent.persistence import save_agent_state
+from yoke.agent.persistence import write_agent_state_snapshot
+from yoke.agent.state import capture_agent_state
 
 
 class DurableAgentMixin:
@@ -84,6 +87,22 @@ class DurableAgentMixin:
             metadata=metadata,
             atomic=atomic,
         )
+        self._state_path = saved_path
+        return saved_path
+
+    def _save_context_unlocked(self, target: Path, context: AgentContext) -> Path:
+        """Save an in-flight runtime context at a safe tool-result checkpoint."""
+        state = capture_agent_state(
+            self._runtime,
+            conversation_entries=context.conversation_log.entries,
+        ).model_copy(
+            update={
+                "active_skills": [
+                    skill.model_copy(deep=True) for skill in context.active_skills
+                ]
+            }
+        )
+        saved_path = write_agent_state_snapshot(target, state, atomic=True)
         self._state_path = saved_path
         return saved_path
 

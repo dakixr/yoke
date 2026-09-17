@@ -201,7 +201,16 @@ class OpenCodeGoProvider(Provider):
             cancel_requested=cancel_requested,
             sleep=self._sleep,
             request_headers={"x-opencode-session": self.config.session_id},
+            get_client=lambda: self._client,
+            reset_client=self._reset_responses_client_for_retry,
         )
+
+    def _reset_responses_client_for_retry(self) -> None:
+        """Recreate owned Responses transport after a transient network error."""
+        if not self._owns_client:
+            return
+        self._client.close()
+        self._client = self._new_client()
 
     def _with_request_cancellation(
         self,

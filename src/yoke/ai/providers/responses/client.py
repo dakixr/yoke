@@ -19,6 +19,9 @@ from yoke.ai.providers.openai_compat import _error_detail
 from yoke.ai.providers.openai_compat import _retry_after_seconds
 from yoke.ai.providers.openai_compat import normalize_openai_request_messages
 from yoke.ai.providers.openai_compat import serialize_message_for_openai
+from yoke.ai.providers.openai_compat.events import emit_recovery_event
+from yoke.ai.providers.openai_compat.events import emit_retry_event
+from yoke.ai.providers.openai_compat.helpers import should_retry_request_error
 from yoke.ai.providers.usage import parse_token_usage
 
 
@@ -39,6 +42,8 @@ def complete_response(
     cancel_requested: Callable[[], bool],
     sleep: Callable[[float], None],
     request_headers: Mapping[str, str] | None = None,
+    get_client: Callable[[], httpx.Client] | None = None,
+    reset_client: Callable[[], None] | None = None,
 ) -> Message:
     """Send a non-streaming Responses API request and normalize its output."""
     payload = _request_payload(
@@ -58,12 +63,19 @@ def complete_response(
         if cancel_requested():
             raise ProviderCancelledError()
         try:
-            response = client.post(url, json=payload, headers=headers)
+            active_client = get_client() if get_client is not None else client
+            response = active_client.post(url, json=payload, headers=headers)
         except httpx.TimeoutException as exc:
             last_error = ProviderError(f"{provider_name} request timed out.")
             if attempt < max_retries:
+                if reset_client is not None:
+                    reset_client()
                 _sleep_before_retry(
                     attempt,
+                    error=last_error,
+                    provider_name=provider_name,
+                    model=model,
+                    max_retries=max_retries,
                     retry_backoff_seconds=retry_backoff_seconds,
                     max_retry_backoff_seconds=max_retry_backoff_seconds,
                     cancel_requested=cancel_requested,
@@ -74,7 +86,25 @@ def complete_response(
         except httpx.RequestError as exc:
             if cancel_requested():
                 raise ProviderCancelledError() from exc
-            raise ProviderError(f"{provider_name} request failed: {exc}") from exc
+            if not should_retry_request_error(exc):
+                raise ProviderError(f"{provider_name} request failed: {exc}") from exc
+            last_error = ProviderError(f"{provider_name} request failed: {exc}")
+            if attempt < max_retries:
+                if reset_client is not None:
+                    reset_client()
+                _sleep_before_retry(
+                    attempt,
+                    error=last_error,
+                    provider_name=provider_name,
+                    model=model,
+                    max_retries=max_retries,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    max_retry_backoff_seconds=max_retry_backoff_seconds,
+                    cancel_requested=cancel_requested,
+                    sleep=sleep,
+                )
+                continue
+            raise last_error from exc
 
         if response.status_code == 429:
             retry_after = _retry_after_seconds(response)
@@ -103,15 +133,25 @@ def complete_response(
                 raise ProviderError(
                     f"{provider_name} returned an invalid response payload."
                 )
-            return _response_message(
+            message = _response_message(
                 result,
                 provider_name=provider_name,
                 model=model,
             )
+            emit_recovery_event(
+                provider_name=provider_name,
+                model_id=model,
+                attempts=attempt,
+            )
+            return message
 
         if attempt < max_retries:
             _sleep_before_retry(
                 attempt,
+                error=last_error,
+                provider_name=provider_name,
+                model=model,
+                max_retries=max_retries,
                 retry_after_seconds=getattr(last_error, "retry_after_seconds", None),
                 retry_backoff_seconds=retry_backoff_seconds,
                 max_retry_backoff_seconds=max_retry_backoff_seconds,
@@ -277,6 +317,10 @@ def _response_message(
 def _sleep_before_retry(
     attempt: int,
     *,
+    error: ProviderError,
+    provider_name: str,
+    model: str,
+    max_retries: int,
     retry_backoff_seconds: float,
     max_retry_backoff_seconds: float,
     cancel_requested: Callable[[], bool],
@@ -288,5 +332,13 @@ def _sleep_before_retry(
         if retry_after_seconds is None
         else retry_after_seconds,
         max_retry_backoff_seconds,
+    )
+    emit_retry_event(
+        error,
+        provider_name=provider_name,
+        model_id=model,
+        attempt=attempt,
+        max_retries=max_retries,
+        wait_seconds=backoff,
     )
     sleep_with_cancel(backoff, cancel_requested=cancel_requested, sleep=sleep)
