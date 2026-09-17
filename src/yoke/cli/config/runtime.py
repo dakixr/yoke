@@ -303,18 +303,22 @@ def _resolve_cli_agent_config(
 
 
 def format_provider_model_status(agent: object) -> str | None:
-    """format_provider_model_status."""
+    """Return the qualified model name: provider:model:effort."""
     provider = getattr(agent, "provider", None)
     if provider is None:
         return None
-    provider_name = provider.__class__.__name__
+    provider_name = getattr(provider, "provider_name", None)
+    if not isinstance(provider_name, str) or not provider_name.strip():
+        provider_name = provider.__class__.__name__
+    else:
+        provider_name = provider_name.strip()
     config = getattr(provider, "config", None)
     model = getattr(config, "model", None)
     reasoning_effort = getattr(config, "reasoning_effort", None)
     if not isinstance(model, str) or not model.strip():
         base = provider_name
     else:
-        base = f"{provider_name} {model.strip()}"
+        base = f"{provider_name}:{model.strip()}"
     if isinstance(reasoning_effort, str) and reasoning_effort.strip():
-        return f"{base} {reasoning_effort.strip()}"
+        return f"{base}:{reasoning_effort.strip()}"
     return base

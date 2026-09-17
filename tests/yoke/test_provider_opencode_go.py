@@ -57,7 +57,7 @@ def test_opencode_go_muse_spark_contributor_catalog_and_request() -> None:
         "muse-spark-1.3-contributor",
         "glm-5.3-flash",
         "deepseek-flash",
-        "deepseek-v4-flash",
+        "deepseek-v4.1-flash",
     ]
     deepseek_41 = provider.list_models()[2]
     assert deepseek_41.display_name == "DeepSeek V4.1 Flash"
@@ -65,7 +65,12 @@ def test_opencode_go_muse_spark_contributor_catalog_and_request() -> None:
     assert deepseek_41.thinking_levels == ("low", "high", "max")
     assert deepseek_41.default_thinking_level == "high"
     assert deepseek_41.supports_image_inputs is True
-    assert provider.list_models()[3].context_window_tokens == 400_000
+    deepseek_41 = provider.list_models()[3]
+    assert deepseek_41.display_name == "DeepSeek V4.1 Flash"
+    assert deepseek_41.context_window_tokens == 400_000
+    assert deepseek_41.thinking_levels == ("low", "high", "max")
+    assert deepseek_41.default_thinking_level == "high"
+    assert deepseek_41.supports_image_inputs is True
     assert captured["url"] == "https://opencode.ai/zen/go/v1/responses"
     assert payload["model"] == "muse-spark-1.3-contributor"
     assert payload["reasoning"] == {

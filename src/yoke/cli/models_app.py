@@ -152,7 +152,7 @@ def _select_model_interactive(
         qualified_ids,
         title="Select a default model for new sessions:",
         subtitle=(
-            "Default scope: global (`~\\.yoke\\config.json`).\n"
+            "Default scope: global (`~/.yoke/config.json`).\n"
             "For this repo, use `yoke models set --repo`."
         ),
         columns=SelectorTableColumns(

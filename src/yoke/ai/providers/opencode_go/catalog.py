@@ -19,7 +19,6 @@ PROVIDER_NAME = "opencode-go"
 ENV_API_KEY = "OPENCODE_API_KEY"
 OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
 
-DEEPSEEK_THINKING_LEVELS = ("high", "max")
 DEEPSEEK_41_THINKING_LEVELS = ("low", "high", "max")
 GLM_53_THINKING_LEVELS = ("low", "high", "max")
 MUSE_SPARK_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
@@ -28,7 +27,7 @@ MODEL_PROTOCOLS = {
     "muse-spark-1.3-contributor": "responses",
     "glm-5.3-flash": "openai",
     "deepseek-flash": "openai",
-    "deepseek-v4-flash": "openai",
+    "deepseek-v4.1-flash": "openai",
 }
 
 MODEL_CATALOG = build_model_catalog(
@@ -57,12 +56,12 @@ MODEL_CATALOG = build_model_catalog(
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
-        id="deepseek-v4-flash",
-        display_name="DeepSeek V4 Flash",
+        id="deepseek-v4.1-flash",
+        display_name="DeepSeek V4.1 Flash",
         context_window_tokens=400_000,
-        thinking_levels=DEEPSEEK_THINKING_LEVELS,
+        thinking_levels=DEEPSEEK_41_THINKING_LEVELS,
         default_thinking_level="high",
-        supports_image_inputs=False,
+        supports_image_inputs=True,
     ),
 )
 
