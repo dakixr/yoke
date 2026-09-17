@@ -104,7 +104,6 @@ def test_rg_flattens_single_submatches_into_toon_columns() -> None:
     content = _canonical(
         {
             "ok": True,
-            "command": ["rg", "--json", "needle"],
             "output": [
                 {
                     "kind": "match",
@@ -213,7 +212,6 @@ def test_fd_projects_paths_and_details_without_command_metadata() -> None:
     paths = _canonical(
         {
             "ok": True,
-            "command": ["fd", "--print0"],
             "output": ["src/a.py", "src/comma,name.py"],
             "exit_code": 0,
             "truncated": True,

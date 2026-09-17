@@ -87,7 +87,7 @@ function makeCall(sequence) {
           elapsed_seconds: 2.18, original_token_count: 812, output: text,
           outputTruncationDetails: { truncated: false, totalLines: 2, outputLines: 2 }, processID: "process-1",
         }
-          : name === "rg" ? { ok: true, command: ["rg", "--json", "inspector"], output: [{ kind: "match", path: "src/inspector.js", line: 42, text: "export function inspect(session)" }], exit_code: 0 }
+          : name === "rg" ? { ok: true, output: [{ kind: "match", path: "src/inspector.js", line: 42, text: "export function inspect(session)" }], exit_code: 0 }
             : { ok: true, exit_code: 0, output: text };
   const resultProjection = name === "exec_command"
     ? JSON.stringify({ ok: true, output: text })

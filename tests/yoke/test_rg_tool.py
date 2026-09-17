@@ -76,6 +76,7 @@ def test_rg_exit_status_controls_success(
     result = _execute_rg(tmp_path, monkeypatch, completed)
 
     assert result["ok"] is expected_ok
+    assert "command" not in result
     if completed.returncode == 2:
         assert result["exit_code"] == 2
         assert "regex parse error" in result["error"]
@@ -242,3 +243,17 @@ def test_rg_bounds_failure_diagnostics(tmp_path: Path) -> None:
     assert result["ok"] is False
     assert len(cast(str, result["error"])) == 20
     assert result["truncated"] is True
+
+
+def test_rg_command_size_does_not_consume_result_budget(tmp_path: Path) -> None:
+    tool = cast(
+        RipgrepTool,
+        RipgrepTool.bind(root=tmp_path).parse_arguments(
+            {"mode": "files", "max_output_chars": 80}
+        ),
+    )
+    command = ["rg", *["x" * 100 for _ in range(20)]]
+
+    result = tool._render_output("a.py\x00", "", command, 0)
+
+    assert result == {"ok": True, "output": ["a.py"], "exit_code": 0}

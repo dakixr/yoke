@@ -248,7 +248,6 @@ class RipgrepTool(WorkspaceTool):
             )
             result = self._error(
                 error,
-                command=command,
                 exit_code=exit_code,
             )
             if truncated:
@@ -267,7 +266,7 @@ class RipgrepTool(WorkspaceTool):
             label = "counts"
 
         items = self._take_items(items)
-        result = self._bounded_result(items, command, exit_code, label)
+        result = self._bounded_result(items, exit_code, label)
         if stderr.strip():
             diagnostic, diagnostic_truncated = bound_text(
                 stderr.rstrip("\r\n"), self.max_output_chars
@@ -295,21 +294,18 @@ class RipgrepTool(WorkspaceTool):
     def _bounded_result(
         self,
         items: list[object],
-        command: list[str],
         exit_code: int,
         label: str,
     ) -> dict[str, object]:
         included: list[object] = []
         truncated = False
         for item in items:
-            candidate = self._success(
-                command=command, output=[*included, item], exit_code=exit_code
-            )
+            candidate = self._success(output=[*included, item], exit_code=exit_code)
             if len(json.dumps(candidate, ensure_ascii=False)) > self.max_output_chars:
                 truncated = True
                 break
             included.append(item)
-        result = self._success(command=command, output=included, exit_code=exit_code)
+        result = self._success(output=included, exit_code=exit_code)
         if truncated or len(included) < len(items):
             result["truncated"] = True
             result["summary"] = f"showing {len(included)} {label}"

@@ -83,6 +83,7 @@ def test_fd_finds_paths_with_real_fd_arguments(tmp_path: Path) -> None:
 
     assert result["ok"] is True
     assert result["exit_code"] == 0
+    assert "command" not in result
     assert any(
         str(path).replace("\\", "/").endswith("src/main.py")
         for path in result["output"]
@@ -233,3 +234,15 @@ def test_fd_bounds_failure_diagnostics(tmp_path: Path) -> None:
     assert result["ok"] is False
     assert len(cast(str, result["error"])) == 20
     assert result["truncated"] is True
+
+
+def test_fd_command_size_does_not_consume_result_budget(tmp_path: Path) -> None:
+    tool = cast(
+        FdTool,
+        FdTool.bind(root=tmp_path).parse_arguments({"max_output_chars": 80}),
+    )
+    command = ["fd", *["x" * 100 for _ in range(20)]]
+
+    result = tool._render_output("a.py\x00", "", command, 0)
+
+    assert result == {"ok": True, "output": ["a.py"], "exit_code": 0}

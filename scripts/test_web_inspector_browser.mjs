@@ -134,6 +134,7 @@ try {
   await test("TOON results render without canonical search bookkeeping", async () => {
     await client.evaluate("audit.controller.selectToolCall(audit.sessionID, 'fixture-call-203')");
     await client.wait("audit.store.getState().sessionData[audit.sessionID]?.toolDetail?.id === 'fixture-call-203'");
+    assert.equal(await client.evaluate("Object.hasOwn(audit.store.getState().sessionData[audit.sessionID].toolDetail.result, 'command')"), false);
     assert.ok(await client.evaluate("document.querySelector('.activity-model-result')?.textContent.includes('matches[1]{path,line,text}')"));
     assert.equal(await client.evaluate("document.querySelector('.activity-result-section')?.textContent.includes('--json')"), false);
     assert.equal(await client.evaluate("document.querySelector('.activity-result-section')?.textContent.includes('exit_code')"), false);

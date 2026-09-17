@@ -246,7 +246,6 @@ class FdTool(WorkspaceTool):
             )
             result = self._error(
                 error,
-                command=command,
                 exit_code=exit_code,
             )
             if truncated:
@@ -276,17 +275,13 @@ class FdTool(WorkspaceTool):
         output: list[object] = []
         truncated = False
         for item in shaped:
-            candidate = self._success(
-                command=command,
-                output=[*output, item],
-                exit_code=exit_code,
-            )
+            candidate = self._success(output=[*output, item], exit_code=exit_code)
             if len(json.dumps(candidate, ensure_ascii=False)) > self.max_output_chars:
                 truncated = True
                 break
             output.append(item)
 
-        result = self._success(command=command, output=output, exit_code=exit_code)
+        result = self._success(output=output, exit_code=exit_code)
         if stderr.strip():
             diagnostic, diagnostic_truncated = bound_text(
                 stderr.rstrip("\r\n"), self.max_output_chars

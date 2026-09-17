@@ -96,7 +96,7 @@ def project_tool_result_content(projection_kind: str, content: str) -> str:
 def _project_rg(result: dict[str, object]) -> str | None:
     if not set(result).issubset(_SEARCH_RESULT_KEYS):
         return None
-    if "command" not in result or "exit_code" not in result:
+    if "exit_code" not in result:
         return None
     if result.get("ok") is not True:
         return _project_search_error(result)
@@ -187,7 +187,7 @@ def _rg_table(rows: list[dict[str, object]]) -> str | None:
 def _project_fd(result: dict[str, object]) -> str | None:
     if not set(result).issubset(_SEARCH_RESULT_KEYS):
         return None
-    if "command" not in result or "exit_code" not in result:
+    if "exit_code" not in result:
         return None
     if result.get("ok") is not True:
         return _project_search_error(result)
