@@ -5,6 +5,63 @@ from __future__ import annotations
 import json
 
 
+_PAGED_RESULT_KEYS = {
+    "ok",
+    "session_id",
+    "status",
+    "running",
+    "exit_code",
+    "timed_out",
+    "cancelled",
+    "output",
+    "elapsed_seconds",
+    "cursor",
+    "has_more_output",
+    "gap",
+    "reason",
+    "next_tool",
+    "error",
+    "python_executable",
+    "timeout",
+    "input_written",
+}
+
+
+def _project_paged_result(result: dict[str, object]) -> str | None:
+    """Retain every continuation field, including output left after process exit."""
+    if not set(result).issubset(_PAGED_RESULT_KEYS):
+        return None
+    cursor = result.get("cursor")
+    if (
+        not isinstance(cursor, str)
+        or not cursor.startswith("pc1_")
+        or not isinstance(result.get("ok"), bool)
+    ):
+        return None
+    payload = {
+        key: result[key]
+        for key in (
+            "ok",
+            "session_id",
+            "running",
+            "exit_code",
+            "output",
+            "cursor",
+            "has_more_output",
+            "reason",
+            "input_written",
+        )
+        if key in result
+    }
+    for key in ("timed_out", "cancelled", "gap"):
+        if result.get(key) is True:
+            payload[key] = True
+    for key in ("error", "python_executable", "next_tool"):
+        if result.get(key):
+            payload[key] = result[key]
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
 _COMMAND_RESULT_KEYS = {
     "ok",
     "session_id",
@@ -41,6 +98,8 @@ _TRUNCATION_KEYS = {
 
 def project_command_result(result: dict[str, object]) -> str | None:
     """Return lean JSON for one recognized managed-command result."""
+    if "cursor" in result:
+        return _project_paged_result(result)
     if not set(result).issubset(_COMMAND_RESULT_KEYS):
         return None
     truncation = result.get("outputTruncationDetails")

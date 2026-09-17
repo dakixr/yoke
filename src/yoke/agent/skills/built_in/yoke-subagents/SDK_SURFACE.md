@@ -56,6 +56,49 @@ to empty; configure relevant skills with `Skill.from_dir(...)` or `Skill.inline(
 from `yoke.ai.skills`. `include_agents_file` defaults to true, so repository
 instructions can load, but the parent's conversation and active skills do not transfer.
 
+## Process tools for launching workers
+
+Native Yoke and MCP use `command_exec`, `python_exec`, `process_input`,
+`process_read`, and `process_cancel`. Both execution tools default to
+`mode="auto"`; the host owns the initial completion window, 30,000 ms natively
+or the configured MCP default. `mode="background"` returns immediately. Choose
+longer waits on `process_read(wait_ms=...)` after a handle exists. MCP read waits
+use the configured remote cap, at most 240,000 ms.
+
+`process_read` accepts 1 to 16 unique session entries containing `session_id`
+and an optional opaque cursor. Its default
+`until="completion"` waits for all requested sessions, not for ordinary output
+or a full output budget. Use `until="output_or_completion"` to return on any
+unread output or terminal session, or `wait_ms=0` for a snapshot. Reads default
+to 60,000 ms; native reads allow up to 3,600,000 ms, one hour. One deadline
+applies to the whole batch. Expiry leaves workers running. Python's `timeout`
+is a separate execution deadline in seconds, not a read wait or an SDK prompt
+timeout.
+
+Copy each item's returned `cursor` unchanged into the matching session entry on
+the next read. Do not decode or construct cursor values. Reads do not consume output. Inspect
+`exit_code` even when the read's `ok` is true, and continue paging after exit
+while `has_more_output` is true. Account for `gap` when history has been
+discarded. The total read `max_bytes` defaults to 32,000
+and accepts 1,024 through 64,000, across all requested sessions.
+
+`process_input` requires nonempty `chars`; use `process_read` for polling.
+Its optional cursor identifies already-read output and must match the target
+session. Without one, output starts at the earliest retained record. Input
+waits default to 250 ms and accept 0 through 5,000 ms. `process_cancel`
+terminates the owned process tree while preserving final output for paging;
+MCP also revokes Python's bridge token and cancels its managed child operations.
+Cancellation does not create a new output cursor, so keep the last cursor from
+execution, reading, or input when final output matters.
+
+Update callers using `exec_command`, `exec_python`, `write_stdin`, or
+`process_io`; these are not callable aliases. Remove execution-level
+`yield-time_ms` or `wait_ms`, choose semantic `mode` at launch, and use
+`process_read.wait_ms` for explicit follow-up waits. Replace empty-input polls
+with cursor-based `process_read` calls. See the
+[shared process reference](../../../../docs/process-tools.md) for result reasons,
+cursor errors, retention, and the full migration table.
+
 ## Durable state
 
 `Agent(state_path=...)` automatically loads that file if it exists. With

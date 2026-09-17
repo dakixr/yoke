@@ -140,6 +140,19 @@ def execute_in_process_tool(
             # Latch cancellation for the worker. The caller's callback may be
             # transient, while the invocation must remain cancelled forever.
             invocation.cancel()
+            if getattr(tools.get(name), "preserve_cancelled_result", False):
+                # Process cancellation can leave running work or already-sent
+                # input. Preserve the worker's handle, cursor, and delivery state.
+                deadline = time.monotonic() + IN_PROCESS_TOOL_SHUTDOWN_SECONDS
+                while time.monotonic() < deadline:
+                    if invocation.done():
+                        return invocation.result(), True
+                    time.sleep(IN_PROCESS_TOOL_POLL_SECONDS)
+                result = cancelled_tool_result()
+                result.update(reason="cancelled", outcome="unknown")
+                if name == "process_input":
+                    result["input_written"] = None
+                return result, True
             return cancelled_tool_result(), True
         time.sleep(IN_PROCESS_TOOL_POLL_SECONDS)
 

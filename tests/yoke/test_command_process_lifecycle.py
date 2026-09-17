@@ -344,7 +344,7 @@ def test_final_lease_release_drains_live_readers(tmp_path: Path) -> None:
         manager.close()
 
 
-def test_capacity_pruning_drains_readers_before_replacement(
+def test_capacity_pruning_reaps_finished_readers_before_replacement(
     tmp_path: Path, monkeypatch
 ) -> None:
     from yoke.agent.tools.command_process_support import admission
@@ -358,8 +358,9 @@ def test_capacity_pruning_drains_readers_before_replacement(
             False,
             None,
             False,
-            argv=[sys.executable, "-c", "import time; time.sleep(30)"],
+            argv=[sys.executable, "-c", "print('first')"],
         )
+        assert _wait_until(lambda: first.finished)
         second = manager._spawn(
             "second",
             tmp_path,
@@ -371,7 +372,8 @@ def test_capacity_pruning_drains_readers_before_replacement(
         assert first.process.poll() is not None
         assert all(not thread.is_alive() for thread in first._reader_threads)
         assert second.process.poll() is None
-        assert len(manager.snapshots()) == 1
+        assert len(manager._processes) == 1
+        assert manager.snapshot(first.session_id).status == "exited"
     finally:
         manager.close()
 

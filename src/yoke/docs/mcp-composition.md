@@ -12,11 +12,11 @@ unchanged.
 | --- | --- |
 | One local read, search, command, or patch | Existing direct tools |
 | Several independent local reads or searches | `batch_read` |
-| Dependent reads, downstream calls, or local filtering | `exec_python` with `yoke_mcp` |
+| Dependent reads, downstream calls, or local filtering | `python_exec` with `yoke_mcp` |
 | Discover downstream contracts | `mcp_inspect` |
 | Retrieve retained output | `result_read` |
 | Observe several running commands | `process_read` |
-| Write terminal input | `process_io` |
+| Write terminal input | `process_input` |
 | Stop a process and its managed dispatch | `process_cancel` |
 | Search and fetch match windows | `search_then_read` |
 | Git status, root instructions, known paths, optional search | `workspace_snapshot` |
@@ -25,8 +25,10 @@ unchanged.
 | Upload bytes from another program | `write_binary_file` |
 | Export exact byte pages to another program | `export_file` |
 
-Existing tool names remain available. New results advertise output schemas and
-use `structuredContent` with a short text acknowledgement. Set
+Process names now match native Yoke. Migrate removed names and wait arguments
+using the [process migration table](process-tools.md#breaking-migration).
+New results advertise output schemas and use `structuredContent` with a short
+text acknowledgement. Set
 `YOKE_MCP_LEGACY_RESULT_TEXT=true` for clients that also require the full JSON
 serialized into text. This compatibility setting does not affect Yoke agents.
 The MCP command descriptor advertises its effective non-login-shell default.
@@ -70,7 +72,7 @@ These limits do not change the direct agent `ReadTool`.
 
 ## Python composition
 
-`exec_python` injects `yoke_mcp` into its fresh Python subprocess. Ordinary
+`python_exec` injects `yoke_mcp` into its fresh Python subprocess. Ordinary
 Python and shell access retain their existing OS permissions. The helper is
 not a sandbox and is not advertised as read-only.
 
@@ -99,7 +101,7 @@ remain in the subprocess instead of passing through ChatGPT.
 `tools.mcp(server, tool, arguments, schema_hash=...)` uses the parent's existing
 downstream client. Discovery remains explicit. For downstream calls, either
 configure a reviewed, schema-pinned read wrapper or include an exact
-`managed_calls` manifest in the outer `exec_python` request:
+`managed_calls` manifest in the outer `python_exec` request:
 
 ```json
 {
@@ -130,6 +132,14 @@ at 4 MiB and replies at 8 MiB. Python admission is separate from child operation
 slots, avoiding parent/child slot starvation. Shared runtime process limits
 still apply. The optional alternate Python interpreter must be able to import
 the installed `yoke` package to use the helper.
+
+Python execution accepts the shared semantic `mode` field. Auto mode uses the
+configured host-owned initial completion window; background mode returns
+without waiting. Its `timeout` is an execution deadline in seconds, separate
+from any read wait. Use `process_read(wait_ms=...)` for longer waits after a
+handle exists. A read deadline leaves Python and its managed operations
+running. `process_cancel` terminates the process tree, revokes its bridge
+token, and cancels managed child operations while preserving final output.
 
 ## Discovery, results, and media
 
@@ -169,14 +179,35 @@ this release does not add an audio decoder or an in-chat HTML widget.
 
 ## Process observation and recipes
 
-`process_read` accepts up to 16 `sessions`, each with `session_id`, `after_seq`,
-and `offset`. Pass each returned `next_cursor` back unchanged. The cursor reads
-retained log ranges without consuming terminal output. `wait_ms` is bounded to
-30 seconds. `gap` and `truncated_before_seq` report evicted ranges, including
-the reduced tail retained after a process completes. The MCP reader decodes
-UTF-8 incrementally so pipe boundaries cannot split characters; invalid UTF-8
-uses replacement characters. The agent reader is unchanged. Final-lease shutdown and capacity pruning drain
-output readers without holding the manager notification lock. Processes are ephemeral.
+MCP and native Yoke share the [process interface](process-tools.md).
+`process_read` takes 1 to 16 `sessions` with unique session IDs. Pass each
+returned opaque `cursor` back unchanged alongside its `session_id`. Omit the
+cursor to start from the earliest retained output. Reads do not consume output. The total `max_bytes`
+budget defaults to 32,000 and accepts 1,024 through 64,000 across the batch.
+
+The default `until="completion"` waits for all requested sessions, with one
+60,000 ms deadline for the batch. Ordinary output and output limits do not
+end that wait. `until="output_or_completion"` returns on any unread output
+or terminal session. `wait_ms=0` takes a snapshot. Invalid cursors and session
+errors return promptly, with items in request order. MCP's configured remote
+wait cap is at most 240,000 ms, not native Yoke's 3,600,000 ms maximum.
+Wait expiry never kills a process.
+
+Read results contain `ok`, `reason`, and `items`. A read can succeed even when
+a process exits nonzero; inspect `exit_code`. Continue paging while
+`has_more_output` is true, including after exit or cancellation. `gap` and
+the returned cursor report lost retention history without exposing the internal
+retention boundary. Finished histories keep their cursors until bounded eviction.
+For terminal writes, `process_input` requires nonempty `chars` and accepts an
+optional cursor identifying already-read output. Without a cursor, it starts
+at the earliest retained output. Empty-input polling is invalid.
+`process_cancel` does not create a new output cursor; use the last cursor you
+already have if you need final output after cancellation.
+
+The MCP reader decodes UTF-8 incrementally so pipe boundaries cannot split
+characters; invalid UTF-8 uses replacement characters. Final-lease shutdown
+and capacity pruning drain output readers without holding the manager
+notification lock. Processes are ephemeral.
 
 `search_then_read` selects the first match window from each of at most 16 files.
 It does not claim semantic relevance. `workspace_snapshot` reads the root's

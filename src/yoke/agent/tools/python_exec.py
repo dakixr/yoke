@@ -4,19 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yoke.agent.tools.command import ManagedCommandTool
-from yoke.agent.tools.command_process_types import (
-    DEFAULT_EXEC_YIELD_TIME_MS,
-)
-from yoke.agent.tools.command_process_types import (
-    DEFAULT_MAX_OUTPUT_TOKENS,
-)
+from yoke.agent.tools.processes.base import ManagedExecutionTool
 from yoke.agent.tools.python_env import current_python_executable
 from yoke.agent.tools.python_env import prepare_python_env
 from pydantic import Field
 
 
-class PythonExecTool(ManagedCommandTool):
+class PythonExecTool(ManagedExecutionTool):
     """Execute Python code with yoke's current interpreter."""
 
     is_yoke_tool = True
@@ -24,8 +18,9 @@ class PythonExecTool(ManagedCommandTool):
     provider_result_projection = "command"
     description = (
         "Execute arbitrary Python code with the current Python interpreter in "
-        "the workspace root. Returns output or a session ID for ongoing "
-        "execution; use write_stdin to poll streamed output. Child "
+        "the workspace root. Auto uses the host's normal initial completion wait; background "
+        "returns promptly. Use process_read with the returned opaque cursor to wait "
+        "or read remaining output, and process_input to send stdin. Child "
         "subprocesses can call `python` or `python3` to use the same "
         "interpreter/venv."
     )
@@ -39,18 +34,6 @@ class PythonExecTool(ManagedCommandTool):
         ),
     )
     timeout: int = Field(default=180, ge=1)
-    yield_time_ms: int = Field(
-        default=DEFAULT_EXEC_YIELD_TIME_MS,
-        ge=1,
-        le=300_000,
-        description="Wait before yielding output. Defaults to 30 seconds.",
-    )
-    max_output_tokens: int | None = Field(
-        default=None,
-        ge=1,
-        le=200_000,
-        description="Approximate output token budget.",
-    )
 
     def execute(self) -> dict[str, object]:
         """Run Python code and return output, status, and timing metadata."""
@@ -62,24 +45,18 @@ class PythonExecTool(ManagedCommandTool):
             prepare_python_env(env, python_executable)
             env["PYTHONIOENCODING"] = "utf-8:replace"
             env.setdefault("PYTHONUTF8", "1")
-            result = self._manager().exec_argv(
+            payload = self._start(
                 argv=[python_executable, "-u", "-c", self.code],
-                display_command=f"{python_executable} -u -c <code>",
+                command=f"{python_executable} -u -c <code>",
                 cwd=self._require_live_root(),
                 env=env,
-                yield_time_ms=self.yield_time_ms,
                 timeout_seconds=self.timeout,
-                cancel_requested=self._is_cancel_requested,
             )
         except Exception as exc:
             return self._error(str(exc))
-        payload = self._format_result(
-            result,
-            max_output_tokens=(self.max_output_tokens or DEFAULT_MAX_OUTPUT_TOKENS),
-        )
         payload["python_executable"] = python_executable
         payload["timeout"] = self.timeout
-        if result.timed_out:
+        if payload.get("timed_out"):
             payload["error"] = (
                 f"Python execution timed out after {self.timeout} seconds"
             )

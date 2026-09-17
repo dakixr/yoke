@@ -54,10 +54,13 @@ discovery, planning, and merge agents are optional, not mandatory stages.
    handoff, and a full `JsonlObserver` trace under `.agents_local/<run-id>/`. Add
    a phase log when it helps diagnose the run. Traces and snapshots can contain
    sensitive content despite redaction.
-6. Run with the repository's Python environment using `exec_command`. Prefer
-   `argv` when no shell syntax is needed. On Mooncake MCP, wait with `process_read`
-   and send input with `process_io`; follow returned cursors and continuation hints.
-   Native Yoke uses `write_stdin`. Read the active tool schema for wait limits.
+6. Run with the repository's Python environment using `command_exec`. Prefer
+   `argv` when no shell syntax is needed. Native Yoke and MCP both use
+   `process_read` to wait, `process_input` for nonempty input, and
+   `process_cancel` to stop the owned process tree. Copy each returned opaque
+   cursor unchanged beside its process `session_id`, and collect remaining output
+   after exit. For background launch, longer follow-up waits, or multiple
+   processes, read the [process guidance](SDK_SURFACE.md#process-tools-for-launching-workers).
 7. Inspect every terminal result, blocker, and `progress_errors` when configured.
    Let `run_many()` close one-shot agents. Use nested `async with` blocks for
    roles so earlier agents close even if a later constructor fails.

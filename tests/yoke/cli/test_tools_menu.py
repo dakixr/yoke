@@ -30,7 +30,7 @@ class ProviderStub:
 
 
 class VisibleTool(LocalTool):
-    name = "exec_command"
+    name = "command_exec"
     description = "Visible menu tool."
 
     def execute(self) -> dict[str, object]:
@@ -67,7 +67,7 @@ def test_global_tool_change_preserves_hidden_runtime_tools(
     config_path.parent.mkdir(parents=True)
     config_path.write_text(
         '{"capabilities":{"shell":"deny"},'
-        '"tools":{"exec_command":"deny","unrelated":"allow"}}',
+        '"tools":{"command_exec":"deny","unrelated":"allow"}}',
         encoding="utf-8",
     )
     notices: list[str] = []
@@ -103,11 +103,11 @@ def test_global_tool_change_preserves_hidden_runtime_tools(
     finally:
         agent.close()
 
-    assert active_names == {"exec_command", "skill"}
+    assert active_names == {"command_exec", "skill"}
     persisted = json.loads(config_path.read_text(encoding="utf-8"))
     assert persisted["capabilities"] == {"shell": "allow"}
     assert persisted["tools"] == {"unrelated": "allow"}
-    assert notices == ["Updated tools for globally: enabled exec_command"]
+    assert notices == ["Updated tools for globally: enabled command_exec"]
 
 
 def test_unchanged_visible_selection_ignores_hidden_runtime_tools(
@@ -146,7 +146,7 @@ def test_unchanged_visible_selection_ignores_hidden_runtime_tools(
     finally:
         agent.close()
 
-    assert active_names == {"exec_command", "skill"}
+    assert active_names == {"command_exec", "skill"}
     assert notices == ["No tool changes applied."]
 
 

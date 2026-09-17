@@ -416,8 +416,11 @@ from yoke.agent.tools import ReadTool, EditTool, WriteTool
 | `EditTool` | `edit` | Replace exact text in files, including targeted occurrences or replace-all edits. |
 | `WriteTool` | `write` | Create or overwrite a UTF-8 text file under the workspace. |
 | `ApplyPatchTool` | `apply_patch` | Apply codex-style multi-file patches inside the workspace. |
-| `ExecCommandTool` / `CommandTool` | `exec_command` | Run shell commands or direct argv processes from the workspace root, returning output or a background session ID. |
-| `WriteStdinTool` | `write_stdin` | Poll a running command session for up to 1 hour or send interactive input. |
+| `CommandExecTool` / `ExecCommandTool` / `CommandTool` | `command_exec` | Run shell commands or direct argv processes with auto or background execution. |
+| `PythonExecTool` | `python_exec` | Run Python with a separate execution timeout and host-owned initial observation window. |
+| `ProcessInputTool` | `process_input` | Write nonempty input and collect a short response, optionally after a supplied cursor. |
+| `ProcessReadTool` | `process_read` | Wait for all requested processes to finish, return on any output or completion, or take a snapshot. |
+| `ProcessCancelTool` | `process_cancel` | Terminate an owned process tree and retain final output for paging. |
 | `FdTool` | `fd` | Find files and directories with typed pattern, path, type, extension, ignore, depth, time/size, sorting, filtering, and limit fields. |
 | `RipgrepTool` | `rg` | Search contents or list files with typed patterns, paths, globs, file types, match/result modes, context, sorting, and limits. |
 | `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
@@ -433,13 +436,31 @@ automatically. Pass already-bound instances when you need custom context. Pass
 capability IDs such as `"file.write"` when you want the SDK to choose the
 provider/model-specific concrete tools.
 
+The `shell` capability provides the five process tools listed above. Native
+Yoke and MCP share their runtime names, execution modes, and cursor semantics.
+See [Shared process tools](process-tools.md) for wait limits, result fields,
+post-exit paging, retention gaps, and migration from the removed tool names
+and `yield_time_ms` argument. Existing `ExecCommandTool`, `CommandTool`, and
+`PythonExecTool` imports remain usable; Python import compatibility does not
+make old model-facing tool names callable.
+
+Import `ProcessInputTool`, `ProcessReadTool`, and `ProcessCancelTool` from
+`yoke.agent.tools.processes`.
+`ProcessCursor` and `ProcessReadRequest` are Pydantic models in
+`yoke.agent.tools.processes.models`. Each read session contains `session_id`
+and an optional opaque `cursor` string returned by an earlier result. The read
+request also contains `until`, `wait_ms`, and `max_bytes`; copy cursors back
+unchanged rather than interpreting or constructing them.
+
 `FdTool` and `RipgrepTool` accept only typed search fields. Native argument
-strings are intentionally not part of the SDK contract; use `exec_command` for
+strings are intentionally not part of the SDK contract; use `command_exec` for
 shell composition or native CLI behavior outside the typed search surface.
 Tool execution still produces and persists the complete JSON result. Before a
 provider request, Yoke projects selected high-volume built-ins into a smaller
 model-facing form. `rg`, `fd`, `apply_patch`, and `web_search` use TOON 4.1 for
 tabular data; command-process tools keep JSON but omit duplicate bookkeeping.
+New process projections retain session IDs, cursors, gaps, `has_more_output`,
+and exit codes, including after a process finishes.
 Custom message transforms run before this projection, so they continue to see
 the canonical JSON result. Projection provenance is stored on the exact
 tool-result entry, and hook-replaced results or custom subclasses do not inherit

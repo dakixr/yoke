@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.mcp_server.execution.models import Request
@@ -28,6 +28,8 @@ class ManagedCall(Request):
 
 
 class ComposePython(PythonExecTool):
+    model_config = ConfigDict(extra="forbid")
+
     managed_calls: list[ManagedCall] = Field(
         default_factory=list,
         max_length=32,

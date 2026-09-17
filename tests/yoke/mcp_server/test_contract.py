@@ -22,9 +22,9 @@ EXPECTED_TOOLS = [
     "fd",
     "skill",
     "apply_patch",
-    "exec_command",
-    "exec_python",
-    "process_io",
+    "command_exec",
+    "python_exec",
+    "process_input",
     "mcp_inspect",
     "mcp_call",
     "batch_read",
@@ -63,28 +63,46 @@ def test_registry_is_an_explicit_tool_allowlist(tmp_path: Path) -> None:
             assert "raw_args" not in tools["rg"].input_schema["properties"]
             assert "raw_args" not in tools["fd"].input_schema["properties"]
             assert "raw_args" not in json.dumps(tools["batch_read"].input_schema)
+            assert "wait_ms" not in tools["command_exec"].input_schema["properties"]
             assert (
-                tools["exec_command"].input_schema["properties"]["yield_time_ms"][
-                    "maximum"
-                ]
-                == MAX_SAFE_REMOTE_WAIT_MS
+                tools["process_input"].input_schema["properties"]["wait_ms"]["maximum"]
+                == 5000
             )
-            assert (
-                tools["process_io"].input_schema["properties"]["yield_time_ms"][
-                    "maximum"
-                ]
-                == MAX_SAFE_REMOTE_WAIT_MS
-            )
-            assert (
-                tools["exec_python"].input_schema["properties"]["yield_time_ms"][
-                    "maximum"
-                ]
-                == MAX_SAFE_REMOTE_WAIT_MS
-            )
+            assert "wait_ms" not in tools["python_exec"].input_schema["properties"]
             assert (
                 tools["process_read"].input_schema["properties"]["wait_ms"]["maximum"]
                 == MAX_SAFE_REMOTE_WAIT_MS
             )
+            for name in (
+                "command_exec",
+                "python_exec",
+                "process_input",
+                "process_cancel",
+            ):
+                annotations = tools[name].annotations
+                assert annotations is not None
+                assert annotations.read_only_hint is False
+                assert annotations.destructive_hint is True
+                assert annotations.idempotent_hint is False
+                assert tools[name].output_schema
+            for name in ("command_exec", "python_exec", "process_input"):
+                output_schema = json.dumps(tools[name].output_schema)
+                assert "pc1_" in output_schema
+                assert "after_seq" not in output_schema
+                assert "offset" not in output_schema
+            read_output_schema = json.dumps(tools["process_read"].output_schema)
+            assert "pc1_" in read_output_schema
+            assert "after_seq" not in read_output_schema
+            assert "offset" not in read_output_schema
+            cancel_output_schema = json.dumps(tools["process_cancel"].output_schema)
+            assert "cursor" not in cancel_output_schema
+            assert "output" not in cancel_output_schema
+            annotations = tools["process_read"].annotations
+            assert annotations is not None
+            assert annotations.read_only_hint is True
+            assert annotations.destructive_hint is False
+            assert annotations.idempotent_hint is True
+            assert annotations.open_world_hint is False
             assert skill_tool.annotations is not None
             assert skill_tool.annotations.read_only_hint is True
             assert patch_tool.annotations is not None
@@ -95,6 +113,20 @@ def test_registry_is_an_explicit_tool_allowlist(tmp_path: Path) -> None:
             assert image_tool.input_schema == TOOL_REGISTRY[
                 "view_image"
             ].tool_class.model_json_schema(by_alias=True)
+
+    asyncio.run(scenario())
+
+
+def test_old_process_names_are_not_mcp_aliases(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        service = create_service(MCPServerConfig(root=tmp_path))
+        async with memory_client(service):
+            for name in ("exec_command", "exec_python", "write_stdin", "process_io"):
+                result = await service.adapter.call_tool(name, {})
+                payload = structured(result)
+                assert result.is_error is True
+                assert payload["error_code"] == "UNKNOWN_TOOL"
+                assert payload["execution_started"] is False
 
     asyncio.run(scenario())
 

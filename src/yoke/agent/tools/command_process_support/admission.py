@@ -9,11 +9,30 @@ from typing import TYPE_CHECKING
 from yoke.agent.tools.command_process import _ManagedCommandProcess
 from yoke.agent.tools.command_process_support.spawn import open_process
 from yoke.agent.tools.command_process_types import MAX_PROCESS_COUNT
+from yoke.agent.tools.command_process_types import CancelRequested
+from yoke.agent.tools.command_process_support.coordination import (
+    acquired,
+    check_cancelled,
+)
 from yoke.agent.tools.python_env import prepare_python_env
 from yoke.agent.tools.shell import build_shell_command
 
 if TYPE_CHECKING:
     from yoke.agent.tools.command_process_manager import CommandProcessManager
+
+
+def allocate_session_id(manager: CommandProcessManager) -> int:
+    """Allocate a JSON-safe handle without ever recycling retired runtime IDs."""
+    used = set(manager._processes)
+    used.update(item.snapshot.session_id for item in manager._completed)
+    used.update(item.session_id for item in manager._completion_events)
+    while manager._next_session_id in used:
+        manager._next_session_id += 1
+    if manager._next_session_id >= 2**53:
+        raise RuntimeError("Process session ID space exhausted")
+    session_id = manager._next_session_id
+    manager._next_session_id += 1
+    return session_id
 
 
 def spawn(
@@ -27,8 +46,12 @@ def spawn(
     argv: list[str] | None,
     env: dict[str, str] | None,
     timeout_seconds: int | None,
+    cancel_requested: CancelRequested | None = None,
 ) -> _ManagedCommandProcess:
-    with manager._spawn_lock:
+    values = argv if argv is not None else [command, shell or ""]
+    if any("\x00" in value for value in values):
+        raise ValueError("Process arguments must not contain NUL characters")
+    with acquired(manager._spawn_lock, cancel_requested):
         _prune(manager)
         managed: _ManagedCommandProcess | None = None
         master_fd: int | None = None
@@ -37,7 +60,8 @@ def spawn(
             with manager._lock:
                 if manager._closed:
                     raise RuntimeError("Command process manager is closed")
-                session_id = manager._allocate_session_id()
+                check_cancelled(cancel_requested)
+                session_id = allocate_session_id(manager)
                 process_env = (
                     env.copy() if env is not None else manager.base_environment()
                 )
@@ -46,6 +70,7 @@ def spawn(
                 process_argv = argv or build_shell_command(
                     command, process_env, shell=shell, login=login
                 )
+                check_cancelled(cancel_requested)
                 process, master_fd, slave_fd = open_process(
                     process_argv, cwd, process_env, tty=tty
                 )
@@ -94,9 +119,6 @@ def _prune(manager: CommandProcessManager) -> None:
     if oldest.finished:
         manager._complete(oldest.session_id)
     else:
-        oldest.terminate()
-        with manager._lock:
-            if manager._processes.get(oldest.session_id) is oldest:
-                manager._processes.pop(oldest.session_id)
-                manager._background_session_ids.discard(oldest.session_id)
-                manager._notified_completion_ids.discard(oldest.session_id)
+        raise RuntimeError(
+            "Process capacity reached; finish work or use process_cancel before starting another process"
+        )

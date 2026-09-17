@@ -8,10 +8,14 @@ from pathlib import Path
 
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import Message
-from yoke.agent.tools import WriteStdinTool
+from yoke.agent.tools import ProcessReadTool
 from yoke.agent.tools.command_process_manager import CommandProcessManager
 from yoke.agent.tools.command_process_types import CommandProcessResult
 from yoke.agent.tools.command_process_types import CommandProcessSnapshot
+from yoke.agent.tools.command_process_types import (
+    CommandProcessOutputPage,
+    CommandProcessOutputChunk,
+)
 from yoke.agent.tools.command_process_types import command_completion_event_id
 from yoke.ai.providers.base import Provider
 
@@ -52,21 +56,20 @@ def _completion_snapshot(
 
 
 class _CompletedCommandProcessManager(CommandProcessManager):
-    def write_stdin(
-        self,
-        *,
-        session_id: int,
-        chars: str,
-        yield_time_ms: int | None,
-        cancel_requested,
-    ) -> CommandProcessResult:
-        del session_id, chars, yield_time_ms, cancel_requested
-        return CommandProcessResult(
-            session_id=None,
-            exit_code=0,
-            output="final line",
-            wall_time_seconds=0.0,
-            original_output_bytes=10,
+    def observe_output(
+        self, session_id: int, *, after_seq: int, limit: int
+    ) -> tuple[CommandProcessSnapshot, CommandProcessOutputPage]:
+        snapshot = next(
+            event
+            for event in self.completion_events()
+            if event.session_id == session_id
+        )
+        return snapshot, CommandProcessOutputPage(
+            chunks=(CommandProcessOutputChunk(seq=1, text="final line"),)
+            if after_seq == 0 and limit
+            else (),
+            latest_seq=1,
+            truncated_before_seq=0,
         )
 
 
@@ -104,7 +107,7 @@ def test_runtime_appends_completion_notice_before_next_model_call(
         assert f'"session_id": {started.session_id}' in notice.plain_text_content
         assert '"exit_code": 0' in notice.plain_text_content
         assert "final line" in notice.plain_text_content
-        assert "Do not poll these session IDs again" in notice.plain_text_content
+        assert "Use process_read only for remaining output" in notice.plain_text_content
         assert result.messages[-2] == notice
         notices = [
             message
@@ -117,14 +120,14 @@ def test_runtime_appends_completion_notice_before_next_model_call(
         agent.close()
 
 
-def test_terminal_poll_suppresses_duplicate_completion_notice(
+def test_terminal_read_suppresses_duplicate_completion_notice(
     tmp_path: Path,
 ) -> None:
     manager = _CompletedCommandProcessManager()
     provider = NoticeRecordingProvider()
     agent = RuntimeAgent(
         provider=provider,
-        tools=[WriteStdinTool.bind(root=tmp_path)],
+        tools=[ProcessReadTool.bind(root=tmp_path)],
         command_process_manager=manager,
     )
     try:
@@ -132,13 +135,13 @@ def test_terminal_poll_suppresses_duplicate_completion_notice(
         assert started.session_id is not None
 
         completed = (
-            agent.tools["write_stdin"]
-            .parse_arguments({"session_id": started.session_id})
+            agent.tools["process_read"]
+            .parse_arguments({"sessions": [{"session_id": started.session_id}]})
             .execute()
         )
         events = manager.completion_events()
 
-        assert completed["session_id"] is None
+        assert completed["reason"] == "completed"
         assert command_completion_event_id(events[0]) in (
             agent._seen_command_completion_events
         )

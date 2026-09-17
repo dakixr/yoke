@@ -53,7 +53,7 @@ def test_batch_partial_failures_and_retained_results(tmp_path: Path) -> None:
                     "items": [
                         {
                             "id": "x",
-                            "tool": "exec_command",
+                            "tool": "command_exec",
                             "arguments": {"cmd": "touch forbidden"},
                         }
                     ]
@@ -84,7 +84,7 @@ def test_python_bridge_dependent_reads_with_one_operation_slot(tmp_path: Path) -
         async with memory_client(service) as client:
             result = structured(
                 await client.call_tool(
-                    "exec_python",
+                    "python_exec",
                     {
                         "code": """
 import asyncio
@@ -95,7 +95,6 @@ async def main():
     output.emit({'evidence': result.data['content']})
 asyncio.run(main())
 """,
-                        "yield_time_ms": 5000,
                     },
                 )
             )
@@ -119,14 +118,13 @@ def test_python_bridge_rejects_unlisted_effects(tmp_path: Path) -> None:
         async with memory_client(service) as client:
             result = structured(
                 await client.call_tool(
-                    "exec_python",
+                    "python_exec",
                     {
                         "code": """
 import asyncio
 from yoke_mcp import tools
-asyncio.run(tools.call('exec_command', {'cmd': 'touch forbidden'}))
+asyncio.run(tools.call('command_exec', {'cmd': 'touch forbidden'}))
 """,
-                        "yield_time_ms": 5000,
                     },
                 )
             )
@@ -143,29 +141,41 @@ def test_process_read_replays_cursors_and_cancel(tmp_path: Path) -> None:
         async with memory_client(service) as client:
             running = structured(
                 await client.call_tool(
-                    "exec_python",
+                    "python_exec",
                     {
                         "code": "import time; print('hello', flush=True); time.sleep(30)",
-                        "yield_time_ms": 250,
+                        "mode": "background",
                     },
                 )
             )
             session = running["session_id"]
-            request = {"sessions": [{"session_id": session}]}
+            request = {"sessions": [{"session_id": session}], "wait_ms": 0}
             first = structured(
-                await client.call_tool("process_read", {**request, "wait_ms": 5000})
+                await client.call_tool(
+                    "process_read",
+                    {**request, "wait_ms": 5000, "until": "output_or_completion"},
+                )
             )
             again = structured(await client.call_tool("process_read", request))
             assert first["items"][0]["output"] == "hello\n"
             assert again["items"][0]["output"] == "hello\n"
-            assert first["items"][0]["next_cursor"] == again["items"][0]["next_cursor"]
-            assert first["items"][0]["continue"] is True
+            assert first["items"][0]["cursor"] == again["items"][0]["cursor"]
+            assert first["items"][0]["running"] is True
             assert first["items"][0]["next_tool"] == "process_read"
-            assert first["items"][0]["recommended_wait_ms"] == 240_000
+            assert "recommended_wait_ms" not in first["items"][0]
             assert first["items"][0]["elapsed_seconds"] > 0
             next_page = structured(
                 await client.call_tool(
-                    "process_read", {"sessions": [first["items"][0]["next_cursor"]]}
+                    "process_read",
+                    {
+                        "sessions": [
+                            {
+                                "session_id": session,
+                                "cursor": first["items"][0]["cursor"],
+                            }
+                        ],
+                        "wait_ms": 0,
+                    },
                 )
             )
             assert next_page["items"][0]["output"] == ""
@@ -214,17 +224,24 @@ def test_search_recipe_and_hash_guarded_patch(tmp_path: Path) -> None:
             assert result["ok"], result
             assert path.read_text().startswith("changed")
             output = result["execution"]["output"]
-            if result["execution"].get("session_id"):
-                cursor = {"session_id": result["execution"]["session_id"]}
+            if result["execution"].get("running") or result["execution"].get(
+                "has_more_output"
+            ):
+                session = result["execution"]["session_id"]
+                cursor = result["execution"]["cursor"]
                 for _ in range(20):
                     observed = structured(
                         await client.call_tool(
-                            "process_read", {"sessions": [cursor], "wait_ms": 1000}
+                            "process_read",
+                            {
+                                "sessions": [{"session_id": session, "cursor": cursor}],
+                                "wait_ms": 1000,
+                            },
                         )
                     )["items"][0]
                     output += observed["output"]
-                    cursor = observed["next_cursor"]
-                    if observed["status"] != "running":
+                    cursor = observed["cursor"]
+                    if not observed["running"] and not observed["has_more_output"]:
                         break
             assert "check one" in output
             assert "check two" in output
@@ -241,20 +258,15 @@ def test_descriptors_defaults_file_parameters_and_output_schemas(
         async with memory_client(service) as client:
             tools = {t.name: t for t in (await client.list_tools()).tools}
             assert (
-                tools["exec_command"].input_schema["properties"]["login"]["default"]
+                tools["command_exec"].input_schema["properties"]["login"]["default"]
                 is False
             )
-            assert (
-                tools["exec_python"].input_schema["properties"]["yield_time_ms"][
-                    "default"
-                ]
-                == 1234
-            )
+            assert "wait_ms" not in tools["python_exec"].input_schema["properties"]
             assert tools["import_files"].meta == {"openai/fileParams": ["files"]}
             assert tools["batch_read"].output_schema
             assert tools["process_read"].annotations is not None
-            assert tools["exec_python"].annotations is not None
+            assert tools["python_exec"].annotations is not None
             assert tools["process_read"].annotations.read_only_hint
-            assert not tools["exec_python"].annotations.read_only_hint
+            assert not tools["python_exec"].annotations.read_only_hint
 
     asyncio.run(scenario())

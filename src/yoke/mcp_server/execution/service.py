@@ -14,11 +14,19 @@ from typing import Any
 from anyio.to_thread import run_sync
 from mcp.types import Tool
 
-from yoke.agent.tools.python_exec import PythonExecTool
+from yoke.agent.tools.processes import ProcessCancelTool
 from yoke.agent.tools.read import ReadTool
 from yoke.mcp.manager import McpManager
 from yoke.mcp_server.config import MCPServerConfig
-from yoke.mcp_server.execution import gateway, processes, reads, search, wrappers
+from yoke.mcp_server.execution import (
+    gateway,
+    policy,
+    processes,
+    python,
+    reads,
+    search,
+    wrappers,
+)
 from yoke.mcp_server.execution.bridge import ComposePython, PythonBridge
 from yoke.mcp_server.execution.catalog import ACTIONS, descriptor
 from yoke.mcp_server.execution.models import (
@@ -74,35 +82,20 @@ class ExecutionService:
             name: descriptor(name, action, self.defaults(name))
             for name, action in ACTIONS.items()
         }
-        for name, property_name in (
-            ("exec_python", "yield_time_ms"),
-            ("process_read", "wait_ms"),
-        ):
-            tool = result[name]
-            properties = tool.input_schema.get("properties", {})
-            property_schema = properties.get(property_name)
-            if isinstance(property_schema, dict):
-                property_schema["maximum"] = self.config.max_remote_wait_ms
+        for name, tool in result.items():
+            policy.schema(self.config, name, tool.input_schema)
         result.update(
             {name: wrapper.descriptor() for name, wrapper in self.wrappers.items()}
         )
         return result
 
     def defaults(self, name: str) -> dict[str, Any]:
-        if name == "exec_python":
-            return {
-                "yield_time_ms": min(
-                    self.config.default_yield_ms, self.config.max_remote_wait_ms
-                ),
-                "timeout": self.config.python_timeout,
-                "max_output_tokens": self.config.max_output_tokens,
-            }
-        return {}
+        return policy.defaults(self.config, name)
 
     def validate_arguments(self, name: str, arguments: dict[str, Any]) -> None:
         """Preflight outer arguments before dispatch can perform any work."""
         if name in ACTIONS:
-            values = self._limit_remote_wait(name, {**self.defaults(name), **arguments})
+            values = policy.arguments(self.config, name, arguments)
             ACTIONS[name].model.model_validate(values)
 
     async def dispatch(
@@ -112,8 +105,8 @@ class ExecutionService:
         *,
         cancel: threading.Event | None = None,
     ) -> dict[str, Any]:
-        if cancel and cancel.is_set():
-            return {"ok": False, "status": "cancelled"}
+        if cancel and cancel.is_set() and name != "process_read":
+            return {"ok": False, "status": "cancelled", "reason": "cancelled"}
         if name in self.wrappers:
             wrapper = self.wrappers[name]
             return await self.dispatch(
@@ -131,7 +124,7 @@ class ExecutionService:
                 return await self.local(name, arguments, cancel=cancel)
             except (ValueError, OSError) as exc:
                 return {"ok": False, "status": "error", "error": str(exc)}
-        values = self._limit_remote_wait(name, {**self.defaults(name), **arguments})
+        values = policy.arguments(self.config, name, arguments)
         request = ACTIONS[name].model.model_validate(values)
         if isinstance(request, BatchRead):
             return await self.batch(request)
@@ -157,7 +150,7 @@ class ExecutionService:
                 }
             return result
         if isinstance(request, ComposePython):
-            return await self.python(request)
+            return await self.python(request, cancel=cancel)
         if isinstance(request, ResultRead):
             return self.store.read(
                 request.result_ref,
@@ -169,22 +162,21 @@ class ExecutionService:
             return await processes.read(
                 self.runtime.manager,
                 request,
-                recommended_wait_ms=self.config.max_remote_wait_ms,
+                cancel=cancel,
+                slots=self.runtime._reads,
+                limiter=self.runtime._read_threads,
             )
         if isinstance(request, ProcessCancel):
-            token = self._sessions.get(request.session_id)
+            token = self._sessions.pop(request.session_id, None)
             if token:
                 self.bridge.revoke(token)
-            state = self.runtime.manager.snapshot(request.session_id)
-            if state.status == "running":
-                await run_sync(
-                    partial(self.runtime.manager.terminate, request.session_id)
-                )
-            return {
-                "ok": True,
-                "session_id": request.session_id,
-                "status": "terminated" if state.status == "running" else state.status,
-            }
+            tool = ProcessCancelTool.bind(
+                root=self.config.root,
+                command_process_manager=self.runtime.manager,
+            ).parse_arguments(request.model_dump())
+            return await self.runtime.execute(
+                "process_cancel", tool, cancel=cancel or threading.Event()
+            )
         if isinstance(request, SearchThenRead):
             return await search_then_read(request, self.dispatch)
         if isinstance(request, WorkspaceSnapshot):
@@ -209,16 +201,7 @@ class ExecutionService:
         raise ValueError("Unsupported action")
 
     def _limit_remote_wait(self, name: str, values: dict[str, Any]) -> dict[str, Any]:
-        wait_key = {
-            "exec_python": "yield_time_ms",
-            "process_read": "wait_ms",
-        }.get(name)
-        if wait_key is None:
-            return values
-        requested_wait = values.get(wait_key)
-        if isinstance(requested_wait, int) and not isinstance(requested_wait, bool):
-            values[wait_key] = min(requested_wait, self.config.max_remote_wait_ms)
-        return values
+        return policy.arguments(self.config, name, values)
 
     async def local(
         self,
@@ -230,12 +213,16 @@ class ExecutionService:
         spec = effective_tool_registry().get(name)
         if spec is None:
             raise ValueError("Unknown local tool")
+        cancel = cancel or threading.Event()
         binding = {
             "root": self.config.root,
             "command_process_manager": self.runtime.manager,
             "skill_dirs": self.config.skill_dirs,
             "mcp_manager": self.manager,
             "cancel_requested": cancel.is_set if cancel else lambda: False,
+            "default_exec_wait_ms": min(
+                self.config.default_yield_ms, self.config.max_remote_wait_ms
+            ),
         }
         if name == "read_file":
             request = ReadTool.model_validate(arguments)
@@ -243,14 +230,16 @@ class ExecutionService:
                 return await run_sync(
                     partial(reads.read_file, self.config.root, request.model_dump())
                 )
-        parsed = spec.tool_class.bind(**binding).parse_arguments(arguments)
+        parsed = spec.tool_class.bind(**binding).parse_arguments(
+            policy.arguments(self.config, name, arguments)
+        )
         if name in {"rg", "fd"}:
             from yoke.mcp_server.search import MCPFdTool, MCPRipgrepTool
 
             assert isinstance(parsed, (MCPFdTool, MCPRipgrepTool))
             async with self.runtime._total:
                 return await run_sync(partial(search.execute, parsed, cancel))
-        return await self.runtime.execute(name, parsed)
+        return await self.runtime.execute(name, parsed, cancel=cancel)
 
     async def batch(self, request: BatchRead) -> dict[str, Any]:
         started = time.monotonic()
@@ -319,39 +308,15 @@ class ExecutionService:
             budget,
         )
 
-    async def python(self, request: ComposePython) -> dict[str, Any]:
-        async with self._orchestrations:
-            token, run, code = await self.bridge.prepare(request)
-            tool = PythonExecTool.bind(
-                root=self.config.root,
-                command_process_manager=self.runtime.manager,
-                cancel_requested=run.cancelled.is_set,
-            ).parse_arguments(
-                {
-                    **request.model_dump(exclude={"managed_calls", "max_calls"}),
-                    "code": code,
-                }
-            )
-            try:
-                # Orchestration has separate admission: children need the operation slots.
-                result = await run_sync(tool.execute)
-            except BaseException:
-                self.bridge.revoke(token)
-                raise
-            session = result.get("session_id")
-            if isinstance(session, int):
-                self._sessions[session] = token
-                watcher = asyncio.create_task(self._watch(session, token, run.deadline))
-                self._watchers.add(watcher)
-                watcher.add_done_callback(self._watchers.discard)
-            else:
-                self.bridge.revoke(token)
-            return result
+    async def python(
+        self, request: ComposePython, *, cancel: threading.Event | None = None
+    ) -> dict[str, Any]:
+        return await python.execute(self, request, cancel=cancel)
 
     async def _watch(self, session: int, token: str, deadline: float) -> None:
         try:
             while time.monotonic() < deadline:
-                if self.runtime.manager._get(session).finished:
+                if self.runtime.manager.snapshot(session).status != "running":
                     return
                 await asyncio.sleep(0.1)
         except ValueError:

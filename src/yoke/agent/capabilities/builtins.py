@@ -28,7 +28,9 @@ from yoke.agent.tools import WebFetchTool
 from yoke.agent.tools import WebResearchTool
 from yoke.agent.tools import WebSearchTool
 from yoke.agent.tools import WorkspaceTool
-from yoke.agent.tools import WriteStdinTool
+from yoke.agent.tools import ProcessInputTool
+from yoke.agent.tools import ProcessReadTool
+from yoke.agent.tools import ProcessCancelTool
 from yoke.agent.tools import WriteTool
 from yoke.agent.tools.apply_patch.instructions import (
     APPLY_PATCH_INSTRUCTIONS,
@@ -155,7 +157,13 @@ def builtin_capabilities() -> tuple[BaseCapability, ...]:
         FileWriteCapability(),
         ToolClassCapability(
             "shell",
-            (ExecCommandTool, WriteStdinTool, PythonExecTool),
+            (
+                ExecCommandTool,
+                PythonExecTool,
+                ProcessInputTool,
+                ProcessReadTool,
+                ProcessCancelTool,
+            ),
         ),
         ImageAttachCapability("image.attach", (AttachImageTool,)),
         ImageGenerationCapability("image.generate", (ImageGenerationTool,)),

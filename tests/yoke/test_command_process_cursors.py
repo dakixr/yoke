@@ -13,9 +13,9 @@ from yoke.agent.tools.command_process import _ManagedCommandProcess
 from yoke.agent.tools.command_process_manager import CommandProcessManager
 from yoke.agent.tools.command_process_support.output import RetainedProcessOutput
 from yoke.agent.tools.command_process_types import MAX_RETAINED_OUTPUT_BYTES
+from yoke.agent.tools.processes.cursor import decode_cursor, ProcessPosition
 from yoke.http.services.process_service import ProcessService
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
-from yoke.mcp_server.execution.processes import ProcessCursor
 from yoke.mcp_server.execution.processes import page as mcp_process_page
 
 
@@ -134,13 +134,13 @@ def test_mcp_cursor_crosses_completion_without_replaying_output(
 ) -> None:
     process = _managed(manager, 2_003)
     process._append_output(b"first")
-    first = mcp_process_page(manager, ProcessCursor(session_id=2_003), 32_000)
+    first = mcp_process_page(manager, ProcessPosition(session_id=2_003), 32_000)
     process._append_output(b"second")
     manager._complete(2_003)
 
     second = mcp_process_page(
         manager,
-        ProcessCursor.model_validate(first["next_cursor"]),
+        decode_cursor(2_003, first["cursor"]),
         32_000,
     )
 

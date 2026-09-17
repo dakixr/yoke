@@ -30,7 +30,7 @@ def events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 @pytest.mark.parametrize(
     "name,arguments",
     [
-        ("exec_python", {"code": []}),
+        ("python_exec", {"code": []}),
         ("process_read", {}),
         ("read_file", {}),
         ("mcp_call", {}),
@@ -76,12 +76,12 @@ def test_runtime_exceptions_do_not_claim_execution_was_prevented(
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
 
-        async def crash(*_args: object) -> dict[str, object]:
+        async def crash(*_args: object, **_kwargs: object) -> dict[str, object]:
             raise error
 
         monkeypatch.setattr(service.runtime, "execute", crash)
         async with memory_client(service) as client:
-            payload = structured(await client.call_tool("exec_command", {"cmd": "pwd"}))
+            payload = structured(await client.call_tool("command_exec", {"cmd": "pwd"}))
             assert payload["error_code"] == code
             assert payload["execution_started"] is None
             assert payload["stage"] == "execution"
@@ -101,13 +101,13 @@ def test_post_dispatch_validation_is_not_reported_as_safe_to_retry(
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
 
-        async def crash(*_args: object) -> dict[str, object]:
+        async def crash(*_args: object, **_kwargs: object) -> dict[str, object]:
             MCPExecCommandTool.model_validate({})
             raise AssertionError("Expected a validation error")
 
         monkeypatch.setattr(service.runtime, "execute", crash)
         async with memory_client(service) as client:
-            payload = structured(await client.call_tool("exec_command", {"cmd": "pwd"}))
+            payload = structured(await client.call_tool("command_exec", {"cmd": "pwd"}))
             assert payload["error_code"] == "TOOL_EXECUTION_ERROR"
             assert payload["execution_started"] is None
 
@@ -144,13 +144,13 @@ def test_cancellation_has_a_terminal_request_log(
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
 
-        async def cancel(*_args: object) -> dict[str, object]:
+        async def cancel(*_args: object, **_kwargs: object) -> dict[str, object]:
             raise asyncio.CancelledError
 
         monkeypatch.setattr(service.runtime, "execute", cancel)
         async with memory_client(service):
             with pytest.raises(asyncio.CancelledError):
-                await service.adapter.call_tool("exec_command", {"cmd": "pwd"})
+                await service.adapter.call_tool("command_exec", {"cmd": "pwd"})
 
     asyncio.run(scenario())
     assert len(events(caplog)) == 2
@@ -176,9 +176,9 @@ def test_cli_formatter_preserves_metadata_and_redacts_tracebacks(
         (),
         (ValueError, ValueError("secret-exception"), None),
     )
-    record.mcp_event = {"tool": "exec_command", "ok": False, "duration_ms": 7}
+    record.mcp_event = {"tool": "command_exec", "ok": False, "duration_ms": 7}
     result = json.loads(handler.format(record))
-    assert result["tool"] == "exec_command"
+    assert result["tool"] == "command_exec"
     assert result["ok"] is False
     assert result["duration_ms"] == 7
     assert result["exception_type"] == "ValueError"

@@ -29,7 +29,7 @@ def test_command_descriptor_has_named_fields_without_a_root_union(
         service = create_service(MCPServerConfig(root=tmp_path))
         async with service.server.session_manager.run(), http_client(service) as client:
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-            command = tools["exec_command"]
+            command = tools["command_exec"]
             schema = command.input_schema
             assert schema["type"] == "object"
             assert not {"anyOf", "oneOf", "allOf"} & schema.keys()
@@ -90,7 +90,7 @@ def test_invalid_commands_never_dispatch_and_have_logged_recovery(
 
         monkeypatch.setattr(service.runtime, "execute", execute)
         async with service.server.session_manager.run(), http_client(service) as client:
-            result = await client.call_tool("exec_command", arguments)
+            result = await client.call_tool("command_exec", arguments)
             payload = structured(result)
             assert result.is_error is True
             assert payload["error_code"] == "INVALID_ARGUMENT"
@@ -133,17 +133,17 @@ def test_corrected_retry_runs_once_and_shell_and_alias_still_work(
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
         async with service.server.session_manager.run(), http_client(service) as client:
-            rejected = structured(await client.call_tool("exec_command", {"cmd": argv}))
+            rejected = structured(await client.call_tool("command_exec", {"cmd": argv}))
             assert rejected["execution_started"] is False
             assert not marker.exists()
             corrected = structured(
-                await client.call_tool("exec_command", {"argv": argv})
+                await client.call_tool("command_exec", {"argv": argv})
             )
             assert corrected["ok"] is True
             assert marker.read_text() == "x"
             for key in ("cmd", "command"):
                 result = structured(
-                    await client.call_tool("exec_command", {key: "printf shell-ok"})
+                    await client.call_tool("command_exec", {key: "printf shell-ok"})
                 )
                 assert result["output"] == "shell-ok"
                 assert result["exit_code"] == 0
@@ -161,7 +161,7 @@ def test_nonzero_exit_is_not_a_permission_or_input_error(
         async with service.server.session_manager.run(), http_client(service) as client:
             result = structured(
                 await client.call_tool(
-                    "exec_command",
+                    "command_exec",
                     {
                         "argv": [
                             sys.executable,
@@ -195,7 +195,7 @@ def test_real_os_execution_denial_has_a_distinct_code(
         service = create_service(MCPServerConfig(root=tmp_path))
         async with service.server.session_manager.run(), http_client(service) as client:
             result = structured(
-                await client.call_tool("exec_command", {"argv": [str(script)]})
+                await client.call_tool("command_exec", {"argv": [str(script)]})
             )
             assert result["error_code"] == "OS_PERMISSION_DENIED"
             assert result["execution_started"] is None
@@ -220,7 +220,7 @@ def test_running_command_and_timeout_keep_correct_outcomes(
         async with service.server.session_manager.run(), http_client(service) as client:
             started = structured(
                 await client.call_tool(
-                    "exec_command",
+                    "command_exec",
                     {
                         "argv": [
                             sys.executable,
@@ -231,7 +231,7 @@ def test_running_command_and_timeout_keep_correct_outcomes(
                             "    assert time.monotonic() < deadline, 'release not received'\n"
                             "    time.sleep(0.01)\n",
                         ],
-                        "yield_time_ms": 1,
+                        "mode": "background",
                     },
                 )
             )
@@ -246,13 +246,13 @@ def test_running_command_and_timeout_keep_correct_outcomes(
                     )
                 )
                 item = result["items"][0]
-                if not item["continue"]:
+                if not item["running"]:
                     assert item["exit_code"] == 0
                     break
-                cursor = item["next_cursor"]
+                cursor = item["cursor"]
             timed_out = structured(
                 await client.call_tool(
-                    "exec_python",
+                    "python_exec",
                     {
                         "code": "import time; time.sleep(5)",
                         "timeout": 1,

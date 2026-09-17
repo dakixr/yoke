@@ -9,13 +9,12 @@ from mcp.types import ToolAnnotations
 
 from yoke.agent.tools.apply_patch import ApplyPatchTool
 from yoke.agent.tools.base import LocalTool
-from yoke.agent.tools.command import WriteStdinTool
 from yoke.agent.tools.mcp import McpCallTool
 from yoke.agent.tools.mcp import McpInspectTool
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.agent.tools.read import ReadTool
 from yoke.mcp_server.files import MCPViewImageTool
-from yoke.mcp_server.commands import MCPExecCommandTool
+from yoke.mcp_server.commands import MCPExecCommandTool, MCPProcessInputTool
 from yoke.mcp_server.search import MCPFdTool
 from yoke.mcp_server.search import MCPRipgrepTool
 from yoke.mcp_server.skills import MCPSkillTool
@@ -103,7 +102,7 @@ TOOL_REGISTRY = {
             MUTATION,
         ),
         ExposedTool(
-            "exec_command",
+            "command_exec",
             "Execute command",
             "Execute a shell command on the server for builds, tests, Git, "
             "service inspection, package managers, and other terminal tasks. "
@@ -112,27 +111,29 @@ TOOL_REGISTRY = {
             "one. cmd must be a string, never an array. On INVALID_ARGUMENT, "
             "correct the arguments and retry. No command started; do not report "
             "a permission denial without an actual denial response. "
-            "Returns final output if it finishes within the yield window, "
-            "otherwise a process session ID. Continue long-running work with "
-            "process_read instead of restarting the command.",
+            "Auto mode uses the host's normal initial completion wait. Background mode "
+            "returns immediately. Every started process retains a session ID and opaque output cursor, even "
+            "after completion. Use process_read for waiting and remaining output.",
             MCPExecCommandTool,
             EXECUTION,
         ),
         ExposedTool(
-            "exec_python",
+            "python_exec",
             "Execute Python",
             "Execute Python with Yoke's current interpreter and environment. "
-            "Long-running calls return a session ID for process_io.",
+            "Auto mode uses the host's normal initial completion wait. Background mode returns immediately. "
+            "Use process_read to wait or page output, process_input to send stdin.",
             PythonExecTool,
             EXECUTION,
         ),
         ExposedTool(
-            "process_io",
-            "Process input/output",
-            "Continue a live exec_command or exec_python process using its "
-            "session ID. Use this primarily for stdin interaction. Empty polling "
-            "is remotely bounded; use process_read to wait for completion.",
-            WriteStdinTool,
+            "process_input",
+            "Process input",
+            "Send required nonempty chars to a process session, then collect output "
+            "for up to wait_ms, default 250 and maximum 5000. Pass the last cursor "
+            "unchanged to avoid replaying output. Without a cursor, reads start at the earliest "
+            "retained output. Use process_read for observation without input.",
+            MCPProcessInputTool,
             EXECUTION,
         ),
     )

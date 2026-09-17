@@ -126,7 +126,7 @@ def test_tool_completion_event_carries_provider_projection_provenance() -> None:
     events: list[tuple[str, dict[str, object]]] = []
     tool_call = ToolCall(
         id="call-event",
-        function=ToolFunction(name="exec_command", arguments="{}"),
+        function=ToolFunction(name="command_exec", arguments="{}"),
     )
 
     finalized, projection = finalize_tool_result(

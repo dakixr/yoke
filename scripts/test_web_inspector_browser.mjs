@@ -119,7 +119,7 @@ try {
   await test("tool detail stays technical and fully open", async () => {
     await client.evaluate("audit.controller.selectToolCall(audit.sessionID, 'fixture-call-201')");
     await client.wait("audit.store.getState().sessionData[audit.sessionID]?.toolDetail?.id === 'fixture-call-201'");
-    assert.ok(await client.evaluate("document.querySelector('.tool-signature')?.textContent.includes('exec_command')"));
+    assert.ok(await client.evaluate("document.querySelector('.tool-signature')?.textContent.includes('command_exec')"));
     assert.equal(await client.evaluate("document.querySelector('.tool-signature')?.textContent.includes('timeout')"), false);
     assert.equal(await client.evaluate("Boolean(document.querySelector('.tool-normalization'))"), false);
     assert.ok(await client.evaluate("document.querySelector('.activity-projected-json')?.textContent.includes('24 passed in 2.18s')"));
@@ -258,7 +258,7 @@ try {
       document.getElementById('app').hidden = true;
       document.body.append(root);
       const outcomes = [
-        ['failed', 'exec_command', { ok: true, exit_code: 2 }],
+        ['failed', 'command_exec', { ok: true, exit_code: 2 }],
         ['cancelled', 'read', { ok: false, cancelled: true }],
         ['completed', 'rg', { ok: true, exit_code: 1 }],
       ];

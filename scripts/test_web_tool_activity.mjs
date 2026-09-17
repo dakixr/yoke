@@ -37,8 +37,8 @@ test("missing chronology never invents opaque ID order", () => {
 
 test("compact signatures show actual tool names and arguments", () => {
   assert.equal(compactCallSignature(call("read", { path: "src/main.py", offset: 120, limit: 80 })), 'read(path="src/main.py", offset=120, limit=80)');
-  const executed = call("exec_command", { cmd: "old" }, { arguments: { raw: '{"cmd":"old"}', executed: { cmd: "uv run pytest", tty: false, workdir: "/repo" } } });
-  assert.equal(compactCallSignature(executed), 'exec_command(cmd="old")');
+  const executed = call("command_exec", { cmd: "old" }, { arguments: { raw: '{"cmd":"old"}', executed: { cmd: "uv run pytest", tty: false, workdir: "/repo" } } });
+  assert.equal(compactCallSignature(executed), 'command_exec(cmd="old")');
   const long = compactCallSignature(call("apply_patch", { input: "line\n".repeat(100) }), 80);
   assert.ok(long.length <= 80);
   assert.ok(long.startsWith("apply_patch(input="));
@@ -54,7 +54,7 @@ test("call argument state shows model-sent values and hides execution normalizat
 });
 
 test("captured output remains available while a call is running", () => {
-  const detail = call("exec_command", {}, { outputChunks: [{ text: "done" }] });
+  const detail = call("command_exec", {}, { outputChunks: [{ text: "done" }] });
   assert.equal(capturedOutput(detail), "done");
 });
 
@@ -69,7 +69,7 @@ test("JSON projections render structurally while TOON stays text", () => {
 });
 
 test("outcome metadata stays technical and no-match searches stay successful", () => {
-  assert.equal(callOutcome(call("exec_command", {}, { result: { exit_code: 2 } })).state, "failed");
+  assert.equal(callOutcome(call("command_exec", {}, { result: { exit_code: 2 } })).state, "failed");
   assert.equal(callOutcome(call("rg", {}, { result: { ok: true, exit_code: 1, output: [] } })).label, "No matches");
   assert.equal(callOutcome(call("fd", {}, { result: { ok: true, exit_code: 2 } })).state, "failed");
   assert.equal(callOutcome(call("read", {}, { status: "running" })).state, "running");
@@ -158,7 +158,7 @@ test("rendered detail is call plus result and keeps off-window selection", async
   const nodes = (tree) => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === "object" ? [tree, ...nodes(tree.children)] : [];
   const content = (tree) => Array.isArray(tree) ? tree.map(content).join("") : tree && typeof tree === "object" ? content(tree.children) : tree == null || typeof tree === "boolean" ? "" : String(tree);
   globalThis.activityPreferences = { callID: "outside", pane: "detail", following: false };
-  const selected = call("exec_command", {}, {
+  const selected = call("command_exec", {}, {
     id: "outside", status: "failed", sequence: 17,
     arguments: { raw: '{"cmd":"pytest"}', executed: { cmd: "uv run pytest", tty: false } },
     result: { ok: false, error: "Permission denied", exit_code: 2, output: "Permission denied", internal_runtime_field: "noise" },
@@ -172,7 +172,7 @@ test("rendered detail is call plus result and keeps off-window selection", async
   const text = content(tree);
   assert.ok(text.includes("Selected call is outside loaded history"));
   assert.ok(text.includes("Call"));
-  assert.ok(text.includes("exec_command"));
+  assert.ok(text.includes("command_exec"));
   assert.ok(text.includes("pytest"));
   assert.equal(text.includes("uv run pytest"), false);
   assert.equal(text.includes("Normalized before execution"), false);
@@ -206,10 +206,10 @@ test("chat preserves tool outcomes through live, saved, reloaded, and orphaned r
   const cases = [
     ["read", { ok: false, error: "Permission denied" }, "failed"],
     ["mcp.read", { isError: true }, "failed"],
-    ["exec_command", { ok: true, exit_code: 2 }, "failed"],
-    ["exec_command", { ok: true, exitCode: "1" }, "failed"],
-    ["exec_command", { ok: true, returncode: -9 }, "failed"],
-    ["exec_command", { ok: true, timed_out: true }, "failed"],
+    ["command_exec", { ok: true, exit_code: 2 }, "failed"],
+    ["command_exec", { ok: true, exitCode: "1" }, "failed"],
+    ["command_exec", { ok: true, returncode: -9 }, "failed"],
+    ["command_exec", { ok: true, timed_out: true }, "failed"],
     ["read", { ok: false, cancelled: true }, "cancelled"],
     ["read", { ok: true, content: "error is just file content" }, "completed"],
     ["rg", { ok: true, exit_code: 1 }, "completed"],

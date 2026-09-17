@@ -9,8 +9,9 @@ Use the `yoke` CLI when the process boundary, persisted CLI conversation, or
 terminal behavior is part of the request. Use `yoke-subagents` for ordinary SDK
 orchestration that does not require a CLI session.
 
-A persisted Yoke session ID names conversation state across CLI processes. An
-`exec_command` session ID is an ephemeral handle for one live child process.
+A persisted Yoke session ID names conversation state across CLI processes. A
+`command_exec` session ID is an ephemeral handle for one child process and its
+retained output, including after exit.
 Keep them separate.
 
 ## Core process
@@ -26,15 +27,41 @@ Keep them separate.
 4. Before concurrent write work starts, assign each session a separate worktree
    or a non-overlapping file scope. Conversation isolation does not isolate the
    filesystem.
-5. Invoke `exec_command` with `argv`, not a shell command string. Keep prompt
+5. Invoke `command_exec` with `argv`, not a shell command string. Keep prompt
    text and every option value in separate arguments.
-6. If `exec_command` returns a live process handle, collect every output chunk
-   from the initial call and subsequent `write_stdin` polls. Do not assume the
-   final poll contains the complete child output.
+6. Collect output from the initial call and subsequent `process_read` calls,
+   passing each returned opaque cursor unchanged beside its `session_id` in
+   `sessions`. Keep paging after exit while
+   `has_more_output` is true. Account for reported retention gaps; the final
+   read alone may not contain the complete child output.
 7. Surface the child answer as soon as it is available. If cleanup remains, use
    a commentary update for the answer before performing that cleanup.
 8. Report the persisted Yoke session ID separately from any live command
    process handle.
+
+## Launch and observation
+
+Native Yoke and MCP use the same process tools. `command_exec` defaults to
+`mode="auto"`, with a 30,000 ms native host-owned wait or the configured MCP
+default. Use `mode="background"` to return immediately. If auto returns a live
+handle, choose the follow-up wait on `process_read(wait_ms=...)`.
+
+`process_read` defaults to a 60,000 ms completion wait for all requested
+sessions. Use `until="output_or_completion"` for interactive progress; it
+returns on any unread output or terminal session. `wait_ms=0` is a snapshot.
+Native reads allow up to one hour; MCP reads use its configured cap, at most
+240 seconds. Read deadlines leave the child running.
+
+`process_input` requires nonempty `chars` and accepts an optional cursor for
+already-read output. Copy the opaque cursor returned for that session without
+interpreting it. Without it,
+the response starts at the earliest retained output and may repeat text.
+Input waits default to 250 ms and accept 0 through 5,000 ms. Poll with
+`process_read`, not empty input. Inspect `exit_code` even when a read succeeds.
+
+For cursor behavior, paging errors, and migration from `exec_command`,
+`exec_python`, `write_stdin`, `process_io`, and `yield_time_ms`, read the
+[shared process reference](../../../../docs/process-tools.md).
 
 ## Create a session
 
@@ -60,9 +87,9 @@ Keep them separate.
 3. Add `--model <provider:model[:thinking-effort]>`, repeated `--skill`, and
    repeated `--image` arguments when the user requests them. Preserve explicit
    user selections exactly.
-4. Run without a TTY. If the command returns an `exec_command` session ID, poll
-   it with empty `write_stdin` calls until it exits unless the user explicitly
-   asks to leave it running.
+4. Run without a TTY. If the child is still running, wait with `process_read`
+   until it exits unless the user explicitly asks to leave it running. Use
+   returned cursors to collect any remaining output pages after exit.
 5. After a successful exit, verify persisted metadata with:
 
    ```text
@@ -95,8 +122,8 @@ answer first and then report the verification failure.
    - Add `--model <provider_name>:<model_id>` when provider and model exist.
    - Add `--model <model_id>` when only the model exists.
    - Omit `--model` when the handoff contains no model.
-6. Run the follow-up without a TTY and poll any live command process until it
-   exits, unless the user asks to leave it running.
+6. Run the follow-up without a TTY and use `process_read` until the child exits,
+   unless the user asks to leave it running. Collect its remaining output pages.
 7. Read a second bounded JSON handoff after success when actual post-run model
    metadata must be reported. Surface any model or effort reconciliation made
    by the runtime.
@@ -135,17 +162,21 @@ root, and saved runtime identity first.
    ```
 
 2. Add the resolved model and reasoning effort arguments for a continuation.
-3. Wait for startup and the seeded answer before submitting another prompt.
+3. Use output-oriented `process_read` calls to observe startup and the seeded
+   answer before submitting another prompt. Completion waits would wait for
+   the interactive CLI to exit.
    Sending input while the seeded turn is active may steer or queue it instead.
-4. Send later prompt text through `write_stdin`. If one write does not submit
+4. Send later prompt text through `process_input`, passing the last returned
+   cursor to avoid replaying already-read output. If one write does not submit
    it, send the text first and `"\r"` in a separate call.
 5. Once the requested interaction is complete, send `"exit\r"` or `"quit\r"`.
-   Poll until the child exits and capture the printed resume command.
+   Read until the child exits and capture the printed resume command.
 6. If clean exit fails, report the child answer first. Send `"\x03"` through
-   the same command handle and poll again. Never use broad process-name matching
-   such as `pkill yoke` or `killall yoke`.
-7. If the process still cannot be closed, report the live handle and cleanup
-   failure rather than risking unrelated Yoke processes.
+   `process_input` on the same handle and read again. If it still cannot exit,
+   use `process_cancel` on that owned session and collect its final output.
+   Never use broad process-name matching such as `pkill yoke` or `killall yoke`.
+7. If cancellation fails, report the live handle and cleanup failure rather
+   than risking unrelated Yoke processes.
 
 ## Safety rules
 
@@ -167,7 +198,7 @@ root, and saved runtime identity first.
   deliberately left running and reported.
 - Every output chunk needed for the child answer was collected.
 - The response clearly distinguishes the persisted Yoke session ID from the
-  `exec_command` process handle.
+  `command_exec` process handle.
 - Continuations were launched with the saved root and available saved runtime
   identity. Any runtime reconciliation was reported.
 - A successful child turn produced a readable persisted handoff.

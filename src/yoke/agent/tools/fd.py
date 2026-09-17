@@ -53,7 +53,7 @@ class FdTool(WorkspaceTool):
     description = (
         "Find files and directories using typed fd options. Do not write shell "
         "pipelines or fd execution flags here. Use limit/sort/filter_pattern for "
-        "result shaping and exec_command when command execution is intended."
+        "result shaping and command_exec when command execution is intended."
     )
 
     pattern: str | None = Field(

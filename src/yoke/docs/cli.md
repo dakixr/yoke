@@ -245,9 +245,9 @@ turn.
   noisy tool sessions do not block navigation.
 - Run `/ps` or press `Ctrl+X` then `Ctrl+P` to open the
   fullscreen process inspector. It lists running and
-  recently completed `exec_command` sessions for this live yoke runtime and
+  recently completed `command_exec` sessions for this live yoke runtime and
   shows each command's PID, working directory, timing, exit status, and bounded
-  output history without consuming output needed by `write_stdin`. The view
+  output history without consuming output needed by `process_read`. The view
   refreshes while processes produce output. Notifications are coalesced and
   decoded/wrapped output is reused until the process bytes, terminal width, or
   wrapping mode changes, so large retained output does not get rebuilt for
@@ -889,11 +889,19 @@ the module cache so another plugin cannot reuse its partially initialized export
 
 **Built-in capability IDs:** `file.read`, `file.write`, `file.search`, `image.attach`, `image.generate`, `web.fetch`, `web.search`, `web.research`, `shell`, `mcp`
 
-**Built-in tool names:** `read`, `edit`, `write`, `apply_patch`, `fd`, `rg`, `find`, `grep`, `ls`, `exec_command`, `write_stdin`, `python_exec`, `web_fetch`, `web_search`, `web_research`, `extract_file_context`, `attach_image`, `image_generation`, `mcp_inspect`, `mcp_call`
+**Built-in tool names:** `read`, `edit`, `write`, `apply_patch`, `fd`, `rg`, `find`, `grep`, `ls`, `command_exec`, `python_exec`, `process_input`, `process_read`, `process_cancel`, `web_fetch`, `web_search`, `web_research`, `extract_file_context`, `attach_image`, `image_generation`, `mcp_inspect`, `mcp_call`
+
+Native and MCP process tools use the same names. Tool-name settings and callers
+must migrate from `exec_command`, `exec_python`, `write_stdin`, and `process_io`;
+execution `yield_time_ms` and `wait_ms` are rejected in new requests. Use
+semantic `mode` on launch and `process_read(wait_ms=...)` after launch. See
+[the migration table](process-tools.md#breaking-migration). The `shell`
+capability ID and existing Python imports `ExecCommandTool`, `CommandTool`, and
+`PythonExecTool` remain usable.
 
 The native `rg` and `fd` tools expose typed search fields instead of shell-like
 argument strings. Use `limit` and `sort` for common result shaping, and use
-`exec_command` for pipelines or command execution. `rg` supports structured
+`command_exec` for pipelines or command execution. `rg` supports structured
 match, file-list, files-with-matches, and count modes; match results include
 line numbers and submatches. Both tools report subprocess failures with
 `ok: false`, a diagnostic `error`, and the exit code. A no-match exit remains a
@@ -912,36 +920,46 @@ The portable `ls`, `find`, and `grep` tools mark a result as truncated only when
 a matching entry or line was actually omitted, not merely when the result
 reaches its limit.
 
-The `exec_command` tool accepts either `cmd` for shell syntax or `argv` for a
+The `command_exec` tool accepts either `cmd` for shell syntax or `argv` for a
 direct process launch with no shell parsing. Shell mode defaults to PowerShell
 on Windows and Bash elsewhere. Direct argv mode is preferable when the caller
 already has argument boundaries, especially for paths and values containing
-shell metacharacters. The tool returns output immediately when the command
-exits, or a `session_id` when it is still running after `yield_time_ms`. The
-default wait is 30,000 ms and explicit initial waits are honored up to 300,000
-ms. Use `write_stdin` with that `session_id` to poll for more output or send
-interactive input, and `/ps` to inspect all command sessions owned by the
-current live runtime. `write_stdin` polls can wait up to 3,600,000 ms. Results
-include `exit_code`/`returncode`, `running`, `wall_time_seconds`, combined
-`output`, and `outputTruncationDetails`. When a command previously returned a
-session ID and then finishes, Yoke automatically supplies the model a bounded
-completion notice before its next provider call. Polling that session directly
-suppresses the duplicate notice. On Windows, bash-style Python heredocs such as
+shell metacharacters. Both execution tools default to `mode="auto"` with a
+host-owned 30,000 ms native initial wait. Use `mode="background"` to return
+without waiting. If auto returns a running process, choose any longer wait on
+`process_read.wait_ms`. Successful process items keep their `session_id` and
+opaque `cursor` even after exit.
+
+Use `process_read` to wait for completion or retrieve output, `process_input`
+to send nonempty input, and `process_cancel` to stop an owned process tree.
+`/ps` inspects the current runtime's processes. Native reads default to 60,000
+ms and accept up to 3,600,000 ms, one hour. Completion mode waits for all
+requested sessions; output-oriented mode returns on any unread output or
+terminal session. A zero-wait read is a snapshot. Read deadlines leave the
+process running. Follow each returned cursor, including after exit when
+`has_more_output` is true, and account for reported retention gaps. See
+[Shared process tools](process-tools.md) for input cursors, result fields,
+paging, and the lower MCP wait cap.
+
+On Windows, bash-style Python heredocs such as
 `python - <<'PY'` are rewritten to PowerShell pipelines while preserving stdin
 through yoke's `python`/`python3` shims. Native PowerShell pipelines use UTF-8
 without a BOM. Windows PowerShell also judges native command success by
 `LASTEXITCODE`, so harmless stderr from a successful command does not become a
 false tool failure. Terminating PowerShell exceptions still propagate.
-The provider-only command projection keeps output plus actionable state such as
-a live `session_id`, nonzero exit status, errors, cancellation, timeout, and a
-compact truncation marker. Duplicate runtime bookkeeping such as
-`returncode`, elapsed/wall time, chunk IDs, and full truncation accounting stays
-available in the canonical session result without consuming model context.
-Truncated command projections still identify that the retained output is the
-tail and preserve the visible/total line counts and partial-line state needed
-to interpret that tail correctly.
+The provider-only process projection keeps output, session IDs, cursors, gaps,
+`has_more_output`, and exit codes, plus errors, cancellation, and timeout state.
+Duplicate runtime bookkeeping stays in the canonical session result. Legacy
+saved results retain their established projection when a session is resumed.
 
-The `python_exec` tool uses yoke's current interpreter by default, preferring the parent shell's active `VIRTUAL_ENV` or `CONDA_PREFIX`. Pass `python_executable` to run a single call with a specific interpreter, for example a worktree-local `.venv` Python. Child subprocesses launched by that code inherit `YOKE_PYTHON_EXECUTABLE`; use that environment variable or `sys.executable` when a nested process must use the same interpreter. It waits 30 seconds by default, honors an explicit initial wait up to 300 seconds, then returns a session ID for code that is still running. Use `write_stdin` with that session ID to poll incremental unbuffered output.
+The `python_exec` tool uses yoke's current interpreter by default, preferring
+the parent shell's active `VIRTUAL_ENV` or `CONDA_PREFIX`. Pass
+`python_executable` to run a single call with a specific interpreter, for
+example a worktree-local `.venv` Python. Child subprocesses launched by that
+code inherit `YOKE_PYTHON_EXECUTABLE`; use that environment variable or
+`sys.executable` when a nested process must use the same interpreter. Python
+uses the same launch and read contract as commands. Its `timeout` is a separate
+execution deadline in seconds, not an initial wait or read deadline.
 
 `skill` is added when yoke discovers one or more skill directories.
 

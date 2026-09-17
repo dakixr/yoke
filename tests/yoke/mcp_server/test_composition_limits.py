@@ -13,10 +13,11 @@ from pydantic import ValidationError
 from yoke.mcp.client import McpToolInfo
 from yoke.mcp.config import McpConfig, McpServerConfig
 from yoke.mcp.manager import McpManager
+from yoke.agent.tools.processes.cursor import decode_cursor, ProcessPosition
 from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.execution.gateway import call
 from yoke.mcp_server.execution.models import BatchRead
-from yoke.mcp_server.execution.processes import ProcessCursor, ProcessRead, page
+from yoke.mcp_server.execution.processes import ProcessRead, page
 from yoke.mcp_server.results.store import ResultStore
 from yoke.mcp_server.server import create_service
 
@@ -70,24 +71,29 @@ def test_process_cursor_pages_large_unicode_output_without_duplicates(
             text = "界é" * 20000
             running = structured(
                 await client.call_tool(
-                    "exec_python",
+                    "python_exec",
                     {
                         "code": f"import time; print({text!r}, flush=True); time.sleep(30)",
-                        "yield_time_ms": 250,
+                        "mode": "background",
                     },
                 )
             )
             session = running["session_id"]
             await service.adapter.execution.dispatch(
-                "process_read", {"sessions": [{"session_id": session}], "wait_ms": 5000}
+                "process_read",
+                {
+                    "sessions": [{"session_id": session}],
+                    "wait_ms": 5000,
+                    "until": "output_or_completion",
+                },
             )
-            cursor = ProcessCursor(session_id=session)
+            cursor = ProcessPosition(session_id=session)
             collected = ""
             for _ in range(200):
                 observed = page(service.runtime.manager, cursor, 1024)
                 assert not observed["gap"]
                 collected += observed["output"]
-                cursor = ProcessCursor.model_validate(observed["next_cursor"])
+                cursor = decode_cursor(session, observed["cursor"])
                 if collected.endswith("\n"):
                     break
                 if not observed["output"]:

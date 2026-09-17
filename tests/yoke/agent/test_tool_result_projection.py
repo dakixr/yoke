@@ -420,7 +420,7 @@ def test_provider_projection_changes_only_the_provider_copy() -> None:
 def test_context_manager_persists_json_but_projects_provider_tool_content() -> None:
     manager = ContextManager()
     context = manager.initialize("search")
-    call = _call("exec_command")
+    call = _call("command_exec")
     manager.append_message(context, Message(role="assistant", tool_calls=[call]))
     result: dict[str, object] = {
         "ok": True,
@@ -605,7 +605,7 @@ def test_persisted_projection_provenance_survives_registry_changes() -> None:
         "",
         append_prompt=False,
         messages=[
-            Message(role="assistant", tool_calls=[_call("exec_command")]),
+            Message(role="assistant", tool_calls=[_call("command_exec")]),
             Message.tool("call-1", custom_result),
         ],
     )

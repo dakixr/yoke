@@ -9,7 +9,7 @@ import re
 import shutil
 import subprocess
 
-COMMAND_TOOL_NAME = "exec_command"
+COMMAND_TOOL_NAME = "command_exec"
 
 
 def default_shell_executable(env: dict[str, str]) -> str:

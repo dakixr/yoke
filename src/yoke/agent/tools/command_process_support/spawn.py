@@ -15,16 +15,21 @@ def open_process(
         import pty
 
         master_fd, slave_fd = pty.openpty()
-        process = subprocess.Popen(  # noqa: S603
-            argv,
-            cwd=cwd,
-            env=env,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            start_new_session=True,
-            text=False,
-        )
+        try:
+            process = subprocess.Popen(  # noqa: S603
+                argv,
+                cwd=cwd,
+                env=env,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+                text=False,
+            )
+        except BaseException:
+            os.close(master_fd)
+            os.close(slave_fd)
+            raise
         return process, master_fd, slave_fd
     creationflags = (
         getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0

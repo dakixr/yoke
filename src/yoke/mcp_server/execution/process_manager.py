@@ -15,11 +15,11 @@ class UTF8CommandProcess(_ManagedCommandProcess):
     def _reader_main(self, read_chunk: Callable[[], bytes]) -> None:
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         try:
-            while raw := read_chunk():
+            for raw in self._read_chunks(read_chunk):
                 decoded = decoder.decode(raw)
                 if decoded:
                     self._append_output(decoded.encode("utf-8"))
-        except OSError:
+        except (OSError, ValueError):
             pass
         finally:
             tail = decoder.decode(b"", final=True)

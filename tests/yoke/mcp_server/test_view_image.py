@@ -155,7 +155,7 @@ def test_malformed_internal_image_result_becomes_a_safe_tool_error(
     (tmp_path / "image.png").write_bytes(_image_bytes("PNG"))
     service = create_service(MCPServerConfig(root=tmp_path))
 
-    async def malformed_execute(*_args: object) -> dict[str, object]:
+    async def malformed_execute(*_args: object, **_kwargs: object) -> dict[str, object]:
         return {
             "ok": True,
             "mime_type": "image/png",

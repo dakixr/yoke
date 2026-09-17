@@ -11,6 +11,8 @@ structured observability, and automatic usage accounting.
   role agents.
 - [Tool-only MCP server](mcp-server.md): expose Yoke's coding and process tools
   over Streamable HTTP without running a second agent.
+- [Shared process tools](process-tools.md): launch, input, wait, cancel, and
+  page output through the same native and MCP interface.
 - [HTTP harness API](http.md): run one process-wide daemon that can inspect and
   drive many durable Yoke sessions from one client.
 

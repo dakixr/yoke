@@ -381,7 +381,7 @@ def test_detail_reuses_persisted_provider_result_projection(tmp_path: Path) -> N
     store = SessionStore(tmp_path / "sessions")
     tool_call = ToolCall(
         id="command-call",
-        function=ToolFunction(name="exec_command", arguments='{"cmd":"printf done"}'),
+        function=ToolFunction(name="command_exec", arguments='{"cmd":"printf done"}'),
     )
     canonical = {
         "ok": True,
@@ -424,7 +424,7 @@ def test_detail_reuses_live_provider_result_projection(tmp_path: Path) -> None:
     traces.record_start(
         {
             "tool_call_id": "live-command",
-            "tool_name": "exec_command",
+            "tool_name": "command_exec",
             "tool_arguments": '{"cmd":"printf done"}',
             "turn_id": 2,
         }
@@ -432,7 +432,7 @@ def test_detail_reuses_live_provider_result_projection(tmp_path: Path) -> None:
     traces.record_end(
         {
             "tool_call_id": "live-command",
-            "tool_name": "exec_command",
+            "tool_name": "command_exec",
             "turn_id": 2,
             "ok": True,
             "result": {
@@ -458,7 +458,7 @@ def test_detail_does_not_infer_projection_from_tool_name(tmp_path: Path) -> None
     traces.record_end(
         {
             "tool_call_id": "hooked-command",
-            "tool_name": "exec_command",
+            "tool_name": "command_exec",
             "ok": True,
             "result": {
                 "ok": True,
@@ -478,7 +478,7 @@ def test_result_projection_is_built_after_public_redaction(tmp_path: Path) -> No
     traces.record_end(
         {
             "tool_call_id": "redacted-command",
-            "tool_name": "exec_command",
+            "tool_name": "command_exec",
             "ok": True,
             "result": {
                 "ok": True,

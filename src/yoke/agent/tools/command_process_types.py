@@ -65,6 +65,7 @@ class CommandProcessSnapshot:
     retained_output_bytes: int
     latest_output_seq: int = 0
     truncated_before_seq: int = 0
+    timed_out: bool = False
 
 
 @dataclass(slots=True, frozen=True)

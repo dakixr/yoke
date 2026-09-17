@@ -4,6 +4,7 @@ from yoke.agent.tools.base import DEFAULT_GLOB
 from yoke.agent.tools.base import LocalTool
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.command import CommandTool
+from yoke.agent.tools.command import CommandExecTool
 from yoke.agent.tools.command import ExecCommandTool
 from yoke.agent.tools.command import WriteStdinTool
 from yoke.agent.tools.context import ModelIdentity
@@ -21,6 +22,11 @@ from yoke.agent.tools.mcp import McpCallTool
 from yoke.agent.tools.mcp import McpInspectTool
 from yoke.agent.tools.mcp import register_mcp_tools
 from yoke.agent.tools.python_exec import PythonExecTool
+from yoke.agent.tools.processes import (
+    ProcessCancelTool,
+    ProcessInputTool,
+    ProcessReadTool,
+)
 from yoke.agent.tools.read import ReadTool
 from yoke.agent.tools.rg import RipgrepTool
 from yoke.agent.tools.search import FindTool
@@ -39,6 +45,7 @@ __all__ = [
     "AttachImageTool",
     "COMMAND_TOOL_NAME",
     "CommandTool",
+    "CommandExecTool",
     "DEFAULT_GLOB",
     "EditTool",
     "ExecCommandTool",
@@ -61,6 +68,9 @@ __all__ = [
     "register_search_tools",
     "LocalTool",
     "PythonExecTool",
+    "ProcessCancelTool",
+    "ProcessInputTool",
+    "ProcessReadTool",
     "ReadTool",
     "RipgrepTool",
     "SkillTool",

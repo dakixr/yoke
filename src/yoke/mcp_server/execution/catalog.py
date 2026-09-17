@@ -46,9 +46,9 @@ ACTIONS = {
         "Call an inspected downstream tool. Pass schema_hash to detect drift; fields selects top-level result fields. May read or write external services.",
         False,
     ),
-    "exec_python": Action(
+    "python_exec": Action(
         ComposePython,
-        "Run Python with the yoke_mcp helper library. tools.call reaches local reads; tools.mcp uses shared downstream clients. Declare exact downstream effects in managed_calls unless server policy grants a reviewed read. output.emit retains selected data. Long execution waits are remotely bounded; continue a returned process session with process_read.",
+        "Run Python with the yoke_mcp helper library. tools.call reaches local reads; tools.mcp uses shared downstream clients. Declare exact downstream effects in managed_calls unless server policy grants a reviewed read. output.emit retains selected data. Auto mode uses the host's normal initial completion wait; background returns immediately. timeout is a separate execution deadline. Every started process retains a session ID and opaque cursor. Use process_read(wait_ms=...) for longer waits or remaining output.",
         False,
     ),
     "result_read": Action(
@@ -58,12 +58,12 @@ ACTIONS = {
     ),
     "process_read": Action(
         ProcessRead,
-        "Wait for and observe several process sessions without consuming output or writing stdin. Each call is bounded below the remote request deadline and returns earlier on output or completion. Repeat next_cursor while continue is true. Use process_io for input and process_cancel to terminate.",
+        "Observe 1..16 unique process sessions without consuming output. Each session takes a session_id and optional opaque cursor copied from its previous result. By default wait for ALL sessions to complete, up to wait_ms. Increase wait_ms for long-running jobs within the advertised host maximum. until=output_or_completion returns on ANY unread output or terminal session. wait_ms=0 takes a snapshot. max_bytes is shared across the batch. Follow each returned cursor while running or has_more_output. Deadlines never kill processes. Use process_input for stdin and process_cancel to terminate.",
         True,
     ),
     "process_cancel": Action(
         ProcessCancel,
-        "Terminate a running process session and cancel its managed child operations. This controls running work.",
+        "Terminate an owned process tree and revoke its Python bridge and managed child operations. Safe on retained finished sessions. This is a lifecycle operation and does not create an output cursor; use the last cursor you already have with process_read for final output.",
         False,
     ),
     "search_then_read": Action(
@@ -114,7 +114,7 @@ def descriptor(name: str, action: Action, defaults: dict[str, Any]) -> Tool:
             destructive_hint=not action.read_only,
             idempotent_hint=action.read_only,
             open_world_hint=name
-            in {"mcp_call", "exec_python", "check_patch", "import_files"},
+            in {"mcp_call", "python_exec", "check_patch", "import_files"},
         ),
         _meta={"openai/fileParams": ["files"]} if name == "import_files" else None,
     )

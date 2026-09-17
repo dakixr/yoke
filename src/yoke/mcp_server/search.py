@@ -14,7 +14,7 @@ class MCPRipgrepTool(RipgrepTool):
     description = (
         "Search file contents or list files using typed ripgrep options. Use "
         "patterns, paths, globs, types, context, mode, limit, and sort directly. "
-        "Use exec_command for shell pipelines or command execution."
+        "Use command_exec for shell pipelines or command execution."
     )
 
 
@@ -24,5 +24,5 @@ class MCPFdTool(FdTool):
     description = (
         "Find files and directories using typed fd options such as pattern, "
         "paths, types, extensions, depth, excludes, limit, and sort. Use "
-        "exec_command for shell pipelines or command execution."
+        "command_exec for shell pipelines or command execution."
     )

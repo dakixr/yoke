@@ -145,11 +145,11 @@ def test_failed_relocation_keeps_the_existing_agent_and_tool_policy(harness):
     runtime = quiescent(h)
     primary = runtime.resources.primary_locked()
     changed = req(
-        h, "PATCH", "/session/saved/tool", json={"disabled": ["exec_command"]}
+        h, "PATCH", "/session/saved/tool", json={"disabled": ["command_exec"]}
     )
     assert changed.status_code == 200, changed.text
     enabled = runtime.session_enabled_tool_names()
-    assert enabled is not None and "exec_command" not in enabled
+    assert enabled is not None and "command_exec" not in enabled
     queued = req(
         h,
         "POST",

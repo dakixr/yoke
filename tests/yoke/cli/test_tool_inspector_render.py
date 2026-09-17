@@ -49,7 +49,7 @@ def test_navigation_to_ansi_tool_output_does_not_break_html() -> None:
         ),
         ToolTraceEntry(
             tool_call_id="ansi",
-            tool_name="exec_command",
+            tool_name="command_exec",
             result={
                 "ok": True,
                 "output": ("\x00\x1b[31mboom\x1b[0m\ud800\n<ansired>unterminated"),
@@ -127,12 +127,12 @@ def test_render_caches_selected_detail_until_data_or_mode_changes(
 def test_live_output_is_bounded_compacted_and_snapshot_is_stable() -> None:
     """High-volume deltas must keep bounded work and immutable snapshots."""
     store = ToolTraceStore()
-    store.record_start({"tool_call_id": "run", "tool_name": "exec_command"})
+    store.record_start({"tool_call_id": "run", "tool_name": "command_exec"})
     for _ in range(1_000):
         store.record_output_delta(
             {
                 "tool_call_id": "run",
-                "tool_name": "exec_command",
+                "tool_name": "command_exec",
                 "stream": "stdout",
                 "text": "x" * 100,
             }
@@ -147,7 +147,7 @@ def test_live_output_is_bounded_compacted_and_snapshot_is_stable() -> None:
     store.record_output_delta(
         {
             "tool_call_id": "run",
-            "tool_name": "exec_command",
+            "tool_name": "command_exec",
             "stream": "stdout",
             "text": "new",
         }

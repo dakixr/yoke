@@ -43,9 +43,9 @@ def test_default_builtin_policy_uses_curated_allowlist(
         "write",
     }
     assert "apply_patch" not in active_names
-    assert "exec_command" in denied_names
+    assert "command_exec" in denied_names
     assert "python_exec" in denied_names
-    assert "write_stdin" in denied_names
+    assert {"process_input", "process_read", "process_cancel"} <= denied_names
     assert resolved.tool_system_messages == []
 
 
@@ -69,9 +69,15 @@ def test_shell_capability_controls_shell_and_python_tools(
         entry.tool.name: entry.capability_id
         for entry in resolved.tool_report.active_tools
     }
-    assert active_by_name["exec_command"] == "shell"
+    assert active_by_name["command_exec"] == "shell"
     assert active_by_name["python_exec"] == "shell"
-    assert active_by_name["write_stdin"] == "shell"
+    assert active_by_name["process_input"] == "shell"
+    assert active_by_name["process_read"] == "shell"
+    assert active_by_name["process_cancel"] == "shell"
+    assert (
+        not {"write_stdin", "process_io", "exec_command", "exec_python"}
+        & active_by_name.keys()
+    )
 
 
 def test_gpt_models_use_apply_patch_for_file_write(tmp_path: Path) -> None:

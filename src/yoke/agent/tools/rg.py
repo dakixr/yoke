@@ -44,7 +44,7 @@ class RipgrepTool(WorkspaceTool):
     description = (
         "Search file contents or list files using typed ripgrep options. Do not "
         "write shell pipelines here. Use limit/sort for bounded results and "
-        "exec_command for shell composition or command execution."
+        "command_exec for shell composition or command execution."
     )
 
     patterns: list[str] = Field(

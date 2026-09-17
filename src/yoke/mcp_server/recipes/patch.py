@@ -80,16 +80,16 @@ async def check_patch(
         released = False
         try:
             execution = await dispatch(
-                "exec_python",
+                "python_exec",
                 {
                     "code": "from yoke.mcp_server.recipes.patch_job import run_job\n"
                     f"run_job({str(directory)!r})\n",
                     "timeout": len(request.checks) * request.timeout_seconds + 40,
-                    "yield_time_ms": 250,
+                    "mode": "background",
                     "max_output_tokens": 8000,
                 },
             )
-            if not execution.get("ok") or not execution.get("session_id"):
+            if not execution.get("ok") or not execution.get("running"):
                 raise RuntimeError("Verification runner could not be started")
             async with asyncio.timeout(10):
                 while not (directory / "ready").exists():

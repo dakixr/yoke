@@ -100,7 +100,7 @@ def test_single_worker_keeps_followups_in_one_conversation(
     assert "read" in names and not names & {
         "apply_patch",
         "write",
-        "exec_command",
+        "command_exec",
         "web_search",
     }
     assert not (tmp_path / ".agents_local").exists()

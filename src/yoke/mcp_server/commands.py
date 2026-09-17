@@ -1,4 +1,4 @@
-"""MCP command arguments, without changing the agent's command contract."""
+"""Strict MCP process arguments and command diagnostics."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import ConfigDict
 
 from yoke.agent.tools.command import ExecCommandTool
+from yoke.agent.tools.processes import ProcessInputTool
 
 
 def _command_schema(schema: dict[str, Any]) -> None:
@@ -39,3 +40,7 @@ class MCPExecCommandTool(ExecCommandTool):
         if isinstance(sys.exception(), PermissionError):
             result["error_code"] = "OS_PERMISSION_DENIED"
         return result
+
+
+class MCPProcessInputTool(ProcessInputTool):
+    model_config = ConfigDict(extra="forbid")

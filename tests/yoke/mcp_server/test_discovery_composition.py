@@ -139,8 +139,8 @@ asyncio.run(main())
 """
             result = structured(
                 await client.call_tool(
-                    "exec_python",
-                    {"code": code, "managed_calls": manifest, "yield_time_ms": 10000},
+                    "python_exec",
+                    {"code": code, "managed_calls": manifest},
                 )
             )
             assert result["ok"], result
@@ -148,11 +148,10 @@ asyncio.run(main())
             assert service.downstream_manager._clients["fake"] is original_client
             denied = structured(
                 await client.call_tool(
-                    "exec_python",
+                    "python_exec",
                     {
                         "code": code,
                         "managed_calls": manifest[:1],
-                        "yield_time_ms": 10000,
                     },
                 )
             )
@@ -214,11 +213,7 @@ def test_configured_wrapper_is_schema_pinned(
             )
             assert result["structuredContent"]["value"] == "selected"
             code = f"import asyncio\nfrom yoke_mcp import tools, output\noutput.emit(asyncio.run(tools.mcp('fake', 'echo', {{'value': 'read'}}, schema_hash={schema_hash(schema)!r})).data)"
-            composed = structured(
-                await client.call_tool(
-                    "exec_python", {"code": code, "yield_time_ms": 10000}
-                )
-            )
+            composed = structured(await client.call_tool("python_exec", {"code": code}))
             assert composed["ok"], composed
 
     asyncio.run(scenario())

@@ -22,17 +22,26 @@ def test_quick_command_and_python_return_final_results(tmp_path: Path) -> None:
         service = create_service(MCPServerConfig(root=tmp_path))
         async with memory_client(service) as client:
             command = structured(
-                await client.call_tool("exec_command", {"cmd": "printf hello"})
+                await client.call_tool("command_exec", {"cmd": "printf hello"})
             )
             python = structured(
-                await client.call_tool("exec_python", {"code": "print(6 * 7)"})
+                await client.call_tool("python_exec", {"code": "print(6 * 7)"})
             )
             assert command["ok"] is True
             assert command["running"] is False
             assert command["output"] == "hello"
             assert python["ok"] is True
             assert python["running"] is False
-            assert python["output"] == "42"
+            assert python["output"] == "42\n"
+            for result in (command, python):
+                assert isinstance(result["session_id"], int)
+                assert isinstance(result["cursor"], str)
+                assert result["cursor"].startswith("pc1_")
+                assert result["exit_code"] == 0
+                assert result["reason"] == "completed"
+                assert result["has_more_output"] is False
+            assert not service.adapter.execution.bridge._runs
+            assert not service.adapter.execution._sessions
 
     asyncio.run(scenario())
 
@@ -51,7 +60,7 @@ def test_child_environment_inherits_user_env_but_excludes_mcp_settings(
         async with memory_client(service) as client:
             result = structured(
                 await client.call_tool(
-                    "exec_python",
+                    "python_exec",
                     {
                         "code": (
                             "import os; print(os.getenv('YOKE_MCP_BEARER_TOKEN')); "
@@ -108,29 +117,35 @@ def test_process_handle_works_across_http_clients(tmp_path: Path) -> None:
             async with http_client(service) as first, http_client(service) as second:
                 started = structured(
                     await first.call_tool(
-                        "exec_python",
+                        "python_exec",
                         {
                             "code": (
                                 "import time; print('started', flush=True); "
                                 "time.sleep(0.7); print('finished', flush=True)"
                             ),
-                            "yield_time_ms": 250,
                         },
                     )
                 )
                 assert started["running"] is True
-                assert started["continue"] is True
                 assert started["next_tool"] == "process_read"
-                assert started["recommended_wait_ms"] == 240_000
+                assert "recommended_wait_ms" not in started
                 session_id = started["session_id"]
                 final = structured(
                     await second.call_tool(
-                        "process_io",
-                        {"session_id": session_id, "chars": "", "yield_time_ms": 2_000},
+                        "process_read",
+                        {
+                            "sessions": [
+                                {
+                                    "session_id": started["session_id"],
+                                    "cursor": started["cursor"],
+                                }
+                            ],
+                            "wait_ms": 2_000,
+                        },
                     )
-                )
+                )["items"][0]
                 assert final["running"] is False
-                assert final["continue"] is False
+                assert final["session_id"] == session_id
                 assert final["exit_code"] == 0
                 assert "finished" in final["output"]
 
@@ -140,23 +155,15 @@ def test_process_handle_works_across_http_clients(tmp_path: Path) -> None:
 def test_remote_wait_arguments_are_capped_before_execution(tmp_path: Path) -> None:
     service = create_service(MCPServerConfig(root=tmp_path, max_remote_wait_ms=5_000))
 
+    assert "wait_ms" not in service.adapter._with_runtime_defaults("command_exec", {})
     assert (
-        service.adapter._with_runtime_defaults(
-            "exec_command", {"yield_time_ms": 999_999}
-        )["yield_time_ms"]
-        == 5_000
+        service.adapter._with_runtime_defaults("process_input", {"wait_ms": 999_999})[
+            "wait_ms"
+        ]
+        == 999_999
     )
-    assert (
-        service.adapter._with_runtime_defaults(
-            "process_io", {"yield_time_ms": 999_999}
-        )["yield_time_ms"]
-        == 5_000
-    )
-    assert (
-        service.adapter.execution._limit_remote_wait(
-            "exec_python", {"yield_time_ms": 999_999}
-        )["yield_time_ms"]
-        == 5_000
+    assert "wait_ms" not in service.adapter.execution._limit_remote_wait(
+        "python_exec", {}
     )
     assert (
         service.adapter.execution._limit_remote_wait(
@@ -172,11 +179,10 @@ def test_python_timeout_kills_the_managed_process(tmp_path: Path) -> None:
         async with memory_client(service) as client:
             result = structured(
                 await client.call_tool(
-                    "exec_python",
+                    "python_exec",
                     {
                         "code": "import time; time.sleep(10)",
                         "timeout": 1,
-                        "yield_time_ms": 2_000,
                     },
                 )
             )
@@ -192,11 +198,29 @@ def test_large_output_is_bounded(tmp_path: Path) -> None:
         service = create_service(MCPServerConfig(root=tmp_path, max_output_tokens=200))
         async with memory_client(service) as client:
             result = structured(
-                await client.call_tool("exec_python", {"code": "print('x' * 100_000)"})
+                await client.call_tool("python_exec", {"code": "print('x' * 100_000)"})
             )
             assert result["ok"] is True
             assert len(result["output"]) < 2_000
-            assert result["original_token_count"] > 20_000
+            assert result["has_more_output"] is True
+            assert result["next_tool"] == "process_read"
+            assert result["running"] is False
+            session = result["session_id"]
+            cursor = result["cursor"]
+            output = result["output"]
+            while result["has_more_output"]:
+                result = structured(
+                    await client.call_tool(
+                        "process_read",
+                        {
+                            "sessions": [{"session_id": session, "cursor": cursor}],
+                            "wait_ms": 0,
+                        },
+                    )
+                )["items"][0]
+                output += result["output"]
+                cursor = result["cursor"]
+            assert output == "x" * 100_000 + "\n"
 
     asyncio.run(scenario())
 
@@ -207,10 +231,9 @@ def test_shutdown_terminates_live_processes(tmp_path: Path) -> None:
         async with memory_client(service) as client:
             result = structured(
                 await client.call_tool(
-                    "exec_command",
+                    "command_exec",
                     {
                         "cmd": f"{sys.executable} -c 'import time; time.sleep(60)'",
-                        "yield_time_ms": 250,
                     },
                 )
             )

@@ -6,27 +6,20 @@ import os
 import random
 import threading
 from collections import deque
-from collections.abc import Callable
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 
 from yoke.agent.tools.command_process import _ManagedCommandProcess
 from yoke.agent.tools.command_process_support.output import CompletedCommandProcess
 from yoke.agent.tools.command_process_support.admission import spawn
-from yoke.agent.tools.command_process_types import (
-    MAX_COMPLETED_PROCESS_COUNT,
-)
+from yoke.agent.tools.command_process_types import MAX_COMPLETED_PROCESS_COUNT
 from yoke.agent.tools.command_process_types import CancelRequested
 from yoke.agent.tools.command_process_types import CommandProcessResult
 from yoke.agent.tools.command_process_types import CommandProcessOutputPage
-from yoke.agent.tools.command_process_types import (
-    CommandProcessSnapshot,
-)
+from yoke.agent.tools.command_process_types import CommandProcessSnapshot
 from yoke.agent.tools.command_process_types import clamp_exec_yield_time
-from yoke.agent.tools.command_process_types import (
-    clamp_write_yield_time,
-)
+from yoke.agent.tools.command_process_types import clamp_write_yield_time
 
 ProcessChangeListener = Callable[[], None]
 
@@ -39,6 +32,7 @@ class CommandProcessManager:
     def __init__(self, *, base_environment: Mapping[str, str] | None = None) -> None:
         self._lock = threading.RLock()
         self._spawn_lock = threading.Lock()
+        self._next_session_id = random.SystemRandom().randrange(1_000, 100_000)
         self._processes: dict[int, _ManagedCommandProcess] = {}
         self._completed: deque[CompletedCommandProcess] = deque(
             maxlen=MAX_COMPLETED_PROCESS_COUNT
@@ -170,13 +164,51 @@ class CommandProcessManager:
 
     def snapshot(self, session_id: int) -> CommandProcessSnapshot:
         """Return one current or retained process snapshot."""
+        process = self._retained_process(session_id)
+        if isinstance(process, CompletedCommandProcess):
+            return process.snapshot
+        return process.snapshot()
+
+    def output_chunks(
+        self,
+        session_id: int,
+        *,
+        after_seq: int,
+        limit: int,
+        exact: bool = False,
+    ) -> CommandProcessOutputPage:
+        """Return a non-consuming retained output page for one process."""
+        return self._retained_process(session_id).output_page(
+            after_seq=after_seq, limit=limit, exact=exact
+        )
+
+    def observe_output(
+        self, session_id: int, *, after_seq: int, limit: int
+    ) -> tuple[CommandProcessSnapshot, CommandProcessOutputPage]:
+        """Read coherent status and history without copying the entire output tail."""
+        process = self._retained_process(session_id)
+        if isinstance(process, CompletedCommandProcess):
+            return process.snapshot, process.output_page(
+                after_seq=after_seq, limit=limit, exact=True
+            )
+        with process.condition:
+            return (
+                process._snapshot_locked(include_output=False),
+                process.output.page(after_seq=after_seq, limit=limit, exact=True),
+            )
+
+    def _retained_process(
+        self, session_id: int
+    ) -> _ManagedCommandProcess | CompletedCommandProcess:
         with self._lock:
+            if self._closed:
+                raise RuntimeError("Command process manager is closed")
             managed = self._processes.get(session_id)
             if managed is not None:
-                return managed.snapshot()
+                return managed
             completed = next(
                 (
-                    item.snapshot
+                    item
                     for item in self._completed
                     if item.snapshot.session_id == session_id
                 ),
@@ -186,36 +218,16 @@ class CommandProcessManager:
             raise ValueError(f"Unknown command session ID {session_id}")
         return completed
 
-    def output_chunks(
+    def write_input(
         self,
         session_id: int,
+        chars: str,
         *,
-        after_seq: int,
-        limit: int,
-    ) -> CommandProcessOutputPage:
-        """Return a non-consuming retained output page for one process."""
-        with self._lock:
-            managed = self._processes.get(session_id)
-            completed = None
-            if managed is None:
-                completed = next(
-                    (
-                        item
-                        for item in self._completed
-                        if item.snapshot.session_id == session_id
-                    ),
-                    None,
-                )
-        if managed is not None:
-            return managed.output_page(after_seq=after_seq, limit=limit)
-        if completed is None:
-            raise ValueError(f"Unknown command session ID {session_id}")
-        return completed.output_page(after_seq=after_seq, limit=limit)
-
-    def write_input(self, session_id: int, chars: str) -> None:
+        cancel_requested: CancelRequested | None = None,
+    ) -> int:
         """Write stdin without consuming process output."""
         managed = self._get(session_id)
-        managed.write(chars)
+        return managed.write(chars, cancel_requested=cancel_requested)
 
     def interrupt(self, session_id: int) -> None:
         """Send the manager's portable interrupt signal to one live process."""
@@ -224,7 +236,9 @@ class CommandProcessManager:
 
     def terminate(self, session_id: int) -> None:
         """Terminate one live process and retain its final inspection snapshot."""
-        managed = self._get(session_id)
+        managed = self._retained_process(session_id)
+        if isinstance(managed, CompletedCommandProcess):
+            return
         managed.terminate()
         self._complete(session_id)
 
@@ -280,6 +294,7 @@ class CommandProcessManager:
         """Terminate live processes and release retained process state."""
         with self._lock:
             self._closed = True
+            listeners = tuple(self._listeners)
             self._listeners.clear()
         first_error: BaseException | None = None
         try:
@@ -292,6 +307,9 @@ class CommandProcessManager:
             self._background_session_ids.clear()
             self._notified_completion_ids.clear()
             self._dropped_completion_events = 0
+        for listener in listeners:
+            with suppress(Exception):
+                listener()
         if first_error is not None:
             raise first_error
 
@@ -306,6 +324,7 @@ class CommandProcessManager:
         argv: list[str] | None = None,
         env: dict[str, str] | None = None,
         timeout_seconds: int | None = None,
+        cancel_requested: CancelRequested | None = None,
     ) -> _ManagedCommandProcess:
         return spawn(
             self,
@@ -317,16 +336,8 @@ class CommandProcessManager:
             argv=argv,
             env=env,
             timeout_seconds=timeout_seconds,
+            cancel_requested=cancel_requested,
         )
-
-    def _allocate_session_id(self) -> int:
-        used = set(self._processes)
-        used.update(item.snapshot.session_id for item in self._completed)
-        used.update(item.session_id for item in self._completion_events)
-        while True:
-            candidate = random.SystemRandom().randrange(1_000, 100_000)
-            if candidate not in used:
-                return candidate
 
     def _get(self, session_id: int) -> _ManagedCommandProcess:
         with self._lock:

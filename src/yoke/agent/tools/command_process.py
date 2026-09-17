@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -17,6 +18,9 @@ from yoke.agent.tools.command_process_support.lifecycle import (
 )
 from yoke.agent.tools.command_process_support.output import CompletedCommandProcess
 from yoke.agent.tools.command_process_support.output import RetainedProcessOutput
+from yoke.agent.tools.command_process_support.output import command_decoder
+from yoke.agent.tools.command_process_support.coordination import acquired
+from yoke.agent.tools.command_process_support.input import write_all
 from yoke.agent.tools.command_process_types import INTERRUPT
 from yoke.agent.tools.command_process_types import CancelRequested
 from yoke.agent.tools.command_process_types import CommandProcessResult
@@ -60,6 +64,7 @@ class _ManagedCommandProcess:
         self.finished_monotonic: float | None = None
         self.last_used_at = self.started_monotonic
         self.condition = threading.Condition()
+        self.input_lock = threading.RLock()
         self.output = RetainedProcessOutput()
         self.open_readers = 0
         self._reader_threads: list[threading.Thread] = []
@@ -107,13 +112,33 @@ class _ManagedCommandProcess:
         thread.start()
 
     def _reader_main(self, read_chunk: Callable[[], bytes]) -> None:
+        decoder = command_decoder()
         try:
-            while raw := read_chunk():
-                self._append_output(raw)
-        except OSError:
+            for raw in self._read_chunks(read_chunk):
+                decoded = decoder.decode(raw)
+                if decoded:
+                    self._append_output(decoded.encode("utf-8"))
+        except (OSError, ValueError):
             pass
         finally:
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                self._append_output(tail.encode("utf-8"))
             self._reader_finished()
+
+    def _read_chunks(self, read_chunk: Callable[[], bytes]) -> Iterator[bytes]:
+        while self._accepting_output:
+            try:
+                raw = read_chunk()
+            except BlockingIOError:
+                # A bounded PTY write temporarily makes the shared master
+                # descriptor nonblocking. This is not EOF.
+                with self.condition:
+                    self.condition.wait(timeout=0.01)
+                continue
+            if not raw:
+                return
+            yield raw
 
     def _reader_finished(self) -> None:
         with self.condition:
@@ -198,7 +223,9 @@ class _ManagedCommandProcess:
                 output_records=self.output.freeze(),
             )
 
-    def _snapshot_locked(self) -> CommandProcessSnapshot:
+    def _snapshot_locked(
+        self, *, include_output: bool = True
+    ) -> CommandProcessSnapshot:
         finished = self.finished
         return CommandProcessSnapshot(
             session_id=self.session_id,
@@ -213,17 +240,20 @@ class _ManagedCommandProcess:
                 (self.finished_monotonic or time.monotonic()) - self.started_monotonic,
             ),
             exit_code=self.process.poll() if finished else None,
-            output_tail=self.output.tail(),
+            output_tail=self.output.tail() if include_output else "",
             original_output_bytes=self.output.original_bytes,
             retained_output_bytes=self.output.retained_bytes,
             latest_output_seq=self.output.latest_seq,
             truncated_before_seq=self.output.truncated_before_seq,
+            timed_out=self.timed_out,
         )
 
-    def output_page(self, *, after_seq: int, limit: int) -> CommandProcessOutputPage:
+    def output_page(
+        self, *, after_seq: int, limit: int, exact: bool = False
+    ) -> CommandProcessOutputPage:
         """Return retained output chunks after an exclusive sequence cursor."""
         with self.condition:
-            return self.output.page(after_seq=after_seq, limit=limit)
+            return self.output.page(after_seq=after_seq, limit=limit, exact=exact)
 
     def _status(self, finished: bool) -> Literal["running", "exited", "failed"]:
         if not finished:
@@ -234,18 +264,22 @@ class _ManagedCommandProcess:
     def finished(self) -> bool:
         return self.process.poll() is not None and self.open_readers == 0
 
-    def write(self, chars: str) -> None:
-        if chars == INTERRUPT and not self.tty:
-            self.interrupt()
-            return
+    def write(
+        self, chars: str, *, cancel_requested: CancelRequested | None = None
+    ) -> int:
         raw = chars.encode("utf-8")
-        if self.master_fd is not None:
-            os.write(self.master_fd, raw)
-            return
-        if self.process.stdin is None:
-            raise RuntimeError("stdin is closed for this command session")
-        self.process.stdin.write(raw)
-        self.process.stdin.flush()
+        with acquired(self.input_lock, cancel_requested):
+            if chars == INTERRUPT and not self.tty:
+                self.interrupt()
+                return 0
+            with acquired(self._lifecycle_lock, cancel_requested):
+                if self.master_fd is not None:
+                    fd = os.dup(self.master_fd)
+                elif self.process.stdin is not None:
+                    fd = os.dup(self.process.stdin.fileno())
+                else:
+                    raise RuntimeError("stdin is closed for this command session")
+            return write_all(fd, raw, cancel_requested=cancel_requested)
 
     def interrupt(self) -> None:
         if self.process.poll() is not None:
@@ -266,9 +300,6 @@ class _ManagedCommandProcess:
     def _shutdown(self) -> None:
         first_error: BaseException | None = None
         with self._lifecycle_lock:
-            with self.condition:
-                if self.finished:
-                    self._tree_cleanup_complete = True
             if not self._tree_cleanup_complete:
                 try:
                     terminate_owned_process_tree(

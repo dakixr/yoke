@@ -35,7 +35,7 @@ const processes = [
 ];
 const tools = [
   { name: "read_file", description: "Read a file or a bounded line range from the workspace.", source: "built-in", capabilityID: "file.read", enabled: true },
-  { name: "exec_command", description: "Run commands and inspect their output.", source: "built-in", capabilityID: "shell", enabled: true },
+  { name: "command_exec", description: "Run commands and inspect their output.", source: "built-in", capabilityID: "shell", enabled: true },
   { name: "apply_patch", description: "Apply an explicit patch to workspace files.", source: "built-in", capabilityID: "file.write", enabled: true },
   { name: "image_generate", description: "Generate a new raster image.", source: "provider", capabilityID: "image.generate", enabled: false },
 ];
@@ -67,9 +67,9 @@ const context = {
 };
 
 function makeCall(sequence) {
-  const names = ["exec_command", "read_file", "rg", "apply_patch", "mcp_call"];
+  const names = ["command_exec", "read_file", "rg", "apply_patch", "mcp_call"];
   const name = names[(sequence - 1) % names.length];
-  const args = name === "exec_command" ? { cmd: `uv run pytest tests/yoke/http -k case_${sequence}`, workdir: ROOT, yield_time_ms: 1000 }
+  const args = name === "command_exec" ? { cmd: `uv run pytest tests/yoke/http -k case_${sequence}`, workdir: ROOT, wait_ms: 1000 }
     : name === "read_file" ? { path: `${ROOT}/src/yoke/web/assets/js/inspector/tool.js`, offset: sequence, limit: 40 }
       : name === "rg" ? { raw_args: `--line-number 'inspector' src/yoke`, root_dir: ROOT }
         : name === "apply_patch" ? { input: "*** Begin Patch\n*** Update File: src/inspector.js\n@@\n-old\n+new\n*** End Patch" }
@@ -82,14 +82,14 @@ function makeCall(sequence) {
   const result = failed ? { ok: false, error: "Connection timed out", output: text }
     : name === "read_file" ? { ok: true, path: args.path, content: text, total_lines: 120, complete: true }
       : name === "apply_patch" ? { ok: true, changes: [{ action: "M", path: "src/inspector.js" }], changes_applied: 1, stdout: text }
-        : name === "exec_command" ? {
+        : name === "command_exec" ? {
           ok: true, exit_code: 0, returncode: 0, running: false, wall_time_seconds: 2.18,
           elapsed_seconds: 2.18, original_token_count: 812, output: text,
           outputTruncationDetails: { truncated: false, totalLines: 2, outputLines: 2 }, processID: "process-1",
         }
           : name === "rg" ? { ok: true, output: [{ kind: "match", path: "src/inspector.js", line: 42, text: "export function inspect(session)" }], exit_code: 0 }
             : { ok: true, exit_code: 0, output: text };
-  const resultProjection = name === "exec_command"
+  const resultProjection = name === "command_exec"
     ? JSON.stringify({ ok: true, output: text })
     : name === "rg"
       ? 'ok: true\nmatches[1]{path,line,text}:\nsrc/inspector.js,42,"export function inspect(session)"'
@@ -99,7 +99,7 @@ function makeCall(sequence) {
   return {
     id: `fixture-call-${sequence}`, sequence, toolName: name, status: failed ? "failed" : "ok",
     turnID: Math.ceil(sequence / 6), iteration: sequence % 6 + 1,
-    arguments: { raw: JSON.stringify(args), executed: { ...args, ...(name === "exec_command" ? { timeout: 10000 } : {}) } },
+    arguments: { raw: JSON.stringify(args), executed: { ...args, ...(name === "command_exec" ? { timeout: 10000 } : {}) } },
     result, resultProjection,
     time: { started: sequence < 120 ? null : date(sequence), ended: sequence < 120 ? null : date(sequence + 2), durationMs: sequence < 120 ? null : 2180 },
     retention: sequence < 120 ? "session" : "runtime",

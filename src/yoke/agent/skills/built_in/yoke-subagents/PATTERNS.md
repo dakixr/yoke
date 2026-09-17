@@ -9,6 +9,22 @@ absolute path. Replace the example prompts and paths with the actual task.
 The guarded entrypoint matters: Yoke's tool subprocesses re-import the launcher.
 Run these as files rather than piping them to Python's stdin.
 
+When launching these scripts through native Yoke or MCP, use `command_exec`
+with `argv`. For example, after saving `ask.py` below:
+
+```json
+{"argv":["uv","run","python","/repo/.agents_local/ask.py","/repo","<provider-selection>","Audit parser.py against SPEC.md."],"workdir":"/repo","mode":"background"}
+```
+
+Replace the example root and selection before dispatch. Background mode
+returns without waiting. Auto mode uses the host-owned initial completion
+window. Choose longer waits only after launch with `process_read(wait_ms=...)`.
+Wait with `process_read` using the returned opaque cursor beside its
+`session_id`, then collect any remaining
+pages after exit. A read deadline is not a worker failure or a reason to launch
+it again. See [process guidance](SDK_SURFACE.md#process-tools-for-launching-workers)
+for completion versus output waits, host limits, and input.
+
 ## One worker, with optional follow-ups
 
 Keep trivial work in the parent. Use one delegated agent when its separate

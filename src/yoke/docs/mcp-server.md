@@ -15,13 +15,13 @@ The service exposes:
 
 - `GET /healthz`
 - MCP Streamable HTTP at `POST /mcp`
-- the original eleven tools: `read_file`, `view_image`, `rg`, `fd`, `skill`, `apply_patch`,
-  `exec_command`, `exec_python`, `process_io`, `mcp_inspect`, and `mcp_call`
+- the direct tools: `read_file`, `view_image`, `rg`, `fd`, `skill`, `apply_patch`,
+  `command_exec`, `python_exec`, `process_input`, `mcp_inspect`, and `mcp_call`
 
 The server also exposes `batch_read`, `result_read`, `process_read`,
 `process_cancel`, `search_then_read`, `workspace_snapshot`, `check_patch`,
 `import_files`, `write_binary_file`, and `export_file`, for 21 default tools.
-`exec_python` includes a parent-owned tool-composition bridge. Explicitly
+`python_exec` includes a parent-owned tool-composition bridge. Explicitly
 configured downstream wrappers may add reviewed names. See
 [Composed MCP work](mcp-composition.md) for schemas, limits, recipes, file
 transfer, and the single-user ownership contract.
@@ -40,7 +40,7 @@ modes, context, ignore behavior, sorting, and a global result limit. `fd`
 accepts a pattern, search paths, file types, extensions, excludes, depth and
 time/size filters, ignore behavior, sorting, a global result limit, and an
 optional regex over returned paths. Shell pipelines and subprocess-launching
-switches are intentionally not representable; use `exec_command` when command
+switches are intentionally not representable; use `command_exec` when command
 execution or arbitrary shell composition is intended. MCP ripgrep ignores
 `RIPGREP_CONFIG_PATH`, while the ordinary agent `rg` tool retains its native
 configuration behavior.
@@ -52,21 +52,28 @@ objects for count mode. `fd` returns bounded path strings, or structured
 replaces common `| head` usage without shell parsing.
 
 The typed contract is the only `rg`/`fd` API. Native argument strings and
-execution switches are not accepted; use `exec_command` for arbitrary native
+execution switches are not accepted; use `command_exec` for arbitrary native
 CLI behavior or shell composition.
 
 The HTTP transport is stateless. One long-lived application runtime owns a
 shared `CommandProcessManager`, so commands that outlive their initial call can
 return an ephemeral process `session_id`. Long waits continue with bounded
-`process_read` calls; `process_io` is primarily for terminal input and short
-interaction. The OS process keeps running between MCP calls. Live
+`process_read` calls; `process_input` writes nonempty terminal input and
+collects a short response. The OS process keeps running between MCP calls. Live
 processes and handles are never persisted and are terminated when the service
 stops. Run one ASGI worker unless process ownership is moved to a separate
 executor.
 
 ## Command arguments and error recovery
 
-Use `exec_command` with exactly one execution mode:
+The process tool names match native Yoke: `command_exec`, `python_exec`,
+`process_input`, `process_read`, and `process_cancel`. The old `exec_command`,
+`exec_python`, `write_stdin`, and `process_io` names are not callable aliases.
+Execution `yield_time_ms` and `wait_ms` are rejected. Use `mode` on launch and
+`process_read(wait_ms=...)` for longer follow-up waits. See
+[Shared process tools](process-tools.md) for the full contract and migration.
+
+Use `command_exec` with exactly one command form:
 
 ```json
 {"cmd":"pwd"}
@@ -78,11 +85,17 @@ Use `exec_command` with exactly one execution mode:
 
 `cmd` is shell text, never an array. `argv` is a non-empty array of non-empty
 strings and bypasses shell parsing. `command` remains a deprecated alias for
-`cmd`. Supplying both aliases, both modes, or an unknown argument such as
+`cmd`. Supplying both aliases, both command forms, or an unknown argument such as
 `timeout` returns `INVALID_ARGUMENT`; it no longer silently ignores a typo.
 The MCP descriptor is a plain object with named fields, without a root-level
-union. Cross-field rules, including exactly one non-null command mode, are
-checked by the runtime. The ordinary agent command schema is unchanged.
+union. Cross-field rules, including exactly one non-null command form, are
+checked by the runtime.
+
+Both execution tools default to `mode="auto"`, which uses the configured
+host-owned initial completion window. `mode="background"` returns immediately.
+A successful process item includes its session ID and
+cursor even when it finishes during the first call. Python's `timeout` remains
+a separate execution deadline in seconds; wait-budget expiry does not stop it.
 
 Argument errors return `stage: "input_validation"`, `execution_started: false`,
 a `request_id`, field-level details without input values, and a corrective
@@ -132,13 +145,22 @@ timeouts in reverse proxies from cutting off the request. Set
 `YOKE_MCP_JSON_RESPONSE=true` or pass `--json-response` only for clients that
 require one buffered JSON response.
 
-Remote execution and observation calls are capped at 240 seconds by default so
-they return before common five-minute connector deadlines. If a command is
-still running, the result includes `continue: true`, `next_tool:
-"process_read"`, and `recommended_wait_ms`. Calling `process_read` again with
-its returned cursor continues observing the same OS process; it does not rerun
-the command. The environment setting may lower this safety cap but cannot raise
-it above 240 seconds.
+Remote auto execution uses the configured `--default-yield-ms` host setting,
+bounded by `max_remote_wait_ms`. `process_read.wait_ms` is also capped by
+`max_remote_wait_ms`, at most 240 seconds, so remote waits return before common
+five-minute connector deadlines. The setting may lower this cap but cannot
+raise it. Native Yoke's one-hour read maximum does not apply to MCP. Execution
+does not expose a per-call wait field.
+
+`process_read` defaults to a 60,000 ms wait for all requested sessions to
+finish. Set `until="output_or_completion"` to return on any unread output or
+terminal session, or `wait_ms=0` for a snapshot. Results include a `reason`
+and ordered `items`; each process item has a `cursor` for continuation.
+`next_tool` can be `process_read` while running or while `has_more_output` is
+true. There is no `recommended_wait_ms`. Reading with returned cursors observes
+the same OS processes, including retained output after exit; it never reruns
+commands. Account for any reported retention gap. See
+[reading and paging](process-tools.md#read-until-completion-output-or-a-snapshot).
 
 `--skill-dir` may be repeated. `YOKE_MCP_SKILL_DIRS` uses the platform path
 separator (`:` on Linux and macOS). The MCP-only `skill` tool recursively
@@ -242,7 +264,7 @@ bearer token, OAuth settings, and other MCP control values are not propagated.
 On POSIX systems, `yoke-mcp` imports non-`YOKE_MCP_` variables from the user's
 login shell once at startup. This makes a service-manager launch behave like a
 normal terminal session without sourcing shell startup files for every tool
-call. MCP `exec_command` calls still use a non-login shell by default. A caller
+call. MCP `command_exec` calls still use a non-login shell by default. A caller
 can request Yoke's `login=true` behavior for an individual shell command, or
 pass `argv` instead of `cmd` to launch a process without shell parsing. Treat
 the selected OS account as the real permission boundary.

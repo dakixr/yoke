@@ -148,7 +148,7 @@ def test_deleted_workspace_keeps_history_and_metadata_operations_available(harne
         ("GET", "/tool?sessionID=saved", None),
         ("GET", "/session/saved/skill", None),
         ("GET", "/session/saved/mcp", None),
-        ("PATCH", "/session/saved/tool", {"disabled": ["exec_command"]}),
+        ("PATCH", "/session/saved/tool", {"disabled": ["command_exec"]}),
     ],
 )
 def test_root_dependent_endpoints_return_one_actionable_error_without_provider_work(

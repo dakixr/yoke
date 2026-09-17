@@ -72,7 +72,7 @@ class CallDiagnostics:
         self.shape = {
             key: json_type(arguments[key])
             for key in ("cmd", "argv", "command")
-            if name == "exec_command" and key in arguments
+            if name == "command_exec" and key in arguments
         }
         self.argument_count = len(arguments)
         self._log("tool_call_started")
@@ -84,7 +84,10 @@ class CallDiagnostics:
 
     def observe(self, result: dict[str, Any]) -> None:
         self.ok = bool(result.get("ok", True))
-        process_result = isinstance(result.get("chunk_id"), str)
+        process_result = isinstance(result.get("chunk_id"), str) or (
+            isinstance(result.get("session_id"), int)
+            and isinstance(result.get("running"), bool)
+        )
         if self.ok or process_result:
             self.execution_started = True
         self.outcome = "running" if result.get("running") else "succeeded"
@@ -93,7 +96,11 @@ class CallDiagnostics:
             self.error_code = "TOOL_ERROR"
             if result.get("error_code") == "OS_PERMISSION_DENIED":
                 self.error_code = "OS_PERMISSION_DENIED"
-            elif result.get("cancelled") or result.get("status") == "cancelled":
+            elif (
+                result.get("cancelled")
+                or result.get("status") == "cancelled"
+                or result.get("reason") == "cancelled"
+            ):
                 self.error_code = "COMMAND_CANCELLED"
             elif result.get("timed_out"):
                 self.error_code = "COMMAND_TIMEOUT"
@@ -138,7 +145,7 @@ class CallDiagnostics:
         result["recovery"] = (
             "Correct the arguments and retry. No tool execution started."
         )
-        if self.name == "exec_command":
+        if self.name == "command_exec":
             result["recovery"] = (
                 'Use exactly one of {"cmd":"pwd"} or {"argv":["pwd"]}. '
                 "cmd must be a string, never an array. Correct the arguments and retry. "

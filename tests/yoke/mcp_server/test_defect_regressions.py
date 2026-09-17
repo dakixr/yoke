@@ -50,20 +50,25 @@ def test_large_patch_runs_checks(tmp_path: Path) -> None:
                 )
             )
             assert result["ok"], result
-            cursor = {"session_id": result["execution"]["session_id"]}
+            session = result["execution"]["session_id"]
+            cursor = result["execution"]["cursor"]
             output = result["execution"]["output"]
             observed: dict[str, Any] = {}
             for _ in range(20):
                 observed = structured(
                     await client.call_tool(
-                        "process_read", {"sessions": [cursor], "wait_ms": 1000}
+                        "process_read",
+                        {
+                            "sessions": [{"session_id": session, "cursor": cursor}],
+                            "wait_ms": 1000,
+                        },
                     )
                 )["items"][0]
                 output += observed["output"]
-                cursor = observed["next_cursor"]
-                if observed["status"] != "running":
+                cursor = observed["cursor"]
+                if not observed["running"] and not observed["has_more_output"]:
                     break
-            assert observed["status"] != "running"
+            assert observed["running"] is False
             assert "verified" in output, output
             assert not list(Path(service.adapter.execution._patch_jobs.name).iterdir())
 
@@ -80,13 +85,13 @@ def test_patch_startup_preserves_files(tmp_path: Path, startup: str) -> None:
 
     async def dispatch(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         calls.append(name)
-        if name == "exec_python":
+        if name == "python_exec":
             if startup == "failure":
                 return {"ok": False, "error": "launch failed"}
             directory = next(jobs.iterdir())
             (directory / "ready").touch()
             path.write_text("external edit\n")
-            return {"ok": True, "session_id": 123}
+            return {"ok": True, "session_id": 123, "running": True}
         return {"ok": True}
 
     request = CheckPatch.model_validate(

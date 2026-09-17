@@ -19,6 +19,7 @@ from yoke.agent.tools import (
     EditTool,
     LocalTool,
     PythonExecTool,
+    ProcessReadTool,
     ReadTool,
     WriteTool,
     WriteStdinTool,
@@ -71,6 +72,22 @@ def test_tools_expose_pydantic_definitions(tmp_path: Path) -> None:
     assert "old_text" not in definitions["edit"]["parameters"]["properties"]
     assert "occurrence" in definitions["edit"]["parameters"]["properties"]
     assert "replaceAll" in definitions["edit"]["parameters"]["properties"]
+
+
+def test_command_exec_is_the_public_command_name(tmp_path: Path) -> None:
+    assert CommandTool.name == COMMAND_TOOL_NAME == "command_exec"
+    assert PythonExecTool.name == "python_exec"
+    tools = tool_set(tmp_path)
+    definition = cast(dict[str, Any], CommandTool.bind(root=tmp_path).to_definition())
+    assert definition["function"]["name"] == "command_exec"
+    assert "exec_command" not in {tool.name for tool in tools}
+    result = execute_tool(
+        tools,
+        "command_exec",
+        {"argv": [sys.executable, "-c", "print('renamed-command')"]},
+    )
+    assert result["ok"] is True
+    assert result["output"] == "renamed-command\n"
 
 
 def test_bound_write_tool_does_not_recreate_a_deleted_workspace(tmp_path: Path) -> None:
@@ -188,16 +205,17 @@ def test_command_tool_can_be_cancelled(tmp_path: Path) -> None:
     assert result["error"] == "Command cancelled"
 
 
-def test_command_tool_defaults_to_thirty_second_yield(tmp_path: Path) -> None:
+def test_command_tool_defaults_to_thirty_second_auto_wait(tmp_path: Path) -> None:
     tool = CommandTool.bind(root=tmp_path)
 
     parsed = cast(CommandTool, tool.parse_arguments({"cmd": "echo ready"}))
     definition = cast(dict[str, Any], tool.to_definition())
     properties = definition["function"]["parameters"]["properties"]
 
-    assert parsed.yield_time_ms == 30_000
-    assert properties["yield_time_ms"]["default"] == 30_000
-    assert properties["yield_time_ms"]["maximum"] == 300_000
+    assert parsed.mode == "auto"
+    assert parsed._execution_wait_ms() == 30_000
+    assert "wait_ms" not in properties
+    assert "yield_time_ms" not in properties
 
 
 def test_exec_yield_honors_the_documented_five_minute_limit() -> None:
@@ -271,7 +289,7 @@ def test_command_tool_direct_argv_bypasses_shell_parsing(tmp_path: Path) -> None
         properties = parameters["properties"]
 
         assert result["ok"] is True
-        assert result["output"] == "literal && shell | syntax"
+        assert result["output"] == "literal && shell | syntax\n"
         assert "argv" in properties
         assert parameters["anyOf"] == [
             {"required": ["cmd"]},
@@ -290,23 +308,28 @@ def test_command_tool_requires_exactly_one_execution_mode(tmp_path: Path) -> Non
         tool.parse_arguments({"cmd": "echo one", "argv": ["echo", "two"]})
 
 
-def test_python_exec_defaults_to_thirty_second_yield(tmp_path: Path) -> None:
+def test_python_exec_defaults_to_thirty_second_auto_wait(tmp_path: Path) -> None:
     tool = PythonExecTool.bind(root=tmp_path)
 
     parsed = cast(PythonExecTool, tool.parse_arguments({"code": "pass"}))
     definition = cast(dict[str, Any], tool.to_definition())
     properties = definition["function"]["parameters"]["properties"]
 
-    assert parsed.yield_time_ms == 30_000
-    assert properties["yield_time_ms"]["default"] == 30_000
+    assert parsed.mode == "auto"
+    assert parsed._execution_wait_ms() == 30_000
+    assert "wait_ms" not in properties
 
 
-def test_python_exec_streams_output_through_write_stdin(
+def test_python_exec_streams_output_through_process_read(
     tmp_path: Path,
 ) -> None:
     manager = CommandProcessManager()
-    python_tool = PythonExecTool.bind(root=tmp_path, command_process_manager=manager)
-    stdin_tool = WriteStdinTool.bind(root=tmp_path, command_process_manager=manager)
+    python_tool = PythonExecTool.bind(
+        root=tmp_path,
+        command_process_manager=manager,
+        default_exec_wait_ms=1_000,
+    )
+    read_tool = ProcessReadTool.bind(root=tmp_path, command_process_manager=manager)
     try:
         started = as_dict(
             python_tool.parse_arguments(
@@ -314,7 +337,6 @@ def test_python_exec_streams_output_through_write_stdin(
                     "code": (
                         "import time\nprint('first')\ntime.sleep(2)\nprint('second')"
                     ),
-                    "yield_time_ms": 1_000,
                 }
             ).execute()
         )
@@ -323,13 +345,18 @@ def test_python_exec_streams_output_through_write_stdin(
         assert started["session_id"] is not None
         assert "first" in started["output"]
         completed = as_dict(
-            stdin_tool.parse_arguments(
+            read_tool.parse_arguments(
                 {
-                    "session_id": started["session_id"],
-                    "yield_time_ms": 3_000,
+                    "sessions": [
+                        {
+                            "session_id": started["session_id"],
+                            "cursor": started["cursor"],
+                        }
+                    ],
+                    "wait_ms": 3_000,
                 }
             ).execute()
-        )
+        )["items"][0]
 
         assert completed["ok"] is True
         assert completed["running"] is False
@@ -338,7 +365,7 @@ def test_python_exec_streams_output_through_write_stdin(
         manager.close()
 
 
-def test_python_exec_timeout_applies_after_yield(tmp_path: Path) -> None:
+def test_python_exec_timeout_is_separate_from_wait_budget(tmp_path: Path) -> None:
     manager = CommandProcessManager()
     tool = PythonExecTool.bind(root=tmp_path, command_process_manager=manager)
     try:
@@ -346,7 +373,6 @@ def test_python_exec_timeout_applies_after_yield(tmp_path: Path) -> None:
             tool.parse_arguments(
                 {
                     "code": "import time\nprint('ready')\ntime.sleep(5)",
-                    "yield_time_ms": 2_000,
                     "timeout": 1,
                 }
             ).execute()
@@ -471,17 +497,15 @@ def test_write_stdin_poll_yield_clamps_to_one_hour() -> None:
     assert clamp_write_yield_time(300_000, has_input=True) == 30_000
 
 
-def test_write_stdin_schema_accepts_one_hour_poll(tmp_path: Path) -> None:
-    tool = WriteStdinTool.bind(root=tmp_path)
+def test_process_read_schema_accepts_one_hour_wait(tmp_path: Path) -> None:
+    tool = ProcessReadTool.bind(root=tmp_path)
 
     parsed = cast(
-        WriteStdinTool,
-        tool.parse_arguments(
-            {"session_id": 1, "chars": "", "yield_time_ms": 3_600_000}
-        ),
+        ProcessReadTool,
+        tool.parse_arguments({"sessions": [{"session_id": 1}], "wait_ms": 3_600_000}),
     )
 
-    assert parsed.yield_time_ms == 3_600_000
+    assert parsed.wait_ms == 3_600_000
 
 
 def test_write_tool_creates_text_file(tmp_path: Path) -> None:

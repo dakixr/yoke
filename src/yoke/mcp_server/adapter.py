@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 from pathlib import Path
+import threading
 
 from mcp.types import CallToolResult
 from mcp.types import ImageContent
@@ -15,7 +16,9 @@ from pydantic import ValidationError
 
 from yoke._version import __version__
 from yoke.mcp_server.diagnostics import CallDiagnostics
+from yoke.mcp_server.execution import policy
 from yoke.mcp_server.execution.service import ExecutionService
+from yoke.mcp_server.results.contracts import OUTPUTS
 from yoke.mcp_server.results.encoding import encode
 from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.process_runtime import ProcessRuntime
@@ -94,10 +97,10 @@ class ToolAdapter:
             self.execution.validate_arguments(name, arguments)
             call.begin_execution()
             result = await self.execution.dispatch(name, arguments)
-            if name == "exec_python":
-                result = self._decorate_process_result(result)
             call.observe(result)
             raw_budget = arguments.get("max_output_tokens")
+            if name == "python_exec" and raw_budget is None:
+                raw_budget = self.config.max_output_tokens
             budget = (
                 min(64000, raw_budget * 4) if isinstance(raw_budget, int) else 32000
             )
@@ -114,6 +117,8 @@ class ToolAdapter:
                 budget=budget,
                 legacy_text=self.config.legacy_result_text,
                 batch=name == "batch_read" and bool(result.get("ok")),
+                process=name in {"python_exec", "process_read"},
+                process_recipe=name == "check_patch",
             )
             call.stage = "complete" if call.ok else "execution"
             return encoded
@@ -124,10 +129,15 @@ class ToolAdapter:
                 call.error("UNKNOWN_TOOL", f"Unknown tool: {name}")
             )
         parsed_arguments = self._with_runtime_defaults(name, arguments)
+        cancelled = threading.Event()
         binding: dict[str, object] = {
             "root": self.config.root,
             "command_process_manager": self.runtime.manager,
             "skill_dirs": self.config.skill_dirs,
+            "cancel_requested": cancelled.is_set,
+            "default_exec_wait_ms": min(
+                self.config.default_yield_ms, self.config.max_remote_wait_ms
+            ),
         }
         binding["mcp_manager"] = self.downstream_manager
         prototype = spec.tool_class.bind(
@@ -135,76 +145,48 @@ class ToolAdapter:
         )
         tool = prototype.parse_arguments(parsed_arguments)
         call.begin_execution()
-        result = await self.runtime.execute(name, tool)
-        if name in {"exec_command", "process_io"}:
-            result = self._decorate_process_result(result)
+        try:
+            result = await self.runtime.execute(name, tool, cancel=cancelled)
+        except BaseException:
+            cancelled.set()
+            raise
         call.observe(result)
         call.stage = "result_encoding"
-        encoded = _encode_tool_result(spec, result)
+        raw_budget = parsed_arguments.get("max_output_tokens")
+        encoded = (
+            encode(
+                result,
+                self.execution.store,
+                budget=min(64000, raw_budget * 4)
+                if isinstance(raw_budget, int)
+                else 32000,
+                legacy_text=self.config.legacy_result_text,
+                process=True,
+            )
+            if name in {"command_exec", "process_input"}
+            else _encode_tool_result(spec, result)
+        )
         call.stage = "complete" if call.ok else "execution"
         return encoded
 
     def _mcp_tool(self, spec: ExposedTool) -> Tool:
         schema = spec.tool_class.model_json_schema(by_alias=True)
-        if spec.name == "exec_command":
-            schema["properties"]["login"]["default"] = False
-            schema["properties"]["yield_time_ms"]["default"] = min(
-                self.config.default_yield_ms, self.config.max_remote_wait_ms
-            )
-            schema["properties"]["yield_time_ms"]["maximum"] = (
-                self.config.max_remote_wait_ms
-            )
-            schema["properties"]["max_output_tokens"]["default"] = (
-                self.config.max_output_tokens
-            )
-        if spec.name == "process_io":
-            schema["properties"]["yield_time_ms"]["maximum"] = (
-                self.config.max_remote_wait_ms
-            )
-            schema["properties"]["max_output_tokens"]["default"] = (
-                self.config.max_output_tokens
-            )
+        policy.schema(self.config, spec.name, schema)
         return Tool(
             name=spec.name,
             title=spec.title,
             description=spec.description,
             input_schema=schema,
+            output_schema=(
+                OUTPUTS[spec.name].model_json_schema() if spec.name in OUTPUTS else None
+            ),
             annotations=spec.annotations,
         )
 
     def _with_runtime_defaults(
         self, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        values = dict(arguments)
-        if name in {"exec_command", "exec_python"}:
-            values.setdefault(
-                "yield_time_ms",
-                min(self.config.default_yield_ms, self.config.max_remote_wait_ms),
-            )
-            values.setdefault("max_output_tokens", self.config.max_output_tokens)
-        if name == "exec_command":
-            values.setdefault("login", False)
-        if name == "exec_python":
-            values.setdefault("timeout", self.config.python_timeout)
-        if name == "process_io":
-            values.setdefault("max_output_tokens", self.config.max_output_tokens)
-        if name in {"exec_command", "process_io"}:
-            requested_wait = values.get("yield_time_ms")
-            if isinstance(requested_wait, int) and not isinstance(requested_wait, bool):
-                values["yield_time_ms"] = min(
-                    requested_wait, self.config.max_remote_wait_ms
-                )
-        return values
-
-    def _decorate_process_result(self, result: dict[str, object]) -> dict[str, object]:
-        running = result.get("running")
-        if not isinstance(running, bool):
-            return result
-        result["continue"] = running
-        if running:
-            result["next_tool"] = "process_read"
-            result["recommended_wait_ms"] = self.config.max_remote_wait_ms
-        return result
+        return policy.arguments(self.config, name, arguments)
 
 
 def _encode_tool_result(spec: ExposedTool, result: dict[str, object]) -> CallToolResult:

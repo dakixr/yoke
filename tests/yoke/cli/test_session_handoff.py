@@ -260,7 +260,7 @@ def test_session_handoff_tail_keeps_whole_recent_user_turns_and_summary(
                 ToolCall(
                     id="call-tests",
                     function=ToolFunction(
-                        name="exec_command", arguments="pytest login"
+                        name="command_exec", arguments="pytest login"
                     ),
                 )
             ],
