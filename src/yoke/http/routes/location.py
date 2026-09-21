@@ -48,6 +48,6 @@ def recent_locations(request: Request) -> RecentLocationsResponse:
 def browse_locations(
     request: Request,
     path: str = Query(min_length=1, max_length=4096),
-    limit: int = Query(default=80, ge=1, le=200),
+    limit: int = Query(default=500, ge=1, le=1000),
 ) -> LocationBrowseResponse:
     return LocationBrowseResponse(data=_service(request).browse(path, limit=limit))

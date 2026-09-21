@@ -34,7 +34,13 @@ from the repository root with:
 node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
 node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs
 node --experimental-default-type=module scripts/test_web_workspace_races.mjs
+node --experimental-default-type=module scripts/test_web_location_picker.mjs
 ```
+
+`scripts/test_web_location_picker_browser.py` drives the working location
+palette, and `scripts/test_web_type_to_focus_browser.py` drives composer
+type-to-focus, both in Chrome against in-browser fixtures. Run them with
+`uv run python scripts/<name>.py`.
 
 ## Workspace status and recovery
 
@@ -118,7 +124,7 @@ Workspace errors use the normal JSON error envelope:
 
 The browser keeps the timeline and editable draft visible when the workspace is
 unavailable. Its notice offers **Retry workspace** after restoring the original
-directory, or **Relocate workspace** to open the existing directory picker.
+directory, or **Relocate workspace** to open the working location palette.
 Choose a folder, then confirm **Relocate this session**. Selecting a folder alone
 does not move the session. Execution, model and compaction controls stay disabled
 until the workspace is available. Queue removal remains accessible. A typed
@@ -228,6 +234,11 @@ the Inspect menu, command palette, or slash commands. The browser does not
 capture the terminal CLI's Ctrl+X chords. `/shortcuts` and `?` show the browser
 shortcut summary.
 Alt+V is terminal-specific; browser clipboard security requires Cmd+V/Ctrl+V.
+Typing or pasting text while nothing editable holds focus writes into the
+composer and focuses it, in both a saved session and a new-session draft, so
+writing never costs a click first. Space and Enter are left alone, so they still
+page the transcript and activate the control that holds focus, and modified
+keystrokes stay with their shortcut. An open dialog keeps the keyboard.
 Typing `/` at the start of an empty prompt opens the browser slash-command
 completion menu using `/api/v1/command` metadata. The menu supports keyboard
 navigation and completion; moving the active option with the keyboard keeps it
@@ -236,6 +247,36 @@ complete their arguments from the current workspace catalogs. Supported slash
 commands execute through the corresponding HTTP operation instead of being sent
 to the model as prompt text. Commands that require a saved session are disabled
 while editing a new-session draft.
+
+## Working location palette
+
+The new-session draft and the workspace relocation notice share one working
+location control. The trigger shows the committed location and opens a modal
+palette whose interaction model is ported from T3 Code's project picker, so both
+products browse a filesystem the same way.
+
+The input is primary and nothing is highlighted until an arrow key moves into
+the list. Enter therefore commits the path that was typed. Enter on a
+highlighted directory opens it instead, and Cmd+Enter on macOS, or Ctrl+Enter
+elsewhere, commits from there. Escape closes the palette without choosing. The
+footer names what Enter will do for the current selection.
+
+The palette opens browsing the home directory, so reaching the filesystem never
+costs a typed `~/` first. A query that starts with `/`, `~/`, a drive letter, or
+a UNC prefix addresses the filesystem; clearing the field searches recent
+projects from `/api/v1/location/recent`. The parent row is derived from the
+directory the server resolved, because `~/` is its own parent as plain text. A trailing separator means the query names a
+directory, so the whole listing shows. Without one the last segment filters that
+same listing by prefix, and hidden directories appear only when the segment
+starts with a dot. Opening a folder appends its name and a separator, which is
+what moves the listing down a level.
+
+`GET /api/v1/location/browse` lists one directory, including its hidden
+directories, and the browser filters the typed segment locally. One listing
+therefore serves every keystroke within a directory, and a listing already read
+is reused when navigating back to it. Because the filtering is local, the
+listing limit must stay above the number of entries a directory can hold rather
+than truncating before the entry being typed toward.
 
 Each saved session has its own browser composer draft. Prompt text and pending
 image attachments stay with that session while the user navigates to another

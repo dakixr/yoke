@@ -217,28 +217,14 @@
 .draft-location { margin-bottom: 8px; }
 .location-picker { position: relative; }
 .location-picker__label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 10.5px; }
-.location-picker__field { position: relative; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--input-bg); transition: border-color 120ms ease, box-shadow 120ms ease; }
-.location-picker__field:focus-within, .location-picker__field.is-open { border-color: color-mix(in srgb, var(--accent) 68%, var(--border-strong)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
-.location-picker__field input { width: 100%; min-width: 0; padding: 9px 38px 9px 31px; border: 0; background: transparent; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.location-picker__glyph { position: absolute; left: 10px; color: var(--accent); font: 700 17px ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
-.location-picker__field-status { position: absolute; right: 10px; display: grid; width: 16px; height: 16px; place-items: center; color: var(--faint); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
-.location-picker__panel { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; left: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--panel); box-shadow: 0 14px 38px rgb(0 0 0 / 42%); }
-.location-picker__header { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 14px; padding: 6px 9px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 10.5px; font-weight: 650; }
-.location-picker__keys { display: flex; align-items: center; gap: 4px; color: var(--faint); font-weight: 520; white-space: nowrap; }
-.location-picker__items { max-height: 280px; overflow-y: auto; padding: 4px; scrollbar-gutter: stable; }
-.location-picker__item { display: flex; width: 100%; min-height: 46px; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 6px; text-align: left; }
-.location-picker__item:hover, .location-picker__item.is-active { background: var(--raised); }
-.location-picker__item.is-active { box-shadow: inset 2px 0 0 var(--accent); }
-.location-picker__item-icon { width: 18px; flex: none; color: color-mix(in srgb, var(--accent) 78%, var(--text)); font-size: 12px; text-align: center; }
-.location-picker__item-copy { display: grid; min-width: 0; flex: 1; gap: 2px; }
-.location-picker__item-copy strong { overflow: hidden; font: 600 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
-.location-picker__item-copy small { overflow: hidden; color: var(--muted); font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
-.location-picker__item-tag { flex: none; padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--faint); font-size: 8.5px; font-weight: 720; letter-spacing: .04em; text-transform: uppercase; }
-.location-picker__state { padding: 18px 12px; color: var(--muted); font-size: 11.5px; text-align: center; }
-.location-picker__state--error { color: var(--danger); }
-.location-picker__footer { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 7px 6px 10px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--panel-2) 76%, var(--panel)); }
-.location-picker__footer-path { min-width: 0; overflow: hidden; color: var(--muted); font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
-.location-picker__footer .primary { flex: none; }
+.location-picker__trigger { display: flex; width: 100%; min-height: 48px; align-items: center; gap: 9px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--input-bg); text-align: left; transition: border-color 120ms ease, box-shadow 120ms ease; }
+.location-picker__trigger:hover, .location-picker__trigger:focus-visible { border-color: color-mix(in srgb, var(--accent) 68%, var(--border-strong)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
+.location-picker__trigger-glyph { flex: none; width: 18px; color: color-mix(in srgb, var(--accent) 78%, var(--text)); font-size: 12px; text-align: center; }
+.location-picker__trigger-copy { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.location-picker__trigger-copy strong { overflow: hidden; font: 600 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.location-picker__trigger-copy small { overflow: hidden; color: var(--muted); font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.location-picker__trigger.is-empty .location-picker__trigger-copy strong { color: var(--muted); font-weight: 520; }
+.location-picker__trigger-hint { flex: none; padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--faint); font-size: 8.5px; font-weight: 720; letter-spacing: .04em; text-transform: uppercase; }
 .composer-shell--draft { margin-top: 6px; }
 .composer-input--draft { min-height: 180px; font-size: 14px; }
 .draft-composer-wrap .slash-menu { top: calc(100% + 6px); bottom: auto; }
@@ -293,12 +279,11 @@
   .draft-composer-wrap .slash-menu { top: auto; bottom: calc(100% + 6px); }
   .draft-composer-wrap .model-picker__panel { top: auto; bottom: 74px; }
   .location-picker__panel { max-height: min(430px, 56vh); }
-  .location-picker__header { align-items: flex-start; }
   .location-picker__keys { display: none; }
+  .location-picker__crumbs { flex: 1; }
+  .location-picker__crumb { max-width: 110px; }
   .location-picker__items { max-height: min(300px, 39vh); }
   .location-picker__item { min-height: 56px; }
-  .location-picker__footer { align-items: stretch; flex-direction: column; }
-  .location-picker__footer .primary { width: 100%; min-height: 42px; }
   .slash-menu__copy small { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
   .draft-composer-wrap { width: calc(100% - 22px); padding-top: 28px; }
 }

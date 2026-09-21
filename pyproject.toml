@@ -1,6 +1,6 @@
 [project]
 name = "yoke"
-version = "3.0.2"
+version = "3.3.0"
 description = "Native Python coding agent CLI and SDK."
 readme = "README.md"
 authors = [
@@ -35,6 +35,7 @@ dev = [
     "playwright>=1.62.0",
     "pyright>=1.1",
     "pytest>=7.4",
+    "pyyaml>=6.0.3",
     "ruff>=0.8",
     "ty>=0.0.1a0",
 ]

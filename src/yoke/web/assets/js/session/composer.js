@@ -7,6 +7,7 @@ import {
 } from "../state/session-composer-drafts.js";
 import { workspaceUnavailable } from "../state/workspace/status.js";
 import { mergeRecoveredDraft, resizeComposerInput, useSessionComposerDraft } from "./composer/draft.js";
+import { useTypeToFocus } from "./composer/type-to-focus.js";
 import { LocationPicker } from "./location-picker.js";
 import { ModelSelectionControl } from "./model-picker.js";
 import {
@@ -55,6 +56,14 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
+
+  useTypeToFocus({
+    enabled: connected && !busy && !overlayOpen,
+    inputRef: promptInput,
+    appendText: (chunk) => updateSessionComposerDraft(sessionID, (current) => ({
+      text: `${current.text || ""}${chunk}`,
+    })),
+  });
 
   const hasContent = Boolean(text.trim() || attachments.length);
   const running = runtime?.state === "running" || runtime?.state === "stopping" || runtime?.state === "waiting_input";
@@ -293,6 +302,11 @@ export function DraftComposer({ draftID, draft }) {
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
+  useTypeToFocus({
+    enabled: connected && !busy && !overlayOpen,
+    inputRef: promptInput,
+    appendText: (chunk) => update({ text: `${value.text || ""}${chunk}` }),
+  });
   const slashMenu = useSlashCompletions({
     text: value.text || "",
     enabled: !(value.attachments || []).length,

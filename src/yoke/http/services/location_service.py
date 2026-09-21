@@ -112,13 +112,13 @@ class LocationService:
                 "The parent directory for this location cannot be read.",
             ) from exc
 
+        # Hidden directories are returned and the caller decides whether to show
+        # them. The browser filters the typed leaf segment locally, so it would
+        # otherwise never see a dot-directory it is about to filter for.
         needle = prefix.casefold()
-        show_hidden = prefix.startswith(".")
         entries: list[LocationBrowseEntry] = []
         for child in children:
             name = child.name
-            if not show_hidden and name.startswith("."):
-                continue
             if needle and not name.casefold().startswith(needle):
                 continue
             try:

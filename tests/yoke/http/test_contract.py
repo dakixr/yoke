@@ -506,14 +506,18 @@ def test_location_browse_autocompletes_real_directories(tmp_path: Path) -> None:
     assert exact.status_code == 200
     assert exact.json()["data"]["selectableDirectory"] == str(alpha.resolve())
 
+    # A directory listing includes hidden directories. The browser filters the
+    # typed leaf segment locally and decides whether to show them.
     children = client.get(
         "/api/v1/location/browse",
         headers=_auth(),
         params={"path": f"{root}/"},
     )
     assert children.status_code == 200
-    assert ".secret" not in [
-        item["name"] for item in children.json()["data"]["entries"]
+    assert [item["name"] for item in children.json()["data"]["entries"]] == [
+        ".secret",
+        "alpha",
+        "alpine",
     ]
 
     hidden_prefix = client.get(

@@ -140,7 +140,10 @@ def test_process_handle_works_across_http_clients(tmp_path: Path) -> None:
                                     "cursor": started["cursor"],
                                 }
                             ],
-                            "wait_ms": 2_000,
+                            # Allow for a cold Python helper start on a loaded
+                            # host. This checks cross-client handles, not
+                            # process startup speed.
+                            "wait_ms": 10_000,
                         },
                     )
                 )["items"][0]

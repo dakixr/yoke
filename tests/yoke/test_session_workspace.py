@@ -83,6 +83,21 @@ def test_workspace_detects_broken_symlinks_and_files_in_parent_path(tmp_path):
     assert inspect_workspace(file / "child").status == "not_directory"
 
 
+def test_workspace_detects_file_parent_when_stat_reports_missing(tmp_path, monkeypatch):
+    file = tmp_path / "file"
+    file.write_text("file")
+    target = file / "child"
+    original_stat = Path.stat
+
+    def stat_with_windows_missing(path, *args, **kwargs):
+        if path == target:
+            raise FileNotFoundError(str(target))
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat_with_windows_missing)
+    assert inspect_workspace(target).status == "not_directory"
+
+
 def test_workspace_unreadable_is_not_reported_as_missing(tmp_path, monkeypatch):
     monkeypatch.setattr("yoke.session.workspace.os.access", lambda *_args: False)
     assert inspect_workspace(tmp_path).status == "unreadable"

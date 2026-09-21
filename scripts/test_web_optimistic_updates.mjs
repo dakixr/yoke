@@ -75,7 +75,7 @@ const {
   sessionStatusDescriptor,
 } = await import("../src/yoke/web/assets/js/components/sidebar-status.js");
 const { treeKeyboardTarget } = await import("../src/yoke/web/assets/js/inspector/tree-keyboard.js");
-const { createLocationBrowseCoordinator, isLocationBrowseQuery } = await import("../src/yoke/web/assets/js/session/location-picker-logic.js");
+const { createLocationBrowseCoordinator, isFilesystemBrowseQuery } = await import("../src/yoke/web/assets/js/session/location-picker-logic.js");
 const { filterModelChoices, groupModelChoices, modelNavigationIndex, modelSelectionErrorMessage, resolveModelEffort } = await import("../src/yoke/web/assets/js/session/model-picker-logic.js");
 const { slashMenuScrollDelta } = await import("../src/yoke/web/assets/js/session/slash-menu-logic.js");
 const { formatTurnSummary } = await import("../src/yoke/web/assets/js/session/turn-summary.js");
@@ -2756,9 +2756,9 @@ async function testLocationBrowseKeepsNewestNavigation() {
   first.resolve("first");
   assert.equal(await firstRun, false);
   assert.deepEqual(commits, ["second"]);
-  assert.equal(isLocationBrowseQuery("~/dev/yo"), true);
-  assert.equal(isLocationBrowseQuery("/home/dakixr/dev"), true);
-  assert.equal(isLocationBrowseQuery("project-name"), false);
+  assert.equal(isFilesystemBrowseQuery("~/dev/yo"), true);
+  assert.equal(isFilesystemBrowseQuery("/home/dakixr/dev"), true);
+  assert.equal(isFilesystemBrowseQuery("project-name"), false);
 }
 
 async function testCombinedModelPickerFiltersAcrossProviders() {

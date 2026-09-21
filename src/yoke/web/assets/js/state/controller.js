@@ -1305,6 +1305,9 @@ export class AppController {
       };
     });
     this.queueServerRevisions.set(sessionID, response.data.queue?.revision || 0);
+    // A project becomes "recent" the moment it holds a session, so the location
+    // picker must learn about it without waiting for a page reload.
+    void this.workspace.refreshLocations(location).catch(() => {});
     return sessionID;
   }
 

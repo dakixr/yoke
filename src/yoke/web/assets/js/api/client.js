@@ -79,7 +79,9 @@ export class YokeApi {
   resolveLocation(directory) {
     return this.request(`/api/v1/location${queryString({ directory })}`);
   }
-  browseLocations(path, limit = 80) {
+  // The palette filters the typed leaf locally, so a listing must not be
+  // truncated before the entry the user is typing toward.
+  browseLocations(path, limit = 500) {
     return this.request(`/api/v1/location/browse${queryString({ path, limit })}`);
   }
   providers(directory) {
