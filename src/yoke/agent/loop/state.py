@@ -11,6 +11,7 @@ from yoke.agent.skills.context import (
 )
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.models import SkillSpec
+from yoke.agent.skills.mentions import activate_mentioned_skills
 from yoke.ai.providers.base import start_provider_turn
 
 
@@ -38,6 +39,15 @@ def context_for_run(
     resolved_active_skills = list(
         active_skills if active_skills is not None else agent.active_skills
     )
+    if append_user_message:
+        resolved_active_skills = activate_mentioned_skills(
+            prompt=prompt,
+            registry=agent.skill_registry,
+            active_skills=resolved_active_skills,
+        )
+        agent.active_skills = [
+            skill.model_copy(deep=True) for skill in resolved_active_skills
+        ]
     if agent._context is None:
         context = agent.context_manager.initialize(
             prompt,

@@ -16,8 +16,12 @@ from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
 
 from yoke.cli.interactive.completion.menu import (
+    apply_completion,
+)
+from yoke.cli.interactive.completion.menu import (
     register_completion_menu_key_bindings,
 )
+from yoke.cli.interactive.completion import SkillMentionCompletion
 
 
 @dataclass
@@ -83,3 +87,21 @@ def test_horizontal_arrow_closes_completion_before_moving() -> None:
         raise AssertionError
     if buffer.complete_state is not None:
         raise AssertionError
+
+
+def test_skill_mention_completion_replaces_the_whole_token_at_caret() -> None:
+    buffer = Buffer()
+    buffer.text = "Use $review, then continue"
+    buffer.cursor_position = len("Use $rev")
+
+    mention = apply_completion(
+        buffer,
+        SkillMentionCompletion(
+            "repo-style",
+            start_position=-len("rev"),
+            display="$repo-style",
+        ),
+    )
+
+    assert mention is True
+    assert buffer.text == "Use $repo-style, then continue"

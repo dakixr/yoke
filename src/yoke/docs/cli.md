@@ -75,6 +75,11 @@ conversation without inserting a synthetic user message. Empty prompts without
 that explicit marker are rejected. Plan mode, interactive permission/question
 requests, session listing, and ACP-level forking remain unsupported.
 
+ACP clients can include `_meta.yoke.cwd` in their client capabilities during
+initialization. Yoke then returns that workspace's skill catalog in
+`_meta.yoke.skills`, allowing clients such as T3 Code to offer `$skill-name`
+completion while sending the authored prompt text unchanged.
+
 Native uploads accept at most 20 attachments and 20 MiB per file. The ACP peer
 also limits inline content to 32 MiB decoded and 48 MiB serialized JSON. Clients
 may impose smaller limits. Mooncake's T3 adapter currently caps its complete
@@ -681,6 +686,9 @@ yoke --skill code-review "review the changes in src/auth.py"
 # Activate a skill during an interactive session, then submit a prompt
 /skill code-review review the current diff with this workflow
 
+# Activate multiple skills as part of a normal prompt
+$code-review $repo-style review the current diff
+
 # Inspect and scaffold skills
 yoke skills list
 yoke skills show code-review
@@ -725,6 +733,16 @@ You can manually activate a skill with `/skill <name>`. If you include text
 after the skill name, yoke activates the skill and submits the remaining text as
 the next normal user prompt, so multiline prompts are supported in the
 interactive editor.
+
+You can also mention skills anywhere in a normal prompt with `$skill-name`.
+Typing `$` opens skill completion at the caret; `Enter` or `Tab` inserts the
+selected name without sending the prompt, so one prompt can mention several
+skills. Yoke activates known mentions in textual order immediately before that
+prompt runs, keeps the mention text visible to the model, and ignores duplicate
+mentions within the same prompt. A later prompt can mention the skill again to
+append a fresh activation. Escaped mentions and mentions inside Markdown code
+are treated as literal text. Queueing or editing a prompt does not activate its
+mentions until that prompt actually runs.
 
 Yoke ships with a built-in `create-skill` skill in the codebase under
 `src/yoke/agent/skills/built_in/create-skill/SKILL.md`. It instructs the

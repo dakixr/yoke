@@ -29,6 +29,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   const attachments = draft.attachments || [];
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [cursorPosition, setCursorPosition] = useState(() => text.length);
   const fileInput = useRef(null);
   const promptInput = useRef(null);
   const escapePrefixAt = useRef(0);
@@ -40,12 +41,14 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   useEffect(() => {
     setBusy(false);
     setExpanded(false);
+    setCursorPosition(text.length);
   }, [sessionID]);
   useEffect(() => {
     if (!data?.editorHandoff) return;
     updateSessionComposerDraft(sessionID, (current) => ({
       text: current.text?.length ? current.text : data.editorHandoff,
     }));
+    if (!text.length) setCursorPosition(data.editorHandoff.length);
     controller.clearEditorHandoff(sessionID);
   }, [data?.editorHandoff, sessionID]);
   useLayoutEffect(() => {
@@ -60,9 +63,11 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   useTypeToFocus({
     enabled: connected && !busy && !overlayOpen,
     inputRef: promptInput,
-    appendText: (chunk) => updateSessionComposerDraft(sessionID, (current) => ({
-      text: `${current.text || ""}${chunk}`,
-    })),
+    appendText: (chunk) => updateSessionComposerDraft(sessionID, (current) => {
+      const nextText = `${current.text || ""}${chunk}`;
+      setCursorPosition(nextText.length);
+      return { text: nextText };
+    }),
   });
 
   const hasContent = Boolean(text.trim() || attachments.length);
@@ -70,7 +75,9 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   const canSteer = Boolean(capabilities?.features?.steering);
   const slashMenu = useSlashCompletions({
     text,
-    enabled: !attachments.length && !unavailable,
+    cursorPosition,
+    enabled: !unavailable,
+    allowCommands: !attachments.length,
     sessionID,
     directory: session.location.directory,
     hasSession: true,
@@ -91,6 +98,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
       appendSpace: !shouldSubmit && item.kind !== "command",
     });
     setText(completion.text);
+    setCursorPosition(completion.cursor);
     slashMenu.close();
     requestAnimationFrame(() => {
       promptInput.current?.focus();
@@ -231,7 +239,11 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
         disabled=${!connected}
         readOnly=${busy}
         aria-busy=${busy}
-        onInput=${(event) => setText(event.currentTarget.value)}
+        onInput=${(event) => {
+          setText(event.currentTarget.value);
+          setCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+        }}
+        onSelect=${(event) => setCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
         onKeyDown=${onKeyDown}
         onPaste=${imageInput.onPaste}
       ></textarea>
@@ -288,11 +300,12 @@ export function DraftComposer({ draftID, draft }) {
   const capabilities = useStore((state) => state.capabilities);
   const recentLocations = useStore((state) => state.recentLocations);
   const overlayOpen = useStore((state) => Boolean(state.ui.inspector || state.ui.commandPaletteOpen));
+  const value = draft || { text: "", location: recentLocations[0]?.directory || "", attachments: [] };
   const [busy, setBusy] = useState(false);
+  const [cursorPosition, setCursorPosition] = useState(() => (value.text || "").length);
   const fileInput = useRef(null);
   const promptInput = useRef(null);
   const escapePrefixAt = useRef(0);
-  const value = draft || { text: "", location: recentLocations[0]?.directory || "", attachments: [] };
   const update = (patch) => controller.updateDraft(draftID, patch);
   useLayoutEffect(() => {
     resizeComposerInput(promptInput.current);
@@ -305,11 +318,16 @@ export function DraftComposer({ draftID, draft }) {
   useTypeToFocus({
     enabled: connected && !busy && !overlayOpen,
     inputRef: promptInput,
-    appendText: (chunk) => update({ text: `${value.text || ""}${chunk}` }),
+    appendText: (chunk) => {
+      const nextText = `${value.text || ""}${chunk}`;
+      setCursorPosition(nextText.length);
+      update({ text: nextText });
+    },
   });
   const slashMenu = useSlashCompletions({
     text: value.text || "",
-    enabled: !(value.attachments || []).length,
+    cursorPosition,
+    allowCommands: !(value.attachments || []).length,
     directory: value.location || "",
     hasSession: false,
   });
@@ -329,6 +347,7 @@ export function DraftComposer({ draftID, draft }) {
       appendSpace: !shouldSubmit && item.kind !== "command",
     });
     update({ text: completion.text });
+    setCursorPosition(completion.cursor);
     slashMenu.close();
     requestAnimationFrame(() => {
       promptInput.current?.focus();
@@ -377,7 +396,10 @@ export function DraftComposer({ draftID, draft }) {
       ${value.attachments?.length ? html`<div class="composer-attachments">${value.attachments.map((attachment, index) => html`
         <span class="attachment-chip">▧ ${attachment.name}<button aria-label=${`Remove ${attachment.name}`} onClick=${() => update({ attachments: value.attachments.filter((_, itemIndex) => itemIndex !== index) })}>×</button></span>
       `)}</div>` : null}
-      <textarea ref=${promptInput} class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" aria-autocomplete="list" aria-controls=${slashMenu.items.length || slashMenu.loading ? "slash-completion-menu" : undefined} aria-expanded=${Boolean(slashMenu.items.length || slashMenu.loading)} aria-activedescendant=${slashMenu.items[slashMenu.activeIndex] ? `slash-completion-menu-option-${slashMenu.activeIndex}` : undefined} onInput=${(event) => update({ text: event.currentTarget.value })} onPaste=${imageInput.onPaste} onKeyDown=${(event) => {
+      <textarea ref=${promptInput} class="composer-input composer-input--draft" rows="8" autofocus value=${value.text || ""} placeholder="Describe the task…" aria-autocomplete="list" aria-controls=${slashMenu.items.length || slashMenu.loading ? "slash-completion-menu" : undefined} aria-expanded=${Boolean(slashMenu.items.length || slashMenu.loading)} aria-activedescendant=${slashMenu.items[slashMenu.activeIndex] ? `slash-completion-menu-option-${slashMenu.activeIndex}` : undefined} onInput=${(event) => {
+        update({ text: event.currentTarget.value });
+        setCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+      }} onSelect=${(event) => setCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length)} onPaste=${imageInput.onPaste} onKeyDown=${(event) => {
         if (event.isComposing) return;
         if (handleSlashMenuKey(event, slashMenu, chooseSlash)) return;
         const key = event.key.toLowerCase();

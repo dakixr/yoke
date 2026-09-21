@@ -89,6 +89,21 @@ class FixtureNative(NativeClient):
                 200,
                 json={"paths": {"/api/v1/session/{session_id}/drain": {"post": {}}}},
             )
+        elif path == "skill":
+            return httpx.Response(
+                200,
+                json={
+                    "location": {"directory": request.url.params["directory"]},
+                    "data": [
+                        {
+                            "name": "review",
+                            "description": "Review the change.",
+                            "sourcePath": "/skills/review/SKILL.md",
+                            "active": False,
+                        }
+                    ],
+                },
+            )
         elif path in {"session", "session/native-id"}:
             data = session
         elif path == "session/active":
@@ -196,7 +211,14 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         self.updates.append(update)
 
     async def test_initialize_exposes_native_catalog_and_worker_drain(self) -> None:
-        result = (await self.agent.initialize(1)).model_dump(by_alias=True)
+        result = (
+            await self.agent.initialize(
+                1,
+                s.ClientCapabilities.model_validate(
+                    {"_meta": {"yoke": {"cwd": os.getcwd()}}}
+                ),
+            )
+        ).model_dump(by_alias=True)
         meta = result["_meta"]["yoke"]
         self.assertTrue(meta["ready"])
         self.assertTrue(meta["workerDrain"])
@@ -205,6 +227,18 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             [model["id"] for model in meta["models"]],
             ["fixture:model", "fixture:other"],
         )
+        self.assertEqual(
+            meta["skills"],
+            [
+                {
+                    "name": "review",
+                    "description": "Review the change.",
+                    "path": "/skills/review/SKILL.md",
+                    "enabled": True,
+                }
+            ],
+        )
+        self.assertIn(("GET", "skill"), self.native.calls)
 
     async def test_prompt_emits_tool_lifecycle_and_final_text(self) -> None:
         result = await self.agent.prompt(

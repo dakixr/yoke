@@ -22,6 +22,10 @@ class SkillLike(Protocol):
     description: str
 
 
+class SkillMentionCompletion(Completion):
+    """Completion that replaces a ``$skill`` token without submitting."""
+
+
 class SlashCommandCompleter(Completer):
     """Complete slash commands at the start of an interactive prompt."""
 
@@ -41,6 +45,14 @@ class SlashCommandCompleter(Completer):
     ) -> Iterator[Completion]:
         """Yield prompt-toolkit completions for the current slash token."""
         del complete_event
+        mention_token = current_skill_mention_token(document.text_before_cursor)
+        if mention_token is not None:
+            yield from self._skill_completions(
+                mention_token,
+                skills=self._skill_provider(),
+                mention=True,
+            )
+            return
         skill_token = current_slash_argument_token(
             document.text_before_cursor, "/skill"
         )
@@ -70,15 +82,17 @@ class SlashCommandCompleter(Completer):
         token: str,
         *,
         skills: Iterable[SkillLike],
+        mention: bool = False,
     ) -> Iterator[Completion]:
-        """Yield completions for `/skill <name>` arguments."""
+        """Yield completions for skill arguments or prompt mentions."""
         for skill in sorted(skills, key=lambda item: item.name):
             if not skill.name.startswith(token):
                 continue
-            yield Completion(
+            completion_type = SkillMentionCompletion if mention else Completion
+            yield completion_type(
                 skill.name,
                 start_position=-len(token),
-                display=skill.name,
+                display=f"${skill.name}" if mention else skill.name,
                 display_meta=skill.description,
             )
 
@@ -113,3 +127,14 @@ def current_slash_argument_token(
 def current_skill_name_token(text_before_cursor: str) -> str | None:
     """Return the skill name token being edited after `/skill`, if any."""
     return current_slash_argument_token(text_before_cursor, "/skill")
+
+
+def current_skill_mention_token(text_before_cursor: str) -> str | None:
+    """Return the skill-name fragment after the current ``$`` token."""
+    index = text_before_cursor.rfind("$")
+    if index < 0:
+        return None
+    token = text_before_cursor[index + 1 :]
+    if any(not (char.isalnum() or char in "_-:") for char in token):
+        return None
+    return token

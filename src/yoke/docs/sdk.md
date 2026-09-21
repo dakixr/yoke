@@ -44,6 +44,11 @@ agent = Agent(
 )
 ```
 
+Prompt text uses the same explicit skill-mention runtime as the CLI and web UI.
+When a file-backed skill is present in `RunConfig.skills`, `$skill-name` in a
+prompt appends a fresh activation before that user message. Several skills can
+be mentioned in one prompt; repeated mentions in that prompt activate once.
+
 Agent runs do not have an iteration-limit setting. Bound a run with a
 cooperative `stop_requested` callback, or use `prompt_async(..., timeout=...)`
 when a time limit is appropriate.

@@ -30,6 +30,7 @@ from prompt_toolkit.utils import get_cwidth
 
 from yoke.cli.render.theme import ACCENT
 from yoke.cli.render.theme import TOOLBAR_STYLE_ENTRIES
+from yoke.cli.interactive.completion.core import SkillMentionCompletion
 
 # prompt-toolkit UIControl override method names are intentionally public.
 # ruff: noqa: D102
@@ -150,7 +151,7 @@ class YokeCompletionsMenuControl(UIControl):
         if mouse_event.event_type == MouseEventType.MOUSE_UP:
             index = mouse_event.position.y
             if 0 <= index < len(complete_state.completions):
-                buffer.apply_completion(complete_state.completions[index])
+                apply_completion(buffer, complete_state.completions[index])
         elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
             buffer.complete_next(count=3, disable_wrap_around=True)
         elif mouse_event.event_type == MouseEventType.SCROLL_UP:
@@ -281,6 +282,20 @@ def selected_completion(complete_state) -> object | None:
     if completions:
         return completions[0]
     return None
+
+
+def apply_completion(buffer, completion: object) -> bool:
+    """Apply one completion and return whether it was a skill mention."""
+    if isinstance(completion, SkillMentionCompletion):
+        suffix_length = 0
+        for char in buffer.document.text_after_cursor:
+            if not (char.isalnum() or char in "_-:"):
+                break
+            suffix_length += 1
+        if suffix_length:
+            buffer.delete(count=suffix_length)
+    buffer.apply_completion(completion)
+    return isinstance(completion, SkillMentionCompletion)
 
 
 def _move_completion_selection(buffer, count: int) -> bool:

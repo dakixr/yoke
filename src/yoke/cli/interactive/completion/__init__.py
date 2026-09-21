@@ -1,10 +1,14 @@
 """Prompt completion package."""
 
 from yoke.cli.interactive.completion.core import (
+    SkillMentionCompletion as SkillMentionCompletion,
+)
+from yoke.cli.interactive.completion.core import (
     SlashCommandCompleter as SlashCommandCompleter,
 )
 from yoke.cli.interactive.completion.core import (
     current_skill_name_token as current_skill_name_token,
+    current_skill_mention_token as current_skill_mention_token,
 )
 from yoke.cli.interactive.completion.core import (
     current_slash_token as current_slash_token,

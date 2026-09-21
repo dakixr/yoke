@@ -42,6 +42,7 @@ SHORTCUT_LINES = (
     "Press `Ctrl+X` then `Q` to open the queue manager.",
     "Press `Ctrl+X` then `M` to switch model.",
     "Press `Ctrl+X` then `T` to open the session tree.",
+    "Type `$skill-name` in a prompt to activate one or more skills.",
     "Use `/shortcuts` or `?` to show this list again.",
 )
 SHORTCUTS_NOTICE = "Keyboard shortcuts:\n" + "\n".join(SHORTCUT_LINES)

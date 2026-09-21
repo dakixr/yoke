@@ -80,6 +80,20 @@ class NativeClient:
             raise fail("Native session has queued inputs")
         await self.drained(session_id, 1)
 
+    async def skills(self, directory: str) -> list[dict[str, Any]]:
+        """Read the workspace skill catalog through the native authority."""
+        result = await self.request(
+            "GET",
+            "skill",
+            params={"directory": directory},
+        )
+        items = result.get("data") if isinstance(result, dict) else None
+        if not isinstance(items, list) or not all(
+            isinstance(item, dict) for item in items
+        ):
+            raise fail("Native skill catalog is invalid")
+        return items
+
     async def stop(self, session_id: str) -> None:
         """Interrupt and wait for physical completion."""
         await self.data("POST", self.path(session_id, "/interrupt"))

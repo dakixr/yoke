@@ -46,11 +46,23 @@ class YokeAcpAgent:
         **_kwargs: Any,
     ) -> s.InitializeResponse:
         """Advertise Yoke and its authoritative ready model catalog."""
-        del protocol_version, client_capabilities, client_info
+        del protocol_version, client_info
+        client_meta = client_capabilities.field_meta if client_capabilities else None
+        yoke_client_meta = (
+            client_meta.get("yoke") if isinstance(client_meta, dict) else None
+        )
+        workspace = (
+            yoke_client_meta.get("cwd") if isinstance(yoke_client_meta, dict) else None
+        )
         try:
             async with asyncio.timeout(10):
                 self.catalog, self.default_model = await discover(self.native)
                 spec = await self.native.request("GET", "openapi.json")
+                skills = (
+                    await self.native.skills(workspace)
+                    if isinstance(workspace, str)
+                    else []
+                )
         except TimeoutError:
             raise fail("Native initialization timed out") from None
         drain = "post" in spec.get("paths", {}).get(
@@ -73,6 +85,15 @@ class YokeAcpAgent:
                         "workerDrain": drain,
                         "models": list(self.catalog.values()),
                         "defaultModel": self.default_model,
+                        "skills": [
+                            {
+                                "name": skill["name"],
+                                "description": skill["description"],
+                                "path": skill["sourcePath"],
+                                "enabled": True,
+                            }
+                            for skill in skills
+                        ],
                     }
                 },
             }

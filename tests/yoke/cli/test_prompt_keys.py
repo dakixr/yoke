@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
+from typing import cast
 
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.buffer import CompletionState
+from prompt_toolkit.document import Document
+
+from yoke.cli.interactive.completion import SkillMentionCompletion
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.prompt.keys import (
     register_prompt_toolkit_key_bindings,
@@ -170,3 +177,21 @@ def test_paste_shortcuts_delegate_without_probing_clipboard(monkeypatch) -> None
         assert event.current_buffer.inserted == ""
 
     assert len(requests) == 2
+
+
+def test_enter_inserts_skill_mention_without_submitting(monkeypatch) -> None:
+    """Selecting a mention keeps the prompt open so more skills can be added."""
+    key_bindings = _registered_key_bindings(monkeypatch)
+    event = _Event()
+    original = Document("Use $rev", cursor_position=len("Use $rev"))
+    buffer = Buffer(document=original)
+    buffer.complete_state = CompletionState(
+        original,
+        [SkillMentionCompletion("review", start_position=-3, display="$review")],
+        complete_index=0,
+    )
+    cast(Any, event).current_buffer = buffer
+
+    key_bindings.handlers[("enter",)](event)
+
+    assert buffer.text == "Use $review "

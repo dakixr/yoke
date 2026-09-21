@@ -255,6 +255,11 @@ complete their arguments from the current workspace catalogs. Supported slash
 commands execute through the corresponding HTTP operation instead of being sent
 to the model as prompt text. Commands that require a saved session are disabled
 while editing a new-session draft.
+Typing `$` anywhere in either composer opens caret-aware skill completion.
+Choosing a skill inserts `$skill-name` without sending, supports several skill
+mentions in one prompt, and remains available when images are attached. Skills
+activate only when the submitted or queued prompt starts running; the prompt API
+and queue transport remain plain text and need no separate activation request.
 
 ## Working location palette
 

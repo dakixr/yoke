@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import format_attachment_reference
+from yoke.cli.interactive.completion.menu import (
+    apply_completion,
+)
 from yoke.cli.interactive.completion.menu import (
     register_completion_menu_key_bindings,
 )
@@ -50,7 +54,10 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         complete_state = event.current_buffer.complete_state
         completion = selected_completion(complete_state)
         if completion is not None:
-            event.current_buffer.apply_completion(completion)
+            mention = apply_completion(event.current_buffer, completion)
+            if mention:
+                _insert_mention_separator(event.current_buffer)
+                return
         state.submit_action = "steer"
         event.current_buffer.validate_and_handle()
 
@@ -59,7 +66,8 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         complete_state = getattr(event.current_buffer, "complete_state", None)
         completion = selected_completion(complete_state)
         if completion is not None:
-            event.current_buffer.apply_completion(completion)
+            if apply_completion(event.current_buffer, completion):
+                _insert_mention_separator(event.current_buffer)
             return
         state.submit_action = "queue"
         event.current_buffer.validate_and_handle()
@@ -131,6 +139,12 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         key_bindings.add("s-enter")(_insert_newline)
     except ValueError:
         key_bindings.add("escape", "enter")(_insert_newline)
+
+
+def _insert_mention_separator(buffer: Any) -> None:
+    after = getattr(getattr(buffer, "document", None), "text_after_cursor", "")
+    if not after or (not after[0].isspace() and after[0] not in ".,;:!?)]}"):
+        buffer.insert_text(" ")
 
 
 def cycle_prompt_thinking_effort(

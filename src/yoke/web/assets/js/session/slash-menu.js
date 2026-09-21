@@ -5,9 +5,12 @@ import { slashMenuScrollDelta } from "./slash-menu-logic.js";
 
 const MAX_ARGUMENT_ITEMS = 9;
 
-export function useSlashCompletions({ text, enabled = true, sessionID = null, directory = "", hasSession = true }) {
+export function useSlashCompletions({ text, cursorPosition = null, enabled = true, allowCommands = true, sessionID = null, directory = "", hasSession = true }) {
   const commands = useStore((state) => state.commands);
-  const context = useMemo(() => enabled ? slashCompletionContext(text) : null, [enabled, text]);
+  const context = useMemo(
+    () => enabled ? promptCompletionContext(text, cursorPosition, { allowCommands }) : null,
+    [allowCommands, cursorPosition, enabled, text],
+  );
   const contextKey = completionContextKey(context);
   const [items, setItems] = useState([]);
   const [itemsKey, setItemsKey] = useState("");
@@ -36,8 +39,8 @@ export function useSlashCompletions({ text, enabled = true, sessionID = null, di
     }
     setLoading(true);
     setLoadingKey(contextKey);
-    const request = context.kind === "skill"
-      ? controller.slashSkillCompletions(directory, context.token)
+    const request = context.kind === "skill" || context.kind === "skillMention"
+      ? controller.slashSkillCompletions(directory, context.kind === "skillMention" ? "" : context.token)
       : controller.slashMcpCompletions(sessionID, directory, context.token);
     void request
       .then((data) => {
@@ -106,6 +109,34 @@ export function slashCompletionContext(text) {
   };
 }
 
+export function skillMentionCompletionContext(text, cursorPosition = null) {
+  const value = String(text || "");
+  const cursor = Math.max(0, Math.min(value.length, cursorPosition ?? value.length));
+  const beforeCursor = value.slice(0, cursor);
+  const match = beforeCursor.match(/\$([A-Za-z0-9_:-]*)$/);
+  if (!match) return null;
+  const replaceStart = cursor - match[0].length;
+  const preceding = replaceStart > 0 ? value[replaceStart - 1] : "";
+  if (preceding && /[A-Za-z0-9_$\\]/.test(preceding)) return null;
+  let replaceEnd = cursor;
+  while (replaceEnd < value.length && /[A-Za-z0-9_:-]/.test(value[replaceEnd])) replaceEnd += 1;
+  return {
+    kind: "skillMention",
+    token: match[1],
+    replaceStart,
+    replaceEnd,
+  };
+}
+
+export function promptCompletionContext(text, cursorPosition = null, { allowCommands = true } = {}) {
+  const mention = skillMentionCompletionContext(text, cursorPosition);
+  if (mention) return mention;
+  const value = String(text || "");
+  const cursor = Math.max(0, Math.min(value.length, cursorPosition ?? value.length));
+  if (!allowCommands || cursor !== value.length) return null;
+  return slashCompletionContext(value);
+}
+
 export function commandCompletionItems(commands, context, { hasSession = true } = {}) {
   if (context?.kind !== "command") return [];
   const query = context.token.slice(1).toLowerCase();
@@ -144,8 +175,8 @@ export function argumentCompletionItems(items, context, kind) {
       kind,
       label: item.name,
       description: item.description || item.detail || "",
-      value: item.name,
-      submitOnEnter: true,
+      value: kind === "skillMention" ? `$${item.name}` : item.name,
+      submitOnEnter: kind !== "skillMention",
       disabled: false,
       replaceStart: context.replaceStart,
       replaceEnd: context.replaceEnd,
@@ -155,7 +186,8 @@ export function argumentCompletionItems(items, context, kind) {
 export function applySlashCompletion(text, item, { appendSpace = false } = {}) {
   const before = text.slice(0, item.replaceStart);
   const after = text.slice(item.replaceEnd);
-  const suffix = appendSpace && !item.value.endsWith(" ") ? " " : "";
+  const needsSpace = !after || (!/^\s/.test(after) && !/^[.,;:!?\)\]\}]/.test(after));
+  const suffix = appendSpace && needsSpace && !item.value.endsWith(" ") ? " " : "";
   const next = `${before}${item.value}${suffix}${after}`;
   return { text: next, cursor: before.length + item.value.length + suffix.length };
 }
@@ -190,9 +222,9 @@ export function SlashCompletionMenu({ items, activeIndex, loading = false, onCho
     refreshScrollState();
   }, [activeIndex, items.length]);
   if (!items.length && !loading) return null;
-  return html`<div id=${id} class="slash-menu" role="listbox" aria-label="Slash command completions">
+  return html`<div id=${id} class="slash-menu" role="listbox" aria-label="Prompt completions">
     <div class="slash-menu__header">
-      <span>${items[0]?.kind === "skill" ? "Skills" : items[0]?.kind === "mcp" ? "MCP servers" : "Commands"}</span>
+      <span>${items[0]?.kind === "skill" || items[0]?.kind === "skillMention" ? "Skills" : items[0]?.kind === "mcp" ? "MCP servers" : "Commands"}</span>
       <span class="slash-menu__keys slash-menu__keys--desktop">↑↓ navigate · Tab complete · Enter choose · Esc close</span>
       <span class="slash-menu__keys slash-menu__keys--mobile">↑↓ Navigate · Tab Complete · Enter Choose · Esc Close</span>
     </div>
