@@ -63,6 +63,7 @@ def _loaded_queue(payload: PersistedPromptQueue) -> LoadedPromptQueue:
             created_at=item.created_at,
             paused=item.paused,
             attachments=[dict(attachment) for attachment in item.attachments],
+            continuation=item.continuation,
         )
         for item in payload.prompts
     ]
@@ -112,6 +113,7 @@ def commit_prompt_queue(
                 PersistedPendingInput(
                     id=prompt.id,
                     prompt=prompt.prompt,
+                    continuation=prompt.continuation,
                     attachments=(
                         list(existing_by_id[prompt.id].attachments)
                         if prompt.id in existing_by_id

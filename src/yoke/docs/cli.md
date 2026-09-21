@@ -52,6 +52,45 @@ renderer and blank-line spacing. Redirected output preserves their Markdown text
 Diagnostic text and redirected prompts are literal text, so square brackets and
 emoji aliases are not interpreted as Rich formatting.
 
+### HTTP and ACP serving
+
+`yoke serve` runs the process-wide HTTP session runtime. `--session-dir` (or
+`YOKE_HTTP_SESSION_DIR`) selects a dedicated session store. `--hide-token`
+suppresses the startup token line for service managers that inject
+`YOKE_HTTP_TOKEN` through a protected environment file.
+
+`yoke acp` exposes that running daemon over Agent Client Protocol on stdio. It
+uses `YOKE_ACP_URL` and `YOKE_ACP_TOKEN`, keeps Yoke's HTTP runtime authoritative
+for sessions, tools, models, and cancellation, and advertises only models whose
+native providers are currently ready. ACP supports text prompts, inline images,
+embedded file attachments, model and reasoning selection, session load/resume,
+tool lifecycle updates, and full-access mode. Images reach the model as image
+content; generic files are saved for Yoke's file-reading tools rather than
+expanded into the prompt. Attachment-only turns are accepted. The native store
+keeps the uploaded bytes when an ACP process exits or a session is resumed.
+
+ACP clients request a promptless continuation with `prompt: []` and
+`_meta.yokeContinuation: true`. This performs another inference on the existing
+conversation without inserting a synthetic user message. Empty prompts without
+that explicit marker are rejected. Plan mode, interactive permission/question
+requests, session listing, and ACP-level forking remain unsupported.
+
+Native uploads accept at most 20 attachments and 20 MiB per file. The ACP peer
+also limits inline content to 32 MiB decoded and 48 MiB serialized JSON. Clients
+may impose smaller limits. Mooncake's T3 adapter currently caps its complete
+encoded prompt at 15 MiB to fit T3's 16 MiB transport frame; base64 encoding
+reduces the usable raw attachment budget to roughly 11 MiB.
+
+For a local service pair, run the HTTP daemon once and let clients launch ACP
+peers as needed:
+
+```bash
+YOKE_HTTP_TOKEN="$TOKEN" YOKE_HTTP_SESSION_DIR="$HOME/.yoke/t3-sessions" \
+  yoke serve --host 127.0.0.1 --port 8770 --hide-token
+
+YOKE_ACP_URL=http://127.0.0.1:8770 YOKE_ACP_TOKEN="$TOKEN" yoke acp
+```
+
 ---
 
 ## Providers and models
@@ -86,7 +125,7 @@ Yoke caps `glm-5.3-flash` at a 400,000-token context window for both
 `opencode-go` and `zai`, even when the upstream provider advertises a larger
 window. The catalog, runtime token budget, compaction policy, and context-usage
 display all use that capped value. OpenCode Go also caps
-`deepseek-flash` and `deepseek-v4.1-flash` at 400,000 tokens.
+`deepseek-v4.1-flash` at 400,000 tokens.
 
 Codex uses a persistent Responses WebSocket transport and keeps response
 continuity, encrypted replay state, prompt-cache affinity, and routing metadata
@@ -103,8 +142,8 @@ tier of `muse-spark-1.3-contributor`. Yoke caps its upstream 1,048,576-token
 window at 400,000 tokens for agentic work and exposes `minimal`, `low`,
 `medium`, `high`, and `xhigh` reasoning efforts (default: `high`). Muse Spark
 uses the Responses path; GLM-5.3-Flash and DeepSeek V4.1 Flash
-(`deepseek-flash`, `deepseek-v4.1-flash`) use OpenAI-compatible chat
-completions. DeepSeek V4.1 Flash supports image inputs and `low`, `high`,
+(`deepseek-v4.1-flash`) use OpenAI-compatible chat completions. DeepSeek V4.1
+Flash supports image inputs and `low`, `high`,
 and `max` reasoning efforts (default: `high`). Yoke sends `x-opencode-session` with one stable value per
 Yoke session, including retries and resumed conversations. Forked sessions
 receive a new value. Both Z.ai and OpenCode Go expose GLM-5.3-Flash with `low`,

@@ -291,6 +291,7 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         prompt: str,
         *,
         user_message: Message | None = None,
+        append_user_message: bool = True,
         on_event: AgentEventHandler | None = None,
         stop_requested: StopRequested | None = None,
         before_tool_call: BeforeToolCallHook | None = None,
@@ -305,6 +306,7 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
             self,
             prompt,
             user_message=user_message,
+            append_user_message=append_user_message,
             available_skills=available_skills,
             active_skills=active_skills,
         )

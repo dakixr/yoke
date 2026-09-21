@@ -19,6 +19,7 @@ from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 from yoke.cli.interactive.queue.mutations import append_prompt
 from yoke.cli.interactive.queue.mutations import attach_pending_image
 from yoke.cli.interactive.queue.mutations import consume_pending_images
+from yoke.cli.interactive.queue.mutations import next_pending_prompt_index
 from yoke.cli.interactive.queue.mutations import remove_pending_image
 from yoke.cli.interactive.queue.persistence import clear_prompt_queue
 from yoke.cli.interactive.queue.persistence import load_prompt_queue
@@ -460,6 +461,58 @@ def test_persisting_queue_does_not_move_paused_items(tmp_path: Path) -> None:
         active_session.id,
     )
     assert [item.id for item in current.prompts] == ["a", "b", "c"]
+
+
+def test_cli_leaves_http_owned_continuations_and_attachments_for_native_runtime(
+    tmp_path: Path,
+) -> None:
+    active_session = active_session_for(tmp_path)
+    snapshot = PersistedPromptQueue(
+        revision=4,
+        prompts=[
+            PersistedPendingInput(
+                id="continuation",
+                prompt="",
+                continuation=True,
+                created_at="2026-09-19T00:00:00+00:00",
+            ),
+            PersistedPendingInput(
+                id="attachment",
+                prompt="inspect this",
+                attachments=[
+                    {
+                        "uri": "yoke-upload://upl_test",
+                        "name": "notes.txt",
+                        "mime": "text/plain",
+                    }
+                ],
+                created_at="2026-09-19T00:00:01+00:00",
+            ),
+            PersistedPendingInput(
+                id="cli",
+                prompt="ordinary CLI work",
+                created_at="2026-09-19T00:00:02+00:00",
+            ),
+        ],
+    )
+    write_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+        snapshot,
+    )
+
+    loaded = load_prompt_queue_state(active_session)
+
+    assert loaded.prompts[0].continuation is True
+    assert loaded.prompts[1].attachments == snapshot.prompts[1].attachments
+    assert next_pending_prompt_index(loaded.prompts) == 2
+    persist_prompt_queue(active_session, loaded.prompts)
+    current = load_prompt_queue_snapshot(
+        active_session.store.directory,
+        active_session.id,
+    )
+    assert current.prompts[0].continuation is True
+    assert current.prompts[1].attachments == snapshot.prompts[1].attachments
 
 
 def test_image_only_update_preserves_newer_prompt_edit(tmp_path: Path) -> None:

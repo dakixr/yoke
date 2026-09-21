@@ -30,6 +30,7 @@ class AdmissionRecord(BaseModel):
     session_id: str
     prompt: str
     attachments: list[AdmissionAttachment] = Field(default_factory=list)
+    continuation: bool = False
     delivery: Literal["steer", "queue"]
     fingerprint: str
     time_created: str

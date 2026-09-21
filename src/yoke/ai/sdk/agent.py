@@ -30,6 +30,7 @@ from yoke.ai.providers.usage_context import (
     current_usage_metric_context,
 )
 from yoke.ai.providers.usage_context import usage_metric_context
+from yoke.ai.providers.usage_attribution import resolve_usage_attribution
 from yoke.ai.sdk.defaults import default_coding_agent_config
 from yoke.ai.sdk.types import AgentResult
 from yoke.ai.sdk.types import Image
@@ -58,6 +59,11 @@ class Agent(DurableAgentMixin):
         self.provider = provider
         self._provider_lease = ProviderLease.claim(provider)
         self.config = config
+        self._usage_attribution = resolve_usage_attribution(
+            root_session_id=config.root_session_id,
+            parent_run_id=config.parent_run_id,
+            inherit=config.inherit_usage_attribution,
+        )
         self.root = Path(config.root).resolve()
         self._state_path = normalize_state_path(state_path)
         self._autosave = autosave
@@ -230,6 +236,7 @@ class Agent(DurableAgentMixin):
             new = object.__new__(Agent)
             new.provider = runtime.provider
             new.config = self.config
+            new._usage_attribution = self._usage_attribution
             new.root = self.root
             new._state_path = None
             new._autosave = False
@@ -274,8 +281,19 @@ class Agent(DurableAgentMixin):
                 usage_context = current_usage_metric_context()
                 with usage_metric_context(
                     surface="sdk",
-                    sdk_operation=usage_context.sdk_operation or "agent",
-                    sdk_run_id=usage_context.sdk_run_id or uuid4().hex,
+                    sdk_operation=(
+                        "run_many"
+                        if usage_context.sdk_operation == "run_many"
+                        else "agent"
+                    ),
+                    sdk_run_id=(
+                        usage_context.sdk_run_id
+                        if usage_context.sdk_operation == "run_many"
+                        else uuid4().hex
+                    ),
+                    session_id=self._usage_attribution.root_session_id,
+                    root_session_id=self._usage_attribution.root_session_id,
+                    parent_run_id=self._usage_attribution.parent_run_id,
                 ):
                     return run_agent_prompt(
                         self,

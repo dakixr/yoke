@@ -183,6 +183,9 @@ class RunConfig:
     after_tool_call: AfterToolCallHook | None = None
     messages: Sequence[Message] | None = None
     conversation_entries: Sequence[ConversationEntry] | None = None
+    root_session_id: str | None = None
+    parent_run_id: str | None = None
+    inherit_usage_attribution: bool = True
 
 
 @dataclass(slots=True)

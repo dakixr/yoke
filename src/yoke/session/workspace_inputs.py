@@ -44,6 +44,7 @@ def reconcile_workspace_inputs(
             restored = PersistedPendingInput(
                 id=item.id,
                 prompt=item.prompt,
+                continuation=item.continuation,
                 attachments=[
                     attachment.model_dump() for attachment in item.attachments
                 ],

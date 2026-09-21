@@ -1,6 +1,6 @@
 [project]
 name = "yoke"
-version = "3.3.0"
+version = "3.4.0"
 description = "Native Python coding agent CLI and SDK."
 readme = "README.md"
 authors = [
@@ -24,6 +24,7 @@ dependencies = [
     "websockets>=15",
     "fastapi>=0.115",
     "python-multipart>=0.0.9",
+    "agent-client-protocol==0.12.1",
 ]
 
 [project.scripts]
@@ -35,7 +36,6 @@ dev = [
     "playwright>=1.62.0",
     "pyright>=1.1",
     "pytest>=7.4",
-    "pyyaml>=6.0.3",
     "ruff>=0.8",
     "ty>=0.0.1a0",
 ]

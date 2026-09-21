@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import Executor
-from concurrent.futures import Future
 from datetime import UTC
 from datetime import datetime
 import logging
@@ -22,8 +21,6 @@ from yoke.agent.compaction import force_compact_agent
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
-from yoke.agent.multimodal import build_image_user_message
-from yoke.agent.multimodal import next_image_label_index
 from yoke.agent.observability import ToolTraceStore
 from yoke.agent.provider_selection import ProviderSessionState
 from yoke.agent.provider_selection import switch_agent_provider_model
@@ -45,12 +42,13 @@ from yoke.http.services.session_read_cache import SessionReadSnapshot
 from yoke.http.services.runtime_start import RuntimeAppendPersistence
 from yoke.http.services.runtime_start import indexed_runtime_start
 from yoke.http.services.runtime_persistence import active_skill_list
-from yoke.http.services.runtime_persistence import input_is_persisted
 from yoke.http.services.runtime_persistence import normalized_runtime_entry_count
 from yoke.http.services.runtime_persistence import tag_input_entry
+from yoke.http.services.runtime_persistence import tag_continuation_entries
 from yoke.http.services.runtime_persistence import with_turn_summary
 from yoke.http.services.session_runtime import SessionRuntimeResources
-from yoke.http.services.session_runtime.completion import retain_cancelled_worker
+from yoke.http.services.session_runtime.controller import launch_controller
+from yoke.http.services.session_runtime.workers import WorkerTracker
 from yoke.http.services.session_runtime.execution import (
     ReservedInput,
     TurnExecution,
@@ -58,10 +56,14 @@ from yoke.http.services.session_runtime.execution import (
     SessionOperation,
 )
 from yoke.http.services.session_runtime.inputs import reserve_next_input
+from yoke.http.services.session_runtime.interruption import persist_interruption
+from yoke.http.services.session_runtime.prompt_input import (
+    user_message as admission_user_message,
+    validate_execution_images,
+)
 from yoke.http.services.session_runtime.workspace import (
     mutates_workspace,
     pause_workspace_input,
-    reap_with_workspace,
     require_runtime_workspace,
     synchronize_runtime_workspace,
     uses_workspace,
@@ -73,7 +75,6 @@ from yoke.session import SessionRecord
 from yoke.session import SessionStore
 from yoke.agent.activity import activity_status_for_event
 from yoke.session.admissions import AdmissionRecord
-from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.mcp.config import McpSessionPolicy
 
 type RuntimeState = Literal["idle", "running", "stopping", "waiting_input", "error"]
@@ -120,6 +121,7 @@ class SessionRuntime:
             store=store,
         )
         self.tool_traces = ToolTraceStore()
+        self.workers = WorkerTracker()
         self._active: TurnExecution | None = None
         self._operation: SessionOperation | None = None
         self._automatic_title = SessionTitleAutomation(
@@ -723,10 +725,7 @@ class SessionRuntime:
         self._activity_status = "Loading session" if cold_start else "Thinking"
         self._active_tool_call_ids = {execution.turn_id: set()}
         self._publish_activity(execution)
-        execution.task = asyncio.create_task(
-            self._run_execution(execution),
-            name=f"yoke-http-session-{self.session_id}-{execution.turn_id}",
-        )
+        launch_controller(self, execution)
         return execution
 
     async def _retire_locked(self, *, reason: str) -> None:
@@ -765,55 +764,6 @@ class SessionRuntime:
         self._activity_status = None
         self._active_tool_call_ids.pop(execution.turn_id, None)
         self._publish_activity(None)
-
-    async def _run_execution(self, execution: TurnExecution) -> None:
-        outcome: TurnOutcome | None = None
-        worker: Future[TurnOutcome] | None = None
-        loop: asyncio.AbstractEventLoop | None = None
-        lease_transferred = False
-        try:
-            if execution.cold_start:
-                # Let the prompt-admission response flush before a cold large-session
-                # parse starts competing for CPU in the worker pool.
-                await asyncio.sleep(0.05)
-            await self.active_slots.acquire()
-            execution.slot_acquired = True
-            if execution.retired_event.is_set():
-                self._release_slot(execution)
-                return
-            execution.worker_started = True
-            loop = asyncio.get_running_loop()
-            worker = self.executor.submit(
-                self._execute_sync,
-                execution,
-                loop,
-            )
-            completed_outcome = await asyncio.shield(asyncio.wrap_future(worker))
-            outcome = completed_outcome
-            await self._finish_execution(execution, completed_outcome)
-        except asyncio.CancelledError:
-            if worker is None:
-                self._release_slot(execution)
-            else:
-                assert loop is not None
-                retain_cancelled_worker(
-                    worker,
-                    loop=loop,
-                    retire_agent=self.resources.retire,
-                    release_slot=lambda: self._release_slot(execution),
-                    release_resources=execution.workspace_use.close,
-                )
-                lease_transferred = True
-            raise
-        except Exception as exc:  # controller finalization boundary
-            await self._finish_execution_error(execution, exc)
-        finally:
-            if outcome is not None:
-                await reap_with_workspace(
-                    self.resources, outcome.agent, execution.workspace_use
-                )
-            elif not lease_transferred:
-                execution.workspace_use.close()
 
     def _execute_sync(
         self,
@@ -855,6 +805,7 @@ class SessionRuntime:
                 execution.append_persistence = indexed.persistence
                 if record.root is not None:
                     self._event_location = record.root
+            execution.baseline_entry_ids = {entry.id for entry in active_entries}
             if execution.automatic_title and not execution.retired_event.is_set():
                 loop.call_soon_threadsafe(
                     self._automatic_title.start,
@@ -868,6 +819,8 @@ class SessionRuntime:
                 active_entries=active_entries,
                 snapshot=snapshot,
             )
+            if isinstance(turn_agent, RuntimeAgent):
+                validate_execution_images(execution.admission, turn_agent.provider)
             execution.context_usage.configure(
                 record.context_window_tokens,
                 (
@@ -876,7 +829,11 @@ class SessionRuntime:
                     else None
                 ),
             )
-            user_message = self._user_message_for_admission(record, execution.admission)
+            user_message = (
+                None
+                if execution.admission.continuation
+                else self._user_message_for_admission(record, execution.admission)
+            )
             # Construction can be slow enough for the directory to disappear
             # after tool binding. Reject before the model sees the input so the
             # admission remains recoverable instead of being falsely settled.
@@ -898,6 +855,7 @@ class SessionRuntime:
                     result = turn_agent.run(
                         execution.admission.prompt,
                         user_message=user_message,
+                        append_user_message=not execution.admission.continuation,
                         on_event=callback,
                         stop_requested=execution.stop_event.is_set,
                         active_skills=record.active_skills,
@@ -912,6 +870,8 @@ class SessionRuntime:
                     }
                     if getattr(turn_agent, "supports_user_message", False):
                         kwargs["user_message"] = user_message
+                    if execution.admission.continuation:
+                        kwargs["append_user_message"] = False
                     execution.execution_started = True
                     result = run(execution.admission.prompt, **kwargs)
             return TurnOutcome(agent=turn_agent, result=result)
@@ -1094,50 +1054,17 @@ class SessionRuntime:
         duration_seconds: float | None = None,
         tool_count: int = 0,
     ) -> None:
-        with self._persistence_lock:
-            snapshot = self._snapshot()
-            record = snapshot.record
-            active_entries = snapshot.owned_active_path()
-            user_message = (
-                None
-                if input_is_persisted(record, admission.id)
-                else self._user_message_for_admission(record, admission)
-            )
-            _, entries = interrupted_turn_snapshot(
-                messages=(),
-                entries=active_entries,
-                user_message=user_message,
-                leaf_id=record.leaf_id,
-            )
-            if duration_seconds is not None:
-                entries = with_turn_summary(
-                    entries,
-                    duration_seconds=duration_seconds,
-                    tool_count=tool_count,
-                )
-            self._save_entries_locked(entries, input_id=admission.id)
+        persist_interruption(
+            self, admission, duration_seconds=duration_seconds, tool_count=tool_count
+        )
 
     def _user_message_for_admission(
         self,
         record: SessionRecord,
         admission: AdmissionRecord,
     ) -> Message:
-        if not admission.attachments:
-            return Message.user(admission.prompt)
-        paths = [
-            self.pending_inputs.uploads.resolve(
-                attachment.uri,
-                session_id=self.session_id,
-                name=attachment.name,
-                mime=attachment.mime,
-            )
-            for attachment in admission.attachments
-        ]
-        return build_image_user_message(
-            admission.prompt,
-            image_paths=paths,
-            start_index=next_image_label_index(record.messages),
-            embed_local_images=False,
+        return admission_user_message(
+            self.pending_inputs, self.session_id, record, admission
         )
 
     def _persist_entries(
@@ -1162,22 +1089,31 @@ class SessionRuntime:
         input_id: str | None,
         active_skills: object | None = None,
     ) -> None:
-        persistence = execution.append_persistence
-        if persistence is None:
-            self._persist_entries(
-                entries,
-                input_id=input_id,
-                active_skills=active_skills,
-            )
-            return
-        skills = active_skill_list(active_skills)
         with self._persistence_lock:
+            # Interrupt persistence owns the saved branch once retirement wins.
+            # Recheck under the same lock used by both writers so a worker that
+            # passed an earlier checkpoint guard cannot overwrite that branch.
+            if execution.retired_event.is_set():
+                return
+            if execution.admission.continuation:
+                entries = tag_continuation_entries(
+                    entries, execution.admission.id, execution.baseline_entry_ids
+                )
+                input_id = None
+            persistence = execution.append_persistence
+            if persistence is None:
+                self._save_entries_locked(
+                    entries,
+                    input_id=input_id,
+                    active_skills=active_skills,
+                )
+                return
             persistence.append(
                 self.store,
                 self.session_id,
                 entries,
                 input_id=input_id,
-                active_skills=skills,
+                active_skills=active_skill_list(active_skills),
             )
 
     def _save_entries_locked(

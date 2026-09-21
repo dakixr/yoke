@@ -180,6 +180,23 @@ def register_commands(app: typer.Typer) -> None:
                 help="Show Uvicorn lifecycle and access logs.",
             ),
         ] = False,
+        session_dir: Annotated[
+            Path | None,
+            typer.Option(
+                "--session-dir",
+                envvar="YOKE_HTTP_SESSION_DIR",
+                help="Session storage directory. Defaults to Yoke's normal session store.",
+                file_okay=False,
+                dir_okay=True,
+            ),
+        ] = None,
+        show_token: Annotated[
+            bool,
+            typer.Option(
+                "--show-token/--hide-token",
+                help="Print the bearer token at startup.",
+            ),
+        ] = True,
     ) -> None:
         """Run the process-wide Yoke HTTP API."""
         import click
@@ -194,11 +211,47 @@ def register_commands(app: typer.Typer) -> None:
                 allow_remote=allow_remote,
                 open_browser=open_browser,
                 verbose=verbose,
+                session_directory=(
+                    session_dir.expanduser().resolve()
+                    if session_dir is not None
+                    else None
+                ),
+                show_token=show_token,
             )
         except (OSError, ValueError) as exc:
             click.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
         raise typer.Exit(result)
+
+    @app.command()
+    def acp(
+        url: Annotated[
+            str | None,
+            typer.Option(
+                "--url",
+                envvar="YOKE_ACP_URL",
+                help="Base URL of the process-wide Yoke HTTP daemon.",
+            ),
+        ] = None,
+        token: Annotated[
+            str | None,
+            typer.Option(
+                "--token",
+                envvar="YOKE_ACP_TOKEN",
+                help="Bearer token for the Yoke HTTP daemon. Prefer the environment variable.",
+                hidden=True,
+            ),
+        ] = None,
+    ) -> None:
+        """Serve Yoke over Agent Client Protocol on stdio."""
+        import click
+
+        from yoke.acp.runner import run_acp
+
+        if not url or not token:
+            click.echo("Error: YOKE_ACP_URL and YOKE_ACP_TOKEN are required.", err=True)
+            raise typer.Exit(2)
+        raise typer.Exit(run_acp(url, token))
 
     _DELEGATE_CONTEXT_SETTINGS = {
         "allow_extra_args": True,

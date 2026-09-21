@@ -1,6 +1,6 @@
 ---
 name: yoke-subagents
-description: "Delegate work through Yoke SDK agents. Use for one delegated question or follow-up conversation, parallel tasks, or persistent roles. Use yoke-sessions for separate CLI conversations."
+description: Delegate work through Yoke SDK agents. Use for one delegated question or follow-up conversation, parallel tasks, or persistent roles. Use yoke-sessions for separate CLI conversations.
 ---
 
 # Yoke subagents
@@ -24,6 +24,8 @@ Start with the small, self-contained examples in [PATTERNS.md](PATTERNS.md).
 Read [SDK_SURFACE.md](SDK_SURFACE.md) before using unfamiliar provider,
 capability, persistence, or cancellation options. Adapt examples to the task;
 discovery, planning, and merge agents are optional, not mandatory stages.
+For detached work or reusable workers, read the
+[usage attribution guidance](SDK_SURFACE.md#usage-attribution).
 
 ## Execute
 

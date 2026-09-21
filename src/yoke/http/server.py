@@ -6,6 +6,7 @@ import ipaddress
 import os
 import secrets
 import socket
+from pathlib import Path
 from types import FrameType
 from urllib.parse import urlencode
 import webbrowser
@@ -47,12 +48,19 @@ def run_server(
     allow_remote: bool,
     open_browser: bool = False,
     verbose: bool = False,
+    session_directory: Path | None = None,
+    show_token: bool = True,
 ) -> int:
     """Bind and run the Yoke HTTP daemon, including reliable port-zero reporting."""
     if not is_loopback_host(host) and not allow_remote:
         raise ValueError("Remote binding requires --allow-remote.")
     token = auth_token or os.getenv("YOKE_HTTP_TOKEN") or secrets.token_urlsafe(32)
-    app = create_app(HttpAppSettings(auth_token=token))
+    app = create_app(
+        HttpAppSettings(
+            auth_token=token,
+            session_directory=session_directory,
+        )
+    )
     sock = socket.socket(
         socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM
     )
@@ -61,7 +69,8 @@ def run_server(
     sock.listen(128)
     selected_port = int(sock.getsockname()[1])
     print(f"Yoke HTTP listening on http://{host}:{selected_port}")
-    print(f"Yoke HTTP bearer token: {token}")
+    if show_token:
+        print(f"Yoke HTTP bearer token: {token}")
     if open_browser:
         url = _browser_launch_url(host, selected_port, token)
         print(f"Opening Yoke web UI at {url.split('#', 1)[0].split('?', 1)[0]}")

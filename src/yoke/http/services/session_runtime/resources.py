@@ -15,7 +15,7 @@ from yoke.agent.models import ConversationEntry
 from yoke.agent.tools.command_process_manager import CommandProcessManager
 from yoke.mcp.config import McpSessionPolicy
 from yoke.mcp.config import McpSessionServerPolicy
-from yoke.http.services.session_runtime.reaper import retire_resource
+from yoke.http.services.session_runtime.owned_cleanup import retire_owned_resource
 from yoke.http.services.session_runtime.cleanup import AgentCleanup as _AgentCleanup
 from yoke.http.services.session_runtime.cleanup import RetiredProvider
 from yoke.http.services.session_runtime.workspace import ProcessWorkspaceLease
@@ -345,7 +345,7 @@ class SessionRuntimeResources:
             return cleanup
         cleanup = _AgentCleanup(self, agent)
         self._cleanups[id(agent)] = cleanup
-        cleanup.completion = retire_resource(cleanup.attempt)
+        cleanup.completion = retire_owned_resource(cleanup.attempt)
         return cleanup
 
     def _remove_terminal_agent(self, agent: object) -> object | None:

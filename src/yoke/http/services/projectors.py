@@ -119,6 +119,7 @@ def project_entry(entry: ConversationEntry) -> ProjectedMessage:
     if entry.kind in {"assistant", "assistant_tool_calls"}:
         return AssistantProjectedMessage(
             id=entry.id,
+            input_id=_entry_input_id(entry),
             time_created=entry.created_at,
             kind=entry.kind,
             turn_summary=_entry_turn_summary(entry),
@@ -163,10 +164,24 @@ def project_message_content(message: Message | None) -> list[ProjectedContent]:
         if isinstance(part, MessageTextContentPart):
             content.append(TextContent(text=part.text))
         elif isinstance(part, MessageLocalImageContentPart):
-            content.append(ImageContent(name=Path(part.path).name))
+            # These are trusted persisted native paths, never ACP resource URIs.
+            # Retain snapshots when available and migrate readable legacy images
+            # on projection rather than permanently reducing them to filenames.
+            from yoke.agent.image_data import local_image_to_data_url
+
+            uri = part.data_url
+            if uri is None:
+                try:
+                    uri = local_image_to_data_url(part.path)
+                except (OSError, ValueError):
+                    pass  # A missing legacy file remains explicitly unavailable.
+            content.append(ImageContent(name=Path(part.path).name, uri=uri))
         elif isinstance(part, MessageImageURLContentPart):
             content.append(
-                ImageContent(name=part.display_label, uri=part.image_url.url)
+                ImageContent(
+                    name=part.attachment_name or part.display_label,
+                    uri=part.image_url.url,
+                )
             )
     return content
 

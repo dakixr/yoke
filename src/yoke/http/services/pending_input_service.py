@@ -15,6 +15,7 @@ from yoke.http.models.prompt import QueueData
 from yoke.http.models.prompt import QueuePatchRequest
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.upload_service import UploadService
+from yoke.http.services.session_runtime.prompt_input import validate_prompt
 from yoke.session import SessionStore
 from yoke.session.workspace import (
     WorkspaceBusy,
@@ -73,6 +74,8 @@ class PendingInputService:
             if existing is not None:
                 legacy_match = (
                     not existing.attachments
+                    and not existing.continuation
+                    and not request.prompt.continuation
                     and not request.prompt.attachments
                     and existing.fingerprint
                     == _legacy_fingerprint(
@@ -129,6 +132,7 @@ class PendingInputService:
                 id=input_id,
                 session_id=session_id,
                 prompt=request.prompt.text,
+                continuation=request.prompt.continuation,
                 attachments=[
                     AdmissionAttachment(
                         uri=item.uri,
@@ -147,6 +151,7 @@ class PendingInputService:
                 PersistedPendingInput(
                     id=input_id,
                     prompt=request.prompt.text,
+                    continuation=request.prompt.continuation,
                     attachments=[
                         {
                             "uri": item.uri,
@@ -377,23 +382,7 @@ class PendingInputService:
         return record
 
     def _validate_prompt(self, session_id: str, prompt: PromptInput) -> None:
-        if len(prompt.attachments) > 20:
-            raise ApiError(
-                400,
-                "too_many_attachments",
-                "Prompt accepts at most 20 attachments.",
-            )
-        for attachment in prompt.attachments:
-            self.uploads.validate_reference(
-                attachment.uri,
-                session_id=session_id,
-                name=attachment.name,
-                mime=attachment.mime,
-            )
-        if not prompt.text.strip() and not prompt.attachments:
-            raise ApiError(400, "empty_prompt", "Prompt text cannot be empty.")
-        if len(prompt.text.encode()) > 1_048_576:
-            raise ApiError(413, "prompt_too_large", "Prompt exceeds the server limit.")
+        validate_prompt(self, session_id, prompt)
 
     def _pin_prompt(self, session_id: str, prompt: PromptInput) -> None:
         for attachment in prompt.attachments:

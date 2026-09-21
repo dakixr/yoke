@@ -80,6 +80,17 @@
             "title": "Id",
             "type": "string"
           },
+          "inputID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputid"
+          },
           "kind": {
             "title": "Kind",
             "type": "string"
@@ -444,6 +455,39 @@
           }
         },
         "title": "CursorInfo",
+        "type": "object"
+      },
+      "DrainData": {
+        "additionalProperties": false,
+        "properties": {
+          "activeWorkers": {
+            "minimum": 0.0,
+            "title": "Activeworkers",
+            "type": "integer"
+          },
+          "drained": {
+            "title": "Drained",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "drained",
+          "activeWorkers"
+        ],
+        "title": "DrainData",
+        "type": "object"
+      },
+      "DrainResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DrainData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "DrainResponse",
         "type": "object"
       },
       "DurableEventInfo": {
@@ -1802,6 +1846,11 @@
             },
             "title": "Attachments",
             "type": "array"
+          },
+          "continuation": {
+            "default": false,
+            "title": "Continuation",
+            "type": "boolean"
           },
           "text": {
             "default": "",
@@ -5568,6 +5617,58 @@
           }
         },
         "summary": "Get Context"
+      }
+    },
+    "/api/v1/session/{session_id}/drain": {
+      "post": {
+        "description": "Observe completion of admitted workers and their cleanup, not ownership.",
+        "operationId": "drainSessionWorkers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "timeoutMs",
+            "required": false,
+            "schema": {
+              "default": 30000,
+              "maximum": 300000,
+              "minimum": 1,
+              "title": "Timeoutms",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DrainResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Drain Session Workers"
       }
     },
     "/api/v1/session/{session_id}/fork": {

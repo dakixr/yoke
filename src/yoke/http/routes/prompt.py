@@ -8,6 +8,7 @@ from fastapi import Query
 from fastapi import Request
 
 from yoke.http.auth import require_auth
+from yoke.http.models.drain import DrainData, DrainResponse
 from yoke.http.models.prompt import PromptAdmissionRequest
 from yoke.http.models.prompt import PromptAdmissionResponse
 from yoke.http.models.prompt import QueuePatchRequest
@@ -21,6 +22,23 @@ from yoke.http.services.session_service import SessionService
 
 
 router = APIRouter(dependencies=[Depends(require_auth)])
+
+
+@router.post(
+    "/session/{session_id}/drain",
+    response_model=DrainResponse,
+    operation_id="drainSessionWorkers",
+)
+async def drain_session_workers(
+    request: Request,
+    session_id: str,
+    timeout_ms: int = Query(default=30_000, alias="timeoutMs", ge=1, le=300_000),
+) -> DrainResponse:
+    """Observe completion of admitted workers and their cleanup, not ownership."""
+    _sessions(request).get_session(session_id)
+    runtime = _registry(request).get_if_loaded(session_id)
+    count = await runtime.workers.drain(timeout_ms / 1000) if runtime else 0
+    return DrainResponse(data=DrainData(drained=count == 0, active_workers=count))
 
 
 def _pending(request: Request) -> PendingInputService:

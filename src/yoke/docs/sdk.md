@@ -169,6 +169,28 @@ retries. Yoke sets this metadata at its CLI, HTTP, and SDK entry points and
 propagates it with execution context; it does not infer attribution from process
 arguments or stack frames.
 
+Command and Python tools export `YOKE_ROOT_SESSION_ID` and `YOKE_PARENT_RUN_ID`
+in each child's environment. SDK agents resolve these once at construction,
+preferring active execution context over environment values. `complete()` resolves
+them per call. Nested SDK subprocesses retain the root session and use the launching
+SDK prompt's run ID as their immediate parent. A direct CLI or HTTP child has no
+parent run ID because the session does not have an SDK run ID.
+
+Override attribution with `RunConfig(root=..., root_session_id=...,
+parent_run_id=...)`. Set `inherit_usage_attribution=False` to detach from inherited
+context, while still allowing explicit IDs. `complete()` accepts the same three
+keywords. `run_many()` uses each agent's configuration. Forks preserve resolved
+attribution; loading a saved agent resolves attribution for the new execution,
+rather than restoring its previous owner. Reusable workers should construct agents
+with explicit attribution for each job.
+
+Attached usage records keep `surface="sdk"` and their own `sdk_run_id`, and add
+`root_session_id`, `parent_run_id` when available, and `session_id` equal to the
+root session for session-based aggregation. Each response is recorded only once.
+This is log attribution, not an update to the parent conversation's token counters.
+The IDs are accounting hints, not authorization, and do not enter provider prompts
+or cache identity. Remote launches require explicit forwarding of the environment.
+
 Set `YOKE_USAGE_METRIC_LOG_DIR` to store these local metrics in another
 directory. Writes use a cross-process lock, retry transient failures, and flush
 data to disk before returning. A persistent failure raises

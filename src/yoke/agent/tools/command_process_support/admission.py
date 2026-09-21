@@ -16,6 +16,7 @@ from yoke.agent.tools.command_process_support.coordination import (
 )
 from yoke.agent.tools.python_env import prepare_python_env
 from yoke.agent.tools.shell import build_shell_command
+from yoke.ai.providers.usage_attribution import attribute_subprocess_environment
 
 if TYPE_CHECKING:
     from yoke.agent.tools.command_process_manager import CommandProcessManager
@@ -65,6 +66,7 @@ def spawn(
                 process_env = (
                     env.copy() if env is not None else manager.base_environment()
                 )
+                attribute_subprocess_environment(process_env)
                 if env is None:
                     prepare_python_env(process_env)
                 process_argv = argv or build_shell_command(

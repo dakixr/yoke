@@ -26,7 +26,6 @@ MUSE_SPARK_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
 MODEL_PROTOCOLS = {
     "muse-spark-1.3-contributor": "responses",
     "glm-5.3-flash": "openai",
-    "deepseek-flash": "openai",
     "deepseek-v4.1-flash": "openai",
 }
 
@@ -45,14 +44,6 @@ MODEL_CATALOG = build_model_catalog(
         context_window_tokens=400_000,
         thinking_levels=GLM_53_THINKING_LEVELS,
         default_thinking_level="max",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="deepseek-flash",
-        display_name="DeepSeek V4.1 Flash",
-        context_window_tokens=400_000,
-        thinking_levels=DEEPSEEK_41_THINKING_LEVELS,
-        default_thinking_level="high",
         supports_image_inputs=True,
     ),
     ProviderModelInfo(

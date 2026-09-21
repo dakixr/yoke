@@ -21,8 +21,16 @@ def context_for_run(
     user_message: Message | None,
     available_skills: Sequence[SkillSpec] | None,
     active_skills: Sequence[ActiveSkill] | None,
+    append_user_message: bool = True,
 ) -> AgentContext:
     """Build the working context for one agent run."""
+    if not append_user_message and (prompt or user_message is not None):
+        raise ValueError("Continuation must not contain user input")
+    if not append_user_message and (
+        agent._context is None
+        or not any(message.role == "user" for message in agent._context.messages)
+    ):
+        raise ValueError("Continuation requires conversation history")
     start_provider_turn(agent.provider)
     resolved_available_skills = list(
         available_skills if available_skills is not None else agent.available_skills
@@ -56,7 +64,10 @@ def context_for_run(
         skill.model_copy(deep=True) for skill in resolved_active_skills
     ]
     append_missing_active_skill_messages(context)
-    agent.context_manager.append_message(context, user_message or Message.user(prompt))
+    if append_user_message:
+        agent.context_manager.append_message(
+            context, user_message or Message.user(prompt)
+        )
     return context
 
 

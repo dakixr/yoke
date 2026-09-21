@@ -322,14 +322,19 @@ def next_pending_prompt_index(
 ) -> int | None:
     """Return the first runnable steering item, then ordinary queued work."""
     for index, prompt in enumerate(prompts):
-        if prompt.kind == "steering" and not prompt.paused:
+        if prompt.kind == "steering" and not prompt.paused and _cli_runnable(prompt):
             return index
     if steering_only:
         return None
     for index, prompt in enumerate(prompts):
-        if not prompt.paused:
+        if not prompt.paused and _cli_runnable(prompt):
             return index
     return None
+
+
+def _cli_runnable(prompt: PendingPrompt) -> bool:
+    """Keep HTTP-owned attachment/continuation inputs with the native daemon."""
+    return not prompt.continuation and not prompt.attachments
 
 
 def _remove_paths(

@@ -7,6 +7,14 @@ event feed, process inspector, tool inspector, and the shared services used by
 the CLI. The normal interactive CLI continues to call those Python/runtime
 services directly and does not route itself through HTTP.
 
+`yoke serve --session-dir PATH` (or `YOKE_HTTP_SESSION_DIR`) selects an explicit
+session store for a dedicated daemon. `--hide-token` suppresses the startup
+bearer-token line when a service manager supplies `YOKE_HTTP_TOKEN` through a
+protected environment file. These options let integrations run a distinct
+process-wide Yoke runtime without a wrapper daemon. `yoke acp` can then expose
+that daemon over stdio ACP while this HTTP service remains the authority for
+session state and physical worker drain.
+
 The public API is versioned under `/api/v1`. Its OpenAPI document is available
 at `/api/v1/openapi.json`. The checked-in contract used by tests is
 `tests/yoke/http/golden/openapi.json`; regenerate it with:
@@ -252,20 +260,19 @@ while editing a new-session draft.
 
 The new-session draft and the workspace relocation notice share one working
 location control. The trigger shows the committed location and opens a modal
-palette whose interaction model is ported from T3 Code's project picker, so both
-products browse a filesystem the same way.
+palette. Its path parsing and filesystem browsing follow T3 Code's project
+picker.
 
-The input is primary and nothing is highlighted until an arrow key moves into
-the list. Enter therefore commits the path that was typed. Enter on a
-highlighted directory opens it instead, and Cmd+Enter on macOS, or Ctrl+Enter
-elsewhere, commits from there. Escape closes the palette without choosing. The
-footer names what Enter will do for the current selection.
+The input is primary and nothing is selected until an arrow key or click chooses
+a row. Enter and the footer's **Select folder** button confirm the selected
+directory. The row's **Open** button or Right Arrow navigates into a selected
+directory, and Left Arrow returns to its parent. The `..` row is navigation-only.
+Recent projects use the same selection model and an explicit **Select project**
+button. Escape or **Cancel** closes the palette without choosing.
 
-The palette opens browsing the home directory, so reaching the filesystem never
-costs a typed `~/` first. A query that starts with `/`, `~/`, a drive letter, or
-a UNC prefix addresses the filesystem; clearing the field searches recent
-projects from `/api/v1/location/recent`. The parent row is derived from the
-directory the server resolved, because `~/` is its own parent as plain text. A trailing separator means the query names a
+A query that starts with `/`, `~/`, a drive letter, or a UNC prefix addresses
+the filesystem; anything else searches recent projects from
+`/api/v1/location/recent`. A trailing separator means the query names a
 directory, so the whole listing shows. Without one the last segment filters that
 same listing by prefix, and hidden directories appear only when the segment
 starts with a dot. Opening a folder appends its name and a separator, which is
@@ -399,6 +406,20 @@ at the same time, subject to the daemon-wide active-session limit. Disconnecting
 an HTTP request or event stream does not cancel admitted work. Use
 `POST /api/v1/session/{sessionID}/interrupt` to retire the active generation.
 
+`POST /api/v1/session/{session_id}/drain?timeoutMs=30000` requires the same
+bearer authentication as other session routes. It observes physical completion
+of admitted agent workers, including retired generations and their owned
+cleanup. Workers waiting for execution capacity also count. The default timeout
+is 30,000 ms, with an allowed range of 1 through 300,000 ms.
+It returns `{"data":{"drained":true,"activeWorkers":0}}` only after that work
+finishes. A timeout returns HTTP 200 with `drained: false` and the outstanding
+worker count. Canceling the request does not cancel workers or cleanup.
+Queued inputs that have not started are not workers. Drain does not resume them.
+This is a process-local completion observation, not an atomic ownership claim
+or permission grant. New work can arrive after the observation. Interrupt still
+retires the logical generation immediately, and `/wait` still observes logical
+session activity. Neither substitutes for drain.
+
 Completed agents and providers retire on independent daemon workers. A blocked
 provider close cannot delay another session's cleanup. Each retirement retries
 sequentially and retains its resources until cleanup succeeds; it cannot force
@@ -478,7 +499,7 @@ The v1 API currently exposes typed resources for:
 - MCP inspection and session-local MCP policy;
 - working-location browsing with real directory completion, plus contained
   filesystem list, find, and read operations;
-- image uploads and durable prompt attachments;
+- image and file uploads with durable prompt attachments;
 - process-local permission and question requests for future human-in-the-loop
   tools and providers;
 - command-palette metadata and capability discovery.
@@ -834,10 +855,23 @@ symlink escapes outside the authorized root. File responses use an inline
 `Content-Disposition` header with encoded filenames, so non-ASCII names and
 quotes do not break the response.
 
-Prompt images use `POST /api/v1/upload`, then reference the returned opaque
+Prompt images and files use `POST /api/v1/upload`, then reference the returned opaque
 `yoke-upload://...` URI in prompt admission. Uploads are bound to a session.
 Admission pins referenced uploads so queued prompts can survive daemon restart.
-The public message projection does not reveal the daemon's upload path.
+Files are limited to 20 MiB each and a prompt accepts at most 20 attachments.
+Images use Yoke's normal multimodal content and the selected model must support
+images. Generic files produce a saved-file reference for the agent's reading
+tools, not an eager text extraction. File references therefore include the
+daemon-local path the tools need.
+
+`prompt.continuation: true` with empty text and no attachments requests another
+inference on saved conversation state without adding a user message. It is
+different from the admission request's `resume` field, which controls whether
+the daemon starts processing the queue. The continuation flag defaults to false
+and participates in durable admission identity. Existing user input IDs and
+history remain unchanged; new continuation output belongs to the new input ID.
+Continuation requires an existing conversation. Empty ordinary prompts still
+fail validation.
 
 ## Human input
 

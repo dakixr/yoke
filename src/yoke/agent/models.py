@@ -101,6 +101,7 @@ class MessageImageURLContentPart(BaseModel):
     image_url: MessageImageURL
     detail: str | None = None
     label: str | None = None
+    attachment_name: str | None = None
 
     @property
     def display_label(self) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: D100,D101,D102,D103,S101
 
 import asyncio
+import base64
 from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
@@ -1056,7 +1057,12 @@ def test_uploaded_image_survives_admission_and_runtime_persistence(
         user = next(item for item in messages if item["type"] == "user")
         assert {part["type"] for part in user["content"]} == {"text", "image"}
         image = next(part for part in user["content"] if part["type"] == "image")
-        assert image == {"type": "image", "name": "tiny.png", "uri": None}
+        assert image == {
+            "type": "image",
+            "name": "tiny.png",
+            "uri": "data:image/png;base64,"
+            + base64.b64encode(encoded.getvalue()).decode(),
+        }
         assert str(tmp_path / "sessions" / "uploads") not in str(messages)
 
 
@@ -1145,7 +1151,12 @@ def test_queued_uploaded_image_survives_daemon_restart(tmp_path: Path) -> None:
         ).json()["data"]
         user = next(item for item in messages if item["type"] == "user")
         image = next(part for part in user["content"] if part["type"] == "image")
-        assert image == {"type": "image", "name": "restart.png", "uri": None}
+        assert image == {
+            "type": "image",
+            "name": "restart.png",
+            "uri": "data:image/png;base64,"
+            + base64.b64encode(encoded.getvalue()).decode(),
+        }
 
 
 def test_queue_attachment_cleanup_waits_for_last_active_reference(

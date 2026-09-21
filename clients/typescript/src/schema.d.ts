@@ -397,6 +397,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/session/{session_id}/drain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Drain Session Workers
+         * @description Observe completion of admitted workers and their cleanup, not ownership.
+         */
+        post: operations["drainSessionWorkers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/session/{session_id}/fork": {
         parameters: {
             query?: never;
@@ -951,6 +971,8 @@ export interface components {
             content?: components["schemas"]["ProjectedContent"][];
             /** Id */
             id: string;
+            /** Inputid */
+            inputID?: string | null;
             /** Kind */
             kind: string;
             /** Phase */
@@ -1092,6 +1114,17 @@ export interface components {
             next?: string | null;
             /** Previous */
             previous?: string | null;
+        };
+        /** DrainData */
+        DrainData: {
+            /** Activeworkers */
+            activeWorkers: number;
+            /** Drained */
+            drained: boolean;
+        };
+        /** DrainResponse */
+        DrainResponse: {
+            data: components["schemas"]["DrainData"];
         };
         /** DurableEventInfo */
         DurableEventInfo: {
@@ -1262,6 +1295,11 @@ export interface components {
         LocationBrowseEntry: {
             /** Directory */
             directory: string;
+            /**
+             * Isgitrepo
+             * @default false
+             */
+            isGitRepo: boolean;
             /** Name */
             name: string;
         };
@@ -1279,6 +1317,11 @@ export interface components {
             parentDirectory: string | null;
             /** Selectabledirectory */
             selectableDirectory: string | null;
+            /**
+             * Selectableisgitrepo
+             * @default false
+             */
+            selectableIsGitRepo: boolean;
             /** Separator */
             separator: string;
         };
@@ -1615,6 +1658,11 @@ export interface components {
         PromptInput: {
             /** Attachments */
             attachments?: components["schemas"]["PromptAttachment"][];
+            /**
+             * Continuation
+             * @default false
+             */
+            continuation: boolean;
             /**
              * Text
              * @default
@@ -3233,6 +3281,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    drainSessionWorkers: {
+        parameters: {
+            query?: {
+                timeoutMs?: number;
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrainResponse"];
                 };
             };
             /** @description Validation Error */

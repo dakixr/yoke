@@ -13,6 +13,7 @@ from yoke.cli.main_core import _inject_prompt_flag
     "argv",
     [
         ["serve", "--host", "127.0.0.1", "--port", "0"],
+        ["acp"],
         ["mcp", "demo"],
         ["--root", "/tmp/repo", "serve", "--port", "0"],
     ],
@@ -23,6 +24,15 @@ def test_prompt_injection_preserves_subcommands(argv: list[str]) -> None:
 
 def test_prompt_injection_still_converts_bare_prompt() -> None:
     assert _inject_prompt_flag(["fix the tests"]) == ["--prompt", "fix the tests"]
+
+
+def test_acp_requires_native_daemon_environment() -> None:
+    result = CliRunner().invoke(
+        app, ["acp"], env={"YOKE_ACP_URL": "", "YOKE_ACP_TOKEN": ""}
+    )
+
+    assert result.exit_code == 2
+    assert "YOKE_ACP_URL and YOKE_ACP_TOKEN are required" in result.output
 
 
 @pytest.mark.parametrize(

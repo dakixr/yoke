@@ -20,6 +20,7 @@ _SUBCOMMANDS = frozenset(
         "version",
         "login",
         "serve",
+        "acp",
         "resume",
         "session-handoff",
         "tools",

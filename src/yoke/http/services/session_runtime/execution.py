@@ -45,6 +45,7 @@ class TurnExecution:
     slot_released: bool = False
     worker_started: bool = False
     execution_started: bool = False
+    baseline_entry_ids: set[str] = field(default_factory=set)
     workspace_use: ExitStack = field(default_factory=ExitStack)
 
 

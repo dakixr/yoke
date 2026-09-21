@@ -20,6 +20,7 @@ class PromptAttachment(ApiModel):
 class PromptInput(ApiModel):
     text: str = ""
     attachments: list[PromptAttachment] = Field(default_factory=list)
+    continuation: bool = Field(default=False, strict=True)
 
 
 class PromptAdmissionRequest(ApiModel):

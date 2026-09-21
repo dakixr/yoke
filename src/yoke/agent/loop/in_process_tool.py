@@ -10,6 +10,8 @@ from yoke.agent.loop.tool_core import cancelled_tool_result
 from yoke.agent.loop.tool_core import execute_tool
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.tools import LocalTool
+from yoke.ai.providers.usage_context import bind_usage_metric_context
+from yoke.ai.providers.usage_context import current_usage_metric_context
 
 IN_PROCESS_TOOL_POLL_SECONDS = 0.005
 IN_PROCESS_TOOL_SHUTDOWN_SECONDS = 1.0
@@ -39,6 +41,7 @@ class InProcessToolInvocation:
         self._cancel_event = threading.Event()
         self._result: dict[str, object] | None = None
         self._started = False
+        self._usage_context = current_usage_metric_context()
         self._worker = threading.Thread(
             target=self._run,
             daemon=True,
@@ -100,12 +103,13 @@ class InProcessToolInvocation:
 
     def _run(self) -> None:
         try:
-            result = execute_tool(
-                self._tools,
-                self._name,
-                self._arguments,
-                cancel_requested=self._cancel_event.is_set,
-            )
+            with bind_usage_metric_context(self._usage_context):
+                result = execute_tool(
+                    self._tools,
+                    self._name,
+                    self._arguments,
+                    cancel_requested=self._cancel_event.is_set,
+                )
             try:
                 self._result_queue.put_nowait(result)
             except queue.Full:

@@ -149,6 +149,7 @@ class PendingPrompt:
     )
     paused: bool = False
     attachments: list[dict[str, str]] = field(default_factory=list)
+    continuation: bool = False
 
     def copy_for_queue(self) -> PendingPrompt:
         """Return a mutable copy preserving queue metadata."""
@@ -160,6 +161,7 @@ class PendingPrompt:
             created_at=self.created_at,
             paused=self.paused,
             attachments=[dict(attachment) for attachment in self.attachments],
+            continuation=self.continuation,
         )
 
 

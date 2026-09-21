@@ -25,6 +25,7 @@ class PersistedPendingInput(BaseModel):
     id: str
     prompt: str
     attachments: list[dict[str, str]] = Field(default_factory=list)
+    continuation: bool = False
     kind: Literal["queued", "steering"] = "queued"
     created_at: str
     paused: bool = False

@@ -63,5 +63,7 @@ def _encode_processed_image(
     if image_format == "WEBP":
         resized.save(output, format="WEBP")
         return output.getvalue(), "image/webp"
+    if resized.mode not in {"1", "L", "LA", "P", "RGB", "RGBA"}:
+        resized = resized.convert("RGB")
     resized.save(output, format="PNG")
     return output.getvalue(), "image/png"

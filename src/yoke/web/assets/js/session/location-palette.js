@@ -18,10 +18,10 @@ import {
 /**
  * Working location palette.
  *
- * The interaction model is ported from T3 Code's project picker: the input is
- * primary and nothing is highlighted until an arrow key moves into the list, so
- * Enter commits the path that was typed. Enter on a highlighted directory
- * browses into it instead, and the primary modifier commits from there.
+ * The input is primary and nothing is selected until an arrow key or click
+ * chooses a row. Enter and the footer button confirm that selection. Opening a
+ * directory is a separate action so choosing a workspace never depends on an
+ * overloaded Enter key.
  */
 const HOME_BROWSE_QUERY = "~/";
 
@@ -150,24 +150,19 @@ export function LocationPalette({ value = "", recentLocations = [], onChange, on
     onChange(directory);
     onClose();
   };
-  const choose = (item) => {
-    if (item.kind === "project") commit(item.directory);
-    else void browseTo(item);
-  };
-
   const resolvedPath = hasTrailingPathSeparator(query)
     ? (browse?.browseDirectory || query.trim())
     : (exactEntry?.directory || query.trim());
   const highlightedItem = items.find((item) => item.value === highlight) || null;
-  const highlightedBrowseItem = highlightedItem !== null && highlightedItem.kind !== "project";
   const canSubmitPath = browsePath.isBrowsing && query.trim().length > 0;
-  const actionLabel = highlightedItem === null
-    ? (canSubmitPath ? "Use this path" : "Choose a project")
-    : highlightedItem.kind === "project"
-      ? "Use this project"
-      : highlightedItem.kind === "up"
-        ? "Go up"
-        : "Open folder";
+  const selectedItem = highlightedItem?.kind === "directory" || highlightedItem?.kind === "project"
+    ? highlightedItem
+    : null;
+  const selectedPath = selectedItem?.directory || (canSubmitPath ? resolvedPath : null);
+  const selectionLabel = selectedItem?.kind === "project" || !browsePath.isBrowsing
+    ? "Select project"
+    : "Select folder";
+  const selectableItems = items.filter((item) => item.kind !== "up");
 
   const onKeyDown = (event) => {
     if (event.isComposing) return;
@@ -179,24 +174,27 @@ export function LocationPalette({ value = "", recentLocations = [], onChange, on
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (!items.length) return;
-      const index = items.findIndex((item) => item.value === highlight);
+      if (!selectableItems.length) return;
+      const index = selectableItems.findIndex((item) => item.value === highlight);
       const next = event.key === "ArrowDown"
-        ? (index < 0 || index >= items.length - 1 ? 0 : index + 1)
-        : (index <= 0 ? items.length - 1 : index - 1);
-      setHighlight(items[next].value);
+        ? (index < 0 || index >= selectableItems.length - 1 ? 0 : index + 1)
+        : (index <= 0 ? selectableItems.length - 1 : index - 1);
+      setHighlight(selectableItems[next].value);
       return;
     }
-    if (event.key !== "Enter") return;
-    const modifier = event.metaKey || event.ctrlKey;
-    if (canSubmitPath && (!highlightedBrowseItem || modifier)) {
+    if (event.key === "ArrowRight" && highlightedItem?.kind === "directory") {
       event.preventDefault();
-      commit(resolvedPath);
+      void browseTo(highlightedItem);
       return;
     }
-    if (highlightedItem) {
+    if (event.key === "ArrowLeft" && highlight !== null && parentPath) {
       event.preventDefault();
-      choose(highlightedItem);
+      void navigate(parentPath);
+      return;
+    }
+    if (event.key === "Enter" && selectedPath) {
+      event.preventDefault();
+      commit(selectedPath);
     }
   };
 
@@ -228,38 +226,53 @@ export function LocationPalette({ value = "", recentLocations = [], onChange, on
         />
         ${pending ? html`<span class="pending-spinner" aria-hidden="true"></span>` : null}
       </div>
-      <div class="command-results" role="listbox" aria-label=${groupLabel}>
+      <div class="command-results" role="group" aria-label=${groupLabel}>
         ${error ? html`<div class="command-empty command-empty--error" role="alert">${error}</div>` : null}
         ${items.length ? html`<div class="command-group">
           <div class="command-group__label">${groupLabel}</div>
           ${items.map((item) => html`
-            <button
+            <div
               key=${item.value}
-              type="button"
-              role="option"
-              aria-selected=${highlight === item.value}
               data-palette-value=${item.value}
-              class=${highlight === item.value ? "is-active" : ""}
-              onMouseDown=${(event) => event.preventDefault()}
-              onMouseMove=${() => setHighlight(item.value)}
-              onClick=${() => choose(item)}
+              class=${`location-palette__row ${highlight === item.value ? "is-active" : ""}`}
             >
-              <span>
-                <strong>${item.name}</strong>
-                <small>${item.directory}</small>
-              </span>
-              <span>${item.kind === "up" ? "up" : item.kind === "project" ? "recent" : "folder"}</span>
-            </button>
+              <button
+                type="button"
+                class="location-palette__row-select"
+                aria-pressed=${item.kind === "up" ? undefined : highlight === item.value}
+                aria-label=${item.kind === "up" ? "Go to parent folder" : `Select ${item.kind === "project" ? "project" : "folder"} ${item.name}`}
+                onMouseDown=${(event) => event.preventDefault()}
+                onClick=${() => item.kind === "up" ? void browseTo(item) : setHighlight(item.value)}
+              >
+                <span>
+                  <strong>${item.name}</strong>
+                  <small>${item.directory}</small>
+                </span>
+                <span>${item.kind === "up" ? "up" : item.kind === "project" ? "recent" : "folder"}</span>
+              </button>
+              ${item.kind === "directory" ? html`<button
+                type="button"
+                class="location-palette__row-open"
+                aria-label=${`Open folder ${item.name}`}
+                onMouseDown=${(event) => event.preventDefault()}
+                onClick=${() => void browseTo(item)}
+              >Open <span aria-hidden="true">›</span></button>` : null}
+            </div>
           `)}
         </div>` : error ? null : html`<div class="command-empty">${emptyMessage({ browsePath, pending, query, recentLocations })}</div>`}
       </div>
-      <div class="command-footer">
-        <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
-        <span><kbd>Enter</kbd> ${actionLabel}</span>
-        ${highlightedBrowseItem && canSubmitPath
-          ? html`<span><kbd>${modifierLabel()}</kbd><kbd>Enter</kbd> Use this path</span>`
-          : null}
-        <span class="command-footer__path">${canSubmitPath ? resolvedPath : value || ""}</span>
+      <div class="command-footer location-palette__footer">
+        <span class="location-palette__keys"><kbd>↑</kbd><kbd>↓</kbd> Choose <kbd>Enter</kbd> Select <kbd>←</kbd> Up <kbd>→</kbd> Open</span>
+        <span class="command-footer__path" title=${selectedPath || value || ""}>${selectedPath || value || ""}</span>
+        <div class="location-palette__actions">
+          <button type="button" onClick=${onClose}>Cancel</button>
+          <button
+            type="button"
+            class="primary small"
+            disabled=${!selectedPath}
+            onClick=${() => commit(selectedPath)}
+          >${selectionLabel}</button>
+        </div>
       </div>
     </div>
   </div>`;
@@ -268,14 +281,10 @@ export function LocationPalette({ value = "", recentLocations = [], onChange, on
 function emptyMessage({ browsePath, pending, query, recentLocations }) {
   if (pending) return "Reading folders…";
   if (browsePath.isBrowsing) {
-    return query.trim() ? "No folder here matches that name. Press Enter to use the path as typed." : "No folders here.";
+    return query.trim() ? "No folder here matches that name. Select folder to use the path as typed." : "No folders here.";
   }
   if (!recentLocations.length) return "No projects yet. Type ~/ or / to browse the filesystem.";
   return "No recent project matches. Type ~/ or / to browse the filesystem.";
-}
-
-function modifierLabel() {
-  return /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || "") ? "⌘" : "Ctrl";
 }
 
 function cssEscape(value) {

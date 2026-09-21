@@ -56,6 +56,20 @@ to empty; configure relevant skills with `Skill.from_dir(...)` or `Skill.inline(
 from `yoke.ai.skills`. `include_agents_file` defaults to true, so repository
 instructions can load, but the parent's conversation and active skills do not transfer.
 
+## Usage attribution
+
+SDK agents launched through session process tools inherit `YOKE_ROOT_SESSION_ID`
+and `YOKE_PARENT_RUN_ID`. Each agent resolves its owner at construction and keeps
+its own SDK run IDs. This links usage logs without sharing conversation state.
+`run_many()` respects each agent's configuration.
+
+For another owner, set `RunConfig(root=..., root_session_id=...,
+parent_run_id=...)`. For standalone work, set `inherit_usage_attribution=False`.
+`complete()` accepts these same keywords. Reusable workers should construct a new
+agent with explicit attribution for each job. Forward the environment explicitly
+for SSH or remote jobs. Forks keep the resolved owner; loading saved state resolves
+the current owner rather than restoring the old one.
+
 ## Process tools for launching workers
 
 Native Yoke and MCP use `command_exec`, `python_exec`, `process_input`,

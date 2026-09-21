@@ -18,10 +18,13 @@ from yoke.session.queue import PersistedPendingInput, PersistedPromptQueue
 
 
 def fingerprint(session_id: str, prompt: PromptInput, delivery: str) -> str:
+    payload = prompt.model_dump(mode="json", by_alias=True)
+    if not prompt.continuation:
+        payload.pop("continuation")  # Preserve identities admitted before this field.
     raw = json.dumps(
         {
             "sessionID": session_id,
-            "prompt": prompt.model_dump(mode="json", by_alias=True),
+            "prompt": payload,
             "delivery": delivery,
         },
         sort_keys=True,
@@ -55,6 +58,7 @@ def receipt(record: AdmissionRecord) -> PromptAdmissionReceipt:
 def prompt_from_admission(record: AdmissionRecord) -> PromptInput:
     return PromptInput(
         text=record.prompt,
+        continuation=record.continuation,
         attachments=[
             PromptAttachment(uri=item.uri, name=item.name, mime=item.mime)
             for item in record.attachments
@@ -70,6 +74,7 @@ def queue_data(queue: PersistedPromptQueue) -> QueueData:
                 id=item.id,
                 prompt=PromptInput(
                     text=item.prompt,
+                    continuation=item.continuation,
                     attachments=[
                         PromptAttachment.model_validate(value)
                         for value in item.attachments
@@ -101,6 +106,8 @@ def apply_operation(items, admissions, operation) -> None:  # noqa: ANN001
         )
     if operation.op == "update":
         item.prompt = operation.prompt.text
+        item.continuation = operation.prompt.continuation
+        admission.continuation = operation.prompt.continuation
         item.attachments = [
             {"uri": attachment.uri, "name": attachment.name, "mime": attachment.mime}
             for attachment in operation.prompt.attachments

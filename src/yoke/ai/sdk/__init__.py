@@ -10,6 +10,7 @@ from yoke.agent.models import Message
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import complete_with_cancel
 from yoke.ai.providers.usage_context import usage_metric_context
+from yoke.ai.providers.usage_attribution import resolve_usage_attribution
 from yoke.ai.sdk.agent import Agent as Agent
 from yoke.ai.sdk.batch import run_many as run_many
 from yoke.ai.sdk.observability import AgentObserver as AgentObserver
@@ -55,12 +56,23 @@ def complete[StructuredT](
     images: Sequence[Image | str | Path] = (),
     image_urls: Sequence[str] = (),
     output_type: type[StructuredT] | None = None,
+    root_session_id: str | None = None,
+    parent_run_id: str | None = None,
+    inherit_usage_attribution: bool = True,
 ) -> CompletionResult[StructuredT]:
     """Run one direct completion against a provider."""
+    attribution = resolve_usage_attribution(
+        root_session_id=root_session_id,
+        parent_run_id=parent_run_id,
+        inherit=inherit_usage_attribution,
+    )
     with usage_metric_context(
         surface="sdk",
         sdk_operation="complete",
         sdk_run_id=uuid4().hex,
+        session_id=attribution.root_session_id,
+        root_session_id=attribution.root_session_id,
+        parent_run_id=attribution.parent_run_id,
     ):
         normalized_images, normalized_urls = normalize_image_inputs(
             images=images,

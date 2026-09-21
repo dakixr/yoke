@@ -32,6 +32,8 @@ class UsageMetricContext:
     session_title: str | None = None
     sdk_operation: SdkOperation | None = None
     sdk_run_id: str | None = None
+    root_session_id: str | None = None
+    parent_run_id: str | None = None
     call_kind: UsageCallKind | None = None
 
     def record_fields(self) -> dict[str, str]:
@@ -55,6 +57,16 @@ def current_usage_metric_context() -> UsageMetricContext:
 
 
 @contextmanager
+def bind_usage_metric_context(context: UsageMetricContext) -> Iterator[None]:
+    """Carry only accounting context into a tool worker thread."""
+    token = _USAGE_METRIC_CONTEXT.set(context)
+    try:
+        yield
+    finally:
+        _USAGE_METRIC_CONTEXT.reset(token)
+
+
+@contextmanager
 def usage_metric_context(
     *,
     surface: UsageSurface | None = None,
@@ -62,6 +74,8 @@ def usage_metric_context(
     session_title: str | None = None,
     sdk_operation: SdkOperation | None = None,
     sdk_run_id: str | None = None,
+    root_session_id: str | None = None,
+    parent_run_id: str | None = None,
     call_kind: UsageCallKind | None = None,
 ) -> Iterator[UsageMetricContext]:
     """Start a surface scope or merge details into the current scope."""
@@ -76,6 +90,8 @@ def usage_metric_context(
             "session_title": session_title,
             "sdk_operation": sdk_operation,
             "sdk_run_id": sdk_run_id,
+            "root_session_id": root_session_id,
+            "parent_run_id": parent_run_id,
             "call_kind": call_kind,
         }.items()
         if value is not None

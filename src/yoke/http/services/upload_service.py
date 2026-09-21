@@ -7,13 +7,14 @@ from datetime import datetime
 from datetime import timedelta
 import mimetypes
 from pathlib import Path
+import re
 import secrets
 import shutil
 
 from fastapi import UploadFile
 from pydantic import BaseModel
 
-from yoke.agent.multimodal import IMAGE_EXTENSIONS
+from yoke.agent.attachments import attachment_mime, attachment_name, validate_attachment
 from yoke.http.errors import ApiError
 from yoke.http.models.upload import UploadInfo
 from yoke.session import SessionStore
@@ -50,23 +51,22 @@ class UploadService:
         self.gc_expired_orphans()
         if session_id is not None and not self.store.exists(session_id):
             raise ApiError(404, "session_not_found", "Session was not found.")
-        name = Path(upload.filename or "attachment").name
-        suffix = Path(name).suffix.lower()
+        name = attachment_name(upload.filename or "attachment")
         mime = (
             upload.content_type
             or mimetypes.guess_type(name)[0]
             or "application/octet-stream"
         )
-        if not mime.startswith("image/") or suffix not in IMAGE_EXTENSIONS:
-            raise ApiError(
-                400,
-                "unsupported_attachment",
-                "This daemon version accepts image prompt attachments only.",
-            )
+        try:
+            mime = attachment_mime(mime)
+        except ValueError as exc:
+            raise ApiError(400, "unsupported_attachment", str(exc)) from exc
         upload_id = f"upl_{secrets.token_hex(12)}"
         target_dir = self.directory / upload_id
         target_dir.mkdir(parents=True, exist_ok=False)
-        target = target_dir / name
+        payload_dir = target_dir / "files"
+        payload_dir.mkdir()
+        target = payload_dir / name
         size = 0
         try:
             with target.open("wb") as handle:
@@ -79,12 +79,13 @@ class UploadService:
                             "Attachment exceeds the server limit.",
                         )
                     handle.write(chunk)
+            if mime.startswith("image/"):
+                try:
+                    validate_attachment(target.read_bytes(), mime)
+                except ValueError as exc:
+                    raise ApiError(400, "invalid_image", str(exc)) from exc
         except BaseException:
-            target.unlink(missing_ok=True)
-            try:
-                target_dir.rmdir()
-            except OSError:
-                pass
+            shutil.rmtree(target_dir, ignore_errors=True)
             raise
         expires = datetime.now(UTC) + UPLOAD_TTL
         record = StoredUpload(
@@ -192,7 +193,7 @@ class UploadService:
                 "Prompt attachment URI must reference a Yoke upload.",
             )
         upload_id = uri[len(prefix) :]
-        if not upload_id.startswith("upl_") or "/" in upload_id or ".." in upload_id:
+        if not re.fullmatch(r"upl_[0-9a-f]{24}", upload_id):
             raise ApiError(400, "invalid_attachment_uri", "Invalid upload URI.")
         metadata = self._metadata_path(upload_id)
         try:

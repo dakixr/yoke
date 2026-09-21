@@ -278,12 +278,6 @@
   .slash-menu__item { height: 58px; min-height: 58px; }
   .draft-composer-wrap .slash-menu { top: auto; bottom: calc(100% + 6px); }
   .draft-composer-wrap .model-picker__panel { top: auto; bottom: 74px; }
-  .location-picker__panel { max-height: min(430px, 56vh); }
-  .location-picker__keys { display: none; }
-  .location-picker__crumbs { flex: 1; }
-  .location-picker__crumb { max-width: 110px; }
-  .location-picker__items { max-height: min(300px, 39vh); }
-  .location-picker__item { min-height: 56px; }
   .slash-menu__copy small { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
   .draft-composer-wrap { width: calc(100% - 22px); padding-top: 28px; }
 }

@@ -81,6 +81,44 @@ def test_run_server_reports_selected_port_and_closes_socket(
     assert observed_socket.fileno() == -1
 
 
+def test_run_server_can_hide_token_and_use_explicit_session_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    observed: dict[str, object] = {}
+
+    class FakeServer:
+        def __init__(self, _config: object, _broker: object) -> None:
+            pass
+
+        def run(self, *, sockets: list[object]) -> None:
+            assert sockets
+
+    def fake_create_app(settings: HttpAppSettings):
+        observed["settings"] = settings
+        return SimpleNamespace(state=SimpleNamespace(event_broker=object()))
+
+    monkeypatch.setattr("yoke.http.server._YokeServer", FakeServer)
+    monkeypatch.setattr("yoke.http.server.create_app", fake_create_app)
+
+    session_directory = tmp_path / "dedicated-sessions"
+    result = run_server(
+        host="127.0.0.1",
+        port=0,
+        auth_token="fixed-token",
+        allow_remote=False,
+        session_directory=session_directory,
+        show_token=False,
+    )
+
+    assert result == 0
+    assert "fixed-token" not in capsys.readouterr().out
+    settings = observed["settings"]
+    assert isinstance(settings, HttpAppSettings)
+    assert settings.session_directory == session_directory
+
+
 def test_run_server_is_quiet_by_default_and_verbose_enables_uvicorn_logs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

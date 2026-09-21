@@ -118,19 +118,6 @@ def inspect_workspace(directory: Path | str | None) -> WorkspaceStatus:
     label = str(directory)
     try:
         path = Path(directory).expanduser()
-        # Windows can report a file used as a parent path as "not found".
-        # Inspect the nearest existing parent first so that case stays distinct
-        # from a genuinely missing workspace.
-        for parent in path.parents:
-            try:
-                parent_mode = parent.stat().st_mode
-            except FileNotFoundError:
-                continue
-            if not stat.S_ISDIR(parent_mode):
-                return WorkspaceStatus(
-                    "not_directory", f"Workspace is not a directory: {label}"
-                )
-            break
         mode = path.stat().st_mode
         if not stat.S_ISDIR(mode):
             return WorkspaceStatus(

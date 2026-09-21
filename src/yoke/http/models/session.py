@@ -189,6 +189,7 @@ class UserProjectedMessage(ProjectedMessageBase):
 
 class AssistantProjectedMessage(ProjectedMessageBase):
     type: Literal["assistant"] = "assistant"
+    input_id: str | None = None
     phase: Literal["commentary", "final_answer"] | None = None
     content: list[ProjectedContent] = Field(default_factory=list)
     tool_calls: list[ToolCallSummary] = Field(default_factory=list)

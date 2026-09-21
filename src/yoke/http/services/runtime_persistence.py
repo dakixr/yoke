@@ -65,6 +65,20 @@ def input_is_persisted(record: SessionRecord, input_id: str) -> bool:
     )
 
 
+def tag_continuation_entries(
+    entries: list[ConversationEntry], input_id: str, baseline: set[str]
+) -> list[ConversationEntry]:
+    """Tag only newly produced assistant rows, never an earlier user or answer."""
+    copied = [entry.model_copy(deep=True) for entry in entries]
+    for entry in copied:
+        if entry.id not in baseline and entry.kind in {
+            "assistant",
+            "assistant_tool_calls",
+        }:
+            entry.metadata[INPUT_ID_METADATA_KEY] = input_id
+    return copied
+
+
 def input_has_terminal_assistant(
     active: Sequence[ConversationEntry],
     input_id: str,
@@ -74,7 +88,6 @@ def input_has_terminal_assistant(
     for entry in active:
         if entry.metadata.get(INPUT_ID_METADATA_KEY) == input_id:
             seen_input = True
-            continue
         if not seen_input or entry.kind != "assistant" or entry.message is None:
             continue
         if not entry.message.tool_calls and entry.message.phase != "commentary":

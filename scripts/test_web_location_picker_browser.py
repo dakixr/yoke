@@ -82,11 +82,11 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
 
 def rows(page):
-    return page.locator(".command-group button")
+    return page.locator(".location-palette__row")
 
 
 def active_row(page):
-    return page.locator(".command-group button.is-active")
+    return page.locator(".location-palette__row.is-active")
 
 
 def palette(page):
@@ -95,6 +95,13 @@ def palette(page):
 
 def footer(page):
     return page.locator(".command-footer")
+
+
+def action_positions(page):
+    cancel = page.get_by_role("button", name="Cancel").bounding_box()
+    select = page.locator(".location-palette__actions .primary").bounding_box()
+    assert cancel is not None and select is not None
+    return cancel["x"], select["x"]
 
 
 def open_palette(page):
@@ -139,7 +146,7 @@ def check_the_parent_row_uses_the_resolved_path(page):
     # directory the server resolved instead of stranding the user on itself.
     expect(rows(page).nth(0)).to_contain_text("..")
     expect(rows(page).nth(0)).not_to_contain_text("~")
-    rows(page).nth(0).click()
+    page.get_by_role("button", name="Go to parent folder").click()
     expect(page.get_by_role("textbox", name="Working location")).to_have_value("/")
 
 
@@ -157,7 +164,7 @@ def check_nothing_is_highlighted_until_an_arrow_key(page):
     expect(rows(page)).to_have_count(2)
     expect(active_row(page)).to_have_count(0)
     page.keyboard.press("ArrowDown")
-    expect(active_row(page)).to_contain_text("..")
+    expect(active_row(page)).to_contain_text("dev")
     page.keyboard.press("ArrowUp")
     expect(active_row(page)).to_have_count(1)
 
@@ -182,17 +189,27 @@ def check_a_typed_path_is_used_on_enter(page):
     assert page.evaluate("audit.chosen").pop() == "/home/dev/yoke-notes"
 
 
-def check_enter_on_a_highlighted_folder_opens_it(page):
+def check_enter_on_a_highlighted_folder_selects_it(page):
     open_palette(page)
     type_query(page, "/home/dev/")
     expect(rows(page)).to_have_count(4)
     page.keyboard.press("ArrowDown")
-    expect(active_row(page)).to_contain_text("..")
-    page.keyboard.press("ArrowDown")
+    expect(active_row(page)).to_contain_text("site-builder")
     page.keyboard.press("ArrowDown")
     expect(active_row(page)).to_contain_text("yoke")
     page.keyboard.press("Enter")
-    # Opening a folder navigates instead of choosing it.
+    expect(palette(page)).to_have_count(0)
+    assert page.evaluate("audit.chosen").pop() == "/home/dev/yoke"
+
+
+def check_right_arrow_opens_a_highlighted_folder(page):
+    open_palette(page)
+    type_query(page, "/home/dev/")
+    expect(rows(page)).to_have_count(4)
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("ArrowDown")
+    expect(active_row(page)).to_contain_text("yoke")
+    page.keyboard.press("ArrowRight")
     expect(page.get_by_role("textbox", name="Working location")).to_have_value(
         "/home/dev/yoke/"
     )
@@ -200,21 +217,30 @@ def check_enter_on_a_highlighted_folder_opens_it(page):
     assert page.evaluate("audit.chosen") == []
 
 
-def check_the_modifier_uses_the_path_from_a_highlighted_folder(page):
+def check_mouse_can_select_or_open_a_folder(page):
     open_palette(page)
     type_query(page, "/home/dev/")
-    expect(rows(page)).to_have_count(4)
-    page.keyboard.press("ArrowDown")
-    expect(active_row(page)).to_contain_text("..")
-    page.keyboard.press("ControlOrMeta+Enter")
+    page.get_by_role("button", name="Select folder yoke", exact=True).click()
+    expect(active_row(page)).to_contain_text("yoke")
+    expect(footer(page)).to_contain_text("/home/dev/yoke")
+    page.get_by_role("button", name="Select folder", exact=True).click()
     expect(palette(page)).to_have_count(0)
-    assert page.evaluate("audit.chosen").pop() == "/home/dev"
+    assert page.evaluate("audit.chosen").pop() == "/home/dev/yoke"
+
+    reset(page)
+    open_palette(page)
+    type_query(page, "/home/dev/")
+    page.get_by_role("button", name="Open folder yoke", exact=True).click()
+    expect(page.get_by_role("textbox", name="Working location")).to_have_value(
+        "/home/dev/yoke/"
+    )
+    assert page.evaluate("audit.chosen") == []
 
 
 def check_the_up_row_navigates_to_the_parent(page):
     open_palette(page)
     type_query(page, "/home/dev/yoke/")
-    page.locator(".command-group button", has_text="..").click()
+    page.get_by_role("button", name="Go to parent folder").click()
     expect(page.get_by_role("textbox", name="Working location")).to_have_value(
         "/home/dev/"
     )
@@ -238,27 +264,31 @@ def check_hidden_directories_appear_only_on_a_dot(page):
     open_palette(page)
     type_query(page, "/home/dev/")
     expect(rows(page)).to_have_count(4)
-    expect(page.locator(".command-group button", has_text=".cache")).to_have_count(0)
+    expect(page.get_by_role("button", name="Select folder .cache")).to_have_count(0)
     type_query(page, "/home/dev/.")
     expect(rows(page)).to_have_count(2)
     expect(rows(page).nth(1)).to_contain_text(".cache")
 
 
-def check_the_footer_names_the_enter_action(page):
+def check_the_footer_exposes_the_selection_action(page):
     open_palette(page)
-    expect(footer(page)).to_contain_text("Use this path")
+    initial_positions = action_positions(page)
+    expect(page.get_by_role("button", name="Select folder", exact=True)).to_be_enabled()
     field = page.get_by_role("textbox", name="Working location")
     field.press("ControlOrMeta+a")
     field.press("Backspace")
-    expect(footer(page)).to_contain_text("Choose a project")
+    expect(
+        page.get_by_role("button", name="Select project", exact=True)
+    ).to_be_disabled()
+    assert action_positions(page) == initial_positions
     type_query(page, "/home/dev/")
-    expect(footer(page)).to_contain_text("Use this path")
+    expect(page.get_by_role("button", name="Select folder", exact=True)).to_be_enabled()
     expect(rows(page)).to_have_count(4)
     page.keyboard.press("ArrowDown")
-    expect(footer(page)).to_contain_text("Go up")
     page.keyboard.press("ArrowDown")
-    page.keyboard.press("ArrowDown")
-    expect(footer(page)).to_contain_text("Open folder")
+    expect(active_row(page)).to_contain_text("yoke")
+    expect(footer(page)).to_contain_text("/home/dev/yoke")
+    assert action_positions(page) == initial_positions
 
 
 def check_escape_closes_without_choosing(page):
@@ -287,9 +317,8 @@ def check_a_slow_listing_never_blanks_the_panel(page):
     )
     page.keyboard.press("ArrowDown")
     page.keyboard.press("ArrowDown")
-    page.keyboard.press("ArrowDown")
     expect(active_row(page)).to_contain_text("yoke")
-    page.keyboard.press("Enter")
+    page.keyboard.press("ArrowRight")
     page.wait_for_timeout(250)
     # The pending listing has not replaced the visible one.
     expect(rows(page)).to_have_count(4)
@@ -309,12 +338,13 @@ def main():
         check_nothing_is_highlighted_until_an_arrow_key,
         check_a_project_name_filters_and_enter_uses_it,
         check_a_typed_path_is_used_on_enter,
-        check_enter_on_a_highlighted_folder_opens_it,
-        check_the_modifier_uses_the_path_from_a_highlighted_folder,
+        check_enter_on_a_highlighted_folder_selects_it,
+        check_right_arrow_opens_a_highlighted_folder,
+        check_mouse_can_select_or_open_a_folder,
         check_the_up_row_navigates_to_the_parent,
         check_a_partial_segment_filters_by_prefix,
         check_hidden_directories_appear_only_on_a_dot,
-        check_the_footer_names_the_enter_action,
+        check_the_footer_exposes_the_selection_action,
         check_escape_closes_without_choosing,
         check_an_unreadable_path_reports_the_failure,
         check_a_slow_listing_never_blanks_the_panel,
