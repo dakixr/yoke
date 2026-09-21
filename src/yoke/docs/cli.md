@@ -80,6 +80,10 @@ initialization. Yoke then returns that workspace's skill catalog in
 `_meta.yoke.skills`, allowing clients such as T3 Code to offer `$skill-name`
 completion while sending the authored prompt text unchanged.
 
+Sessions created through ACP start unnamed. The native HTTP runtime generates
+their title from the first prompt using the same background title flow as other
+Yoke sessions, rather than retaining a client-specific placeholder.
+
 Native uploads accept at most 20 attachments and 20 MiB per file. The ACP peer
 also limits inline content to 32 MiB decoded and 48 MiB serialized JSON. Clients
 may impose smaller limits. Mooncake's T3 adapter currently caps its complete

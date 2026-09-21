@@ -215,7 +215,6 @@ class YokeAcpAgent:
             "session",
             json={
                 "location": {"directory": cwd},
-                "title": "T3 Code session",
                 "selection": {
                     "provider": provider,
                     "model": model,

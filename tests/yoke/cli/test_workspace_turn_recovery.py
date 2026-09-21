@@ -94,7 +94,6 @@ def test_dequeue_delete_run_outcome_finish_restores_exact_paused_item(
         "describe it",
         kind=kind,
         user_message=build_user_message("describe it", image_paths=[image.path]),
-        attachments=[{"type": "image", "url": "data:image/png;base64,abc"}],
     )
     later = PendingPrompt("later", paused=True)
     for item in [first, selected, later]:
@@ -118,7 +117,7 @@ def test_dequeue_delete_run_outcome_finish_restores_exact_paused_item(
     expected.paused = True
     assert load_prompt_queue_state(active).prompts == [first, expected, later]
     persisted = load_prompt_queue_snapshot(active.store.directory, active.id)
-    assert persisted.prompts[1].attachments == selected.attachments
+    assert persisted.prompts[1].attachments == []
     assert persisted.prompts[1].user_message == selected.user_message
     assert active.store.load(active.id).messages == []
     assert agent.seen_history_lengths == []

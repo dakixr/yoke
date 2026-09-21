@@ -116,8 +116,8 @@ def inspect_workspace(directory: Path | str | None) -> WorkspaceStatus:
     if directory is None or not str(directory).strip():
         return WorkspaceStatus("unconfigured", "Session has no workspace directory.")
     label = str(directory)
+    path = Path(directory).expanduser()
     try:
-        path = Path(directory).expanduser()
         mode = path.stat().st_mode
         if not stat.S_ISDIR(mode):
             return WorkspaceStatus(
@@ -131,6 +131,22 @@ def inspect_workspace(directory: Path | str | None) -> WorkspaceStatus:
         # domain error on every entry point.
         path.resolve()
     except FileNotFoundError:
+        # Windows reports a missing leaf when an existing parent is a file,
+        # while POSIX reports NotADirectoryError. Preserve one domain result.
+        parent = path.parent
+        while parent != parent.parent:
+            try:
+                mode = parent.stat().st_mode
+            except FileNotFoundError:
+                parent = parent.parent
+                continue
+            except OSError:
+                break
+            if not stat.S_ISDIR(mode):
+                return WorkspaceStatus(
+                    "not_directory", f"Workspace is not a directory: {label}"
+                )
+            break
         return WorkspaceStatus(
             "missing", f"Workspace directory no longer exists: {label}"
         )

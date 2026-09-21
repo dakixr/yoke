@@ -1295,11 +1295,6 @@ export interface components {
         LocationBrowseEntry: {
             /** Directory */
             directory: string;
-            /**
-             * Isgitrepo
-             * @default false
-             */
-            isGitRepo: boolean;
             /** Name */
             name: string;
         };
@@ -1317,11 +1312,6 @@ export interface components {
             parentDirectory: string | null;
             /** Selectabledirectory */
             selectableDirectory: string | null;
-            /**
-             * Selectableisgitrepo
-             * @default false
-             */
-            selectableIsGitRepo: boolean;
             /** Separator */
             separator: string;
         };

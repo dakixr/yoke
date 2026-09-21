@@ -26,6 +26,7 @@ class FixtureNative(NativeClient):
         self.calls: list[tuple[str, str]] = []
         self.queue: asyncio.Queue[dict[str, Any]] | None = None
         self.admission: dict[str, Any] | None = None
+        self.session_create: dict[str, Any] | None = None
         self.running = False
         self.hold = False
         self.interrupted = False
@@ -104,7 +105,10 @@ class FixtureNative(NativeClient):
                     ],
                 },
             )
-        elif path in {"session", "session/native-id"}:
+        elif path == "session":
+            self.session_create = json.loads(request.content)
+            data = session
+        elif path == "session/native-id":
             data = session
         elif path == "session/active":
             data = {}
@@ -239,6 +243,12 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertIn(("GET", "skill"), self.native.calls)
+
+    async def test_new_session_leaves_title_empty_for_native_auto_generation(
+        self,
+    ) -> None:
+        assert self.native.session_create is not None
+        self.assertNotIn("title", self.native.session_create)
 
     async def test_prompt_emits_tool_lifecycle_and_final_text(self) -> None:
         result = await self.agent.prompt(

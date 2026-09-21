@@ -331,10 +331,16 @@ try {
     await client.evaluate("Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Relocate workspace').click()");
     await client.wait("document.querySelector('#draft-working-location')");
     await delay(150);
-    await client.evaluate("document.querySelector('#draft-working-location').focus()");
-    await client.send("Input.insertText", { text: "/fixture/new/" });
-    await client.wait("Array.from(document.querySelectorAll('button')).some(b => b.textContent === 'Use folder')");
-    await client.evaluate("Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Use folder').click()");
+    await client.evaluate("document.querySelector('#draft-working-location').click()");
+    await client.wait("document.querySelector('input[aria-label=\"Working location\"]')");
+    await client.evaluate(`(() => {
+      const field = document.querySelector('input[aria-label="Working location"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(field, '/fixture/new');
+      field.dispatchEvent(new Event('input', {bubbles: true}));
+    })()`);
+    await client.wait("Array.from(document.querySelectorAll('button')).some(b => b.textContent === 'Select folder')");
+    await client.evaluate("Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Select folder').click()");
     assert.deepEqual(await client.evaluate("audit.relocations"), []);
     await client.evaluate("Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Relocate this session').click()");
     await client.wait("!document.querySelector('.workspace-notice') && !document.querySelector('[aria-label=\"Send message\"]').disabled");
