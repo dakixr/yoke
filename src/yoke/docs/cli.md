@@ -107,7 +107,7 @@ YOKE_ACP_URL=http://127.0.0.1:8770 YOKE_ACP_TOKEN="$TOKEN" yoke acp
 Select models with `provider:model` or `provider:model:thinking_effort`:
 
 ```bash
-yoke --model codex:gpt-5.6-sol:medium "..."
+yoke --model codex:gpt-6-sol:medium "..."
 yoke --model codex:gpt-5.6-terra:max "..."
 yoke --model opencode-go:muse-spark-1.3-contributor:high "..."
 yoke --model opencode-go:glm-5.3-flash:max "..."
@@ -126,7 +126,7 @@ Provider selections without a model use these defaults:
 
 | Provider | Default selection |
 | --- | --- |
-| `codex` | `codex:gpt-5.6-sol:medium` |
+| `codex` | `codex:gpt-6-sol:medium` |
 | `opencode-go` | `opencode-go:glm-5.3-flash:max` |
 | `zai` | `zai:glm-5.3-flash:max` |
 
@@ -141,10 +141,15 @@ continuity, encrypted replay state, prompt-cache affinity, and routing metadata
 in memory. Session IDs provide stable cache scope across provider
 reconstruction and resume. New and forked sessions receive distinct scopes.
 The advertised catalog currently includes `gpt-5.6-sol`,
-`gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-6-astra`.
+`gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-6-astra`, `gpt-6-sol`, and
+`gpt-6-luna`.
 Select Astra with `yoke --model codex:gpt-6-astra:medium "..."`. Yoke caps
 its context window at 400,000 tokens and supports image inputs and `low`,
 `medium`, `high`, `xhigh`, and `max` reasoning efforts (default: `medium`).
+Select Sol or Luna with `codex:gpt-6-sol:<effort>` or
+`codex:gpt-6-luna:<effort>`. Yoke also caps those models at 400,000 tokens;
+both support image inputs and `none`, `low`, `medium`, `high`, `xhigh`, and
+`max` reasoning efforts (default: `medium`).
 
 OpenCode Go advertises its maintained model catalog, including the Contributor
 tier of `muse-spark-1.3-contributor`. Yoke caps its upstream 1,048,576-token
@@ -168,7 +173,7 @@ Use these commands to inspect or change defaults:
 
 ```bash
 yoke models list
-yoke models set codex:gpt-5.6-sol:medium
+yoke models set codex:gpt-6-sol:medium
 yoke models set opencode-go:glm-5.3-flash:max
 yoke models set zai:glm-5.3-flash:max
 yoke models set

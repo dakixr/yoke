@@ -63,6 +63,22 @@ MODEL_CATALOG = (
         default_thinking_level="medium",
         supports_image_inputs=True,
     ),
+    ProviderModelInfo(
+        id="gpt-6-sol",
+        display_name="GPT-6 Sol",
+        context_window_tokens=400_000,
+        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
+    ProviderModelInfo(
+        id="gpt-6-luna",
+        display_name="GPT-6 Luna",
+        context_window_tokens=400_000,
+        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
 )
 
 

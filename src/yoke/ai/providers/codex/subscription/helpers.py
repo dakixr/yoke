@@ -19,6 +19,12 @@ def clamp_reasoning_effort(model: str, effort: str) -> str:
             if normalized in ("low", "medium", "high", "xhigh", "max")
             else "medium"
         )
+    if model in {"gpt-6-sol", "gpt-6-luna"}:
+        return (
+            normalized
+            if normalized in ("none", "low", "medium", "high", "xhigh", "max")
+            else "medium"
+        )
     if normalized == "max" and not model.startswith("gpt-5.6"):
         return "xhigh" if "gpt-5" in model else "high"
     if normalized == "xhigh" and "gpt-5" not in model:

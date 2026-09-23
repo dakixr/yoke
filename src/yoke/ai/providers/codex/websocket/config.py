@@ -52,7 +52,7 @@ def register_provider(context: Any) -> CodexProvider:
         context.model
         or env.get("YOKE_CODEX_MODEL")
         or env.get("YOKE_CODEX_WEBSOCKETS_MODEL")
-        or "gpt-5.6-sol"
+        or "gpt-6-sol"
     )
     from yoke.ai.providers.codex.websocket.provider import CodexProvider
 
