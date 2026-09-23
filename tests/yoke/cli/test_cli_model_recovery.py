@@ -63,7 +63,7 @@ def write_default(root: Path, model: str) -> Path:
     [
         ("zai", "glm-5.3-flash", "max"),
         ("opencode-go", "glm-5.3-flash", "max"),
-        ("codex", "gpt-5.6-sol", "medium"),
+        ("codex", "gpt-6-sol", "medium"),
     ],
 )
 def test_interactive_stale_default_opens_and_keeps_config(
