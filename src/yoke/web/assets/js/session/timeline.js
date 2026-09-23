@@ -5,7 +5,7 @@ import { assistantMetadataMessageIDs, compactToolBatchMessageIDs, projectedMessa
 import { controller } from "../state/controller.js";
 import { getScroll, setScroll } from "../state/local-state.js";
 import { chatActivityForRuntime } from "./activity.js";
-import { markdownHTML } from "./markdown.js";
+import { markdownHTML, renderMarkdownMath } from "./markdown.js";
 import { formatTurnSummary } from "./turn-summary.js";
 
 export function Timeline({ sessionID, data, runtime }) {
@@ -201,7 +201,7 @@ function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolR
   return html`<article class=${`turn turn--assistant ${commentary ? "is-commentary" : ""} ${toolOnly ? "is-tool-only" : ""} ${compactToolBatch ? "is-tool-run-continuation" : ""}`}>
     ${showMetadata ? html`<div class="turn__rail"><span class="turn__label">${phase}</span>${message.timeCreated ? html`<time>${formatTime(message.timeCreated)}</time>` : null}</div>` : null}
     <div class="turn__body assistant-content">
-      ${text ? html`<div class="markdown" dangerouslySetInnerHTML=${{ __html: renderedText }}></div>` : null}
+      ${text ? html`<${MarkdownContent} renderedText=${renderedText} />` : null}
       ${images.map((part) => html`<span class="attachment-chip">▧ ${part.name}</span>`)}
       ${message.toolCalls?.length ? html`<div class="tool-call-list">
         ${message.toolCalls.map((call) => {
@@ -224,6 +224,14 @@ function AssistantMessage({ sessionID = null, message, liveToolsByID = {}, toolR
       </div>` : null}
     </div>
   </article>`;
+}
+
+function MarkdownContent({ renderedText }) {
+  const root = useRef(null);
+  useLayoutEffect(() => {
+    renderMarkdownMath(root.current);
+  }, [renderedText]);
+  return html`<div ref=${root} class="markdown" dangerouslySetInnerHTML=${{ __html: renderedText }}></div>`;
 }
 
 function ToolMessage({ sessionID, message, toolName = null }) {

@@ -49,6 +49,9 @@ node --experimental-default-type=module scripts/test_web_location_picker.mjs
 palette, and `scripts/test_web_type_to_focus_browser.py` drives composer
 type-to-focus, both in Chrome against in-browser fixtures. Run them with
 `uv run python scripts/<name>.py`.
+`scripts/test_web_markdown_math_browser.py` covers sanitized assistant Markdown,
+inline and display math, code blocks, and the bundled KaTeX fonts with the same
+fixture approach.
 
 ## Workspace status and recovery
 
@@ -225,7 +228,12 @@ application shell, and `GET /assets/*` serves the packaged browser modules,
 CSS, vendored dependencies, and licenses. `/settings` is a compatibility alias
 for the home view, not a separate settings screen. These browser routes are excluded
 from the v1 OpenAPI schema. Production does not require Node.js, npm, a CDN, or
-a separate frontend server. When image attachments are enabled, the composer
+a separate frontend server. Assistant Markdown is sanitized before display and
+then renders TeX math with the bundled KaTeX assets. `\\(...\\)` is inline math;
+`\\[...\\]` and `$$...$$` are display math. Math-like text inside code spans or
+fences stays literal, and single-dollar `$...$` text is left alone so prices do
+not turn into formulas. Math rendering does not require a CDN or other browser
+network request. When image attachments are enabled, the composer
 accepts images from the file picker, drag and drop, and the browser paste event
 used by Cmd+V on macOS or Ctrl+V on other platforms. Composer keyboard behavior
 tracks the interactive CLI: Enter sends or steers, Tab queues, Shift+Tab cycles

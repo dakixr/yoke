@@ -293,6 +293,15 @@ def test_packaged_web_app_routes_and_assets_share_api_origin(tmp_path: Path) -> 
     controller_asset = client.get("/assets/js/state/controller.js")
     assert controller_asset.status_code == 200
 
+    math_module = client.get("/assets/vendor/katex/katex.mjs")
+    assert math_module.status_code == 200
+    assert math_module.headers["cache-control"] == "no-store"
+    assert "javascript" in math_module.headers["content-type"]
+    math_styles = client.get("/assets/vendor/katex/katex.min.css")
+    assert math_styles.status_code == 200
+    assert math_styles.headers["cache-control"] == "no-store"
+    assert math_styles.headers["content-type"].startswith("text/css")
+
     missing = client.get("/assets/not-real.js")
     assert missing.status_code == 404
     unknown = client.get("/not-an-app-route")
