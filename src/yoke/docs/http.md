@@ -49,6 +49,8 @@ node --experimental-default-type=module scripts/test_web_location_picker.mjs
 palette, and `scripts/test_web_type_to_focus_browser.py` drives composer
 type-to-focus, both in Chrome against in-browser fixtures. Run them with
 `uv run python scripts/<name>.py`.
+`scripts/test_web_composer_popover_browser.py` verifies completion menus open
+above both the saved-session and new-session composers.
 `scripts/test_web_markdown_math_browser.py` covers sanitized assistant Markdown,
 inline and display math, code blocks, and the bundled KaTeX fonts with the same
 fixture approach.
@@ -268,6 +270,9 @@ Choosing a skill inserts `$skill-name` without sending, supports several skill
 mentions in one prompt, and remains available when images are attached. Skills
 activate only when the submitted or queued prompt starts running; the prompt API
 and queue transport remain plain text and need no separate activation request.
+Literal dollar tokens that cannot name a Yoke skill, such as `$HOME` or `$5`, do
+not open skill completion or interfere with sending the prompt. The completion
+menu opens above the composer in both saved sessions and new-session drafts.
 
 ## Working location palette
 

@@ -77,7 +77,11 @@ const {
 const { treeKeyboardTarget } = await import("../src/yoke/web/assets/js/inspector/tree-keyboard.js");
 const { createLocationBrowseCoordinator, isFilesystemBrowseQuery } = await import("../src/yoke/web/assets/js/session/location-picker-logic.js");
 const { filterModelChoices, groupModelChoices, modelNavigationIndex, modelSelectionErrorMessage, resolveModelEffort } = await import("../src/yoke/web/assets/js/session/model-picker-logic.js");
-const { slashMenuScrollDelta } = await import("../src/yoke/web/assets/js/session/slash-menu-logic.js");
+const {
+  captureCompletionKeyWhileLoading,
+  skillMentionCompletionContext,
+  slashMenuScrollDelta,
+} = await import("../src/yoke/web/assets/js/session/slash-menu-logic.js");
 const { formatTurnSummary } = await import("../src/yoke/web/assets/js/session/turn-summary.js");
 const { installKeybindings } = await import("../src/yoke/web/assets/js/lib/keyboard.js");
 const { visualSessionOrder } = await import("../src/yoke/web/assets/js/state/session-order.js");
@@ -2791,6 +2795,22 @@ async function testSlashMenuKeepsKeyboardSelectionInsideViewport() {
   assert.equal(slashMenuScrollDelta({ viewportTop: 100, viewportBottom: 300, itemTop: 300, itemBottom: 342 }), 42);
 }
 
+async function testSkillMentionCompletionMatchesRuntimeGrammar() {
+  assert.deepEqual(skillMentionCompletionContext("Use $front"), {
+    kind: "skillMention", token: "front", replaceStart: 4, replaceEnd: 10,
+  });
+  assert.deepEqual(skillMentionCompletionContext("Use $review later", 8), {
+    kind: "skillMention", token: "rev", replaceStart: 4, replaceEnd: 11,
+  });
+  assert.equal(skillMentionCompletionContext("echo $HOME"), null);
+  assert.equal(skillMentionCompletionContext("costs $5"), null);
+  assert.equal(skillMentionCompletionContext("Use $review_extra"), null);
+  assert.equal(skillMentionCompletionContext("Use \\$review"), null);
+  assert.equal(captureCompletionKeyWhileLoading("Enter", "skillMention"), false);
+  assert.equal(captureCompletionKeyWhileLoading("Tab", "skillMention"), true);
+  assert.equal(captureCompletionKeyWhileLoading("Enter", "skill"), true);
+}
+
 async function testTreeKeyboardNavigationFollowsVisibleTopology() {
   const rows = [
     { id: "root", graphParentID: null, active: true },
@@ -3274,6 +3294,7 @@ const tests = [
   testLocationBrowseKeepsNewestNavigation,
   testCombinedModelPickerFiltersAcrossProviders,
   testSlashMenuKeepsKeyboardSelectionInsideViewport,
+  testSkillMentionCompletionMatchesRuntimeGrammar,
   testTreeKeyboardNavigationFollowsVisibleTopology,
   testNewSessionGlobalShortcutSupportsMacAndWindows,
   testSidebarGlobalShortcutSupportsMacAndWindows,

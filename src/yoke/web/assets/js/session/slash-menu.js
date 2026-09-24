@@ -1,7 +1,11 @@
 import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
-import { slashMenuScrollDelta } from "./slash-menu-logic.js";
+import {
+  captureCompletionKeyWhileLoading,
+  skillMentionCompletionContext,
+  slashMenuScrollDelta,
+} from "./slash-menu-logic.js";
 
 const MAX_ARGUMENT_ITEMS = 9;
 
@@ -106,25 +110,6 @@ export function slashCompletionContext(text) {
     token: argumentText,
     replaceStart: value.length - argumentText.length,
     replaceEnd: value.length,
-  };
-}
-
-export function skillMentionCompletionContext(text, cursorPosition = null) {
-  const value = String(text || "");
-  const cursor = Math.max(0, Math.min(value.length, cursorPosition ?? value.length));
-  const beforeCursor = value.slice(0, cursor);
-  const match = beforeCursor.match(/\$([A-Za-z0-9_:-]*)$/);
-  if (!match) return null;
-  const replaceStart = cursor - match[0].length;
-  const preceding = replaceStart > 0 ? value[replaceStart - 1] : "";
-  if (preceding && /[A-Za-z0-9_$\\]/.test(preceding)) return null;
-  let replaceEnd = cursor;
-  while (replaceEnd < value.length && /[A-Za-z0-9_:-]/.test(value[replaceEnd])) replaceEnd += 1;
-  return {
-    kind: "skillMention",
-    token: match[1],
-    replaceStart,
-    replaceEnd,
   };
 }
 
@@ -278,6 +263,7 @@ export function handleSlashMenuKey(event, menu, choose) {
   if ((event.key === "Tab" && !event.shiftKey) || (event.key === "Enter" && !event.shiftKey)) {
     const item = menu.items[menu.activeIndex];
     if (!item && menu.loading) {
+      if (!captureCompletionKeyWhileLoading(event.key, menu.context?.kind)) return false;
       event.preventDefault();
       event.stopPropagation();
       return true;

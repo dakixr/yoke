@@ -228,7 +228,6 @@
 .location-picker__trigger-hint { flex: none; padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--faint); font-size: 8.5px; font-weight: 720; letter-spacing: .04em; text-transform: uppercase; }
 .composer-shell--draft { margin-top: 6px; }
 .composer-input--draft { min-height: 180px; font-size: 14px; }
-.draft-composer-wrap .slash-menu { top: calc(100% + 6px); bottom: auto; }
 
 @media (max-width: 760px) {
   .session-header { min-height: 51px; padding: 5px 7px; }
@@ -277,7 +276,6 @@
   .slash-menu__keys--mobile { display: inline; font-size: 10.5px; line-height: 1.25; text-align: left; white-space: nowrap; }
   .slash-menu__items { max-height: 240px; }
   .slash-menu__item { height: 58px; min-height: 58px; }
-  .draft-composer-wrap .slash-menu { top: auto; bottom: calc(100% + 6px); }
   .draft-composer-wrap .model-picker__panel { top: auto; bottom: 74px; }
   .slash-menu__copy small { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
   .draft-composer-wrap { width: calc(100% - 22px); padding-top: 28px; }
