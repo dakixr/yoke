@@ -105,6 +105,23 @@ The read envelope is `{ok, reason, items}`. Normal reasons are:
 `error` and `cancelled` are exceptional reasons. This interface uses explicit
 reads; it does not promise runtime push delivery or output batching thresholds.
 
+## Automatic completion notices
+
+The native agent adds a status-only notice before its next model call when a
+background command finishes. Notices batch completed sessions and include their
+session IDs, statuses, exit codes, elapsed times, commands, and working directories.
+They do not include command output or advance output cursors. Output remains in
+the process tools, so a notice cannot replay logs from an earlier read.
+
+Use `process_read` with the last returned cursor for each session when its output
+is needed. A read that reports the session as terminal suppresses a later notice
+for that completion. A read made while the session is still running does not
+suppress its eventual completion notice. Notices also report
+`older_events_dropped` when the bounded completion queue evicts older events.
+
+These notices are native agent context messages, not an MCP push-delivery
+contract. MCP clients continue to use explicit process reads.
+
 ## Input and cancellation
 
 `process_input` requires `session_id` and nonempty `chars`. It also accepts
