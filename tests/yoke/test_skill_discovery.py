@@ -2,10 +2,29 @@
 
 from pathlib import Path
 
+import pytest
+import yaml
+
 from yoke.agent.skills.discovery import builtin_skill_dir
 from yoke.agent.skills.discovery import discover_skills
 from yoke.agent.skills.discovery import load_skill
 from yoke.agent.skills.paths import default_skill_dirs
+
+
+@pytest.mark.parametrize(
+    "root", sorted(builtin_skill_dir().iterdir()), ids=lambda p: p.name
+)
+def test_builtin_skills_have_valid_yaml_metadata(root: Path) -> None:
+    """Shared skills must parse as YAML in other harnesses as well as Yoke."""
+    content = (root / "SKILL.md").read_text(encoding="utf-8")
+    assert content.startswith("---\n")
+    metadata = yaml.safe_load(content.split("---", 2)[1])
+    assert isinstance(metadata, dict)
+    assert metadata["name"] == root.name
+    assert isinstance(metadata["description"], str)
+    assert metadata["description"].strip()
+    skill = load_skill(root)
+    assert skill.description == metadata["description"]
 
 
 def _write_skill(parent: Path, name: str, description: str) -> Path:
