@@ -60,7 +60,7 @@ def test_codex_readiness_recognizes_account_vault_credentials(
     account_auth.parent.mkdir(parents=True)
     account_auth.write_text("{}", encoding="utf-8")
 
-    ready = provider_status("codex:gpt-5.6-sol", env={}, home=tmp_path)
+    ready = provider_status("codex:gpt-6-sol", env={}, home=tmp_path)
 
     assert ready.ready is True
 

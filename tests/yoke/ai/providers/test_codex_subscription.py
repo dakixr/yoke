@@ -94,21 +94,19 @@ def test_invalid_oauth_token_error_detection() -> None:
     assert not is_invalid_oauth_token_error("rate limited")
 
 
-def test_codex_gpt_5_6_accepts_max_reasoning_effort(tmp_path: Path) -> None:
+def test_legacy_codex_gpt_5_6_request_contract(tmp_path: Path) -> None:
     provider = CodexSubscriptionProvider(
         CodexSubscriptionConfig(
             auth_path=tmp_path / "auth.json",
             accounts_dir=tmp_path / "accounts",
             auths_path=tmp_path / "auths.json",
             selection_path=tmp_path / "selection.json",
-            model="gpt-5.6-terra",
-            reasoning_effort="medium",
+            model="gpt-5.6-luna",
+            reasoning_effort="max",
         )
     )
 
     try:
-        provider.set_model("gpt-5.6-luna", reasoning_effort="max")
-
         assert provider.config.model == "gpt-5.6-luna"
         assert provider.config.reasoning_effort == "max"
         assert provider._request_payload([Message.user("hello")], [])["reasoning"] == {

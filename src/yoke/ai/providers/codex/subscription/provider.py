@@ -17,7 +17,7 @@ from yoke.ai.providers.base import (
 )
 from yoke.ai.providers.model_selection import set_config_model_from_catalog
 
-from .catalog import MODEL_CATALOG, PROVIDER_NAME
+from .catalog import LEGACY_MODEL_CATALOG, MODEL_CATALOG, PROVIDER_NAME
 from .completion import CodexCompletionMixin
 from .config import CodexSubscriptionConfig
 from .images import CodexImageMixin
@@ -42,7 +42,7 @@ class CodexSubscriptionProvider(
         self.config = config
         set_config_model_from_catalog(
             self.config,
-            MODEL_CATALOG,
+            MODEL_CATALOG + LEGACY_MODEL_CATALOG,
             provider_name=PROVIDER_NAME,
             model_id=self.config.model,
             reasoning_effort=self.config.reasoning_effort,

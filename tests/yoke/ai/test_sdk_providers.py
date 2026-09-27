@@ -135,11 +135,11 @@ def test_build_builtin_provider_accepts_selection_string(
 
     provider = cast(
         CodexSubscriptionProvider,
-        build_builtin_provider("codex:gpt-5.6-sol:high"),
+        build_builtin_provider("codex:gpt-6-sol:high"),
     )
 
     config = provider.config
-    assert config.model == "gpt-5.6-sol"
+    assert config.model == "gpt-6-sol"
     assert config.reasoning_effort == "high"
     provider.close()
 

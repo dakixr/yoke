@@ -7,8 +7,32 @@ import pytest
 
 from yoke.agent.models import Message
 from yoke.ai.providers.codex.subscription import clamp_reasoning_effort
+from yoke.ai.providers.codex.subscription.catalog import list_provider_models
 from yoke.ai.providers.codex.websocket.provider import CodexProvider
+from yoke.ai.providers.model_selection import UnknownModelError
 from yoke.ai.sdk.providers import build_builtin_provider
+
+
+def test_codex_catalog_only_advertises_gpt6_models() -> None:
+    assert [model.id for model in list_provider_models(None)] == [
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+    ]
+
+
+def test_codex_rejects_new_gpt5_selection(tmp_path: Path) -> None:
+    provider = build_builtin_provider(
+        "codex:gpt-6-sol:medium",
+        env={"YOKE_CODEX_API_KEY": "test-key"},
+        home=tmp_path,
+    )
+    assert isinstance(provider, CodexProvider)
+    try:
+        with pytest.raises(UnknownModelError):
+            provider.set_model("gpt-5.6-sol")
+    finally:
+        provider.close()
 
 
 @pytest.mark.parametrize("model_id", ["gpt-6-sol", "gpt-6-luna"])

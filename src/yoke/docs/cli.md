@@ -108,7 +108,7 @@ Select models with `provider:model` or `provider:model:thinking_effort`:
 
 ```bash
 yoke --model codex:gpt-6-sol:medium "..."
-yoke --model codex:gpt-5.6-terra:max "..."
+yoke --model codex:gpt-6-astra:max "..."
 yoke --model opencode-go:muse-spark-1.3-contributor:high "..."
 yoke --model opencode-go:glm-5.3-flash:max "..."
 yoke --model zai:glm-5.3-flash:max "..."
@@ -140,9 +140,9 @@ Codex uses a persistent Responses WebSocket transport and keeps response
 continuity, encrypted replay state, prompt-cache affinity, and routing metadata
 in memory. Session IDs provide stable cache scope across provider
 reconstruction and resume. New and forked sessions receive distinct scopes.
-The advertised catalog currently includes `gpt-5.6-sol`,
-`gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-6-astra`, `gpt-6-sol`, and
-`gpt-6-luna`.
+The advertised catalog currently includes `gpt-6-astra`, `gpt-6-sol`, and
+`gpt-6-luna`. GPT-5.6 models no longer appear as selectable models; the Codex
+provider still handles legacy configurations that already use them.
 Select Astra with `yoke --model codex:gpt-6-astra:medium "..."`. Yoke caps
 its context window at 400,000 tokens and supports image inputs and `low`,
 `medium`, `high`, `xhigh`, and `max` reasoning efforts (default: `medium`).

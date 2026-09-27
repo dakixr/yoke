@@ -32,30 +32,6 @@ DEFAULT_YOKE_ORIGINATOR = "yoke"
 CODEX_CLI_ORIGINATOR = "codex_cli_rs"
 MODEL_CATALOG = (
     ProviderModelInfo(
-        id="gpt-5.6-sol",
-        display_name="GPT-5.6 Sol",
-        context_window_tokens=400_000,
-        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="gpt-5.6-terra",
-        display_name="GPT-5.6 Terra",
-        context_window_tokens=400_000,
-        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="gpt-5.6-luna",
-        display_name="GPT-5.6 Luna",
-        context_window_tokens=400_000,
-        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
         id="gpt-6-astra",
         display_name="GPT-6 Astra",
         context_window_tokens=400_000,
@@ -79,6 +55,19 @@ MODEL_CATALOG = (
         default_thinking_level="medium",
         supports_image_inputs=True,
     ),
+)
+
+# Keep configured legacy models usable without offering them for new selection.
+LEGACY_MODEL_CATALOG = tuple(
+    ProviderModelInfo(
+        id=f"gpt-5.6-{name}",
+        display_name=f"GPT-5.6 {name.title()}",
+        context_window_tokens=400_000,
+        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    )
+    for name in ("sol", "terra", "luna")
 )
 
 
