@@ -142,12 +142,18 @@ class FixtureNative(NativeClient):
                     {
                         "tool_call_id": "call",
                         "tool_name": "read",
-                        "tool_arguments": {},
+                        "tool_arguments": '{"path":"src/app.py","offset":3}',
                     },
                 ),
                 (
                     "session.tool.ended",
-                    {"tool_call_id": "call", "ok": True, "result": {"ok": True}},
+                    {
+                        "tool_call_id": "call",
+                        "tool_name": "read",
+                        "executed_arguments": {"path": "src/app.py", "offset": 3},
+                        "ok": True,
+                        "result": {"ok": True, "content": "line one\nline two"},
+                    },
                 ),
             ]:
                 self.queue.put_nowait(
@@ -266,6 +272,12 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             ["tool_call", "tool_call_update", "agent_message_chunk"],
         )
         self.assertEqual(self.updates[-1]["content"]["text"], "Done.")
+        start, end = self.updates[:2]
+        self.assertEqual(start["kind"], "read")
+        self.assertEqual(end["kind"], "read")
+        self.assertEqual(start["title"], end["title"])
+        self.assertEqual(end["rawInput"], {"path": "src/app.py", "offset": 3})
+        self.assertEqual(end["content"][0]["content"]["text"], "line one\nline two")
 
     async def test_cancel_waits_for_native_worker_drain_and_can_resume(self) -> None:
         self.native.hold = True

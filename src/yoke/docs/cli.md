@@ -69,6 +69,35 @@ content; generic files are saved for Yoke's file-reading tools rather than
 expanded into the prompt. Attachment-only turns are accepted. The native store
 keeps the uploaded bytes when an ACP process exits or a session is resumed.
 
+Tool rows retain their action and target when they finish, rather than using
+the result JSON as a label. The ACP peer identifies file reads, edits, searches,
+and command execution for stock client presentation; process polling and MCP
+calls keep descriptive labels. Command and search arguments gain display aliases
+only in ACP, without changing native tool execution or model-visible messages.
+Expanded output uses readable text with a bounded head/tail preview, while
+`rawOutput` retains the native structured result. Clients may impose their own
+limits. File locations use the native session's workspace for relative paths,
+never the peer's potentially different working directory. Interrupted calls
+with no final result close as unconfirmed failures rather than staying active.
+
+Managed jobs that remain running after a command launch or process read also
+publish a separate background-task lifecycle to the Yoke T3 adapter. Stock T3
+clients show Monitoring when these are the only remaining work after the turn
+ends. The ACP peer watches the native process inspector through read-only
+requests and event invalidations, with a 15-second fallback snapshot check for
+lost notifications. Job completion, failure, and termination update that task
+even when the foreground turn has finished. Repeated snapshots and
+elapsed-time-only changes do not generate new activity rows.
+
+Ending observation does not stop a job. A disconnected observer or closed ACP
+peer ends its displayed monitoring task with the process status marked unknown,
+not successful. The peer tracks jobs observed by its command and process tools;
+after reconnecting, a process read can reestablish observation of a running job.
+Long process waits use a Monitoring label, while `wait_ms: 0` remains a snapshot.
+When a successful turn settles before its live tool notifications arrive, the
+bridge recovers missing calls from that turn's saved transcript and inspector.
+Already displayed completions are not replayed.
+
 ACP clients request a promptless continuation with `prompt: []` and
 `_meta.yokeContinuation: true`. This performs another inference on the existing
 conversation without inserting a synthetic user message. Empty prompts without

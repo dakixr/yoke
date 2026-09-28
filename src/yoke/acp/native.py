@@ -12,6 +12,7 @@ from urllib.parse import quote
 import httpx
 from acp import RequestError
 
+from yoke.acp.process_monitor import ProcessMonitor
 from yoke.acp.prompting import InlineAttachment
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -33,6 +34,7 @@ class NativeClient:
             trust_env=False,
             follow_redirects=False,
         )
+        self.process_monitor = ProcessMonitor(self)
 
     @staticmethod
     def path(session_id: str, suffix: str = "") -> str:
@@ -40,6 +42,7 @@ class NativeClient:
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
+        await self.process_monitor.close()
         await self.http.aclose()
 
     async def request(self, method: str, path: str, **kwargs: Any) -> Any:
@@ -170,6 +173,8 @@ class NativeClient:
             elif found and message["type"] == "assistant":
                 if message.get("inputID") not in (None, input_id):
                     break  # A later promptless turn is not this prompt's answer.
+                for call in message.get("toolCalls", []):
+                    await emit("session.tool.reconcile", call)
                 if message.get("phase") != "commentary" and not message.get(
                     "toolCalls"
                 ):

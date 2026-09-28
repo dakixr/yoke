@@ -3,22 +3,72 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote
 
 from acp import RequestError
 from acp import schema as s
 
 from yoke.acp.prompting import decode_prompt
+from yoke.acp.tools import ToolCallProjector
 
 if TYPE_CHECKING:
     from yoke.acp.bridge import YokeAcpAgent
 
 
 async def emit(
-    agent: YokeAcpAgent, session_id: str, kind: str, data: dict[str, Any]
+    agent: YokeAcpAgent,
+    session_id: str,
+    kind: str,
+    data: dict[str, Any],
+    tools: ToolCallProjector,
 ) -> None:
+    if kind == "session.tool.reconcile":
+        call_id = data["id"]
+        if tools.has_completed(call_id):
+            return
+        if not tools.has_started(call_id):
+            await emit(
+                agent,
+                session_id,
+                "session.tool.started",
+                {
+                    "tool_call_id": call_id,
+                    "tool_name": data["name"],
+                    "tool_arguments": data["arguments"],
+                },
+                tools,
+            )
+        # Live tool events are ephemeral. The settled transcript supplies exact
+        # call ownership, and the inspector supplies the actual raw result.
+        try:
+            info = await agent.native.data(
+                "GET",
+                agent.native.path(session_id, "/tool-call/" + quote(call_id, safe="")),
+            )
+        except Exception:  # noqa: BLE001 - finish() marks an unavailable result
+            return
+        if info.get("id") != call_id or info.get("status") not in (
+            "ok",
+            "failed",
+            "cancelled",
+        ):
+            return
+        await emit(
+            agent,
+            session_id,
+            "session.tool.ended",
+            {
+                "tool_call_id": call_id,
+                "tool_name": info["toolName"],
+                "executed_arguments": info.get("arguments", {}).get("executed"),
+                "result": info.get("result"),
+                "ok": info["status"] == "ok",
+            },
+            tools,
+        )
+        return
     if kind == "answer" or (
         kind == "session.message.updated" and data.get("phase") == "commentary"
     ):
@@ -30,32 +80,39 @@ async def emit(
             },
         )
     elif kind in ("session.tool.started", "session.tool.ended"):
-        start = kind.endswith("started")
-        update: dict[str, Any] = {
-            "sessionUpdate": "tool_call" if start else "tool_call_update",
-            "toolCallId": data["tool_call_id"],
-            "status": "in_progress"
-            if start
-            else ("completed" if data["ok"] else "failed"),
-        }
-        if start:
-            update.update(
-                title=data["tool_name"],
-                kind="other",
-                rawInput=data.get("tool_arguments"),
+        call_id = data["tool_call_id"]
+        if tools.has_completed(call_id) or (
+            kind == "session.tool.started" and tools.has_started(call_id)
+        ):
+            return
+        await agent.update(
+            session_id, tools.update(start=kind.endswith("started"), data=data)
+        )
+        result = data.get("result")
+        if (
+            kind == "session.tool.ended"
+            and data.get("tool_name")
+            in ("command_exec", "python_exec", "process_read", "process_input")
+            and isinstance(result, dict)
+        ):
+            processes = (
+                result.get("items", [])
+                if data["tool_name"] == "process_read"
+                else [result]
             )
-        else:
-            update["rawOutput"] = data.get("result")
-            update["content"] = [
-                {
-                    "type": "content",
-                    "content": {
-                        "type": "text",
-                        "text": json.dumps(data.get("result"), ensure_ascii=False),
-                    },
-                }
-            ]
-        await agent.update(session_id, update)
+            if isinstance(processes, list):
+                for process in processes:
+                    if (
+                        isinstance(process, dict)
+                        and process.get("running") is True
+                        and type(process.get("session_id")) is int
+                    ):
+                        await agent.native.process_monitor.track(
+                            session_id,
+                            process["session_id"],
+                            data["tool_call_id"],
+                            agent.update,
+                        )
 
 
 async def prompt(
@@ -85,17 +142,30 @@ async def prompt(
             "task": asyncio.current_task(),
         }
         agent.active[session_id] = work
+        tools = ToolCallProjector()
+        reason = "failed"
         try:
+            session = await agent.native.data("GET", agent.native.path(session_id))
+            tools.cwd = session.get("location", {}).get("directory")
             reason = await agent.native.turn(
                 session_id,
                 decoded.text,
                 input_id,
                 work,
-                lambda event, data: emit(agent, session_id, event, data),
+                lambda event, data: emit(agent, session_id, event, data, tools),
                 attachments=decoded.attachments,
                 continuation=decoded.continuation,
             )
             return s.PromptResponse(stop_reason=cast(s.StopReason, reason))
         finally:
-            work["done"].set()
-            agent.active.pop(session_id, None)
+            try:
+                for update in tools.finish(
+                    interrupted=reason == "cancelled" or work["cancel"]
+                ):
+                    try:
+                        await agent.update(session_id, update)
+                    except Exception:  # noqa: BLE001 - preserve the original turn error
+                        break
+            finally:
+                work["done"].set()
+                agent.active.pop(session_id, None)
