@@ -181,11 +181,32 @@ try {
     assert.equal(await client.evaluate("audit.mutations.filter(item => item.kind === 'navigate').at(-1).targetID"), "node-20");
   });
   await test("all supporting views render real components without exceptions", async () => {
-    for (const mode of ["process", "tools", "skills", "mcp", "context"]) {
+    for (const mode of ["process", "agents", "tools", "skills", "mcp", "context"]) {
       await open(mode);
       await client.screenshot(`${mode}-desktop`);
       assert.equal(await client.evaluate("Boolean(document.querySelector('.inspector-load-error'))"), false);
     }
+  });
+  await test("agents list running work with nested sub-agents and link to their process", async () => {
+    await open("agents");
+    await client.wait("document.querySelectorAll('.agent-list .agent-row').length === 2");
+    assert.ok(await client.evaluate("document.querySelector('.agent-sidebar__header').textContent.includes('2 running / 4 retained')"));
+    assert.ok(await client.evaluate("document.querySelector('.agent-filter .is-active').textContent === 'Running'"));
+    assert.ok(await client.evaluate("[...document.querySelectorAll('.agent-row')].find(node => node.textContent.includes('recon-implementation')).style.getPropertyValue('--agent-depth').trim() === '1'"));
+    assert.equal(await client.evaluate("Boolean(document.querySelector('.agent-roster'))"), false);
+    await client.screenshot("agents-desktop");
+    await client.evaluate("[...document.querySelectorAll('.agent-filter button')].find(node => node.textContent.includes('All')).click()");
+    await client.wait("document.querySelectorAll('.agent-list .agent-row').length === 4");
+    await client.evaluate("[...document.querySelectorAll('.agent-row')].find(node => node.textContent.includes('recon-game')).click()");
+    await client.wait("document.querySelector('.agent-detail-header')?.textContent.includes('recon-game')");
+    assert.ok(await client.evaluate("document.querySelector('.agent-facts').textContent.includes('TimeoutError')"));
+    await client.screenshot("agents-failed-desktop");
+    await client.evaluate("[...document.querySelectorAll('.agent-row')].find(node => node.textContent.includes('recon-implementation')).click()");
+    await client.wait("document.querySelector('.agent-detail-header')?.textContent.includes('recon-implementation')");
+    await client.evaluate("[...document.querySelectorAll('.agent-link')].find(node => node.textContent === 'Open process').click()");
+    await client.wait("audit.store.getState().sessionData[audit.sessionID].processDetail?.processID === 'process-1' && document.querySelector('.process-detail-header')");
+    await client.evaluate("[...document.querySelectorAll('.process-back-row button')].find(node => node.textContent === 'Back to origin').click()");
+    await client.wait("document.querySelector('.agent-detail-header')?.textContent.includes('recon-implementation')");
   });
   await test("rapid renewed process selection keeps the user's final choice", async () => {
     await open("process");
@@ -237,9 +258,10 @@ try {
     await open("tree");
     assert.ok(await client.evaluate("[...document.querySelectorAll('.tree-entry__time')].some(node => node.getClientRects().length && getComputedStyle(node).display !== 'none')"));
     await client.screenshot("tree-mobile");
-    for (const mode of ["process", "tools", "mcp", "context"]) {
+    for (const mode of ["process", "agents", "tools", "mcp", "context"]) {
       await open(mode);
       assert.ok(await client.evaluate("document.querySelector('.inspector').scrollWidth <= document.querySelector('.inspector').clientWidth + 1"));
+      if (mode === "agents") assert.ok(await client.evaluate("document.querySelector('.agent-mobile-back').getClientRects().length > 0"));
       await client.screenshot(`${mode}-mobile`);
     }
   });

@@ -82,6 +82,11 @@ COMMANDS = (
         action="process.list",
     ),
     CommandInfo(
+        name="agents",
+        description="Inspect Yoke SDK agents started in this session.",
+        action="agent.list",
+    ),
+    CommandInfo(
         name="image", description="Attach an image to a prompt.", action="upload.create"
     ),
     CommandInfo(

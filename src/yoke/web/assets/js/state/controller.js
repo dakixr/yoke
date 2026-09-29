@@ -2289,6 +2289,7 @@ export class AppController {
     if (command.action === "session.tool") return this.openInspector("tools");
     if (command.action === "session.mcp") return this.openInspector("mcp");
     if (command.action === "process.list") return this.openInspector("process");
+    if (command.action === "agent.list") return this.openInspector("agents");
     if (command.action === "session.skill") return this.openInspector("skills");
     if (command.action === "session.queue") return this.focusQueueEditor();
     if (command.action === "session.selection") return this.focusModelSelector();

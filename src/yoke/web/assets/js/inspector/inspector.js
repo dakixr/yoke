@@ -4,6 +4,7 @@ import { useStore } from "../state/hooks.js";
 import { trapFocus } from "../lib/focus.js";
 import { useModalFocus } from "../lib/modal-focus.js";
 import { ContextInspector, FileInspector, McpInspector, SkillsInspector, ToolsInspector } from "./config.js";
+import { AgentInspector } from "./agents.js";
 import { ProcessInspector } from "./process.js";
 import { ToolInspector } from "./tool.js";
 import { TreeInspector } from "./tree.js";
@@ -12,6 +13,7 @@ const PRIMARY_VIEWS = [
   { mode: "tool", label: "Tool activity", feature: "toolInspector" },
   { mode: "tree", label: "Tree", feature: "sessionTree" },
   { mode: "process", label: "Processes", feature: "processInspector" },
+  { mode: "agents", label: "Agents" },
   { mode: "context", label: "Context" },
   { mode: "configuration", label: "Configuration" },
 ];
@@ -91,6 +93,7 @@ function InspectorDialog({ inspector, sessionID, session, data, capabilities }) 
             ${inspector.mode === "tree" ? html`<${TreeInspector} sessionID=${sessionID} data=${data} />` : null}
             ${inspector.mode === "tool" ? html`<${ToolInspector} sessionID=${sessionID} inspector=${inspector} data=${data} />` : null}
             ${inspector.mode === "process" ? html`<${ProcessInspector} sessionID=${sessionID} inspector=${inspector} data=${data} capabilities=${capabilities} />` : null}
+            ${inspector.mode === "agents" ? html`<${AgentInspector} sessionID=${sessionID} inspector=${inspector} capabilities=${capabilities} />` : null}
             ${inspector.mode === "tools" ? html`<${ToolsInspector} sessionID=${sessionID} data=${data} />` : null}
             ${inspector.mode === "skills" ? html`<${SkillsInspector} sessionID=${sessionID} data=${data} />` : null}
             ${inspector.mode === "mcp" ? html`<${McpInspector} sessionID=${sessionID} data=${data} />` : null}

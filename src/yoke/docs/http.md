@@ -520,9 +520,9 @@ prompt runs owned by that session, newest first, in a `data` array. It requires
 the normal HTTP authorization. Missing sessions return 404. Listing observations
 does not start a session, consume command output, or control a worker.
 
-The native session view groups these runs by agent and shows the latest run in
-its Agents section. It refreshes on selection, `session.agent.updated`, and
-reconnect. One Python process can host several independently tracked agents.
+The web inspector's Agents view groups these runs by agent and shows the latest
+run of each. While open, it refreshes on selection, `session.agent.updated`, and
+reconnect. The session view itself has no agent panel. One Python process can host several independently tracked agents.
 Reusing an agent keeps its identity and creates another run, while an unstarted
 agent does not count as running.
 
@@ -806,8 +806,8 @@ always show their role/time metadata. Within each assistant turn, only the last
 assistant row containing text shows assistant role/time metadata, so intermediate
 commentary and tool-calling rows do not repeat the same rail.
 
-Web inspectors share a modal with Tool activity, Tree, Processes, Context, and
-Configuration views. Tools, Skills, and MCP servers sit within Configuration.
+Web inspectors share a modal with Tool activity, Tree, Processes, Agents,
+Context, and Configuration views. Tools, Skills, and MCP servers sit within Configuration.
 Small screens use a fullscreen list or detail view with a Back control rather
 than two short stacked scrolling panes. Selection, filters, and reading positions
 stay with each session and view while the browser application remains open.

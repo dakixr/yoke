@@ -66,7 +66,7 @@ export async function openInspector(host, mode, payload = {}) {
         const match = store.getState().sessionData[sessionID]?.processes?.find((process) => (
           String(process.runtimeSessionID) === String(inspector.runtimeSessionID)
         ));
-        if (!match) throw new Error(`Process ${inspector.runtimeSessionID} is no longer retained. The originating tool result is still available.`);
+        if (!match) throw new Error(`Process ${inspector.runtimeSessionID} is no longer retained.`);
         store.setState((state) => ({ ...state, ui: { ...state.ui, inspector: { ...state.ui.inspector, processID: match.processID } } }));
         await host.loadProcess(match.processID);
       } else {

@@ -158,6 +158,14 @@ api.patchTreeEntry = async (_id, entryID, body) => {
 api.messages = async () => ({ data: [], cursor: { next: null } });
 api.getSession = async () => ({ data: copy(session) });
 api.processes = async () => ({ data: copy(processes) });
+const agentRun = (fields) => ({ schemaVersion: 1, sessionID: SESSION, provider: "codex", model: "gpt-6-sol", observation: "live", version: 1, lastSeenAt: date(300), updatedAt: date(300), runtimeSessionID: 7, ...fields });
+const agentRuns = [
+  agentRun({ agentId: "agent-root", runId: "run-root", name: "recon-lead", status: "running", startedAt: date(190), lastToolName: "rg" }),
+  agentRun({ agentId: "agent-child", runId: "run-child", parentAgentId: "agent-root", name: "recon-implementation", status: "running", startedAt: date(195), lastToolName: "read", taskId: "implementation" }),
+  agentRun({ agentId: "agent-done", runId: "run-done", name: "recon-experience", status: "completed", startedAt: date(90), finishedAt: date(160), lastToolName: "read", attempt: 1 }),
+  agentRun({ agentId: "agent-failed", runId: "run-failed", name: "recon-game", status: "failed", startedAt: date(80), finishedAt: date(85), errorType: "TimeoutError", runtimeSessionID: 6 }),
+];
+api.agentRuns = async () => ({ data: copy(agentRuns) });
 api.process = async (id) => ({ data: copy(processes.find((process) => process.processID === id)) });
 api.processOutput = async (id) => ({ data: [], cursor: { next: processes.find((process) => process.processID === id)?.output.latestSeq || 0, truncatedBefore: 0 } });
 api.processSignal = async (id, signal) => {

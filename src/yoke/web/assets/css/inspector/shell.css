@@ -55,7 +55,7 @@
 .inspector-subnav button { min-height: 40px; font-size: 12px; }
 .inspector__content { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; }
 .inspector__body { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 20px; scrollbar-gutter: stable; }
-.inspector__body--tree, .inspector__body--tool, .inspector__body--process { overflow: hidden; padding: 0; }
+.inspector__body--tree, .inspector__body--tool, .inspector__body--process, .inspector__body--agents { overflow: hidden; padding: 0; }
 .inspector-help { flex: none; padding: 9px 20px; border-bottom: 1px solid var(--border); background: var(--bg); color: var(--muted); font-size: 12px; }
 .inspector-help p { margin: 4px 0; line-height: 1.6; }
 .inspector kbd { color: var(--muted); font-size: 11px; }
@@ -101,7 +101,7 @@
   .inspector-nav, .inspector-subnav { gap: 0; padding: 0 6px; }
   .inspector-nav button { padding-right: 9px; padding-left: 9px; font-size: 12px; }
   .inspector__body { padding: 14px; }
-  .inspector__body--tree, .inspector__body--tool, .inspector__body--process { padding: 0; }
+  .inspector__body--tree, .inspector__body--tool, .inspector__body--process, .inspector__body--agents { padding: 0; }
   .inspector-help-toggle { font-size: 11px; }
   .inspector-load-error { padding: 10px 14px; }
 }

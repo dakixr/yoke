@@ -92,6 +92,25 @@ Terminate are separate actions; termination requires an inline confirmation.
 Input and actions display their own pending and error states. An action finishing
 for one process must not replace a different process selected in the meantime.
 
+## Agents
+
+Agents lists Yoke SDK agents started in this session, one row per agent showing
+its latest run. The session view has no agent panel; open Agents from the
+Inspect menu, the inspector tabs, the command palette, or `/agents`. Like
+Processes, the initial filter is Running when an agent runs, otherwise All /
+recent, and explicit choices are remembered. Search covers names, models, last
+tools, task IDs, errors, and agent or run IDs. Running agents come first, then
+newest started. A sub-agent is indented under its parent when the parent is
+shown; otherwise it appears as its own row.
+
+The detail shows status and observation state, model, start and finish times,
+duration, last tool, error class, attempt, and task. Parent and sub-agent links
+select the related agent. Open process shows the managed process that hosts the
+agent, and Back to origin in Processes returns to the agent. A selected agent
+stays visible outside the current filter. Stale or lost observations are never
+shown as running or completed, and a failed refresh keeps the previous rows
+labelled as not current.
+
 ## Configuration
 
 Tools use source groups, search, enabled/disabled filters, and expandable
@@ -142,6 +161,7 @@ node --experimental-default-type=module scripts/test_web_inspector_state.mjs
 node --experimental-default-type=module scripts/test_web_tool_activity.mjs
 node --experimental-default-type=module scripts/test_web_tree_navigation.mjs
 node --experimental-default-type=module scripts/test_web_inspector_support.mjs
+node --experimental-default-type=module scripts/test_web_agent_runs.mjs
 uv run pytest tests/yoke/http/test_tool_trace_chronology.py
 ```
 

@@ -1,4 +1,4 @@
-import { html, useEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
+import { html, useEffect, useRef, useState } from "../../vendor/htm-preact.js";
 import { currentRoute } from "../router/router.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
@@ -9,7 +9,6 @@ import { Timeline } from "./timeline.js";
 import { hasPendingQueue } from "../components/sidebar-status.js";
 import { workspaceUnavailable } from "../state/workspace/status.js";
 import { WorkspaceNotice } from "./workspace-notice.js";
-import { AgentRoster } from "./agents/view.js";
 
 export function MainView() {
   const newSession = useStore((state) => state.ui.newSession);
@@ -29,8 +28,6 @@ function NewSessionView() {
 }
 
 function SessionView() {
-  // Keep the roster out of token-driven timeline renders. It owns its subscription.
-  const agents = useMemo(() => html`<${AgentRoster} />`, []);
   const sessionID = useStore((state) => state.ui.selectedSessionID);
   const session = useStore((state) => sessionID ? state.sessions[sessionID] : null);
   const runtime = useStore((state) => sessionID ? state.active[sessionID] : null);
@@ -41,7 +38,6 @@ function SessionView() {
   const attentionCount = (data?.permissions?.length || 0) + (data?.questions?.length || 0);
   return html`<main class="main-view session-view">
     <${SessionHeader} session=${session} runtime=${runtime} attentionCount=${attentionCount} />
-    ${agents}
     <${WorkspaceNotice} key=${sessionID} session=${session} runtime=${runtime} />
     <${Timeline} sessionID=${sessionID} data=${data} runtime=${runtime} />
     <div class="session-bottom">
@@ -143,6 +139,7 @@ function InspectMenu({ capabilities, inspector }) {
       ${capabilities?.features?.sessionTree ? html`<button onClick=${() => inspect("tree")}>Tree</button>` : null}
       ${capabilities?.features?.toolInspector ? html`<button onClick=${() => inspect("tool")}>Tool activity</button>` : null}
       ${capabilities?.features?.processInspector ? html`<button onClick=${() => inspect("process")}>Processes</button>` : null}
+      <button onClick=${() => inspect("agents")}>Agents</button>
       <button onClick=${() => inspect("tools")}>Tools</button>
       ${capabilities?.features?.skills ? html`<button onClick=${() => inspect("skills")}>Skills</button>` : null}
       ${capabilities?.features?.mcp ? html`<button onClick=${() => inspect("mcp")}>MCP</button>` : null}
@@ -152,7 +149,7 @@ function InspectMenu({ capabilities, inspector }) {
 }
 
 function inspectorLabel(mode) {
-  return ({ tree: "Tree", tool: "Tool", process: "Processes", tools: "Tools", skills: "Skills", mcp: "MCP", context: "Info", file: "File" })[mode] || "Open";
+  return ({ tree: "Tree", tool: "Tool", process: "Processes", agents: "Agents", tools: "Tools", skills: "Skills", mcp: "MCP", context: "Info", file: "File" })[mode] || "Open";
 }
 
 function closeDetailsAnd(action) {
