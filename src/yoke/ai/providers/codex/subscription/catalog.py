@@ -48,6 +48,14 @@ MODEL_CATALOG = (
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
+        id="gpt-6.1-sol",
+        display_name="GPT-6.1 Sol",
+        context_window_tokens=400_000,
+        thinking_levels=("low", "medium", "high", "xhigh", "max"),
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
+    ProviderModelInfo(
         id="gpt-6-luna",
         display_name="GPT-6 Luna",
         context_window_tokens=400_000,

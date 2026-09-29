@@ -196,9 +196,14 @@ balancer in front of it, stays on the warm prompt cache. Leading system
 messages form the Codex `instructions`; system context added later, such as a
 skill activated mid-session, is sent in place as a `developer` input message so
 the cached prefix and response continuity survive the activation.
-The advertised catalog currently includes `gpt-6-astra`, `gpt-6-sol`, and
-`gpt-6-luna`. GPT-5.6 models no longer appear as selectable models; the Codex
-provider still handles legacy configurations that already use them.
+The advertised catalog currently includes `gpt-6-astra`, `gpt-6.1-sol`,
+`gpt-6-sol`, and `gpt-6-luna`. GPT-5.6 models no longer appear as selectable
+models; the Codex provider still handles legacy configurations that already use
+them.
+Select GPT-6.1 Sol with `yoke --model codex:gpt-6.1-sol:medium "..."`.
+Yoke caps its context window at 400,000 tokens and supports image inputs and
+`low`, `medium`, `high`, `xhigh`, and `max` reasoning efforts (default:
+`medium`). Availability depends on the signed-in Codex account and rollout.
 Select Astra with `yoke --model codex:gpt-6-astra:medium "..."`. Yoke caps
 its context window at 400,000 tokens and supports image inputs and `low`,
 `medium`, `high`, `xhigh`, and `max` reasoning efforts (default: `medium`).

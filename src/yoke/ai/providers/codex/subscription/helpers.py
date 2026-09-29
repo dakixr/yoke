@@ -13,7 +13,7 @@ def clamp_reasoning_effort(model: str, effort: str) -> str:
     allowed = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
     if normalized not in allowed:
         normalized = "medium"
-    if model == "gpt-6-astra":
+    if model in {"gpt-6-astra", "gpt-6.1-sol"}:
         return (
             normalized
             if normalized in ("low", "medium", "high", "xhigh", "max")
