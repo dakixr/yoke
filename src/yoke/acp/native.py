@@ -7,6 +7,7 @@ import json
 from collections.abc import Awaitable
 from collections.abc import Callable
 from typing import Any
+from time import monotonic
 from urllib.parse import quote
 
 import httpx
@@ -14,6 +15,7 @@ from acp import RequestError
 
 from yoke.acp.agent_monitor import AgentMonitor
 from yoke.acp.observation.errors import NativeHttpError
+from yoke.acp.observation.errors import native_request_failure
 from yoke.acp.process_monitor import ProcessMonitor
 from yoke.acp.prompting import InlineAttachment
 
@@ -51,6 +53,7 @@ class NativeClient:
 
     async def request(self, method: str, path: str, **kwargs: Any) -> Any:
         """Run one native request without exposing response bodies in failures."""
+        started = monotonic()
         try:
             response = await self.http.request(method, path, **kwargs)
             if response.is_error:
@@ -58,8 +61,10 @@ class NativeClient:
             return response.json()
         except RequestError:
             raise
-        except (httpx.HTTPError, ValueError):
-            raise fail("Native HTTP transport or JSON failure") from None
+        except (httpx.HTTPError, ValueError) as exc:
+            raise native_request_failure(
+                exc, method=method, path=path, elapsed=monotonic() - started
+            ) from None
 
     async def data(self, method: str, path: str, **kwargs: Any) -> Any:
         """Return the standard native response data member."""

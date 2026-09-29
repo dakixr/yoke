@@ -15,6 +15,14 @@ process-wide Yoke runtime without a wrapper daemon. `yoke acp` can then expose
 that daemon over stdio ACP while this HTTP service remains the authority for
 session state and physical worker drain.
 
+ACP reports native HTTP failures with the failure category, operation, and
+elapsed time, for example `Native HTTP read timeout during POST session/wait
+after 35.0s`. These errors describe the local ACP-to-daemon request, not the
+model provider connection. Session IDs, query values, credentials, response
+bodies, and raw exception text are omitted. Failed requests are not retried
+automatically, since a prompt may already have been admitted. A failed turn
+still interrupts admitted work and waits for worker drain.
+
 The public API is versioned under `/api/v1`. Its OpenAPI document is available
 at `/api/v1/openapi.json`. The checked-in contract used by tests is
 `tests/yoke/http/golden/openapi.json`; regenerate it with:
