@@ -146,7 +146,6 @@ class CodexRequestMixin:
         return payload
 
     def _request_headers(self: Any, credentials: OAuthCredentials) -> dict[str, str]:
-        request_id = secrets.token_hex(16)
         return {
             "Authorization": f"Bearer {credentials.access}",
             "chatgpt-account-id": credentials.account_id,
@@ -159,8 +158,10 @@ class CodexRequestMixin:
             "OpenAI-Beta": "responses=experimental",
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
-            "session_id": request_id,
-            "x-client-request-id": request_id,
+            # Codex backends and codex-lb derive cache and account affinity
+            # from session_id; a per-request value scatters the prompt cache.
+            "session_id": self._prompt_cache_key,
+            "x-client-request-id": secrets.token_hex(16),
             **(
                 {X_CODEX_TURN_STATE_HEADER: self._turn_state}
                 if self._turn_state

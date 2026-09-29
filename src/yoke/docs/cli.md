@@ -190,6 +190,9 @@ Codex uses a persistent Responses WebSocket transport and keeps response
 continuity, encrypted replay state, prompt-cache affinity, and routing metadata
 in memory. Session IDs provide stable cache scope across provider
 reconstruction and resume. New and forked sessions receive distinct scopes.
+Every Codex request and WebSocket handshake sends that scope as the
+`session_id` header, so a reconnect after an idle close, and any Codex load
+balancer in front of it, stays on the warm prompt cache.
 The advertised catalog currently includes `gpt-6-astra`, `gpt-6-sol`, and
 `gpt-6-luna`. GPT-5.6 models no longer appear as selectable models; the Codex
 provider still handles legacy configurations that already use them.

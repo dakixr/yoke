@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.protocol import State
 
 from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderCancelledError, ProviderError
@@ -108,7 +109,6 @@ class CodexWebSocketTransportMixin:
         )
 
     def _request_headers(self: Any, credentials: OAuthCredentials) -> dict[str, str]:
-        request_id = secrets.token_hex(16)
         headers = {
             "Authorization": f"Bearer {credentials.access}",
             "originator": originator_for_model(
@@ -119,8 +119,10 @@ class CodexWebSocketTransportMixin:
             ),
             "OpenAI-Beta": RESPONSES_WEBSOCKETS_BETA,
             "Content-Type": "application/json",
-            "session_id": request_id,
-            "x-client-request-id": request_id,
+            # Codex backends and codex-lb derive cache and account affinity
+            # from session_id, so a reconnect replay must reuse the cache key.
+            "session_id": self._prompt_cache_key,
+            "x-client-request-id": secrets.token_hex(16),
             **(
                 {X_CODEX_TURN_STATE_HEADER: self._turn_state}
                 if self._turn_state
@@ -213,7 +215,11 @@ class CodexWebSocketTransportMixin:
 
     def _websocket_closed(self: Any, websocket: CodexWebSocketConnection) -> bool:
         try:
-            return bool(getattr(websocket, "closed", False))
+            if getattr(websocket, "closed", False):
+                return True
+            # websockets' sync client exposes connection state rather than
+            # `closed`; its background reader records idle closes from proxies.
+            return getattr(websocket, "state", None) in {State.CLOSING, State.CLOSED}
         except Exception:
             return False
 

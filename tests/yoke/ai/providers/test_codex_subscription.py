@@ -359,9 +359,11 @@ def test_codex_provider_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:
     )
     _write_fallback_auth(auth_path, credentials)
     request_bodies: list[dict[str, object]] = []
+    session_headers: list[str | None] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         request_bodies.append(json.loads(request.content))
+        session_headers.append(request.headers.get("session_id"))
         return httpx.Response(
             200,
             text='event: response.completed\ndata: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"usage":{}}}\n\n',
@@ -388,6 +390,7 @@ def test_codex_provider_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:
     assert (
         request_bodies[0]["prompt_cache_key"] == request_bodies[1]["prompt_cache_key"]
     )
+    assert session_headers == [request_bodies[0]["prompt_cache_key"]] * 2
 
 
 def test_codex_provider_captures_and_replays_turn_state(tmp_path: Path) -> None:

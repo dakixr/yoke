@@ -10,6 +10,7 @@ from typing import cast
 
 import pytest
 from websockets.exceptions import ConnectionClosedError
+from websockets.protocol import State
 
 from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderCancelledError
@@ -583,6 +584,10 @@ def test_codex_websockets_retries_stale_cached_socket(tmp_path: Path) -> None:
         "Bearer access-token",
         "Bearer access-token",
     ]
+    assert [headers["session_id"] for headers in factory_headers] == [
+        provider._prompt_cache_key,
+        provider._prompt_cache_key,
+    ]
     assert len(sent_payloads) == 2
 
 
@@ -732,6 +737,33 @@ def test_codex_websockets_reconnects_closed_cached_socket(
     assert factory_calls == 1
     assert provider._websocket_credentials is not None
     assert provider._websocket_credentials.access == "fresh-access-token"
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [(State.OPEN, False), (State.CLOSING, True), (State.CLOSED, True)],
+)
+def test_codex_websockets_detects_idle_closed_sync_connection(
+    tmp_path: Path, state: State, expected: bool
+) -> None:
+    class SyncConnection:
+        def __init__(self) -> None:
+            self.state = state
+
+    provider = CodexWebSockets(
+        CodexWebSocketsConfig(
+            auth_path=tmp_path / "auth.json",
+            accounts_dir=tmp_path / "accounts",
+            auths_path=tmp_path / "auths.json",
+            selection_path=tmp_path / "selection.json",
+        )
+    )
+
+    try:
+        connection = cast(CodexWebSocketConnection, SyncConnection())
+        assert provider._websocket_closed(connection) is expected
+    finally:
+        provider.close()
 
 
 def test_codex_websockets_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:
