@@ -19,7 +19,14 @@ def convert_messages(
     for message in codex_request_messages(messages):
         if message.role == "system":
             text = message.text_content()
-            if text:
+            if not text:
+                continue
+            # Only the leading system block is stable instructions. Later
+            # system context, such as a skill activated mid-session, stays in
+            # place as developer input so the cached prefix is only extended.
+            if input_items:
+                input_items.append(message_item("developer", text))
+            else:
                 instructions.append(text)
             continue
         if message.role == "tool":

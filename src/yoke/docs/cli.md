@@ -192,7 +192,10 @@ in memory. Session IDs provide stable cache scope across provider
 reconstruction and resume. New and forked sessions receive distinct scopes.
 Every Codex request and WebSocket handshake sends that scope as the
 `session_id` header, so a reconnect after an idle close, and any Codex load
-balancer in front of it, stays on the warm prompt cache.
+balancer in front of it, stays on the warm prompt cache. Leading system
+messages form the Codex `instructions`; system context added later, such as a
+skill activated mid-session, is sent in place as a `developer` input message so
+the cached prefix and response continuity survive the activation.
 The advertised catalog currently includes `gpt-6-astra`, `gpt-6-sol`, and
 `gpt-6-luna`. GPT-5.6 models no longer appear as selectable models; the Codex
 provider still handles legacy configurations that already use them.
