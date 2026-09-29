@@ -191,7 +191,7 @@ def test_opencode_go_responses_rebuilds_owned_client_after_read_error(
     assert clients[1].is_closed
 
 
-def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
+def test_opencode_go_glm_flash_uses_server_managed_reasoning() -> None:
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -200,7 +200,7 @@ def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
         captured["payload"] = json.loads(request.content.decode("utf-8"))
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"role": "assistant", "content": "glm-ok"}}]},
+            text=_chat_stream("glm-ok"),
         )
 
     provider = OpenCodeGoProvider(
@@ -222,7 +222,10 @@ def test_opencode_go_glm_flash_sends_selected_reasoning_effort() -> None:
     assert captured["url"] == "https://opencode.ai/zen/go/v1/chat/completions"
     assert captured["session"] == "conversation-chat"
     assert payload["model"] == "glm-5.3-flash"
-    assert payload["reasoning_effort"] == "high"
+    assert provider.config.reasoning_effort is None
+    assert provider.list_models()[1].thinking_levels == ()
+    assert "reasoning_effort" not in payload
+    assert payload["stream"] is True
     assert message.content == "glm-ok"
 
 
@@ -234,11 +237,7 @@ def test_opencode_go_deepseek_41_flash_uses_chat_completions() -> None:
         captured["payload"] = json.loads(request.content.decode("utf-8"))
         return httpx.Response(
             200,
-            json={
-                "choices": [
-                    {"message": {"role": "assistant", "content": "deepseek-ok"}}
-                ]
-            },
+            text=_chat_stream("deepseek-ok"),
         )
 
     provider = OpenCodeGoProvider(
@@ -269,7 +268,7 @@ def test_opencode_go_generated_session_id_is_stable_across_requests() -> None:
         sessions.append(request.headers["x-opencode-session"])
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+            text=_chat_stream("ok"),
         )
 
     provider = OpenCodeGoProvider(
@@ -312,7 +311,7 @@ def test_opencode_go_can_rebind_session_id() -> None:
         sessions.append(request.headers["x-opencode-session"])
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+            text=_chat_stream("ok"),
         )
 
     provider = OpenCodeGoProvider(
@@ -332,3 +331,17 @@ def test_opencode_go_can_rebind_session_id() -> None:
         provider.close()
 
     assert sessions == ["source-session", "fork-session"]
+
+
+def _chat_stream(text: str) -> str:
+    return (
+        "data: "
+        + json.dumps(
+            {
+                "choices": [
+                    {"index": 0, "delta": {"content": text}, "finish_reason": "stop"}
+                ]
+            }
+        )
+        + "\n\ndata: [DONE]\n\n"
+    )

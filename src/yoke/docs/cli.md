@@ -160,7 +160,7 @@ Select models with `provider:model` or `provider:model:thinking_effort`:
 yoke --model codex:gpt-6-sol:medium "..."
 yoke --model codex:gpt-6-astra:max "..."
 yoke --model opencode-go:muse-spark-1.3-contributor:high "..."
-yoke --model opencode-go:glm-5.3-flash:max "..."
+yoke --model opencode-go:glm-5.3-flash "..."
 yoke --model zai:glm-5.3-flash:max "..."
 ```
 
@@ -177,7 +177,7 @@ Provider selections without a model use these defaults:
 | Provider | Default selection |
 | --- | --- |
 | `codex` | `codex:gpt-6-sol:medium` |
-| `opencode-go` | `opencode-go:glm-5.3-flash:max` |
+| `opencode-go` | `opencode-go:glm-5.3-flash` |
 | `zai` | `zai:glm-5.3-flash:max` |
 
 Yoke caps `glm-5.3-flash` at a 400,000-token context window for both
@@ -216,10 +216,15 @@ uses the Responses path; GLM-5.3-Flash and DeepSeek V4.1 Flash
 Flash supports image inputs and `low`, `high`,
 and `max` reasoning efforts (default: `high`). Yoke sends `x-opencode-session` with one stable value per
 Yoke session, including retries and resumed conversations. Forked sessions
-receive a new value. Both Z.ai and OpenCode Go expose GLM-5.3-Flash with `low`,
-`high`, and `max` reasoning efforts (default: `max`). Provider catalogs also
-declare context windows, image-input support, and model-specific system
-messages.
+receive a new value. Z.ai exposes GLM-5.3-Flash with `low`, `high`, and `max` reasoning
+efforts, defaulting to `max`. OpenCode Go GLM uses server-managed reasoning,
+matching OpenCode, and exposes no effort choices. Saved GLM effort selections
+normalize to the server default. Go chat requests stream text, reasoning, tool
+calls, and usage internally, then return one complete response to Yoke. A
+truncated stream fails without executing partial tool calls or replaying the
+generation. Message serialization and session cache headers remain unchanged.
+Provider catalogs also declare context windows, image-input support, and
+model-specific system messages.
 
 Built-in provider response and stream-idle timeouts default to 15 minutes.
 Connection-establishment and WebSocket health-check timeouts remain shorter so
@@ -230,7 +235,7 @@ Use these commands to inspect or change defaults:
 ```bash
 yoke models list
 yoke models set codex:gpt-6-sol:medium
-yoke models set opencode-go:glm-5.3-flash:max
+yoke models set opencode-go:glm-5.3-flash
 yoke models set zai:glm-5.3-flash:max
 yoke models set
 yoke models set --repo

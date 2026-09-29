@@ -62,7 +62,7 @@ def write_default(root: Path, model: str) -> Path:
     ("provider_name", "default_model", "default_effort"),
     [
         ("zai", "glm-5.3-flash", "max"),
-        ("opencode-go", "glm-5.3-flash", "max"),
+        ("opencode-go", "glm-5.3-flash", None),
         ("codex", "gpt-6-sol", "medium"),
     ],
 )
@@ -72,7 +72,7 @@ def test_interactive_stale_default_opens_and_keeps_config(
     scope: str,
     provider_name: str,
     default_model: str,
-    default_effort: str,
+    default_effort: str | None,
 ) -> None:
     path = write_default(
         Path.home() if scope == "global" else tmp_path, f"{provider_name}:retired"
@@ -563,7 +563,7 @@ def test_explicit_continuation_selection_and_effort_win(
     def interactive(args, agent, _messages, **_kwargs) -> int:
         assert args.model_source == "cli"
         assert agent.provider.provider_name == "opencode-go"
-        assert agent.provider.config.model == "glm-5.3-flash"
+        assert agent.provider.config.model == "deepseek-v4.1-flash"
         assert agent.provider.config.reasoning_effort == "high"
         return 0
 
@@ -572,7 +572,7 @@ def test_explicit_continuation_selection_and_effort_win(
         root=str(tmp_path),
         session=None if fork else "saved",
         fork_session_id="saved" if fork else None,
-        model="opencode-go:glm-5.3-flash:high",
+        model="opencode-go:deepseek-v4.1-flash:high",
     )
     stderr = CaptureStream()
 

@@ -22,6 +22,7 @@ from yoke.ai.providers.openai_compat import (
     OpenAICompatibleProvider,
 )
 from yoke.ai.providers.responses import complete_response
+from yoke.ai.providers.opencode_go.chat import GoChatProvider
 from yoke.ai.providers.opencode_go.catalog import (
     MODEL_PROTOCOLS,
     OPENAI_BASE_URL,
@@ -84,7 +85,7 @@ class OpenCodeGoProvider(Provider):
         openai_reasoning_effort = config.reasoning_effort
         if openai_reasoning_effort == "thinking":
             openai_reasoning_effort = None
-        return OpenAICompatibleProvider(
+        return GoChatProvider(
             OpenAICompatibleConfig(
                 api_key=config.api_key,
                 model=config.model,

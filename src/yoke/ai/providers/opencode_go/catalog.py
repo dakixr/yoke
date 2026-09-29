@@ -20,7 +20,6 @@ ENV_API_KEY = "OPENCODE_API_KEY"
 OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
 
 DEEPSEEK_41_THINKING_LEVELS = ("low", "high", "max")
-GLM_53_THINKING_LEVELS = ("low", "high", "max")
 MUSE_SPARK_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
 
 MODEL_PROTOCOLS = {
@@ -42,8 +41,7 @@ MODEL_CATALOG = build_model_catalog(
         id="glm-5.3-flash",
         display_name="GLM-5.3-Flash",
         context_window_tokens=400_000,
-        thinking_levels=GLM_53_THINKING_LEVELS,
-        default_thinking_level="max",
+        thinking_levels=(),
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
