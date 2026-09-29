@@ -12,6 +12,8 @@ from urllib.parse import quote
 import httpx
 from acp import RequestError
 
+from yoke.acp.agent_monitor import AgentMonitor
+from yoke.acp.observation.errors import NativeHttpError
 from yoke.acp.process_monitor import ProcessMonitor
 from yoke.acp.prompting import InlineAttachment
 
@@ -35,6 +37,7 @@ class NativeClient:
             follow_redirects=False,
         )
         self.process_monitor = ProcessMonitor(self)
+        self.agent_monitor = AgentMonitor(self)
 
     @staticmethod
     def path(session_id: str, suffix: str = "") -> str:
@@ -42,6 +45,7 @@ class NativeClient:
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
+        await self.agent_monitor.close()
         await self.process_monitor.close()
         await self.http.aclose()
 
@@ -50,7 +54,7 @@ class NativeClient:
         try:
             response = await self.http.request(method, path, **kwargs)
             if response.is_error:
-                raise fail(f"Native HTTP error {response.status_code}")
+                raise NativeHttpError(response.status_code)
             return response.json()
         except RequestError:
             raise
@@ -250,8 +254,9 @@ class NativeClient:
                         )
                 if not page["hasMore"]:
                     break
-            if work["cancel"]:
-                return "cancelled"
+            # A valid ACP prompt has already been accepted by the client. Even
+            # when cancellation wins during setup, admit its input before stop
+            # checkpoints it; otherwise rapid steering silently loses messages.
             prompt: dict[str, Any] = {"text": text}
             if continuation:
                 prompt["continuation"] = True
@@ -274,8 +279,6 @@ class NativeClient:
                             "mime": uploaded["mime"],
                         }
                     )
-            if work["cancel"]:
-                return "cancelled"
             admitted = True
             receipt = await self.data(
                 "POST",

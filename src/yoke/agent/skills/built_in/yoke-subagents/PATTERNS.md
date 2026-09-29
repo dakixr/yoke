@@ -9,7 +9,9 @@ absolute path. Replace the example prompts and paths with the actual task.
 The guarded entrypoint matters: Yoke's tool subprocesses re-import the launcher.
 Run these as files rather than piping them to Python's stdin.
 Scripts launched through a Yoke session's process tools inherit usage attribution
-automatically. See [usage attribution](SDK_SURFACE.md#usage-attribution) for overrides.
+and register SDK prompt runs automatically. An optional `RunConfig(name="reviewer", ...)`
+label helps distinguish workers. See [tracking](SDK_SURFACE.md#automatic-tracking)
+for inspection and [usage attribution](SDK_SURFACE.md#usage-attribution) for overrides.
 
 When launching these scripts through native Yoke or MCP, use `command_exec`
 with `argv`. For example, after saving `ask.py` below:

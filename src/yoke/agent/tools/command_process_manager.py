@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 
+from yoke.agent_runs import AgentRunRegistry
 from yoke.agent.tools.command_process import _ManagedCommandProcess
 from yoke.agent.tools.command_process_support.output import CompletedCommandProcess
 from yoke.agent.tools.command_process_support.admission import spawn
@@ -30,6 +31,7 @@ class CommandProcessManager:
     _managed_process_factory = _ManagedCommandProcess
 
     def __init__(self, *, base_environment: Mapping[str, str] | None = None) -> None:
+        self.agent_runs = AgentRunRegistry()
         self._lock = threading.RLock()
         self._spawn_lock = threading.Lock()
         self._next_session_id = random.SystemRandom().randrange(1_000, 100_000)
@@ -301,6 +303,7 @@ class CommandProcessManager:
             self.terminate_all()
         except BaseException as exc:
             first_error = exc
+        self.agent_runs.close()
         with self._lock:
             self._completed.clear()
             self._completion_events.clear()
@@ -313,31 +316,7 @@ class CommandProcessManager:
         if first_error is not None:
             raise first_error
 
-    def _spawn(
-        self,
-        command: str,
-        cwd: Path,
-        tty: bool,
-        shell: str | None,
-        login: bool,
-        *,
-        argv: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        timeout_seconds: int | None = None,
-        cancel_requested: CancelRequested | None = None,
-    ) -> _ManagedCommandProcess:
-        return spawn(
-            self,
-            command,
-            cwd,
-            tty,
-            shell,
-            login,
-            argv=argv,
-            env=env,
-            timeout_seconds=timeout_seconds,
-            cancel_requested=cancel_requested,
-        )
+    _spawn = spawn
 
     def _get(self, session_id: int) -> _ManagedCommandProcess:
         with self._lock:

@@ -61,17 +61,27 @@ def test_control_can_finish_initial_wait_with_all_execution_slots_occupied(
                 assert service.runtime._process_starts.locked()
                 assert not active.done() and not queued.done()
                 async with asyncio.timeout(5):
-                    ready = structured(
-                        await client.call_tool(
-                            "process_read",
-                            {
-                                "sessions": [{"session_id": session}],
-                                "until": "output_or_completion",
-                                "wait_ms": 5000,
-                            },
+                    output = ""
+                    position = {"session_id": session}
+                    # Reads expose chunks, not lines. Unbuffered print can
+                    # publish its text and newline in separate notifications.
+                    while "\n" not in output:
+                        ready = structured(
+                            await client.call_tool(
+                                "process_read",
+                                {
+                                    "sessions": [position],
+                                    "until": "output_or_completion",
+                                    "wait_ms": 5000,
+                                },
+                            )
                         )
-                    )
-                    assert ready["items"][0]["output"] == "ready\n"
+                        item = ready["items"][0]
+                        assert item["running"], item
+                        assert not item["gap"], item
+                        output += item["output"]
+                        position = {"session_id": session, "cursor": item["cursor"]}
+                    assert output == "ready\n"
                     # Cancelled queued work must not start when control frees
                     # the active initial observation's execution slot.
                     queued_cancel.set()

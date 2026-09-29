@@ -10,6 +10,7 @@ from yoke.agent.loop.tool_core import cancelled_tool_result
 from yoke.agent.loop.tool_core import execute_tool
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.tools import LocalTool
+from yoke.agent_runs.context import bind_binding, release_tool_binding, tool_binding
 from yoke.ai.providers.usage_context import bind_usage_metric_context
 from yoke.ai.providers.usage_context import current_usage_metric_context
 
@@ -42,6 +43,7 @@ class InProcessToolInvocation:
         self._result: dict[str, object] | None = None
         self._started = False
         self._usage_context = current_usage_metric_context()
+        self._run_binding = tool_binding(tools)
         self._worker = threading.Thread(
             target=self._run,
             daemon=True,
@@ -52,6 +54,7 @@ class InProcessToolInvocation:
         """Start the worker thread."""
         with _WORKERS_LOCK:
             if id(self._tools) in _SHUTTING_DOWN_TOOL_SETS:
+                release_tool_binding(self._run_binding)
                 raise InProcessToolShutdownError(
                     "Cannot start an in-process tool while its runtime is closing."
                 )
@@ -61,6 +64,7 @@ class InProcessToolInvocation:
         try:
             self._worker.start()
         except BaseException:
+            release_tool_binding(self._run_binding)
             with _WORKERS_LOCK:
                 workers = _ACTIVE_WORKERS.get(id(self._tools))
                 if workers is not None:
@@ -103,7 +107,10 @@ class InProcessToolInvocation:
 
     def _run(self) -> None:
         try:
-            with bind_usage_metric_context(self._usage_context):
+            with (
+                bind_usage_metric_context(self._usage_context),
+                bind_binding(self._run_binding),
+            ):
                 result = execute_tool(
                     self._tools,
                     self._name,
@@ -115,6 +122,7 @@ class InProcessToolInvocation:
             except queue.Full:
                 pass
         finally:
+            release_tool_binding(self._run_binding)
             with _WORKERS_LOCK:
                 workers = _ACTIVE_WORKERS.get(id(self._tools))
                 if workers is not None:

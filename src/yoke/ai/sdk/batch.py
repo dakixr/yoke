@@ -14,6 +14,7 @@ from typing import cast
 from uuid import uuid4
 
 from yoke.agent.models import Message
+from yoke.agent_runs.context import batch_attempt
 from yoke.ai.sdk.agent import Agent
 from yoke.ai.sdk.async_support import drain_worker
 from yoke.ai.sdk.batch_safety import close_attempt_agent
@@ -173,10 +174,14 @@ async def _run_task[StructuredT](
             registered = True
             baseline_usage = _usage_from_messages(agent.messages)
             attempt_stage = "prompt"
-            with usage_metric_context(
-                surface="sdk",
-                sdk_operation="run_many",
-                sdk_run_id=uuid4().hex,
+            run_id = uuid4().hex
+            with (
+                batch_attempt(task.id, attempt, run_id),
+                usage_metric_context(
+                    surface="sdk",
+                    sdk_operation="run_many",
+                    sdk_run_id=run_id,
+                ),
             ):
                 result = await agent.prompt_async(
                     task.prompt,

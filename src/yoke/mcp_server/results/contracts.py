@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from yoke.agent.tools.processes.cursor import CURSOR_LENGTH, CURSOR_PATTERN
+from yoke.mcp_server.agent_runs import AgentRunsOutput
 from yoke.mcp_server.execution.models import ResultEnvelope
 
 
@@ -79,4 +80,5 @@ OUTPUTS = {
     "python_exec": ExecutionOutput,
     "process_input": ExecutionOutput,
     "process_cancel": ProcessCancelOutput,
+    "agent_runs": AgentRunsOutput,
 }

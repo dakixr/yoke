@@ -9,6 +9,7 @@ from yoke.agent.models import Message
 from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.image_input import resolve_image_path
+from yoke.cli.interactive.agents import print_agent_table
 from yoke.cli.interactive.common import COMPACTION_IN_PROGRESS_NOTICE
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.interactive.common import SHORTCUTS_NOTICE
@@ -20,9 +21,7 @@ from yoke.cli.interactive.session_commands import handle_pin_session
 from yoke.cli.interactive.session_commands import print_session_info
 from yoke.cli.interactive.skill_commands import handle_skill_load
 from yoke.cli.interactive.tree_selector import prompt_tree_label
-from yoke.cli.interactive.tree_selector import (
-    select_tree_entry_interactive,
-)
+from yoke.cli.interactive.tree_selector import select_tree_entry_interactive
 from yoke.cli.interactive.tools_menu import handle_tools_menu
 from yoke.cli.render.base import Console
 from yoke.cli.render import format_compaction_note
@@ -71,14 +70,17 @@ def handle_slash_command(  # noqa: C901
         except WorkspaceUnavailable as exc:
             print_scrollback_notice(console, str(exc))
             return True, messages, active_session
+    if normalized == "/agents":
+        print_agent_table(console, agent)
+        return True, messages, active_session
     if normalized == "/ps":
         if on_process_inspector is None:
             print_process_table(console, agent)
         else:
             on_process_inspector()
         return True, messages, active_session
-    if normalized.startswith("/ps "):
-        print_scrollback_notice(console, "Usage: /ps")
+    if normalized and normalized.split()[0] in {"/ps", "/agents"}:
+        print_scrollback_notice(console, f"Usage: {normalized.split()[0]}")
         return True, messages, active_session
     if normalized.startswith("/image "):
         if pending_images is None:

@@ -10,6 +10,7 @@ from pathlib import Path
 import threading
 from uuid import uuid4
 
+from yoke.agent_runs.context import consume_batch_run_id, current_binding
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.loop.types import BeforeToolCallHook
@@ -25,10 +26,8 @@ from yoke.ai.sdk.observability import AgentObserver
 from yoke.ai.sdk.prompt_runner import run_agent_prompt
 from yoke.ai.sdk.resources import CloseAttempt
 from yoke.ai.sdk.resources import ProviderLease
+from yoke.ai.sdk.tracking import RunAuthority, fork_ownership
 from yoke.ai.providers.base import Provider
-from yoke.ai.providers.usage_context import (
-    current_usage_metric_context,
-)
 from yoke.ai.providers.usage_context import usage_metric_context
 from yoke.ai.providers.usage_attribution import resolve_usage_attribution
 from yoke.ai.sdk.defaults import default_coding_agent_config
@@ -57,6 +56,8 @@ class Agent(DurableAgentMixin):
         if config is None:
             config = default_coding_agent_config()
         self.provider = provider
+        self._agent_id = uuid4().hex
+        self._run_host = RunAuthority()
         self._provider_lease = ProviderLease.claim(provider)
         self.config = config
         self._usage_attribution = resolve_usage_attribution(
@@ -84,12 +85,14 @@ class Agent(DurableAgentMixin):
             )
             if self._state_path is not None and self._state_path.exists():
                 restore_agent_state(self._runtime, self._state_path)
+            self._run_host = RunAuthority(current_binding())
         except BaseException:
             runtime = getattr(self, "_runtime", None)
             try:
                 if runtime is not None:
                     runtime.close()
             finally:
+                self._run_host.close()
                 self._provider_lease.release()
             raise
 
@@ -114,6 +117,11 @@ class Agent(DurableAgentMixin):
         agent._state_path = normalize_state_path(path)
         agent._autosave = autosave
         return agent
+
+    @property
+    def agent_id(self) -> str:
+        """Return this SDK instance's identity, independent of saved conversations."""
+        return self._agent_id
 
     @property
     def messages(self) -> list[Message]:
@@ -181,6 +189,8 @@ class Agent(DurableAgentMixin):
                     except BaseException as exc:
                         if error is None:
                             error = exc
+                    finally:
+                        self._run_host.close()
         except BaseException as exc:
             if error is None:
                 error = exc
@@ -235,6 +245,7 @@ class Agent(DurableAgentMixin):
             runtime = self._runtime.fork(isolate_provider=True)
             new = object.__new__(Agent)
             new.provider = runtime.provider
+            new._agent_id = uuid4().hex
             new.config = self.config
             new._usage_attribution = self._usage_attribution
             new.root = self.root
@@ -250,11 +261,7 @@ class Agent(DurableAgentMixin):
             new._close_attempt = None
             new._closing = False
             new._closed = False
-            new._provider_lease = (
-                self._provider_lease.acquire()
-                if runtime.provider is self.provider
-                else ProviderLease.claim(runtime.provider)
-            )
+            new._provider_lease, new._run_host = fork_ownership(self, runtime)
             new._runtime = runtime
             return new
 
@@ -278,19 +285,11 @@ class Agent(DurableAgentMixin):
                 raise RuntimeError("Recursive prompts on one agent are not supported")
             self._prompt_owner = threading.get_ident()
             try:
-                usage_context = current_usage_metric_context()
+                batch_run_id = consume_batch_run_id()
                 with usage_metric_context(
                     surface="sdk",
-                    sdk_operation=(
-                        "run_many"
-                        if usage_context.sdk_operation == "run_many"
-                        else "agent"
-                    ),
-                    sdk_run_id=(
-                        usage_context.sdk_run_id
-                        if usage_context.sdk_operation == "run_many"
-                        else uuid4().hex
-                    ),
+                    sdk_operation="run_many" if batch_run_id is not None else "agent",
+                    sdk_run_id=batch_run_id or uuid4().hex,
                     session_id=self._usage_attribution.root_session_id,
                     root_session_id=self._usage_attribution.root_session_id,
                     parent_run_id=self._usage_attribution.parent_run_id,

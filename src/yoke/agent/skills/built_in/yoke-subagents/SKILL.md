@@ -6,8 +6,12 @@ description: "Delegate work through Yoke SDK agents. Use for one delegated quest
 # Yoke subagents
 
 Create SDK `Agent` instances through Python, rather than looking for a subagent
-tool. Keep small single-threaded work in the parent. Use `yoke-sessions` for a
-separate CLI process, saved CLI conversation, or interactive terminal task.
+tool. Managed launches register prompt runs automatically. Use an optional short
+`RunConfig(name="reviewer", ...)` label for the roster. Read
+[tracking](SDK_SURFACE.md#automatic-tracking) when inspecting agent status or
+diagnosing missing observations. Keep small single-threaded work in the parent.
+Use `yoke-sessions` for a separate CLI process, saved CLI conversation, or
+interactive terminal task.
 
 ## Choose a workflow
 

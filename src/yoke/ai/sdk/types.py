@@ -186,6 +186,7 @@ class RunConfig:
     root_session_id: str | None = None
     parent_run_id: str | None = None
     inherit_usage_attribution: bool = True
+    name: str | None = None
 
 
 @dataclass(slots=True)

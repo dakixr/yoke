@@ -8,35 +8,13 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
+from yoke.acp.observation.events import Invalidations as _Invalidations
+
 if TYPE_CHECKING:
     from yoke.acp.native import NativeClient
 
 LOGGER = logging.getLogger(__name__)
 Update = Callable[[str, dict[str, Any]], Awaitable[None]]
-
-
-class _Invalidations(asyncio.Queue[dict[str, Any]]):
-    """Ignore chat traffic and retain one pending refresh per native session."""
-
-    def __init__(self) -> None:
-        super().__init__(maxsize=256)
-        self._queued: set[str] = set()
-
-    def put_nowait(self, item: dict[str, Any]) -> None:
-        session_id = item.get("sessionID")
-        if item.get("type") != "session.process.updated" or not isinstance(
-            session_id, str
-        ):
-            return
-        if session_id in self._queued:
-            return
-        super().put_nowait(item)
-        self._queued.add(session_id)
-
-    def get_nowait(self) -> dict[str, Any]:
-        item = super().get_nowait()
-        self._queued.discard(item["sessionID"])
-        return item
 
 
 def _state(info: dict[str, Any]) -> str:

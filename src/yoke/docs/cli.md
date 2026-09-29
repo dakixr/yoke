@@ -98,11 +98,32 @@ When a successful turn settles before its live tool notifications arrive, the
 bridge recovers missing calls from that turn's saved transcript and inspector.
 Already displayed completions are not replayed.
 
+SDK subagents also publish their own lifecycle, separately from the Python
+process that hosts them. ACP attaches the native agent roster on session create
+or load, then reconciles changes even after the foreground turn ends. The Yoke
+T3 adapter translates these observations into existing subagent task events.
+Losing the observer marks its knowledge stale or lost; it does not complete or
+stop the underlying agent. Older daemons without the agent-run endpoint continue
+to support ordinary ACP sessions without an agent roster.
+
 ACP clients request a promptless continuation with `prompt: []` and
 `_meta.yokeContinuation: true`. This performs another inference on the existing
 conversation without inserting a synthetic user message. Empty prompts without
 that explicit marker are rejected. Plan mode, interactive permission/question
 requests, session listing, and ACP-level forking remain unsupported.
+
+To steer an active ACP turn, clients send `session/cancel`, wait for its
+in-flight `session/prompt` response, then send the correction in the same
+session with a fresh `_meta.yokeInputID`. Yoke confirms cancellation only after
+native workers drain; the next prompt retains the interrupted conversation.
+T3 Code keeps these successive native prompts inside one visible turn. A
+client must not send concurrent prompts or reuse an earlier input ID.
+
+Once a valid ACP prompt is accepted, cancellation during setup or attachment
+upload still persists that input before interrupting it. Rapid corrections
+therefore remain in the resumed conversation rather than disappearing between
+the client's dispatch and the native admission receipt. Interruption appends
+only its recovery/checkpoint suffix, without copying historical tool payloads.
 
 ACP clients can include `_meta.yoke.cwd` in their client capabilities during
 initialization. Yoke then returns that workspace's skill catalog in
@@ -325,6 +346,10 @@ turn.
   are rate-limited, unchanged trace snapshots and detail layouts are reused,
   and streamed output is compacted within its bounded history so large or
   noisy tool sessions do not block navigation.
+- Run `/agents` to print the latest run for each observed SDK agent in this
+  runtime. The snapshot includes its display name, model, status, and last tool.
+  Only running agents with live observation count as active. Run the command
+  again to refresh; it does not stop work or consume process output.
 - Run `/ps` or press `Ctrl+X` then `Ctrl+P` to open the
   fullscreen process inspector. It lists running and
   recently completed `command_exec` sessions for this live yoke runtime and

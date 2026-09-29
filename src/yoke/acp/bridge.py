@@ -15,7 +15,7 @@ from yoke.acp.catalog import discover
 from yoke.acp.native import NativeClient
 from yoke.acp.native import fail
 from yoke.acp.ownership import session_owner
-from yoke.acp.prompting import history_content
+from yoke.acp.prompting import replay_history
 from yoke.acp.turns import prompt as run_prompt
 
 type AcpMcpServer = s.HttpMcpServer | s.SseMcpServer | s.AcpMcpServer | s.McpServerStdio
@@ -224,6 +224,7 @@ class YokeAcpAgent:
         )
         session_id = data["id"]
         self.remember(session_id, data, catalog, default)
+        await self.native.agent_monitor.attach(session_id, self.update)
         return s.NewSessionResponse.model_validate(
             {"sessionId": session_id, "configOptions": self.options(session_id)}
         )
@@ -244,6 +245,7 @@ class YokeAcpAgent:
                 )
             catalog, default = await discover(self.native, cwd)
             self.remember(session_id, data, catalog, default)
+            await self.native.agent_monitor.attach(session_id, self.update)
             return {"configOptions": self.options(session_id)}
 
     async def load_session(
@@ -258,19 +260,9 @@ class YokeAcpAgent:
             session_id, cwd, mcp_servers, additional_directories
         )
         async with self.exclusive(session_id):
-            for message in await self.native.messages(session_id):
-                if message["type"] not in ("user", "assistant"):
-                    continue
-                kind = (
-                    "user_message_chunk"
-                    if message["type"] == "user"
-                    else "agent_message_chunk"
-                )
-                for block in message["content"]:
-                    await self.update(
-                        session_id,
-                        {"sessionUpdate": kind, "content": history_content(block)},
-                    )
+            await replay_history(
+                session_id, await self.native.messages(session_id), self.update
+            )
         return s.LoadSessionResponse.model_validate(result)
 
     async def resume_session(
@@ -317,6 +309,7 @@ class YokeAcpAgent:
             await work["done"].wait()
         self.sessions.pop(session_id, None)
         self.catalogs.pop(session_id, None)
+        await self.native.agent_monitor.detach(session_id)
         return s.CloseSessionResponse()
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:

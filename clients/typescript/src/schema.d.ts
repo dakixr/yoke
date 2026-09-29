@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/agent-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Runs */
+        get: operations["listAgentRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capabilities": {
         parameters: {
             query?: never;
@@ -964,6 +981,98 @@ export interface components {
             state: "idle" | "running" | "stopping" | "waiting_input" | "error";
             /** Turnid */
             turnID?: number | null;
+        };
+        /**
+         * AgentRunListResponse
+         * @description Authoritative retained roster for one native session.
+         */
+        AgentRunListResponse: {
+            /** Data */
+            data: components["schemas"]["AgentRunSnapshot"][];
+        };
+        /**
+         * AgentRunSnapshot
+         * @description The registry's wire names are deliberately independent of API aliases.
+         */
+        AgentRunSnapshot: {
+            /** Agentid */
+            agentId: string;
+            /** Attempt */
+            attempt?: number | null;
+            /** Effort */
+            effort?: string | null;
+            /** Errortype */
+            errorType?: string | null;
+            /** Finishedat */
+            finishedAt?: string | null;
+            /** Lastseenat */
+            lastSeenAt: string;
+            /** Lasttoolname */
+            lastToolName?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Observation
+             * @enum {string}
+             */
+            observation: "live" | "stale" | "lost";
+            /** Origintoolcallid */
+            originToolCallId?: string | null;
+            /** Originturnid */
+            originTurnId?: string | number | null;
+            /** Parentagentid */
+            parentAgentId?: string | null;
+            /** Parentrunid */
+            parentRunId?: string | null;
+            /** Provider */
+            provider: string;
+            /** Runid */
+            runId: string;
+            /** Runtimesessionid */
+            runtimeSessionID?: number | null;
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Sessionid */
+            sessionID: string | null;
+            /** Startedat */
+            startedAt: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
+            /** Taskid */
+            taskId?: string | null;
+            typedUsage?: components["schemas"]["AgentUsage"] | null;
+            /** Updatedat */
+            updatedAt: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * AgentUsage
+         * @description Cumulative counters, never arbitrary provider metadata.
+         */
+        AgentUsage: {
+            /** Cachedinputtokens */
+            cachedInputTokens?: number | null;
+            /** Durationms */
+            durationMs?: number | null;
+            /** Inputtokens */
+            inputTokens?: number | null;
+            /** Outputtokens */
+            outputTokens?: number | null;
+            /** Reasoningoutputtokens */
+            reasoningOutputTokens?: number | null;
+            /** Tooluses */
+            toolUses?: number | null;
+            /** Totaltokens */
+            totalTokens?: number | null;
         };
         /** AssistantProjectedMessage */
         AssistantProjectedMessage: {
@@ -2532,6 +2641,37 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listAgentRuns: {
+        parameters: {
+            query: {
+                sessionID: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     capabilities: {
         parameters: {
             query?: never;

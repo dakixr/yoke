@@ -49,11 +49,13 @@ jobs:
 
       - name: Validate browser behavior
         run: |
+          node --experimental-default-type=module scripts/test_web_markdown_math.mjs
           node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs
           node --experimental-default-type=module scripts/test_web_workspace_races.mjs
           node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
           node --experimental-default-type=module scripts/test_web_inspector_state.mjs
           node --experimental-default-type=module scripts/test_web_tool_activity.mjs
+          node --experimental-default-type=module scripts/test_web_agent_runs.mjs
           node --experimental-default-type=module scripts/test_web_tree_navigation.mjs
           node --experimental-default-type=module scripts/test_web_inspector_support.mjs
 

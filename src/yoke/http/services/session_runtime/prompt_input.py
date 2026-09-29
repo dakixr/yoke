@@ -78,7 +78,9 @@ def user_message(
     message = build_image_user_message(
         admission.prompt,
         image_paths=images,
-        start_index=next_image_label_index(record.messages),
+        # Plain text and file-only inputs do not consume image labels. Avoid
+        # rebuilding the entire transcript just to compute an unused index.
+        start_index=next_image_label_index(record.messages) if images else 1,
         embed_local_images=True,
     )
     if isinstance(message.content, list):

@@ -27,6 +27,11 @@ def _text(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _tool_call_id(value: str) -> str:
+    # Only the registry observer owns agent notifications, never model tool IDs.
+    return "yoke-tool:" + value if value.startswith("yoke-agent:") else value
+
+
 def _label(value: str) -> str:
     single_line = " ".join(value.split())
     return single_line if len(single_line) <= 160 else single_line[:157] + "..."
@@ -188,14 +193,18 @@ class ToolCallProjector:
         update = {
             **metadata,
             "sessionUpdate": "tool_call" if start else "tool_call_update",
-            "toolCallId": call_id,
+            "toolCallId": _tool_call_id(call_id),
             "status": "in_progress"
             if start
             else ("completed" if data["ok"] else "failed"),
         }
         if not start:
             result = data.get("result")
-            update["rawOutput"] = result
+            update["rawOutput"] = (
+                {"toolResult": result}
+                if isinstance(result, dict) and result.get("type") == "yoke_agent"
+                else result
+            )
             update["content"] = output_content(result)
         return update
 
@@ -210,7 +219,7 @@ class ToolCallProjector:
             {
                 **metadata,
                 "sessionUpdate": "tool_call_update",
-                "toolCallId": call_id,
+                "toolCallId": _tool_call_id(call_id),
                 "status": "failed",
                 "content": output_content(message),
             }

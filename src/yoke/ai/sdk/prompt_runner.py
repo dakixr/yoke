@@ -22,6 +22,7 @@ from yoke.ai.sdk.structured import structured_output_retry_message
 from yoke.ai.sdk.types import AgentResult
 from yoke.ai.sdk.types import Image
 from yoke.ai.sdk.types import StructuredOutputError
+from yoke.ai.sdk.tracking import track_prompt
 from yoke.ai.providers.usage_context import usage_metric_context
 
 if TYPE_CHECKING:
@@ -44,6 +45,46 @@ def run_agent_prompt[StructuredT](
     after_tool_call: AfterToolCallHook | None,
 ) -> AgentResult[StructuredT]:
     """Run one prompt while the caller owns the agent prompt lock."""
+    with track_prompt(agent) as reporter:
+
+        def tracked_event(name: str, payload: dict[str, object]) -> None:
+            if reporter is not None and name == "tool_execution_start":
+                reporter.tool(payload.get("tool_name"))
+            if on_event is not None:
+                on_event(name, payload)
+
+        result = _run_observed_prompt(
+            agent,
+            prompt,
+            images=images,
+            image_urls=image_urls,
+            output_type=output_type,
+            on_event=tracked_event if reporter else on_event,
+            observer=observer,
+            stop_requested=stop_requested,
+            before_tool_call=before_tool_call,
+            after_tool_call=after_tool_call,
+        )
+        if reporter is not None:
+            reporter.finish(
+                "completed" if result.status == "completed" else "cancelled"
+            )
+        return result
+
+
+def _run_observed_prompt[StructuredT](
+    agent: Agent,
+    prompt: str,
+    *,
+    images: Sequence[Image | str | Path],
+    image_urls: Sequence[str],
+    output_type: type[StructuredT] | None,
+    on_event: AgentEventHandler | None,
+    observer: AgentObserver | None,
+    stop_requested: StopRequested | None,
+    before_tool_call: BeforeToolCallHook | None,
+    after_tool_call: AfterToolCallHook | None,
+) -> AgentResult[StructuredT]:
     observers = tuple(item for item in (agent.observer, observer) if item is not None)
     event_handler = compose_event_handler(on_event, observers)
     notify_observers(observers, "agent_start", {"prompt": prompt})

@@ -1,3 +1,5 @@
+@import url("./session/agents.css");
+
 .session-header { display: flex; min-height: 57px; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 13px 7px 16px; border-bottom: 1px solid var(--border); background: var(--bg); }
 .session-header__identity { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .session-header__text { min-width: 0; }

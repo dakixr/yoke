@@ -25,6 +25,7 @@ EXPECTED_TOOLS = [
     "command_exec",
     "python_exec",
     "process_input",
+    "agent_runs",
     "mcp_inspect",
     "mcp_call",
     "batch_read",
@@ -46,7 +47,7 @@ def test_registry_is_an_explicit_tool_allowlist(tmp_path: Path) -> None:
         async with memory_client(service) as client:
             result = await client.list_tools()
             assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
-            assert set(TOOL_REGISTRY) == set(EXPECTED_TOOLS[:9])
+            assert set(TOOL_REGISTRY) == set(EXPECTED_TOOLS[:10])
             tools = {tool.name: tool for tool in result.tools}
             read_tool = tools["read_file"]
             image_tool = tools["view_image"]

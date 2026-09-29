@@ -113,7 +113,9 @@ export function reducePublicEvent(state, event) {
   }
 
   const data = copySessionData(next, sessionID);
-  if (event.type === "session.permission.requested") {
+  if (event.type === "session.agent.updated") {
+    data.agentRunsRevision = (data.agentRunsRevision || 0) + 1;
+  } else if (event.type === "session.permission.requested") {
     const current = data.permissions || [];
     data.permissions = [
       ...current.filter((item) => item.id !== event.data?.id),

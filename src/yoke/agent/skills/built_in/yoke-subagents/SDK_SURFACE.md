@@ -70,6 +70,30 @@ agent with explicit attribution for each job. Forward the environment explicitly
 for SSH or remote jobs. Forks keep the resolved owner; loading saved state resolves
 the current owner rather than restoring the old one.
 
+## Automatic tracking
+
+Managed command and Python launches register SDK prompt runs with the host.
+Keep ordinary `Agent` and `prompt_async()` calls; registration needs no observer
+or extra spawn tool. `RunConfig(name="reviewer", ...)` adds a display name.
+Use a short role label, not a prompt, path, credential, or sensitive task detail.
+
+An SDK instance has one `agent_id`; each prompt or batch attempt has a new run
+ID matching usage logs. Sequential follow-ups keep the agent identity. Nested
+managed launches retain their reporting host and parent linkage. Standalone SDK
+work without a host remains standalone. A managed registration error occurs
+before the first model call, so inspect the error instead of assuming work began.
+Close every instance, including ones that never prompt. Captured agents retain
+their authority beyond parent-history eviction. Retention and release retries
+are idempotent; pending releases count toward a 4096-instance per-process bound.
+
+Inspect `/agents` in the CLI, the native web Agents section, or MCP `agent_runs`.
+MCP's optional `session_id` is the hosting process handle, not a conversation ID.
+Its runtime is shared by MCP clients. Execution status and observation health are
+separate: stale/lost observation means the outcome is unconfirmed. Continue
+collecting script output with `process_read` and inspect each dispatched result.
+An observation row does not replace the completion gate or authorize cancelling
+the whole hosting process when only one agent needs to stop.
+
 ## Process tools for launching workers
 
 Native Yoke and MCP use `command_exec`, `python_exec`, `process_input`,

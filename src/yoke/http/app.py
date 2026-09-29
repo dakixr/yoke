@@ -22,6 +22,7 @@ from yoke.http.errors import validation_error_handler
 from yoke.http.errors import workspace_error_handler
 from yoke.session.workspace import WorkspaceError
 from yoke.http.routes import health
+from yoke.http.routes import agent_run
 from yoke.http.routes import catalog
 from yoke.http.routes import command
 from yoke.http.routes import event
@@ -39,6 +40,7 @@ from yoke.http.routes import tool
 from yoke.http.routes import upload
 from yoke.http.routes import workspace
 from yoke.http.services.location_service import LocationService
+from yoke.http.services.agent_runs import AgentRunService
 from yoke.http.services.mcp_service import McpService
 from yoke.http.services.catalog_service import CatalogService
 from yoke.http.services.event_broker import EventService
@@ -96,9 +98,11 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         max_active_sessions=configured.max_active_sessions,
         max_worker_threads=configured.max_worker_threads,
     )
+    agent_runs = AgentRunService(runtime_registry, events)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        agent_run_task = asyncio.create_task(agent_runs.watch())
         maintenance_task = asyncio.create_task(
             _maintain_session_index(
                 store,
@@ -111,7 +115,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         try:
             yield
         finally:
-            for task in (maintenance_task, runtime_import_task):
+            for task in (maintenance_task, runtime_import_task, agent_run_task):
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
@@ -119,6 +123,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
             try:
                 await runtime_registry.close_runtimes()
             finally:
+                agent_runs.close()
                 try:
                     session_service.close()
                 finally:
@@ -147,6 +152,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.state.path_policy = PathPolicy()
     app.state.filesystem_service = FilesystemService(app.state.path_policy)
     app.state.runtime_registry = runtime_registry
+    app.state.agent_run_service = agent_runs
     app.state.process_service = ProcessService(runtime_registry)
     app.state.tool_trace_service = ToolTraceService(
         store,
@@ -196,6 +202,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         )
 
     app.include_router(health.router, prefix="/api/v1")
+    app.include_router(agent_run.router, prefix="/api/v1")
     app.include_router(catalog.router, prefix="/api/v1")
     app.include_router(command.router, prefix="/api/v1")
     app.include_router(event.router, prefix="/api/v1")

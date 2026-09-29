@@ -13,6 +13,7 @@ from yoke.agent.tools.mcp import McpCallTool
 from yoke.agent.tools.mcp import McpInspectTool
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.agent.tools.read import ReadTool
+from yoke.mcp_server.agent_runs import MCPAgentRunsTool
 from yoke.mcp_server.files import MCPViewImageTool
 from yoke.mcp_server.commands import MCPExecCommandTool, MCPProcessInputTool
 from yoke.mcp_server.search import MCPFdTool
@@ -135,6 +136,13 @@ TOOL_REGISTRY = {
             "retained output. Use process_read for observation without input.",
             MCPProcessInputTool,
             EXECUTION,
+        ),
+        ExposedTool(
+            "agent_runs",
+            "Agent runs",
+            MCPAgentRunsTool.description,
+            MCPAgentRunsTool,
+            READ_ONLY,
         ),
     )
 }

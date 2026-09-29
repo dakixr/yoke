@@ -177,6 +177,9 @@ export class YokeApi {
   processes({ sessionID, status, limit = 100 } = {}) {
     return this.request(`/api/v1/process${queryString({ sessionID, status, limit })}`);
   }
+  agentRuns(sessionID, options = {}) {
+    return this.request(`/api/v1/agent-run${queryString({ sessionID })}`, options);
+  }
   process(id) { return this.request(`/api/v1/process/${encodeURIComponent(id)}`); }
   processOutput(id, afterSeq = 0, limit = 200) {
     return this.request(`/api/v1/process/${encodeURIComponent(id)}/output${queryString({ afterSeq, limit })}`);

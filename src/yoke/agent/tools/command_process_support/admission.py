@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.agent.tools.command_process import _ManagedCommandProcess
 from yoke.agent.tools.command_process_support.spawn import open_process
+from yoke.agent.tools.command_process_support.agent_runs import prepare_launch
+from yoke.agent_runs.context import Binding
 from yoke.agent.tools.command_process_types import MAX_PROCESS_COUNT
 from yoke.agent.tools.command_process_types import CancelRequested
 from yoke.agent.tools.command_process_support.coordination import (
@@ -44,9 +47,9 @@ def spawn(
     shell: str | None,
     login: bool,
     *,
-    argv: list[str] | None,
-    env: dict[str, str] | None,
-    timeout_seconds: int | None,
+    argv: list[str] | None = None,
+    env: dict[str, str] | None = None,
+    timeout_seconds: int | None = None,
     cancel_requested: CancelRequested | None = None,
 ) -> _ManagedCommandProcess:
     values = argv if argv is not None else [command, shell or ""]
@@ -57,6 +60,7 @@ def spawn(
         managed: _ManagedCommandProcess | None = None
         master_fd: int | None = None
         slave_fd: int | None = None
+        launch_binding: Binding | None = None
         try:
             with manager._lock:
                 if manager._closed:
@@ -67,6 +71,7 @@ def spawn(
                     env.copy() if env is not None else manager.base_environment()
                 )
                 attribute_subprocess_environment(process_env)
+                launch_binding = prepare_launch(manager, process_env, session_id)
                 if env is None:
                     prepare_python_env(process_env)
                 process_argv = argv or build_shell_command(
@@ -86,9 +91,27 @@ def spawn(
                     on_change=manager._notify,
                     timeout_seconds=timeout_seconds,
                 )
+                if launch_binding is None:
+                    pass  # Reporting outage, child SDK admission remains mandatory.
+                elif launch_binding.registry is manager.agent_runs:
+                    # A shell can exit while its owned descendants still run.
+                    # Retire authority after existing tree cleanup, not shell exit.
+                    manager.agent_runs.watch_launch(
+                        launch_binding.token,
+                        lambda owned=managed: 0 if owned.closed else None,
+                    )
+                else:
+                    with suppress(Exception):
+                        launch_binding.attach(process.pid)
+                    manager.agent_runs.watch_remote_launch(
+                        lambda owned=managed: owned.closed, launch_binding.revoke
+                    )
                 manager._processes[session_id] = managed
                 managed.start_readers()
         except BaseException:
+            if launch_binding is not None:
+                with suppress(Exception):
+                    launch_binding.revoke()
             if managed is not None:
                 try:
                     managed.terminate()

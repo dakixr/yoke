@@ -203,6 +203,49 @@ data to disk before returning. A persistent failure raises
 usage record. A failed append is rolled back before retrying. If that rollback
 fails, the writer stops rather than appending more bytes to an uncertain record.
 
+## Automatic agent tracking
+
+SDK agents launched by Yoke's managed command or Python tools register each
+prompt with their owning runtime. Existing Python orchestrators need no special
+spawn tool or observer. `RunConfig(name="reviewer", root=..., tools=...)` adds an
+optional display label; use a short role name rather than task instructions or
+sensitive text.
+
+`Agent.agent_id` identifies the SDK instance. Each prompt has a separate run ID,
+matching `sdk_run_id` in usage logs. Reusing an agent keeps its identity while
+creating another run. Forks and newly loaded SDK instances get new identities.
+Constructing an agent alone does not make it active. Batch attempts retain their
+task and attempt metadata alongside their own run IDs.
+
+The host issues a private launch capability. Session IDs in accounting settings
+cannot authorize reporting into another session. Nested managed launches retain
+the original reporting host and record their immediate parent run. Reporting
+metadata stays out of provider prompts, conversation state, and cache identity.
+A standalone SDK call without a managed reporting context remains standalone.
+
+Captured SDK instances retain authority independently of their parent's retained
+run history. A transient retention failure is retried before later prompting,
+using the same request identity so a lost acknowledgement does not create another
+capability. `close()` releases this authority even when no prompt ran. A failed
+release stays queued for retry without changing the agent's execution result.
+Each Python process permits at most 4096 managed instances, including releases
+awaiting acknowledgement, to bound this cleanup queue. Close unused instances.
+
+For managed runs, registration must succeed before the first provider call.
+Later reporting failures do not replace the SDK result. Execution state and
+observation health are separate: a missed heartbeat or disconnected client means
+the status is stale or unknown, not that the agent succeeded or failed. A
+cancellation request does not settle a run until its synchronous worker stops.
+An ordinary command does not become dependent on reporting after a tracking
+outage, but an SDK prompt inside that command still requires registration.
+
+Inspect the native web session's Agents section, use `/agents` in the CLI, or
+call the read-only MCP `agent_runs` tool. HTTP and ACP expose the same retained
+observations. The registry reports bounded identity, model, status, and last-tool
+metadata, not prompts, tool arguments, full outputs, or exception messages. Usage
+logs remain the accounting record; joining by run ID does not add child usage to
+the parent's conversation counters. Observation does not control agent execution.
+
 ## Observing Agent Work
 
 Use an SDK observer for live, structured visibility into an agent run. The

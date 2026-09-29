@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -128,3 +129,21 @@ def history_content(block: dict[str, Any]) -> dict[str, Any]:
                 "_meta": {"yokeAttachmentName": block["name"]},
             }
     raise RequestError(-32001, "Native history contains an unavailable content payload")
+
+
+async def replay_history(
+    session_id: str,
+    messages: list[dict[str, Any]],
+    update: Callable[[str, dict[str, Any]], Awaitable[None]],
+) -> None:
+    """Replay saved chat content independently of the live observation roster."""
+    for message in messages:
+        if message["type"] not in ("user", "assistant"):
+            continue
+        kind = (
+            "user_message_chunk" if message["type"] == "user" else "agent_message_chunk"
+        )
+        for block in message["content"]:
+            await update(
+                session_id, {"sessionUpdate": kind, "content": history_content(block)}
+            )

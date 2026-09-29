@@ -204,6 +204,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand("/queue", "Open the interactive prompt queue manager."),
     SlashCommand("/ps", "Inspect command processes for this live runtime."),
+    SlashCommand("/agents", "Show the latest SDK agent runs for this live runtime."),
     SlashCommand("/image", "Attach an image file to the next prompt.", "path"),
     SlashCommand(
         "/skill",

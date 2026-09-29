@@ -21,6 +21,14 @@ from yoke.agent.loop.tool_core import cancelled_tool_result
 from yoke.agent.loop.tool_core import execute_tool
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.tools import LocalTool
+from yoke.agent_runs.context import current_binding, release_tool_binding, tool_binding
+from yoke.agent_runs.context import bind_binding
+from yoke.agent_runs.protocol import ENVIRONMENT_KEY
+from yoke.ai.providers.usage_context import UsageMetricContext
+from yoke.ai.providers.usage_context import (
+    bind_usage_metric_context,
+    current_usage_metric_context,
+)
 
 
 TOOL_CANCEL_GRACE_SECONDS = 0.25
@@ -42,6 +50,12 @@ class ToolProcessInvocation:
     ) -> None:
         self._context = _process_context()
         tool = _tool_for_child_process(tools.get(name), self._context)
+        self._run_binding = tool_binding(tools)
+        run_environment = (
+            {ENVIRONMENT_KEY: self._run_binding.encode()}
+            if self._run_binding is not None
+            else {}
+        )
         self._cancel_event = self._context.Event()
         self._result_queue: Queue[dict[str, object]] = self._context.Queue(maxsize=1)
         process_factory = cast(
@@ -56,6 +70,8 @@ class ToolProcessInvocation:
                 arguments,
                 self._cancel_event,
                 self._result_queue,
+                current_usage_metric_context(),
+                run_environment,
             ),
         )
         self._result: dict[str, object] | None = None
@@ -134,6 +150,7 @@ class ToolProcessInvocation:
         self._cancel_event.set()
         if not self._started:
             self._closed = True
+            release_tool_binding(self._run_binding)
             self._result_queue.close()
             self._result_queue.join_thread()
             return
@@ -165,6 +182,7 @@ class ToolProcessInvocation:
         if self._closed:
             return
         if not self._started:
+            release_tool_binding(self._run_binding)
             self._result_queue.close()
             self._result_queue.join_thread()
             self._closed = True
@@ -183,6 +201,7 @@ class ToolProcessInvocation:
         self._result_queue.close()
         self._result_queue.join_thread()
         self._closed = True
+        release_tool_binding(self._run_binding)
         _ACTIVE_INVOCATIONS.discard(self)
 
 
@@ -222,15 +241,22 @@ def _tool_process_main(
     arguments: dict[str, object],
     cancel_event,
     result_queue: Queue[dict[str, object]],
+    usage_context: UsageMetricContext | None = None,
+    run_environment: dict[str, str] | None = None,
 ) -> None:
     _start_process_group()
     tools = {tool.name: tool} if tool is not None else {}
-    result = execute_tool(
-        tools,
-        name,
-        arguments,
-        cancel_requested=cancel_event.is_set,
-    )
+    # Already-running hosts can still spawn this entrypoint with its old arguments.
+    with (
+        bind_usage_metric_context(usage_context or current_usage_metric_context()),
+        bind_binding(current_binding(run_environment)),
+    ):
+        result = execute_tool(
+            tools,
+            name,
+            arguments,
+            cancel_requested=cancel_event.is_set,
+        )
     result_queue.put(_pickle_safe_result(result))
 
 

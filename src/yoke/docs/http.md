@@ -40,9 +40,11 @@ from the repository root with:
 
 ```bash
 node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
+node --experimental-default-type=module scripts/test_web_agent_runs.mjs
 node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs
 node --experimental-default-type=module scripts/test_web_workspace_races.mjs
 node --experimental-default-type=module scripts/test_web_location_picker.mjs
+node --experimental-default-type=module scripts/test_web_markdown_math.mjs
 ```
 
 `scripts/test_web_location_picker_browser.py` drives the working location
@@ -231,11 +233,16 @@ CSS, vendored dependencies, and licenses. `/settings` is a compatibility alias
 for the home view, not a separate settings screen. These browser routes are excluded
 from the v1 OpenAPI schema. Production does not require Node.js, npm, a CDN, or
 a separate frontend server. Assistant Markdown is sanitized before display and
-then renders TeX math with the bundled KaTeX assets. `\\(...\\)` is inline math;
-`\\[...\\]` and `$$...$$` are display math. Math-like text inside code spans or
-fences stays literal, and single-dollar `$...$` text is left alone so prices do
-not turn into formulas. Math rendering does not require a CDN or other browser
-network request. When image attachments are enabled, the composer
+then renders TeX math with the bundled KaTeX assets. `$...$` and `\(...\)` are
+inline math; `\[...\]` and `$$...$$` are display math. Single-dollar math stays
+on one source line, with no whitespace immediately inside either delimiter.
+Its closing dollar cannot be followed by a digit. The first unescaped dollar
+must be a valid closer, so prices such as `$25 and $30` or `$5-$10` do not
+consume a later formula. Escape literal dollars with `\$`. Code spans, code
+fences, and link destinations stay literal. Math is tokenized before Markdown
+unescapes text, so escaped dollars are never reinterpreted after sanitization.
+Incomplete or invalid formulas remain readable text. The bundled renderer and
+fonts need no external network requests. When image attachments are enabled, the composer
 accepts images from the file picker, drag and drop, and the browser paste event
 used by Cmd+V on macOS or Ctrl+V on other platforms. Composer keyboard behavior
 tracks the interactive CLI: Enter sends or steers, Tab queues, Shift+Tab cycles
@@ -424,6 +431,10 @@ at the same time, subject to the daemon-wide active-session limit. Disconnecting
 an HTTP request or event stream does not cancel admitted work. Use
 `POST /api/v1/session/{sessionID}/interrupt` to retire the active generation.
 
+Interruption persists dangling-tool recovery and the interrupted-turn marker as
+an append-only suffix. It does not deep-copy or reserialize historical entries;
+existing branches, input identities, and provider-visible context are retained.
+
 `POST /api/v1/session/{session_id}/drain?timeoutMs=30000` requires the same
 bearer authentication as other session routes. It observes physical completion
 of admitted agent workers, including retired generations and their owned
@@ -501,6 +512,48 @@ GET /api/v1/session/{sessionID}/history?after=<seq>&limit=<n>
 gaps. A reconnecting client should refresh `/session/active`, fetch current
 REST snapshots for visible sessions, then use `/history` from its last durable
 sequence before treating that session as caught up.
+
+## Agent run observations
+
+`GET /api/v1/agent-run?sessionID=<native-session-id>` returns the retained SDK
+prompt runs owned by that session, newest first, in a `data` array. It requires
+the normal HTTP authorization. Missing sessions return 404. Listing observations
+does not start a session, consume command output, or control a worker.
+
+The native session view groups these runs by agent and shows the latest run in
+its Agents section. It refreshes on selection, `session.agent.updated`, and
+reconnect. One Python process can host several independently tracked agents.
+Reusing an agent keeps its identity and creates another run, while an unstarted
+agent does not count as running.
+
+Snapshots contain `agentId`, `runId`, owner and parent linkage, model and display
+name, execution status, last tool, timestamps, and a revision. `observation`
+records `live`, `stale`, or `lost` independently of the execution status. A
+restored journal entry does not prove that its worker is still running. The
+daemon preserves known outcomes and marks unconfirmed live work as observation
+lost after restart. Neither losing a browser connection nor ending an ACP
+observer terminates a worker.
+
+A lost child-attachment message is not proof of process death. The registry
+retains that launch authority until an authenticated descendant identifies its
+process group or managed cleanup explicitly releases it. Unconfirmed launch
+authority is bounded at 256 unattached launches and 4096 remote launch scopes per
+runtime. Platforms without observable process-group death keep ambiguous crash
+cleanup conservative until explicit release or host shutdown.
+
+If a terminal record leaves registry retention before the HTTP observer sees it,
+the last known running row becomes observation lost. It does not remain a live
+claim, and the daemon does not invent a successful outcome. Optional exception
+class names that cannot be represented in the public contract are omitted as
+`null`; the failed execution still appears.
+
+The host writes bounded lifecycle observations through the session event
+journal. Heartbeats refresh liveness without appending a durable event for every
+tick. Clients use a fresh snapshot after lost notifications or reconnect rather
+than treating the live feed as a complete history. Prompts, tool arguments,
+full agent outputs, credentials, and exception messages are not roster fields.
+The native view lets a snapshot request finish during sustained activity and
+coalesces its pending refresh, rather than cancelling every read on each event.
 
 ## Main resources
 

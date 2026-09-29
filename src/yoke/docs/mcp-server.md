@@ -16,11 +16,11 @@ The service exposes:
 - `GET /healthz`
 - MCP Streamable HTTP at `POST /mcp`
 - the direct tools: `read_file`, `view_image`, `rg`, `fd`, `skill`, `apply_patch`,
-  `command_exec`, `python_exec`, `process_input`, `mcp_inspect`, and `mcp_call`
+  `command_exec`, `python_exec`, `process_input`, `agent_runs`, `mcp_inspect`, and `mcp_call`
 
 The server also exposes `batch_read`, `result_read`, `process_read`,
 `process_cancel`, `search_then_read`, `workspace_snapshot`, `check_patch`,
-`import_files`, `write_binary_file`, and `export_file`, for 21 default tools.
+`import_files`, `write_binary_file`, and `export_file`, for 22 default tools.
 `python_exec` includes a parent-owned tool-composition bridge. Explicitly
 configured downstream wrappers may add reviewed names. See
 [Composed MCP work](mcp-composition.md) for schemas, limits, recipes, file
@@ -63,6 +63,31 @@ collects a short response. The OS process keeps running between MCP calls. Live
 processes and handles are never persisted and are terminated when the service
 stops. Run one ASGI worker unless process ownership is moved to a separate
 executor.
+
+## Inspecting SDK agents
+
+The injected Python bridge imports only its client-side dependencies in child
+processes. Importing `yoke.mcp_server.execution.client` does not initialize the
+MCP server or its protocol schemas. Public server exports still resolve normally
+when requested from the package.
+
+`agent_runs` reads SDK runs registered by managed command and Python launches.
+Its optional `session_id` filters the hosting process handle returned by those
+tools, not an OS PID or a conversation ID. `active_only: true` selects running
+runs with live observation. `limit` bounds the result; `total` and `truncated`
+describe the matching retained rows before that limit.
+
+The result's `data` array contains separate agent and run identities, execution
+status, observation health, model/name, parent linkage, and last-tool metadata.
+It excludes prompts, process output, and exception messages. Reading it does
+not change agent state or consume process output cursors. Use `process_read`
+to collect the orchestration script's results and verify its exit status.
+
+This MCP runtime is shared by authenticated clients. It does not infer ChatGPT
+conversation ownership from the working directory or process handle. Stale or
+lost observation is not evidence that a worker stopped. See
+[automatic agent tracking](sdk.md#automatic-agent-tracking) for SDK identity and
+lifecycle behavior.
 
 ## Command arguments and error recovery
 
