@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import pytest
 
 from yoke.agent.compaction import COMPACTION_SUMMARY_PROMPT, CompactionPolicy
-from yoke.agent.models import Message, ToolCall, ToolFunction
+from yoke.agent.models import Message, TokenUsage, ToolCall, ToolFunction
 from yoke.agent.tools import LocalTool
 from yoke.agent_runs import AgentRunRegistry
 from yoke.ai.providers.base import ProviderError
@@ -42,6 +42,49 @@ def tool_call():
             )
         ],
     )
+
+
+def test_provider_usage_reaches_live_and_completed_agent_snapshots(registry, tmp_path):
+    first = tool_call()
+    first.usage = TokenUsage(
+        input_tokens=10, output_tokens=3, total_tokens=13, cached_input_tokens=4
+    )
+    final = Message.assistant("done")
+    final.usage = TokenUsage(input_tokens=15, output_tokens=5)
+    provider = RecordingProvider([first, final])
+    live = []
+
+    def observe(event, _payload):
+        if event == "tool_execution_start":
+            live.append(registry.snapshots()[0])
+
+    with registry.bind(session_id="owner"):
+        agent = Agent(
+            provider=provider,
+            config=RunConfig(
+                root=tmp_path, tools=[Evidence], include_agents_file=False
+            ),
+        )
+        try:
+            agent.prompt("Use the fixture.", on_event=observe)
+        finally:
+            agent.close()
+
+    assert live[0]["status"] == "running"
+    assert live[0]["typedUsage"] == {
+        "totalTokens": 13,
+        "inputTokens": 10,
+        "outputTokens": 3,
+        "cachedInputTokens": 4,
+        "toolUses": 1,
+    }
+    finished = registry.snapshots()[0]
+    assert finished["status"] == "completed"
+    assert finished["typedUsage"]["totalTokens"] == 33
+    assert finished["typedUsage"]["inputTokens"] == 25
+    assert finished["typedUsage"]["outputTokens"] == 8
+    assert finished["typedUsage"]["toolUses"] == 1
+    assert finished["typedUsage"]["durationMs"] >= 0
 
 
 class RecordingProvider:

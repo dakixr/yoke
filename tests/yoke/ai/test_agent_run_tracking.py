@@ -75,6 +75,11 @@ def test_reuse_fork_and_load_get_distinct_identities(manager, tmp_path):
             assert len({row["runId"] for row in rows}) == 4
             assert len([row for row in rows if row["agentId"] == agent.agent_id]) == 2
             assert all(row["status"] == "completed" for row in rows)
+            assert all(
+                "totalTokens" not in row["typedUsage"]
+                and row["typedUsage"]["durationMs"] >= 0
+                for row in rows
+            )
             assert all(row["sessionID"] == "owner" for row in rows)
             assert "SECRET" not in json.dumps(rows)
             assert rows[-1]["runId"] == provider.calls[0][0].sdk_run_id

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
+import math
+from typing import cast
 
 from yoke.agent_runs.lifetime import Lifetime
 from yoke.agent_runs.worker import Worker
@@ -72,4 +74,35 @@ def metadata(frame: dict[str, object]) -> dict[str, object]:
         if type(attempt) is not int or not 1 <= attempt <= 1_000_000:
             raise ValueError("Invalid agent run attempt")
         result["attempt"] = attempt
+    return result
+
+
+def typed_usage(value: object) -> dict[str, int | float]:
+    """Accept only bounded counters from the private reporter channel."""
+    if not isinstance(value, dict):
+        raise ValueError("Invalid agent run usage")
+    fields = cast(dict[str, object], value)
+    result: dict[str, int | float] = {}
+    for key in (
+        "totalTokens",
+        "inputTokens",
+        "outputTokens",
+        "cachedInputTokens",
+        "reasoningOutputTokens",
+        "toolUses",
+    ):
+        if key not in fields:
+            continue
+        count = fields[key]
+        if type(count) is not int or not 0 <= count <= 2**53 - 1:
+            raise ValueError("Invalid agent run usage")
+        result[key] = count
+    if "durationMs" in fields:
+        duration = fields["durationMs"]
+        if type(duration) not in (int, float):
+            raise ValueError("Invalid agent run usage")
+        duration = cast(int | float, duration)
+        if not math.isfinite(duration) or not 0 <= duration <= 2**53 - 1:
+            raise ValueError("Invalid agent run usage")
+        result["durationMs"] = duration
     return result

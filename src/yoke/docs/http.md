@@ -529,7 +529,11 @@ agent does not count as running.
 Snapshots contain `agentId`, `runId`, owner and parent linkage, model and display
 name, execution status, last tool, timestamps, and a revision. `observation`
 records `live`, `stale`, or `lost` independently of the execution status. A
-restored journal entry does not prove that its worker is still running. The
+`typedUsage` object contains cumulative provider-reported token counts and tool
+uses when available, plus elapsed duration when the run finishes. Missing
+provider counters remain absent rather than appearing as zero. The same usage
+travels through ACP to T3 Code's Agents pane. A restored journal entry does not
+prove that its worker is still running. The
 daemon preserves known outcomes and marks unconfirmed live work as observation
 lost after restart. Neither losing a browser connection nor ending an ACP
 observer terminates a worker.

@@ -18,7 +18,7 @@ from yoke.agent_runs.context import (
 )
 from yoke.agent_runs.protocol import RegistrationError
 from yoke.agent_runs.reclamation import REVOCATIONS
-from yoke.agent_runs.reporting import Reporter
+from yoke.agent_runs.reporting import Reporter, bind_reporter
 from yoke.ai.providers.usage_context import current_usage_metric_context
 from yoke.ai.sdk.resources import ProviderLease
 
@@ -113,7 +113,7 @@ def track_prompt(agent: Agent) -> Iterator[Reporter | None]:
         },
     )
     try:
-        with bind_binding(reporter.binding):
+        with bind_reporter(reporter), bind_binding(reporter.binding):
             yield reporter
     except BaseException as exc:
         status = (

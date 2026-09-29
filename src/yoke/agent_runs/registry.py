@@ -11,7 +11,14 @@ import secrets
 import threading
 import time
 
-from yoke.agent_runs.records import Capability, Owner, Record, metadata, text
+from yoke.agent_runs.records import (
+    Capability,
+    Owner,
+    Record,
+    metadata,
+    text,
+    typed_usage,
+)
 from yoke.agent_runs.capabilities import delegate, retention_token
 from yoke.agent_runs.lifetime import Lifetime
 from yoke.agent_runs.notifications import Notifier
@@ -266,6 +273,8 @@ class AgentRunRegistry:
         for key in ("lastToolName", "errorType"):
             if key in frame:
                 updates[key] = text(frame[key])
+        if "typedUsage" in frame:
+            updates["typedUsage"] = typed_usage(frame["typedUsage"])
         record.sequence = sequence
         record.seen = self._clock()
         record.snapshot["lastSeenAt"] = self._timestamp()

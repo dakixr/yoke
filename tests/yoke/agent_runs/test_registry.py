@@ -134,6 +134,36 @@ def test_duplicates_terminals_privacy_and_host_authority(registry):
         registry.dispatch({**frame, "token": "not-the-capability"})
 
 
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"totalTokens": -1},
+        {"totalTokens": True},
+        {"totalTokens": "12"},
+        {"durationMs": float("nan")},
+        {"totalTokens": 2**53},
+    ],
+)
+def test_invalid_usage_cannot_change_a_run(registry, usage):
+    root = registry.capability(Owner("owner"))
+    token = registry.dispatch({**registration(), "token": root})["token"]
+    before = registry.snapshots()[0]
+    with pytest.raises(ValueError, match="Invalid agent run usage"):
+        registry.dispatch(
+            {"op": "report", "token": token, "sequence": 1, "typedUsage": usage}
+        )
+    assert registry.snapshots()[0] == before
+    registry.dispatch(
+        {
+            "op": "report",
+            "token": token,
+            "sequence": 1,
+            "typedUsage": {"totalTokens": 12, "prompt": "SECRET"},
+        }
+    )
+    assert registry.snapshots()[0]["typedUsage"] == {"totalTokens": 12}
+
+
 def test_callbacks_are_outside_lock_and_errors_do_not_break_registration(registry):
     observed = threading.Event()
     completed = threading.Event()

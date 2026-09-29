@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from yoke.agent.models import Message
 from yoke.agent.models import TokenUsage
+from yoke.agent_runs.reporting import report_provider_usage
 from yoke.ai.providers.usage_context import (
     current_usage_metric_context,
 )
@@ -31,6 +32,7 @@ def record_provider_usage(provider: object, response: Message) -> None:
     """Append one durable metric for a completed provider response."""
     completed_at = datetime.now(UTC)
     usage = response.usage
+    report_provider_usage(usage)
     provider_name = _provider_name(provider, usage)
     record: dict[str, object] = {
         "schema_version": 1,

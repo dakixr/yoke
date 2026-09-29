@@ -124,6 +124,11 @@ def test_independent_runs_in_one_process_and_reuse(
         assert {row["sessionID"] for row in rows} == {"native-owner"}
         assert {row["runtimeSessionID"] for row in rows} == {launched["session_id"]}
         assert all(row["observation"] == "live" for row in rows)
+        assert all(
+            cast(dict[str, object], row["typedUsage"])["totalTokens"] == 9
+            for row in rows
+            if row["status"] == "completed"
+        )
         assert "SECRET_" not in json.dumps(rows)
         manager.write_input(cast(int, launched["session_id"]), "release\n")
         final = receipt.wait(
@@ -135,6 +140,11 @@ def test_independent_runs_in_one_process_and_reuse(
         assert len(reused) == 2
         assert len({row["agentId"] for row in reused}) == 1
         assert len({row["runId"] for row in reused}) == 2
+        assert all(
+            cast(dict[str, object], row["typedUsage"])["totalTokens"] == 9
+            for row in final
+            if row["status"] == "completed"
+        )
         assert "SECRET_" not in json.dumps(final)
         usage = [
             json.loads(line)
