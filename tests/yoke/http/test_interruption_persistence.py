@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from yoke.agent.models import ConversationEntry, Message, ToolCall, ToolFunction
 from yoke.agent.session_tree import ConversationProjection, SessionTree
 from yoke.agent.session_tree._tool_sequence import tail_open_tool_call_ids
+from yoke.ai.providers.codex.subscription.messages import convert_messages
+from yoke.ai.providers.openai_compat import serialize_message_for_openai
 from yoke.http.services.runtime_persistence import (
     tag_continuation_entries,
     tag_input_entry,
@@ -167,6 +169,20 @@ def test_interruption_only_copies_and_appends_new_entries(
         assert [message.model_dump() for message in projected.provider_messages] == [
             message.model_dump() for message in expected_messages
         ]
+        # Legacy full-history saves normalized null assistant content to empty
+        # strings. Preserve exact wire requests without rewriting those rows.
+        legacy_messages = [
+            message.model_copy(update={"content": ""})
+            if message.role == "assistant" and message.content is None
+            else message
+            for message in expected_messages
+        ]
+        assert convert_messages(list(projected.provider_messages)) == convert_messages(
+            legacy_messages
+        )
+        assert [
+            serialize_message_for_openai(m) for m in projected.provider_messages
+        ] == [serialize_message_for_openai(m) for m in legacy_messages]
         actual_suffix = saved.conversation_entries[len(before) :]
         if dangling and mode != "empty":
             assert actual_suffix[0].metadata["recovered_incomplete_tool_call"] is True
