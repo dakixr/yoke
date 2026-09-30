@@ -22,6 +22,11 @@ from yoke.acp.prompting import InlineAttachment
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
+# Uvicorn closes idle keep-alive connections after 5 seconds. Expire pooled
+# connections sooner so a request never reuses a socket the server is closing.
+NATIVE_KEEPALIVE_EXPIRY_SECONDS = 2.0
+
+
 def fail(message: str) -> RequestError:
     """Build a sanitized ACP server error."""
     return RequestError(-32001, message)
@@ -35,6 +40,7 @@ class NativeClient:
             base_url=url.rstrip("/") + "/api/v1/",
             headers={"Authorization": "Bearer " + token},
             timeout=35,
+            limits=httpx.Limits(keepalive_expiry=NATIVE_KEEPALIVE_EXPIRY_SECONDS),
             trust_env=False,
             follow_redirects=False,
         )

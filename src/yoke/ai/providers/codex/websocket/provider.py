@@ -97,6 +97,7 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
                 auth_profile = self._websocket_auth_profile or self._active_auth_profile
                 websocket_payload = self._prepare_websocket_payload(payload)
                 continuity_mode = self._response_chain.prepared_mode
+                continuity_reason = self._response_chain.prepared_reason
                 try:
                     websocket.send(json.dumps(websocket_payload, separators=(",", ":")))
                 except ConnectionClosed as exc:
@@ -123,6 +124,7 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
                     used_previous_response_id="previous_response_id"
                     in websocket_payload,
                     continuity_mode=continuity_mode,
+                    continuity_reason=continuity_reason,
                     **request_metrics,
                 )
                 return message

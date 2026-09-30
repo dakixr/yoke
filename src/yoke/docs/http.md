@@ -21,7 +21,9 @@ after 35.0s`. These errors describe the local ACP-to-daemon request, not the
 model provider connection. Session IDs, query values, credentials, response
 bodies, and raw exception text are omitted. Failed requests are not retried
 automatically, since a prompt may already have been admitted. A failed turn
-still interrupts admitted work and waits for worker drain.
+still interrupts admitted work and waits for worker drain. The ACP client
+expires idle pooled connections after 2 seconds, before the daemon's 5-second
+keep-alive timeout, so it never reuses a connection the server is closing.
 
 The public API is versioned under `/api/v1`. Its OpenAPI document is available
 at `/api/v1/openapi.json`. The checked-in contract used by tests is

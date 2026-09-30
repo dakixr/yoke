@@ -32,6 +32,9 @@ class CodexResponseChain:
     pending_output_items: list[dict[str, Any]] = field(default_factory=list)
     prepared_input_items: list[dict[str, Any]] = field(default_factory=list)
     prepared_mode: ContinuityMode = "visible_input"
+    # Why the request could not continue the previous response, for logs only.
+    # Holds key names, positions, and item types, never content.
+    prepared_reason: str | None = None
 
     def prepare(
         self,
@@ -46,12 +49,16 @@ class CodexResponseChain:
         current_input = _input_items(payload)
         self.prepared_input_items = deepcopy(current_input or [])
         self.prepared_mode = "visible_input"
-        if current_input is None or not self._can_continue(
+        if current_input is None:
+            self.prepared_reason = "input_not_item_list"
+            return prepared
+        self.prepared_reason = self._continuity_blocker(
             payload,
             account_id=account_id,
             auth_profile=auth_profile,
             selected_auth_profile=selected_auth_profile,
-        ):
+        )
+        if self.prepared_reason is not None:
             return prepared
 
         incremental_items = strip_list_prefix(
@@ -59,6 +66,9 @@ class CodexResponseChain:
             self.retained_visible_items,
         )
         if incremental_items is None:
+            self.prepared_reason = history_divergence(
+                current_input, self.retained_visible_items
+            )
             return prepared
 
         if self.response_id:
@@ -68,6 +78,7 @@ class CodexResponseChain:
             self.prepared_mode = "previous_response_id"
             return prepared
 
+        self.prepared_reason = "no_response_anchor"
         replay_items = [*self.retained_input_items, *incremental_items]
         prepared.pop("previous_response_id", None)
         prepared["input"] = replay_items
@@ -136,6 +147,7 @@ class CodexResponseChain:
         self.clear_staged_response()
         self.prepared_input_items = []
         self.prepared_mode = "visible_input"
+        self.prepared_reason = None
 
     def clear_staged_response(self) -> None:
         """Clear only response output staged for the current request."""
@@ -148,29 +160,29 @@ class CodexResponseChain:
         forked.drop_anchor()
         return forked
 
-    def _can_continue(
+    def _continuity_blocker(
         self,
         payload: dict[str, object],
         *,
         account_id: str | None,
         auth_profile: str | None,
         selected_auth_profile: str | None,
-    ) -> bool:
+    ) -> str | None:
         if not self.retained_input_items or self.retained_request_payload is None:
-            return False
+            return "no_retained_state"
         if self.response_account_id != account_id:
-            return False
+            return "account_changed"
         if self.response_auth_profile != auth_profile:
-            return False
+            return "auth_profile_changed"
         if (
             selected_auth_profile is not None
             and self.response_auth_profile != selected_auth_profile
         ):
-            return False
-        return response_request_properties_match(
-            self.retained_request_payload,
-            payload,
-        )
+            return "selected_auth_profile_changed"
+        changed = changed_request_properties(self.retained_request_payload, payload)
+        if changed:
+            return "request_changed:" + ",".join(changed)
+        return None
 
 
 def output_items_from_message(message: Message) -> list[dict[str, Any]]:
@@ -230,18 +242,32 @@ def visible_items_from_output(
     return visible
 
 
-def response_request_properties_match(
+def changed_request_properties(
     previous: dict[str, object], current: dict[str, object]
-) -> bool:
-    """Return whether two requests differ only in incremental state."""
+) -> list[str]:
+    """Return sorted request keys that differ outside incremental state."""
     ignored_keys = {"input", "client_metadata", "previous_response_id"}
-    previous_properties = {
-        key: value for key, value in previous.items() if key not in ignored_keys
-    }
-    current_properties = {
-        key: value for key, value in current.items() if key not in ignored_keys
-    }
-    return previous_properties == current_properties
+    keys = (previous.keys() | current.keys()) - ignored_keys
+    missing = object()
+    return sorted(
+        key for key in keys if previous.get(key, missing) != current.get(key, missing)
+    )
+
+
+def history_divergence(
+    items: list[dict[str, Any]], retained: list[dict[str, Any]]
+) -> str:
+    """Describe where input stopped extending retained history, without content."""
+    if len(retained) > len(items):
+        return f"history_shorter:{len(items)}<{len(retained)}"
+    index = next(
+        position
+        for position, (current, previous) in enumerate(zip(items, retained))
+        if current != previous
+    )
+    item = items[index]
+    kind = item.get("type") or item.get("role") or "unknown"
+    return f"history_diverged:{index}/{len(retained)}:{kind}"
 
 
 def strip_list_prefix(items: list[Any], prefix: list[Any]) -> list[Any] | None:

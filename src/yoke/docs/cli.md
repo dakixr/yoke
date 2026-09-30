@@ -306,7 +306,11 @@ configuration. Codex request logs default to
 `~/.yoke/providers/logs/`; `YOKE_CODEX_LOGS_DIR` overrides that location, with
 `YOKE_PROVIDER_LOGS_DIR` as the shared provider fallback. Yoke resolves these
 paths when it creates the provider config, so changes to `HOME` apply without
-restarting Python. Every completed response also writes an attributed local
+restarting Python. Each `request_ok` entry records `continuity_mode` and, when
+the request could not continue the previous response, a `continuity_reason`
+such as `request_changed:instructions`, `history_diverged:<index>/<retained>:<item
+type>`, `account_changed`, or `no_response_anchor`. Reasons name keys,
+positions, and item types only, never content. Every completed response also writes an attributed local
 usage record under `~/.yoke/usage-metric-logs/<provider>/`.
 
 ---

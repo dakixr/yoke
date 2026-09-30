@@ -30,6 +30,11 @@ class _YokeServer(uvicorn.Server):
         super().handle_exit(sig, frame)
 
 
+# Idle keep-alive lifetime for HTTP clients such as the ACP adapter, whose pool
+# must expire connections before this server closes them.
+KEEPALIVE_TIMEOUT_SECONDS = 5
+
+
 def is_loopback_host(host: str) -> bool:
     """Return whether a configured bind host is loopback-only."""
     if host.casefold() == "localhost":
@@ -79,6 +84,7 @@ def run_server(
         app,
         log_level="info" if verbose else "warning",
         access_log=verbose,
+        timeout_keep_alive=KEEPALIVE_TIMEOUT_SECONDS,
         timeout_graceful_shutdown=3,
     )
     server = _YokeServer(config, app.state.event_broker)

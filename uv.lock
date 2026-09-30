@@ -1684,7 +1684,7 @@ wheels = [
 
 [[package]]
 name = "yoke"
-version = "3.10.0"
+version = "3.10.1"
 source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
