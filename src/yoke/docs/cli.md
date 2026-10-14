@@ -223,8 +223,9 @@ and `max` reasoning efforts (default: `high`). Yoke sends `x-opencode-session` w
 Yoke session, including retries and resumed conversations. Forked sessions
 receive a new value. Z.ai exposes GLM-5.3-Flash with `low`, `high`, and `max` reasoning
 efforts, defaulting to `max`. OpenCode Go GLM uses server-managed reasoning,
-matching OpenCode, and exposes no effort choices. Saved GLM effort selections
-normalize to the server default. Go chat requests stream text, reasoning, tool
+matching OpenCode, and exposes no effort choices. The CLI rejects explicit or
+saved effort selections for that model. Omit the effort to use server-managed
+reasoning. Go chat requests stream text, reasoning, tool
 calls, and usage internally, then return one complete response to Yoke. A
 truncated stream fails without executing partial tool calls or replaying the
 generation. Message serialization and session cache headers remain unchanged.
@@ -254,11 +255,20 @@ yoke providers init my-provider
 Without `--repo`, model defaults are written to
 `~/.yoke/config.json`; workspace defaults live in `.yoke/config.json`.
 Explicit CLI flags win, while resumed sessions prefer their saved provider,
-model, and thinking effort. Every model selection is reconciled with the
-destination provider's catalog. A supported explicit effort is retained;
-otherwise Yoke uses that model's advertised default. This applies at startup,
-session resume, SDK construction, and `/model` switches, so an effort saved for
-one model or provider cannot make another model unavailable.
+model, and thinking effort when no model override is supplied. An explicit
+`--model provider:model:effort` overrides both the saved model and effort,
+including with `yoke resume`, `--session`, and `--fork`.
+
+The CLI validates thinking effort against the destination provider's catalog.
+An unsupported effort fails with an error listing the supported levels. This
+applies to `--model`, `yoke resume --model`, and `yoke models set`, as well as
+efforts loaded from config or saved sessions. Invalid selections do not change
+config or saved session state. Empty effort suffixes such as `provider:model:`
+also fail. Providers without a catalog receive the effort for their own
+validation. Omitting the effort uses the model's advertised default.
+`yoke models set` saves the model and effort separately as `default_model` and
+`default_reasoning_effort`. Its picker chooses a model with its default effort;
+pass `provider:model:effort` to save a specific effort.
 
 When a configured default model or a resumed session's model is no longer in
 the provider catalog, the interactive CLI retries once with that same provider's

@@ -11,14 +11,14 @@ import typer
 from rich.table import Table
 from rich.text import Text
 
-from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
 from yoke.ai.providers.resolution import list_provider_models
-from yoke.ai.providers.resolution import parse_provider_ref
 from yoke.ai.providers.resolution import UnknownModelError
 from yoke.cli.config import CLIArgs
 from yoke.cli.config import load_effective_yoke_config
 from yoke.cli.path_display import format_root_label
 from yoke.cli.providers.catalog import list_all_provider_model_choices
+from yoke.cli.providers.selection import resolve_cli_reasoning_effort
+from yoke.cli.providers.selection import parse_cli_model_ref
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
 from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
@@ -70,7 +70,7 @@ def set_default_model(
     repo_scope: bool = False,
 ) -> Path:
     """Persist the configured default model and return the config path."""
-    provider_ref = parse_provider_ref(default_model)
+    provider_ref = parse_cli_model_ref(default_model)
     provider_name = provider_ref.provider_name
     model_name = provider_ref.model
     if model_name is None:
@@ -90,7 +90,9 @@ def set_default_model(
             provider_name, model_name, [model.id for model in models]
         )
     resolved_effort = (
-        compatible_reasoning_effort_for_model(selected, provider_ref.reasoning_effort)
+        resolve_cli_reasoning_effort(
+            selected, provider_ref.reasoning_effort, provider_name=provider_name
+        )
         if selected is not None
         else provider_ref.reasoning_effort
     )

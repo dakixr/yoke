@@ -32,7 +32,7 @@ class Worker:
         worker = cls(pid)
         if hasattr(os, "pidfd_open"):
             try:
-                worker.fd = os.pidfd_open(pid)
+                worker.fd = getattr(os, "pidfd_open")(pid)
                 return worker
             except OSError:
                 pass

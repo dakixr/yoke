@@ -8,20 +8,19 @@ from typing import TYPE_CHECKING
 
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.base import ModelCatalogProvider
 from yoke.ai.providers.credentials import provider_environment
-from yoke.ai.providers.model_selection import (
-    compatible_reasoning_effort_for_model,
-)
 from yoke.ai.providers.plugins import ProviderPluginContext
 from yoke.ai.providers.plugins import available_custom_provider_names
 from yoke.ai.providers.plugins import create_custom_provider
 from yoke.ai.providers.resolution import BUILTIN_PROVIDER_NAMES
 from yoke.ai.providers.resolution import build_builtin_provider
 from yoke.ai.providers.resolution import list_provider_models
-from yoke.ai.providers.resolution import parse_provider_ref
 from yoke.ai.providers.resolution import UnknownModelError
 from yoke.cli.config.default_model import load_effective_yoke_config
 from yoke.cli.config.default_model import parse_config_default_model
+from yoke.cli.providers.selection import resolve_cli_reasoning_effort
+from yoke.cli.providers.selection import parse_cli_model_ref
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,11 +53,32 @@ def prepare_provider_args(args: CLIArgs) -> None:
     _normalize_provider_model_args(args)
     if config is not None:
         _apply_config_default_reasoning_effort(args, config)
-    _apply_compatible_model_reasoning_effort(args)
+    _apply_model_reasoning_effort(args)
 
 
 def build_provider_from_args(args: CLIArgs) -> Provider:
     """Build the selected provider from CLI args and environment."""
+    provider = _build_provider_from_args(args)
+    if (
+        args.model is None
+        and args.reasoning_effort is not None
+        and isinstance(provider, ModelCatalogProvider)
+    ):
+        try:
+            model = provider.current_model_info()
+            if model is not None:
+                resolve_cli_reasoning_effort(
+                    model, args.reasoning_effort, provider_name=provider.provider_name
+                )
+        except ValueError:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
+            raise
+    return provider
+
+
+def _build_provider_from_args(args: CLIArgs) -> Provider:
     try:
         provider_name = _resolve_provider_name(args)
     except ValueError as exc:
@@ -183,7 +203,7 @@ def _normalize_provider_model_args(args: CLIArgs) -> None:
     if ":" not in normalized:
         args.model = normalized
         return
-    provider_ref = parse_provider_ref(normalized)
+    provider_ref = parse_cli_model_ref(normalized)
     if provider_ref.model is None:
         raise ValueError("Expected `provider-name:model-name` with model name.")
     args.model = provider_ref.model
@@ -192,8 +212,8 @@ def _normalize_provider_model_args(args: CLIArgs) -> None:
         args.reasoning_effort = provider_ref.reasoning_effort
 
 
-def _apply_compatible_model_reasoning_effort(args: CLIArgs) -> None:
-    """Validate the requested model and reconcile its reasoning effort."""
+def _apply_model_reasoning_effort(args: CLIArgs) -> None:
+    """Validate the requested model and thinking effort before construction."""
     if args.model is None:
         return
     provider_name = args.provider_name or _resolve_provider_name(args)
@@ -210,9 +230,10 @@ def _apply_compatible_model_reasoning_effort(args: CLIArgs) -> None:
         raise UnknownModelError(
             provider_name, args.model, [model.id for model in models]
         )
-    args.reasoning_effort = compatible_reasoning_effort_for_model(
+    args.reasoning_effort = resolve_cli_reasoning_effort(
         selected,
         args.reasoning_effort,
+        provider_name=provider_name,
     )
 
 

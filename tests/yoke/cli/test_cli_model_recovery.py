@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from typer.testing import CliRunner
 
 from yoke.agent.models import Message
 from yoke.ai.providers.plugins import ProviderPluginContext
@@ -17,6 +18,7 @@ from yoke.cli.bootstrap.types import ResolvedAgentConfig, ToolLoadReport
 from yoke.cli.config import CLIArgs
 from yoke.cli.config import runtime as config_runtime
 from yoke.cli.config import providers as provider_config
+from yoke.cli.main import app
 from yoke.cli.providers.state import apply_session_provider_defaults
 from yoke.cli.providers.state import ProviderSessionState
 from yoke.cli.runtime.cli import run_cli, run_resume_cli
@@ -547,9 +549,10 @@ def test_strict_continuation_failure_does_not_modify_or_fork_source(
     assert list(store.directory.glob("*.jsonl")) == [path]
 
 
-@pytest.mark.parametrize("fork", [False, True])
+@pytest.mark.parametrize("mode", ["session", "fork", "resume"])
+@pytest.mark.parametrize("effort", [None, "high"])
 def test_explicit_continuation_selection_and_effort_win(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fork: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, effort: str | None
 ) -> None:
     SessionStore().save(
         "saved",
@@ -570,11 +573,51 @@ def test_explicit_continuation_selection_and_effort_win(
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", interactive)
     args = CLIArgs(
         root=str(tmp_path),
-        session=None if fork else "saved",
-        fork_session_id="saved" if fork else None,
-        model="opencode-go:deepseek-v4.1-flash:high",
+        session="saved" if mode == "session" else None,
+        fork_session_id="saved" if mode == "fork" else None,
+        model="opencode-go:deepseek-v4.1-flash" + (f":{effort}" if effort else ""),
     )
     stderr = CaptureStream()
 
-    assert run_cli(args, stdout=CaptureStream(), stderr=stderr) == 0
+    result = (
+        run_resume_cli(args, "saved", stdout=CaptureStream(), stderr=stderr)
+        if mode == "resume"
+        else run_cli(args, stdout=CaptureStream(), stderr=stderr)
+    )
+    assert result == 0
     assert stderr.getvalue() == ""
+
+
+@pytest.mark.parametrize("mode", ["fresh", "headless", "session", "fork", "resume"])
+@pytest.mark.parametrize("effort", ["ultra", ""])
+def test_invalid_cli_thinking_effort_fails_before_session_changes(
+    tmp_path: Path, mode: str, effort: str
+) -> None:
+    store = SessionStore()
+    store.save(
+        "saved",
+        [Message.user("old")],
+        root=tmp_path,
+        provider_name="codex",
+        model_id="gpt-6.1-sol",
+        reasoning_effort="low",
+    )
+    path = store.directory / "saved.jsonl"
+    original = path.read_bytes()
+    selection = f"codex:gpt-6.1-sol:{effort}"
+    argv = ["--root", str(tmp_path), "--model", selection]
+    if mode == "resume":
+        argv.insert(0, "saved")
+        argv.insert(0, "resume")
+    elif mode in {"session", "fork"}:
+        argv.extend([f"--{mode}", "saved"])
+    elif mode == "headless":
+        argv.extend(["--headless", "--prompt", "Do work"])
+
+    result = CliRunner().invoke(app, argv)
+
+    assert result.exit_code == 1, result.output
+    assert "thinking effort" in result.output
+    assert "Warning:" not in result.output
+    assert path.read_bytes() == original
+    assert list(store.directory.glob("*.jsonl")) == [path]

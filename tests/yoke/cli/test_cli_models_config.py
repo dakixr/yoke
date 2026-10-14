@@ -121,7 +121,7 @@ def test_explicit_model_accepts_sdk_style_thinking_effort(tmp_path: Path) -> Non
     assert args.model_source == "cli"
 
 
-def test_configured_model_replaces_stale_effort_with_model_default(
+def test_configured_model_rejects_unsupported_effort(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -139,12 +139,8 @@ def test_configured_model_replaces_stale_effort_with_model_default(
     )
     args = CLIArgs(root=str(tmp_path))
 
-    prepare_provider_args(args)
-
-    assert args.provider_name == "zai"
-    assert args.model == "glm-5.3-flash"
-    assert args.reasoning_effort == "max"
-    assert args.model_source == "config"
+    with pytest.raises(ValueError, match="Unsupported thinking effort 'medium'"):
+        prepare_provider_args(args)
 
 
 def test_prepare_provider_args_loads_effective_config_once(
@@ -158,7 +154,7 @@ def test_prepare_provider_args_loads_effective_config_once(
         config_reads.append((root, home))
         return PiConfig(
             default_model="zai:glm-5.3-flash",
-            default_reasoning_effort="medium",
+            default_reasoning_effort="low",
         )
 
     monkeypatch.setattr(
@@ -172,11 +168,11 @@ def test_prepare_provider_args_loads_effective_config_once(
     assert config_reads == [(tmp_path, tmp_path)]
     assert args.provider_name == "zai"
     assert args.model == "glm-5.3-flash"
-    assert args.reasoning_effort == "max"
+    assert args.reasoning_effort == "low"
     assert args.model_source == "config"
 
 
-def test_resumed_model_replaces_stale_effort_with_model_default(
+def test_resumed_model_rejects_unsupported_effort(
     tmp_path: Path,
 ) -> None:
     args = CLIArgs(root=str(tmp_path))
@@ -189,12 +185,8 @@ def test_resumed_model_replaces_stale_effort_with_model_default(
         ),
     )
 
-    prepare_provider_args(args)
-
-    assert args.provider_name == "zai"
-    assert args.model == "glm-5.3-flash"
-    assert args.reasoning_effort == "max"
-    assert args.model_source == "session"
+    with pytest.raises(ValueError, match="Unsupported thinking effort 'medium'"):
+        prepare_provider_args(args)
 
 
 def test_interactive_cli_recovers_stale_configured_model(

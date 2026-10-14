@@ -168,7 +168,7 @@ def test_model_mutation_is_validated_before_config_replacement(
     _avoid_model_discovery(monkeypatch)
     monkeypatch.setattr(
         models_app,
-        "parse_provider_ref",
+        "parse_cli_model_ref",
         lambda _model: ProviderRef(provider_name="demo"),
     )
 

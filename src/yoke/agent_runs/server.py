@@ -69,7 +69,7 @@ class Server:
                         pid, uid, _ = struct.unpack(
                             "3i",
                             connection.getsockopt(
-                                socket.SOL_SOCKET, socket.SO_PEERCRED, 12
+                                socket.SOL_SOCKET, getattr(socket, "SO_PEERCRED"), 12
                             ),
                         )
                         if uid != os.getuid():
