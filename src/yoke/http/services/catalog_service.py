@@ -10,6 +10,10 @@ from typing import Any
 from yoke.ai.providers.resolution import available_provider_names
 from yoke.ai.providers.resolution import list_provider_models
 from yoke.ai.providers.resolution import list_provider_readiness
+from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
+from yoke.ai.providers.model_selection import default_reasoning_effort_for_model
+from yoke.cli.config.default_model import load_effective_yoke_config
+from yoke.cli.config.default_model import parse_config_default_model
 from yoke.http.errors import ApiError
 from yoke.http.models.catalog import ModelCapabilities
 from yoke.http.models.catalog import ModelInfo
@@ -17,6 +21,7 @@ from yoke.http.models.catalog import ModelListResponse
 from yoke.http.models.catalog import ProviderInfo
 from yoke.http.models.catalog import ProviderListResponse
 from yoke.http.models.common import LocationInfo
+from yoke.http.models.session import SessionSelection
 from yoke.http.services.redaction import redact_public_value
 
 
@@ -31,8 +36,32 @@ class CatalogService:
     def providers(self, *, directory: str | None) -> ProviderListResponse:
         location = _location(directory)
         readiness = self._provider_readiness()
+        config = load_effective_yoke_config(root=Path(location.directory))
+        configured = parse_config_default_model(config.default_model)
+        default_selection = None
+        if configured is not None and any(
+            item.provider_name == configured.provider_name and item.ready
+            for item in readiness
+        ):
+            model = next(
+                (
+                    model
+                    for model in self._provider_models(configured.provider_name)
+                    if model.id == configured.model_name
+                ),
+                None,
+            )
+            if model is not None:
+                default_selection = SessionSelection(
+                    provider=configured.provider_name,
+                    model=model.id,
+                    reasoning_effort=compatible_reasoning_effort_for_model(
+                        model, config.default_reasoning_effort
+                    ),
+                )
         return ProviderListResponse(
             location=location,
+            default_selection=default_selection,
             data=[
                 ProviderInfo(
                     id=item.provider_name,
@@ -77,6 +106,9 @@ class CatalogService:
                         provider=provider_name,
                         name=model.display_name,
                         reasoning_efforts=list(model.thinking_levels),
+                        default_reasoning_effort=default_reasoning_effort_for_model(
+                            model
+                        ),
                         capabilities=ModelCapabilities(
                             images=model.supports_image_inputs,
                             tools=True,

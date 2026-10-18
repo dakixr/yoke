@@ -67,6 +67,7 @@ class McpSessionPolicy:
     """Mutable MCP policy overrides for one interactive session."""
 
     servers: dict[str, McpSessionServerPolicy]
+    injected_servers: tuple[McpServerConfig, ...] = ()
 
     @classmethod
     def empty(cls) -> McpSessionPolicy:
@@ -96,6 +97,10 @@ def load_mcp_config(
         loaded_paths.append(path)
         for server in parsed:
             merged[server.name] = server
+    if session_policy is not None:
+        merged.update(
+            (server.name, server) for server in session_policy.injected_servers
+        )
     servers = tuple(merged[name] for name in sorted(merged))
     if session_policy is not None:
         servers = apply_mcp_session_policy(servers, session_policy)

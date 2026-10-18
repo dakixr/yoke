@@ -76,6 +76,7 @@ from yoke.session import SessionStore
 from yoke.agent.activity import activity_status_for_event
 from yoke.session.admissions import AdmissionRecord
 from yoke.mcp.config import McpSessionPolicy
+from yoke.http.services.session_runtime.configuration import apply_mcp_policy
 
 type RuntimeState = Literal["idle", "running", "stopping", "waiting_input", "error"]
 T = TypeVar("T")
@@ -139,6 +140,8 @@ class SessionRuntime:
         self._last_error: str | None = None
         self._activity_status: str | None = None
         self._active_tool_call_ids: dict[int, set[str]] = {}
+
+    set_mcp_policy = apply_mcp_policy
 
     async def wake(self) -> None:
         """Start eligible work or apply a pending steer at a safe control boundary."""
@@ -622,35 +625,6 @@ class SessionRuntime:
         return self.resources.mcp_session_policy()
 
     @mutates_workspace
-    async def set_mcp_policy(
-        self,
-        server_name: str,
-        *,
-        enabled: bool | None,
-        enabled_tools: tuple[str, ...] | None,
-        disabled_tools: tuple[str, ...] | None,
-        update_enabled_tools: bool = False,
-        update_disabled_tools: bool = False,
-    ) -> None:
-        """Apply session-only MCP server and tool policy."""
-        async with self._lock:
-            self._require_no_work_locked()
-            self.resources.set_mcp_policy(
-                server_name,
-                enabled=enabled,
-                enabled_tools=enabled_tools,
-                disabled_tools=disabled_tools,
-                update_enabled_tools=update_enabled_tools,
-                update_disabled_tools=update_disabled_tools,
-            )
-            self.events.live(
-                "session.mcp.updated",
-                {"server": server_name},
-                session_id=self.session_id,
-                location=self._event_location,
-            )
-
-    @mutates_workspace
     async def set_tools(
         self,
         *,
@@ -861,6 +835,13 @@ class SessionRuntime:
                         active_skills=record.active_skills,
                         available_skills=turn_agent.available_skills,
                         after_tool_result_appended=checkpoint,
+                        before_tool_call=(
+                            self.resources.client_session.before_tool(
+                                turn_agent.before_tool_call, execution.stop_event.is_set
+                            )
+                            if self.resources.client_session is not None
+                            else turn_agent.before_tool_call
+                        ),
                     )
                 else:
                     run = getattr(turn_agent, "run")

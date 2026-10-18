@@ -109,6 +109,7 @@ def synchronize_resource_workspace(
         resources._primary_root = record.root
         resources._session_enabled_tool_names = None
         resources._mcp_session_policy = McpSessionPolicy.empty()
+        resources.client_session = None
         if old is not None:
             resources._submit_cleanup_locked(old)
 

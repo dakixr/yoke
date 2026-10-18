@@ -49,6 +49,7 @@ class HumanInputService:
         *,
         permission: str,
         message: str,
+        tool_call: dict[str, object] | None = None,
     ) -> PermissionRequestInfo:
         record = self._require_session(session_id)
         info = PermissionRequestInfo(
@@ -57,6 +58,7 @@ class HumanInputService:
             permission=permission,
             message=message,
             created_at=datetime.now(UTC).isoformat(),
+            tool_call=tool_call,
         )
         with self._lock:
             self._permissions[info.id] = _PendingPermission(info=info, event=Event())

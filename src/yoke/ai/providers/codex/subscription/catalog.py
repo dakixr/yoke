@@ -40,14 +40,6 @@ MODEL_CATALOG = (
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
-        id="gpt-6-sol",
-        display_name="GPT-6 Sol",
-        context_window_tokens=400_000,
-        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
-        default_thinking_level="medium",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
         id="gpt-6.1-sol",
         display_name="GPT-6.1 Sol",
         context_window_tokens=400_000,
@@ -66,7 +58,16 @@ MODEL_CATALOG = (
 )
 
 # Keep configured legacy models usable without offering them for new selection.
-LEGACY_MODEL_CATALOG = tuple(
+LEGACY_MODEL_CATALOG = (
+    ProviderModelInfo(
+        id="gpt-6-sol",
+        display_name="GPT-6 Sol",
+        context_window_tokens=400_000,
+        thinking_levels=("none", "low", "medium", "high", "xhigh", "max"),
+        default_thinking_level="medium",
+        supports_image_inputs=True,
+    ),
+) + tuple(
     ProviderModelInfo(
         id=f"gpt-5.6-{name}",
         display_name=f"GPT-5.6 {name.title()}",

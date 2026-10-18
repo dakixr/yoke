@@ -231,7 +231,7 @@ class NativeClient:
                 return
             kind, data = item["type"], item["data"]
             if "permission" in kind or "question" in kind:
-                raise fail("Native interactive permissions/questions are unsupported")
+                return  # SessionNotifications owns bidirectional client requests.
             if data.get("inputID") != input_id:
                 return
             if kind == "session.runtime.failed":
@@ -338,8 +338,6 @@ class NativeClient:
                         await event(incoming.result())
                     if waited in done:
                         state = waited.result()["state"]
-                        if state == "waiting_input":
-                            raise fail("Native interactive input is unsupported")
                         if state in ("idle", "error"):
                             await self.drained(session_id)
                             idle_without_receipt = True

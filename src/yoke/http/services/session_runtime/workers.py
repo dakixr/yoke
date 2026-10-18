@@ -16,6 +16,11 @@ class WorkerTracker:
     def admit(self, turn_id: int) -> None:
         self._workers[turn_id] = 1
 
+    @property
+    def active_count(self) -> int:
+        """Count physical admissions including retained owned cleanup."""
+        return len(self._workers)
+
     def release(self, turn_id: int) -> None:
         remaining = self._workers[turn_id] - 1
         if remaining:

@@ -22,6 +22,7 @@ from yoke.http.errors import validation_error_handler
 from yoke.http.errors import workspace_error_handler
 from yoke.session.workspace import WorkspaceError
 from yoke.http.routes import health
+from yoke.http.routes import client_session
 from yoke.http.routes import agent_run
 from yoke.http.routes import catalog
 from yoke.http.routes import command
@@ -202,6 +203,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         )
 
     app.include_router(health.router, prefix="/api/v1")
+    app.include_router(client_session.router, prefix="/api/v1")
     app.include_router(agent_run.router, prefix="/api/v1")
     app.include_router(catalog.router, prefix="/api/v1")
     app.include_router(command.router, prefix="/api/v1")

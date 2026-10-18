@@ -184,6 +184,12 @@ const fork = await client.forkSession("my-session", {
 });
 ```
 
+Provider catalog responses include `defaultSelection`, resolved from the same
+global and workspace configuration as the CLI. The model catalog includes each
+model's `defaultReasoningEffort` alongside its supported `reasoningEfforts`.
+These values let ACP clients select the configured model without substituting
+a provider's built-in default, and reset thinking correctly when switching models.
+
 ## Starting the daemon
 
 ```bash
@@ -542,7 +548,8 @@ records `live`, `stale`, or `lost` independently of the execution status. A
 `typedUsage` object contains cumulative provider-reported token counts and tool
 uses when available, plus elapsed duration when the run finishes. Missing
 provider counters remain absent rather than appearing as zero. The same usage
-travels through ACP to T3 Code's Agents pane. A restored journal entry does not
+travels through ACP observer records. A Yoke-specific client decoder can project
+these into an Agents pane; the generic T3 ACP route shows tool activity. A restored journal entry does not
 prove that its worker is still running. The
 daemon preserves known outcomes and marks unconfirmed live work as observation
 lost after restart. Neither losing a browser connection nor ending an ACP
@@ -975,3 +982,20 @@ The shared human-input service exposes blocking worker-side waits. A future tool
 or provider can therefore suspend on a domain request and let the browser answer
 it without calling terminal input functions. Pending requests are process-local
 in v1 because the worker waiting for them is process-local too.
+
+## Client session configuration
+
+Authenticated `PUT /api/v1/session/{id}/client` attaches process-local client
+configuration with `owner`, `mode`, `mcpServers`, and `additionalDirectories`.
+MCP entries accept stdio `command`, `args`, `env`, or `streamable-http` `url`
+and `headers`. Additional directories must exist and be absolute. Duplicate
+server names are rejected. Credentials are never persisted. The response
+contains only the mode, directory list, and server names.
+
+`GET /api/v1/session/{id}/client` returns the current mode and latest plan, or
+null when detached. `DELETE` with `?owner=...` removes only that owner's
+configuration. Replacement and detach require logical idleness and physical
+worker drain. Existing background processes are not stopped by either action.
+Workspace relocation clears attached configuration; reattach at the new root.
+Plans and client configuration remain process-local and disappear on daemon
+restart. [ACP and T3 Code](acp.md) describes tool policy and client behavior.

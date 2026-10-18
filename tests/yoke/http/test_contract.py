@@ -1148,6 +1148,7 @@ def test_provider_and_model_catalogs_are_typed_and_searchable(
             "provider": "demo",
             "name": "Model A",
             "reasoningEfforts": ["low", "medium", "high"],
+            "defaultReasoningEffort": "medium",
             "capabilities": {"images": True, "tools": True},
             "contextWindowTokens": 123_456,
         }

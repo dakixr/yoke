@@ -158,7 +158,7 @@ api.patchTreeEntry = async (_id, entryID, body) => {
 api.messages = async () => ({ data: [], cursor: { next: null } });
 api.getSession = async () => ({ data: copy(session) });
 api.processes = async () => ({ data: copy(processes) });
-const agentRun = (fields) => ({ schemaVersion: 1, sessionID: SESSION, provider: "codex", model: "gpt-6-sol", observation: "live", version: 1, lastSeenAt: date(300), updatedAt: date(300), runtimeSessionID: 7, ...fields });
+const agentRun = (fields) => ({ schemaVersion: 1, sessionID: SESSION, provider: "codex", model: "gpt-6.1-sol", observation: "live", version: 1, lastSeenAt: date(300), updatedAt: date(300), runtimeSessionID: 7, ...fields });
 const agentRuns = [
   agentRun({ agentId: "agent-root", runId: "run-root", name: "recon-lead", status: "running", startedAt: date(190), lastToolName: "rg" }),
   agentRun({ agentId: "agent-child", runId: "run-child", parentAgentId: "agent-root", name: "recon-implementation", status: "running", startedAt: date(195), lastToolName: "read", taskId: "implementation" }),

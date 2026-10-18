@@ -15,6 +15,7 @@ class PermissionRequestInfo(ApiModel):
     permission: str
     message: str
     created_at: str
+    tool_call: dict[str, object] | None = None
 
 
 class PermissionListResponse(ApiModel):

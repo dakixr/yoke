@@ -13,32 +13,32 @@ from yoke.ai.providers.model_selection import UnknownModelError
 from yoke.ai.sdk.providers import build_builtin_provider
 
 
-def test_codex_catalog_only_advertises_gpt6_models() -> None:
+def test_codex_catalog_advertises_current_models() -> None:
     assert [model.id for model in list_provider_models(None)] == [
         "gpt-6-astra",
-        "gpt-6-sol",
         "gpt-6.1-sol",
         "gpt-6-luna",
     ]
 
 
-def test_codex_rejects_new_gpt5_selection(tmp_path: Path) -> None:
+@pytest.mark.parametrize("retired", ["gpt-5.6-sol", "gpt-6-sol"])
+def test_codex_rejects_retired_selection(tmp_path: Path, retired: str) -> None:
     provider = build_builtin_provider(
-        "codex:gpt-6-sol:medium",
+        "codex:gpt-6.1-sol:medium",
         env={"YOKE_CODEX_API_KEY": "test-key"},
         home=tmp_path,
     )
     assert isinstance(provider, CodexProvider)
     try:
         with pytest.raises(UnknownModelError):
-            provider.set_model("gpt-5.6-sol")
+            provider.set_model(retired)
     finally:
         provider.close()
 
 
-@pytest.mark.parametrize("model_id", ["gpt-6-sol", "gpt-6-luna"])
+@pytest.mark.parametrize("model_id", ["gpt-6-luna"])
 @pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh", "max"])
-def test_gpt6_sol_luna_selection_and_request_preserve_reasoning(
+def test_gpt6_luna_selection_and_request_preserve_reasoning(
     tmp_path: Path, model_id: str, effort: str
 ) -> None:
     provider = build_builtin_provider(
@@ -71,9 +71,9 @@ def test_gpt6_sol_luna_selection_and_request_preserve_reasoning(
         provider.close()
 
 
-@pytest.mark.parametrize("model_id", ["gpt-6-sol", "gpt-6-luna"])
+@pytest.mark.parametrize("model_id", ["gpt-6-luna"])
 @pytest.mark.parametrize("effort", ["minimal", "invalid"])
-def test_gpt6_sol_luna_unsupported_reasoning_defaults_to_medium(
+def test_gpt6_luna_unsupported_reasoning_defaults_to_medium(
     model_id: str, effort: str
 ) -> None:
     assert clamp_reasoning_effort(model_id, effort) == "medium"

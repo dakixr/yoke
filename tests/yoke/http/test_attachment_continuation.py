@@ -362,7 +362,9 @@ def test_file_is_read_by_native_tool_and_continuation_checkpoint_recovers(
             submit(client, "tool-continuation", {"continuation": True}).status_code
             == 200
         )
-        assert drain(client)["drained"]
+        # This turn starts an isolated tool process. Allow for cold imports on
+        # busy CI hosts; this test checks persistence, not tool startup latency.
+        assert drain(client, timeout=30_000)["drained"]
         rows = messages(client)
         assert rows[: len(prior)] == prior
         assert rows[-1]["inputID"] == "tool-continuation", client.get(

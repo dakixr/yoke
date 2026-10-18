@@ -14,7 +14,8 @@ from yoke.session.workspace import promote_session_turn as promote_runtime_fork
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tools.command_process_manager import CommandProcessManager
 from yoke.mcp.config import McpSessionPolicy
-from yoke.mcp.config import McpSessionServerPolicy
+from yoke.http.services.client_session import ClientSession
+from yoke.http.services.session_runtime.configuration import bind_client, set_mcp_policy
 from yoke.http.services.session_runtime.owned_cleanup import retire_owned_resource
 from yoke.http.services.session_runtime.cleanup import AgentCleanup as _AgentCleanup
 from yoke.http.services.session_runtime.cleanup import RetiredProvider
@@ -53,6 +54,7 @@ class SessionRuntimeResources:
         self._process_unsubscribe: Callable[[], None] | None = None
         self._session_enabled_tool_names: set[str] | None = None
         self._mcp_session_policy = McpSessionPolicy.empty()
+        self.client_session: ClientSession | None = None
         self._turn_agents: dict[int, object] = {}
         self._providers: dict[int, object] = {}
         self._claimed_providers: set[int] = set()
@@ -92,11 +94,7 @@ class SessionRuntimeResources:
                 self._primary_agent = candidate
                 self._primary_root = record.root
                 self._providers[id(candidate.provider)] = candidate.provider
-                object.__setattr__(
-                    candidate.provider,
-                    "_yoke_mcp_session_policy",
-                    self._mcp_session_policy,
-                )
+                bind_client(self, candidate)
                 candidate.refresh_tools(force=True)
                 manager = candidate.command_process_manager
                 if self.store is not None:
@@ -150,6 +148,7 @@ class SessionRuntimeResources:
             object.__setattr__(
                 provider, "_yoke_mcp_session_policy", self._mcp_session_policy
             )
+            object.__setattr__(provider, "_yoke_client_session", self.client_session)
 
     def retire_provider(self, provider: object) -> None:
         """Close replaced providers only after their remaining agents retire."""
@@ -177,6 +176,9 @@ class SessionRuntimeResources:
             if primary is None or self._closing:
                 raise RuntimeError("HTTP runtime resources are closing.")
             turn_agent = primary.fork(isolate_provider=True, include_state=False)
+            if self.client_session is not None:
+                bind_client(self, turn_agent)
+                turn_agent.refresh_tools(force=True)
             self._turn_agents[id(turn_agent)] = turn_agent
             self._providers[id(turn_agent.provider)] = turn_agent.provider
             try:
@@ -219,7 +221,10 @@ class SessionRuntimeResources:
     def mcp_session_policy(self) -> McpSessionPolicy:
         """Return a defensive copy of the process-local MCP policy."""
         with self.lock:
-            return McpSessionPolicy(servers=dict(self._mcp_session_policy.servers))
+            return McpSessionPolicy(
+                servers=dict(self._mcp_session_policy.servers),
+                injected_servers=self._mcp_session_policy.injected_servers,
+            )
 
     def set_mcp_policy(
         self,
@@ -232,39 +237,15 @@ class SessionRuntimeResources:
         update_disabled_tools: bool,
     ) -> None:
         """Update MCP policy and refresh the primary agent if loaded."""
-        with self.lock:
-            existing = self._mcp_session_policy.servers.get(server_name)
-            self._mcp_session_policy.servers[server_name] = McpSessionServerPolicy(
-                enabled=enabled
-                if enabled is not None
-                else existing.enabled
-                if existing
-                else None,
-                enabled_tools=(
-                    enabled_tools
-                    if update_enabled_tools
-                    else existing.enabled_tools
-                    if existing
-                    else None
-                ),
-                disabled_tools=(
-                    disabled_tools
-                    if update_disabled_tools
-                    else existing.disabled_tools
-                    if existing
-                    else None
-                ),
-            )
-            primary = self._primary_agent
-            if primary is not None:
-                object.__setattr__(
-                    primary.provider,
-                    "_yoke_mcp_session_policy",
-                    self._mcp_session_policy,
-                )
-                primary.refresh_tools(force=True)
-                if primary._context is not None:
-                    primary._sync_context_instructions(primary._context)
+        set_mcp_policy(
+            self,
+            server_name,
+            enabled=enabled,
+            enabled_tools=enabled_tools,
+            disabled_tools=disabled_tools,
+            update_enabled_tools=update_enabled_tools,
+            update_disabled_tools=update_disabled_tools,
+        )
 
     def set_tools(
         self,

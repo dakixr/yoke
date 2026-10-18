@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 from acp import RequestError
@@ -15,8 +14,9 @@ from yoke.acp.catalog import discover
 from yoke.acp.native import NativeClient
 from yoke.acp.native import fail
 from yoke.acp.ownership import session_owner
-from yoke.acp.prompting import replay_history
 from yoke.acp.turns import prompt as run_prompt
+from yoke.acp.sessions import SessionLifecycle, MODES
+from yoke.acp.notifications import SessionNotifications
 
 type AcpMcpServer = s.HttpMcpServer | s.SseMcpServer | s.AcpMcpServer | s.McpServerStdio
 
@@ -33,6 +33,8 @@ class YokeAcpAgent:
         self.busy: set[str] = set()
         self.active: dict[str, dict[str, Any]] = {}
         self.conn: Any = None
+        self.lifecycle = SessionLifecycle(self)
+        self.notifications = SessionNotifications(self)
 
     def on_connect(self, conn: Any) -> None:
         """Capture the ACP client connection for session notifications."""
@@ -65,6 +67,9 @@ class YokeAcpAgent:
                 )
         except TimeoutError:
             raise fail("Native initialization timed out") from None
+        self.lifecycle.enabled = "put" in spec.get("paths", {}).get(
+            "/api/v1/session/{session_id}/client", {}
+        )
         drain = "post" in spec.get("paths", {}).get(
             "/api/v1/session/{session_id}/drain", {}
         )
@@ -72,10 +77,23 @@ class YokeAcpAgent:
             {
                 "protocolVersion": 1,
                 "agentInfo": {"name": "yoke", "version": __version__},
-                "authMethods": [{"id": "yoke", "name": "Yoke native daemon"}],
+                "authMethods": [],
                 "agentCapabilities": {
                     "loadSession": True,
-                    "sessionCapabilities": {"resume": {}},
+                    "sessionCapabilities": {
+                        "resume": {},
+                        **(
+                            {
+                                "close": {},
+                                "list": {},
+                                "fork": {},
+                                "additionalDirectories": {},
+                            }
+                            if self.lifecycle.enabled
+                            else {}
+                        ),
+                    },
+                    "mcpCapabilities": {"http": self.lifecycle.enabled},
                     "promptCapabilities": {"image": True, "embeddedContext": True},
                 },
                 "_meta": {
@@ -129,8 +147,17 @@ class YokeAcpAgent:
                 "name": "Mode",
                 "category": "mode",
                 "type": "select",
-                "currentValue": "full-access",
-                "options": [{"value": "full-access", "name": "Full access"}],
+                "currentValue": self.lifecycle.configs.get(session_id, {}).get(
+                    "mode", "full-access"
+                ),
+                "options": [
+                    {"value": key, "name": value}
+                    for key, value in (
+                        MODES.items()
+                        if self.lifecycle.enabled
+                        else {"full-access": "Full access"}.items()
+                    )
+                ],
             },
         ]
         efforts = catalog[selection["model"]]["reasoningEfforts"]
@@ -188,17 +215,8 @@ class YokeAcpAgent:
         if session_id not in self.sessions:
             raise fail("Load or resume the native session first")
 
-    @staticmethod
-    def scope(
-        cwd: str,
-        mcp_servers: list[AcpMcpServer] | None,
-        additional_directories: list[str] | None,
-    ) -> str:
-        if mcp_servers or additional_directories:
-            raise RequestError(-32602, "MCP and additional directories are unsupported")
-        if not Path(cwd).is_absolute():
-            raise RequestError(-32602, "cwd must be absolute")
-        return str(Path(cwd).resolve())
+    async def discover(self, cwd: str) -> tuple[dict[str, dict[str, Any]], str]:
+        return await discover(self.native, cwd)
 
     async def new_session(
         self,
@@ -207,46 +225,7 @@ class YokeAcpAgent:
         mcp_servers: list[AcpMcpServer] | None = None,
         **_kwargs: Any,
     ) -> s.NewSessionResponse:
-        cwd = self.scope(cwd, mcp_servers, additional_directories)
-        catalog, default = await discover(self.native, cwd)
-        provider, model = default.split(":", 1)
-        data = await self.native.data(
-            "POST",
-            "session",
-            json={
-                "location": {"directory": cwd},
-                "selection": {
-                    "provider": provider,
-                    "model": model,
-                    "reasoningEffort": catalog[default]["defaultReasoningEffort"],
-                },
-            },
-        )
-        session_id = data["id"]
-        self.remember(session_id, data, catalog, default)
-        await self.native.agent_monitor.attach(session_id, self.update)
-        return s.NewSessionResponse.model_validate(
-            {"sessionId": session_id, "configOptions": self.options(session_id)}
-        )
-
-    async def restore(
-        self,
-        session_id: str,
-        cwd: str,
-        mcp_servers: list[AcpMcpServer] | None,
-        additional_directories: list[str] | None,
-    ) -> dict[str, Any]:
-        cwd = self.scope(cwd, mcp_servers, additional_directories)
-        async with self.exclusive(session_id):
-            data = await self.native.data("GET", self.native.path(session_id))
-            if str(Path(data["location"]["directory"]).resolve()) != cwd:
-                raise fail(
-                    "cwd mismatch: native session belongs to a different directory"
-                )
-            catalog, default = await discover(self.native, cwd)
-            self.remember(session_id, data, catalog, default)
-            await self.native.agent_monitor.attach(session_id, self.update)
-            return {"configOptions": self.options(session_id)}
+        return await self.lifecycle.new(cwd, mcp_servers, additional_directories)
 
     async def load_session(
         self,
@@ -256,14 +235,11 @@ class YokeAcpAgent:
         additional_directories: list[str] | None = None,
         **_kwargs: Any,
     ) -> s.LoadSessionResponse:
-        result = await self.restore(
-            session_id, cwd, mcp_servers, additional_directories
-        )
-        async with self.exclusive(session_id):
-            await replay_history(
-                session_id, await self.native.messages(session_id), self.update
+        return s.LoadSessionResponse.model_validate(
+            await self.lifecycle.restore(
+                session_id, cwd, mcp_servers, additional_directories, replay=True
             )
-        return s.LoadSessionResponse.model_validate(result)
+        )
 
     async def resume_session(
         self,
@@ -274,17 +250,15 @@ class YokeAcpAgent:
         **_kwargs: Any,
     ) -> s.ResumeSessionResponse:
         return s.ResumeSessionResponse.model_validate(
-            await self.restore(session_id, cwd, mcp_servers, additional_directories)
+            await self.lifecycle.restore(
+                session_id, cwd, mcp_servers, additional_directories, replay=False
+            )
         )
 
     async def list_sessions(
-        self,
-        cwd: str | None = None,
-        cursor: str | None = None,
-        **_kwargs: Any,
+        self, cwd: str | None = None, cursor: str | None = None, **_kwargs: Any
     ) -> s.ListSessionsResponse:
-        del cwd, cursor
-        raise RequestError(-32601, "ACP session listing is not supported")
+        return await self.lifecycle.list_sessions(cwd, cursor)
 
     async def fork_session(
         self,
@@ -294,22 +268,14 @@ class YokeAcpAgent:
         mcp_servers: list[AcpMcpServer] | None = None,
         **_kwargs: Any,
     ) -> s.ForkSessionResponse:
-        del session_id, cwd, additional_directories, mcp_servers
-        raise RequestError(-32601, "ACP session forking is not supported")
+        return await self.lifecycle.fork(
+            session_id, cwd, mcp_servers, additional_directories
+        )
 
     async def close_session(
-        self,
-        session_id: str,
-        **_kwargs: Any,
+        self, session_id: str, **_kwargs: Any
     ) -> s.CloseSessionResponse:
-        work = self.active.get(session_id)
-        if work is not None:
-            work["cancel"] = True
-            work["wake"].set()
-            await work["done"].wait()
-        self.sessions.pop(session_id, None)
-        self.catalogs.pop(session_id, None)
-        await self.native.agent_monitor.detach(session_id)
+        await self.lifecycle.close(session_id)
         return s.CloseSessionResponse()
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -328,42 +294,54 @@ class YokeAcpAgent:
     ) -> s.SetSessionConfigOptionResponse:
         self.known(session_id)
         async with self.exclusive(session_id):
-            if config_id == "mode":
-                if value != "full-access":
-                    raise RequestError(-32602, "Only full-access mode is supported")
-            elif config_id in ("model", "reasoningEffort"):
-                if not isinstance(value, str):
-                    raise RequestError(-32602, "Unsupported config value")
-                catalog = self.catalogs[session_id]
-                selection = dict(self.sessions[session_id])
-                if config_id == "model":
-                    if value not in catalog:
-                        raise RequestError(-32602, "Unsupported model")
-                    selection = {
-                        "model": value,
-                        "effort": catalog[value]["defaultReasoningEffort"],
-                    }
-                else:
-                    if value not in catalog[selection["model"]]["reasoningEfforts"]:
-                        raise RequestError(-32602, "Unsupported reasoning effort")
-                    selection["effort"] = value
-                provider, model = selection["model"].split(":", 1)
-                await self.native.assert_idle(session_id)
-                await self.native.data(
-                    "POST",
-                    self.native.path(session_id, "/selection"),
-                    json={
-                        "provider": provider,
-                        "model": model,
-                        "reasoningEffort": selection["effort"],
-                    },
-                )
-                self.sessions[session_id] = selection
+            return await self.set_config_option_unlocked(config_id, session_id, value)
+
+    async def set_config_option_unlocked(
+        self, config_id: str, session_id: str, value: str | bool
+    ) -> s.SetSessionConfigOptionResponse:
+        if config_id == "mode":
+            await self.lifecycle.mode(session_id, value)
+        elif config_id in ("model", "reasoningEffort"):
+            if not isinstance(value, str):
+                raise RequestError(-32602, "Unsupported config value")
+            catalog = self.catalogs[session_id]
+            selection = dict(self.sessions[session_id])
+            if config_id == "model":
+                if value not in catalog:
+                    raise RequestError(-32602, "Unsupported model")
+                selection = {
+                    "model": value,
+                    "effort": catalog[value]["defaultReasoningEffort"],
+                }
             else:
-                raise RequestError(-32602, "Unsupported config option or model")
-            return s.SetSessionConfigOptionResponse.model_validate(
-                {"configOptions": self.options(session_id)}
+                if value not in catalog[selection["model"]]["reasoningEfforts"]:
+                    raise RequestError(-32602, "Unsupported reasoning effort")
+                selection["effort"] = value
+            provider, model = selection["model"].split(":", 1)
+            await self.native.assert_idle(session_id)
+            await self.native.data(
+                "POST",
+                self.native.path(session_id, "/selection"),
+                json={
+                    "provider": provider,
+                    "model": model,
+                    "reasoningEffort": selection["effort"],
+                },
             )
+            self.sessions[session_id] = selection
+        else:
+            raise RequestError(-32602, "Unsupported config option or model")
+        if self.lifecycle.enabled:
+            await self.update(
+                session_id,
+                {
+                    "sessionUpdate": "config_option_update",
+                    "configOptions": self.options(session_id),
+                },
+            )
+        return s.SetSessionConfigOptionResponse.model_validate(
+            {"configOptions": self.options(session_id)}
+        )
 
     async def set_session_mode(
         self, session_id: str, mode_id: str, **_kwargs: Any
@@ -382,12 +360,20 @@ class YokeAcpAgent:
         prompt: list[Any],
         **kwargs: Any,
     ) -> s.PromptResponse:
+        self.known(session_id)
+        if self.lifecycle.enabled:
+            from yoke.acp.commands import run_command
+
+            response = await run_command(self, session_id, prompt)
+            if response is not None:
+                return response
         return await run_prompt(self, session_id, prompt, kwargs)
 
     async def cancel(self, session_id: str, **_kwargs: Any) -> None:
         if work := self.active.get(session_id):
             work["cancel"] = True
             work["wake"].set()
+            await self.notifications.cancel_requests(session_id)
             await work["done"].wait()
 
     async def close(self) -> None:
@@ -401,4 +387,10 @@ class YokeAcpAgent:
             *(item["task"] for item in work if item.get("task") is not None),
             return_exceptions=True,
         )
+        await self.notifications.close()
+        for session_id in list(self.lifecycle.configs):
+            try:
+                await self.lifecycle.close(session_id)
+            except RequestError:
+                pass
         await self.native.close()

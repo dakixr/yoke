@@ -64,8 +64,9 @@ uses `YOKE_ACP_URL` and `YOKE_ACP_TOKEN`, keeps Yoke's HTTP runtime authoritativ
 for sessions, tools, models, and cancellation, and advertises only models whose
 native providers are currently ready. ACP supports text prompts, inline images,
 embedded file attachments, model and reasoning selection, session load/resume,
-tool lifecycle updates, and full-access mode. Images reach the model as image
-content; generic files are saved for Yoke's file-reading tools rather than
+tool lifecycle updates, client MCP servers, plans, interactive questions, and
+permission modes. See [ACP and T3 Code](acp.md) for setup and the complete
+contract. Images reach the model as image content; generic files are saved for Yoke's file-reading tools rather than
 expanded into the prompt. Attachment-only turns are accepted. The native store
 keeps the uploaded bytes when an ACP process exits or a session is resumed.
 
@@ -81,10 +82,11 @@ never the peer's potentially different working directory. Interrupted calls
 with no final result close as unconfirmed failures rather than staying active.
 
 Managed jobs that remain running after a command launch or process read also
-publish a separate background-task lifecycle to the Yoke T3 adapter. Stock T3
-clients show Monitoring when these are the only remaining work after the turn
-ends. The ACP peer watches the native process inspector through read-only
-requests and event invalidations, with a 15-second fallback snapshot check for
+publish a separate background-task lifecycle to the Yoke T3 adapter. A client
+with that adapter shows Monitoring when these are the only remaining work after
+the turn ends. Generic ACP clients retain the observations as tool
+activity; see [presentation limits](acp.md#generic-t3-presentation-limits). The
+ACP peer watches the native process inspector through read-only requests and event invalidations, with a 15-second fallback snapshot check for
 lost notifications. Job completion, failure, and termination update that task
 even when the foreground turn has finished. Repeated snapshots and
 elapsed-time-only changes do not generate new activity rows.
@@ -109,8 +111,8 @@ to support ordinary ACP sessions without an agent roster.
 ACP clients request a promptless continuation with `prompt: []` and
 `_meta.yokeContinuation: true`. This performs another inference on the existing
 conversation without inserting a synthetic user message. Empty prompts without
-that explicit marker are rejected. Plan mode, interactive permission/question
-requests, session listing, and ACP-level forking remain unsupported.
+that explicit marker are rejected. Current daemons also support plan mode,
+permission requests, form questions, session listing, and ACP-level forking.
 
 To steer an active ACP turn, clients send `session/cancel`, wait for its
 in-flight `session/prompt` response, then send the correction in the same
@@ -157,7 +159,7 @@ YOKE_ACP_URL=http://127.0.0.1:8770 YOKE_ACP_TOKEN="$TOKEN" yoke acp
 Select models with `provider:model` or `provider:model:thinking_effort`:
 
 ```bash
-yoke --model codex:gpt-6-sol:medium "..."
+yoke --model codex:gpt-6.1-sol:medium "..."
 yoke --model codex:gpt-6-astra:max "..."
 yoke --model opencode-go:muse-spark-1.3-contributor:high "..."
 yoke --model opencode-go:glm-5.3-flash "..."
@@ -176,7 +178,7 @@ Provider selections without a model use these defaults:
 
 | Provider | Default selection |
 | --- | --- |
-| `codex` | `codex:gpt-6-sol:medium` |
+| `codex` | `codex:gpt-6.1-sol:medium` |
 | `opencode-go` | `opencode-go:glm-5.3-flash` |
 | `zai` | `zai:glm-5.3-flash:max` |
 
@@ -196,10 +198,10 @@ balancer in front of it, stays on the warm prompt cache. Leading system
 messages form the Codex `instructions`; system context added later, such as a
 skill activated mid-session, is sent in place as a `developer` input message so
 the cached prefix and response continuity survive the activation.
-The advertised catalog currently includes `gpt-6-astra`, `gpt-6.1-sol`,
-`gpt-6-sol`, and `gpt-6-luna`. GPT-5.6 models no longer appear as selectable
-models; the Codex provider still handles legacy configurations that already use
-them.
+The advertised Codex catalog includes `gpt-6-astra`, `gpt-6.1-sol`, and
+`gpt-6-luna`. GPT-6.1 Sol is the default. GPT-6 Sol and GPT-5.6 models no
+longer appear as selectable models; the Codex provider still handles legacy
+configurations that already use them.
 Select GPT-6.1 Sol with `yoke --model codex:gpt-6.1-sol:medium "..."`.
 Yoke caps its context window at 400,000 tokens and supports image inputs and
 `low`, `medium`, `high`, `xhigh`, and `max` reasoning efforts (default:
@@ -207,9 +209,8 @@ Yoke caps its context window at 400,000 tokens and supports image inputs and
 Select Astra with `yoke --model codex:gpt-6-astra:medium "..."`. Yoke caps
 its context window at 400,000 tokens and supports image inputs and `low`,
 `medium`, `high`, `xhigh`, and `max` reasoning efforts (default: `medium`).
-Select Sol or Luna with `codex:gpt-6-sol:<effort>` or
-`codex:gpt-6-luna:<effort>`. Yoke also caps those models at 400,000 tokens;
-both support image inputs and `none`, `low`, `medium`, `high`, `xhigh`, and
+Select Luna with `codex:gpt-6-luna:<effort>`. Yoke caps it at 400,000 tokens;
+it supports image inputs and `none`, `low`, `medium`, `high`, `xhigh`, and
 `max` reasoning efforts (default: `medium`).
 
 OpenCode Go advertises its maintained model catalog, including the Contributor
@@ -240,7 +241,7 @@ Use these commands to inspect or change defaults:
 
 ```bash
 yoke models list
-yoke models set codex:gpt-6-sol:medium
+yoke models set codex:gpt-6.1-sol:medium
 yoke models set opencode-go:glm-5.3-flash
 yoke models set zai:glm-5.3-flash:max
 yoke models set

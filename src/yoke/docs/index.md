@@ -16,6 +16,9 @@ structured observability, and automatic usage accounting.
 - [HTTP harness API](http.md): run one process-wide daemon that can inspect and
   drive many durable Yoke sessions from one client.
 
+- [ACP and T3 Code](acp.md): register a generic ACP provider, attach client MCP
+  tools, and use session modes and interactive requests.
+
 ## Design
 
 ### Providers and models
@@ -93,7 +96,7 @@ yoke --headless "Add type annotations to src/utils.py"
 from yoke.ai import Agent, build_builtin_provider
 
 agent = Agent(
-    provider=build_builtin_provider("codex:gpt-6-sol:medium"),
+    provider=build_builtin_provider("codex:gpt-6.1-sol:medium"),
 )
 
 result = agent.prompt("Add type annotations to src/utils.py")

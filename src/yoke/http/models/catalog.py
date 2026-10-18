@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from yoke.http.models.common import ApiModel
 from yoke.http.models.common import LocationInfo
+from yoke.http.models.session import SessionSelection
 
 
 class ProviderInfo(ApiModel):
@@ -17,6 +18,7 @@ class ProviderInfo(ApiModel):
 class ProviderListResponse(ApiModel):
     location: LocationInfo
     data: list[ProviderInfo]
+    default_selection: SessionSelection | None = None
 
 
 class ModelCapabilities(ApiModel):
@@ -29,6 +31,7 @@ class ModelInfo(ApiModel):
     provider: str
     name: str
     reasoning_efforts: list[str]
+    default_reasoning_effort: str | None = None
     capabilities: ModelCapabilities
     context_window_tokens: int
 
