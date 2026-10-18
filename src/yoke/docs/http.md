@@ -34,8 +34,10 @@ uv run python scripts/generate_http_openapi.py
 ```
 
 `clients/typescript` contains a small `openapi-fetch` client whose `paths`
-types are generated from that checked-in contract. Validate contract drift and
-compile the client with:
+types are generated from that checked-in contract. After changing the HTTP
+API, run `npm run generate` in `clients/typescript` and commit the generated
+`src/schema.d.ts` alongside the OpenAPI golden file. Validate contract drift
+and compile the client with:
 
 ```bash
 cd clients/typescript

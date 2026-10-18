@@ -380,6 +380,25 @@ export interface paths {
         patch: operations["patchSession"];
         trace?: never;
     };
+    "/api/v1/session/{session_id}/client": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["getSessionClient"];
+        /** Configure */
+        put: operations["configureSessionClient"];
+        post?: never;
+        /** Detach */
+        delete: operations["detachSessionClient"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/session/{session_id}/compact": {
         parameters: {
             query?: never;
@@ -1134,6 +1153,46 @@ export interface components {
              */
             maxPromptBytes: number;
         };
+        /** ClientMcpServer */
+        ClientMcpServer: {
+            /** Args */
+            args?: string[];
+            /** Command */
+            command?: string | null;
+            /** Env */
+            env?: {
+                [key: string]: string;
+            };
+            /** Headers */
+            headers?: {
+                [key: string]: string;
+            };
+            /** Name */
+            name: string;
+            /**
+             * Transport
+             * @default stdio
+             * @enum {string}
+             */
+            transport: "stdio" | "streamable-http";
+            /** Url */
+            url?: string | null;
+        };
+        /** ClientSessionRequest */
+        ClientSessionRequest: {
+            /** Additionaldirectories */
+            additionalDirectories?: string[];
+            /** Mcpservers */
+            mcpServers?: components["schemas"]["ClientMcpServer"][];
+            /**
+             * Mode
+             * @default full-access
+             * @enum {string}
+             */
+            mode: "full-access" | "approval-required" | "auto-accept-edits" | "plan";
+            /** Owner */
+            owner: string;
+        };
         /** CommandInfo */
         CommandInfo: {
             /** Action */
@@ -1536,6 +1595,8 @@ export interface components {
             capabilities: components["schemas"]["ModelCapabilities"];
             /** Contextwindowtokens */
             contextWindowTokens: number;
+            /** Defaultreasoningeffort */
+            defaultReasoningEffort?: string | null;
             /** Id */
             id: string;
             /** Name */
@@ -1582,6 +1643,10 @@ export interface components {
             permission: string;
             /** Sessionid */
             sessionID: string;
+            /** Toolcall */
+            toolCall?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** PermissionResolution */
         PermissionResolution: {
@@ -1785,6 +1850,7 @@ export interface components {
         ProviderListResponse: {
             /** Data */
             data: components["schemas"]["ProviderInfo"][];
+            defaultSelection?: components["schemas"]["SessionSelection"] | null;
             location: components["schemas"]["LocationInfo"];
         };
         /** PublicEvent */
@@ -3340,6 +3406,111 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getSessionClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    configureSessionClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detachSessionClient: {
+        parameters: {
+            query: {
+                owner: string;
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
