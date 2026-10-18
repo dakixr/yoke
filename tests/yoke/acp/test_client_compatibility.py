@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 from acp import schema as s
 from acp.agent.router import build_agent_router
 
@@ -23,6 +24,47 @@ async def catalog(*_args):
             "images": True,
         }
     }, "fixture:model"
+
+
+@pytest.mark.parametrize("method", ["session/load", "session/resume"])
+def test_restore_reactivates_archived_session(tmp_path, monkeypatch, method):
+    monkeypatch.setattr("yoke.acp.bridge.discover", catalog)
+
+    async def scenario():
+        app = app_for(tmp_path, RecordingProvider())
+        async with app.router.lifespan_context(app):
+            native = ReceiptNative("http://fixture", "unused")
+            await native.http.aclose()
+            native.http = httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://fixture/api/v1/",
+                headers={"Authorization": "Bearer runtime-lifetime-secret"},
+            )
+            agent = YokeAcpAgent(native)
+            agent.on_connect(Connection())
+            router = build_agent_router(agent, use_unstable_protocol=True)
+            try:
+                await router("initialize", {"protocolVersion": 1}, False)
+                created = await router(
+                    "session/new", {"cwd": str(tmp_path), "mcpServers": []}, False
+                )
+                sid = created.session_id
+                await router("session/close", {"sessionId": sid}, False)
+                await native.data("PATCH", native.path(sid), json={"archived": True})
+                await router(
+                    method,
+                    {"sessionId": sid, "cwd": str(tmp_path), "mcpServers": []},
+                    False,
+                )
+                assert (await native.data("GET", native.path(sid)))[
+                    "archivedAt"
+                ] is None
+                listed = await router("session/list", {"cwd": str(tmp_path)}, False)
+                assert sid in {item.session_id for item in listed.sessions}
+            finally:
+                await agent.close()
+
+    asyncio.run(scenario())
 
 
 def test_standard_lifecycle_config_commands_and_notification_recovery(

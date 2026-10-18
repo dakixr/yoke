@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Request
 
 from yoke.http.auth import require_auth
@@ -31,11 +33,12 @@ async def configure(
     request: Request, session_id: str, body: ClientSessionRequest
 ) -> dict[str, object]:
     runtime = request.app.state.runtime_registry.get_or_start(session_id)
-    return {
-        "data": await configure_client(
-            runtime, body, request.app.state.human_input_service
-        )
-    }
+    data = await configure_client(runtime, body, request.app.state.human_input_service)
+    record = request.app.state.session_service.get_session(session_id)
+    request.app.state.thread_settlement_service.attach(
+        session_id, body, Path(record.location.directory)
+    )
+    return {"data": data}
 
 
 @router.delete("/session/{session_id}/client", operation_id="detachSessionClient")
@@ -43,4 +46,5 @@ async def detach(request: Request, session_id: str, owner: str) -> dict[str, obj
     runtime = request.app.state.runtime_registry.get_if_loaded(session_id)
     if runtime is not None:
         await detach_client(runtime, owner)
+    await request.app.state.thread_settlement_service.reconcile(session_id, owner)
     return {"data": {"detached": True}}

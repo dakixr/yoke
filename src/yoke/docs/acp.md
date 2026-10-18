@@ -2,7 +2,8 @@
 
 `yoke acp` is a stdio ACP agent backed by a running `yoke serve` daemon.
 The daemon owns durable conversations and execution. Closing an ACP connection
-releases its client configuration and observers, without deleting the session.
+releases its client tool configuration and prompt observers. Saved sessions
+remain available, and T3 settlement synchronization continues in the daemon.
 
 ## T3 Code setup
 
@@ -74,6 +75,30 @@ Load and resume replace the injected servers with the client's current values.
 Closing the owning connection removes them. A different session cannot see
 them. The model uses `mcp_inspect` and `mcp_call` to discover and call these
 tools even when the ordinary CLI configuration does not enable MCP.
+
+### T3 settlement
+
+T3 sends ACP `session/close` both when settling a thread and when releasing
+an ordinary idle session. The message carries no reason. Yoke therefore reads
+the thread's durable `settled` state through T3's injected, scoped MCP service.
+A confirmed settlement archives the corresponding native Yoke session after
+its workers and queued prompts drain. Ordinary closes and failed state reads
+leave the session active. Loading or resuming an archived session reactivates it.
+
+The daemon checks on client detach and every 15 seconds. Its settlement
+observer survives an ACP disconnect, so settling an already idle T3 thread
+still reaches Yoke. The observer retains only its scoped MCP credential in
+memory, separate from the model's tools, until settlement, credential
+revocation, replacement by another client, or daemon shutdown. No credential
+is persisted. After restarting the daemon, load or resume the T3 thread to
+reattach this observer. Reopening a thread reactivates Yoke on its next ACP
+load or resume. This synchronization runs from T3 to Yoke. Archiving directly
+in Yoke does not settle T3. T3 archive actions that revoke MCP access before
+Yoke can read state cannot be inferred safely from the resulting authorization
+failure.
+
+HTTP MCP connections send the server's negotiated `MCP-Protocol-Version`
+header after initialization. T3 requires this header for subsequent requests.
 
 ## Modes and interactive tools
 

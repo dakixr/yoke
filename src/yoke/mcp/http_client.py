@@ -46,6 +46,7 @@ class StreamableHttpClient:
         )
         self._owns_client = http_client is None
         self._session_id: str | None = None
+        self._protocol_version: str | None = None
         self._initialized = False
         self._next_id = 0
         self._tool_cache: tuple[McpToolInfo, ...] | None = None
@@ -64,6 +65,9 @@ class StreamableHttpClient:
             },
             timeout=self.server.startup_timeout_sec,
         )
+        version = result.get("protocolVersion")
+        if isinstance(version, str) and version:
+            self._protocol_version = version
         instructions = result.get("instructions")
         if isinstance(instructions, str) and instructions.strip():
             self.server_instructions = instructions.strip()
@@ -180,6 +184,7 @@ class StreamableHttpClient:
         if self._owns_client:
             self._client.close()
         self._session_id = None
+        self._protocol_version = None
         self._initialized = False
 
     def _post_request(
@@ -257,6 +262,8 @@ class StreamableHttpClient:
             headers.update(self.server.headers)
         if self._session_id is not None:
             headers["Mcp-Session-Id"] = self._session_id
+        if self._protocol_version is not None:
+            headers["MCP-Protocol-Version"] = self._protocol_version
         return headers
 
     def _capture_session_id(self, response: httpx.Response) -> None:

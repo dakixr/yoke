@@ -49,6 +49,7 @@ from yoke.http.services.event_broker import GlobalEventBroker
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.filesystem_service import FilesystemService
 from yoke.http.services.human_input_service import HumanInputService
+from yoke.http.services.thread_settlement import ThreadSettlementService
 from yoke.http.services.path_policy import PathPolicy
 from yoke.http.services.process_service import ProcessService
 from yoke.http.services.runtime_registry import SessionAgentFactory
@@ -100,10 +101,12 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         max_worker_threads=configured.max_worker_threads,
     )
     agent_runs = AgentRunService(runtime_registry, events)
+    thread_settlement = ThreadSettlementService(session_service, runtime_registry)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         agent_run_task = asyncio.create_task(agent_runs.watch())
+        settlement_task = asyncio.create_task(thread_settlement.watch())
         maintenance_task = asyncio.create_task(
             _maintain_session_index(
                 store,
@@ -116,7 +119,12 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         try:
             yield
         finally:
-            for task in (maintenance_task, runtime_import_task, agent_run_task):
+            for task in (
+                settlement_task,
+                maintenance_task,
+                runtime_import_task,
+                agent_run_task,
+            ):
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
@@ -144,6 +152,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.state.event_journal = journal
     app.state.event_service = events
     app.state.session_service = session_service
+    app.state.thread_settlement_service = thread_settlement
     app.state.skill_service = SkillService(store)
     app.state.location_service = LocationService(store)
     app.state.human_input_service = HumanInputService(store, events)

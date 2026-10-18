@@ -157,6 +157,10 @@ class SessionLifecycle:
             if self.enabled:
                 await agent.native.drained(session_id)
             await self.configure(session_id, cwd, mcp_servers, additional_directories)
+            if data.get("archivedAt") is not None:
+                await agent.native.data(
+                    "PATCH", agent.native.path(session_id), json={"archived": False}
+                )
             agent.remember(session_id, data, catalog, default)
             if replay:
                 await replay_history(
