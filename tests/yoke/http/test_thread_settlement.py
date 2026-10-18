@@ -66,7 +66,9 @@ def test_settle_after_idle_disconnect_and_client_secret_cleanup(
             state["settled"] = True
             reconcile(client, app)
         assert archived(client) is not None
-        assert not app.state.thread_settlement_service.bindings
+        assert app.state.thread_settlement_service.bindings[
+            "session-a"
+        ].archived_by_sync
         assert all(
             b"ephemeral-test-secret" not in path.read_bytes()
             for path in (tmp_path / "sessions").rglob("*")
@@ -178,6 +180,77 @@ def test_retained_native_worker_defers_settlement_until_physical_drain(
         assert archived(client) is not None
 
 
+def test_unsettle_reactivates_without_acp_load_or_resume(tmp_path, monkeypatch):
+    state = {"threadId": "t", "settled": False, "archived": False}
+    monkeypatch.setattr(module, "read_thread", lambda _: dict(state))
+    app = app_for(tmp_path, RecordingProvider())
+    with TestClient(app) as client:
+        _create_session(client, tmp_path, "session-a")
+        configure(client, mcpServers=[server()])
+        client.delete(
+            "/api/v1/session/session-a/client?owner=test-client", headers=_auth()
+        )
+        for _ in range(2):
+            state["settled"] = True
+            reconcile(client, app)
+            timestamp = archived(client)
+            assert timestamp is not None
+            reconcile(client, app)
+            assert archived(client) == timestamp
+            # Neither incomplete state nor a still-archived T3 thread is active.
+            state.pop("archived")
+            state["settled"] = False
+            reconcile(client, app)
+            assert archived(client) == timestamp
+            state["archived"] = True
+            reconcile(client, app)
+            assert archived(client) == timestamp
+            state["archived"] = False
+            reconcile(client, app)
+            assert archived(client) is None
+        assert (
+            client.get("/api/v1/session/session-a/client", headers=_auth()).json()[
+                "data"
+            ]
+            is None
+        )
+
+
+def test_unsettle_preserves_independent_yoke_archives(tmp_path, monkeypatch):
+    state = {"threadId": "t", "settled": False, "archived": False}
+    monkeypatch.setattr(module, "read_thread", lambda _: dict(state))
+    app = app_for(tmp_path, RecordingProvider())
+    with TestClient(app) as client:
+        _create_session(client, tmp_path, "session-a")
+        client.patch(
+            "/api/v1/session/session-a", headers=_auth(), json={"archived": True}
+        )
+        configure(client, mcpServers=[server()])
+        timestamp = archived(client)
+        for settled in (False, True, False):
+            state["settled"] = settled
+            reconcile(client, app)
+            assert archived(client) == timestamp
+            assert not app.state.thread_settlement_service.bindings[
+                "session-a"
+            ].archived_by_sync
+
+
+def test_mode_update_keeps_unsettle_observer_ownership(tmp_path, monkeypatch):
+    state = {"threadId": "t", "settled": True, "archived": False}
+    monkeypatch.setattr(module, "read_thread", lambda _: dict(state))
+    app = app_for(tmp_path, RecordingProvider())
+    with TestClient(app) as client:
+        _create_session(client, tmp_path, "session-a")
+        configure(client, mcpServers=[server()])
+        reconcile(client, app)
+        assert archived(client) is not None
+        configure(client, mode="plan", mcpServers=[server()])
+        state["settled"] = False
+        reconcile(client, app)
+        assert archived(client) is None
+
+
 def test_mcp_http_contract_and_identity_validation(tmp_path, monkeypatch):
     calls = []
     thread_id = "thread-a"
@@ -234,9 +307,8 @@ def test_mcp_http_contract_and_identity_validation(tmp_path, monkeypatch):
 
 
 def test_watcher_reconciles_and_clears_credentials_on_shutdown(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        module, "read_thread", lambda _: {"threadId": "t", "settled": True}
-    )
+    state = {"threadId": "t", "settled": True, "archived": False}
+    monkeypatch.setattr(module, "read_thread", lambda _: dict(state))
     app = app_for(tmp_path, RecordingProvider())
     service = app.state.thread_settlement_service
     service.interval = 0.01
@@ -244,13 +316,16 @@ def test_watcher_reconciles_and_clears_credentials_on_shutdown(tmp_path, monkeyp
         _create_session(client, tmp_path, "session-a")
         configure(client, mcpServers=[server()])
 
-        async def wait():
+        async def wait(expected):
             async with asyncio.timeout(5):
-                while service.bindings:
+                while service.bindings["session-a"].archived_by_sync is not expected:
                     await asyncio.sleep(0.01)
 
         assert client.portal is not None
-        client.portal.call(wait)
+        client.portal.call(wait, True)
         assert archived(client) is not None
+        state["settled"] = False
+        client.portal.call(wait, False)
+        assert archived(client) is None
         configure(client, mcpServers=[server()])
     assert not service.bindings

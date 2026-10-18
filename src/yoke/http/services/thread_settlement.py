@@ -2,7 +2,7 @@
 
 ACP close has no settlement reason. Keep this observer separate from client
 tool configuration so an idle ACP disconnect cannot lose a later settlement.
-Credentials remain process-local and are discarded on settlement or revocation.
+Credentials remain process-local and are discarded on replacement or revocation.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ class ThreadBinding:
     owner: str
     server: McpServerConfig = field(repr=False)
     thread_id: str | None = None
+    archived_by_sync: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
@@ -107,8 +108,17 @@ class ThreadSettlementService:
                 continue
             if not endpoint.startswith(("http://", "https://")):
                 continue
+            previous = self.bindings.get(session_id)
+            if previous is not None and (
+                previous.owner != config.owner
+                or previous.server.url != endpoint
+                or previous.server.headers != {"Authorization": authorization}
+            ):
+                previous = None
             self.bindings[session_id] = ThreadBinding(
                 owner=config.owner,
+                thread_id=previous.thread_id if previous else None,
+                archived_by_sync=previous.archived_by_sync if previous else False,
                 server=McpServerConfig(
                     name="t3-code",
                     transport="streamable-http",
@@ -138,15 +148,26 @@ class ThreadSettlementService:
                 if self.bindings.get(session_id) is not binding:
                     return
                 binding.thread_id = data["threadId"]
-                # Unknown/missing state, failures and ordinary closes never settle.
-                if data.get("settled") is not True and data.get("archived") is not True:
+                settled = data.get("settled") is True or data.get("archived") is True
+                active = data.get("settled") is False and data.get("archived") is False
+                # Only undo archives this observer applied. Missing state is unknown.
+                if not settled and (not active or not binding.archived_by_sync):
                     return
 
-                def archive() -> None:
+                def synchronize() -> None:
                     if self.bindings.get(session_id) is not binding:
                         return
+                    record = self.sessions.store.summary_record(session_id)
+                    if record is None:
+                        raise ApiError(
+                            404, "session_not_found", "Session was not found."
+                        )
+                    if (record.archived_at is not None) == settled:
+                        if not settled:
+                            binding.archived_by_sync = False
+                        return
                     runtime = self.runtimes.get_if_loaded(session_id)
-                    if runtime is not None and runtime.workers.active_count:
+                    if settled and runtime is not None and runtime.workers.active_count:
                         raise ApiError(
                             409,
                             "session_busy",
@@ -160,12 +181,11 @@ class ThreadSettlementService:
                             pinned_set=False,
                             pinned=None,
                             archived_set=True,
-                            archived=True,
+                            archived=settled,
                         )
+                        binding.archived_by_sync = settled
 
-                await self.runtimes.idle_mutation(session_id, archive)
-                if self.bindings.get(session_id) is binding:
-                    self.bindings.pop(session_id, None)
+                await self.runtimes.idle_mutation(session_id, synchronize)
             except ApiError as exc:
                 if exc.status_code == 404 and self.bindings.get(session_id) is binding:
                     self.bindings.pop(session_id, None)

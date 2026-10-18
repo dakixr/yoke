@@ -84,16 +84,21 @@ the thread's durable `settled` state through T3's injected, scoped MCP service.
 A confirmed settlement archives the corresponding native Yoke session after
 its workers and queued prompts drain. Ordinary closes and failed state reads
 leave the session active. Loading or resuming an archived session reactivates it.
+Unsettling a thread in T3 also reactivates its Yoke session on the next check,
+without a new message or ACP connection. This only undoes archives applied by
+the settlement observer. It preserves sessions that were already archived
+independently in Yoke.
 
 The daemon checks on client detach and every 15 seconds. Its settlement
 observer survives an ACP disconnect, so settling an already idle T3 thread
 still reaches Yoke. The observer retains only its scoped MCP credential in
-memory, separate from the model's tools, until settlement, credential
-revocation, replacement by another client, or daemon shutdown. No credential
-is persisted. After restarting the daemon, load or resume the T3 thread to
-reattach this observer. Reopening a thread reactivates Yoke on its next ACP
-load or resume. This synchronization runs from T3 to Yoke. Archiving directly
-in Yoke does not settle T3. T3 archive actions that revoke MCP access before
+memory, separate from the model's tools, until credential revocation,
+replacement by another client, or daemon shutdown. It continues observing
+settled threads so Unsettle can reach Yoke. No credential is persisted.
+After restarting the daemon, load or resume the T3 thread to
+reattach this observer. Loading or resuming also reactivates Yoke immediately.
+This synchronization runs from T3 to Yoke. Archiving directly in Yoke does not
+settle T3. T3 archive actions that revoke MCP access before
 Yoke can read state cannot be inferred safely from the resulting authorization
 failure.
 
