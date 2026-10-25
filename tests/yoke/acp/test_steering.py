@@ -107,6 +107,7 @@ def test_steering_preserves_native_history_after_physical_drain(
                 assert connection.updates == [
                     {
                         "sessionUpdate": "agent_message_chunk",
+                        "messageId": rows[-1]["id"],
                         "content": {"type": "text", "text": "answer-2"},
                     }
                 ]

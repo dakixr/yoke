@@ -72,10 +72,20 @@ async def emit(
     if kind == "answer" or (
         kind == "session.message.updated" and data.get("phase") == "commentary"
     ):
+        # Commentary arrives before native entries are persisted. Scope its
+        # boundary to this input and model iteration; settled answers carry the
+        # saved entry ID used by session/load. Never rely on tool notifications
+        # to separate consecutive assistant messages.
+        message_id = (
+            data["messageID"]
+            if kind == "answer"
+            else f"yoke:commentary:{data['inputID']}:{data.get('iteration', uuid.uuid4().hex)}"
+        )
         await agent.update(
             session_id,
             {
                 "sessionUpdate": "agent_message_chunk",
+                "messageId": message_id,
                 "content": {"type": "text", "text": data["content"]},
             },
         )

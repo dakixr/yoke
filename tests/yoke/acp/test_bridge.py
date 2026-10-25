@@ -191,6 +191,7 @@ class FixtureNative(NativeClient):
                         "content": [],
                     },
                     {
+                        "id": "answer-id",
                         "type": "assistant",
                         "phase": "final_answer",
                         "content": [{"type": "text", "text": "Done."}],

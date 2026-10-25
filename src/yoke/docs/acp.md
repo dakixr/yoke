@@ -68,6 +68,18 @@ ACP protocol version 1 is negotiated even when the client offers version 2.
 The installed Python ACP SDK supports the standard and unstable methods used
 here. SSE MCP and MCP-over-ACP transports are not advertised or accepted.
 
+History replay includes each saved native entry's `messageId` on all of its
+content chunks. Consecutive messages remain separate even when they have the
+same role or identical text. Live final replies use the same saved IDs as
+replay. Live commentary uses IDs scoped to the admitted input and model
+iteration, since its native entry has not yet been persisted. Message
+boundaries do not depend on intervening tool updates.
+
+These IDs preserve transcript boundaries through ACP reloads. T3 retains its
+own timeline and controls mobile caching and work folding. Updating the peer
+does not rewrite existing T3 rows or establish that every disappearing-view
+report has the same cause.
+
 Injected MCP configuration takes precedence over a persisted server with the
 same name. It lives only in the daemon's session runtime. Credentials are not
 written into Yoke configuration, saved sessions, or client-status responses.

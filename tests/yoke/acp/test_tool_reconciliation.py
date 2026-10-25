@@ -89,6 +89,7 @@ class DroppedToolsNative(FixtureNative):
                             "result": json.dumps(self.result),
                         },
                         {
+                            "id": "recovered-answer",
                             "type": "assistant",
                             "inputID": input_id,
                             "content": [{"type": "text", "text": "Done."}],

@@ -177,7 +177,7 @@ class NativeClient:
     ) -> None:
         """Emit the persisted final assistant text for one admitted input."""
         found = False
-        answers: list[str] = []
+        answers: list[tuple[str, str]] = []
         for message in await self.messages(session_id):
             if continuation:
                 found = message.get("inputID") == input_id
@@ -198,11 +198,11 @@ class NativeClient:
                             raise fail(
                                 "Native answer contains unsupported non-text content"
                             )
-                        answers.append(block["text"])
-        if not any(text.strip() for text in answers):
+                        answers.append((message["id"], block["text"]))
+        if not any(text.strip() for _, text in answers):
             raise fail("Native settlement has no persisted final answer")
-        for text in answers:
-            await emit("answer", {"content": text})
+        for message_id, text in answers:
+            await emit("answer", {"messageID": message_id, "content": text})
 
     async def turn(
         self,

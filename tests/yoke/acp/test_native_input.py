@@ -139,6 +139,7 @@ def test_acp_uploads_continues_and_loads_real_native_history(
                 assert connection.updates == [
                     {
                         "sessionUpdate": "agent_message_chunk",
+                        "messageId": (await native.messages("session-a"))[-1]["id"],
                         "content": {"type": "text", "text": "answer-2"},
                     }
                 ]

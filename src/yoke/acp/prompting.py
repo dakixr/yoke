@@ -145,5 +145,10 @@ async def replay_history(
         )
         for block in message["content"]:
             await update(
-                session_id, {"sessionUpdate": kind, "content": history_content(block)}
+                session_id,
+                {
+                    "sessionUpdate": kind,
+                    "messageId": message["id"],
+                    "content": history_content(block),
+                },
             )
