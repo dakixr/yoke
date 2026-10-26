@@ -198,10 +198,10 @@ balancer in front of it, stays on the warm prompt cache. Leading system
 messages form the Codex `instructions`; system context added later, such as a
 skill activated mid-session, is sent in place as a `developer` input message so
 the cached prefix and response continuity survive the activation.
-The advertised Codex catalog includes `gpt-6-astra`, `gpt-6.1-sol`, and
-`gpt-6-luna`. GPT-6.1 Sol is the default. GPT-6 Sol and GPT-5.6 models no
-longer appear as selectable models; the Codex provider still handles legacy
-configurations that already use them.
+The advertised Codex catalog includes `gpt-6-astra`, `gpt-6.1-sol`,
+`gpt-6.1-terra`, and `gpt-6-luna`. GPT-6.1 Sol is the default. GPT-6 Sol and
+GPT-5.6 models no longer appear as selectable models; the Codex provider still
+handles legacy configurations that already use them.
 Select GPT-6.1 Sol with `yoke --model codex:gpt-6.1-sol:medium "..."`.
 Yoke caps its context window at 400,000 tokens and supports image inputs and
 `low`, `medium`, `high`, `xhigh`, and `max` reasoning efforts (default:
@@ -212,6 +212,10 @@ its context window at 400,000 tokens and supports image inputs and `low`,
 Select Luna with `codex:gpt-6-luna:<effort>`. Yoke caps it at 400,000 tokens;
 it supports image inputs and `none`, `low`, `medium`, `high`, `xhigh`, and
 `max` reasoning efforts (default: `medium`).
+Select Terra with `yoke --model codex:gpt-6.1-terra:medium "..."`.
+Yoke caps its context window at 400,000 tokens and supports image inputs and
+`none`, `low`, `medium`, `high`, `xhigh`, and `max` reasoning efforts (default:
+`medium`).
 
 OpenCode Go advertises its maintained model catalog, including the Contributor
 tier of `muse-spark-1.3-contributor`. Yoke caps its upstream 1,048,576-token
