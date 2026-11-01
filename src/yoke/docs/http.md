@@ -250,8 +250,9 @@ application shell, and `GET /assets/*` serves the packaged browser modules,
 CSS, vendored dependencies, and licenses. `/settings` is a compatibility alias
 for the home view, not a separate settings screen. These browser routes are excluded
 from the v1 OpenAPI schema. Production does not require Node.js, npm, a CDN, or
-a separate frontend server. Assistant Markdown is sanitized before display and
-then renders TeX math with the bundled KaTeX assets. `$...$` and `\(...\)` are
+a separate frontend server. Assistant Markdown is sanitized with bundled
+DOMPurify 3.4.17 before display. TeX math is rendered with the bundled KaTeX
+assets. `$...$` and `\(...\)` are
 inline math; `\[...\]` and `$$...$$` are display math. Single-dollar math stays
 on one source line, with no whitespace immediately inside either delimiter.
 Its closing dollar cannot be followed by a digit. The first unescaped dollar
