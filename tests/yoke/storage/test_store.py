@@ -221,6 +221,29 @@ def test_writes_roll_back_together_and_after_commit_waits(tmp_path: Path) -> Non
     assert store.load("shared").title != "inner"
 
 
+def test_after_commit_runs_all_callbacks_before_reporting_failure(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "callbacks.db")
+    called: list[str] = []
+
+    def fail() -> None:
+        called.append("first")
+        raise RuntimeError("subscriber failed")
+
+    def succeed() -> None:
+        called.append("second")
+
+    with pytest.raises(RuntimeError, match="subscriber failed"):
+        with database.write():
+            database.after_commit(fail)
+            database.after_commit(succeed)
+
+    assert called == ["first", "second"]
+    with database.write():
+        pass
+
+
 def test_retention_deletes_idle_unpinned_sessions_with_their_rows(
     tmp_path: Path,
 ) -> None:

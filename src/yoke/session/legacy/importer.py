@@ -39,7 +39,7 @@ def import_legacy_sessions(
     Idempotent and resumable: a session that already exists in the database
     is skipped, so a rerun continues after the last committed session. Each
     import is read back and compared with the JSONL loader's record; a
-    mismatch is deleted again and reported, so a rerun retries it.
+    mismatch is rolled back and reported, so a rerun retries it.
     """
     index = read_legacy_index(source)
     ids = list(session_ids) if session_ids is not None else legacy_session_ids(source)
@@ -65,16 +65,26 @@ def import_legacy_session(
     if store.exists(session_id):
         return ImportResult(session_id, "skipped", "Already in the database.", count)
     try:
-        inserted = store.insert_record(record)
+        # Insert and verify in one write transaction. A mismatch rolls the
+        # insert back; deleting afterwards could destroy a turn another
+        # process appended between the insert and the check.
+        with store.database.write():
+            if not store.insert_record(record):
+                return ImportResult(
+                    session_id, "skipped", "Already in the database.", count
+                )
+            problem = verify_imported_session(store, record)
+            if problem is not None:
+                raise _ImportMismatch(problem)
+    except _ImportMismatch as mismatch:
+        return ImportResult(session_id, "mismatch", str(mismatch), count)
     except Exception as exc:  # noqa: BLE001 - report and continue with the batch
         return ImportResult(session_id, "failed", f"{type(exc).__name__}: {exc}")
-    if not inserted:
-        return ImportResult(session_id, "skipped", "Already in the database.", count)
-    problem = verify_imported_session(store, record)
-    if problem is not None:
-        store.delete(session_id)
-        return ImportResult(session_id, "mismatch", problem, count)
     return ImportResult(session_id, "imported", None, count)
+
+
+class _ImportMismatch(Exception):
+    """Abort the import transaction when verification fails."""
 
 
 def verify_imported_session(store: SessionStore, expected: SessionRecord) -> str | None:

@@ -10,6 +10,7 @@ import shutil
 import pytest
 
 from yoke.session import SessionStore
+import yoke.session.legacy.importer as importer
 from yoke.session.legacy.importer import import_legacy_sessions
 from yoke.session.legacy.loader import load_legacy_session
 from yoke.session.repository import SessionTreeIndex
@@ -119,3 +120,16 @@ def test_import_reports_unreadable_sessions(tmp_path: Path) -> None:
     [result] = import_legacy_sessions(store, source)
     assert result.status == "failed"
     assert not store.exists("broken")
+
+
+def test_import_mismatch_rolls_back_without_deleting_newer_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _legacy_dir(tmp_path, "canonical")
+    store = SessionStore(tmp_path / "db")
+    monkeypatch.setattr(importer, "verify_imported_session", lambda *_: "mismatch")
+
+    [result] = import_legacy_sessions(store, source, ["canonical"])
+
+    assert result.status == "mismatch"
+    assert not store.exists("canonical")

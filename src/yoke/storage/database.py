@@ -142,10 +142,13 @@ class Database:
                     yield self._writer
                 return
             connection = self._writer
-            connection.execute("BEGIN IMMEDIATE")
-            self._owner = threading.get_ident()
-            self._depth = 1
             try:
+                # BEGIN sits inside the try: a KeyboardInterrupt that lands
+                # right after BEGIN acquires the lock must still roll back, or
+                # this process would hold the database write lock forever.
+                connection.execute("BEGIN IMMEDIATE")
+                self._owner = threading.get_ident()
+                self._depth = 1
                 yield connection
                 connection.execute("COMMIT")
             except BaseException:
@@ -158,8 +161,17 @@ class Database:
                 self._owner = None
             callbacks = [callback for _, callback in self._callbacks]
             self._callbacks.clear()
+        # The write committed: run every callback and surface the first error
+        # only after all of them ran, so one failing subscriber cannot drop
+        # the notifications that follow it.
+        failure: BaseException | None = None
         for callback in callbacks:
-            callback()
+            try:
+                callback()
+            except Exception as exc:  # noqa: BLE001 - re-raised after the loop
+                failure = failure or exc
+        if failure is not None:
+            raise failure
 
     @contextmanager
     def _savepoint(self) -> Iterator[None]:
