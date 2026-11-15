@@ -76,7 +76,8 @@ model-catalog initialization, Yoke closes that instance before reporting the
 original error. An error during cleanup does not replace the construction error.
 
 Codex can authenticate from its OAuth state, the Codex account vault, or
-`YOKE_CODEX_API_KEY`. OpenCode Go uses `OPENCODE_API_KEY`; Z.ai uses
+`YOKE_CODEX_API_KEY`. OpenCode Go uses `OPENCODE_API_KEY`, plus optional
+`YOKE_OPENCODE_GO_BASE_URL` and `YOKE_OPENCODE_GO_MODEL_PREFIX` for gateways; Z.ai uses
 `ZAI_API_KEY`. The CLI credential store is also included in provider
 resolution. OpenCode Go requests include a stable `x-opencode-session` value.
 Pass `session_id=` to `build_builtin_provider()` when provider instances must
