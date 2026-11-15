@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import ConversationEntry
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.http.runtime.cleanup import AgentCleanup as _AgentCleanup
 from yoke.http.runtime.cleanup import RetiredProvider
 from yoke.http.runtime.owned_cleanup import retire_owned_resource

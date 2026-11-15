@@ -38,19 +38,6 @@ class Normalizer:
             self.replacements.setdefault(entry.id, f"<{prefix}:{index}:{entry.kind}>")
 
     def normalize(self, calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        # Register only ephemeral scopes of explicit title calls. Every normal
-        # scope must refer to a persisted identity or remain literal and fail.
-        for call in calls:
-            context = call["request_context"]
-            if call["kind"] == "session_title" and context:
-                scope = context["cache_scope"]
-                if scope not in self.replacements and re.fullmatch(
-                    r"[0-9a-f]{16}", scope
-                ):
-                    self.transient_titles.setdefault(
-                        scope, f"<TRANSIENT_TITLE_SCOPE:{len(self.transient_titles)}>"
-                    )
-
         command_ids = {
             tool["id"]
             for call in calls

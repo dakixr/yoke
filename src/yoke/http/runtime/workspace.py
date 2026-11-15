@@ -8,7 +8,7 @@ from functools import wraps
 from threading import Lock
 from typing import TYPE_CHECKING, Concatenate, Protocol
 
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.session import SessionStore
 from yoke.session.workspace import (
     WorkspaceUnavailable,

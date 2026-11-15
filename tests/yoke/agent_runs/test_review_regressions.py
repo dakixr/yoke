@@ -9,7 +9,7 @@ import threading
 
 import pytest
 
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent_runs import AgentRunRegistry
 from yoke.agent_runs.context import Binding, bind_binding
 from yoke.agent_runs.protocol import RegistrationError

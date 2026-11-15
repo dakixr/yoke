@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from yoke.agent.tools.command_process_manager import (
+from yoke.agent.tools.command_process import (
     CommandProcessManager,
 )
 from yoke.cli.render.base import Console

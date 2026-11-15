@@ -7,22 +7,21 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from yoke.agent.tools.command_process import _ManagedCommandProcess
-from yoke.agent.tools.command_process_support.spawn import open_process
-from yoke.agent.tools.command_process_support.agent_runs import prepare_launch
-from yoke.agent_runs.context import Binding
-from yoke.agent.tools.command_process_types import MAX_PROCESS_COUNT
-from yoke.agent.tools.command_process_types import CancelRequested
-from yoke.agent.tools.command_process_support.coordination import (
+from yoke.agent.tools.command_process.agent_runs import prepare_launch
+from yoke.agent.tools.command_process.coordination import (
     acquired,
     check_cancelled,
 )
+from yoke.agent.tools.command_process.process import _ManagedCommandProcess
+from yoke.agent.tools.command_process.spawn import open_process
+from yoke.agent.tools.command_process.types import MAX_PROCESS_COUNT, CancelRequested
 from yoke.agent.tools.python_env import prepare_python_env
 from yoke.agent.tools.shell import build_shell_command
+from yoke.agent_runs.context import Binding
 from yoke.ai.providers.usage_attribution import attribute_subprocess_environment
 
 if TYPE_CHECKING:
-    from yoke.agent.tools.command_process_manager import CommandProcessManager
+    from yoke.agent.tools.command_process.manager import CommandProcessManager
 
 
 def allocate_session_id(manager: CommandProcessManager) -> int:

@@ -14,9 +14,9 @@ from typing import cast
 
 import pytest
 
-from yoke.agent.tools.command_process import _ManagedCommandProcess
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_support import lifecycle
+from yoke.agent.tools.command_process.process import _ManagedCommandProcess
+from yoke.agent.tools.command_process import CommandProcessManager
+from yoke.agent.tools.command_process import lifecycle
 
 
 posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX process-group test")
@@ -272,7 +272,7 @@ def test_local_close_attempts_every_descriptor_and_can_retry(monkeypatch) -> Non
             return 0
 
     monkeypatch.setattr(
-        "yoke.agent.tools.command_process.terminate_owned_process_tree",
+        "yoke.agent.tools.command_process.process.terminate_owned_process_tree",
         lambda *_args: None,
     )
     managed = _ManagedCommandProcess(
@@ -347,7 +347,7 @@ def test_final_lease_release_drains_live_readers(tmp_path: Path) -> None:
 def test_capacity_pruning_reaps_finished_readers_before_replacement(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from yoke.agent.tools.command_process_support import admission
+    from yoke.agent.tools.command_process import admission
 
     monkeypatch.setattr(admission, "MAX_PROCESS_COUNT", 1)
     manager = CommandProcessManager()

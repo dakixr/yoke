@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_support.admission import allocate_session_id
-from yoke.agent.tools.command_process_support import output as output_module
-from yoke.agent.tools.command_process_support.output import (
+from yoke.agent.tools.command_process import CommandProcessManager
+from yoke.agent.tools.command_process.admission import allocate_session_id
+from yoke.agent.tools.command_process import output as output_module
+from yoke.agent.tools.command_process.output import (
     CompletedCommandProcess,
     RetainedProcessOutput,
     command_decoder,
 )
-from yoke.agent.tools.command_process_types import CommandProcessSnapshot
+from yoke.agent.tools.command_process import CommandProcessSnapshot
 from yoke.agent.tools.processes.cursor import decode_cursor
 from yoke.agent.tools.processes.cursor import encode_cursor
 from yoke.agent.tools.processes.cursor import ProcessPosition

@@ -9,10 +9,10 @@ from typing import cast
 
 import pytest
 
-from yoke.agent.tools.command_process import _ManagedCommandProcess
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_support.output import RetainedProcessOutput
-from yoke.agent.tools.command_process_types import MAX_RETAINED_OUTPUT_BYTES
+from yoke.agent.tools.command_process.process import _ManagedCommandProcess
+from yoke.agent.tools.command_process import CommandProcessManager
+from yoke.agent.tools.command_process.output import RetainedProcessOutput
+from yoke.agent.tools.command_process.types import MAX_RETAINED_OUTPUT_BYTES
 from yoke.agent.tools.processes.cursor import decode_cursor, ProcessPosition
 from yoke.http.services.process_service import ProcessService
 from yoke.http.runtime.registry import SessionRuntimeRegistry
@@ -32,7 +32,7 @@ class _FinishedProcess:
 @pytest.fixture
 def manager(monkeypatch: pytest.MonkeyPatch) -> Iterator[CommandProcessManager]:
     monkeypatch.setattr(
-        "yoke.agent.tools.command_process.terminate_owned_process_tree",
+        "yoke.agent.tools.command_process.process.terminate_owned_process_tree",
         lambda *_args: None,
     )
     owned = CommandProcessManager()

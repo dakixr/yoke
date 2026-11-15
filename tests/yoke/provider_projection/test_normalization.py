@@ -7,8 +7,7 @@ import json
 import struct
 from pathlib import Path
 
-from yoke.agent.models import ConversationEntry, Message
-from yoke.session import SessionRecord
+from yoke.agent.models import Message
 
 from .golden import Normalizer
 from .recording import tool_calls
@@ -33,7 +32,6 @@ def test_only_command_process_identity_is_normalized(tmp_path: Path) -> None:
     calls = [
         {
             "kind": "model_iteration",
-            "request_context": None,
             "messages_json": [m.model_dump_json() for m in (ordinary, command, result)],
         }
     ]
@@ -62,23 +60,3 @@ def test_only_command_process_identity_is_normalized(tmp_path: Path) -> None:
     )
     calls[0]["messages_json"][-1] = changed.model_dump_json()
     assert Normalizer(tmp_path).normalize(calls) != normalized
-
-
-def test_fork_scope_cannot_alias_a_different_parent_entry(tmp_path: Path) -> None:
-    normalizer = Normalizer(tmp_path)
-    parent = ConversationEntry(kind="user", message=Message.user("same"))
-    fork_entry = ConversationEntry(kind="user", message=Message.user("same"))
-    normalizer.register(SessionRecord(id="parent", conversation_entries=[parent]))
-    normalizer.register(
-        SessionRecord(id="fork", conversation_entries=[fork_entry]), fork=True
-    )
-    calls = [
-        {
-            "kind": "model_iteration",
-            "request_context": {"cache_scope": parent.id},
-            "messages_json": [],
-        }
-    ]
-    original = normalizer.normalize(calls)
-    calls[0]["request_context"]["cache_scope"] = fork_entry.id
-    assert normalizer.normalize(calls) != original

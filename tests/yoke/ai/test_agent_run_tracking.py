@@ -14,7 +14,7 @@ import pytest
 from yoke.agent.models import Message
 from yoke.agent.models import ToolCall, ToolFunction
 from yoke.agent.tools import LocalTool
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent_runs import AgentRunRegistry
 from yoke.agent_runs.context import Binding, bind_binding
 from yoke.agent_runs.protocol import ENVIRONMENT_KEY, RegistrationError

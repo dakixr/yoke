@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent_runs import AgentRunRegistry
 
 from tests.yoke.agent_runs.test_launches import CHILD_CODE
@@ -29,7 +29,7 @@ def test_host_retires_remote_launches_after_repeated_issuer_crashes(tmp_path):
     code = """
 import os, sys
 from pathlib import Path
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 manager = CommandProcessManager()
 child = manager._spawn('nested', Path.cwd(), False, None, False,
     argv=[sys.executable, '-c', 'pass'])
@@ -116,7 +116,7 @@ subprocess.Popen([sys.executable, '-c', {grandchild!r}])
     outer = f"""
 import os, sys
 from pathlib import Path
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent_runs.context import Binding
 from yoke.agent_runs.protocol import RegistrationError
 if {lost_attach!r}:

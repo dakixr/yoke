@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
 import os
 import time
+from contextlib import suppress
 
-from yoke.agent.tools.command_process_types import CancelRequested
-
+from yoke.agent.tools.command_process.types import CancelRequested
 
 MAX_STDIN_DELIVERY_SECONDS = 5.0
 WRITE_CHUNK_BYTES = 4096

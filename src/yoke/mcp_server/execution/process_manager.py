@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import codecs
 
-from yoke.agent.tools.command_process import _ManagedCommandProcess
-from yoke.agent.tools.command_process_manager import (
+from yoke.agent.tools.command_process.process import _ManagedCommandProcess
+from yoke.agent.tools.command_process import (
     CommandProcessManager,
 )
 

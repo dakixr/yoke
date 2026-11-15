@@ -5,41 +5,50 @@ from __future__ import annotations
 import json
 
 from yoke.agent.context.helpers import append_control_message
-from yoke.agent.internal_events import COMMAND_COMPLETION_EVENT
-from yoke.agent.internal_events import COMMAND_COMPLETION_NOTICE_PREFIX
-from yoke.agent.internal_events import INTERNAL_EVENT_METADATA_KEY
-from yoke.agent.models import AgentContext
-from yoke.agent.models import Message
-from yoke.agent.tools.command_process_types import CommandProcessSnapshot
-from yoke.agent.tools.command_process_types import command_completion_event_id
+from yoke.agent.internal_events import (
+    COMMAND_COMPLETION_EVENT,
+    COMMAND_COMPLETION_NOTICE_PREFIX,
+    INTERNAL_EVENT_METADATA_KEY,
+)
+from yoke.agent.models import AgentContext, Message
+from yoke.agent.tools.command_process import (
+    CommandProcessManager,
+    CommandProcessSnapshot,
+    command_completion_event_id,
+)
 
 MAX_NOTICE_FIELD_CHARS = 500
 
 
-def append_command_completion_notices(agent, context: AgentContext) -> None:
-    """Append unseen command completions before the next model call."""
-    retained_events = agent.command_process_manager.completion_events()
-    retained_ids = {command_completion_event_id(event) for event in retained_events}
-    agent._seen_command_completion_events.intersection_update(retained_ids)
-    events = [
-        event
-        for event in retained_events
-        if command_completion_event_id(event)
-        not in agent._seen_command_completion_events
-    ]
-    dropped_total = agent.command_process_manager.dropped_completion_event_count
-    dropped = max(0, dropped_total - agent._seen_dropped_completion_events)
-    if not events and not dropped:
-        return
-    append_control_message(
-        context,
-        Message.user(_format_completion_notice(events, dropped=dropped)),
-        metadata={INTERNAL_EVENT_METADATA_KEY: COMMAND_COMPLETION_EVENT},
-    )
-    agent._seen_command_completion_events.update(
-        command_completion_event_id(event) for event in events
-    )
-    agent._seen_dropped_completion_events = dropped_total
+class CommandCompletionNotices:
+    """Own completion-event delivery cursors for one runtime."""
+
+    def __init__(self, manager: CommandProcessManager) -> None:
+        self.manager = manager
+        self.seen: set[str] = set()
+        self.dropped = 0
+
+    def append(self, context: AgentContext) -> None:
+        """Append unseen command completions before the next model call."""
+        retained_events = self.manager.completion_events()
+        retained_ids = {command_completion_event_id(event) for event in retained_events}
+        self.seen.intersection_update(retained_ids)
+        events = [
+            event
+            for event in retained_events
+            if command_completion_event_id(event) not in self.seen
+        ]
+        dropped_total = self.manager.dropped_completion_event_count
+        dropped = max(0, dropped_total - self.dropped)
+        if not events and not dropped:
+            return
+        append_control_message(
+            context,
+            Message.user(_format_completion_notice(events, dropped=dropped)),
+            metadata={INTERNAL_EVENT_METADATA_KEY: COMMAND_COMPLETION_EVENT},
+        )
+        self.seen.update(command_completion_event_id(event) for event in events)
+        self.dropped = dropped_total
 
 
 def _format_completion_notice(

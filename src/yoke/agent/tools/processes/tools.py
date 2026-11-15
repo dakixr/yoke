@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from yoke.agent.tools.processes.base import ManagedCommandTool
-from yoke.agent.tools.command_process_support.coordination import (
-    acquired,
+from yoke.agent.tools.command_process.coordination import (
     ProcessOperationCancelled,
+    acquired,
 )
-from yoke.agent.tools.command_process_support.input import StdinDeliveryError
-from yoke.agent.tools.processes.cursor import decode_cursor
-from yoke.agent.tools.processes.cursor import CURSOR_LENGTH, CURSOR_PATTERN
+from yoke.agent.tools.command_process.input import StdinDeliveryError
+from yoke.agent.tools.processes.base import ManagedCommandTool
+from yoke.agent.tools.processes.cursor import (
+    CURSOR_LENGTH,
+    CURSOR_PATTERN,
+    decode_cursor,
+)
 from yoke.agent.tools.processes.models import (
     DEFAULT_INPUT_WAIT_MS,
     MAX_INPUT_WAIT_MS,

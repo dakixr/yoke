@@ -1,75 +1,107 @@
-"""Runtime agent iteration helpers."""
+"""Iteration and tool sequencing for a single agent run."""
 
 from __future__ import annotations
 
 import logging
+from itertools import count
+from typing import TYPE_CHECKING
 
-from yoke.agent.context import ContextManager
-from yoke.agent.loop.lifecycle import complete_iteration_model
-from yoke.agent.loop.lifecycle import completed_result
-from yoke.agent.loop.lifecycle import handle_post_tool_results
-from yoke.agent.loop.lifecycle import handle_pre_model_compaction
-from yoke.agent.loop.lifecycle import stopped_result
-from yoke.agent.loop.lifecycle import sync_runtime_skills_from_context
-from yoke.agent.loop.tool_core import cancelled_tool_result
-from yoke.agent.loop.tool_core import is_stopped
-from yoke.agent.loop.tool_core import prepare_tool_calls
-from yoke.agent.loop.tool_core import tool_definitions
+from yoke.agent.loop.events import completed_result
+from yoke.agent.loop.requests import ModelRequests
+from yoke.agent.loop.tool_core import (
+    cancelled_tool_result,
+    is_stopped,
+    prepare_tool_calls,
+)
 from yoke.agent.loop.tool_runner import execute_tool_calls
-from yoke.agent.loop.types import AfterToolCallHook
-from yoke.agent.loop.types import AgentEventHandler
-from yoke.agent.loop.types import AgentResult
-from yoke.agent.loop.types import AgentStoppedError
-from yoke.agent.loop.types import BeforeToolCallHook
-from yoke.agent.loop.types import StopRequested
-from yoke.agent.loop.types import ToolExecutionMode
-from yoke.agent.loop.types import ToolResultCheckpoint
-from yoke.agent.models import AgentContext
-from yoke.agent.models import ToolCall
-from yoke.agent.tools import LocalTool
+from yoke.agent.loop.types import (
+    INTERRUPTED_TURN_NOTICE,
+    AfterToolCallHook,
+    AgentEventHandler,
+    AgentResult,
+    AgentStoppedError,
+    BeforeToolCallHook,
+    StopRequested,
+    ToolResultCheckpoint,
+)
+from yoke.agent.models import AgentContext, Message, ToolCall
+from yoke.ai.providers.base import ProviderError
 
-
+if TYPE_CHECKING:
+    from yoke.agent.loop.agent import RuntimeAgent
 logger = logging.getLogger(__name__)
 
 
-class RuntimeAgentIterationMixin:
-    """Private iteration behavior for RuntimeAgent."""
+class AgentRun:
+    """Own a run's callbacks and working context until completion or interruption."""
 
-    context_manager: ContextManager
-    tools: dict[str, LocalTool]
-    tool_execution: ToolExecutionMode
-
-    def _run_iteration(
+    def __init__(
         self,
+        runtime: RuntimeAgent,
         context: AgentContext,
         *,
-        iteration: int,
         on_event: AgentEventHandler | None,
         stop_requested: StopRequested | None,
         before_tool_call: BeforeToolCallHook | None,
         after_tool_call: AfterToolCallHook | None,
-        after_tool_result_appended: ToolResultCheckpoint | None = None,
-    ) -> AgentResult | None:
-        if self._is_stopped(stop_requested):
-            return self._stopped_result(context, iterations=iteration - 1)
-        if handle_pre_model_compaction(self, context, iteration, on_event):
-            return self._stopped_result(context, iterations=iteration - 1)
-        assistant_message = complete_iteration_model(
-            self,
-            context,
-            iteration=iteration,
-            on_event=on_event,
-            stop_requested=stop_requested,
+        after_tool_result_appended: ToolResultCheckpoint | None,
+    ) -> None:
+        self.runtime = runtime
+        self.context = context
+        self.on_event = on_event
+        self.stop_requested = stop_requested
+        self.before_tool_call = before_tool_call
+        self.after_tool_call = after_tool_call
+        self.after_tool_result_appended = after_tool_result_appended
+        self.requests = ModelRequests(runtime, context, on_event)
+
+    def run(self) -> AgentResult:
+        try:
+            if is_stopped(self.stop_requested):
+                result = self._stopped_result(iterations=0)
+                self.runtime.replace_context(self.context)
+                return result
+            for iteration in count(1):
+                result = self._run_iteration(iteration=iteration)
+                if result is not None:
+                    self.runtime.replace_context(self.context)
+                    return result
+            raise AssertionError("The unbounded iteration loop terminated.")
+        except ProviderError as exc:
+            exc.partial_messages = self.context.messages
+            exc.partial_conversation_entries = [
+                entry.model_copy(deep=True)
+                for entry in self.context.conversation_log.entries
+            ]
+            self.runtime.replace_context(self.context)
+            raise
+        except Exception:
+            self.runtime.replace_context(self.context)
+            raise
+
+    def _run_iteration(self, *, iteration: int) -> AgentResult | None:
+        context = self.context
+        on_event = self.on_event
+        stop_requested = self.stop_requested
+        before_tool_call = self.before_tool_call
+        after_tool_call = self.after_tool_call
+        after_tool_result_appended = self.after_tool_result_appended
+        if is_stopped(stop_requested):
+            return self._stopped_result(iterations=iteration - 1)
+        if self._pre_model(iteration):
+            return self._stopped_result(iterations=iteration - 1)
+        assistant_message = self.requests.complete(
+            iteration=iteration, stop_requested=stop_requested
         )
-        self.context_manager.append_message(context, assistant_message)
-        if self._is_stopped(stop_requested):
+        self.runtime.context_manager.append_message(context, assistant_message)
+        if is_stopped(stop_requested):
             self._append_cancelled_context_tool_results(
                 context,
                 assistant_message.tool_calls,
             )
-            return self._stopped_result(context, iterations=iteration)
+            return self._stopped_result(iterations=iteration)
         if not assistant_message.tool_calls:
-            sync_runtime_skills_from_context(self, context)
+            self._sync_skills()
             return completed_result(
                 context,
                 output=assistant_message.final_text_content() or "",
@@ -89,7 +121,7 @@ class RuntimeAgentIterationMixin:
                 context,
                 assistant_message.tool_calls,
             )
-            return self._stopped_result(context, iterations=iteration)
+            return self._stopped_result(iterations=iteration)
         if self._execute_iteration_tool_calls(
             context,
             prepared_calls,
@@ -98,8 +130,8 @@ class RuntimeAgentIterationMixin:
             stop_requested=stop_requested,
             after_tool_call=after_tool_call,
             after_tool_result_appended=after_tool_result_appended,
-        ) or self._is_stopped(stop_requested):
-            return self._stopped_result(context, iterations=iteration)
+        ) or is_stopped(stop_requested):
+            return self._stopped_result(iterations=iteration)
         return None
 
     def _prepare_iteration_tool_calls(
@@ -114,7 +146,7 @@ class RuntimeAgentIterationMixin:
     ) -> list | None:
         try:
             return prepare_tool_calls(
-                tools=self.tools,
+                tools=self.runtime.tools,
                 iteration=iteration,
                 context=context,
                 tool_calls=tool_calls,
@@ -138,8 +170,8 @@ class RuntimeAgentIterationMixin:
         after_tool_result_appended: ToolResultCheckpoint | None,
     ) -> bool:
         tool_results, stopped = execute_tool_calls(
-            tools=self.tools,
-            tool_execution=self.tool_execution,
+            tools=self.runtime.tools,
+            tool_execution=self.runtime.tool_execution,
             iteration=iteration,
             prepared_calls=prepared_calls,
             context=context,
@@ -153,7 +185,7 @@ class RuntimeAgentIterationMixin:
         # it after the first result of a multi-call batch leaves the remaining
         # calls open and violates the provider/tool sequence.
         for tool_call, arguments, result, projection in tool_results:
-            self.context_manager.append_tool_result(
+            self.runtime.context_manager.append_tool_result(
                 context,
                 tool_call_id=tool_call.id,
                 result=result,
@@ -180,7 +212,7 @@ class RuntimeAgentIterationMixin:
         if tool_results and after_tool_result_appended is not None:
             after_tool_result_appended(context)
         if tool_results:
-            handle_post_tool_results(self, context, iteration, on_event)
+            self._post_tools(iteration)
         return stopped
 
     def _append_tool_context_messages(
@@ -192,7 +224,7 @@ class RuntimeAgentIterationMixin:
         arguments: dict[str, object],
         result: dict[str, object],
     ) -> None:
-        tool = self.tools.get(tool_name)
+        tool = self.runtime.tools.get(tool_name)
         if tool is None or not hasattr(tool, "pending_context_messages"):
             return
         try:
@@ -207,9 +239,9 @@ class RuntimeAgentIterationMixin:
             return
         for message in pending:
             if message.role == "system":
-                self.context_manager.append_skill_message(context, message)
+                self.runtime.context_manager.append_skill_message(context, message)
             else:
-                self.context_manager.append_tool_context_message(
+                self.runtime.context_manager.append_tool_context_message(
                     context,
                     message,
                     tool_name=tool_name,
@@ -222,30 +254,59 @@ class RuntimeAgentIterationMixin:
         tool_calls: list[ToolCall],
     ) -> None:
         for tool_call in tool_calls:
-            self.context_manager.append_tool_result(
+            self.runtime.context_manager.append_tool_result(
                 context,
                 tool_call_id=tool_call.id,
                 result=cancelled_tool_result(),
             )
 
     def _raise_if_stopped(self, stop_requested: StopRequested | None) -> None:
-        if self._is_stopped(stop_requested):
+        if is_stopped(stop_requested):
             raise AgentStoppedError("Agent stopped")
 
-    def _is_stopped(self, stop_requested: StopRequested | None) -> bool:
-        return is_stopped(stop_requested)
-
-    def _tool_definitions(self) -> list[dict[str, object]]:
-        return tool_definitions(self.tools)
-
-    def _stopped_result(
-        self,
-        context: AgentContext,
-        *,
-        iterations: int,
-    ) -> AgentResult:
-        return stopped_result(
-            context,
-            iterations=iterations,
-            append_message=self.context_manager.append_message,
+    def _stopped_result(self, *, iterations: int) -> AgentResult:
+        """Build the standard stopped result payload."""
+        context = self.context
+        self.runtime.context_manager.append_message(
+            context, Message.assistant(INTERRUPTED_TURN_NOTICE)
         )
+        return AgentResult(
+            output="Stopped current turn.",
+            messages=context.messages,
+            iterations=iterations,
+            status="stopped",
+            conversation_entries=[
+                entry.model_copy(deep=True)
+                for entry in context.conversation_log.entries
+            ],
+        )
+
+    def _pre_model(self, iteration: int) -> bool:
+        self.runtime.command_notices.append(self.context)
+        compaction = self.requests.compact(iteration=iteration)
+        if compaction.failed:
+            return True
+        if compaction.result is not None:
+            self.requests.emit_usage(iteration=iteration, reason="compaction")
+        return False
+
+    def _post_tools(self, iteration: int) -> None:
+        self.runtime.active_skills = [
+            skill.model_copy(deep=True) for skill in self.context.active_skills
+        ]
+        if self.runtime.refresh_tools(force=True):
+            self.runtime.sync_context_instructions(self.context)
+        self.requests.emit_usage(iteration=iteration, reason="tool_results")
+        compaction = self.requests.compact(iteration=iteration, after_tool_results=True)
+        if compaction.failed:
+            raise AgentStoppedError()
+        if compaction.result is not None:
+            self.requests.emit_usage(iteration=iteration, reason="post_tool_compaction")
+
+    def _sync_skills(self) -> None:
+        changed = self.runtime.active_skills != self.context.active_skills
+        self.runtime.active_skills = [
+            skill.model_copy(deep=True) for skill in self.context.active_skills
+        ]
+        if changed and self.runtime.refresh_tools(force=True):
+            self.runtime.sync_context_instructions(self.context)

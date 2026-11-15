@@ -18,14 +18,14 @@ from yoke.agent.models import Message
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
 from yoke.agent.tools import ProcessReadTool
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_types import CommandProcessSnapshot
-from yoke.agent.tools.command_process_types import (
+from yoke.agent.tools.command_process import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessSnapshot
+from yoke.agent.tools.command_process.types import (
     CommandProcessOutputPage,
     CommandProcessOutputChunk,
 )
-from yoke.agent.tools.command_process_types import command_completion_event_id
-from yoke.agent.tools.command_process_types import MAX_COMPLETED_PROCESS_COUNT
+from yoke.agent.tools.command_process import command_completion_event_id
+from yoke.agent.tools.command_process.types import MAX_COMPLETED_PROCESS_COUNT
 from yoke.agent.tools.processes.cursor import ProcessPosition
 from yoke.agent.tools.processes.observation import page
 from yoke.ai.providers.base import Provider
@@ -190,9 +190,7 @@ def test_terminal_read_suppresses_duplicate_completion_notice(
         events = manager.completion_events()
 
         assert completed["reason"] == "completed"
-        assert command_completion_event_id(events[0]) in (
-            agent._seen_command_completion_events
-        )
+        assert command_completion_event_id(events[0]) in (agent.command_notices.seen)
         result = agent.run("Continue after the terminal poll")
         assert all(
             "Automatic command lifecycle notice"

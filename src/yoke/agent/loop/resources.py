@@ -1,55 +1,69 @@
-"""Shared lifetime management for resources owned by local tools."""
+"""Runtime-owned leases for resources shared by local tools."""
 
 from __future__ import annotations
 
 import threading
 from collections.abc import Iterable
+from weakref import WeakSet
 
 from yoke.agent.tools import LocalTool
 
-_RESOURCE_LEASES: dict[int, tuple[object, int]] = {}
-_RESOURCE_LEASE_LOCK = threading.RLock()
 
+class ToolResources:
+    """Own runtime leases; close a resource after its final owner releases it.
 
-def acquire_tool_resources(tools: Iterable[LocalTool]) -> None:
-    """Acquire one runtime lease for each distinct tool-owned resource."""
-    with _RESOURCE_LEASE_LOCK:
-        for resource in _tool_resources(tools):
-            resource_id = id(resource)
-            current = _RESOURCE_LEASES.get(resource_id)
-            if current is None:
-                _RESOURCE_LEASES[resource_id] = (resource, 1)
-            else:
-                _RESOURCE_LEASES[resource_id] = (current[0], current[1] + 1)
+    The weak owner directory coordinates independently constructed runtimes too.
+    It never retains a runtime or resource. All resource references and counts
+    live on the owning runtime's lease collection.
+    """
 
+    _owners: WeakSet[ToolResources] = WeakSet()
+    lock = threading.RLock()
 
-def release_tool_resources(tools: Iterable[LocalTool]) -> None:
-    """Release leases and close resources after their final runtime releases."""
-    resources = _tool_resources(tools)
-    ready_to_close: list[object] = []
-    with _RESOURCE_LEASE_LOCK:
-        for resource in resources:
-            resource_id = id(resource)
-            current = _RESOURCE_LEASES.get(resource_id)
-            if current is None:
-                continue
-            if current[1] > 1:
-                _RESOURCE_LEASES[resource_id] = (current[0], current[1] - 1)
-                continue
-            del _RESOURCE_LEASES[resource_id]
-            ready_to_close.append(current[0])
+    def __init__(self) -> None:
+        self._leases: dict[int, tuple[object, int]] = {}
+        with self.lock:
+            self._owners.add(self)
 
-    first_error: BaseException | None = None
-    for resource in ready_to_close:
-        close = getattr(resource, "close", None)
-        if callable(close):
-            try:
-                close()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
-    if first_error is not None:
-        raise first_error
+    def acquire(self, tools: Iterable[LocalTool]) -> None:
+        """Acquire one lease for each distinct tool-owned resource."""
+        with self.lock:
+            for resource in _tool_resources(tools):
+                resource_id = id(resource)
+                current = self._leases.get(resource_id)
+                self._leases[resource_id] = (
+                    resource,
+                    1 if current is None else current[1] + 1,
+                )
+
+    def release(self, tools: Iterable[LocalTool]) -> None:
+        """Release leases, closing every final resource outside the lease lock."""
+        resources = _tool_resources(tools)
+        ready_to_close: list[object] = []
+        with self.lock:
+            for resource in resources:
+                resource_id = id(resource)
+                current = self._leases.get(resource_id)
+                if current is None:
+                    continue
+                if current[1] > 1:
+                    self._leases[resource_id] = (current[0], current[1] - 1)
+                    continue
+                del self._leases[resource_id]
+                if not any(resource_id in owner._leases for owner in self._owners):
+                    ready_to_close.append(current[0])
+
+        first_error: BaseException | None = None
+        for resource in ready_to_close:
+            close = getattr(resource, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+        if first_error is not None:
+            raise first_error
 
 
 def _tool_resources(tools: Iterable[LocalTool]) -> list[object]:

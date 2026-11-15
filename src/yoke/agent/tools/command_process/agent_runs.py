@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
 import json
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from yoke.agent_runs.context import Binding, current_binding
@@ -12,7 +12,7 @@ from yoke.agent_runs.records import Owner
 from yoke.ai.providers.usage_context import current_usage_metric_context
 
 if TYPE_CHECKING:
-    from yoke.agent.tools.command_process_manager import CommandProcessManager
+    from yoke.agent.tools.command_process.manager import CommandProcessManager
 
 
 def prepare_launch(

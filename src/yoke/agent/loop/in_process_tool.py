@@ -6,19 +6,22 @@ import queue
 import threading
 import time
 
-from yoke.agent.loop.tool_core import cancelled_tool_result
-from yoke.agent.loop.tool_core import execute_tool
+from yoke.agent.loop.tool_core import cancelled_tool_result, execute_tool
 from yoke.agent.loop.types import StopRequested
 from yoke.agent.tools import LocalTool
-from yoke.agent_runs.context import bind_binding, release_tool_binding, tool_binding
-from yoke.ai.providers.usage_context import bind_usage_metric_context
-from yoke.ai.providers.usage_context import current_usage_metric_context
+from yoke.agent_runs.context import (
+    Binding,
+    bind_binding,
+    release_tool_binding,
+    tool_binding,
+)
+from yoke.ai.providers.usage_context import (
+    bind_usage_metric_context,
+    current_usage_metric_context,
+)
 
 IN_PROCESS_TOOL_POLL_SECONDS = 0.005
 IN_PROCESS_TOOL_SHUTDOWN_SECONDS = 1.0
-_WORKERS_LOCK = threading.Lock()
-_ACTIVE_WORKERS: dict[int, dict[threading.Thread, threading.Event]] = {}
-_SHUTTING_DOWN_TOOL_SETS: set[int] = set()
 
 
 class InProcessToolShutdownError(RuntimeError):
@@ -36,6 +39,7 @@ class InProcessToolInvocation:
         arguments: dict[str, object],
     ) -> None:
         self._tools = tools
+        self._workers = workers_for_tools(tools)
         self._name = name
         self._arguments = arguments
         self._result_queue: queue.Queue[dict[str, object]] = queue.Queue(maxsize=1)
@@ -52,26 +56,7 @@ class InProcessToolInvocation:
 
     def start(self) -> None:
         """Start the worker thread."""
-        with _WORKERS_LOCK:
-            if id(self._tools) in _SHUTTING_DOWN_TOOL_SETS:
-                release_tool_binding(self._run_binding)
-                raise InProcessToolShutdownError(
-                    "Cannot start an in-process tool while its runtime is closing."
-                )
-            _ACTIVE_WORKERS.setdefault(id(self._tools), {})[self._worker] = (
-                self._cancel_event
-            )
-        try:
-            self._worker.start()
-        except BaseException:
-            release_tool_binding(self._run_binding)
-            with _WORKERS_LOCK:
-                workers = _ACTIVE_WORKERS.get(id(self._tools))
-                if workers is not None:
-                    workers.pop(self._worker, None)
-                    if not workers:
-                        _ACTIVE_WORKERS.pop(id(self._tools), None)
-            raise
+        self._workers.start(self._worker, self._cancel_event, self._run_binding)
         self._started = True
 
     def done(self) -> bool:
@@ -123,12 +108,7 @@ class InProcessToolInvocation:
                 pass
         finally:
             release_tool_binding(self._run_binding)
-            with _WORKERS_LOCK:
-                workers = _ACTIVE_WORKERS.get(id(self._tools))
-                if workers is not None:
-                    workers.pop(threading.current_thread(), None)
-                    if not workers:
-                        _ACTIVE_WORKERS.pop(id(self._tools), None)
+            self._workers.finished(threading.current_thread())
 
 
 def execute_in_process_tool(
@@ -169,47 +149,105 @@ def execute_in_process_tool(
         time.sleep(IN_PROCESS_TOOL_POLL_SECONDS)
 
 
-def shutdown_in_process_tools(
-    tools: dict[str, LocalTool],
-    *,
-    timeout_seconds: float | None = None,
-) -> None:
-    """Cancel workers and guarantee bounded, explicit runtime shutdown."""
-    timeout = (
-        IN_PROCESS_TOOL_SHUTDOWN_SECONDS
-        if timeout_seconds is None
-        else max(0.0, timeout_seconds)
-    )
-    tool_set_id = id(tools)
-    with _WORKERS_LOCK:
-        _SHUTTING_DOWN_TOOL_SETS.add(tool_set_id)
-        workers = tuple(_ACTIVE_WORKERS.get(tool_set_id, {}).items())
-        for _, cancel_event in workers:
-            cancel_event.set()
+class InProcessTools:
+    """Own cancellable workers for one installed runtime tool index."""
 
-    deadline = time.monotonic() + timeout
-    for worker, _ in workers:
-        worker.join(timeout=max(0.0, deadline - time.monotonic()))
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._workers: dict[threading.Thread, threading.Event] = {}
+        self._shutting_down = False
 
-    alive = [worker for worker, _ in workers if worker.is_alive()]
-    if alive:
-        names = ", ".join(sorted(worker.name for worker in alive))
-        raise InProcessToolShutdownError(
-            f"Runtime shutdown timed out after {timeout:g}s waiting for "
-            f"{len(alive)} in-process tool worker(s): {names}. "
-            "The runtime remains open; release the tools and close it again."
+    def start(
+        self, worker: threading.Thread, cancel: threading.Event, binding: Binding | None
+    ) -> None:
+        """Register a worker before starting it, excluding concurrent shutdown."""
+        with self._lock:
+            if self._shutting_down:
+                release_tool_binding(binding)
+                raise InProcessToolShutdownError(
+                    "Cannot start an in-process tool while its runtime is closing."
+                )
+            self._workers[worker] = cancel
+        try:
+            worker.start()
+        except BaseException:
+            release_tool_binding(binding)
+            self.finished(worker)
+            raise
+
+    def finished(self, worker: threading.Thread) -> None:
+        """Forget a worker after its invocation releases its binding."""
+        with self._lock:
+            self._workers.pop(worker, None)
+
+    def shutdown(self, *, timeout_seconds: float | None = None) -> None:
+        """Cancel workers with the same bounded, retryable shutdown contract."""
+        timeout = (
+            IN_PROCESS_TOOL_SHUTDOWN_SECONDS
+            if timeout_seconds is None
+            else max(0.0, timeout_seconds)
         )
+        with self._lock:
+            self._shutting_down = True
+            workers = tuple(self._workers.items())
+            for _, cancel_event in workers:
+                cancel_event.set()
+        deadline = time.monotonic() + timeout
+        for worker, _ in workers:
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        alive = [worker for worker, _ in workers if worker.is_alive()]
+        if alive:
+            names = ", ".join(sorted(worker.name for worker in alive))
+            raise InProcessToolShutdownError(
+                f"Runtime shutdown timed out after {timeout:g}s waiting for "
+                f"{len(alive)} in-process tool worker(s): {names}. "
+                "The runtime remains open; release the tools and close it again."
+            )
+        with self._lock:
+            self._shutting_down = False
 
-    with _WORKERS_LOCK:
-        _SHUTTING_DOWN_TOOL_SETS.discard(tool_set_id)
+    def wait(self) -> None:
+        """Wait for detached workers in a background retirement path."""
+        while True:
+            with self._lock:
+                workers = tuple(self._workers)
+            if not workers:
+                return
+            for worker in workers:
+                worker.join()
+
+
+class RuntimeTools(dict[str, LocalTool]):
+    """The runtime's tool index, carrying its worker owner without a global registry."""
+
+    def __init__(
+        self, workers: InProcessTools, tools: dict[str, LocalTool] | None = None
+    ) -> None:
+        super().__init__(tools or {})
+        self.workers = workers
+
+
+def workers_for_tools(tools: dict[str, LocalTool]) -> InProcessTools:
+    """Find runtime ownership, or attach an owner to standalone tool prototypes."""
+    if isinstance(tools, RuntimeTools):
+        return tools.workers
+    for tool in tools.values():
+        workers = tool._context.get("in_process_workers")
+        if isinstance(workers, InProcessTools):
+            return workers
+    workers = InProcessTools()
+    for tool in tools.values():
+        tool._context["in_process_workers"] = workers
+    return workers
+
+
+def shutdown_in_process_tools(
+    tools: dict[str, LocalTool], *, timeout_seconds: float | None = None
+) -> None:
+    """Cancel workers owned by the runtime or standalone tool collection."""
+    workers_for_tools(tools).shutdown(timeout_seconds=timeout_seconds)
 
 
 def wait_for_in_process_tools(tools: dict[str, LocalTool]) -> None:
-    """Wait for detached workers in a background retirement path."""
-    while True:
-        with _WORKERS_LOCK:
-            workers = tuple(_ACTIVE_WORKERS.get(id(tools), ()))
-        if not workers:
-            return
-        for worker in workers:
-            worker.join()
+    """Wait for the collection's detached workers before retiring its resources."""
+    workers_for_tools(tools).wait()

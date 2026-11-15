@@ -11,7 +11,7 @@ from threading import Event
 from time import monotonic
 
 from yoke.agent.observability import ToolTraceStore
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.http.models.session import ActiveRuntimeInfo
 from yoke.http.reads.cache import SessionReadCache
 from yoke.http.reads.message_index import SessionMessageIndex

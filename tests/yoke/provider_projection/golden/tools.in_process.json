@@ -6,10 +6,6 @@
     {
       "stage": "scenario",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:user>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,
@@ -26,10 +22,6 @@
     {
       "stage": "scenario",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:user>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,
@@ -48,10 +40,6 @@
     {
       "stage": "scenario",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:user>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,
@@ -72,10 +60,6 @@
     {
       "stage": "scenario",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:user>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,
@@ -98,10 +82,6 @@
     {
       "stage": "scenario",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:user>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,
@@ -128,10 +108,6 @@
     {
       "stage": "continuation",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:user>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,
@@ -160,10 +136,6 @@
     {
       "stage": "continuation",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:user>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,

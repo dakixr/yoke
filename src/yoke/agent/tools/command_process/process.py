@@ -2,33 +2,32 @@
 
 from __future__ import annotations
 
+import codecs
 import os
 import signal
 import subprocess
 import threading
 import time
-import codecs
-from collections.abc import Callable
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from yoke.agent.tools.command_process_support.lifecycle import (
+from yoke.agent.tools.command_process.coordination import acquired
+from yoke.agent.tools.command_process.input import write_all
+from yoke.agent.tools.command_process.lifecycle import (
     terminate_owned_process_tree,
 )
-from yoke.agent.tools.command_process_support.output import CompletedCommandProcess
-from yoke.agent.tools.command_process_support.output import RetainedProcessOutput
-from yoke.agent.tools.command_process_support.output import command_decoder
-from yoke.agent.tools.command_process_support.coordination import acquired
-from yoke.agent.tools.command_process_support.input import write_all
-from yoke.agent.tools.command_process_types import INTERRUPT
-from yoke.agent.tools.command_process_types import CancelRequested
-from yoke.agent.tools.command_process_types import CommandProcessResult
-from yoke.agent.tools.command_process_types import (
-    CommandProcessOutputPage,
+from yoke.agent.tools.command_process.output import (
+    CompletedCommandProcess,
+    RetainedProcessOutput,
+    command_decoder,
 )
-from yoke.agent.tools.command_process_types import (
+from yoke.agent.tools.command_process.types import (
+    INTERRUPT,
+    CancelRequested,
+    CommandProcessOutputPage,
+    CommandProcessResult,
     CommandProcessSnapshot,
 )
 

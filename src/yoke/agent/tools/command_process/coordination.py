@@ -6,7 +6,7 @@ from _thread import LockType, RLock
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from yoke.agent.tools.command_process_types import CancelRequested
+from yoke.agent.tools.command_process.types import CancelRequested
 
 
 class ProcessOperationCancelled(RuntimeError):

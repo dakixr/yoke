@@ -199,7 +199,7 @@ def promote_session_turn(primary: RuntimeAgent, forked: RuntimeAgent) -> None:
     try:
         promote_runtime_fork(primary, forked)
     except (OSError, ValueError):
-        if inspect_workspace(primary._tool_root).available:
+        if inspect_workspace(primary.tool_root).available:
             raise
 
 

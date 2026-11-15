@@ -12,7 +12,7 @@ import pytest
 from yoke.agent.loop.in_process_tool import InProcessToolInvocation
 from yoke.agent.loop.tool_process import ToolProcessInvocation
 from yoke.agent.tools import LocalTool
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent_runs.protocol import ENVIRONMENT_KEY
 from yoke.ai.providers.usage_context import usage_metric_context
 
@@ -93,7 +93,7 @@ def test_nested_manager_reports_only_to_original_registry(tmp_path: Path):
     code = f"""
 import os, sys
 from pathlib import Path
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 manager = CommandProcessManager(base_environment={{'PATH': os.environ['PATH']}})
 try:
     process = manager._spawn('grandchild', Path.cwd(), False, None, False,

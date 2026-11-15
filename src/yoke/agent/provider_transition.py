@@ -47,7 +47,7 @@ class PreparedContextTransition:
 
     def rollback(self) -> None:
         """Restore context and budgeting from before the preparation."""
-        self.agent._context = self.source_context
+        self.agent.replace_context(self.source_context)
         rebind_context_manager_budget(
             self.agent.context_manager,
             provider=self.source_provider,
@@ -60,7 +60,7 @@ def prepare_context_for_provider(
     target_provider: object,
 ) -> PreparedContextTransition | None:
     """Prepare a reduced provider epoch for a smaller target transactionally."""
-    if not isinstance(agent, RuntimeAgent) or agent._context is None:
+    if not isinstance(agent, RuntimeAgent) or not agent.has_state:
         return None
     if _target_context_is_not_smaller(agent.provider, target_provider):
         return None
@@ -70,7 +70,7 @@ def prepare_context_for_provider(
     transition = PreparedContextTransition(
         agent=agent,
         source_provider=agent.provider,
-        source_context=agent._context.model_copy(deep=True),
+        source_context=agent.context_for_messages(agent.messages).model_copy(deep=True),
     )
     try:
         rebind_context_manager_budget(
@@ -105,9 +105,9 @@ def prepare_context_for_provider(
 
 
 def _context_fit(agent: RuntimeAgent, provider: object):  # noqa: ANN202
-    context = agent._context
-    if context is None:
+    if not agent.has_state:
         raise ValueError("Runtime context is unavailable for model transition.")
+    context = agent.context_for_messages(agent.messages)
     provider_messages = agent.context_manager.messages_for_provider(context)
     return current_context_fits_provider_budget(
         agent.context_manager,

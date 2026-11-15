@@ -6,7 +6,7 @@ from yoke.agent.compaction import force_compact_agent
 from yoke.agent.compaction import CompactionPreparation
 from yoke.agent.compaction import TokenEstimate
 from yoke.agent.compaction import summary_source_text
-from yoke.agent.loop.overflow import should_retry_after_overflow
+from yoke.agent.loop.requests import should_retry_after_overflow
 from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import TokenUsage
 from yoke.ai.providers.base import ProviderError

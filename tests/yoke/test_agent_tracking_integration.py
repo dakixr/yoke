@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 
 from yoke.agent.tools.command import ExecCommandTool
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.ai.providers.usage_context import usage_metric_context
 from yoke.mcp_server.config import MCPServerConfig

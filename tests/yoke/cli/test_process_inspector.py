@@ -13,8 +13,8 @@ from typing import Any, Literal, cast
 from prompt_toolkit.formatted_text import HTML
 
 from yoke.agent.loop import RuntimeAgent
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_types import (
+from yoke.agent.tools.command_process import CommandProcessManager
+from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
 )
 from yoke.ai.providers.base import Provider

@@ -2,108 +2,55 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
-from dataclasses import field
 from pathlib import Path
 from urllib.parse import urlparse
 
 from PIL import Image
 
-from yoke.agent.compaction.types import CompactionBoundary
-from yoke.agent.compaction.types import CompactionReason
-from yoke.agent.compaction.render import is_real_user_message
 from yoke.agent.compaction.render import (
+    is_real_user_message,
     truncate_message_to_token_budget,
 )
-from yoke.agent.models import Message
-from yoke.agent.models import MessageImageURLContentPart
-from yoke.agent.models import MessageLocalImageContentPart
-from yoke.agent.models import MessageTextContentPart
-
-TOKEN_WIDTH_GUESS = 4
-DEFAULT_TOTAL_CONTEXT_TOKENS = 400_000
-DEFAULT_KEEP_RECENT_TOKENS = 20_000
-DEFAULT_RECENT_USER_TOKENS = 20_000
-DEFAULT_HANDOFF_TARGET_TOKENS = 12_000
-DEFAULT_RESERVED_OUTPUT_TOKENS = 128_000
-DEFAULT_OPENAI_MODEL_GROUP = "gpt4o_4_1_4_5"
-DEFAULT_IMAGE_DETAIL = "high"
-OPENAI_IMAGE_TOKEN_TABLE = {
-    "gpt5": {"base": 70, "tile": 140},
-    "gpt4o_4_1_4_5": {"base": 85, "tile": 170},
-    "gpt4o_mini": {"base": 2833, "tile": 5667},
-    "o1_o3": {"base": 75, "tile": 150},
-    "computer_use": {"base": 65, "tile": 129},
-}
-COMPACTION_SUMMARY_PROMPT = "\n".join(
-    [
-        "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a "
-        "handoff summary for another LLM that will resume the task.",
-        "",
-        "Include:",
-        "- Current progress and key decisions made",
-        "- Important context, constraints, or user preferences",
-        "- What remains to be done (clear next steps)",
-        "- Any critical data, examples, or references needed to continue",
-        "",
-        "Rules:",
-        "- Be concise but concrete",
-        "- Preserve important constraints exactly",
-        "- Preserve file names, commands, APIs, config values, and decisions "
-        "when relevant",
-        "- Do not restate obvious boilerplate",
-        "- Do not include raw logs unless essential",
-        "- Do not call tools",
-        "- Return only the handoff summary as response text",
-        "- Keep the handoff below 12,000 estimated tokens",
-        "- Assume the next model will not see prior assistant replies or tool output",
-        "- Optimize for seamless continuation by another agent",
-    ]
+from yoke.agent.compaction.types import (
+    COMPACTION_SUMMARY_PROMPT as COMPACTION_SUMMARY_PROMPT,
 )
-
-
-@dataclass(slots=True, frozen=True)
-class CompactionPolicy:
-    """Policy settings controlling when and how compaction is applied."""
-
-    max_total_tokens: int = DEFAULT_TOTAL_CONTEXT_TOKENS
-    reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS
-    keep_recent_tokens: int = DEFAULT_KEEP_RECENT_TOKENS
-    recent_user_tokens: int = DEFAULT_RECENT_USER_TOKENS
-    handoff_target_tokens: int = DEFAULT_HANDOFF_TARGET_TOKENS
-    soft_trigger_ratio: float | None = 0.95
-    enabled: bool = True
-
-
-@dataclass(slots=True, frozen=True)
-class TokenEstimate:
-    """Estimated token counts for a sequence of messages."""
-
-    input_tokens: int
-    total_with_reserve: int
-
-
-@dataclass(slots=True, frozen=True)
-class CompactionPreparation:
-    """Data gathered before performing a context compaction."""
-
-    reason: CompactionReason
-    estimate: TokenEstimate
-    boundary: CompactionBoundary
-    messages_to_summarize: list[Message]
-    kept_messages: list[Message]
-    recent_user_messages: list[Message] = field(default_factory=list)
-    turn_prefix_messages: list[Message] = field(default_factory=list)
-
-
-@dataclass(slots=True, frozen=True)
-class CompactionResult:
-    """Result of a context compaction with new messages and summary."""
-
-    messages: list[Message]
-    summary_text: str
+from yoke.agent.compaction.types import (
+    DEFAULT_HANDOFF_TARGET_TOKENS as DEFAULT_HANDOFF_TARGET_TOKENS,
+)
+from yoke.agent.compaction.types import DEFAULT_IMAGE_DETAIL as DEFAULT_IMAGE_DETAIL
+from yoke.agent.compaction.types import (
+    DEFAULT_KEEP_RECENT_TOKENS as DEFAULT_KEEP_RECENT_TOKENS,
+)
+from yoke.agent.compaction.types import (
+    DEFAULT_OPENAI_MODEL_GROUP as DEFAULT_OPENAI_MODEL_GROUP,
+)
+from yoke.agent.compaction.types import (
+    DEFAULT_RECENT_USER_TOKENS as DEFAULT_RECENT_USER_TOKENS,
+)
+from yoke.agent.compaction.types import (
+    DEFAULT_RESERVED_OUTPUT_TOKENS as DEFAULT_RESERVED_OUTPUT_TOKENS,
+)
+from yoke.agent.compaction.types import (
+    DEFAULT_TOTAL_CONTEXT_TOKENS as DEFAULT_TOTAL_CONTEXT_TOKENS,
+)
+from yoke.agent.compaction.types import (
+    OPENAI_IMAGE_TOKEN_TABLE as OPENAI_IMAGE_TOKEN_TABLE,
+)
+from yoke.agent.compaction.types import TOKEN_WIDTH_GUESS as TOKEN_WIDTH_GUESS
+from yoke.agent.compaction.types import CompactionPolicy as CompactionPolicy
+from yoke.agent.compaction.types import CompactionPreparation as CompactionPreparation
+from yoke.agent.compaction.types import CompactionResult as CompactionResult
+from yoke.agent.compaction.types import TokenEstimate as TokenEstimate
+from yoke.agent.models import (
+    Message,
+    MessageImageURLContentPart,
+    MessageLocalImageContentPart,
+    MessageTextContentPart,
+)
 
 
 class Compactor:
@@ -348,9 +295,6 @@ def _read_data_url_image_dimensions(url: str) -> tuple[int, int] | None:
     if not payload:
         return None
     try:
-        import base64
-        import io
-
         data = base64.b64decode(payload)
         with Image.open(io.BytesIO(data)) as image:
             return image.size

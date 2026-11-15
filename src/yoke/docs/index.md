@@ -21,6 +21,9 @@ structured observability, and automatic usage accounting.
 
 ## Design
 
+- [Runtime implementation](runtime.md): ownership, request sequencing and
+  differential guards for changes to the agent loop.
+
 ### Providers and models
 
 Yoke ships three provider families:

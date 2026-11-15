@@ -6,11 +6,9 @@ import logging
 from collections.abc import Sequence
 
 from yoke.agent.loop import RuntimeAgent
-from yoke.agent.loop.cache_scope import conversation_cache_scope
 from yoke.agent.models import Message
 from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.ai.providers.base import Provider
-from yoke.ai.providers.base import ProviderRequestContext
 from yoke.ai.providers.base import complete_with_cancel
 from yoke.ai.providers.base import fork_provider
 from yoke.ai.providers.usage_context import usage_metric_context
@@ -34,7 +32,7 @@ def generate_session_title(
     provider = getattr(agent, "provider", None)
     if provider is None or not messages:
         return None
-    provider, request_messages, tools, cache_scope = build_session_title_request(
+    provider, request_messages, tools = build_session_title_request(
         agent, messages, provider
     )
     for attempt in range(2):
@@ -44,10 +42,6 @@ def generate_session_title(
                     provider,
                     request_messages,
                     tools,
-                    request_context=ProviderRequestContext(
-                        cache_scope=cache_scope,
-                        response_continuity="isolated",
-                    ),
                 )
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Session title generation failed: %s", exc)
@@ -65,28 +59,18 @@ def build_session_title_request(
     agent: object,
     messages: Sequence[Message],
     provider: Provider,
-) -> tuple[Provider, list[Message], list[dict[str, object]], str]:
+) -> tuple[Provider, list[Message], list[dict[str, object]]]:
     """Append a title instruction to the canonical provider request."""
     tools: list[dict[str, object]] = []
-    cache_scope = "empty-conversation"
     provider_messages = [message.model_copy(deep=True) for message in messages]
     if isinstance(agent, RuntimeAgent):
-        context = agent._context
-        if context is None or agent.messages != list(messages):
-            context = agent.context_manager.initialize(
-                "",
-                list(messages),
-                append_prompt=False,
-                available_skills=agent.available_skills,
-                active_skills=agent.active_skills,
-            )
+        context = agent.context_for_messages(messages)
         provider_messages = messages_for_provider_capabilities(
             agent.context_manager.messages_for_provider(context), provider
         )
-        tools = agent._tool_definitions()
-        cache_scope = conversation_cache_scope(context)
+        tools = agent.tool_definitions()
     provider_messages.append(Message.user(SESSION_TITLE_PROMPT))
-    return fork_provider(provider), provider_messages, tools, cache_scope
+    return fork_provider(provider), provider_messages, tools
 
 
 def normalize_generated_title(content: str | None) -> str | None:

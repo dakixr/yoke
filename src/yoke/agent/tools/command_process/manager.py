@@ -10,17 +10,19 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 
+from yoke.agent.tools.command_process.admission import spawn
+from yoke.agent.tools.command_process.output import CompletedCommandProcess
+from yoke.agent.tools.command_process.process import _ManagedCommandProcess
+from yoke.agent.tools.command_process.types import (
+    MAX_COMPLETED_PROCESS_COUNT,
+    CancelRequested,
+    CommandProcessOutputPage,
+    CommandProcessResult,
+    CommandProcessSnapshot,
+    clamp_exec_yield_time,
+    clamp_write_yield_time,
+)
 from yoke.agent_runs import AgentRunRegistry
-from yoke.agent.tools.command_process import _ManagedCommandProcess
-from yoke.agent.tools.command_process_support.output import CompletedCommandProcess
-from yoke.agent.tools.command_process_support.admission import spawn
-from yoke.agent.tools.command_process_types import MAX_COMPLETED_PROCESS_COUNT
-from yoke.agent.tools.command_process_types import CancelRequested
-from yoke.agent.tools.command_process_types import CommandProcessResult
-from yoke.agent.tools.command_process_types import CommandProcessOutputPage
-from yoke.agent.tools.command_process_types import CommandProcessSnapshot
-from yoke.agent.tools.command_process_types import clamp_exec_yield_time
-from yoke.agent.tools.command_process_types import clamp_write_yield_time
 
 ProcessChangeListener = Callable[[], None]
 

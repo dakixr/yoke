@@ -4,18 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from yoke.agent.conversation import project_conversation
-from yoke.agent.conversation import memory_message_has_continuation_note
-from yoke.agent.conversation import parse_memory_message
-from yoke.agent.models import AgentContext
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import ConversationEntryKind
-from yoke.agent.models import ConversationLog
-from yoke.agent.models import MemorySnapshot
-from yoke.agent.models import Message
+from yoke.agent.conversation import (
+    memory_message_has_continuation_note,
+    parse_memory_message,
+    project_conversation,
+)
+from yoke.agent.models import (
+    AgentContext,
+    ConversationEntry,
+    ConversationEntryKind,
+    ConversationLog,
+    MemorySnapshot,
+    Message,
+)
 from yoke.agent.session_tree import SessionTree
-from yoke.agent.skills.models import ActiveSkill
-from yoke.agent.skills.models import SkillSpec
 from yoke.agent.state import active_branch_entries
 
 
@@ -101,103 +103,6 @@ def update_message_projection(
     )
 
 
-def initialize_context_state(
-    *,
-    prompt: str,
-    messages: list[Message] | None,
-    instructions: list[Message],
-    system_prompt: str | None,
-    user_message: Message | None,
-    append_prompt: bool,
-    conversation_entries: Sequence[ConversationEntry] | None,
-    available_skills: Sequence[SkillSpec] | None,
-    active_skills: Sequence[ActiveSkill] | None,
-    append_message,
-    transcript_messages,
-) -> AgentContext:
-    """Build the initial AgentContext state from persisted messages/entries."""
-    if conversation_entries is not None:
-        persisted_messages = [
-            entry.message
-            for entry in conversation_entries
-            if entry.message is not None and entry.kind != "instruction"
-        ]
-        resolved_instructions = resolve_instructions(persisted_messages, instructions)
-        prior_memory_snapshot = extract_memory_snapshot_from_entries(
-            conversation_entries
-        )
-        conversation_log = build_conversation_log_from_entries(
-            conversation_entries,
-            resolved_instructions,
-            prior_memory_snapshot,
-        )
-    else:
-        persisted_messages = [
-            message.model_copy(deep=True) for message in messages or []
-        ]
-        prior_memory_snapshot = extract_persisted_memory_snapshot(persisted_messages)
-        recent_messages = strip_persisted_memory_messages(persisted_messages)
-        resolved_instructions = resolve_instructions(recent_messages, instructions)
-        conversation_log = build_conversation_log(
-            persisted_messages,
-            prior_memory_snapshot,
-            instructions=resolved_instructions,
-        )
-    context = AgentContext(
-        system_prompt=system_prompt,
-        messages=[],
-        instructions=resolved_instructions,
-        conversation_log=conversation_log,
-        available_skills=[
-            skill.model_copy(deep=True) for skill in available_skills or []
-        ],
-        active_skills=[skill.model_copy(deep=True) for skill in active_skills or []],
-    )
-    context.messages = transcript_messages(context)
-    if append_prompt:
-        append_message(context, user_message or Message.user(prompt))
-    return context
-
-
-def initialize_owned_context_state(
-    *,
-    prompt: str,
-    entries: list[ConversationEntry],
-    instructions: list[Message],
-    system_prompt: str | None,
-    user_message: Message | None,
-    append_prompt: bool,
-    available_skills: Sequence[SkillSpec] | None,
-    active_skills: Sequence[ActiveSkill] | None,
-    append_message,
-) -> AgentContext:
-    """Take a validated active path without recopying its entry values."""
-    persisted_messages = [
-        entry.message
-        for entry in entries
-        if entry.message is not None and entry.kind != "instruction"
-    ]
-    resolved_instructions = resolve_instructions(persisted_messages, instructions)
-    seed = SessionTree.take_validated_runtime(entries)
-    context = AgentContext.model_construct(
-        system_prompt=system_prompt,
-        messages=[*resolved_instructions, *seed.messages],
-        instructions=resolved_instructions,
-        conversation_log=ConversationLog.model_construct(
-            entries=seed.entries,
-            leaf_id=seed.leaf_id,
-        ),
-        available_skills=[
-            skill.model_copy(deep=True) for skill in available_skills or []
-        ],
-        active_skills=[skill.model_copy(deep=True) for skill in active_skills or []],
-        provider_epoch_reset=False,
-    )
-    if append_prompt:
-        append_message(context, user_message or Message.user(prompt))
-    return context
-
-
 def _runtime_message(entry: ConversationEntry) -> Message:
     """Return one runtime message with non-persisted projection provenance."""
     assert entry.message is not None  # noqa: S101
@@ -230,8 +135,6 @@ def resolve_instructions(
 def build_conversation_log(
     messages: Sequence[Message],
     memory_snapshot: MemorySnapshot | None,
-    *,
-    instructions: Sequence[Message],
 ) -> ConversationLog:
     """Build a conversation log from persisted transcript messages."""
     tree = SessionTree.from_runtime_messages(messages, memory_snapshot)
@@ -244,11 +147,9 @@ def build_conversation_log(
 
 def build_conversation_log_from_entries(
     entries: Sequence[ConversationEntry],
-    instructions: Sequence[Message],
     memory_snapshot: MemorySnapshot | None,
 ) -> ConversationLog:
     """Rebuild a conversation log from stored ConversationEntry values."""
-    del instructions
     tree = SessionTree.restore_runtime(entries, memory_snapshot)
     exported = tree.export()
     return ConversationLog(

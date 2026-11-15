@@ -291,7 +291,7 @@ def test_reconnected_registry_can_restore_same_native_revision(tmp_path, monkeyp
 
 
 def test_real_core_registry_and_broker_then_fresh_app_restart(tmp_path, monkeypatch):
-    from yoke.agent.tools.command_process_manager import CommandProcessManager
+    from yoke.agent.tools.command_process import CommandProcessManager
     from yoke.agent_runs.records import Owner
 
     app, loaded = setup(tmp_path, monkeypatch)

@@ -1,120 +1,48 @@
-"""Lazy exports for context compaction."""
-
-# ruff: noqa: F401
+"""Lazy public exports; generate the matching stub with docs/tools/generate_exports.py."""
 
 from __future__ import annotations
 
 from importlib import import_module
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .core import (
-        COMPACTION_SUMMARY_PROMPT,
-        DEFAULT_HANDOFF_TARGET_TOKENS,
-        DEFAULT_IMAGE_DETAIL,
-        DEFAULT_KEEP_RECENT_TOKENS,
-        DEFAULT_OPENAI_MODEL_GROUP,
-        DEFAULT_RECENT_USER_TOKENS,
-        DEFAULT_RESERVED_OUTPUT_TOKENS,
-        DEFAULT_TOTAL_CONTEXT_TOKENS,
-        OPENAI_IMAGE_TOKEN_TABLE,
-        TOKEN_WIDTH_GUESS,
-        CompactionPolicy,
-        CompactionPreparation,
-        CompactionResult,
-        Compactor,
-        TokenEstimate,
-    )
-    from .operations import (
-        ForcedCompaction,
-        estimate_agent_context_usage,
-        force_compact_agent,
-    )
-    from .render import (
-        build_compaction_summary_prompt,
-        is_real_user_message,
-        render_message,
-        summary_source_text,
-        truncate_message_to_token_budget,
-        truncate_structured_user_content,
-    )
-    from .types import CompactionBoundary, CompactionReason
-
-_CORE_EXPORTS = (
-    "COMPACTION_SUMMARY_PROMPT",
-    "CompactionPolicy",
-    "CompactionPreparation",
-    "CompactionResult",
-    "Compactor",
-    "DEFAULT_HANDOFF_TARGET_TOKENS",
-    "DEFAULT_IMAGE_DETAIL",
-    "DEFAULT_KEEP_RECENT_TOKENS",
-    "DEFAULT_OPENAI_MODEL_GROUP",
-    "DEFAULT_RECENT_USER_TOKENS",
-    "DEFAULT_RESERVED_OUTPUT_TOKENS",
-    "DEFAULT_TOTAL_CONTEXT_TOKENS",
-    "OPENAI_IMAGE_TOKEN_TABLE",
-    "TOKEN_WIDTH_GUESS",
-    "TokenEstimate",
-)
-_TYPE_EXPORTS = ("CompactionBoundary", "CompactionReason")
-_RENDER_EXPORTS = (
-    "build_compaction_summary_prompt",
-    "is_real_user_message",
-    "render_message",
-    "summary_source_text",
-    "truncate_message_to_token_budget",
-    "truncate_structured_user_content",
-)
-_OPERATION_EXPORTS = (
-    "ForcedCompaction",
-    "estimate_agent_context_usage",
-    "force_compact_agent",
-)
+from typing import Any
 
 _LAZY_EXPORTS = {
-    **{name: ("yoke.agent.compaction.core", name) for name in _CORE_EXPORTS},
-    **{name: ("yoke.agent.compaction.types", name) for name in _TYPE_EXPORTS},
-    **{name: ("yoke.agent.compaction.render", name) for name in _RENDER_EXPORTS},
-    **{name: ("yoke.agent.compaction.operations", name) for name in _OPERATION_EXPORTS},
+    "COMPACTION_SUMMARY_PROMPT": "yoke.agent.compaction.types",
+    "CompactionPolicy": "yoke.agent.compaction.types",
+    "CompactionPreparation": "yoke.agent.compaction.types",
+    "CompactionResult": "yoke.agent.compaction.types",
+    "Compactor": "yoke.agent.compaction.core",
+    "DEFAULT_HANDOFF_TARGET_TOKENS": "yoke.agent.compaction.types",
+    "DEFAULT_IMAGE_DETAIL": "yoke.agent.compaction.types",
+    "DEFAULT_KEEP_RECENT_TOKENS": "yoke.agent.compaction.types",
+    "DEFAULT_OPENAI_MODEL_GROUP": "yoke.agent.compaction.types",
+    "DEFAULT_RECENT_USER_TOKENS": "yoke.agent.compaction.types",
+    "DEFAULT_RESERVED_OUTPUT_TOKENS": "yoke.agent.compaction.types",
+    "DEFAULT_TOTAL_CONTEXT_TOKENS": "yoke.agent.compaction.types",
+    "OPENAI_IMAGE_TOKEN_TABLE": "yoke.agent.compaction.types",
+    "TOKEN_WIDTH_GUESS": "yoke.agent.compaction.types",
+    "TokenEstimate": "yoke.agent.compaction.types",
+    "CompactionBoundary": "yoke.agent.compaction.types",
+    "CompactionReason": "yoke.agent.compaction.types",
+    "build_compaction_summary_prompt": "yoke.agent.compaction.render",
+    "is_real_user_message": "yoke.agent.compaction.render",
+    "render_message": "yoke.agent.compaction.render",
+    "summary_source_text": "yoke.agent.compaction.render",
+    "truncate_message_to_token_budget": "yoke.agent.compaction.render",
+    "truncate_structured_user_content": "yoke.agent.compaction.render",
+    "ForcedCompaction": "yoke.agent.compaction.operations",
+    "estimate_agent_context_usage": "yoke.agent.compaction.operations",
+    "force_compact_agent": "yoke.agent.compaction.operations",
 }
 
-__all__ = (
-    "COMPACTION_SUMMARY_PROMPT",
-    "CompactionPolicy",
-    "CompactionPreparation",
-    "CompactionResult",
-    "Compactor",
-    "DEFAULT_HANDOFF_TARGET_TOKENS",
-    "DEFAULT_IMAGE_DETAIL",
-    "DEFAULT_KEEP_RECENT_TOKENS",
-    "DEFAULT_OPENAI_MODEL_GROUP",
-    "DEFAULT_RECENT_USER_TOKENS",
-    "DEFAULT_RESERVED_OUTPUT_TOKENS",
-    "DEFAULT_TOTAL_CONTEXT_TOKENS",
-    "OPENAI_IMAGE_TOKEN_TABLE",
-    "TOKEN_WIDTH_GUESS",
-    "TokenEstimate",
-    "CompactionBoundary",
-    "CompactionReason",
-    "build_compaction_summary_prompt",
-    "is_real_user_message",
-    "render_message",
-    "summary_source_text",
-    "truncate_message_to_token_budget",
-    "truncate_structured_user_content",
-    "ForcedCompaction",
-    "estimate_agent_context_usage",
-    "force_compact_agent",
-)
+__all__ = tuple(_LAZY_EXPORTS)  # pyright: ignore[reportUnsupportedDunderAll]
 
 
-def __getattr__(name: str) -> Any:  # noqa: ANN401
-    """Resolve a compaction export without importing unrelated runtime code."""
+def __getattr__(name: str) -> Any:
+    """Resolve an export on first access, retaining normal module identity."""
     target = _LAZY_EXPORTS.get(name)
     if target is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name, attribute = target
+    module_name, attribute = (target, name) if isinstance(target, str) else target
     value = getattr(import_module(module_name), attribute)
     globals()[name] = value
     return value

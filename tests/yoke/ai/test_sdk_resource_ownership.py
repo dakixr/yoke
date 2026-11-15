@@ -198,6 +198,7 @@ def test_concurrent_aclose_callers_share_failure_then_retry(
 
 
 def test_tool_resource_release_closes_every_resource_outside_lease_lock() -> None:
+    leases = loop_resources.ToolResources()
     closed: list[str] = []
     first_error = RuntimeError("first close failed")
 
@@ -207,7 +208,7 @@ def test_tool_resource_release_closes_every_resource_outside_lease_lock() -> Non
             self.error = error
 
         def close(self) -> None:
-            is_owned = getattr(loop_resources._RESOURCE_LEASE_LOCK, "_is_owned")
+            is_owned = getattr(leases.lock, "_is_owned")
             assert isinstance(is_owned, Callable)
             assert is_owned() is False
             closed.append(self.name)
@@ -230,10 +231,10 @@ def test_tool_resource_release_closes_every_resource_outside_lease_lock() -> Non
         FailingResource("second", RuntimeError("second close failed")),
     )
     tool = ResourceTool.bind(resources=resources)
-    loop_resources.acquire_tool_resources([tool])
+    leases.acquire([tool])
 
     with pytest.raises(RuntimeError) as raised:
-        loop_resources.release_tool_resources([tool])
+        leases.release([tool])
 
     assert raised.value is first_error
     assert closed == ["first", "second"]

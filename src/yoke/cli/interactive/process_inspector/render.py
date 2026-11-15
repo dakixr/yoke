@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Literal
 from typing import Protocol
 
-from yoke.agent.tools.command_process_types import (
+from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
 )
 from yoke.cli.interactive.tool_inspector.display import format_duration

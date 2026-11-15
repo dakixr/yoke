@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from yoke.agent.models import AgentContext
-from yoke.agent.models import Message
-from yoke.agent.skills.models import ActiveSkill
-from yoke.agent.skills.models import SkillSpec
+from yoke.agent.models import AgentContext, Message
+from yoke.agent.skills.models import ActiveSkill, SkillSpec
 
 
 class PromptContext(BaseModel):
@@ -21,29 +18,26 @@ class PromptContext(BaseModel):
     ordered_messages: list[Message] = Field(default_factory=list)
 
 
-class PromptBuilder:
-    """Assembles a PromptContext from an AgentContext for the provider."""
-
-    def build(self, context: AgentContext) -> PromptContext:
-        """Build a PromptContext from the given agent context."""
-        instructions = list(context.instructions)
-        memory_messages: list[Message] = []
-        skill_messages = (
-            [
-                render_available_skills_message(context.available_skills),
-            ]
-            if context.available_skills
-            else []
-        )
-        recent_messages = list(context.messages[len(context.instructions) :])
-        ordered_messages = [*memory_messages, *skill_messages, *recent_messages]
-        return PromptContext(
-            instructions=instructions,
-            memory_messages=memory_messages,
-            skill_messages=skill_messages,
-            recent_messages=recent_messages,
-            ordered_messages=ordered_messages,
-        )
+def build_prompt_context(context: AgentContext) -> PromptContext:
+    """Build a PromptContext from the given agent context."""
+    instructions = list(context.instructions)
+    memory_messages: list[Message] = []
+    skill_messages = (
+        [
+            render_available_skills_message(context.available_skills),
+        ]
+        if context.available_skills
+        else []
+    )
+    recent_messages = list(context.messages[len(context.instructions) :])
+    ordered_messages = [*memory_messages, *skill_messages, *recent_messages]
+    return PromptContext(
+        instructions=instructions,
+        memory_messages=memory_messages,
+        skill_messages=skill_messages,
+        recent_messages=recent_messages,
+        ordered_messages=ordered_messages,
+    )
 
 
 def render_available_skills_message(

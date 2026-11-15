@@ -14,7 +14,7 @@ import pytest
 
 from yoke.agent.loop.in_process_tool import InProcessToolInvocation
 from yoke.agent.tools.command import ExecCommandTool
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent.tools.python_exec import PythonExecTool
 from yoke.ai.providers.usage_attribution import attribute_subprocess_environment
 from yoke.ai.providers.usage_context import usage_metric_context

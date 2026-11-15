@@ -1,0 +1,464 @@
+{
+  "tools-skills-images": [
+    {
+      "messages_json": "[{\"role\":\"system\",\"content\":\"base\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Available skills:\\nUse the `skill` tool to activate skills by name when relevant.\\n- oracle-skill: An available oracle skill.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Active skill:\\nname: inline\\ndescription: An active inline skill.\\nsource: <inline>\\n\\nPreserve these exact instructions.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"inspect\",\"cache_control\":null},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=\"},\"detail\":null,\"label\":\"[Image #1]\",\"attachment_name\":null}],\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"system\",\"content\":\"base\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Available skills:\\nUse the `skill` tool to activate skills by name when relevant.\\n- oracle-skill: An available oracle skill.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Active skill:\\nname: inline\\ndescription: An active inline skill.\\nsource: <inline>\\n\\nPreserve these exact instructions.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"inspect\",\"cache_control\":null},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=\"},\"detail\":null,\"label\":\"[Image #1]\",\"attachment_name\":null}],\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"checking\",\"tool_call_id\":null,\"tool_calls\":[{\"id\":\"oracle-single\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"single\\\"}\"}}],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":true,\\\"value\\\":\\\"single\\\"}\",\"tool_call_id\":\"oracle-single\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"system\",\"content\":\"base\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Available skills:\\nUse the `skill` tool to activate skills by name when relevant.\\n- oracle-skill: An available oracle skill.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Active skill:\\nname: inline\\ndescription: An active inline skill.\\nsource: <inline>\\n\\nPreserve these exact instructions.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"inspect\",\"cache_control\":null},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=\"},\"detail\":null,\"label\":\"[Image #1]\",\"attachment_name\":null}],\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"checking\",\"tool_call_id\":null,\"tool_calls\":[{\"id\":\"oracle-single\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"single\\\"}\"}}],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":true,\\\"value\\\":\\\"single\\\"}\",\"tool_call_id\":\"oracle-single\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"checking\",\"tool_call_id\":null,\"tool_calls\":[{\"id\":\"oracle-left\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"left\\\"}\"}},{\"id\":\"oracle-right\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"right\\\"}\"}}],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":true,\\\"value\\\":\\\"left\\\"}\",\"tool_call_id\":\"oracle-left\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":true,\\\"value\\\":\\\"right\\\"}\",\"tool_call_id\":\"oracle-right\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    }
+  ],
+  "tools-skills-text": [
+    {
+      "messages_json": "[{\"role\":\"system\",\"content\":\"base\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Available skills:\\nUse the `skill` tool to activate skills by name when relevant.\\n- oracle-skill: An available oracle skill.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Active skill:\\nname: inline\\ndescription: An active inline skill.\\nsource: <inline>\\n\\nPreserve these exact instructions.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"inspect\",\"cache_control\":null},{\"type\":\"text\",\"text\":\"[Image omitted: [Image #1] was attached in the original conversation, but the active model does not support image inputs.]\",\"cache_control\":null}],\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"system\",\"content\":\"base\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Available skills:\\nUse the `skill` tool to activate skills by name when relevant.\\n- oracle-skill: An available oracle skill.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Active skill:\\nname: inline\\ndescription: An active inline skill.\\nsource: <inline>\\n\\nPreserve these exact instructions.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"inspect\",\"cache_control\":null},{\"type\":\"text\",\"text\":\"[Image omitted: [Image #1] was attached in the original conversation, but the active model does not support image inputs.]\",\"cache_control\":null}],\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"checking\",\"tool_call_id\":null,\"tool_calls\":[{\"id\":\"oracle-single\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"single\\\"}\"}}],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":true,\\\"value\\\":\\\"single\\\"}\",\"tool_call_id\":\"oracle-single\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"system\",\"content\":\"base\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Available skills:\\nUse the `skill` tool to activate skills by name when relevant.\\n- oracle-skill: An available oracle skill.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"system\",\"content\":\"Active skill:\\nname: inline\\ndescription: An active inline skill.\\nsource: <inline>\\n\\nPreserve these exact instructions.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"inspect\",\"cache_control\":null},{\"type\":\"text\",\"text\":\"[Image omitted: [Image #1] was attached in the original conversation, but the active model does not support image inputs.]\",\"cache_control\":null}],\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"checking\",\"tool_call_id\":null,\"tool_calls\":[{\"id\":\"oracle-single\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"single\\\"}\"}}],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":true,\\\"value\\\":\\\"single\\\"}\",\"tool_call_id\":\"oracle-single\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"checking\",\"tool_call_id\":null,\"tool_calls\":[{\"id\":\"oracle-left\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"left\\\"}\"}},{\"id\":\"oracle-right\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"right\\\"}\"}}],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":true,\\\"value\\\":\\\"left\\\"}\",\"tool_call_id\":\"oracle-left\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":true,\\\"value\\\":\\\"right\\\"}\",\"tool_call_id\":\"oracle-right\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    }
+  ],
+  "manual-compaction": [
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"old request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"old answer alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha \",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"recent request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\nInclude:\\n- Current progress and key decisions made\\n- Important context, constraints, or user preferences\\n- What remains to be done (clear next steps)\\n- Any critical data, examples, or references needed to continue\\n\\nRules:\\n- Be concise but concrete\\n- Preserve important constraints exactly\\n- Preserve file names, commands, APIs, config values, and decisions when relevant\\n- Do not restate obvious boilerplate\\n- Do not include raw logs unless essential\\n- Do not call tools\\n- Return only the handoff summary as response text\\n- Keep the handoff below 12,000 estimated tokens\\n- Assume the next model will not see prior assistant replies or tool output\\n- Optimize for seamless continuation by another agent\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "compaction_summary",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"old request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"recent request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"handoff summary\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"follow up\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    }
+  ],
+  "automatic-compaction": [
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"old request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"old answer alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha \",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"recent request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"follow up\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\nInclude:\\n- Current progress and key decisions made\\n- Important context, constraints, or user preferences\\n- What remains to be done (clear next steps)\\n- Any critical data, examples, or references needed to continue\\n\\nRules:\\n- Be concise but concrete\\n- Preserve important constraints exactly\\n- Preserve file names, commands, APIs, config values, and decisions when relevant\\n- Do not restate obvious boilerplate\\n- Do not include raw logs unless essential\\n- Do not call tools\\n- Return only the handoff summary as response text\\n- Keep the handoff below 12,000 estimated tokens\\n- Assume the next model will not see prior assistant replies or tool output\\n- Optimize for seamless continuation by another agent\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "compaction_summary",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"old request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"recent request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"follow up\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"handoff summary\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    }
+  ],
+  "overflow-retry": [
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"old request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"old answer alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha \",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"recent request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"follow up\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"old request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"old answer alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha \",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"recent request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"follow up\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\nInclude:\\n- Current progress and key decisions made\\n- Important context, constraints, or user preferences\\n- What remains to be done (clear next steps)\\n- Any critical data, examples, or references needed to continue\\n\\nRules:\\n- Be concise but concrete\\n- Preserve important constraints exactly\\n- Preserve file names, commands, APIs, config values, and decisions when relevant\\n- Do not restate obvious boilerplate\\n- Do not include raw logs unless essential\\n- Do not call tools\\n- Return only the handoff summary as response text\\n- Keep the handoff below 12,000 estimated tokens\\n- Assume the next model will not see prior assistant replies or tool output\\n- Optimize for seamless continuation by another agent\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "compaction_summary",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"old request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"recent request\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"follow up\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"handoff summary\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "overflow_retry",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    }
+  ],
+  "stop-continue": [
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"start\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    },
+    {
+      "messages_json": "[{\"role\":\"user\",\"content\":\"start\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"checking\",\"tool_call_id\":null,\"tool_calls\":[{\"id\":\"oracle-cancelled\",\"type\":\"function\",\"function\":{\"name\":\"oracle_echo\",\"arguments\":\"{\\\"value\\\": \\\"cancelled\\\"}\"}}],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"tool\",\"content\":\"{\\\"ok\\\":false,\\\"cancelled\\\":true,\\\"error\\\":\\\"Tool call cancelled because the turn was stopped\\\"}\",\"tool_call_id\":\"oracle-cancelled\",\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"The previous turn was interrupted by the user before completion. Continue from the current state and follow the user's next instruction.\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    }
+  ],
+  "tree-navigation": [
+    {
+      "messages_json": "[{\"role\":\"system\",\"content\":\"active branch skill\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"root\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"assistant\",\"content\":\"prior checkpoint\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null},{\"role\":\"user\",\"content\":\"continue active branch\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}]",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "oracle_echo",
+            "description": "Echo a value for the request oracle.",
+            "parameters": {
+              "description": "An in-process tool whose result is independent of the environment.",
+              "properties": {
+                "value": {
+                  "title": "Value",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "title": "EchoTool",
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "call_kind": "model_iteration",
+      "prompt_cache_key": "c9a54df738465eafe8d73b53104451c7c6370aca6f0a26002f1e222adaf6ebf8"
+    }
+  ]
+}

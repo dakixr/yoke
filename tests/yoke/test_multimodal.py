@@ -26,14 +26,15 @@ def _image_message(index: int) -> Message:
     )
 
 
-def test_provider_request_image_budget_keeps_newest_images() -> None:
+def test_provider_projection_preserves_images_without_a_request_wide_limit() -> None:
     original = [_image_message(1), _image_message(2), _image_message(3)]
 
     projected = messages_for_provider_capabilities(original, _TwoImageProvider())
 
     assert isinstance(projected[0].content, list)
-    assert isinstance(projected[0].content[1], MessageTextContentPart)
-    assert "at most 2 images per request" in projected[0].content[1].text
+    assert isinstance(projected[0].content[1], MessageImageURLContentPart)
+    assert projected == original
+    assert projected[0] is not original[0]
     assert isinstance(projected[1].content, list)
     assert isinstance(projected[1].content[1], MessageImageURLContentPart)
     assert isinstance(projected[2].content, list)

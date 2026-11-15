@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol, Self, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, cast, runtime_checkable
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -297,32 +297,6 @@ class BaseProvider[ConfigT: BaseModel, ClientT: Closeable]:
             self._client.close()
 
 
-ResponseContinuity = Literal["continue", "reset", "isolated"]
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderRequestContext:
-    """Stable request metadata supplied by the agent runtime."""
-
-    cache_scope: str
-    response_continuity: ResponseContinuity = "continue"
-
-
-@runtime_checkable
-class ContextualProvider(Protocol):
-    """Optional protocol for providers using runtime request metadata."""
-
-    def complete_with_context(
-        self,
-        messages: list[Message],
-        tools: list[dict[str, object]],
-        *,
-        request_context: ProviderRequestContext,
-    ) -> Message:
-        """Complete a request with stable conversation metadata."""
-        ...
-
-
 @dataclass(frozen=True, slots=True)
 class ProviderIdentity:
     """Normalized provider metadata for attribution and model selection."""
@@ -419,18 +393,11 @@ def complete_with_cancel(
     tools: list[dict[str, object]],
     *,
     cancel_requested: Callable[[], bool] | None = None,
-    request_context: ProviderRequestContext | None = None,
 ) -> Message:
     """Use provider-native cancellation when available."""
     if cancel_requested is not None and cancel_requested():
         raise ProviderCancelledError()
-    if request_context is not None and isinstance(provider, ContextualProvider):
-        response = provider.complete_with_context(
-            messages,
-            tools,
-            request_context=request_context,
-        )
-    elif isinstance(provider, CancellableProvider):
+    if isinstance(provider, CancellableProvider):
         try:
             response = provider.complete_with_cancel(
                 messages,

@@ -6,10 +6,6 @@
     {
       "stage": "scenario",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:skill_event>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,
@@ -30,10 +26,6 @@
     {
       "stage": "continuation",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:skill_event>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,
@@ -56,10 +48,6 @@
     {
       "stage": "continuation",
       "kind": "model_iteration",
-      "request_context": {
-        "cache_scope": "<ENTRY:0:skill_event>",
-        "response_continuity": "continue"
-      },
       "provider_session_id": "oracle-session",
       "provider_model": "oracle-model",
       "supports_image_inputs": true,

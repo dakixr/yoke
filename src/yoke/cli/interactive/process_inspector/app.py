@@ -9,10 +9,10 @@ import threading
 import time
 from typing import Literal
 
-from yoke.agent.tools.command_process_manager import (
+from yoke.agent.tools.command_process import (
     CommandProcessManager,
 )
-from yoke.agent.tools.command_process_types import (
+from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
 )
 from yoke.cli.interactive.process_inspector.render import detail_text

@@ -14,7 +14,17 @@ from yoke.agent.models import MessageTextContentPart
 from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
 from yoke.ai.providers.base import emit_provider_event
-from yoke.ai.providers.base import ProviderRequestContext
+import pytest
+from .request_state_support import (
+    RequestState as ProviderRequestContext,
+    capture_request_state,
+    provider_request_state,
+)
+
+
+@pytest.fixture(autouse=True)
+def _capture_request_state(monkeypatch):
+    capture_request_state(monkeypatch)
 
 
 class ContextRecordingProvider:
@@ -24,20 +34,15 @@ class ContextRecordingProvider:
     def __init__(self) -> None:
         self.cache_scopes: list[str] = []
 
+    def complete_with_context(self, messages, tools, *, request_context):
+        raise AssertionError("Runtime must not use the retired contextual dispatch")
+
     def complete(
         self,
         messages: list[Message],
         tools: list[dict[str, object]],
     ) -> Message:
-        raise AssertionError("The runtime should supply provider context")
-
-    def complete_with_context(
-        self,
-        messages: list[Message],
-        tools: list[dict[str, object]],
-        *,
-        request_context: ProviderRequestContext,
-    ) -> Message:
+        request_context = provider_request_state(self)
         del messages, tools
         self.cache_scopes.append(request_context.cache_scope)
         return Message.assistant("ok")
@@ -66,13 +71,12 @@ def test_compaction_reuses_scope_then_resets_reduced_epoch() -> None:
             self.requests: list[list[Message]] = []
             self.tool_sets: list[list[dict[str, object]]] = []
 
-        def complete_with_context(
+        def complete(
             self,
             messages: list[Message],
             tools: list[dict[str, object]],
-            *,
-            request_context: ProviderRequestContext,
         ) -> Message:
+            request_context = provider_request_state(self)
             self.cache_scopes.append(request_context.cache_scope)
             self.request_contexts.append(request_context)
             self.requests.append(messages)
@@ -127,14 +131,13 @@ def test_messages_only_forced_compaction_preserves_tool_result_projection() -> N
             super().__init__()
             self.requests: list[list[Message]] = []
 
-        def complete_with_context(
+        def complete(
             self,
             messages: list[Message],
             tools: list[dict[str, object]],
-            *,
-            request_context: ProviderRequestContext,
         ) -> Message:
             del tools
+            request_context = provider_request_state(self)
             self.cache_scopes.append(request_context.cache_scope)
             self.requests.append(
                 [message.model_copy(deep=True) for message in messages]
@@ -197,15 +200,14 @@ def test_compaction_handoff_uses_the_normal_provider_capability_projection(
             super().__init__()
             self.requests: list[list[Message]] = []
 
-        def complete_with_context(
+        def complete(
             self,
             messages: list[Message],
             tools: list[dict[str, object]],
-            *,
-            request_context: ProviderRequestContext,
         ) -> Message:
             del tools
             self.requests.append(messages)
+            request_context = provider_request_state(self)
             self.cache_scopes.append(request_context.cache_scope)
             return Message.assistant("image-aware handoff")
 
@@ -288,14 +290,12 @@ def test_compaction_provider_mutation_isolated_from_agent_history() -> None:
     class MutatingCompactionProvider(ContextRecordingProvider):
         supports_image_inputs = True
 
-        def complete_with_context(
+        def complete(
             self,
             messages: list[Message],
             tools: list[dict[str, object]],
-            *,
-            request_context: ProviderRequestContext,
         ) -> Message:
-            del tools, request_context
+            del tools
             messages[0].content = "provider mutation"
             return Message.assistant("safe summary")
 

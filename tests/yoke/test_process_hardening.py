@@ -24,8 +24,8 @@ from yoke.agent.tools import (
     ProcessReadTool,
     PythonExecTool,
 )
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_support import (
+from yoke.agent.tools.command_process import CommandProcessManager
+from yoke.agent.tools.command_process import (
     admission,
     input as stdin_delivery,
     spawn,

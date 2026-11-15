@@ -17,8 +17,8 @@ from yoke.http.models.process import ProcessResponse
 from yoke.http.runtime.registry import SessionRuntimeRegistry
 
 if TYPE_CHECKING:
-    from yoke.agent.tools.command_process_manager import CommandProcessManager
-    from yoke.agent.tools.command_process_types import CommandProcessSnapshot
+    from yoke.agent.tools.command_process import CommandProcessManager
+    from yoke.agent.tools.command_process import CommandProcessSnapshot
 
 
 class ProcessService:

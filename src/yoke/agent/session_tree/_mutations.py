@@ -5,21 +5,26 @@ from __future__ import annotations
 from collections.abc import Sequence
 from copy import deepcopy
 
-from yoke.agent.compaction.types import CompactionBoundary
-from yoke.agent.compaction.types import CompactionReason
-from yoke.agent.models import CompactionHandoff
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import ConversationEntryKind
-from yoke.agent.models import MemorySnapshot
-from yoke.agent.models import Message
+from yoke.agent.compaction.types import CompactionBoundary, CompactionReason
+from yoke.agent.models import (
+    CompactionHandoff,
+    ConversationEntry,
+    ConversationEntryKind,
+    MemorySnapshot,
+    Message,
+)
+from yoke.agent.prompting import render_active_skill_message
 from yoke.agent.skills.models import ActiveSkill
+from yoke.agent.usage import compact_usage_payload
 
-from .errors import InvalidCheckpointError
-from .errors import InvalidMessageError
-from .errors import InvalidToolSequenceError
 from ._tool_sequence import open_tool_call_ids
-from .values import EntryRef
 from ._topology import active_path
+from .errors import (
+    InvalidCheckpointError,
+    InvalidMessageError,
+    InvalidToolSequenceError,
+)
+from .values import EntryRef
 
 
 class SessionTreeMutations:
@@ -95,8 +100,6 @@ class SessionTreeMutations:
         self, skills: Sequence[ActiveSkill]
     ) -> tuple[EntryRef, ...]:
         """Append rendered activation events for the supplied active skills."""
-        from yoke.agent.prompting import render_active_skill_message
-
         appended: list[EntryRef] = []
         for skill in skills:
             if not isinstance(skill, ActiveSkill):
@@ -310,8 +313,6 @@ def _generation_from_entry(entry: ConversationEntry) -> int | None:
 
 
 def _message_metadata(message: Message) -> dict[str, object]:
-    from yoke.agent.usage import compact_usage_payload
-
     metadata: dict[str, object] = {}
     usage = compact_usage_payload(message.usage)
     if usage is not None:

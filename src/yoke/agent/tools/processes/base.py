@@ -9,14 +9,15 @@ from typing import Any, ClassVar, Literal, cast
 from pydantic import ConfigDict, Field
 
 from yoke.agent.tools.base import LocalTool, WorkspaceTool
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_support.coordination import (
+from yoke.agent.tools.command_process import (
+    CommandProcessManager,
+    command_completion_event_id,
+)
+from yoke.agent.tools.command_process.coordination import (
     ProcessOperationCancelled,
 )
-from yoke.agent.tools.command_process_types import DEFAULT_MAX_OUTPUT_TOKENS
-from yoke.agent.tools.command_process_types import command_completion_event_id
-from yoke.agent.tools.processes.cursor import encode_cursor
-from yoke.agent.tools.processes.cursor import ProcessPosition
+from yoke.agent.tools.command_process.types import DEFAULT_MAX_OUTPUT_TOKENS
+from yoke.agent.tools.processes.cursor import ProcessPosition, encode_cursor
 from yoke.agent.tools.processes.models import (
     DEFAULT_EXEC_WAIT_MS,
     MAX_READ_BYTES,
@@ -24,7 +25,6 @@ from yoke.agent.tools.processes.models import (
     ProcessReadRequest,
 )
 from yoke.agent.tools.processes.observation import read_processes
-
 
 _FALLBACK_MANAGER = CommandProcessManager()
 atexit.register(_FALLBACK_MANAGER.close)

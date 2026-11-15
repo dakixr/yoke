@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from threading import Event, Lock
 from typing import Any
 
@@ -12,7 +12,6 @@ from yoke.agent.models import Message, TokenUsage, ToolCall, ToolFunction
 from yoke.ai.providers.base import (
     ProviderError,
     ProviderModelInfo,
-    ProviderRequestContext,
 )
 from yoke.ai.providers.usage_context import current_usage_metric_context
 
@@ -137,22 +136,12 @@ class RecordingProvider:
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
     ) -> Message:
-        return self._record(messages, tools, None)
-
-    def complete_with_context(
-        self,
-        messages: list[Message],
-        tools: list[dict[str, object]],
-        *,
-        request_context: ProviderRequestContext,
-    ) -> Message:
-        return self._record(messages, tools, request_context)
+        return self._record(messages, tools)
 
     def _record(
         self,
         messages: list[Message],
         tools: list[dict[str, object]],
-        request_context: ProviderRequestContext | None,
     ) -> Message:
         usage = current_usage_metric_context()
         with self.tape.lock:
@@ -166,9 +155,6 @@ class RecordingProvider:
                 {
                     "stage": self.tape.stage,
                     "kind": usage.call_kind,
-                    "request_context": asdict(request_context)
-                    if request_context
-                    else None,
                     "provider_session_id": self.session_id,
                     "provider_model": self.model_id,
                     "supports_image_inputs": self.supports_image_inputs,

@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
-from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.tools.command_process_types import CommandProcessOutputPage
-from yoke.agent.tools.command_process_types import CommandProcessSnapshot
-from yoke.agent.tools.processes.cursor import decode_cursor
-from yoke.agent.tools.processes.cursor import encode_cursor
-from yoke.agent.tools.processes.cursor import ProcessPosition
+from yoke.agent.tools.command_process import (
+    CommandProcessManager,
+    CommandProcessOutputPage,
+    CommandProcessSnapshot,
+)
+from yoke.agent.tools.processes.cursor import (
+    ProcessPosition,
+    decode_cursor,
+    encode_cursor,
+)
 from yoke.agent.tools.processes.models import ProcessReadRequest
 
 

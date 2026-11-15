@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from collections import deque
 import codecs
+from collections import deque
 from dataclasses import dataclass
 from itertools import islice
 
-from yoke.agent.tools.command_process_types import MAX_RETAINED_OUTPUT_BYTES
-from yoke.agent.tools.command_process_types import CommandProcessOutputChunk
-from yoke.agent.tools.command_process_types import CommandProcessOutputPage
-from yoke.agent.tools.command_process_types import CommandProcessSnapshot
-from yoke.agent.tools.command_process_types import decode_command_output_chunk
+from yoke.agent.tools.command_process.types import (
+    MAX_RETAINED_OUTPUT_BYTES,
+    CommandProcessOutputChunk,
+    CommandProcessOutputPage,
+    CommandProcessSnapshot,
+    decode_command_output_chunk,
+)
 
 
 def _legacy_byte_fallback(error: UnicodeError) -> tuple[str, int]:

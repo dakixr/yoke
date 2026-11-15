@@ -454,7 +454,7 @@ def test_context_manager_persists_json_but_projects_provider_tool_content() -> N
     assert tool_entries[0].metadata["provider_result_projection"] == "command"
 
 
-def test_custom_transform_sees_canonical_json_before_provider_projection() -> None:
+def test_canonical_json_is_preserved_before_provider_projection() -> None:
     canonical = _canonical(
         {
             "ok": True,
@@ -463,15 +463,7 @@ def test_custom_transform_sees_canonical_json_before_provider_projection() -> No
             "exit_code": 0,
         }
     )
-    seen: list[str] = []
-
-    def transform(messages: list[Message]) -> list[Message]:
-        for message in messages:
-            if message.role == "tool" and isinstance(message.content, str):
-                seen.append(message.content)
-        return messages
-
-    manager = ContextManager(transform_messages=transform)
+    manager = ContextManager()
     context = manager.initialize("", append_prompt=False)
     manager.append_message(context, Message(role="assistant", tool_calls=[_call("fd")]))
     manager.append_tool_result(
@@ -483,7 +475,7 @@ def test_custom_transform_sees_canonical_json_before_provider_projection() -> No
 
     projected = manager.messages_for_provider(context)
 
-    assert seen == [canonical]
+    assert context.messages[-1].content == canonical
     assert projected[-1].content == "ok: true\npaths[1]: a.py"
 
 

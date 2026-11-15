@@ -20,7 +20,7 @@ from yoke.agent.tools import (
     ProcessReadTool,
     PythonExecTool,
 )
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent.tools.processes.cursor import encode_cursor, ProcessPosition
 from yoke.agent.tools.processes.models import ProcessCursor, ProcessReadRequest
 from yoke.agent.tools.processes.observation import read_processes

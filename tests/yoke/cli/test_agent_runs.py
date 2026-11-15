@@ -13,7 +13,7 @@ from prompt_toolkit.document import Document
 from rich.console import Console
 
 from yoke.agent.models import Message
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.cli.interactive.basic import run_basic_interactive_cli
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.commands import SLASH_COMMANDS, handle_slash_command

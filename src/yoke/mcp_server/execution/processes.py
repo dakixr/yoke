@@ -11,7 +11,7 @@ from anyio import CapacityLimiter
 from anyio.to_thread import run_sync
 from pydantic import ConfigDict, Field
 
-from yoke.agent.tools.command_process_manager import CommandProcessManager
+from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent.tools.processes.models import ProcessCursor, ProcessReadRequest
 from yoke.agent.tools.processes.observation import page, read_processes
 from yoke.mcp_server.config import MAX_SAFE_REMOTE_WAIT_MS

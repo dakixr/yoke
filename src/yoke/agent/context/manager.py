@@ -2,47 +2,54 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable
 from collections.abc import Sequence
 
-from yoke.agent.compaction import CompactionPolicy
-from yoke.agent.compaction import CompactionPreparation
-from yoke.agent.compaction import CompactionReason
-from yoke.agent.compaction import CompactionResult
-from yoke.agent.compaction import Compactor
-from yoke.agent.compaction import TokenEstimate
-from yoke.agent.context.helpers import append_conversation_entry
-from yoke.agent.context.helpers import entry_kind_for_message
-from yoke.agent.context.helpers import initialize_context_state
-from yoke.agent.context.helpers import initialize_owned_context_state
-from yoke.agent.context.helpers import normalize_instructions
-from yoke.agent.context.helpers import update_message_projection
-from yoke.agent.context.compaction_projection import compacted_runtime_messages
+from yoke.agent.compaction import (
+    CompactionPolicy,
+    CompactionPreparation,
+    CompactionReason,
+    CompactionResult,
+    Compactor,
+    TokenEstimate,
+)
+from yoke.agent.context.accounting import latest_log_usage, latest_message_usage
 from yoke.agent.context.compaction_projection import (
+    compacted_runtime_messages,
     next_compaction_generation_from_active_path,
 )
-from yoke.agent.context.accounting import latest_log_usage
-from yoke.agent.context.accounting import latest_message_usage
-from yoke.agent.context.accounting import message_entry_metadata
+from yoke.agent.context.helpers import (
+    append_conversation_entry,
+    build_conversation_log,
+    build_conversation_log_from_entries,
+    extract_memory_snapshot_from_entries,
+    extract_persisted_memory_snapshot,
+    normalize_instructions,
+    resolve_instructions,
+    strip_persisted_memory_messages,
+)
+from yoke.agent.context.history import (
+    append_message,
+    append_skill_message,
+    append_tool_context_message,
+    append_tool_result,
+    message_image_count,
+    newest_real_user_message,
+    transcript_messages,
+)
 from yoke.agent.message_sanitizer import normalize_tool_call_sequence
-from yoke.agent.models import AgentContext
-from yoke.agent.models import CompactionHandoff
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import MemorySnapshot
-from yoke.agent.models import Message
-from yoke.agent.models import MessageImageURLContentPart
-from yoke.agent.models import MessageLocalImageContentPart
-from yoke.agent.prompting import PromptBuilder
-from yoke.agent.skills.context import skill_message_conversation_entry
-from yoke.agent.skills.context import skill_name_from_message
-from yoke.agent.skills.models import ActiveSkill
-from yoke.agent.skills.models import SkillSpec
+from yoke.agent.models import (
+    AgentContext,
+    CompactionHandoff,
+    ConversationEntry,
+    ConversationLog,
+    MemorySnapshot,
+    Message,
+)
+from yoke.agent.prompting import build_prompt_context
+from yoke.agent.session_tree import SessionTree
+from yoke.agent.skills.models import ActiveSkill, SkillSpec
 from yoke.agent.tool_result_projection import project_tool_results_for_provider
-from yoke.agent.usage import UsageAccounting
-from yoke.agent.usage import effective_usage_accounting
-
-MessageTransform = Callable[[list[Message]], list[Message]]
+from yoke.agent.usage import UsageAccounting, effective_usage_accounting
 
 
 class ContextManager:
@@ -51,19 +58,13 @@ class ContextManager:
     def __init__(
         self,
         instructions: Sequence[Message] | None = None,
-        transform_messages: MessageTransform | None = None,
-        convert_messages: MessageTransform | None = None,
         compaction_policy: CompactionPolicy | None = None,
-        prompt_builder: PromptBuilder | None = None,
         compactor: Compactor | None = None,
     ) -> None:
         self.instructions = normalize_instructions(instructions)
         self.system_prompt = (
             self.instructions[0].plain_text_content if self.instructions else None
         )
-        self.transform_messages = transform_messages
-        self.convert_messages = convert_messages
-        self.prompt_builder = prompt_builder or PromptBuilder()
         self.compactor = compactor or Compactor()
         self.compaction_policy = compaction_policy or CompactionPolicy()
         self.max_total_tokens = (
@@ -84,20 +85,54 @@ class ContextManager:
         available_skills: Sequence[SkillSpec] | None = None,
         active_skills: Sequence[ActiveSkill] | None = None,
     ) -> AgentContext:
-        """Initialize a new AgentContext from a prompt and optional history."""
-        return initialize_context_state(
-            prompt=prompt,
-            messages=messages,
-            instructions=self.instructions,
+        """Build the initial AgentContext state from persisted messages/entries."""
+        if conversation_entries is not None:
+            persisted_messages = [
+                entry.message
+                for entry in conversation_entries
+                if entry.message is not None and entry.kind != "instruction"
+            ]
+            resolved_instructions = resolve_instructions(
+                persisted_messages, self.instructions
+            )
+            prior_memory_snapshot = extract_memory_snapshot_from_entries(
+                conversation_entries
+            )
+            conversation_log = build_conversation_log_from_entries(
+                conversation_entries,
+                prior_memory_snapshot,
+            )
+        else:
+            persisted_messages = [
+                message.model_copy(deep=True) for message in messages or []
+            ]
+            prior_memory_snapshot = extract_persisted_memory_snapshot(
+                persisted_messages
+            )
+            recent_messages = strip_persisted_memory_messages(persisted_messages)
+            resolved_instructions = resolve_instructions(
+                recent_messages, self.instructions
+            )
+            conversation_log = build_conversation_log(
+                persisted_messages,
+                prior_memory_snapshot,
+            )
+        context = AgentContext(
             system_prompt=self.system_prompt,
-            user_message=user_message,
-            append_prompt=append_prompt,
-            conversation_entries=conversation_entries,
-            available_skills=available_skills,
-            active_skills=active_skills,
-            append_message=self.append_message,
-            transcript_messages=self.transcript_messages,
+            messages=[],
+            instructions=resolved_instructions,
+            conversation_log=conversation_log,
+            available_skills=[
+                skill.model_copy(deep=True) for skill in available_skills or []
+            ],
+            active_skills=[
+                skill.model_copy(deep=True) for skill in active_skills or []
+            ],
         )
+        context.messages = self.transcript_messages(context)
+        if append_prompt:
+            self.append_message(context, user_message or Message.user(prompt))
+        return context
 
     def initialize_owned(
         self,
@@ -109,120 +144,43 @@ class ContextManager:
         available_skills: Sequence[SkillSpec] | None = None,
         active_skills: Sequence[ActiveSkill] | None = None,
     ) -> AgentContext:
-        """Take an owned, validated active path into a new context."""
-        return initialize_owned_context_state(
-            prompt=prompt,
-            entries=conversation_entries,
-            instructions=self.instructions,
+        """Take a validated active path without recopying its entry values."""
+        persisted_messages = [
+            entry.message
+            for entry in conversation_entries
+            if entry.message is not None and entry.kind != "instruction"
+        ]
+        resolved_instructions = resolve_instructions(
+            persisted_messages, self.instructions
+        )
+        seed = SessionTree.take_validated_runtime(conversation_entries)
+        context = AgentContext.model_construct(
             system_prompt=self.system_prompt,
-            user_message=user_message,
-            append_prompt=append_prompt,
-            available_skills=available_skills,
-            active_skills=active_skills,
-            append_message=self.append_message,
+            messages=[*resolved_instructions, *seed.messages],
+            instructions=resolved_instructions,
+            conversation_log=ConversationLog.model_construct(
+                entries=seed.entries,
+                leaf_id=seed.leaf_id,
+            ),
+            available_skills=[
+                skill.model_copy(deep=True) for skill in available_skills or []
+            ],
+            active_skills=[
+                skill.model_copy(deep=True) for skill in active_skills or []
+            ],
+            provider_epoch_reset=False,
         )
+        if append_prompt:
+            self.append_message(context, user_message or Message.user(prompt))
+        return context
 
-    def append_message(self, context: AgentContext, message: Message) -> None:
-        """Append a message to the context's conversation log."""
-        copied = message.model_copy(deep=True)
-        branching = append_conversation_entry(
-            context,
-            ConversationEntry(
-                kind=entry_kind_for_message(copied),
-                message=copied,
-                metadata=message_entry_metadata(copied),
-            ),
-        )
-        update_message_projection(context, copied, branching=branching)
+    append_message = staticmethod(append_message)
 
-    def append_tool_context_message(
-        self,
-        context: AgentContext,
-        message: Message,
-        *,
-        tool_name: str,
-        tool_call_id: str,
-    ) -> None:
-        """Append provider-visible context injected by a completed tool call."""
-        copied = message.model_copy(deep=True)
-        metadata = message_entry_metadata(copied)
-        metadata.update(
-            {
-                "tool_name": tool_name,
-                "tool_call_id": tool_call_id,
-            }
-        )
-        branching = append_conversation_entry(
-            context,
-            ConversationEntry(
-                kind="tool_context",
-                message=copied,
-                metadata=metadata,
-            ),
-        )
-        update_message_projection(context, copied, branching=branching)
+    append_tool_context_message = staticmethod(append_tool_context_message)
 
-    def append_skill_message(self, context: AgentContext, message: Message) -> None:
-        """Append activated skill instructions to the context log."""
-        copied = message.model_copy(deep=True)
-        skill_name = skill_name_from_message(copied)
-        existing_activation_ids = {
-            activation_id
-            for entry in context.conversation_log.entries
-            if entry.kind == "skill_event"
-            and isinstance(
-                activation_id := entry.metadata.get("skill_activation_id"),
-                str,
-            )
-        }
-        activation_id = next(
-            (
-                skill.activation_id
-                for skill in reversed(context.active_skills)
-                if skill.name == skill_name
-                and skill.activation_id
-                and skill.activation_id not in existing_activation_ids
-            ),
-            None,
-        )
-        branching = append_conversation_entry(
-            context,
-            skill_message_conversation_entry(
-                copied,
-                parent_id=None,
-                skill_name=skill_name,
-                skill_activation_id=activation_id,
-            ),
-        )
-        update_message_projection(context, copied, branching=branching)
+    append_skill_message = staticmethod(append_skill_message)
 
-    def append_tool_result(
-        self,
-        context: AgentContext,
-        *,
-        tool_call_id: str,
-        result: dict[str, object],
-        provider_result_projection: str | None = None,
-    ) -> Message:
-        """Append a tool result message to the context and return it."""
-        message = Message.tool(
-            tool_call_id=tool_call_id,
-            content=json.dumps(result, ensure_ascii=False, separators=(",", ":")),
-        )
-        message._provider_result_projection = provider_result_projection
-        metadata = message_entry_metadata(message)
-        if provider_result_projection is not None:
-            metadata["provider_result_projection"] = provider_result_projection
-        branching = append_conversation_entry(
-            context,
-            ConversationEntry(
-                kind="tool_result",
-                message=message.model_copy(deep=True),
-                metadata=metadata,
-            ),
-        )
-        update_message_projection(context, message, branching=branching)
-        return message
+    append_tool_result = staticmethod(append_tool_result)
 
     def prepare_compaction(
         self,
@@ -354,56 +312,22 @@ class ContextManager:
 
     def messages_for_provider(self, context: AgentContext) -> list[Message]:
         """Build the message list to send to the provider for this context."""
-        prompt_context = self.prompt_builder.build(context)
+        prompt_context = build_prompt_context(context)
         messages = [
             *prompt_context.instructions,
             *prompt_context.ordered_messages,
         ]
-        if self.transform_messages is not None or self.convert_messages is not None:
-            messages = [message.model_copy(deep=True) for message in messages]
-        if self.transform_messages is not None:
-            messages = self.transform_messages(messages)
-        if self.convert_messages is not None:
-            messages = self.convert_messages(messages)
         normalized = normalize_tool_call_sequence(
             messages,
             drop_incomplete_assistant=True,
         )
         return project_tool_results_for_provider(normalized)
 
-    def transcript_messages(self, context: AgentContext) -> list[Message]:
-        """Return the compact runtime transcript from canonical history."""
-        messages = [message.model_copy(deep=True) for message in context.instructions]
-        from yoke.agent.conversation import project_conversation
+    transcript_messages = staticmethod(transcript_messages)
 
-        projection = project_conversation(
-            context.conversation_log.entries,
-            leaf_id=context.conversation_log.leaf_id,
-        )
-        messages.extend(
-            message.model_copy(deep=True) for message in projection.runtime_messages
-        )
-        return messages
+    newest_real_user_message = staticmethod(newest_real_user_message)
 
-    def newest_real_user_message(self, context: AgentContext) -> Message | None:
-        """Return the newest user-authored message from the transcript."""
-        for entry in reversed(context.conversation_log.entries):
-            if entry.kind == "user" and entry.message is not None:
-                return entry.message.model_copy(deep=True)
-        return None
-
-    def message_image_count(self, message: Message) -> int:
-        """Return the count of image inputs in one message."""
-        if not isinstance(message.content, list):
-            return 0
-        return sum(
-            1
-            for part in message.content
-            if isinstance(
-                part,
-                MessageImageURLContentPart | MessageLocalImageContentPart,
-            )
-        )
+    message_image_count = staticmethod(message_image_count)
 
     def estimate_tokens(self, messages: Sequence[Message]) -> TokenEstimate:
         """Estimate token usage for the given messages."""

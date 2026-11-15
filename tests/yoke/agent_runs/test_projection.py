@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from tests.yoke.loop.request_state_support import (
+    capture_request_state,
+    provider_request_state,
+)
+
 from collections import deque
 from contextlib import nullcontext
 from copy import deepcopy
@@ -87,6 +92,11 @@ def test_provider_usage_reaches_live_and_completed_agent_snapshots(registry, tmp
     assert finished["typedUsage"]["durationMs"] >= 0
 
 
+@pytest.fixture(autouse=True)
+def _capture_request_state(monkeypatch):
+    capture_request_state(monkeypatch)
+
+
 class RecordingProvider:
     provider_name = "fixture"
     max_images_per_message = None
@@ -96,10 +106,11 @@ class RecordingProvider:
         self.responses = deque(responses)
         self.requests = []
 
-    def complete(self, messages, tools):
-        raise AssertionError("Runtime must supply cache and continuity context")
-
     def complete_with_context(self, messages, tools, *, request_context):
+        raise AssertionError("Runtime must not use the retired contextual dispatch")
+
+    def complete(self, messages, tools):
+        request_context = provider_request_state(self)
         self.requests.append(
             (
                 [message.model_dump() for message in messages],

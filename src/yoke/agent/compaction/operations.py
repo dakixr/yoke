@@ -4,18 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
-from yoke.agent.compaction.core import CompactionPreparation
-from yoke.agent.compaction.core import CompactionResult
-from yoke.agent.compaction.core import TokenEstimate
+from yoke.agent.compaction.core import (
+    CompactionPreparation,
+    CompactionResult,
+    TokenEstimate,
+)
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.loop.lifecycle import compact_context_for_iteration
+from yoke.agent.loop.requests import ModelRequests
+from yoke.agent.models import ConversationEntry, Message, TokenUsage
 from yoke.agent.multimodal import messages_for_provider_capabilities
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.agent.models import TokenUsage
 from yoke.agent.usage import effective_usage_accounting
 
 
@@ -49,16 +48,10 @@ def force_compact_agent(
         available_skills=agent.available_skills,
         active_skills=agent.active_skills,
     )
-    compaction = compact_context_for_iteration(
-        agent,
-        context,
-        iteration=0,
-        on_event=None,
-        reason="manual",
-    )
+    compaction = ModelRequests(agent, context).compact(reason="manual")
     if compaction.result is None or compaction.preparation is None:
         return None
-    agent._context = context
+    agent.replace_context(context)
     provider_messages = messages_for_provider_capabilities(
         context_manager.messages_for_provider(context), agent.provider
     )

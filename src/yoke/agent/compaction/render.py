@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
-from yoke.agent.models import Message
-from yoke.agent.models import MessageContentPart
-
-if TYPE_CHECKING:
-    from yoke.agent.compaction.core import CompactionPreparation
+from yoke.agent.compaction.types import (
+    COMPACTION_SUMMARY_PROMPT,
+    DEFAULT_HANDOFF_TARGET_TOKENS,
+    TOKEN_WIDTH_GUESS,
+    CompactionPreparation,
+)
+from yoke.agent.conversation import parse_memory_message
+from yoke.agent.models import Message, MessageContentPart, MessageTextContentPart
 
 
 def build_compaction_summary_prompt(target_tokens: int) -> str:
     """Build the appended handoff instruction for one target size."""
     if target_tokens <= 0:
         raise ValueError("Compaction handoff target must be positive.")
-    from yoke.agent.compaction.core import COMPACTION_SUMMARY_PROMPT
-    from yoke.agent.compaction.core import DEFAULT_HANDOFF_TARGET_TOKENS
 
     return COMPACTION_SUMMARY_PROMPT.replace(
         f"{DEFAULT_HANDOFF_TARGET_TOKENS:,} estimated tokens",
@@ -84,8 +84,6 @@ def is_real_user_message(message: Message) -> bool:
 def parse_memory_safe(content: str) -> str | None:
     """Parse a memory message, returning None if parsing fails."""
     try:
-        from yoke.agent.conversation import parse_memory_message
-
         return parse_memory_message(content)
     except Exception:
         return None
@@ -99,7 +97,6 @@ def truncate_message_to_token_budget(
     """Truncate a message's content to fit within the given token budget."""
     if token_budget <= 0 or message.content is None:
         return None
-    from yoke.agent.compaction.core import TOKEN_WIDTH_GUESS
 
     char_budget = max(0, (token_budget - 1) * TOKEN_WIDTH_GUESS)
     text_content = message.text_content()
@@ -122,7 +119,6 @@ def truncate_structured_user_content(
     suffix: str,
 ) -> list[MessageContentPart]:
     """Truncate only the text parts of structured user content."""
-    from yoke.agent.models import MessageTextContentPart
 
     remaining = usable
     kept: list[MessageContentPart] = []

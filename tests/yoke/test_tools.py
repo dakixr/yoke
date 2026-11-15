@@ -27,12 +27,12 @@ from yoke.agent.tools import (
 )
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.truncate import truncate_head
-from yoke.agent.tools.command_process_types import (
+from yoke.agent.tools.command_process.types import (
     CommandProcessResult,
     clamp_exec_yield_time,
     clamp_write_yield_time,
 )
-from yoke.agent.tools.command_process_manager import (
+from yoke.agent.tools.command_process import (
     CommandProcessManager,
 )
 
@@ -390,7 +390,7 @@ def test_python_exec_timeout_is_separate_from_wait_budget(tmp_path: Path) -> Non
 def test_command_process_close_waits_for_in_flight_spawn(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from yoke.agent.tools.command_process_support import admission
+    from yoke.agent.tools.command_process import admission
 
     opening = threading.Event()
     allow_open = threading.Event()

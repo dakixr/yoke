@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from yoke.agent.loop import RuntimeAgent
-from yoke.agent.loop.state import context_for_run
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import Message
@@ -133,8 +132,7 @@ def test_skill_command_appends_skill_message_to_compacted_branch(
         active_skills=updated.active_skills,
         conversation_entries=updated.conversation_entries,
     )
-    resumed_context = context_for_run(
-        resumed_agent,
+    resumed_context = resumed_agent.context_for_run(
         "continue",
         user_message=None,
         available_skills=None,
