@@ -34,21 +34,14 @@ from tests.yoke.http.daemon_load_support import (
 )
 
 
-def _app(
-    tmp_path: Path,
-    controller: Controller,
-    *,
-    max_active_sessions: int = 4,
-    max_worker_threads: int | None = None,
-):
+def _app(tmp_path: Path, controller: Controller, **settings: int):
     return create_app(
         HttpAppSettings(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
             indexed_runtime_seed=False,
-            max_active_sessions=max_active_sessions,
-            max_worker_threads=max_worker_threads,
+            **settings,
         )
     )
 
