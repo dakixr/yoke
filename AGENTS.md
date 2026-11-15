@@ -5,7 +5,7 @@ When adding or changing interactive keyboard shortcuts, update the binding table
 and both modes' `/shortcuts` notices. Prompt-toolkit startup prints only the
 version banner.
 
-Prefer deep modules with clear seams over flat files sharing a prefix. New Python files under `src/yoke` must stay at or below 400 lines. Do not increase an existing oversized module; split it into deeper modules when modifying it substantially.
+Prefer deep modules with clear seams over flat files sharing a prefix. Aim for Python files under `src/yoke` of at most 400 lines; one cohesive class may grow to about 600. Never split code just to meet the limit: mixins, free functions taking an untyped owner, Protocols that list another class's private attributes, and helpers that reach into another object's underscore attributes are worse than a longer module. Split along real seams, where each piece owns its state and has a small public interface.
 
 After changing the Yoke SDK, read `src/yoke/agent/skills/built_in/yoke-subagents/SKILL.md` and update it, plus `PATTERNS.md` and `SDK_SURFACE.md`, when the documented orchestration API or examples are affected.
 
