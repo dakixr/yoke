@@ -12,7 +12,7 @@ from threading import RLock
 from pydantic import ValidationError
 
 from yoke._file_io import exclusive_file_lock
-from yoke.cli.session.models import SessionIndex
+from yoke.session.repository.models import SessionIndex
 
 
 INDEX_WRITE_ATTEMPTS = 6

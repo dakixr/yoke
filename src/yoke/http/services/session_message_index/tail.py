@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import mmap
 from typing import TYPE_CHECKING
+from typing import cast
 
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tool_context import normalize_legacy_tool_context_entries
-from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
-from yoke.cli.session.io import SESSION_METADATA_EVENT
+from yoke.session.repository.io import SESSION_ENTRY_METADATA_EVENT
+from yoke.session.repository.io import SESSION_METADATA_EVENT
 from yoke.http.services.session_message_index.models import ContextIndexWindow
 from yoke.http.services.session_message_index.models import MessageIndexSnapshot
 from yoke.http.services.session_message_index.models import TreeIndexPage
@@ -63,35 +64,72 @@ def tail_tree_page(
         stat = source.stat()
     except OSError:
         return None
+    scanned = _scan_tree_tail(source, stat.st_size, limit)
+    if scanned is None:
+        return None
+    locations, newest_ids, metadata_events, explicit_leaf = scanned
     summary = host.store.index_entry(session_id)
     leaf_id = summary.leaf_id if summary is not None else None
-    explicit_leaf: str | None | object = UNSET
+    if explicit_leaf is not UNSET:
+        leaf_id = explicit_leaf if isinstance(explicit_leaf, str) else None
+    elif leaf_id is None and newest_ids:
+        leaf_id = newest_ids[0]
+    selected_ids = newest_ids[:limit]
+    for entry_id in selected_ids:
+        metadata = metadata_events.get(entry_id)
+        if metadata is not None:
+            locations[entry_id][4:] = metadata
+    selected_ids.reverse()
+    snapshot = MessageIndexSnapshot(
+        source_size=stat.st_size,
+        source_mtime_ns=stat.st_mtime_ns,
+        indexed_size=stat.st_size,
+        prefix_hash="",
+        leaf_id=leaf_id,
+        entries=locations,
+    )
+    entries = read_entries(host, session_id, snapshot, selected_ids)
+    if entries is None:
+        return None
+    normalize_legacy_tool_context_entries(entries)
+    active_ids = _active_tail_ids(locations, leaf_id)
+    child_counts = _child_counts(locations, selected_ids)
+    total_entries = (
+        summary.entry_count
+        if summary is not None and summary.entry_count is not None
+        else len(selected_ids)
+    )
+    return TreeIndexPage(
+        entries=entries,
+        leaf_id=leaf_id,
+        active_ids=frozenset(active_ids),
+        child_counts=child_counts,
+        total_entries=total_entries,
+        has_more=len(newest_ids) > limit or total_entries > len(selected_ids),
+    )
+
+
+def _scan_tree_tail(
+    source, source_size: int, limit: int
+) -> (
+    tuple[
+        dict[str, list[object]],
+        list[str],
+        dict[str, tuple[int, int]],
+        str | None | object,
+    ]
+    | None
+):
     locations: dict[str, list[object]] = {}
     newest_ids: list[str] = []
     metadata_events: dict[str, tuple[int, int]] = {}
-
+    explicit_leaf: str | None | object = UNSET
     try:
         with source.open("rb") as handle:
-            if stat.st_size == 0:
-                return TreeIndexPage(
-                    entries=[],
-                    leaf_id=None,
-                    active_ids=frozenset(),
-                    child_counts={},
-                    total_entries=0,
-                    has_more=False,
-                )
+            if source_size == 0:
+                return locations, newest_ids, metadata_events, explicit_leaf
             with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
-                end = stat.st_size
-                if end and mapped[end - 1] == 10:
-                    end -= 1
-                while end > 0 and len(newest_ids) <= limit:
-                    newline = mapped.rfind(b"\n", 0, end)
-                    start = newline + 1
-                    raw = mapped[start:end]
-                    end = newline if newline >= 0 else 0
-                    if not raw:
-                        continue
+                for raw, start in _reverse_lines(mapped, source_size):
                     topology = entry_topology(raw)
                     if topology is not None:
                         entry_id, parent_id, kind = topology
@@ -104,6 +142,8 @@ def tail_tree_page(
                             None,
                         ]
                         newest_ids.append(entry_id)
+                        if len(newest_ids) > limit:
+                            break
                         continue
                     if not raw.startswith(b'{"type":'):
                         continue
@@ -118,10 +158,9 @@ def tail_tree_page(
                         payload_type == SESSION_METADATA_EVENT
                         and explicit_leaf is UNSET
                     ):
-                        if "leaf_id" in payload:
-                            value = payload.get("leaf_id")
-                            if value is None or isinstance(value, str):
-                                explicit_leaf = value
+                        value = payload.get("leaf_id")
+                        if value is None or isinstance(value, str):
+                            explicit_leaf = value
                     elif payload_type == SESSION_ENTRY_METADATA_EVENT:
                         entry_id = payload.get("entry_id")
                         if (
@@ -131,56 +170,40 @@ def tail_tree_page(
                             metadata_events[entry_id] = (start, len(raw))
     except (OSError, ValueError):
         return None
+    return locations, newest_ids, metadata_events, explicit_leaf
 
-    has_more = len(newest_ids) > limit
-    selected_ids = newest_ids[:limit]
-    if explicit_leaf is not UNSET:
-        leaf_id = explicit_leaf if isinstance(explicit_leaf, str) else None
-    elif leaf_id is None and newest_ids:
-        leaf_id = newest_ids[0]
 
-    for entry_id in selected_ids:
-        metadata = metadata_events.get(entry_id)
-        if metadata is not None:
-            locations[entry_id][4] = metadata[0]
-            locations[entry_id][5] = metadata[1]
-    selected_ids.reverse()
-    snapshot = MessageIndexSnapshot(
-        source_size=stat.st_size,
-        source_mtime_ns=stat.st_mtime_ns,
-        indexed_size=stat.st_size,
-        prefix_hash="",
-        leaf_id=leaf_id,
-        entries=locations,
-    )
-    entries = read_entries(host, session_id, snapshot, selected_ids)
-    if entries is None:
-        return None
-    normalize_legacy_tool_context_entries(entries)
+def _reverse_lines(mapped: mmap.mmap, size: int):
+    end = size - 1 if size and mapped[size - 1] == 10 else size
+    while end > 0:
+        newline = mapped.rfind(b"\n", 0, end)
+        start = newline + 1
+        raw = mapped[start:end]
+        end = newline if newline >= 0 else 0
+        if raw:
+            yield raw, start
 
-    active_ids: set[str] = set()
+
+def _active_tail_ids(
+    locations: dict[str, list[object]], leaf_id: str | None
+) -> set[str]:
+    active: set[str] = set()
     current = leaf_id
     while current is not None and current in locations:
-        active_ids.add(current)
+        active.add(current)
         current = location_parent_id(locations[current])
-    child_counts = {entry_id: 0 for entry_id in selected_ids}
+    return active
+
+
+def _child_counts(
+    locations: dict[str, list[object]], selected_ids: list[str]
+) -> dict[str, int]:
+    counts = {entry_id: 0 for entry_id in selected_ids}
     for location in locations.values():
-        entry_parent_id = location_parent_id(location)
-        if entry_parent_id in child_counts:
-            child_counts[entry_parent_id] += 1
-    total_entries = (
-        summary.entry_count
-        if summary is not None and summary.entry_count is not None
-        else len(selected_ids)
-    )
-    return TreeIndexPage(
-        entries=entries,
-        leaf_id=leaf_id,
-        active_ids=frozenset(active_ids),
-        child_counts=child_counts,
-        total_entries=total_entries,
-        has_more=has_more or total_entries > len(selected_ids),
-    )
+        parent = location_parent_id(location)
+        if parent in counts:
+            counts[parent] += 1
+    return counts
 
 
 def tail_context_window(
@@ -197,20 +220,44 @@ def tail_context_window(
     except OSError:
         return None
     leaf_id = indexed_leaf_id(host, session_id, stat.st_size, stat.st_mtime_ns)
+    scanned = _scan_context_tail(
+        source, stat.st_size, leaf_id, limit, include_instructions
+    )
+    if scanned is None:
+        return None
+    raw_entries, selected, complete = scanned
+    entries = _read_tail_entries(source, selected)
+    if entries is None:
+        return None
+    summary = host.store.index_entry(session_id)
+    total_entries = (
+        summary.entry_count
+        if summary is not None and summary.entry_count is not None
+        else len(entries)
+    )
+    return ContextIndexWindow(
+        entries=entries,
+        total_entries=total_entries,
+        truncated=not complete or total_entries > len(entries),
+    )
+
+
+def _scan_context_tail(source, size, leaf_id, limit, include_instructions):
     raw_entries: dict[str, tuple[str | None, str, int, int]] = {}
     selected: list[tuple[str, int, int]] = []
     current = leaf_id
     complete = False
 
-    def consume_available() -> bool:
+    def consume() -> bool:
         nonlocal current, complete
         while current is not None:
-            item = raw_entries.get(current)
+            current_id = cast(str, current)
+            item = raw_entries.get(current_id)
             if item is None:
                 return False
             parent_id, kind, offset, length = item
             if include_instructions or kind != "instruction":
-                selected.append((current, offset, length))
+                selected.append((current_id, offset, length))
                 if len(selected) > limit:
                     return True
             current = parent_id
@@ -219,57 +266,46 @@ def tail_context_window(
 
     try:
         with source.open("rb") as handle:
-            if stat.st_size == 0:
-                return ContextIndexWindow(
-                    entries=[],
-                    total_entries=0,
-                    truncated=False,
-                )
+            if size == 0:
+                return raw_entries, selected, True
             with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
-                end = stat.st_size
-                if end and mapped[end - 1] == 10:
-                    end -= 1
-                while end > 0:
-                    newline = mapped.rfind(b"\n", 0, end)
-                    start = newline + 1
-                    raw = mapped[start:end]
-                    end = newline if newline >= 0 else 0
-                    if not raw:
-                        continue
+                for raw, start in _reverse_lines(mapped, size):
                     topology = entry_topology(raw)
                     if topology is not None:
                         entry_id, parent_id, kind = topology
-                        raw_entries[entry_id] = (
-                            parent_id,
-                            kind,
-                            start,
-                            len(raw),
-                        )
+                        raw_entries[entry_id] = (parent_id, kind, start, len(raw))
                         if leaf_id is None:
                             leaf_id = entry_id
                             current = entry_id
-                        if current == entry_id and consume_available():
+                        if current == entry_id and consume():
                             break
                         continue
                     if leaf_id is None and raw.startswith(b'{"type":"metadata"'):
-                        try:
-                            payload = from_json(raw)
-                        except ValueError:
-                            continue
-                        if isinstance(payload, dict) and "leaf_id" in payload:
-                            value = payload.get("leaf_id")
-                            if value is None or isinstance(value, str):
-                                leaf_id = value
-                                current = value
-                                if consume_available():
-                                    break
+                        value = _metadata_leaf(raw)
+                        if value is not UNSET:
+                            leaf_id = value
+                            current = value
+                            if consume():
+                                break
                 if current is not None and len(selected) <= limit:
                     return None
     except (OSError, ValueError):
         return None
+    return raw_entries, selected[:limit][::-1], complete
 
-    selected = selected[:limit]
-    selected.reverse()
+
+def _metadata_leaf(raw: bytes) -> str | None | object:
+    try:
+        payload = from_json(raw)
+    except ValueError:
+        return UNSET
+    if not isinstance(payload, dict) or "leaf_id" not in payload:
+        return UNSET
+    value = payload.get("leaf_id")
+    return value if value is None or isinstance(value, str) else UNSET
+
+
+def _read_tail_entries(source, selected):
     entries: list[ConversationEntry] = []
     try:
         with source.open("rb") as handle:
@@ -284,15 +320,4 @@ def tail_context_window(
                 entries.append(ConversationEntry.model_validate(raw_entry))
     except (OSError, ValueError):
         return None
-
-    summary = host.store.index_entry(session_id)
-    total_entries = (
-        summary.entry_count
-        if summary is not None and summary.entry_count is not None
-        else len(entries)
-    )
-    return ContextIndexWindow(
-        entries=entries,
-        total_entries=total_entries,
-        truncated=not complete or total_entries > len(entries),
-    )
+    return entries

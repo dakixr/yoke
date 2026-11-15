@@ -41,7 +41,7 @@ from yoke.cli.runtime.startup import can_recover_resumed_provider
 from yoke.cli.runtime.startup import apply_startup_session_defaults
 from yoke.cli.runtime.startup import resolve_runtime_agent as _resolve_runtime_agent
 from yoke.cli.runtime.workspaces import load_resume_workspace, session_workspace
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 from yoke.session.workspace import require_workspace
 
 

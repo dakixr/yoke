@@ -5,8 +5,8 @@ from pathlib import Path
 
 from tests.yoke.http.performance_helpers import messages as _messages
 from yoke.agent.models import ConversationEntry, Message
-from yoke.cli.session.models import SessionRecord
-from yoke.cli.session.store import SessionStore
+from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.store import SessionStore
 from yoke.http.models.session import SessionForkRequest, TreeNavigateRequest
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_message_index import storage as index_storage

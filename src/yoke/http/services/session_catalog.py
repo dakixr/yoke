@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-from yoke.cli.session.models import SessionIndexEntry
+from yoke.session.repository.models import SessionIndexEntry
 from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.common import CursorInfo, LocationInfo
 from yoke.http.models.session import (

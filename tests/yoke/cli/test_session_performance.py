@@ -28,10 +28,10 @@ from yoke.cli.runtime.tree import flatten_tree_rows
 from yoke.cli.runtime.tree import get_session_tree
 from yoke.cli.runtime.tree import default_folded_tree_ids
 from yoke.cli.runtime.tree import set_entry_label
-from yoke.cli.session import SessionRecord
-from yoke.cli.session import SessionStore
-from yoke.cli.session.io import decode_session_record
-from yoke.cli.session.io import record_jsonl
+from yoke.session.repository import SessionRecord
+from yoke.session import SessionStore
+from yoke.session.repository.io import decode_session_record
+from yoke.session.repository.io import record_jsonl
 
 ENTRY_COUNT = 50_000
 ACTIVE_COUNT = 32
@@ -300,8 +300,8 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
         committed.append(saved)
         return saved
 
-    monkeypatch.setattr("yoke.cli.session.tree.SessionTree.restore", fail)
-    monkeypatch.setattr("yoke.cli.session.writer.append_jsonl_lines", fail)
+    monkeypatch.setattr("yoke.session.repository.tree.SessionTree.restore", fail)
+    monkeypatch.setattr("yoke.session.repository.writer.append_jsonl_lines", fail)
     monkeypatch.setattr(store, "load", fail)
     monkeypatch.setattr(store, "_prune_index_and_sessions", fail)
     monkeypatch.setattr(store, "save", track_save)
@@ -436,7 +436,7 @@ def test_prompt_exit_appends_only_changed_reasoning_metadata(
         events.append(changes)
 
     monkeypatch.setattr(
-        "yoke.cli.session.metadata.append_session_metadata",
+        "yoke.session.repository.metadata.append_session_metadata",
         capture_metadata,
     )
     monkeypatch.setattr(store, "_update_index", lambda _record: None)

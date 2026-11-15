@@ -21,9 +21,9 @@ from typing import Any
 from urllib.request import Request
 from urllib.request import urlopen
 
-from yoke.cli.session.index import SESSION_INDEX_SUMMARY_VERSION
-from yoke.cli.session.models import SessionIndex
-from yoke.cli.session.models import SessionIndexEntry
+from yoke.session.repository.index import SESSION_INDEX_SUMMARY_VERSION
+from yoke.session.repository.models import SessionIndex
+from yoke.session.repository.models import SessionIndexEntry
 
 
 TOKEN = "yoke-perf-benchmark"

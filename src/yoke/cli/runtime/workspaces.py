@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
 
-from yoke.cli.session import SessionRecord, SessionStore
+from yoke.session.repository import SessionRecord, SessionStore
 from yoke.session.workspace import relocate_session_workspace
 from yoke.session.workspace import require_session_workspace
 from yoke.session.workspace import workspace_lease

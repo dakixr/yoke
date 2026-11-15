@@ -26,11 +26,11 @@ from yoke.cli.runtime.selector.session import (
     _select_session_id_interactive,
 )
 from yoke.cli.runtime.selector.ui import can_use_keyboard_selector
-from yoke.cli.session import SessionRecord
-from yoke.cli.session import SessionStore
-from yoke.cli.session import new_session_id
-from yoke.cli.session.utils import new_unique_session_id
-from yoke.cli.session.metadata import update_loaded_provider_state
+from yoke.session.repository import SessionRecord
+from yoke.session import SessionStore
+from yoke.session.repository import new_session_id
+from yoke.session.repository.utils import new_unique_session_id
+from yoke.session.repository.metadata import update_loaded_provider_state
 from yoke.cli.runtime.workspaces import retain_workspace_lease, session_workspace
 from yoke.session.workspace import require_workspace
 from yoke.cli.runtime.title import (

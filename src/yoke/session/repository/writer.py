@@ -10,15 +10,15 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from yoke.agent.models import ConversationEntry
-from yoke.cli.session.io import append_jsonl_lines
-from yoke.cli.session.io import decode_session_record_lines
-from yoke.cli.session.io import entry_jsonl_line
-from yoke.cli.session.io import entry_metadata_jsonl_line
-from yoke.cli.session.io import is_canonical_jsonl
-from yoke.cli.session.io import metadata_delta_jsonl_line
-from yoke.cli.session.io import record_jsonl
-from yoke.cli.session.io import trusted_append_jsonl_lines
-from yoke.cli.session.models import SessionRecord
+from yoke.session.repository.io import append_jsonl_lines
+from yoke.session.repository.io import decode_session_record_lines
+from yoke.session.repository.io import entry_jsonl_line
+from yoke.session.repository.io import entry_metadata_jsonl_line
+from yoke.session.repository.io import is_canonical_jsonl
+from yoke.session.repository.io import metadata_delta_jsonl_line
+from yoke.session.repository.io import record_jsonl
+from yoke.session.repository.io import trusted_append_jsonl_lines
+from yoke.session.repository.models import SessionRecord
 
 
 def write_session_record(

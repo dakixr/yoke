@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mmap
 from typing import TYPE_CHECKING
+from typing import cast
 
 from pydantic_core import from_json
 
@@ -14,6 +15,7 @@ from yoke.http.services.session_message_index.models import MessageIndexSnapshot
 from yoke.http.services.session_message_index.models import MessagePage
 from yoke.http.services.session_message_index.models import NavigationIndexPreview
 from yoke.http.services.session_message_index.models import PUBLIC_EXCLUDED_KINDS
+from yoke.http.services.session_message_index.models import UNSET
 from yoke.http.services.session_message_index.models import entry_topology
 from yoke.http.services.session_message_index.models import known_parent_chain
 from yoke.http.services.session_message_index.models import (
@@ -31,8 +33,7 @@ def query_entry_tree_state(
     session_id: str,
     entry_id: str,
 ) -> tuple[ConversationEntry, bool, bool, int] | None:
-    """Read one entry with its active/current and child-count state."""
-    snapshot = host._ensure(session_id)
+    snapshot = host.ensure(session_id)
     if snapshot is None or entry_id not in snapshot.entries:
         return None
     entries = read_entries(host, session_id, snapshot, [entry_id])
@@ -58,14 +59,13 @@ def query_navigation_target(
     session_id: str,
     target_id: str,
 ) -> ConversationEntry | None:
-    """Return one proven persisted navigation target from the topology index."""
     snapshot = current_snapshot(host, session_id)
     if snapshot is None:
         entry = tail_entry(host, session_id, target_id)
         if entry is not None:
             host.warm_async(session_id)
             return entry
-        snapshot = host._ensure(session_id)
+        snapshot = host.ensure(session_id)
     if snapshot is None or target_id not in snapshot.entries:
         return None
     entries = read_entries(host, session_id, snapshot, [target_id])
@@ -79,7 +79,6 @@ def tail_navigation_preview(
     target_id: str,
     abandoned_limit: int,
 ) -> NavigationIndexPreview | None:
-    """Resolve one navigation preview from the relevant log tail only."""
     source = host.store.directory / f"{session_id}.jsonl"
     try:
         stat = source.stat()
@@ -227,35 +226,46 @@ def tail_page(
     limit: int,
     anchor_id: str | None,
 ) -> MessagePage | None:
-    """Serve a descending active-branch page without scanning old bodies."""
     source = host.store.directory / f"{session_id}.jsonl"
     try:
         stat = source.stat()
     except OSError:
         return None
     leaf_id = indexed_leaf_id(host, session_id, stat.st_size, stat.st_mtime_ns)
+    scanned = _scan_navigation_tail(source, stat.st_size, leaf_id, limit, anchor_id)
+    if scanned is None:
+        return None
+    locations, selected, passed_anchor = scanned
+    if anchor_id is not None and not passed_anchor:
+        return None
+    entries = _read_navigation_entries(source, selected[:limit])
+    if entries is None:
+        return None
+    return MessagePage(entries=entries, has_more=len(selected) > limit)
+
+
+def _scan_navigation_tail(source, size, leaf_id, limit, anchor_id):
     raw_entries: dict[str, tuple[str | None, str, int, int]] = {}
     selected: list[tuple[int, int]] = []
     current = leaf_id
     waiting_for = current
     passed_anchor = anchor_id is None
 
-    def consume_available(mapped: mmap.mmap) -> bool:
+    def consume(mapped: mmap.mmap) -> bool:
         nonlocal current, passed_anchor, waiting_for
         while current is not None:
-            item = raw_entries.get(current)
+            current_id = cast(str, current)
+            item = raw_entries.get(current_id)
             if item is None:
                 waiting_for = current
                 return False
-            parent_id, kind, offset, length = item
+            parent_id, _kind, offset, length = item
             if not passed_anchor:
                 if current == anchor_id:
                     passed_anchor = True
             else:
                 normalized_kind, missing_id = _tail_entry_kind(
-                    mapped,
-                    raw_entries,
-                    current,
+                    mapped, raw_entries, current_id
                 )
                 if normalized_kind is None:
                     waiting_for = missing_id
@@ -270,66 +280,63 @@ def tail_page(
 
     try:
         with source.open("rb") as handle:
-            if stat.st_size == 0:
-                return MessagePage(entries=[], has_more=False)
+            if size == 0:
+                return {}, [], passed_anchor
             with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
-                end = stat.st_size
-                if end and mapped[end - 1] == 10:
-                    end -= 1
-                while end > 0:
-                    newline = mapped.rfind(b"\n", 0, end)
-                    start = newline + 1
-                    raw = mapped[start:end]
-                    end = newline if newline >= 0 else 0
-                    if not raw:
-                        continue
+                for raw, start in _reverse_lines(mapped, size):
                     topology = entry_topology(raw)
                     if topology is not None:
                         entry_id, parent_id, kind = topology
-                        raw_entries[entry_id] = (
-                            parent_id,
-                            kind,
-                            start,
-                            len(raw),
-                        )
+                        raw_entries[entry_id] = (parent_id, kind, start, len(raw))
                         if leaf_id is None:
-                            # Canonical writes append leaf metadata before
-                            # appended entries. If no newer metadata event
-                            # appeared after the entries, the last entry is
-                            # the current leaf. This makes old/missing index
-                            # migrations fast without guessing across a
-                            # metadata-only checkout.
                             leaf_id = entry_id
                             current = entry_id
                             waiting_for = entry_id
-                        if waiting_for == entry_id and consume_available(mapped):
+                        if waiting_for == entry_id and consume(mapped):
                             break
                         continue
                     if leaf_id is None and raw.startswith(b'{"type":"metadata"'):
-                        try:
-                            payload = from_json(raw)
-                        except ValueError:
-                            continue
-                        if isinstance(payload, dict) and "leaf_id" in payload:
-                            value = payload.get("leaf_id")
-                            if value is None or isinstance(value, str):
-                                leaf_id = value
-                                current = value
-                                waiting_for = value
-                                if consume_available(mapped):
-                                    break
+                        value = _metadata_leaf(raw)
+                        if value is not UNSET:
+                            leaf_id = value
+                            current = value
+                            waiting_for = value
+                            if consume(mapped):
+                                break
                 if current is not None and len(selected) <= limit:
                     return None
     except (OSError, ValueError):
         return None
+    return raw_entries, selected, passed_anchor
 
-    if anchor_id is not None and not passed_anchor:
-        return None
-    page_locations = selected[:limit]
+
+def _reverse_lines(mapped: mmap.mmap, size: int):
+    end = size - 1 if size and mapped[size - 1] == 10 else size
+    while end > 0:
+        newline = mapped.rfind(b"\n", 0, end)
+        start = newline + 1
+        raw = mapped[start:end]
+        end = newline if newline >= 0 else 0
+        if raw:
+            yield raw, start
+
+
+def _metadata_leaf(raw: bytes) -> str | None | object:
+    try:
+        payload = from_json(raw)
+    except ValueError:
+        return UNSET
+    if not isinstance(payload, dict) or "leaf_id" not in payload:
+        return UNSET
+    value = payload.get("leaf_id")
+    return value if value is None or isinstance(value, str) else UNSET
+
+
+def _read_navigation_entries(source, locations):
     entries: list[ConversationEntry] = []
     try:
         with source.open("rb") as handle:
-            for offset, length in page_locations:
+            for offset, length in locations:
                 handle.seek(offset)
                 payload = from_json(handle.read(length))
                 if not isinstance(payload, dict):
@@ -340,7 +347,7 @@ def tail_page(
                 entries.append(ConversationEntry.model_validate(raw_entry))
     except (OSError, ValueError):
         return None
-    return MessagePage(entries=entries, has_more=len(selected) > limit)
+    return entries
 
 
 def _tail_entry_kind(
@@ -348,7 +355,6 @@ def _tail_entry_kind(
     raw_entries: dict[str, tuple[str | None, str, int, int]],
     entry_id: str,
 ) -> tuple[str | None, str | None]:
-    """Classify one cold-tail user after its provenance chain is available."""
     location = raw_entries[entry_id]
     if location[1] != "user":
         return location[1], None
@@ -383,8 +389,10 @@ def indexed_leaf_id(
     source_mtime_ns: int,
 ) -> str | None:
     entry = host.store.index_entry(session_id)
-    if entry is None:
-        return None
-    if entry.file_size != source_size or entry.file_mtime_ns != source_mtime_ns:
-        return None
-    return entry.leaf_id
+    return (
+        entry.leaf_id
+        if entry is not None
+        and entry.file_size == source_size
+        and entry.file_mtime_ns == source_mtime_ns
+        else None
+    )

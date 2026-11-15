@@ -10,7 +10,7 @@ from yoke.agent.models import ConversationEntry
 from yoke.agent.models import ConversationEntryKind
 from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import Message
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 
 
 def _entry(

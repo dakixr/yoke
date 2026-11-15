@@ -8,7 +8,7 @@ from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import Message
 from yoke.agent.session_tree import SessionTree
 from yoke.agent.session_tree.projections import ConversationProjection
-from yoke.cli.session.models import SessionRecord
+from yoke.session.repository.models import SessionRecord
 from yoke.http.models.session import ContextData
 from yoke.http.models.session import ContextMessage
 from yoke.http.models.session import ContextResponse

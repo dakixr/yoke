@@ -36,7 +36,7 @@ from yoke.cli.runtime.title import (
     start_session_title_generation,
     wait_for_session_title,
 )
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 
 from .support import CaptureStream, FakeAgent, ImageAwareAgent, active_session_for
 

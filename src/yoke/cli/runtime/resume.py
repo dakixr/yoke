@@ -10,8 +10,8 @@ from yoke.agent.session_tree import ConversationProjection
 from yoke.agent.session_tree import parse_memory_message
 from yoke.agent.session_tree import ScrollbackProjection
 from yoke.agent.session_tree import SessionTree
-from yoke.cli.session import SessionRecord
-from yoke.cli.session import SessionTreeIndex
+from yoke.session.repository import SessionRecord
+from yoke.session.repository import SessionTreeIndex
 
 RESUME_SCROLLBACK_MESSAGE_LIMIT = 400
 

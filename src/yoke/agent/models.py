@@ -148,6 +148,10 @@ class Message(BaseModel):
     reasoning_signature: str | None = None
     usage: TokenUsage | None = None
 
+    def set_provider_result_projection(self, projection: str | None) -> None:
+        """Attach runtime-only provider projection provenance."""
+        self._provider_result_projection = projection
+
     @property
     def _provider_result_projection(self) -> str | None:
         """Return runtime-only tool-result projection provenance."""

@@ -20,10 +20,10 @@ from yoke.cli.interactive import session_commands
 from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.render import build_console
 from yoke.cli.runtime import create_active_session, run_cli
-from yoke.cli.session import SessionStore
-from yoke.cli.session.io import decode_session_record
-from yoke.cli.session.models import SessionRecord
-from yoke.cli.session.writer import write_session_record
+from yoke.session import SessionStore
+from yoke.session.repository.io import decode_session_record
+from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.writer import write_session_record
 
 from .support import CaptureStream, FakeAgent
 

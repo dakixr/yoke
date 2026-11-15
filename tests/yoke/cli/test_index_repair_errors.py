@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from yoke.agent.models import Message
-from yoke.cli.session import SessionStore
-from yoke.cli.session.writer import append_session_metadata
+from yoke.session import SessionStore
+from yoke.session.repository.writer import append_session_metadata
 
 
 def test_transient_summary_failure_retains_prior_index_until_next_repair(

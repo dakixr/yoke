@@ -41,7 +41,7 @@ from yoke.cli.runtime.cli import run_cli, run_resume_cli
 from yoke.cli.runtime.lifetime import close_cli_owned_agent, register_cli_owned_agent
 from yoke.cli.runtime.session import create_active_session
 from yoke.cli.runtime.workspaces import retain_workspace_lease
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 from yoke.session.workspace import WorkspaceBusy, WorkspaceUnavailable, workspace_lease
 
 from .support import CaptureStream, FakeAgent, active_session_for

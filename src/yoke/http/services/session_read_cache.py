@@ -11,10 +11,10 @@ from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.skills.models import ActiveSkill
-from yoke.cli.session.io import SESSION_ENTRY_EVENT
-from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
-from yoke.cli.session.io import SESSION_METADATA_EVENT
-from yoke.cli.session.models import SessionRecord
+from yoke.session.repository.io import SESSION_ENTRY_EVENT
+from yoke.session.repository.io import SESSION_ENTRY_METADATA_EVENT
+from yoke.session.repository.io import SESSION_METADATA_EVENT
+from yoke.session.repository.models import SessionRecord
 from yoke.http.services.projectors import public_chat_entries
 from yoke.session import SessionStore
 

@@ -22,7 +22,7 @@ from yoke.cli.main import app
 from yoke.cli.providers.state import apply_session_provider_defaults
 from yoke.cli.providers.state import ProviderSessionState
 from yoke.cli.runtime.cli import run_cli, run_resume_cli
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 
 from .support import CaptureStream
 

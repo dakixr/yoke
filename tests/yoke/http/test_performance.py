@@ -14,7 +14,7 @@ from tests.yoke.http.performance_helpers import projected_text as _projected_tex
 from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.agent.observability import ToolTraceStore
 from yoke.agent.skills.models import ActiveSkill
-from yoke.cli.session.store import SessionStore
+from yoke.session.repository.store import SessionStore
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_message_index import storage as index_storage

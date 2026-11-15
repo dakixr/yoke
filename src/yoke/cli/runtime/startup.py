@@ -16,7 +16,7 @@ from yoke.cli.runtime.base import ToolReportAgent
 from yoke.cli.runtime.lifetime import register_cli_owned_agent
 from yoke.cli.runtime.session import apply_session_defaults_to_args
 from yoke.cli.runtime.workspaces import retain_workspace_lease, session_workspace
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 from yoke.session.workspace import require_workspace
 
 

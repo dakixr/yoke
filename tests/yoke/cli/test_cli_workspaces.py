@@ -17,7 +17,7 @@ from yoke.cli.runtime.cli import run_cli, run_resume_cli
 from yoke.cli.config import CLIArgs
 from yoke.cli.runtime import workspaces
 from yoke.cli.runtime.session import create_active_session, fork_active_session
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 from yoke.session.workspace import (
     WorkspaceBusy,
     WorkspaceUnavailable,

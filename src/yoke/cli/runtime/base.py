@@ -24,7 +24,7 @@ from yoke.cli.runtime.stats import (
 from yoke.cli.runtime.stats import (
     estimate_messages_token_usage as estimate_serialized_message_tokens,
 )
-from yoke.cli.session import SessionRecord, SessionStore, SessionTreeIndex
+from yoke.session.repository import SessionRecord, SessionStore, SessionTreeIndex
 
 
 @runtime_checkable

@@ -12,7 +12,7 @@ from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.cli.config import CLIArgs
 from yoke.cli.runtime import run_resume_cli
 from yoke.cli.render import build_console, print_session_scrollback
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 
 from .support import CaptureStream, FakeAgent
 
@@ -20,7 +20,7 @@ from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
 from yoke.cli.runtime.resume import RESUME_SCROLLBACK_MESSAGE_LIMIT
 from yoke.cli.runtime.resume import project_resumed_session
-from yoke.cli.session import SessionRecord
+from yoke.session.repository import SessionRecord
 
 
 def test_resume_by_id_continues_saved_session(tmp_path: Path) -> None:
@@ -420,7 +420,7 @@ def test_save_reuses_loaded_record_without_decoding_file_again(
     store.save("current", [Message.user("hello")], root=tmp_path)
     loaded = store.load("current")
     monkeypatch.setattr(
-        "yoke.cli.session.writer.decode_session_record_lines",
+        "yoke.session.repository.writer.decode_session_record_lines",
         lambda *_args, **_kwargs: pytest.fail("session was decoded again"),
     )
 

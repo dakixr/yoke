@@ -11,13 +11,13 @@ from typing import Any
 import pytest
 
 from yoke.agent.models import Message
-from yoke.cli.session import SessionStore
-from yoke.cli.session.index_cache import INDEX_WRITE_ATTEMPTS
-from yoke.cli.session.index_cache import INDEX_WRITE_RETRY_SECONDS
-from yoke.cli.session.index_cache import SessionIndexCache
-from yoke.cli.session.maintenance import prune_index_and_sessions
-from yoke.cli.session.models import SessionIndex
-from yoke.cli.session.models import SessionIndexEntry
+from yoke.session import SessionStore
+from yoke.session.repository.index_cache import INDEX_WRITE_ATTEMPTS
+from yoke.session.repository.index_cache import INDEX_WRITE_RETRY_SECONDS
+from yoke.session.repository.index_cache import SessionIndexCache
+from yoke.session.repository.maintenance import prune_index_and_sessions
+from yoke.session.repository.models import SessionIndex
+from yoke.session.repository.models import SessionIndexEntry
 
 
 def _update_index_in_process(
@@ -45,7 +45,7 @@ def _prune_with_paused_session_scan(
     scan_complete: Any,
     release_scan: Any,
 ) -> None:
-    import yoke.cli.session.store as store_module
+    import yoke.session.repository.store as store_module
 
     original_session_file_ids = store_module.session_file_ids
 
@@ -81,7 +81,7 @@ def test_index_write_retries_permission_errors_and_uses_unique_temps(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.cli.session.index_cache as index_cache_module
+    import yoke.session.repository.index_cache as index_cache_module
 
     cache = SessionIndexCache(tmp_path / "index.json")
     attempts: list[Path] = []
@@ -190,7 +190,7 @@ def test_maintenance_preserves_index_when_directory_scan_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.cli.session.index as index_module
+    import yoke.session.repository.index as index_module
 
     store = SessionStore(tmp_path / "sessions")
     store.save("kept", [], root=tmp_path)
@@ -209,7 +209,7 @@ def test_maintenance_retries_summary_after_one_entry_stat_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.cli.session.index as index_module
+    import yoke.session.repository.index as index_module
 
     store = SessionStore(tmp_path / "sessions")
     store.save("kept", [Message.user("still here")], root=tmp_path)
@@ -256,7 +256,7 @@ def test_maintenance_removes_file_deleted_between_repair_and_prune(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.cli.session.store as store_module
+    import yoke.session.repository.store as store_module
 
     store = SessionStore(tmp_path / "sessions")
     store.save("deleted-during-maintenance", [], root=tmp_path)
@@ -277,7 +277,7 @@ def test_prune_scans_session_names_inside_the_index_transaction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.cli.session.store as store_module
+    import yoke.session.repository.store as store_module
 
     store = SessionStore(tmp_path / "sessions")
     store.save("kept", [], root=tmp_path)
@@ -367,10 +367,11 @@ def test_prune_without_directory_snapshot_keeps_direct_missing_file_check(
     store._session_path("missing").unlink()
 
     changed = prune_index_and_sessions(
-        store,
+        directory=store.directory,
+        session_path=store._session_path,
         index=index,
         retention_days=30,
-        exclude_session_id=None,
+        existing_session_ids=set(),
     )
 
     assert changed is True
@@ -381,7 +382,7 @@ def test_session_save_survives_and_repairs_an_index_write_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.cli.session.index_cache as index_cache_module
+    import yoke.session.repository.index_cache as index_cache_module
 
     store = SessionStore(tmp_path / "sessions")
     original_replace = store._index_cache._replace_once

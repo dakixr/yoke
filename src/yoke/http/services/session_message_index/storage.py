@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
-from yoke.cli.session.io import SESSION_ENTRY_EVENT
-from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
-from yoke.cli.session.io import SESSION_JSONL_HEADER_TYPE
-from yoke.cli.session.io import SESSION_JSONL_HEADER_VERSION
-from yoke.cli.session.io import SESSION_METADATA_EVENT
+from yoke.session.repository.io import SESSION_ENTRY_EVENT
+from yoke.session.repository.io import SESSION_ENTRY_METADATA_EVENT
+from yoke.session.repository.io import SESSION_JSONL_HEADER_TYPE
+from yoke.session.repository.io import SESSION_JSONL_HEADER_VERSION
+from yoke.session.repository.io import SESSION_METADATA_EVENT
 from yoke.http.services.session_message_index.models import MessageIndexSnapshot
 from yoke.http.services.session_message_index.models import can_append
 from yoke.http.services.session_message_index.models import (
@@ -72,16 +72,13 @@ def clone_sidecar(
 
 def warm_async(host: SessionMessageIndex, session_id: str) -> None:
     """Build a durable topology sidecar after latency-sensitive reads return."""
-    with host._cache_lock:
-        if session_id in host._warming:
-            return
-        host._warming.add(session_id)
-    host._executor.submit(warm_one, host, session_id)
+    if host.cache.start_warming(session_id):
+        host.cache.submit(lambda: warm_one(host, session_id))
 
 
 def close(host: SessionMessageIndex) -> None:
     """Stop accepting background index work during application shutdown."""
-    host._executor.shutdown(wait=False, cancel_futures=True)
+    host.cache.close()
 
 
 def warm_one(host: SessionMessageIndex, session_id: str) -> None:
@@ -89,10 +86,9 @@ def warm_one(host: SessionMessageIndex, session_id: str) -> None:
         # Give the HTTP response and browser paint a head start. The full
         # source scan is deliberately background work.
         time.sleep(0.2)
-        host._ensure(session_id)
+        host.ensure(session_id)
     finally:
-        with host._cache_lock:
-            host._warming.discard(session_id)
+        host.cache.finish_warming(session_id)
 
 
 def current_snapshot(
@@ -362,11 +358,7 @@ def read_entries(
 
 
 def cached(host: SessionMessageIndex, session_id: str) -> MessageIndexSnapshot | None:
-    with host._cache_lock:
-        snapshot = host._cache.get(session_id)
-        if snapshot is not None:
-            host._cache.move_to_end(session_id)
-        return snapshot
+    return host.cache.get(session_id)
 
 
 def store_cache(
@@ -374,13 +366,8 @@ def store_cache(
     session_id: str,
     snapshot: MessageIndexSnapshot,
 ) -> None:
-    with host._cache_lock:
-        host._cache[session_id] = snapshot
-        host._cache.move_to_end(session_id)
-        while len(host._cache) > host.max_cached_sessions:
-            host._cache.popitem(last=False)
+    host.cache.put(session_id, snapshot)
 
 
 def session_lock(host: SessionMessageIndex, session_id: str) -> Lock:
-    with host._cache_lock:
-        return host._session_locks.setdefault(session_id, Lock())
+    return host.cache.session_lock(session_id)

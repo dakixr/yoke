@@ -10,10 +10,10 @@ from yoke.agent.message_sanitizer import normalize_tool_call_sequence
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.session_tree import SessionTree
-from yoke.cli.session.tree_index import SessionTreeIndex
+from yoke.session.repository.tree_index import SessionTreeIndex
 
 if TYPE_CHECKING:
-    from yoke.cli.session import SessionRecord
+    from yoke.session.repository import SessionRecord
 
 
 @dataclass(frozen=True, slots=True)

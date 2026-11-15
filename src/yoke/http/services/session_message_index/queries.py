@@ -45,7 +45,7 @@ def query_page(
             host.warm_async(session_id)
             return page
     if snapshot is None:
-        snapshot = host._ensure(session_id)
+        snapshot = host.ensure(session_id)
     if snapshot is None:
         return None
     if order == "desc":
@@ -64,7 +64,7 @@ def query_page(
 def query_entry(
     host: SessionMessageIndex, session_id: str, entry_id: str
 ) -> ConversationEntry | None:
-    snapshot = host._ensure(session_id)
+    snapshot = host.ensure(session_id)
     if snapshot is None:
         return None
     location = snapshot.entries.get(entry_id)
@@ -84,7 +84,7 @@ def query_tool_trace_messages(
         if has_tools is False:
             host.warm_async(session_id)
             return []
-        snapshot = host._ensure(session_id)
+        snapshot = host.ensure(session_id)
     if snapshot is None:
         return None
     active_ids = paths.active_ids(snapshot)
@@ -128,7 +128,7 @@ def query_tool_trace_messages(
             projection = entry.metadata.get("provider_result_projection")
             if isinstance(projection, str) and projection:
                 message = message.model_copy(deep=False)
-                message._provider_result_projection = projection
+                message.set_provider_result_projection(projection)
         messages.append(message)
     return messages
 
@@ -148,7 +148,7 @@ def query_tree_page(
             host.warm_async(session_id)
             return tail_page
     if snapshot is None:
-        snapshot = host._ensure(session_id)
+        snapshot = host.ensure(session_id)
     if snapshot is None:
         return None
     ordered_ids = list(snapshot.entries)
@@ -200,7 +200,7 @@ def query_context_window(
         if tail_window is not None:
             host.warm_async(session_id)
             return tail_window
-        snapshot = host._ensure(session_id)
+        snapshot = host.ensure(session_id)
     if snapshot is None:
         return None
     active_ids = paths.active_ids(snapshot)
@@ -267,7 +267,7 @@ def query_runtime_seed(
             prior, stat.st_size, source_prefix_hash
         ):
             return None
-        snapshot = host._ensure(session_id)
+        snapshot = host.ensure(session_id)
     if snapshot is None:
         return None
     active_ids = paths.active_ids(snapshot)
@@ -356,7 +356,7 @@ def query_navigation_preview(
         if tail_preview is not None:
             host.warm_async(session_id)
             return tail_preview
-        snapshot = host._ensure(session_id)
+        snapshot = host.ensure(session_id)
     if snapshot is None or target_id not in snapshot.entries:
         return None
     current_ids = paths.active_ids(snapshot)

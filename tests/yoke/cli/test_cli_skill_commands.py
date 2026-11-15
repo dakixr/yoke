@@ -15,7 +15,7 @@ from yoke.ai.providers.base import Provider
 from yoke.cli.interactive.skill_commands import handle_skill_load
 from yoke.cli.render import build_console
 from yoke.cli.runtime import ActiveSession
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 
 from .support import CaptureStream
 

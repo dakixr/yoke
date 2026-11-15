@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from yoke.cli.session.models import SessionRecord
-from yoke.cli.session.utils import normalize_root
-from yoke.cli.session.utils import normalize_title
-from yoke.cli.session.utils import timestamp
-from yoke.cli.session.writer import append_session_metadata
+from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.utils import normalize_root
+from yoke.session.repository.utils import normalize_title
+from yoke.session.repository.utils import timestamp
+from yoke.session.repository.writer import append_session_metadata
 
 if TYPE_CHECKING:
-    from yoke.cli.session.store import SessionStore
+    from yoke.session.repository.store import SessionStore
 
 
 def update_loaded_provider_state(
@@ -45,13 +45,13 @@ def update_loaded_provider_state(
     if record.created_at is None:
         changes["created_at"] = now
     updated = record.model_copy(update=changes)
-    path = store._session_path(record.id)
+    path = store.session_path(record.id)
     store.directory.mkdir(parents=True, exist_ok=True)
     if path.exists():
         append_session_metadata(path, changes)
     else:
-        store._write_session_record(updated)
+        store.write_session_record(updated)
     for key, value in changes.items():
         setattr(record, key, value)
-    store._update_index(updated)
+    store.update_index(updated)
     return record

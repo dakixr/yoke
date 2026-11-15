@@ -19,9 +19,9 @@ from yoke.agent.loop import AgentResult
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.session_tree import ConversationProjection, SessionTree
-from yoke.cli.session.models import SessionRecord
-from yoke.cli.session.store import SessionStore
-from yoke.cli.session.writer import append_session_metadata
+from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.store import SessionStore
+from yoke.session.repository.writer import append_session_metadata
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.services import runtime_factory
 from yoke.http.services.session_message_index import SessionMessageIndex

@@ -17,13 +17,13 @@ import stat
 from typing import TYPE_CHECKING, Literal
 
 from yoke._file_io import file_lock
-from yoke.cli.session.models import SessionRecord
-from yoke.cli.session.utils import timestamp
-from yoke.cli.session.writer import append_session_metadata
+from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.utils import timestamp
+from yoke.session.repository.writer import append_session_metadata
 
 if TYPE_CHECKING:
     from yoke.agent.loop.agent import RuntimeAgent
-    from yoke.cli.session.store import SessionStore
+    from yoke.session.repository.store import SessionStore
 
 
 WorkspaceState = Literal[
@@ -213,7 +213,7 @@ def workspace_lease(
     and resource cleanup. A retired worker must retain its lease until it really
     stops, not merely until a client receives an interruption acknowledgement.
     """
-    store._session_path(session_id)  # Validate before constructing a sidecar path.
+    store.session_path(session_id)  # Validate before constructing a sidecar path.
     directory = store.directory / "workspaces"
     directory.mkdir(parents=True, exist_ok=True)
     lock = file_lock(
@@ -287,6 +287,6 @@ def relocate_session_workspace(
                 "skill_dirs": [],
             }
             updated = record.model_copy(update=changes)
-            append_session_metadata(store._session_path(session_id), changes)
-            store._update_index_metadata(updated)
+            append_session_metadata(store.session_path(session_id), changes)
+            store.update_index_metadata(updated)
             return updated

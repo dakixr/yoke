@@ -8,8 +8,8 @@ from typing import BinaryIO
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
-from yoke.cli.session.index import SESSION_INDEX_SUMMARY_VERSION
-from yoke.cli.session.store import SessionStore
+from yoke.session.repository.index import SESSION_INDEX_SUMMARY_VERSION
+from yoke.session.repository.store import SessionStore
 
 _ENTRY_PREFIX = b'{"type":"entry","entry":{"kind":'
 _MESSAGE_MARKER = b',"message":'

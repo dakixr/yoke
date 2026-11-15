@@ -1,5 +1,5 @@
 """Shared import path for session persistence models."""
 
-from yoke.cli.session.models import SessionIndex as SessionIndex
-from yoke.cli.session.models import SessionIndexEntry as SessionIndexEntry
-from yoke.cli.session.models import SessionRecord as SessionRecord
+from yoke.session.repository.models import SessionIndex as SessionIndex
+from yoke.session.repository.models import SessionIndexEntry as SessionIndexEntry
+from yoke.session.repository.models import SessionRecord as SessionRecord

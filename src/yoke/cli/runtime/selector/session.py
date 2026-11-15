@@ -14,7 +14,7 @@ from yoke.cli.runtime.selector.format import fit_selector_identifier
 from yoke.cli.runtime.selector.ui import SelectorTableColumns
 from yoke.cli.runtime.selector.ui import selector_terminal_size
 from yoke.cli.runtime.selector.ui import select_table_item_interactive
-from yoke.cli.session import SessionRecord
+from yoke.session.repository import SessionRecord
 
 
 @dataclass(slots=True)

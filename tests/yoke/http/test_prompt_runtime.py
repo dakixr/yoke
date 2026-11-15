@@ -479,7 +479,7 @@ def test_completed_turn_survives_session_index_replace_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.cli.session.index_cache as index_cache_module
+    import yoke.session.repository.index_cache as index_cache_module
 
     controller = FakeRuntimeController()
     app = create_app(

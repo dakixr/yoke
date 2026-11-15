@@ -13,8 +13,8 @@ from yoke.agent.models import MessageLocalImageContentPart
 from yoke.agent.models import MessageTextContentPart
 from yoke.agent.session_tree import SessionTree
 from yoke.agent.session_tree.projections import ConversationProjection
-from yoke.cli.session.models import SessionRecord
-from yoke.cli.session.store import SessionStore
+from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.store import SessionStore
 
 from .models import DEFAULT_HANDOFF_MAX_CHARS
 from .models import SessionHandoff

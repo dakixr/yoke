@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
-from threading import Lock
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.http.services.session_message_index.models import ContextIndexWindow
 from yoke.http.services.session_message_index.models import MessageIndexSnapshot
+from yoke.http.services.session_message_index.cache import SnapshotCache
 from yoke.http.services.session_message_index.models import MessagePage
 from yoke.http.services.session_message_index.models import NavigationIndexPreview
 from yoke.http.services.session_message_index.models import RuntimeIndexSeed
@@ -39,15 +37,7 @@ class SessionMessageIndex:
 
     def __init__(self, store: SessionStore, *, max_cached_sessions: int = 8) -> None:
         self.store = store
-        self.max_cached_sessions = max_cached_sessions
-        self._cache_lock = Lock()
-        self._session_locks: dict[str, Lock] = {}
-        self._cache: OrderedDict[str, MessageIndexSnapshot] = OrderedDict()
-        self._warming: set[str] = set()
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="yoke-http-read-index",
-        )
+        self.cache = SnapshotCache(max_cached_sessions)
 
     def page(
         self,
@@ -134,5 +124,9 @@ class SessionMessageIndex:
     def close(self) -> None:
         close(self)
 
-    def _ensure(self, session_id: str) -> MessageIndexSnapshot | None:
+    def ensure(self, session_id: str) -> MessageIndexSnapshot | None:
         return ensure(self, session_id)
+
+    def _ensure(self, session_id: str) -> MessageIndexSnapshot | None:
+        """Deprecated test seam; callers should use :meth:`ensure`."""
+        return self.ensure(session_id)

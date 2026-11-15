@@ -13,7 +13,7 @@ from yoke.agent.models import Message
 from yoke.ai.providers.usage_context import UsageMetricContext
 from yoke.ai.providers.usage_context import usage_metric_context
 from yoke.cli.runtime.base import ActiveSession
-from yoke.cli.session import fallback_session_title
+from yoke.session.repository import fallback_session_title
 from yoke.session.title import generate_session_title as generate_session_title
 
 

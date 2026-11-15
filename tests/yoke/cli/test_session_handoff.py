@@ -13,7 +13,7 @@ from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
 from yoke.agent.session_tree import SessionTree
 from yoke.cli.main import main
-from yoke.cli.session.writer import append_session_tree_delta
+from yoke.session.repository.writer import append_session_tree_delta
 from yoke.session import SessionStore
 from yoke.session.handoff import build_session_handoff
 

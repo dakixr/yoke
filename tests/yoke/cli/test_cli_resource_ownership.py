@@ -18,7 +18,7 @@ from yoke.cli.config import runtime as config_runtime
 from yoke.cli.runtime.lifetime import close_cli_owned_agent
 from yoke.cli.runtime.lifetime import register_cli_owned_agent
 from yoke.cli.runtime.workspaces import retain_workspace_lease
-from yoke.cli.session import SessionStore
+from yoke.session import SessionStore
 from yoke.session.workspace import WorkspaceBusy, workspace_lease
 
 

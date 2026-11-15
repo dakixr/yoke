@@ -11,7 +11,7 @@ from pydantic_core import from_json
 
 from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import ConversationEntry
-from yoke.cli.session.models import SessionRecord
+from yoke.session.repository.models import SessionRecord
 
 SESSION_JSONL_HEADER_TYPE = "yoke_session"
 SESSION_JSONL_HEADER_VERSION = 2

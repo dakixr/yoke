@@ -8,21 +8,21 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 from pydantic_core import from_json
 
-from yoke.cli.session.io import SESSION_ENTRY_EVENT
-from yoke.cli.session.io import SESSION_ENTRY_METADATA_EVENT
-from yoke.cli.session.io import SESSION_JSONL_HEADER_TYPE
-from yoke.cli.session.io import SESSION_JSONL_HEADER_VERSION
-from yoke.cli.session.io import SESSION_METADATA_EVENT
-from yoke.cli.session.io import decode_legacy_session_record
-from yoke.cli.session.io import decode_session_record_lines
-from yoke.cli.session.io import is_canonical_jsonl
-from yoke.cli.session.models import SessionIndexEntry
-from yoke.cli.session.models import SessionRecord
-from yoke.cli.session.writer import append_session_metadata
-from yoke.cli.session.writer import write_session_record
+from yoke.session.repository.io import SESSION_ENTRY_EVENT
+from yoke.session.repository.io import SESSION_ENTRY_METADATA_EVENT
+from yoke.session.repository.io import SESSION_JSONL_HEADER_TYPE
+from yoke.session.repository.io import SESSION_JSONL_HEADER_VERSION
+from yoke.session.repository.io import SESSION_METADATA_EVENT
+from yoke.session.repository.io import decode_legacy_session_record
+from yoke.session.repository.io import decode_session_record_lines
+from yoke.session.repository.io import is_canonical_jsonl
+from yoke.session.repository.models import SessionIndexEntry
+from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.writer import append_session_metadata
+from yoke.session.repository.writer import write_session_record
 
 if TYPE_CHECKING:
-    from yoke.cli.session.store import SessionStore
+    from yoke.session.repository.index_service import SessionIndexService
 
 
 def scan_canonical_session_summary(
@@ -152,7 +152,7 @@ def _canonical_user_entry_created_at(line: bytes) -> str | None:
 
 
 def load_existing_record(
-    store: SessionStore,
+    index_service: SessionIndexService,
     session_id: str,
     path: Path,
     *,
@@ -182,12 +182,17 @@ def load_existing_record(
         record = record.model_copy(update={"version": current_schema_version})
         needs_rewrite = True
 
-    index_entry = store.index_entry(session_id)
-    if index_entry is None:
+    index_entry = index_service.entry(session_id)
+
+    def rewrite() -> None:
+        nonlocal record
         if needs_rewrite:
             write_session_record(record, path=path)
             if update_index:
-                store._update_index(record)
+                index_service.update(record)
+
+    if index_entry is None:
+        rewrite()
         return record
     changes: dict[str, object] = {}
     if _index_is_newer(index_entry, record):
@@ -198,16 +203,11 @@ def load_existing_record(
     ):
         changes["last_user_message_at"] = index_entry.last_user_message_at
     if not changes:
-        if needs_rewrite:
-            write_session_record(record, path=path)
-            if update_index:
-                store._update_index(record)
+        rewrite()
         return record
     record = record.model_copy(update=changes)
     if needs_rewrite:
-        write_session_record(record, path=path)
-        if update_index:
-            store._update_index(record)
+        rewrite()
     else:
         append_session_metadata(path, changes)
     return record

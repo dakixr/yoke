@@ -8,9 +8,9 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-from yoke.cli.session.models import SessionIndex
-from yoke.cli.session.models import SessionIndexEntry
-from yoke.cli.session.models import SessionRecord
+from yoke.session.repository.models import SessionIndex
+from yoke.session.repository.models import SessionIndexEntry
+from yoke.session.repository.models import SessionRecord
 
 SESSION_INDEX_SUMMARY_VERSION = 3
 

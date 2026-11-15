@@ -71,6 +71,11 @@ Session indexes, prompt queues, and usage logs share the portable file lock in
 `yoke._file_io`. Their write policies stay separate: index replacement retries,
 atomic queue snapshots, and usage-log append rollback and disk flushing.
 
+The persistence implementation is exposed from `yoke.session` and organized
+under `yoke.session.repository`; CLI, HTTP, ACP, and handoff code use that
+shared repository. HTTP transcript pagination keeps a bounded topology snapshot
+cache and warms durable sidecars in the background.
+
 ### Usage and observability
 
 Every completed provider response is recorded automatically in daily JSONL

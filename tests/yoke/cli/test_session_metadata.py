@@ -10,8 +10,8 @@ import pytest
 from yoke.cli.providers.state import ProviderSessionState
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime.session import save_active_session_metadata
-from yoke.cli.session import SessionRecord
-from yoke.cli.session import SessionStore
+from yoke.session.repository import SessionRecord
+from yoke.session import SessionStore
 
 
 def test_provider_metadata_update_appends_without_reading_or_rewriting_history(

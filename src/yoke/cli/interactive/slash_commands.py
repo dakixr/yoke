@@ -26,7 +26,7 @@ from yoke.cli.runtime import (
     persist_session_state,
     session_usage_metric_context,
 )
-from yoke.cli.session import fallback_session_title
+from yoke.session.repository import fallback_session_title
 
 
 def agents(

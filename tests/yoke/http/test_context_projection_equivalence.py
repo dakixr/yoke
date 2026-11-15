@@ -22,7 +22,7 @@ from yoke.agent.session_tree import (
     SessionTree,
 )
 from yoke.agent.session_tree.projections import ConversationProjection
-from yoke.cli.session.io import SESSION_METADATA_EVENT
+from yoke.session.repository.io import SESSION_METADATA_EVENT
 from yoke.http.services.projectors import project_message_content
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_service import SessionService
