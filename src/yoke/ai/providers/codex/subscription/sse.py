@@ -1,11 +1,8 @@
-"""Codex subscription provider implementation."""
-
-# ruff: noqa: ANN401,C901,D101,D102,D103,E501,S105
+"""Parse Codex SSE text, tools, image results and routing metadata."""
 
 from __future__ import annotations
 
 import json
-import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -18,6 +15,7 @@ from yoke.ai.providers.base import (
     ProviderRateLimitError,
     ProviderServerError,
 )
+from yoke.ai.providers.cancellation import cancellation_watcher
 from yoke.ai.providers.usage import parse_token_usage
 
 from .catalog import X_CODEX_TURN_STATE_HEADER
@@ -36,44 +34,27 @@ def consume_sse_response(
     completed_payload: dict[str, Any] | None = None
     usage_payload: object | None = None
     event_lines: list[str] = []
-    finished = threading.Event()
-    response_closed = threading.Event()
-
-    def close_on_cancel() -> None:
-        if cancel_requested is None:
-            return
-        while not finished.wait(0.05):
-            if cancel_requested():
-                response_closed.set()
-                response.close()
-                return
-
-    watcher = threading.Thread(target=close_on_cancel, daemon=True)
-    watcher.start()
-    try:
-        for line in response.iter_lines():
+    with cancellation_watcher(cancel_requested, response.close):
+        try:
+            for line in response.iter_lines():
+                if cancel_requested is not None and cancel_requested():
+                    raise ProviderCancelledError()
+                if line == "":
+                    completed_payload, usage_payload = handle_sse_event(
+                        event_lines,
+                        text_parts,
+                        function_calls,
+                        completed_payload,
+                        usage_payload,
+                        turn_state_updated=turn_state_updated,
+                    )
+                    event_lines = []
+                    continue
+                event_lines.append(line)
+        except httpx.HTTPError as exc:
             if cancel_requested is not None and cancel_requested():
-                raise ProviderCancelledError()
-            if line == "":
-                completed_payload, usage_payload = handle_sse_event(
-                    event_lines,
-                    text_parts,
-                    function_calls,
-                    completed_payload,
-                    usage_payload,
-                    turn_state_updated=turn_state_updated,
-                )
-                event_lines = []
-                continue
-            event_lines.append(line)
-    except httpx.HTTPError as exc:
-        if cancel_requested is not None and cancel_requested():
-            raise ProviderCancelledError() from exc
-        raise
-    finally:
-        finished.set()
-    if response_closed.is_set() and cancel_requested is not None and cancel_requested():
-        raise ProviderCancelledError()
+                raise ProviderCancelledError() from exc
+            raise
     if event_lines:
         completed_payload, usage_payload = handle_sse_event(
             event_lines,

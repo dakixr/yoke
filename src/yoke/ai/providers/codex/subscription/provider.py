@@ -1,6 +1,4 @@
-"""Codex subscription provider implementation."""
-
-# ruff: noqa: ANN401,C901,D101,D102,D103,E501,S105
+"""Codex subscription HTTP provider and model selection."""
 
 from __future__ import annotations
 
@@ -15,6 +13,7 @@ from yoke.ai.providers.base import (
     Provider,
     ProviderModelInfo,
 )
+from yoke.ai.providers.model_selection import ModelCatalogMixin
 from yoke.ai.providers.model_selection import set_config_model_from_catalog
 
 from .catalog import LEGACY_MODEL_CATALOG, MODEL_CATALOG, PROVIDER_NAME
@@ -24,9 +23,16 @@ from .images import CodexImageMixin
 from .request import CodexRequestMixin
 
 
-class CodexSubscriptionProvider(
-    CodexCompletionMixin, CodexImageMixin, CodexRequestMixin, Provider
+class CodexSubscriptionProvider[ConfigT: CodexSubscriptionConfig](
+    ModelCatalogMixin[ConfigT],
+    CodexCompletionMixin,
+    CodexImageMixin,
+    CodexRequestMixin,
+    Provider,
 ):
+    _active_auth_profile: str | None
+    _last_logged_auth_profile: str | None
+    _turn_state: str | None
     provider_name = PROVIDER_NAME
     supports_image_inputs = True
     max_images_per_message = None
@@ -34,7 +40,7 @@ class CodexSubscriptionProvider(
 
     def __init__(
         self,
-        config: CodexSubscriptionConfig,
+        config: ConfigT,
         *,
         http_client: httpx.Client | None = None,
         sleep: Callable[[float], None] | None = None,
@@ -61,21 +67,17 @@ class CodexSubscriptionProvider(
             verify=tls_verification_enabled(),
         )
 
+    def fork_for_turn(self) -> CodexSubscriptionProvider[ConfigT]:
+        """Copy request state, retaining a borrowed transport without owning it."""
+        forked = type(self)(
+            self.config.model_copy(deep=True),
+            http_client=None if self._owns_client else self._client,
+            sleep=self._sleep,
+        )
+        return forked
+
     def list_models(self) -> list[ProviderModelInfo]:
         return [model.model_copy(deep=True) for model in MODEL_CATALOG]
-
-    def current_model_id(self) -> str | None:
-        model = self.config.model.strip()
-        return model or None
-
-    def current_model_info(self) -> ProviderModelInfo | None:
-        current_model = self.current_model_id()
-        if current_model is None:
-            return None
-        for model in self.list_models():
-            if model.id == current_model:
-                return model
-        return None
 
     def set_model(self, model_id: str, *, reasoning_effort: str | None = None) -> None:
         set_config_model_from_catalog(

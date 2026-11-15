@@ -1,10 +1,7 @@
-"""Codex subscription provider implementation."""
-
-# ruff: noqa: ANN401,C901,D101,D102,D103,E501,S105
+"""Codex request construction, authentication recovery and telemetry."""
 
 from __future__ import annotations
 
-from typing import Any
 
 import contextlib
 import platform
@@ -13,6 +10,7 @@ import time
 
 
 from yoke.agent.models import Message
+from yoke.ai.providers.http_retry import backoff_seconds
 
 from .catalog import (
     OAUTH_PROVIDER_ID,
@@ -21,6 +19,7 @@ from .catalog import (
     originator_for_model,
     uses_responses_lite,
 )
+from .host import CodexHTTPHost
 from .helpers import clamp_reasoning_effort
 from .logging import exception_summary, log_provider_event
 from .messages import convert_messages, convert_tools, count_message_images
@@ -30,7 +29,7 @@ from .profiles import AuthStorage, CodexProfileStore
 
 
 class CodexRequestMixin:
-    def _fresh_credentials(self: Any) -> OAuthCredentials:
+    def _fresh_credentials(self: CodexHTTPHost) -> OAuthCredentials:
         if self.config.accounts_dir.expanduser().exists():
             try:
                 store = CodexProfileStore(
@@ -69,7 +68,7 @@ class CodexRequestMixin:
         )
 
     def _recover_invalid_oauth_credentials(
-        self: Any,
+        self: CodexHTTPHost,
         *,
         auth_profile: str | None,
         request_id: str,
@@ -112,7 +111,7 @@ class CodexRequestMixin:
         return credentials
 
     def _request_payload(
-        self: Any, messages: list[Message], tools: list[dict[str, object]]
+        self: CodexHTTPHost, messages: list[Message], tools: list[dict[str, object]]
     ) -> dict[str, object]:
         instructions, input_items = convert_messages(messages)
         responses_lite = uses_responses_lite(self.config.model)
@@ -145,7 +144,9 @@ class CodexRequestMixin:
             payload["client_metadata"] = client_metadata
         return payload
 
-    def _request_headers(self: Any, credentials: OAuthCredentials) -> dict[str, str]:
+    def _request_headers(
+        self: CodexHTTPHost, credentials: OAuthCredentials
+    ) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {credentials.access}",
             "chatgpt-account-id": credentials.account_id,
@@ -174,7 +175,7 @@ class CodexRequestMixin:
             ),
         }
 
-    def _responses_url(self: Any) -> str:
+    def _responses_url(self: CodexHTTPHost) -> str:
         base_url = self.config.base_url.rstrip("/")
         if base_url.endswith("/codex/responses"):
             return base_url
@@ -182,13 +183,19 @@ class CodexRequestMixin:
             return f"{base_url}/responses"
         return f"{base_url}/codex/responses"
 
-    def _backoff_seconds(self: Any, attempt: int) -> float:
-        return min(
-            self.config.retry_backoff_seconds * (2**attempt),
+    def _backoff_seconds(
+        self: CodexHTTPHost, attempt: int, retry_after: float | None = None
+    ) -> float:
+        return backoff_seconds(
+            attempt,
+            self.config.retry_backoff_seconds,
             self.config.max_retry_backoff_seconds,
+            retry_after,
         )
 
-    def _clear_selection_cache(self: Any, *, reason: str = "rate_limit") -> None:
+    def _clear_selection_cache(
+        self: CodexHTTPHost, *, reason: str = "rate_limit"
+    ) -> None:
         """Clear the cached profile selection to force account rotation on the next credential fetch."""
         self._turn_state = None
         selection_path = self.config.selection_path.expanduser()
@@ -196,17 +203,17 @@ class CodexRequestMixin:
             selection_path.unlink()
         self._log_event("account_rotation", reason=reason)
 
-    def _delete_account_profile(self: Any, profile_name: str) -> None:
+    def _delete_account_profile(self: CodexHTTPHost, profile_name: str) -> None:
         path = self.config.accounts_dir.expanduser() / profile_name / "auth.json"
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
 
-    def _delete_fallback_auth(self: Any) -> None:
+    def _delete_fallback_auth(self: CodexHTTPHost) -> None:
         with contextlib.suppress(FileNotFoundError):
             self.config.auth_path.expanduser().unlink()
 
     def _request_log_metrics(
-        self: Any, messages: list[Message], tools: list[dict[str, object]]
+        self: CodexHTTPHost, messages: list[Message], tools: list[dict[str, object]]
     ) -> dict[str, object]:
         return {
             "model": self.config.model,
@@ -218,7 +225,7 @@ class CodexRequestMixin:
         }
 
     def _log_auth_profile_change(
-        self: Any, auth_source: str, auth_profile: str
+        self: CodexHTTPHost, auth_source: str, auth_profile: str
     ) -> None:
         if self._last_logged_auth_profile == auth_profile:
             return
@@ -230,7 +237,7 @@ class CodexRequestMixin:
         )
 
     def _log_request_failure(
-        self: Any,
+        self: CodexHTTPHost,
         request_id: str,
         started: float,
         attempt: int,
@@ -249,5 +256,5 @@ class CodexRequestMixin:
             **request_metrics,
         )
 
-    def _log_event(self: Any, event: str, **fields: object) -> None:
+    def _log_event(self: CodexHTTPHost, event: str, **fields: object) -> None:
         log_provider_event(self.config.logs_dir, self.provider_name, event, **fields)

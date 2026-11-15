@@ -19,7 +19,9 @@ from yoke.ai.providers.opencode_go import OpenCodeGoProvider
 from yoke.ai.providers.zai import ZAIProvider
 
 
-def test_openai_compatible_provider_does_not_retry_read_timeout() -> None:
+def test_openai_compatible_provider_retries_read_timeout_before_response_bytes() -> (
+    None
+):
     calls = 0
 
     def timeout(_request: httpx.Request) -> httpx.Response:
@@ -36,7 +38,7 @@ def test_openai_compatible_provider_does_not_retry_read_timeout() -> None:
     with pytest.raises(ProviderError, match="timed out"):
         provider.complete([Message.user("hello")], [])
 
-    assert calls == 1
+    assert calls == 9
 
 
 def test_openai_compatible_provider_honors_zero_retry_after() -> None:

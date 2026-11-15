@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from yoke.ai.providers.base import provider_identity
 from yoke.agent.models import Message
 from yoke.agent.models import TokenUsage
 from yoke.agent_runs.reporting import report_provider_usage
@@ -60,16 +61,13 @@ def usage_log_root() -> Path:
 def _provider_name(provider: object, usage: TokenUsage | None) -> str:
     if usage is not None and _text(usage.provider_name) is not None:
         return _text(usage.provider_name) or "unknown"
-    return _text(getattr(provider, "provider_name", None)) or "unknown"
+    return provider_identity(provider).name
 
 
 def _model_id(provider: object, usage: TokenUsage | None) -> str | None:
     if usage is not None and _text(usage.model_id) is not None:
         return _text(usage.model_id)
-    current_model_id = getattr(provider, "current_model_id", None)
-    if callable(current_model_id):
-        return _text(current_model_id())
-    return _text(getattr(getattr(provider, "config", None), "model", None))
+    return provider_identity(provider).model
 
 
 def _usage_payload(usage: TokenUsage | None) -> dict[str, int]:

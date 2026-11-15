@@ -18,8 +18,13 @@ from typing import cast
 
 from yoke.ai.providers.base import ModelCatalogProvider
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import provider_identity
 from yoke.ai.providers.base import ProviderModelInfo
-from yoke.ai.providers.model_selection import set_config_model_from_catalog
+from yoke.ai.providers.model_selection import (
+    current_model_id_from_config,
+    current_model_info_from_catalog,
+    set_config_model_from_catalog,
+)
 from yoke.ai.providers.model_selection import UnknownModelError
 
 
@@ -320,31 +325,23 @@ def _normalize_plugin_provider_config(
     set_config_model_from_catalog(
         config,
         model_catalog,
-        provider_name=getattr(provider, "provider_name", "custom"),
+        provider_name=provider_identity(provider).name,
         model_id=current_model,
         reasoning_effort=reasoning_effort,
     )
 
 
 def _current_plugin_model_id(provider: Provider) -> str | None:
-    config = getattr(provider, "config", None)
-    model = getattr(config, "model", None)
-    if isinstance(model, str) and model.strip():
-        return model.strip()
-    return None
+    return current_model_id_from_config(getattr(provider, "config", None))
 
 
 def _current_plugin_model_info(
     provider: Provider,
     model_catalog: list[ProviderModelInfo],
 ) -> ProviderModelInfo | None:
-    current_model = _current_plugin_model_id(provider)
-    if current_model is None:
-        return None
-    for model in model_catalog:
-        if model.id == current_model:
-            return model.model_copy(deep=True)
-    return None
+    return current_model_info_from_catalog(
+        getattr(provider, "config", None), model_catalog
+    )
 
 
 def _set_plugin_model(
@@ -360,7 +357,7 @@ def _set_plugin_model(
     set_config_model_from_catalog(
         config,
         model_catalog,
-        provider_name=getattr(provider, "provider_name", "custom"),
+        provider_name=provider_identity(provider).name,
         model_id=model_id,
         reasoning_effort=reasoning_effort,
     )

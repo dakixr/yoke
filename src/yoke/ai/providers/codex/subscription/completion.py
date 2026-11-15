@@ -1,19 +1,16 @@
-"""Codex subscription provider implementation."""
-
-# ruff: noqa: ANN401,C901,D101,D102,D103,E501,S105
+"""Codex HTTP completion retries, cancellation and turn lifecycle."""
 
 from __future__ import annotations
 
-from typing import Any
 
 import secrets
-import threading
 import time
 from collections.abc import Callable
 
 import httpx
 
 from yoke.agent.models import Message
+from yoke.ai.providers.cancellation import cancellation_watcher
 from yoke.ai.providers.base import (
     ProviderCancelledError,
     ProviderError,
@@ -21,15 +18,17 @@ from yoke.ai.providers.base import (
     ProviderServerError,
     sleep_with_cancel,
 )
+from yoke.ai.providers.http_retry import StreamProgress, retryable_status
 from yoke.ai.providers.codex.cache import build_prompt_cache_key
 
+from .host import CodexHTTPHost
 from .helpers import error_detail, is_invalid_oauth_token_error, retry_after_seconds
 from .sse import consume_sse_response
 
 
 class CodexCompletionMixin:
     def _complete_with_cancel_impl(
-        self: Any,
+        self: CodexHTTPHost,
         messages: list[Message],
         tools: list[dict[str, object]],
         *,
@@ -44,6 +43,7 @@ class CodexCompletionMixin:
         headers = self._request_headers(credentials)
         last_error: ProviderError | None = None
         for attempt in range(self.config.max_retries + 1):
+            progress: StreamProgress | None = None
             try:
                 with self._client.stream(
                     "POST",
@@ -58,7 +58,7 @@ class CodexCompletionMixin:
                             retry_after_seconds=retry_after,
                         )
                         if attempt < self.config.max_retries:
-                            wait_seconds = retry_after or self._backoff_seconds(attempt)
+                            wait_seconds = self._backoff_seconds(attempt, retry_after)
                             self._clear_selection_cache()
                             credentials = self._fresh_credentials()
                             auth_profile = self._active_auth_profile
@@ -81,7 +81,7 @@ class CodexCompletionMixin:
                             )
                             continue
                         raise last_error
-                    if 500 <= response.status_code < 600:
+                    if retryable_status(response.status_code):
                         last_error = ProviderServerError(
                             f"Codex server error: {error_detail(response)}",
                             status_code=response.status_code,
@@ -139,6 +139,7 @@ class CodexCompletionMixin:
                             f"Codex request failed: {detail}",
                             status_code=response.status_code,
                         )
+                    progress = StreamProgress(response)
                     message = consume_sse_response(
                         response,
                         provider_name=self.provider_name,
@@ -163,8 +164,8 @@ class CodexCompletionMixin:
             except ProviderRateLimitError as exc:
                 last_error = exc
                 if attempt < self.config.max_retries:
-                    wait_seconds = exc.retry_after_seconds or self._backoff_seconds(
-                        attempt
+                    wait_seconds = self._backoff_seconds(
+                        attempt, exc.retry_after_seconds
                     )
                     self._clear_selection_cache()
                     credentials = self._fresh_credentials()
@@ -226,6 +227,12 @@ class CodexCompletionMixin:
                 )
                 raise
             except httpx.TimeoutException as exc:
+                if cancel_requested():
+                    raise ProviderCancelledError() from exc
+                if progress is not None and progress.started:
+                    raise ProviderError(
+                        "Codex stream interrupted after response bytes were received."
+                    ) from exc
                 last_error = ProviderError("Codex request timed out.")
                 if attempt < self.config.max_retries:
                     wait_seconds = self._backoff_seconds(attempt)
@@ -290,49 +297,39 @@ class CodexCompletionMixin:
         raise ProviderError("Codex request failed unexpectedly.")
 
     def _with_request_cancellation(
-        self: Any,
+        self: CodexHTTPHost,
         action: Callable[[], Message],
         *,
         cancel_requested: Callable[[], bool],
     ) -> Message:
         if not self._owns_client:
             return action()
-        finished = threading.Event()
-        client_closed = threading.Event()
 
-        def close_on_cancel() -> None:
-            while not finished.wait(0.05):
-                if cancel_requested():
-                    client_closed.set()
-                    self._client.close()
-                    return
+        def rebuild() -> None:
+            self._client = self._new_client()
 
-        threading.Thread(target=close_on_cancel, daemon=True).start()
-        try:
-            message = action()
-            if cancel_requested():
-                raise ProviderCancelledError()
-            return message
-        finally:
-            finished.set()
-            if client_closed.is_set():
-                self._client = self._new_client()
+        with cancellation_watcher(
+            cancel_requested,
+            lambda: self._client.close(),
+            rebuild=rebuild,
+        ):
+            return action()
 
-    def close(self: Any) -> None:
+    def close(self: CodexHTTPHost) -> None:
         if self._owns_client:
             self._client.close()
 
-    def _set_turn_state(self: Any, value: str) -> None:
+    def _set_turn_state(self: CodexHTTPHost, value: str) -> None:
         self._turn_state = value
 
-    def start_turn(self: Any) -> None:
+    def start_turn(self: CodexHTTPHost) -> None:
         """Clear Codex routing metadata at a logical user-turn boundary."""
         self._turn_state = None
 
-    def _new_prompt_cache_key(self: Any) -> str:
+    def _new_prompt_cache_key(self: CodexHTTPHost) -> str:
         return build_prompt_cache_key(self.config)
 
-    def set_session_id(self: Any, session_id: str) -> None:
+    def set_session_id(self: CodexHTTPHost, session_id: str) -> None:
         self.config.prompt_cache_key = session_id
         self._prompt_cache_key = self._new_prompt_cache_key()
         self._turn_state = None

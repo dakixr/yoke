@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import provider_identity
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.builtin_registry import BUILTIN_PROVIDER_NAMES
 from yoke.ai.providers.builtin_registry import build_registered_provider
@@ -375,15 +376,11 @@ def _resolve_provider_selection(
 
 
 def _current_model(provider: Provider) -> str | None:
-    config = getattr(provider, "config", None)
-    model = getattr(config, "model", None)
-    return model.strip() if isinstance(model, str) and model.strip() else None
+    return provider_identity(provider).model
 
 
 def _current_reasoning_effort(provider: Provider) -> str | None:
-    config = getattr(provider, "config", None)
-    effort = getattr(config, "reasoning_effort", None)
-    return effort.strip() if isinstance(effort, str) and effort.strip() else None
+    return provider_identity(provider).reasoning_effort
 
 
 def _normalized_optional(value: str) -> str | None:

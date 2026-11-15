@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderCancelledError, ProviderError
+from yoke.ai.providers.http_retry import StreamProgress
 from yoke.ai.providers.openai_compat.content import (
     normalize_openai_request_messages,
     serialize_message_for_openai,
@@ -51,7 +52,7 @@ class GoChatProvider(OpenAICompatibleProvider):
         for attempt in range(self.config.max_retries + 1):
             if cancel_requested():
                 raise ProviderCancelledError()
-            started = False
+            progress: StreamProgress | None = None
             try:
                 with self._client.get_client().stream(
                     "POST",
@@ -70,7 +71,7 @@ class GoChatProvider(OpenAICompatibleProvider):
                             is not None
                         ):
                             continue
-                    started = True
+                    progress = StreamProgress(response)
                     message = read_completion(
                         response, cancel_requested, self.config.model
                     )
@@ -84,7 +85,7 @@ class GoChatProvider(OpenAICompatibleProvider):
                 if cancel_requested():
                     raise ProviderCancelledError() from exc
                 # Do not replay a generation after receiving a successful stream.
-                if started or isinstance(exc, httpx.ReadTimeout):
+                if progress is not None and progress.started:
                     raise ProviderError("OpenCode Go stream interrupted.") from exc
                 if (
                     isinstance(exc, httpx.RequestError)

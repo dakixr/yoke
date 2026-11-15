@@ -1,6 +1,4 @@
-"""Codex subscription provider implementation."""
-
-# ruff: noqa: ANN401,C901,D101,D102,D103,E501,S105
+"""Codex subscription configuration and log directory resolution."""
 
 from __future__ import annotations
 

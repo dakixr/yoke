@@ -1,29 +1,26 @@
-"""Codex subscription provider implementation."""
-
-# ruff: noqa: ANN401,C901,D101,D102,D103,E501,S105
+"""Hosted Codex image generation and edit requests."""
 
 from __future__ import annotations
-
-from typing import Any
 
 
 from yoke.ai.providers.base import (
     ProviderError,
 )
 
+from .host import CodexHTTPHost
 from .helpers import clamp_reasoning_effort, error_detail
 from .sse import consume_hosted_image_sse_response
 
 
 class CodexImageMixin:
-    def generate_image(self: Any, *, prompt: str) -> str:
+    def generate_image(self: CodexHTTPHost, *, prompt: str) -> str:
         """Generate an image through Codex's hosted Responses image tool."""
         return self._generate_hosted_image(
             prompt=prompt,
             reference_image_urls=[],
         )
 
-    def edit_image(self: Any, *, prompt: str, image_urls: list[str]) -> str:
+    def edit_image(self: CodexHTTPHost, *, prompt: str, image_urls: list[str]) -> str:
         """Generate an edited image using reference image data URLs."""
         if not image_urls:
             raise ProviderError(
@@ -35,7 +32,7 @@ class CodexImageMixin:
         )
 
     def _generate_hosted_image(
-        self: Any, *, prompt: str, reference_image_urls: list[str]
+        self: CodexHTTPHost, *, prompt: str, reference_image_urls: list[str]
     ) -> str:
         credentials = self._fresh_credentials()
         payload = self._hosted_image_payload(
@@ -57,7 +54,7 @@ class CodexImageMixin:
             return consume_hosted_image_sse_response(response)
 
     def _hosted_image_payload(
-        self: Any, *, prompt: str, reference_image_urls: list[str]
+        self: CodexHTTPHost, *, prompt: str, reference_image_urls: list[str]
     ) -> dict[str, object]:
         content: list[dict[str, object]] = [
             {"type": "input_text", "text": prompt},

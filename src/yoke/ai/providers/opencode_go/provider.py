@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Callable
 
@@ -10,11 +9,11 @@ import httpx
 
 from yoke._tls import tls_verification_enabled
 from yoke.agent.models import Message
-from yoke.ai.providers.base import Provider, ProviderCancelledError, ProviderModelInfo
+from yoke.ai.providers.cancellation import cancellation_watcher
+from yoke.ai.providers.base import Provider, ProviderModelInfo
+from yoke.ai.providers.model_selection import ModelCatalogMixin
 from yoke.ai.providers.model_selection import (
     cloned_model_catalog,
-    current_model_id_from_config,
-    current_model_info_from_catalog,
     set_config_model_from_catalog,
 )
 from yoke.ai.providers.openai_compat import (
@@ -33,7 +32,7 @@ from yoke.ai.providers.opencode_go.catalog import (
 )
 
 
-class OpenCodeGoProvider(Provider):
+class OpenCodeGoProvider(ModelCatalogMixin[OpenCodeGoConfig], Provider):
     provider_name = PROVIDER_NAME
     supports_image_inputs = True
     max_images_per_message = 50
@@ -73,9 +72,6 @@ class OpenCodeGoProvider(Provider):
         config: OpenCodeGoConfig,
         http_client: httpx.Client | None,
     ) -> OpenAICompatibleProvider:
-        openai_reasoning_effort = config.reasoning_effort
-        if openai_reasoning_effort == "thinking":
-            openai_reasoning_effort = None
         return GoChatProvider(
             OpenAICompatibleConfig(
                 api_key=config.api_key,
@@ -86,7 +82,7 @@ class OpenCodeGoProvider(Provider):
                 retry_backoff_seconds=config.retry_backoff_seconds,
                 max_retry_backoff_seconds=config.max_retry_backoff_seconds,
                 max_tokens=_max_output_tokens(config.model),
-                reasoning_effort=openai_reasoning_effort,
+                reasoning_effort=self._chat_reasoning_effort(),
                 provider_name=PROVIDER_NAME,
                 model_catalog=config.model_catalog,
                 headers={"x-opencode-session": config.session_id},
@@ -95,14 +91,17 @@ class OpenCodeGoProvider(Provider):
             sleep=self._sleep,
         )
 
+    def fork_for_turn(self) -> OpenCodeGoProvider:
+        """Copy request state, retaining a borrowed transport without owning it."""
+        forked = type(self)(
+            self.config.model_copy(deep=True),
+            http_client=None if self._owns_client else self._client,
+            sleep=self._sleep,
+        )
+        return forked
+
     def list_models(self) -> list[ProviderModelInfo]:
         return cloned_model_catalog(self.config.model_catalog)
-
-    def current_model_id(self) -> str | None:
-        return current_model_id_from_config(self.config)
-
-    def current_model_info(self) -> ProviderModelInfo | None:
-        return current_model_info_from_catalog(self.config, self.list_models())
 
     def set_model(self, model_id: str, *, reasoning_effort: str | None = None) -> None:
         set_config_model_from_catalog(
@@ -162,13 +161,14 @@ class OpenCodeGoProvider(Provider):
         if self._owns_client:
             self._client.close()
 
+    def _chat_reasoning_effort(self) -> str | None:
+        effort = self.config.reasoning_effort
+        return None if effort == "thinking" else effort
+
     def _sync_openai_config(self) -> None:
         self._openai_provider.config.model = self.config.model
         self._openai_provider.config.max_tokens = _max_output_tokens(self.config.model)
-        reasoning_effort = self.config.reasoning_effort
-        if reasoning_effort == "thinking":
-            reasoning_effort = None
-        self._openai_provider.config.reasoning_effort = reasoning_effort
+        self._openai_provider.config.reasoning_effort = self._chat_reasoning_effort()
 
     def _complete_responses(
         self,
@@ -212,23 +212,13 @@ class OpenCodeGoProvider(Provider):
     ) -> Message:
         if not self._owns_client:
             return action()
-        finished = threading.Event()
-        client_closed = threading.Event()
 
-        def close_on_cancel() -> None:
-            while not finished.wait(0.05):
-                if cancel_requested():
-                    client_closed.set()
-                    self._client.close()
-                    return
+        def rebuild() -> None:
+            self._client = self._new_client()
 
-        threading.Thread(target=close_on_cancel, daemon=True).start()
-        try:
-            message = action()
-            if cancel_requested():
-                raise ProviderCancelledError()
-            return message
-        finally:
-            finished.set()
-            if client_closed.is_set():
-                self._client = self._new_client()
+        with cancellation_watcher(
+            cancel_requested,
+            lambda: self._client.close(),
+            rebuild=rebuild,
+        ):
+            return action()

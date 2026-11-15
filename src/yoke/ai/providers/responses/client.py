@@ -15,13 +15,18 @@ from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import ProviderRateLimitError
 from yoke.ai.providers.base import ProviderServerError
 from yoke.ai.providers.base import sleep_with_cancel
-from yoke.ai.providers.openai_compat import _error_detail
-from yoke.ai.providers.openai_compat import _retry_after_seconds
+from yoke.ai.providers.http_retry import (
+    backoff_seconds,
+    post_response,
+    retryable_status,
+    error_detail,
+)
+from yoke.ai.providers.http_retry import retry_after_seconds
 from yoke.ai.providers.openai_compat import normalize_openai_request_messages
 from yoke.ai.providers.openai_compat import serialize_message_for_openai
 from yoke.ai.providers.openai_compat.events import emit_recovery_event
 from yoke.ai.providers.openai_compat.events import emit_retry_event
-from yoke.ai.providers.openai_compat.helpers import should_retry_request_error
+from yoke.ai.providers.http_retry import should_retry_request_error
 from yoke.ai.providers.usage import parse_token_usage
 
 
@@ -64,7 +69,7 @@ def complete_response(
             raise ProviderCancelledError()
         try:
             active_client = get_client() if get_client is not None else client
-            response = active_client.post(url, json=payload, headers=headers)
+            response = post_response(active_client, url, json=payload, headers=headers)
         except httpx.TimeoutException as exc:
             last_error = ProviderError(f"{provider_name} request timed out.")
             if attempt < max_retries:
@@ -107,19 +112,19 @@ def complete_response(
             raise last_error from exc
 
         if response.status_code == 429:
-            retry_after = _retry_after_seconds(response)
+            retry_after = retry_after_seconds(response)
             last_error = ProviderRateLimitError(
-                f"{provider_name} request was rate limited: {_error_detail(response)}",
+                f"{provider_name} request was rate limited: {error_detail(response)}",
                 retry_after_seconds=retry_after,
             )
-        elif 500 <= response.status_code < 600:
+        elif retryable_status(response.status_code):
             last_error = ProviderServerError(
-                f"{provider_name} server error: {_error_detail(response)}",
+                f"{provider_name} server error: {error_detail(response)}",
                 status_code=response.status_code,
             )
         elif response.is_error:
             raise ProviderError(
-                f"{provider_name} request failed: {_error_detail(response)}",
+                f"{provider_name} request failed: {error_detail(response)}",
                 status_code=response.status_code,
             )
         else:
@@ -327,11 +332,11 @@ def _sleep_before_retry(
     sleep: Callable[[float], None],
     retry_after_seconds: float | None = None,
 ) -> None:
-    backoff = min(
-        retry_backoff_seconds * (2**attempt)
-        if retry_after_seconds is None
-        else retry_after_seconds,
+    backoff = backoff_seconds(
+        attempt,
+        retry_backoff_seconds,
         max_retry_backoff_seconds,
+        retry_after_seconds,
     )
     emit_retry_event(
         error,

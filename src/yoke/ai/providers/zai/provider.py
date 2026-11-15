@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -11,6 +10,7 @@ import httpx
 
 from yoke._tls import tls_verification_enabled
 from yoke.agent.models import Message
+from yoke.ai.providers.cancellation import cancellation_watcher
 from yoke.ai.providers.base import (
     Provider,
     ProviderCancelledError,
@@ -20,6 +20,7 @@ from yoke.ai.providers.base import (
     ProviderServerError,
     sleep_with_cancel,
 )
+from yoke.ai.providers.model_selection import ModelCatalogMixin
 from yoke.ai.providers.model_selection import set_config_model_from_catalog
 from yoke.ai.providers.zai.models import (
     MODEL_CATALOG,
@@ -27,15 +28,19 @@ from yoke.ai.providers.zai.models import (
     ZAIConfig,
     _thinking_config,
 )
-from yoke.ai.providers.zai.recovery import ZAIMessageRecoveryMixin
-from yoke.ai.providers.zai.retry import ZAIRetryMixin
-from yoke.ai.providers.zai.streaming import ZAIStreamingMixin
+from yoke.ai.providers.zai.recovery import ZAIMessageRecovery
+from yoke.ai.providers.http_retry import (
+    backoff_seconds,
+    error_detail,
+    retry_after_seconds,
+    retryable_status,
+    StreamProgress,
+)
+from yoke.ai.providers.zai.streaming import parse_sse_response
 
 
 class ZAIProvider(
-    ZAIStreamingMixin,
-    ZAIMessageRecoveryMixin,
-    ZAIRetryMixin,
+    ModelCatalogMixin[ZAIConfig],
     Provider,
 ):
     """Provider for Z.AI's coding chat-completions API."""
@@ -58,6 +63,7 @@ class ZAIProvider(
             model_id=self.config.model,
             reasoning_effort=self.config.reasoning_effort,
         )
+        self._recovery = ZAIMessageRecovery(self.config)
         self._owns_client = http_client is None
         self._sleep = sleep or time.sleep
         self._client = http_client or self._new_client()
@@ -77,21 +83,17 @@ class ZAIProvider(
             verify=tls_verification_enabled(),
         )
 
+    def fork_for_turn(self) -> ZAIProvider:
+        """Copy request state, retaining a borrowed transport without owning it."""
+        forked = type(self)(
+            self.config.model_copy(deep=True),
+            http_client=None if self._owns_client else self._client,
+            sleep=self._sleep,
+        )
+        return forked
+
     def list_models(self) -> list[ProviderModelInfo]:
         return [model.model_copy(deep=True) for model in MODEL_CATALOG]
-
-    def current_model_id(self) -> str | None:
-        model = self.config.model.strip()
-        return model or None
-
-    def current_model_info(self) -> ProviderModelInfo | None:
-        current_model = self.current_model_id()
-        if current_model is None:
-            return None
-        for model in self.list_models():
-            if model.id == current_model:
-                return model
-        return None
 
     def set_model(self, model_id: str, *, reasoning_effort: str | None = None) -> None:
         set_config_model_from_catalog(
@@ -131,11 +133,12 @@ class ZAIProvider(
         *,
         cancel_requested: Callable[[], bool],
     ) -> Message:
-        prepared_messages = self._prepare_messages(messages)
+        prepared_messages = self._recovery._prepare_messages(messages)
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": [
-                self._message_to_api_dict(message) for message in prepared_messages
+                self._recovery._message_to_api_dict(message)
+                for message in prepared_messages
             ],
             "stream": True,
         }
@@ -161,6 +164,7 @@ class ZAIProvider(
         for attempt in range(self.config.max_retries + 2):
             if cancel_requested():
                 raise ProviderCancelledError()
+            progress: StreamProgress | None = None
             try:
                 with self._client.stream(
                     "POST",
@@ -170,8 +174,8 @@ class ZAIProvider(
                 ) as response:
                     if response.status_code == 429:
                         response.read()
-                        detail = self._error_detail(response)
-                        retry_after = self._retry_after_seconds(response)
+                        detail = error_detail(response)
+                        retry_after = retry_after_seconds(response)
                         last_error = ProviderRateLimitError(
                             (
                                 f"ZAI request failed after {attempt + 1} attempts: {detail}"
@@ -182,18 +186,21 @@ class ZAIProvider(
                         )
                         if attempt < self.config.max_retries:
                             sleep_with_cancel(
-                                self._backoff_seconds(attempt)
-                                if retry_after is None
-                                else retry_after,
+                                backoff_seconds(
+                                    attempt,
+                                    self.config.retry_backoff_seconds,
+                                    self.config.max_retry_backoff_seconds,
+                                    retry_after,
+                                ),
                                 cancel_requested=cancel_requested,
                                 sleep=self._sleep,
                             )
                             continue
                         raise last_error
 
-                    if 500 <= response.status_code < 600:
+                    if retryable_status(response.status_code):
                         response.read()
-                        detail = self._error_detail(response)
+                        detail = error_detail(response)
                         last_error = ProviderServerError(
                             (
                                 f"ZAI request failed after {attempt + 1} attempts: {detail}"
@@ -204,7 +211,11 @@ class ZAIProvider(
                         )
                         if attempt < self.config.max_retries:
                             sleep_with_cancel(
-                                self._backoff_seconds(attempt),
+                                backoff_seconds(
+                                    attempt,
+                                    self.config.retry_backoff_seconds,
+                                    self.config.max_retry_backoff_seconds,
+                                ),
                                 cancel_requested=cancel_requested,
                                 sleep=self._sleep,
                             )
@@ -213,12 +224,14 @@ class ZAIProvider(
 
                     if response.is_error:
                         response.read()
-                        detail = self._error_detail(response)
+                        detail = error_detail(response)
                         if (
                             not attempted_message_recovery
-                            and self._looks_like_illegal_messages_error(detail)
+                            and self._recovery._looks_like_illegal_messages_error(
+                                detail
+                            )
                         ):
-                            self._log_debug_event(
+                            self._recovery._log_debug_event(
                                 "illegal_messages_error",
                                 detail=detail,
                                 messages=[
@@ -226,12 +239,14 @@ class ZAIProvider(
                                     for message in prepared_messages
                                 ],
                             )
-                            recovered_messages = self._recover_illegal_messages(
-                                prepared_messages
+                            recovered_messages = (
+                                self._recovery._recover_illegal_messages(
+                                    prepared_messages
+                                )
                             )
                             attempted_message_recovery = True
                             if recovered_messages != prepared_messages:
-                                self._log_debug_event(
+                                self._recovery._log_debug_event(
                                     "illegal_messages_recovery",
                                     detail=detail,
                                     messages=[
@@ -241,7 +256,7 @@ class ZAIProvider(
                                 )
                                 prepared_messages = recovered_messages
                                 payload["messages"] = [
-                                    self._message_to_api_dict(message)
+                                    self._recovery._message_to_api_dict(message)
                                     for message in prepared_messages
                                 ]
                                 continue
@@ -250,12 +265,20 @@ class ZAIProvider(
                             status_code=response.status_code,
                         )
 
-                    message = self._parse_sse_response(
+                    progress = StreamProgress(response)
+                    message = parse_sse_response(
                         response,
+                        model_id=self.config.model,
                         cancel_requested=cancel_requested,
                     )
                     return message
             except httpx.TimeoutException as exc:
+                if cancel_requested():
+                    raise ProviderCancelledError() from exc
+                if progress is not None and progress.started:
+                    raise ProviderError(
+                        "ZAI stream interrupted after response bytes were received."
+                    ) from exc
                 last_error = ProviderError(
                     (
                         f"ZAI request timed out after {attempt + 1} attempts."
@@ -265,7 +288,11 @@ class ZAIProvider(
                 )
                 if attempt < self.config.max_retries:
                     sleep_with_cancel(
-                        self._backoff_seconds(attempt),
+                        backoff_seconds(
+                            attempt,
+                            self.config.retry_backoff_seconds,
+                            self.config.max_retry_backoff_seconds,
+                        ),
                         cancel_requested=cancel_requested,
                         sleep=self._sleep,
                     )
@@ -288,26 +315,16 @@ class ZAIProvider(
     ) -> Message:
         if not self._owns_client:
             return action()
-        finished = threading.Event()
-        client_closed = threading.Event()
 
-        def close_on_cancel() -> None:
-            while not finished.wait(0.05):
-                if cancel_requested():
-                    client_closed.set()
-                    self._client.close()
-                    return
+        def rebuild() -> None:
+            self._client = self._new_client()
 
-        threading.Thread(target=close_on_cancel, daemon=True).start()
-        try:
-            message = action()
-            if cancel_requested():
-                raise ProviderCancelledError()
-            return message
-        finally:
-            finished.set()
-            if client_closed.is_set():
-                self._client = self._new_client()
+        with cancellation_watcher(
+            cancel_requested,
+            lambda: self._client.close(),
+            rebuild=rebuild,
+        ):
+            return action()
 
     def close(self) -> None:
         """Close the owned HTTP client, if this provider created it."""

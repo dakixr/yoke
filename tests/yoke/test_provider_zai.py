@@ -375,7 +375,8 @@ def test_zai_provider_retries_transient_failure(
 
     assert attempts == 2
     assert message.content == "done"
-    assert delays == [expected_delay]
+    assert len(delays) == 1
+    assert expected_delay <= delays[0] <= expected_delay * 1.1
 
 
 def test_zai_provider_raises_on_empty_streaming_completion() -> None:

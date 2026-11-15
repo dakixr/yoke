@@ -6,9 +6,9 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from copy import deepcopy
 from dataclasses import dataclass
 import time
+import logging
 from typing import TYPE_CHECKING
 from typing import Literal
 from typing import Protocol
@@ -219,27 +219,56 @@ class ContextualProvider(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderIdentity:
+    """Normalized provider metadata for attribution and model selection."""
+
+    name: str
+    model: str | None
+    reasoning_effort: str | None
+
+
+def provider_identity(provider: object) -> ProviderIdentity:
+    """Read provider metadata without guessing a name from its Python type."""
+
+    def text(value: object) -> str | None:
+        return value.strip() or None if isinstance(value, str) else None
+
+    config = getattr(provider, "config", None)
+    current_model = getattr(provider, "current_model_id", None)
+    model = (
+        current_model() if callable(current_model) else getattr(config, "model", None)
+    )
+    return ProviderIdentity(
+        name=text(getattr(provider, "provider_name", None)) or "unknown",
+        model=text(model),
+        reasoning_effort=text(getattr(config, "reasoning_effort", None)),
+    )
+
+
 def fork_provider(provider: Provider) -> Provider:
-    """Create a request-isolated provider when its constructor supports it."""
+    """Fork explicitly, warning when a custom provider offers no isolation.
+
+    Built-ins preserve injected transports without taking ownership of them.
+    Custom providers must implement fork_for_turn for independent request state.
+    For compatibility, missing hooks share the instance with a warning rather
+    than guessing a constructor and silently dropping injected dependencies.
+    """
     custom_fork = getattr(provider, "fork_for_turn", None)
     if callable(custom_fork):
-        return cast(Provider, custom_fork())
-    config = getattr(provider, "config", None)
-    if config is None:
-        return provider
-    copy_config = getattr(config, "model_copy", None)
-    cloned_config = (
-        copy_config(deep=True) if callable(copy_config) else deepcopy(config)
+        forked = cast(Provider, custom_fork())
+        if forked is not provider:
+            return forked
+        reason = "fork_for_turn() returned the original instance"
+    else:
+        reason = "does not implement fork_for_turn()"
+    logging.getLogger(__name__).warning(
+        "Provider %s %s; request state is shared. "
+        "Implement fork_for_turn() to return an independent provider.",
+        type(provider).__name__,
+        reason,
     )
-    constructor = cast(Callable[..., Provider], type(provider))
-    sleep = getattr(provider, "_sleep", None)
-    try:
-        return constructor(cloned_config, **({"sleep": sleep} if sleep else {}))
-    except (AttributeError, TypeError, ValueError):
-        try:
-            return constructor(cloned_config)
-        except (AttributeError, TypeError, ValueError):
-            return provider
+    return provider
 
 
 @runtime_checkable
@@ -279,7 +308,7 @@ def complete_with_cancel(
             response = provider.complete_with_cancel(
                 messages,
                 tools,
-                cancel_requested=cancel_requested or _never_cancel,
+                cancel_requested=cancel_requested or never_cancel,
             )
         except ProviderError as exc:
             if cancel_requested is not None and cancel_requested():
@@ -287,6 +316,7 @@ def complete_with_cancel(
             raise
     else:
         response = provider.complete(messages, tools)
+    # usage_log imports provider_identity; importing here avoids a module cycle.
     from yoke.ai.providers.usage_log import record_provider_usage
 
     record_provider_usage(provider, response)
@@ -305,9 +335,6 @@ def start_provider_turn(provider: Provider) -> None:
 def never_cancel() -> bool:
     """Return false for APIs that require a cancellation callback."""
     return False
-
-
-_never_cancel = never_cancel
 
 
 def sleep_with_cancel(

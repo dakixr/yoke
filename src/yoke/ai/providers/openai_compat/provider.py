@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -18,14 +17,13 @@ from pydantic import model_validator
 from yoke._tls import tls_verification_enabled
 from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import Message
+from yoke.ai.providers.cancellation import cancellation_watcher
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.model_selection import ModelCatalogMixin
 from yoke.ai.providers.model_selection import cloned_model_catalog
-from yoke.ai.providers.model_selection import (
-    current_model_id_from_config,
-)
 from yoke.ai.providers.model_selection import (
     current_model_info_from_catalog,
 )
@@ -132,7 +130,9 @@ class OpenAICompatibleConfig(BaseModel):
         return cls(**{key: value for key, value in values.items() if value is not None})
 
 
-class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
+class OpenAICompatibleProvider(
+    ModelCatalogMixin[OpenAICompatibleConfig], OpenAICompatibleRetryMixin, Provider
+):
     """Provider for generic OpenAI-compatible chat-completions endpoints.
 
     Use this when the upstream service accepts bearer authentication and the
@@ -177,6 +177,15 @@ class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
             ),
         )
 
+    def fork_for_turn(self) -> OpenAICompatibleProvider:
+        """Copy request state, retaining a borrowed transport without owning it."""
+        forked = type(self)(
+            self.config.model_copy(deep=True),
+            http_client=None if self._owns_client else self._client.get_client(),
+            sleep=self._sleep,
+        )
+        return forked
+
     def list_models(self) -> list[ProviderModelInfo]:
         """Return the configured model catalog for this provider."""
         if self.config.model_catalog:
@@ -192,10 +201,6 @@ class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
                 supports_image_inputs=self.supports_image_inputs,
             )
         ]
-
-    def current_model_id(self) -> str | None:
-        """Return the currently configured model id."""
-        return current_model_id_from_config(self.config)
 
     def current_model_info(self) -> ProviderModelInfo | None:
         """Return metadata for the current model when available."""
@@ -277,8 +282,6 @@ class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
                 if cancel_requested():
                     raise ProviderCancelledError() from exc
                 last_error = ProviderError("Provider request timed out.")
-                if isinstance(exc, httpx.ReadTimeout):
-                    raise last_error from exc
                 if attempt < self.config.max_retries:
                     self._reset_transport_for_retry()
                     self._retry_sleep(
@@ -350,29 +353,17 @@ class OpenAICompatibleProvider(OpenAICompatibleRetryMixin, Provider):
                 cancel_requested=cancel_requested,
             )
 
-        finished = threading.Event()
-
-        def abort_on_cancel() -> None:
-            while not finished.wait(0.05):
+        with cancellation_watcher(cancel_requested, self._client.abort, repeat=True):
+            try:
+                return self._complete_impl(
+                    messages,
+                    tools,
+                    cancel_requested=cancel_requested,
+                )
+            except ProviderError as exc:
                 if cancel_requested():
-                    self._client.abort()
-
-        threading.Thread(target=abort_on_cancel, daemon=True).start()
-        try:
-            response = self._complete_impl(
-                messages,
-                tools,
-                cancel_requested=cancel_requested,
-            )
-            if cancel_requested():
-                raise ProviderCancelledError()
-            return response
-        except ProviderError as exc:
-            if cancel_requested():
-                raise ProviderCancelledError() from exc
-            raise
-        finally:
-            finished.set()
+                    raise ProviderCancelledError() from exc
+                raise
 
     def close(self) -> None:
         """Close the owned HTTP client, if this provider created it."""

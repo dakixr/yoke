@@ -7,6 +7,8 @@ from threading import Lock
 
 import httpx
 
+from yoke.ai.providers.http_retry import post_response
+
 
 class LazyHttpClient:
     """Create an owned HTTP client only when the first request starts."""
@@ -29,7 +31,7 @@ class LazyHttpClient:
         headers: dict[str, str],
     ) -> httpx.Response:
         """Send a POST request through the initialized client."""
-        return self.get_client().post(url, json=json, headers=headers)
+        return post_response(self.get_client(), url, json=json, headers=headers)
 
     def close(self) -> None:
         """Close the client if a request initialized it."""

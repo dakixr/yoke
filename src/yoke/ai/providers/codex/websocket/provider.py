@@ -35,10 +35,15 @@ from yoke.ai.providers.codex.websocket.config import (
     CodexWebSocketConnection,
     CodexWebSocketTimeoutError,
 )
+from yoke.ai.providers.codex.websocket.host import CodexWebSocketHost
 from yoke.ai.providers.codex.websocket.transport import CodexWebSocketTransportMixin
 
 
-class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
+class CodexProvider(
+    CodexWebSocketTransportMixin, CodexSubscriptionProvider[CodexConfig]
+):
+    _active_auth_profile: str | None
+    _last_logged_auth_profile: str | None
     provider_name = PROVIDER_NAME
 
     def __init__(
@@ -58,14 +63,18 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
         self._websocket_auth_profile: str | None = None
         self._turn_state: str | None = None
         self._response_chain = CodexResponseChain()
+        self._stream_started = False
 
-    @property
-    def config(self) -> CodexConfig:
-        return self.__dict__["config"]
-
-    @config.setter
-    def config(self, value: CodexConfig) -> None:
-        self.__dict__["config"] = value
+    def fork_for_turn(self) -> CodexProvider:
+        """Clone replayable response state without sharing a live WebSocket."""
+        forked = type(self)(
+            self.config.model_copy(deep=True),
+            websocket_factory=self._websocket_factory,
+            sleep=self._sleep,
+        )
+        forked._prompt_cache_key = self._prompt_cache_key
+        forked._response_chain = self._response_chain.fork_for_new_connection()
+        return forked
 
     def complete(
         self, messages: list[Message], tools: list[dict[str, object]]
@@ -77,7 +86,7 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
         )
 
     def complete_with_cancel(
-        self,
+        self: CodexWebSocketHost,
         messages: list[Message],
         tools: list[dict[str, object]],
         *,
@@ -91,6 +100,7 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
         last_error: ProviderError | None = None
 
         for attempt in range(self.config.max_retries + 1):
+            self._stream_started = False
             auth_profile = self._active_auth_profile
             try:
                 websocket = self._fresh_websocket()
@@ -134,17 +144,18 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
                 if attempt >= self.config.max_retries:
                     break
                 self._clear_selection_cache()
+                wait_seconds = self._backoff_seconds(attempt, exc.retry_after_seconds)
                 self._log_event(
                     "request_retry",
                     request_id=request_log_id,
                     attempt=attempt,
                     reason="websocket_rate_limited",
-                    wait_seconds=self._backoff_seconds(attempt),
+                    wait_seconds=wait_seconds,
                     auth_profile=auth_profile,
                     **request_metrics,
                 )
                 sleep_with_cancel(
-                    self._backoff_seconds(attempt),
+                    wait_seconds,
                     cancel_requested=cancel_requested,
                     sleep=self._sleep,
                 )
@@ -153,17 +164,18 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
                 self._close_websocket()
                 if attempt >= self.config.max_retries:
                     break
+                wait_seconds = self._backoff_seconds(attempt)
                 self._log_event(
                     "request_retry",
                     request_id=request_log_id,
                     attempt=attempt,
                     reason="websocket_server_error",
-                    wait_seconds=self._backoff_seconds(attempt),
+                    wait_seconds=wait_seconds,
                     auth_profile=auth_profile,
                     **request_metrics,
                 )
                 sleep_with_cancel(
-                    self._backoff_seconds(attempt),
+                    wait_seconds,
                     cancel_requested=cancel_requested,
                     sleep=self._sleep,
                 )
@@ -179,6 +191,11 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
                 )
                 raise
             except CodexWebSocketTimeoutError as exc:
+                if self._stream_started:
+                    self._close_websocket(clear_credentials=False)
+                    raise ProviderError(
+                        "Codex WebSocket timed out after response bytes were received."
+                    ) from exc
                 last_error = exc
                 self._close_websocket(clear_credentials=False)
                 if attempt >= self.config.max_retries:
@@ -219,17 +236,18 @@ class CodexProvider(CodexWebSocketTransportMixin, CodexSubscriptionProvider):
                     self._close_websocket(clear_credentials=False)
                     if attempt >= self.config.max_retries:
                         break
+                    wait_seconds = self._backoff_seconds(attempt)
                     self._log_event(
                         "request_retry",
                         request_id=request_log_id,
                         attempt=attempt,
                         reason="websocket_closed",
-                        wait_seconds=self._backoff_seconds(attempt),
+                        wait_seconds=wait_seconds,
                         auth_profile=auth_profile,
                         **request_metrics,
                     )
                     sleep_with_cancel(
-                        self._backoff_seconds(attempt),
+                        wait_seconds,
                         cancel_requested=cancel_requested,
                         sleep=self._sleep,
                     )

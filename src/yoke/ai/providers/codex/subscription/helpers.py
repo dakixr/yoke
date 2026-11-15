@@ -1,11 +1,10 @@
-"""Codex subscription provider implementation."""
-
-# ruff: noqa: ANN401,C901,D101,D102,D103,E501,S105
+"""Codex reasoning normalization and OAuth error classification."""
 
 from __future__ import annotations
 
 
-import httpx
+from yoke.ai.providers.http_retry import error_detail as error_detail
+from yoke.ai.providers.http_retry import retry_after_seconds as retry_after_seconds
 
 
 def clamp_reasoning_effort(model: str, effort: str) -> str:
@@ -39,33 +38,6 @@ def first_query_value(query: dict[str, list[str]], key: str) -> str | None:
     return values[0]
 
 
-def error_detail(response: httpx.Response) -> str:
-    try:
-        response.read()
-    except httpx.ResponseNotRead:
-        pass
-    except httpx.CloseError:
-        return f"HTTP {response.status_code}"
-
-    try:
-        payload = response.json()
-    except ValueError:
-        return response.text.strip() or f"HTTP {response.status_code}"
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict):
-            message = error.get("message")
-            if isinstance(message, str) and message.strip():
-                return message.strip()
-        if isinstance(error, str) and error.strip():
-            return error.strip()
-        for key in ("message", "detail"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return response.text.strip() or f"HTTP {response.status_code}"
-
-
 def is_invalid_oauth_token_error(detail: object) -> bool:
     normalized = str(detail).strip().lower()
     return (
@@ -74,13 +46,3 @@ def is_invalid_oauth_token_error(detail: object) -> bool:
         or ("oauth token" in normalized and "invalid" in normalized)
         or ("oauth token" in normalized and "revoked" in normalized)
     )
-
-
-def retry_after_seconds(response: httpx.Response) -> float | None:
-    value = response.headers.get("retry-after")
-    if value is None:
-        return None
-    try:
-        return max(float(value), 0.0)
-    except ValueError:
-        return None

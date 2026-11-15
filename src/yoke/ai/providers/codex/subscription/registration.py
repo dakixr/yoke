@@ -1,6 +1,4 @@
-"""Codex subscription provider implementation."""
-
-# ruff: noqa: ANN401,C901,D101,D102,D103,E501,S105
+"""Construct the Codex subscription provider from plugin context."""
 
 from __future__ import annotations
 

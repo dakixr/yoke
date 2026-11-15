@@ -1,0 +1,293 @@
+{
+  "openai:False": [
+    {
+      "url": "https://api.openai.com/v1/chat/completions",
+      "headers": {
+        "host": "api.openai.com",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-session": "session-fixed",
+        "content-length": "162"
+      },
+      "body": "{\"model\":\"model\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\"},{\"role\":\"user\",\"content\":\"Hello \u2603\"}],\"reasoning_effort\":\"high\",\"max_tokens\":123}"
+    }
+  ],
+  "openai:True": [
+    {
+      "url": "https://api.openai.com/v1/chat/completions",
+      "headers": {
+        "host": "api.openai.com",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-session": "session-fixed",
+        "content-length": "893"
+      },
+      "body": "{\"model\":\"model\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\"},{\"role\":\"system\",\"content\":\"Skill instructions.\"},{\"role\":\"user\",\"content\":\"Read the file\"},{\"role\":\"assistant\",\"content\":\"Checking\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"Private thought\"},{\"role\":\"tool\",\"content\":\"file content\\n<checkpoint>\",\"tool_call_id\":\"call_1\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Inspect\"},{\"type\":\"text\",\"text\":\"<image>\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\",\"detail\":\"high\"}},{\"type\":\"text\",\"text\":\"</image>\"}]}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}],\"tool_choice\":\"auto\",\"reasoning_effort\":\"high\",\"max_tokens\":123}"
+    },
+    {
+      "url": "https://api.openai.com/v1/chat/completions",
+      "headers": {
+        "host": "api.openai.com",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-session": "session-fixed",
+        "content-length": "966"
+      },
+      "body": "{\"model\":\"model\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\"},{\"role\":\"system\",\"content\":\"Skill instructions.\"},{\"role\":\"user\",\"content\":\"Read the file\"},{\"role\":\"assistant\",\"content\":\"Checking\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"Private thought\"},{\"role\":\"tool\",\"content\":\"file content\\n<checkpoint>\",\"tool_call_id\":\"call_1\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Inspect\"},{\"type\":\"text\",\"text\":\"<image>\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\",\"detail\":\"high\"}},{\"type\":\"text\",\"text\":\"</image>\"}]},{\"role\":\"assistant\",\"content\":\"ok\"},{\"role\":\"user\",\"content\":\"Continue\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}],\"tool_choice\":\"auto\",\"reasoning_effort\":\"high\",\"max_tokens\":123}"
+    }
+  ],
+  "zai:False": [
+    {
+      "url": "https://api.z.ai/api/coding/paas/v4/chat/completions",
+      "headers": {
+        "host": "api.z.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "content-length": "219",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\":\"glm-5.3-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\"},{\"role\":\"user\",\"content\":\"Hello \u2603\"}],\"stream\":true,\"thinking\":{\"type\":\"enabled\",\"clear_thinking\":true},\"reasoning_effort\":\"high\"}"
+    }
+  ],
+  "zai:True": [
+    {
+      "url": "https://api.z.ai/api/coding/paas/v4/chat/completions",
+      "headers": {
+        "host": "api.z.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "content-length": "885",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\":\"glm-5.3-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\\n\\nSkill instructions.\"},{\"role\":\"user\",\"content\":\"Read the file\"},{\"role\":\"assistant\",\"content\":\"Checking\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"}}]},{\"role\":\"tool\",\"content\":\"file content\\n<checkpoint>\",\"tool_call_id\":\"call_1\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Inspect\"},{\"type\":\"text\",\"text\":\"<image>\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\",\"detail\":\"high\"}},{\"type\":\"text\",\"text\":\"</image>\"}]}],\"stream\":true,\"thinking\":{\"type\":\"enabled\",\"clear_thinking\":true},\"reasoning_effort\":\"high\",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}],\"tool_choice\":\"auto\"}"
+    },
+    {
+      "url": "https://api.z.ai/api/coding/paas/v4/chat/completions",
+      "headers": {
+        "host": "api.z.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "content-length": "958",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\":\"glm-5.3-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\\n\\nSkill instructions.\"},{\"role\":\"user\",\"content\":\"Read the file\"},{\"role\":\"assistant\",\"content\":\"Checking\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"}}]},{\"role\":\"tool\",\"content\":\"file content\\n<checkpoint>\",\"tool_call_id\":\"call_1\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Inspect\"},{\"type\":\"text\",\"text\":\"<image>\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\",\"detail\":\"high\"}},{\"type\":\"text\",\"text\":\"</image>\"}]},{\"role\":\"assistant\",\"content\":\"ok\"},{\"role\":\"user\",\"content\":\"Continue\"}],\"stream\":true,\"thinking\":{\"type\":\"enabled\",\"clear_thinking\":true},\"reasoning_effort\":\"high\",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}],\"tool_choice\":\"auto\"}"
+    }
+  ],
+  "go-chat:False": [
+    {
+      "url": "https://opencode.ai/zen/go/v1/chat/completions",
+      "headers": {
+        "host": "opencode.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-opencode-session": "session-fixed",
+        "content-length": "232"
+      },
+      "body": "{\"model\":\"deepseek-v4.1-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\"},{\"role\":\"user\",\"content\":\"Hello \u2603\"}],\"stream\":true,\"stream_options\":{\"include_usage\":true},\"max_tokens\":65536,\"reasoning_effort\":\"high\"}"
+    }
+  ],
+  "go-chat:True": [
+    {
+      "url": "https://opencode.ai/zen/go/v1/chat/completions",
+      "headers": {
+        "host": "opencode.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-opencode-session": "session-fixed",
+        "content-length": "963"
+      },
+      "body": "{\"model\":\"deepseek-v4.1-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\"},{\"role\":\"system\",\"content\":\"Skill instructions.\"},{\"role\":\"user\",\"content\":\"Read the file\"},{\"role\":\"assistant\",\"content\":\"Checking\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"Private thought\"},{\"role\":\"tool\",\"content\":\"file content\\n<checkpoint>\",\"tool_call_id\":\"call_1\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Inspect\"},{\"type\":\"text\",\"text\":\"<image>\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\",\"detail\":\"high\"}},{\"type\":\"text\",\"text\":\"</image>\"}]}],\"stream\":true,\"stream_options\":{\"include_usage\":true},\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}],\"tool_choice\":\"auto\",\"max_tokens\":65536,\"reasoning_effort\":\"high\"}"
+    },
+    {
+      "url": "https://opencode.ai/zen/go/v1/chat/completions",
+      "headers": {
+        "host": "opencode.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-opencode-session": "session-fixed",
+        "content-length": "1036"
+      },
+      "body": "{\"model\":\"deepseek-v4.1-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"System.\\nKeep order.\"},{\"role\":\"system\",\"content\":\"Skill instructions.\"},{\"role\":\"user\",\"content\":\"Read the file\"},{\"role\":\"assistant\",\"content\":\"Checking\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"Private thought\"},{\"role\":\"tool\",\"content\":\"file content\\n<checkpoint>\",\"tool_call_id\":\"call_1\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Inspect\"},{\"type\":\"text\",\"text\":\"<image>\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\",\"detail\":\"high\"}},{\"type\":\"text\",\"text\":\"</image>\"}]},{\"role\":\"assistant\",\"content\":\"ok\"},{\"role\":\"user\",\"content\":\"Continue\"}],\"stream\":true,\"stream_options\":{\"include_usage\":true},\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}],\"tool_choice\":\"auto\",\"max_tokens\":65536,\"reasoning_effort\":\"high\"}"
+    }
+  ],
+  "go-responses:False": [
+    {
+      "url": "https://opencode.ai/zen/go/v1/responses",
+      "headers": {
+        "host": "opencode.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-opencode-session": "session-fixed",
+        "content-length": "292"
+      },
+      "body": "{\"model\":\"muse-spark-1.3-contributor\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hello \u2603\"}]}],\"store\":false,\"parallel_tool_calls\":false,\"instructions\":\"System.\\nKeep order.\",\"max_output_tokens\":65536,\"reasoning\":{\"effort\":\"high\",\"summary\":\"auto\",\"context\":\"all_turns\"}}"
+    }
+  ],
+  "go-responses:True": [
+    {
+      "url": "https://opencode.ai/zen/go/v1/responses",
+      "headers": {
+        "host": "opencode.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-opencode-session": "session-fixed",
+        "content-length": "995"
+      },
+      "body": "{\"model\":\"muse-spark-1.3-contributor\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Read the file\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Checking\"}]},{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"file content\\n<checkpoint>\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Inspect\"},{\"type\":\"input_text\",\"text\":\"<image>\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AAAA\",\"detail\":\"high\"},{\"type\":\"input_text\",\"text\":\"</image>\"}]}],\"store\":false,\"parallel_tool_calls\":false,\"instructions\":\"System.\\nKeep order.\\n\\nSkill instructions.\",\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}],\"tool_choice\":\"auto\",\"max_output_tokens\":65536,\"reasoning\":{\"effort\":\"high\",\"summary\":\"auto\",\"context\":\"all_turns\"}}"
+    },
+    {
+      "url": "https://opencode.ai/zen/go/v1/responses",
+      "headers": {
+        "host": "opencode.ai",
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "user-agent": "contract-test",
+        "authorization": "Bearer test",
+        "content-type": "application/json",
+        "x-opencode-session": "session-fixed",
+        "content-length": "1131"
+      },
+      "body": "{\"model\":\"muse-spark-1.3-contributor\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Read the file\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Checking\"}]},{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"file content\\n<checkpoint>\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Inspect\"},{\"type\":\"input_text\",\"text\":\"<image>\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AAAA\",\"detail\":\"high\"},{\"type\":\"input_text\",\"text\":\"</image>\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Continue\"}]}],\"store\":false,\"parallel_tool_calls\":false,\"instructions\":\"System.\\nKeep order.\\n\\nSkill instructions.\",\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}],\"tool_choice\":\"auto\",\"max_output_tokens\":65536,\"reasoning\":{\"effort\":\"high\",\"summary\":\"auto\",\"context\":\"all_turns\"}}"
+    }
+  ],
+  "codex-http:False": [
+    {
+      "url": "https://chatgpt.com/backend-api/codex/responses",
+      "headers": {
+        "host": "chatgpt.com",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "authorization": "Bearer test",
+        "chatgpt-account-id": "acct-fixed",
+        "originator": "yoke",
+        "user-agent": "yoke (linux; x86_64)",
+        "openai-beta": "responses=experimental",
+        "accept": "text/event-stream",
+        "content-type": "application/json",
+        "session_id": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "x-client-request-id": "fixed-id",
+        "content-length": "423"
+      },
+      "body": "{\"model\":\"gpt-6.1-sol\",\"store\":false,\"stream\":true,\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hello \u2603\"}]}],\"text\":{\"verbosity\":\"medium\"},\"include\":[\"reasoning.encrypted_content\"],\"prompt_cache_key\":\"b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587\",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"reasoning\":{\"effort\":\"medium\",\"summary\":\"auto\"},\"instructions\":\"System.\\nKeep order.\"}"
+    }
+  ],
+  "codex-http:True": [
+    {
+      "url": "https://chatgpt.com/backend-api/codex/responses",
+      "headers": {
+        "host": "chatgpt.com",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "authorization": "Bearer test",
+        "chatgpt-account-id": "acct-fixed",
+        "originator": "yoke",
+        "user-agent": "yoke (linux; x86_64)",
+        "openai-beta": "responses=experimental",
+        "accept": "text/event-stream",
+        "content-type": "application/json",
+        "session_id": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "x-client-request-id": "fixed-id",
+        "content-length": "1089"
+      },
+      "body": "{\"model\":\"gpt-6.1-sol\",\"store\":false,\"stream\":true,\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Read the file\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Checking\"}]},{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"file content\\n<checkpoint>\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Inspect\"},{\"type\":\"input_text\",\"text\":\"<image>\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AAAA\"},{\"type\":\"input_text\",\"text\":\"</image>\"}]}],\"text\":{\"verbosity\":\"medium\"},\"include\":[\"reasoning.encrypted_content\"],\"prompt_cache_key\":\"b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587\",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"reasoning\":{\"effort\":\"medium\",\"summary\":\"auto\"},\"instructions\":\"System.\\nKeep order.\\n\\nSkill instructions.\",\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}]}"
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/codex/responses",
+      "headers": {
+        "host": "chatgpt.com",
+        "accept-encoding": "gzip, deflate",
+        "connection": "keep-alive",
+        "authorization": "Bearer test",
+        "chatgpt-account-id": "acct-fixed",
+        "originator": "yoke",
+        "user-agent": "yoke (linux; x86_64)",
+        "openai-beta": "responses=experimental",
+        "accept": "text/event-stream",
+        "content-type": "application/json",
+        "session_id": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "x-client-request-id": "fixed-id",
+        "x-codex-turn-state": "turn-fixed",
+        "content-length": "1279"
+      },
+      "body": "{\"model\":\"gpt-6.1-sol\",\"store\":false,\"stream\":true,\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Read the file\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Checking\"}]},{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"file content\\n<checkpoint>\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Inspect\"},{\"type\":\"input_text\",\"text\":\"<image>\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AAAA\"},{\"type\":\"input_text\",\"text\":\"</image>\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Continue\"}]}],\"text\":{\"verbosity\":\"medium\"},\"include\":[\"reasoning.encrypted_content\"],\"prompt_cache_key\":\"b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587\",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"reasoning\":{\"effort\":\"medium\",\"summary\":\"auto\"},\"instructions\":\"System.\\nKeep order.\\n\\nSkill instructions.\",\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}],\"client_metadata\":{\"x-codex-turn-state\":\"turn-fixed\"}}"
+    }
+  ],
+  "codex-ws:False": [
+    {
+      "url": "wss://chatgpt.com/backend-api/codex/responses",
+      "headers": {
+        "Authorization": "Bearer test",
+        "originator": "yoke",
+        "User-Agent": "yoke (linux; x86_64)",
+        "OpenAI-Beta": "responses_websockets=2026-02-06",
+        "Content-Type": "application/json",
+        "session_id": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "x-client-request-id": "fixed-id",
+        "chatgpt-account-id": "acct-fixed"
+      }
+    },
+    {
+      "body": "{\"model\":\"gpt-6.1-sol\",\"store\":false,\"stream\":true,\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hello \\u2603\"}]}],\"text\":{\"verbosity\":\"medium\"},\"include\":[\"reasoning.encrypted_content\"],\"prompt_cache_key\":\"b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587\",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"reasoning\":{\"effort\":\"medium\",\"summary\":\"auto\",\"context\":\"all_turns\"},\"instructions\":\"System.\\nKeep order.\",\"type\":\"response.create\"}"
+    }
+  ],
+  "codex-ws:True": [
+    {
+      "url": "wss://chatgpt.com/backend-api/codex/responses",
+      "headers": {
+        "Authorization": "Bearer test",
+        "originator": "yoke",
+        "User-Agent": "yoke (linux; x86_64)",
+        "OpenAI-Beta": "responses_websockets=2026-02-06",
+        "Content-Type": "application/json",
+        "session_id": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "x-client-request-id": "fixed-id",
+        "chatgpt-account-id": "acct-fixed"
+      }
+    },
+    {
+      "body": "{\"model\":\"gpt-6.1-sol\",\"store\":false,\"stream\":true,\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Read the file\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Checking\"}]},{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"x\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"file content\\n<checkpoint>\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Inspect\"},{\"type\":\"input_text\",\"text\":\"<image>\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AAAA\"},{\"type\":\"input_text\",\"text\":\"</image>\"}]}],\"text\":{\"verbosity\":\"medium\"},\"include\":[\"reasoning.encrypted_content\"],\"prompt_cache_key\":\"b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587\",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"reasoning\":{\"effort\":\"medium\",\"summary\":\"auto\",\"context\":\"all_turns\"},\"instructions\":\"System.\\nKeep order.\\n\\nSkill instructions.\",\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}],\"type\":\"response.create\"}"
+    },
+    {
+      "body": "{\"model\":\"gpt-6.1-sol\",\"store\":false,\"stream\":true,\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Continue\"}]}],\"text\":{\"verbosity\":\"medium\"},\"include\":[\"reasoning.encrypted_content\"],\"prompt_cache_key\":\"b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587\",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"reasoning\":{\"effort\":\"medium\",\"summary\":\"auto\",\"context\":\"all_turns\"},\"instructions\":\"System.\\nKeep order.\\n\\nSkill instructions.\",\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}],\"client_metadata\":{\"x-codex-turn-state\":\"turn-fixed\"},\"type\":\"response.create\",\"previous_response_id\":\"resp-fixed\"}"
+    }
+  ]
+}

@@ -1,7 +1,5 @@
 """Connection lifecycle and continuity for Codex WebSockets."""
 
-# ruff: noqa: ANN401
-
 from __future__ import annotations
 
 import json
@@ -15,6 +13,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 from websockets.protocol import State
 
 from yoke.agent.models import Message
+from yoke.ai.providers.codex.websocket.host import CodexWebSocketHost
 from yoke.ai.providers.base import ProviderCancelledError, ProviderError
 from yoke.ai.providers.codex.subscription import (
     CodexSubscriptionProvider,
@@ -42,23 +41,12 @@ from yoke.ai.providers.codex.websocket.events import (
 
 
 class CodexWebSocketTransportMixin:
-    def close(self: Any) -> None:
+    def close(self: CodexWebSocketHost) -> None:
         self._close_websocket()
         self._response_chain.reset()
         CodexSubscriptionProvider.close(self)
 
-    def fork_for_turn(self: Any) -> Any:
-        """Clone replayable response state without sharing a live WebSocket."""
-        forked = type(self)(
-            self.config.model_copy(deep=True),
-            websocket_factory=self._websocket_factory,
-            sleep=self._sleep,
-        )
-        forked._prompt_cache_key = self._prompt_cache_key
-        forked._response_chain = self._response_chain.fork_for_new_connection()
-        return forked
-
-    def set_session_id(self: Any, session_id: str) -> None:
+    def set_session_id(self: CodexWebSocketHost, session_id: str) -> None:
         """Switch cache affinity and response chaining to a new session."""
         previous_key = self._prompt_cache_key
         CodexSubscriptionProvider.set_session_id(self, session_id)
@@ -68,7 +56,9 @@ class CodexWebSocketTransportMixin:
         self._response_chain.reset()
 
     def _request_payload(
-        self: Any, messages: list[Message], tools: list[dict[str, object]]
+        self: CodexWebSocketHost,
+        messages: list[Message],
+        tools: list[dict[str, object]],
     ) -> dict[str, object]:
         payload = CodexSubscriptionProvider._request_payload(self, messages, tools)
         reasoning = payload.get("reasoning")
@@ -86,7 +76,7 @@ class CodexWebSocketTransportMixin:
         return payload
 
     def _prepare_websocket_payload(
-        self: Any, payload: dict[str, object]
+        self: CodexWebSocketHost, payload: dict[str, object]
     ) -> dict[str, object]:
         credentials = self._websocket_credentials
         current_account_id = credentials.account_id if credentials is not None else None
@@ -98,7 +88,7 @@ class CodexWebSocketTransportMixin:
         )
 
     def _remember_successful_response(
-        self: Any, payload: dict[str, object], message: Message
+        self: CodexWebSocketHost, payload: dict[str, object], message: Message
     ) -> None:
         credentials = self._websocket_credentials
         self._response_chain.remember(
@@ -108,7 +98,9 @@ class CodexWebSocketTransportMixin:
             auth_profile=self._websocket_auth_profile,
         )
 
-    def _request_headers(self: Any, credentials: OAuthCredentials) -> dict[str, str]:
+    def _request_headers(
+        self: CodexWebSocketHost, credentials: OAuthCredentials
+    ) -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {credentials.access}",
             "originator": originator_for_model(
@@ -133,7 +125,7 @@ class CodexWebSocketTransportMixin:
             headers["chatgpt-account-id"] = credentials.account_id
         return headers
 
-    def _fresh_credentials(self: Any) -> OAuthCredentials:
+    def _fresh_credentials(self: CodexWebSocketHost) -> OAuthCredentials:
         if self.config.api_key:
             self._active_auth_profile = "api-key"
             self._log_auth_profile_change("env", "api-key")
@@ -146,7 +138,7 @@ class CodexWebSocketTransportMixin:
         return CodexSubscriptionProvider._fresh_credentials(self)
 
     def _recover_invalid_oauth_credentials(
-        self: Any,
+        self: CodexWebSocketHost,
         *,
         auth_profile: str | None,
         request_id: str,
@@ -173,17 +165,19 @@ class CodexWebSocketTransportMixin:
             request_metrics=request_metrics,
         )
 
-    def _responses_url(self: Any) -> str:
+    def _responses_url(self: CodexWebSocketHost) -> str:
         return websocket_url_for_base(self.config.base_url)
 
     def _request_log_metrics(
-        self: Any, messages: list[Message], tools: list[dict[str, object]]
+        self: CodexWebSocketHost,
+        messages: list[Message],
+        tools: list[dict[str, object]],
     ) -> dict[str, object]:
         metrics = CodexSubscriptionProvider._request_log_metrics(self, messages, tools)
         metrics["transport"] = "websocket"
         return metrics
 
-    def _fresh_websocket(self: Any) -> CodexWebSocketConnection:
+    def _fresh_websocket(self: CodexWebSocketHost) -> CodexWebSocketConnection:
         if self._websocket is not None and not self._websocket_closed(self._websocket):
             return self._websocket
 
@@ -213,7 +207,9 @@ class CodexWebSocketTransportMixin:
         except Exception as exc:
             raise ProviderError(f"Codex WebSocket connection failed: {exc}") from exc
 
-    def _websocket_closed(self: Any, websocket: CodexWebSocketConnection) -> bool:
+    def _websocket_closed(
+        self: CodexWebSocketHost, websocket: CodexWebSocketConnection
+    ) -> bool:
         try:
             if getattr(websocket, "closed", False):
                 return True
@@ -223,7 +219,9 @@ class CodexWebSocketTransportMixin:
         except Exception:
             return False
 
-    def _valid_websocket_credentials(self: Any) -> OAuthCredentials | None:
+    def _valid_websocket_credentials(
+        self: CodexWebSocketHost,
+    ) -> OAuthCredentials | None:
         credentials = self._websocket_credentials
         if credentials is None:
             return None
@@ -237,7 +235,7 @@ class CodexWebSocketTransportMixin:
             return None
         return credentials
 
-    def _selected_auth_profile(self: Any) -> str | None:
+    def _selected_auth_profile(self: CodexWebSocketHost) -> str | None:
         if not self.config.accounts_dir.expanduser().exists():
             return None
         try:
@@ -257,7 +255,7 @@ class CodexWebSocketTransportMixin:
         return selected
 
     def _consume_websocket_response(
-        self: Any,
+        self: CodexWebSocketHost,
         websocket: CodexWebSocketConnection,
         *,
         cancel_requested: Callable[[], bool] | None = None,
@@ -281,6 +279,8 @@ class CodexWebSocketTransportMixin:
             except ConnectionClosed as exc:
                 self._close_websocket(clear_credentials=False)
                 raise ProviderError(STALE_WEBSOCKET_CLOSED_MESSAGE) from exc
+            if raw:
+                self._stream_started = True
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
             if not isinstance(raw, str):
@@ -306,7 +306,7 @@ class CodexWebSocketTransportMixin:
                 )
                 return message
 
-    def _capture_turn_state(self: Any, event: dict[str, Any]) -> None:
+    def _capture_turn_state(self: CodexWebSocketHost, event: dict[str, Any]) -> None:
         # Codex CLI treats x-codex-turn-state as a server-provided sticky
         # routing token. It is replayed on later requests so reconnects still
         # reach the same warm backend, but it is intentionally separate from the
@@ -323,7 +323,9 @@ class CodexWebSocketTransportMixin:
                 self._turn_state = value.strip()
             return
 
-    def _close_websocket(self: Any, *, clear_credentials: bool = True) -> None:
+    def _close_websocket(
+        self: CodexWebSocketHost, *, clear_credentials: bool = True
+    ) -> None:
         websocket = self._websocket
         self._websocket = None
         self._response_chain.drop_anchor()

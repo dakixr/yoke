@@ -107,3 +107,21 @@ def set_config_model_from_catalog(
     if not hasattr(config, "model"):
         raise ValueError("Provider config does not expose a mutable model")
     cast(Any, config).model = normalized_model
+
+
+class ModelCatalogMixin[ConfigT]:
+    """Share selection queries while each provider supplies its catalog source."""
+
+    config: ConfigT
+
+    def list_models(self) -> list[ProviderModelInfo]:
+        """Return this provider's selectable models as independent copies."""
+        raise NotImplementedError
+
+    def current_model_id(self) -> str | None:
+        """Return the selected model id, with surrounding whitespace removed."""
+        return current_model_id_from_config(self.config)
+
+    def current_model_info(self) -> ProviderModelInfo | None:
+        """Look up independent metadata for the selected model."""
+        return current_model_info_from_catalog(self.config, self.list_models())

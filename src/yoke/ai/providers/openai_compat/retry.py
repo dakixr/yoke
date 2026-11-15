@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 from collections.abc import Callable
 from typing import Any
 
@@ -13,9 +12,10 @@ from yoke.ai.providers.base import ProviderRateLimitError
 from yoke.ai.providers.base import ProviderServerError
 from yoke.ai.providers.base import sleep_with_cancel
 from yoke.ai.providers.openai_compat.events import emit_retry_event
-from yoke.ai.providers.openai_compat.helpers import error_detail
-from yoke.ai.providers.openai_compat.helpers import retry_after_seconds
-from yoke.ai.providers.openai_compat.helpers import should_retry_request_error
+from yoke.ai.providers.http_retry import backoff_seconds, retryable_status
+from yoke.ai.providers.http_retry import error_detail
+from yoke.ai.providers.http_retry import retry_after_seconds
+from yoke.ai.providers.http_retry import should_retry_request_error
 
 
 class OpenAICompatibleRetryMixin:
@@ -28,22 +28,15 @@ class OpenAICompatibleRetryMixin:
     def _reset_transport_for_retry(self) -> None:
         """Discard provider-owned transport state before a network retry."""
 
-    def _backoff_seconds(self, attempt: int) -> float:
-        return min(
-            self.config.retry_backoff_seconds * (2**attempt),
-            self.config.max_retry_backoff_seconds,
-        )
-
     def _sleep_seconds(
         self, attempt: int, retry_after_seconds: float | None = None
     ) -> float:
-        base_seconds = (
-            self._backoff_seconds(attempt)
-            if retry_after_seconds is None
-            else retry_after_seconds
+        return backoff_seconds(
+            attempt,
+            self.config.retry_backoff_seconds,
+            self.config.max_retry_backoff_seconds,
+            retry_after_seconds,
         )
-        jitter = secrets.randbelow(1000) / 1000 * min(1.0, base_seconds * 0.1)
-        return min(base_seconds + jitter, self.config.max_retry_backoff_seconds)
 
     def _retry_sleep(
         self,
@@ -111,7 +104,7 @@ class OpenAICompatibleRetryMixin:
                 )
                 return provider_error
             raise provider_error
-        if 500 <= response.status_code < 600:
+        if retryable_status(response.status_code):
             provider_error = ProviderServerError(
                 f"Provider server error: {error_detail(response)}",
                 status_code=response.status_code,

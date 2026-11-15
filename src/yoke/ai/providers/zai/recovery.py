@@ -18,8 +18,11 @@ def message_text(message: Message) -> str:
     return message.text_content() or ""
 
 
-class ZAIMessageRecoveryMixin:
-    config: ZAIConfig
+class ZAIMessageRecovery:
+    """Normalize message history and recover rejected ZAI conversations."""
+
+    def __init__(self, config: ZAIConfig) -> None:
+        self.config = config
 
     def _prepare_messages(self, messages: list[Message]) -> list[Message]:
         prepared = normalize_openai_request_messages(messages)
@@ -69,10 +72,7 @@ class ZAIMessageRecoveryMixin:
 
     def _looks_like_illegal_messages_error(self, detail: str) -> bool:
         normalized = detail.lower()
-        return (
-            "messages parameter is illegal" in normalized
-            or "messages parameter" in normalized
-        )
+        return "messages parameter" in normalized
 
     def _recover_illegal_messages(self, messages: list[Message]) -> list[Message]:
         recovered: list[Message] = []

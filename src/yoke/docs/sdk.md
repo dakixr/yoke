@@ -88,8 +88,22 @@ providers and other Yoke-owned network clients. Values `0`, `false`, `no`, and
 `off` keep verification enabled. An injected HTTP client keeps its own TLS
 configuration.
 
-OpenAI-compatible, Responses, and Z.ai retries honor an explicit `Retry-After: 0`.
-They use exponential backoff only when no usable retry delay was supplied.
+Provider HTTP retries share capped exponential backoff with bounded jitter.
+`Retry-After` accepts seconds or an HTTP date, including an explicit zero delay.
+Connect and pool timeouts can retry. Read timeouts can retry before any response
+bytes arrive. Once a response stream has delivered bytes, a timeout fails the
+request without replaying the generation. This also applies to Codex WebSockets.
+
+Built-in providers implement `fork_for_turn()` to copy request state and config.
+A fork retains an injected HTTP client as a borrowed transport; closing the fork
+does not close that client. Owned clients and live WebSockets are independent.
+Custom providers should implement `fork_for_turn()` for isolation. Without this
+hook, `fork_provider()` logs a warning and shares the instance for compatibility.
+A hook that returns the original instance also logs a warning.
+
+`provider_identity(provider)` in `yoke.ai.providers.base` returns normalized
+`name`, `model`, and `reasoning_effort` metadata. An unnamed provider uses
+`unknown`; absent model or effort values are `None`.
 
 Codex uses Responses continuity and a stable cache scope. Healthy follow-up
 requests can send only the new input against the prior response; stale anchors
