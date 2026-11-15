@@ -136,6 +136,7 @@ SLASH_COMMANDS: tuple[Command, ...] = (
         "Open the interactive prompt queue manager.",
         handlers.queue,
         available_in_basic=False,
+        rejects_args=True,
     ),
     Command(
         "/ps",

@@ -3481,7 +3481,7 @@
       1
     ],
     "sleeps": [
-      10
+      90.0
     ],
     "events": [
       {
@@ -3491,10 +3491,10 @@
       {
         "event": "request_retry",
         "attempt": 0,
-        "status_code": 429,
-        "wait_seconds": 10,
+        "wait_seconds": 90.0,
         "retry_after_used": true,
-        "reason": "rate_limited"
+        "reason": "rate_limited",
+        "status_code": 429
       }
     ],
     "payloads": [
@@ -3565,7 +3565,7 @@
       1
     ],
     "sleeps": [
-      10
+      90.0
     ],
     "events": [
       {
@@ -3575,10 +3575,10 @@
       {
         "event": "request_retry",
         "attempt": 0,
-        "status_code": 429,
-        "wait_seconds": 10,
+        "wait_seconds": 90.0,
         "retry_after_used": true,
-        "reason": "rate_limited"
+        "reason": "rate_limited",
+        "status_code": 429
       },
       {
         "event": "request_error",

@@ -178,11 +178,19 @@ def finalize_tool_result(
     finalized = dict(result)
     try:
         invocation = prepare_tool(tools, tool_call.function.name, arguments)
-        invocation.apply_result(context, finalized)
     except Exception:
-        logger.warning(
-            "Could not apply result for tool %s", tool_call.function.name, exc_info=True
-        )
+        # Unknown tools and invalid arguments are ordinary model mistakes; the
+        # tool result already reports them to the model.
+        logger.debug("Skipping result hooks for tool %s", tool_call.function.name)
+    else:
+        try:
+            invocation.apply_result(context, finalized)
+        except Exception:
+            logger.warning(
+                "Could not apply result for tool %s",
+                tool_call.function.name,
+                exc_info=True,
+            )
     if after_tool_call is not None:
         hook_result = after_tool_call(
             AfterToolCallContext(

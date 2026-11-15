@@ -229,6 +229,12 @@ class AgentRun:
             return
         try:
             invocation = tool.parse_arguments(arguments)
+        except Exception:
+            # Invalid arguments are a model mistake already reported in the
+            # tool result, not an internal failure.
+            logger.debug("Skipping pending context for tool %s", tool_name)
+            return
+        try:
             pending = invocation.pending_context_messages(result)
         except Exception:
             logger.warning(

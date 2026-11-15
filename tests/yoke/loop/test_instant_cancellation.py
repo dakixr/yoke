@@ -879,7 +879,8 @@ def test_runtime_close_times_out_without_releasing_live_tool_resources(
     started_at = time.monotonic()
     with pytest.raises(InProcessToolShutdownError, match="runtime remains open"):
         agent.close()
-    assert time.monotonic() - started_at < 5
+    # Close must time out instead of waiting for the tool's 5s release.
+    assert time.monotonic() - started_at < 2.5
     assert agent._closed is False
     assert not resource_closed.is_set()
 

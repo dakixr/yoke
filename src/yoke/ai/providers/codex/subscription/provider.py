@@ -206,6 +206,10 @@ class CodexSubscriptionProvider[ConfigT: CodexSubscriptionConfig](
         return f"{base_url}/codex/responses"
 
     def _backoff_seconds(self, attempt: int, retry_after: float | None = None) -> float:
+        # Honor the server's full Retry-After, as main did; only computed
+        # backoff is capped.
+        if retry_after is not None:
+            return retry_after
         return backoff_seconds(
             attempt,
             self.config.retry_backoff_seconds,
