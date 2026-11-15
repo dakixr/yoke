@@ -82,6 +82,12 @@ class AgentMonitor:
                 self._watch_task = asyncio.create_task(self._watch())
 
     async def _on_event(self, event: dict[str, object] | None) -> None:
+        # Only agent-run changes, reconcile ticks and disconnects need a read.
+        if event is not None and event.get("type") not in (
+            "session.agent.updated",
+            "__disconnected__",
+        ):
+            return
         async with self._lock:
             if event is not None and event.get("type") == "__disconnected__":
                 await self._lost()

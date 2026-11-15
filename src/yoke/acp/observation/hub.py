@@ -7,8 +7,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from yoke.acp.observation.events import Invalidations
-
 if TYPE_CHECKING:
     from yoke.acp.native import NativeClient
 
@@ -43,7 +41,10 @@ class NativeEventHub:
 
     async def _watch(self) -> None:
         while self._callbacks and not self._closed:
-            queue = Invalidations("*")
+            # Every event must reach subscribers in order; coalescing here
+            # would drop catalog.updated (no sessionID) and same-session
+            # events such as plan or permission requests.
+            queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=1024)
             ready = self.ready
             stream = asyncio.create_task(self.native.events(queue, ready))
             tick = asyncio.create_task(asyncio.sleep(15))

@@ -215,6 +215,12 @@ class ProcessMonitor:
                 await asyncio.gather(watch, return_exceptions=True)
 
     async def _on_event(self, event: dict[str, object] | None) -> None:
+        # Only process changes, reconcile ticks and disconnects need a snapshot.
+        if event is not None and event.get("type") not in (
+            "session.process.updated",
+            "__disconnected__",
+        ):
+            return
         async with self._lock:
             for process_id, observed in list(self._observed.items()):
                 if event is not None and event.get("type") == "__disconnected__":

@@ -264,13 +264,15 @@ class ProcessMonitorTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(message["content"][0]["content"]["text"]), 4000)
         self.assertTrue(message["rawOutput"]["summary"].endswith("final error detail"))
 
-    async def test_chat_traffic_and_repeated_invalidations_do_not_overflow(
+    async def test_chat_traffic_does_not_trigger_process_snapshots(
         self,
     ) -> None:
         await self.native.process_monitor.track("owner", 7, "call", self.update)
         await self.next()
         assert self.native.events_queue is not None
-        for _ in range(1000):
+        while not self.native.snapshots.empty():
+            self.native.snapshots.get_nowait()
+        for _ in range(500):
             self.native.events_queue.put_nowait(
                 {
                     "type": "session.message.updated",
@@ -278,7 +280,10 @@ class ProcessMonitorTests(unittest.IsolatedAsyncioTestCase):
                     "data": {},
                 }
             )
-            self.native.invalidate()
-        self.assertEqual(self.native.events_queue.qsize(), 1)
+        for _ in range(50):
+            await asyncio.sleep(0)
+        # Chat traffic is ignored; only process invalidations read a snapshot.
+        self.assertTrue(self.native.snapshots.empty())
         self.native.items[0] = process(status="exited", code=0)
+        self.native.invalidate()
         self.assertEqual((await self.next())["status"], "completed")
