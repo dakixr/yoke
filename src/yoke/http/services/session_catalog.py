@@ -18,9 +18,8 @@ from yoke.http.models.session import (
     SessionTime,
     SessionTreeSummary,
 )
-from yoke.http.reads.cursor import encode_cursor, query_fingerprint
+from yoke.http.reads.cursor import decode_cursor, encode_cursor, query_fingerprint
 from yoke.http.services.event_broker import EventService
-from yoke.http.reads.cursors import cursor_start
 from yoke.http.reads.model import SessionReadModel
 from yoke.session import SessionRecord, SessionStore, new_unique_session_id
 from yoke.session.queue import (
@@ -69,38 +68,27 @@ class SessionCatalog:
         order: SessionOrder,
         cursor: str | None,
     ) -> SessionListResponse:
-        records = self.store.list_index_entries(root=directory, maintain=False)
-        if search:
-            needle = search.casefold()
-            records = [
-                record
-                for record in records
-                if needle in record.id.casefold()
-                or needle in (record.title or "").casefold()
-                or needle in (record.root or "").casefold()
-            ]
-        if pinned is not None:
-            records = [record for record in records if record.pinned is pinned]
-        if archived is not None:
-            records = [
-                record
-                for record in records
-                if (record.archived_at is not None) is archived
-            ]
-        records.sort(
-            key=lambda record: self._sort_key(record, order),
-            reverse=order.endswith("Desc"),
-        )
-
         fingerprint = query_fingerprint((directory, search, pinned, archived, order))
-        start = cursor_start(records, cursor, fingerprint)
-        page = records[start : start + limit]
+        anchor = (
+            decode_cursor(cursor, expected_query=fingerprint)
+            if cursor is not None
+            else None
+        )
+        page, total, has_more = self.read_model.index.queries.sessions(
+            directory=directory,
+            search=search,
+            pinned=pinned,
+            archived=archived,
+            order=order,
+            limit=limit,
+            anchor_id=anchor,
+        )
         queue_snapshots = load_prompt_queue_snapshots(
             self.store.directory,
             (record.id for record in page),
         )
         next_cursor = None
-        if start + limit < len(records) and page:
+        if has_more and page:
             next_cursor = encode_cursor(query=fingerprint, anchor_id=page[-1].id)
         return SessionListResponse(
             data=[
@@ -111,7 +99,7 @@ class SessionCatalog:
                 for record in page
             ],
             cursor=CursorInfo(previous=None, next=next_cursor),
-            total=len(records),
+            total=total,
         )
 
     def get_session(self, session_id: str) -> SessionInfo:
@@ -296,16 +284,3 @@ class SessionCatalog:
             data,
             location=record.root,
         )
-
-    @staticmethod
-    def _sort_key(
-        record: SessionRecord | SessionIndexEntry,
-        order: SessionOrder,
-    ) -> tuple[str, str]:
-        if order.startswith("created"):
-            value = record.created_at
-        elif order.startswith("lastUser"):
-            value = record.last_user_message_at or record.created_at
-        else:
-            value = record.updated_at or record.created_at
-        return value or "", record.id

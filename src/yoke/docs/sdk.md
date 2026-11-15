@@ -186,8 +186,8 @@ fork the same agent.
 
 ## Usage Metrics
 
-Yoke records every completed provider response from the CLI, HTTP API, and SDK in daily
-JSONL files under `~/.yoke/usage-metric-logs/<provider>/`. Records contain only
+Yoke records every completed provider response from the CLI, HTTP API, and SDK
+in the `usage_events` table of `~/.yoke/yoke.db`. Records contain only
 the provider, model, completion time, normalized token counts, and explicit
 execution attribution. Attribution includes `surface`, `call_kind`, CLI or HTTP
 session identity, or the SDK operation and a random SDK run ID as applicable. A
@@ -232,12 +232,15 @@ This is log attribution, not an update to the parent conversation's token counte
 The IDs are accounting hints, not authorization, and do not enter provider prompts
 or cache identity. Remote launches require explicit forwarding of the environment.
 
-Set `YOKE_USAGE_METRIC_LOG_DIR` to store these local metrics in another
-directory. Writes use a cross-process lock, retry transient failures, and flush
-data to disk before returning. A persistent failure raises
-`yoke.ai.providers.UsageLogWriteError` instead of silently losing a completed
-usage record. A failed append is rolled back before retrying. If that rollback
-fails, the writer stops rather than appending more bytes to an uncertain record.
+Set `YOKE_DB_PATH` to use another SQLite database. SDK processes insert usage
+rows directly through WAL, including while the CLI or daemon writes sessions.
+`YOKE_USAGE_METRIC_LOG_DIR` no longer controls persistence. Records retain the
+same schema and privacy rules. Read them with
+`yoke.ai.providers.usage_writer.read_usage_events()`, optionally filtering by
+`provider`, `session_id`, or ISO `since` timestamp and selecting `database_path`.
+Writes commit atomically with `synchronous=NORMAL`, the shared database policy.
+A write failure raises `yoke.ai.providers.UsageLogWriteError`; a failed insertion
+leaves no partial row. Usage rows survive session retention.
 
 ## Automatic agent tracking
 

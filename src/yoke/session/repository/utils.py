@@ -15,7 +15,7 @@ DATABASE_FILE_NAME = "yoke.db"
 def default_session_directory() -> Path:
     """Return the directory for session file state that is not in the database.
 
-    Workspace leases and uploads live here. ``YOKE_SESSION_DIR`` relocates it
+    Workspace leases and disposable upload materializations live here. ``YOKE_SESSION_DIR`` relocates it
     together with the database, which keeps tests and tools fully isolated.
     """
     override = os.getenv("YOKE_SESSION_DIR")

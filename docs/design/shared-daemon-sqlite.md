@@ -1,6 +1,6 @@
 # Shared daemon and SQLite storage
 
-Status: proposed, awaiting approval. Owner decisions are marked **(decided)**.
+Status: approved. Owner decisions are marked **(decided)**.
 
 ## Goals
 
@@ -152,3 +152,94 @@ Choices made where the design was silent, and deliberate deviations.
 - **Reads.** `http/reads` read JSONL files directly, so the minimum adaptation was made: the message index builds topology from `entries` (tail scanners and sidecars deleted), the read cache catches up with `read_delta`, and tool traces and handoffs use store signatures and topology. SQL pagination and deleting the read cache remain Phase 2.
 - **Importer.** `yoke db import-legacy` imports sessions only (not event journals, admissions or queues), honoring newer metadata in the legacy `index.json` exactly as the old loader did.
 - **Workspace leases** remain `flock` files until the daemon owns them.
+
+## Phase 2 implementation notes
+
+- **Blobs and migration.** Schema v2 hashes the original v1 entry bytes with
+  SHA-256 and moves them into `blobs`. `entries.message_sha256` references that
+  table. Neither migration nor loading re-encodes the immutable payload. Entry
+  metadata overrides remain separate. Fork copies rows and references only.
+  Blobs use a rowid table with a separate unique key index: foreign-key checks
+  must not walk large blob records. Migration is atomic and concurrent starters
+  wait up to 60 seconds; ordinary writes use a 5-second timeout again.
+- **HTTP reads.** Recursive SQL walks select active ancestry; message and tree
+  cursors select entry IDs with SQL boundaries and limits. Session catalog
+  filtering, ordering and pagination also run in SQL. Only selected payloads are
+  decoded. Topology caches, background warming, paths and index provenance
+  repair are gone. Pre-provenance tool images get a derived topology kind at
+  insertion or migration, while loaders still return their original bytes.
+  `SessionMessageIndex` remains a stateless query facade for runtime callers.
+  `reads/cache.py` is only an import shim for the stateless runtime snapshot
+  adapter. Explicit full-record projections retain their canonical fallback.
+- **Uploads.** Metadata and original bytes are transactional DB rows, with bytes
+  deduplicated in `blobs`. Phase 1 upload metadata files migrate when the upload
+  service opens. Native file tools still need stable paths, which also occur in
+  existing messages. Those files are disposable materializations rebuilt from
+  the DB, including durable non-image attachments at startup. Upload bindings
+  do not cascade on session deletion: a saved native file reference in a fork
+  can still use the original attachment, matching file-store behavior. Expired
+  unpinned uploads and explicitly removed queue attachments retain their existing
+  cleanup policy.
+- **Usage and agent runs.** SDK processes and the daemon insert privacy-safe
+  metrics into `usage_events` through WAL. Reporting records keep schema 1,
+  including missing-usage events and attribution. `read_usage_events` supports
+  provider, session and timestamp filters. `YOKE_DB_PATH` selects the DB;
+  `YOKE_USAGE_METRIC_LOG_DIR` no longer controls persistence. Usage rows do not
+  cascade with sessions. The agent-run registry has no persisted file state;
+  it remains memory-only. Credentials, settings, SDK state snapshots, MCP full
+  output and provider request debug logs remain files.
+- **Maintenance.** The existing 30-day unpinned retention and five-second
+  maintenance cadence remain. Idle blob collection deletes up to 128 orphan
+  blobs and reclaims up to 256 pages per pass. It skips a busy writer instead
+  of waiting. Creation enables incremental auto-vacuum. Phase 1 databases
+  already enabled it; externally created DBs with `auto_vacuum=NONE` require
+  an offline `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;`, documented in the CLI
+  guide. Migration leaves freed v1 pages on the freelist; `yoke db backup`
+  produces a compact copy without imposing a full vacuum during startup.
+
+### Phase 2 validation
+
+Implementation commit: `b4c22ad`. The originals in `~/.yoke/sessions` were only
+read. The QA copy contained 443 JSONL files, totaling 1,249,136,237 bytes.
+
+Both `yoke db import-legacy --all` runs, under Phase 1 code at `d218cfc` and
+under v2, imported all 443 sessions with zero skipped, mismatched or failed
+records. A v1 database built with that Phase 1 code then migrated to v2 in
+29.974 seconds. The JSONL loader and importer verification compared every
+record and all 17,216 entries again after migration. Integrity and foreign-key
+checks passed. The corpus contains 17,204 distinct entry blobs, totaling
+962,582,189 bytes.
+
+The largest session was `20261025-135540-63d26b`, with 7,564 entries and
+649,388,782 encoded entry bytes. Both forks requested metadata-only results,
+so the measurements include copying the stored session and its entries, but
+exclude parsing a returned full conversation.
+
+| Measurement | v1 | v2 |
+| --- | ---: | ---: |
+| Fork wall time | 12.247 s | 0.355 s |
+| Transaction body, BEGIN to COMMIT trace | 6.710 s | 0.258 s |
+| Competing writer wait, observed lock interval | 7.139 s | 0.329 s |
+| Explicit WAL checkpoint after benchmark cleanup | 0.104 s | 0.002 s |
+| Compact DB size | 995,082,240 B | 986,505,216 B |
+
+The contending writer begins after the entry-copy SQL starts and acquires
+`BEGIN IMMEDIATE` as soon as SQLite's busy handler allows it. This includes
+commit and retry/scheduling delay; the transaction-body timer excludes commit.
+The remaining fork wall time includes connection/summary work and SQLite's
+automatic checkpoint. A migrated DB occupies 1,976,291,328 bytes before idle
+page reclamation, including 241,233 free pages; `VACUUM INTO` produces the compact
+v2 size above. After fork/delete benchmarking, the directly imported v2 DB
+occupies 991,367,168 bytes with 753 free pages.
+
+A live `yoke serve --session-dir <temporary-directory>` run used the default
+`codex` provider and `gpt-6.1-sol` model. It created a session, submitted a real
+prompt, waited for idle, read two messages using one-message pages, forked,
+and verified the fork's message JSON exactly matched the original. The provider
+returned `SQLite smoke passed.`
+
+Final checks: 2,277 tests passed and 4 skipped; `uv run ruff check .`,
+`uv run ruff format .`, `uv run ty check` and `uv run pyright` passed. The full
+suite includes the provider projection oracle and the full HTTP suite. Provider
+projection fixtures, HTTP contract and context-equivalence tests, and the
+OpenAPI golden are unchanged. No version bump or push was made.

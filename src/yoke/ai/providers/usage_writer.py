@@ -1,91 +1,74 @@
-"""Durable JSONL writes for provider usage records."""
+"""Transactional provider usage records, shared with SDK child processes."""
 
 from __future__ import annotations
 
 import json
-import os
-import time
+import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
-from yoke._file_io import exclusive_file_lock
-
-WRITE_ATTEMPTS = 3
-WRITE_RETRY_SECONDS = 0.02
+from yoke.session.repository.utils import default_database_path
+from yoke.storage import open_database
 
 
 class UsageLogWriteError(OSError):
-    """Raised when a provider usage record cannot be persisted durably."""
+    """Raised when a provider usage record cannot be persisted."""
 
 
-def append_json_line(path: Path, record: dict[str, object]) -> None:
-    """Append one JSON record with locking, retries, and durable flushing."""
-    encoded = (
-        json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
-    ).encode("utf-8")
-    last_error: OSError | None = None
-    for attempt in range(WRITE_ATTEMPTS):
-        try:
-            _append_once(path, encoded)
-            return
-        except UsageLogWriteError:
-            raise
-        except OSError as exc:
-            last_error = exc
-            if attempt + 1 < WRITE_ATTEMPTS:
-                time.sleep(WRITE_RETRY_SECONDS * (2**attempt))
-    raise UsageLogWriteError(
-        f"Could not persist provider usage metric to {path} after "
-        f"{WRITE_ATTEMPTS} attempts."
-    ) from last_error
-
-
-def _append_once(path: Path, encoded: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_name(f".{path.name}.lock")
-    with exclusive_file_lock(lock_path):
-        flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
-        flags |= getattr(os, "O_BINARY", 0)
-        descriptor = os.open(path, flags, 0o600)
-        try:
-            original_size = os.fstat(descriptor).st_size
-            try:
-                _write_all(descriptor, encoded)
-                os.fsync(descriptor)
-                _fsync_directory(path.parent)
-            except OSError:
-                _rollback_write(descriptor, original_size)
-                raise
-        finally:
-            os.close(descriptor)
-
-
-def _rollback_write(descriptor: int, original_size: int) -> None:
-    """Restore the pre-attempt EOF before a failed append is retried."""
+def append_usage(
+    record: dict[str, object], *, database_path: Path | None = None
+) -> None:
+    """Insert one privacy-safe metric atomically, retaining its reporting schema."""
     try:
-        os.ftruncate(descriptor, original_size)
-        os.fsync(descriptor)
-    except OSError as exc:
-        raise UsageLogWriteError(
-            "Could not roll back a failed provider usage metric append."
-        ) from exc
+        database = open_database(database_path or default_database_path())
+        usage = record.get("usage")
+        tokens = usage if isinstance(usage, dict) else {}
+        with database.write() as connection:
+            connection.execute(
+                "INSERT INTO usage_events (event_id, completed_at, provider, model, "
+                "surface, session_id, input_tokens, output_tokens, cached_tokens, data) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record["event_id"],
+                    record["completed_at"],
+                    record["provider"],
+                    record.get("model"),
+                    record.get("surface"),
+                    record.get("session_id"),
+                    tokens.get("input_tokens"),
+                    tokens.get("output_tokens"),
+                    tokens.get("cached_input_tokens"),
+                    json.dumps(record, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+    except (OSError, sqlite3.Error) as exc:
+        raise UsageLogWriteError("Could not persist provider usage metric.") from exc
 
 
-def _fsync_directory(path: Path) -> None:
-    """Persist the daily file's directory entry on POSIX systems."""
-    if os.name == "nt":
-        return
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(path, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _write_all(descriptor: int, payload: bytes) -> None:
-    remaining = memoryview(payload)
-    while remaining:
-        written = os.write(descriptor, remaining)
-        if written <= 0:
-            raise OSError("Usage metric write made no forward progress.")
-        remaining = remaining[written:]
+def read_usage_events(
+    *,
+    database_path: Path | None = None,
+    provider: str | None = None,
+    session_id: str | None = None,
+    since: str | None = None,
+) -> Iterator[dict[str, object]]:
+    """Read reporting records in completion order from a consistent snapshot."""
+    database = open_database(database_path or default_database_path())
+    where = []
+    parameters = []
+    for column, value, operator in (
+        ("provider", provider, "="),
+        ("session_id", session_id, "="),
+        ("completed_at", since, ">="),
+    ):
+        if value is not None:
+            where.append(f"{column} {operator} ?")
+            parameters.append(value)
+    query = "SELECT data FROM usage_events"
+    if where:
+        query += " WHERE " + " AND ".join(where)
+    with database.read() as connection:
+        for (data,) in connection.execute(
+            query + " ORDER BY completed_at, event_id", parameters
+        ):
+            yield json.loads(data)

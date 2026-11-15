@@ -336,7 +336,7 @@ the request could not continue the previous response, a `continuity_reason`
 such as `request_changed:instructions`, `history_diverged:<index>/<retained>:<item
 type>`, `account_changed`, or `no_response_anchor`. Reasons name keys,
 positions, and item types only, never content. Every completed response also writes an attributed local
-usage record under `~/.yoke/usage-metric-logs/<provider>/`.
+usage record in the `usage_events` table of `~/.yoke/yoke.db`.
 
 ---
 
@@ -480,7 +480,7 @@ checkpoint. The in-memory continuation branch is available immediately, while
 per-session write serialization prevents a retired stop checkpoint from racing
 with or replacing a newer turn.
 
-Yoke checkpoints accepted session state to the same session JSONL file after tool
+Yoke checkpoints accepted session state to the same session database transaction after tool
 results and records a synthetic interruption checkpoint immediately when a turn
 is stopped or steered. A steering turn starts from the latest checkpoint,
 including activated skills, while retired turns cannot overwrite a newer
@@ -631,17 +631,34 @@ saved root, provider, model, and reasoning effort before automated continuation.
 Sessions are stored in the SQLite database `~/.yoke/yoke.db` and auto-expire
 after 30 days unless pinned. Set `YOKE_DB_PATH` to use another database file;
 `YOKE_SESSION_DIR` relocates both the database (as `yoke.db` inside it) and the
-remaining session files (workspace leases and uploads, still under
+remaining session files (workspace leases and disposable attachment files under
 `~/.yoke/sessions/` by default). Settings and credentials stay files. The CLI
 and the HTTP daemon share the database through WAL, so both can write at once:
-each write is one `BEGIN IMMEDIATE` transaction, and a process waits up to 30
+each write is one `BEGIN IMMEDIATE` transaction, and a process waits up to 5
 seconds for another process's transaction. The stored agent state uses
 structured conversation entries so memory snapshots, typed compaction handoffs,
 and branched session trees can be restored without flattening to transcript
-text. Each entry row keeps the exact JSON bytes of the entry; a later label or
+text. Each entry row references the exact JSON bytes in a SHA-256 blob shared by
+forks; a later label or
 other metadata edit is stored beside it rather than appended, and an entry
 append commits together with its session row. A database written by a newer
 Yoke release is refused rather than opened.
+
+Schema version 2 automatically converts v1 entry bytes to content-addressed
+blobs in one transaction. HTTP lists and pages select metadata or entry IDs in
+SQL and fetch only the selected payloads. Upload metadata and original bytes
+also live in the database. Native file tools use stable, disposable files
+rebuilt from the database; those paths remain unchanged in saved messages.
+Agent-run observations remain in memory and are lost on restart.
+
+New databases use `auto_vacuum=INCREMENTAL`. Periodic maintenance retains the
+30-day unpinned-session policy, collects blobs with no entry or upload references,
+and incrementally reclaims up to 256 free pages per pass. A database created
+without auto-vacuum needs an offline conversion: stop every Yoke process, then
+run `sqlite3 /path/to/yoke.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'`.
+Migration does not run a potentially long full vacuum at startup. Phase 1 Yoke
+databases already enable incremental auto-vacuum.
+
 
 Sessions saved by earlier releases as JSONL files under `~/.yoke/sessions/` are
 not read. Import them explicitly:

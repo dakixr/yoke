@@ -1,81 +1,155 @@
-"""Indexed transcript, context, and branch-preview queries."""
+"""Direct SQL transcript, context, and branch queries.
+
+The historical SessionMessageIndex name remains for runtime integrations. There
+is no index state, sidecar, cache or background warming.
+"""
 
 from __future__ import annotations
 
+from functools import wraps
+from typing import Callable
+
 from yoke.agent.models import ConversationEntry, Message
-from yoke.http.reads.message_index import paths as paths
 from yoke.http.reads.message_index.models import (
-    PUBLIC_EXCLUDED_KINDS,
     ContextIndexWindow,
     MessagePage,
     NavigationIndexPreview,
     RuntimeIndexSeed,
     TreeIndexPage,
-    kind,
 )
-from yoke.http.reads.message_index.models import (
-    parent_id as location_parent_id,
-)
-from yoke.http.reads.message_index.storage import IndexStorage
+from yoke.http.reads.queries import SessionQueries
 from yoke.session import SessionStore
 
 
+def _snapshot[**P, R](method: Callable[P, R]) -> Callable[P, R]:
+    @wraps(method)
+    def read(*args: P.args, **kwargs: P.kwargs) -> R:
+        owner = args[0]
+        assert isinstance(owner, SessionMessageIndex)
+        with owner.store.database.read():
+            return method(*args, **kwargs)
+
+    return read
+
+
 class SessionMessageIndex:
-    """Read transcript pages and tree views using independently owned storage."""
+    """Query a consistent SQLite snapshot, decoding only selected entries."""
 
-    def __init__(self, store: SessionStore, *, max_cached_sessions: int = 8) -> None:
+    def __init__(self, store: SessionStore) -> None:
         self.store = store
-        self.storage = IndexStorage(store, max_cached_sessions)
-        self.ensure = self.storage.ensure
-        self.warm_async = self.storage.warm_async
-        self.close = self.storage.close
+        self.queries = SessionQueries(store)
 
+    def ensure(self, session_id: str):  # noqa: ANN201
+        """Return session metadata. Kept for runtime integration compatibility."""
+        return self.store.summary_record(session_id)
+
+    def warm_async(self, session_id: str) -> None:
+        """Compatibility hook; SQL reads need no warming."""
+
+    def close(self) -> None:
+        """Compatibility hook; this query facade owns no resources."""
+
+    @_snapshot
     def page(
-        self,
-        session_id: str,
-        *,
-        limit: int,
-        order: str,
-        anchor_id: str | None,
+        self, session_id: str, *, limit: int, order: str, anchor_id: str | None
     ) -> MessagePage | None:
-        snapshot = self.ensure(session_id)
-        if snapshot is None:
+        summary = self.store.summary_record(session_id)
+        if summary is None:
             return None
-        if order == "desc":
-            ids = paths.descending_ids(snapshot, limit=limit, anchor_id=anchor_id)
-        else:
-            ids = paths.ascending_ids(snapshot, limit=limit, anchor_id=anchor_id)
-        if ids is None:
+        ids, more = self.queries.page_ids(
+            session_id, summary.leaf_id, limit=limit, order=order, anchor_id=anchor_id
+        )
+        entries = self.queries.read(session_id, ids)
+        return None if entries is None else MessagePage(entries, more)
+
+    @_snapshot
+    def entry(self, session_id: str, entry_id: str) -> ConversationEntry | None:
+        entries = self.queries.read(session_id, [entry_id])
+        if entries and entries[0].kind not in {
+            "instruction",
+            "memory_snapshot",
+            "tool_context",
+        }:
+            return entries[0]
+        return None
+
+    @_snapshot
+    def tree_page(
+        self, session_id: str, *, limit: int, anchor_id: str | None
+    ) -> TreeIndexPage | None:
+        summary = self.store.index_entry(session_id)
+        if summary is None:
             return None
-        selected, has_more = ids
-        entries = self.storage.read_entries(session_id, snapshot, selected)
+        ids, more = self.queries.page_ids(
+            session_id,
+            summary.leaf_id,
+            limit=limit,
+            order="desc",
+            anchor_id=anchor_id,
+            tree=True,
+        )
+        ids.reverse()
+        entries = self.queries.read(session_id, ids)
         if entries is None:
             return None
-        return MessagePage(entries=entries, has_more=has_more)
+        return TreeIndexPage(
+            entries,
+            summary.leaf_id,
+            frozenset(i for i, _ in self.queries.path(session_id, summary.leaf_id)),
+            self.queries.children(session_id, ids),
+            summary.entry_count or 0,
+            more,
+        )
 
-    def entry(self, session_id: str, entry_id: str) -> ConversationEntry | None:
-        snapshot = self.ensure(session_id)
-        if snapshot is None:
+    @_snapshot
+    def context_window(
+        self, session_id: str, *, limit: int, include_instructions: bool
+    ) -> ContextIndexWindow | None:
+        summary = self.store.summary_record(session_id)
+        if summary is None:
             return None
-        location = snapshot.entries.get(entry_id)
-        if location is None or kind(location) in PUBLIC_EXCLUDED_KINDS:
-            return None
-        entries = self.storage.read_entries(session_id, snapshot, [entry_id])
-        return entries[0] if entries else None
+        rows = self.queries.path(session_id, summary.leaf_id)
+        ids = [i for i, _ in rows]
+        checkpoint = next(
+            (
+                n
+                for n in range(len(rows) - 1, -1, -1)
+                if rows[n][1] == "memory_snapshot"
+            ),
+            None,
+        )
+        if checkpoint is None:
+            selected = ids[-limit:] if limit else []
+        else:
+            tail = ids[checkpoint + 1 :]
+            selected = [ids[checkpoint], *(tail[-limit:] if limit else [])]
+        if include_instructions:
+            selected = [
+                *[i for i, kind in rows if kind == "instruction" and i not in selected],
+                *selected,
+            ]
+        entries = self.queries.read(session_id, selected)
+        return (
+            None
+            if entries is None
+            else ContextIndexWindow(entries, len(ids), len(set(selected)) < len(ids))
+        )
 
+    @_snapshot
     def tool_trace_messages(self, session_id: str) -> list[Message] | None:
         """Read only active-branch turns that contain persisted tool activity."""
-        snapshot = self.ensure(session_id)
+        snapshot = self.store.summary_record(session_id)
         if snapshot is None:
             return None
-        active_ids = paths.active_ids(snapshot)
+        rows = self.queries.path(session_id, snapshot.leaf_id)
+        active_ids = [entry_id for entry_id, _ in rows]
+        kinds = dict(rows)
         if active_ids is None:
             return None
         tool_indexes = [
             index
             for index, entry_id in enumerate(active_ids)
-            if kind(snapshot.entries[entry_id])
-            in {"assistant_tool_calls", "tool_result"}
+            if kinds[entry_id] in {"assistant_tool_calls", "tool_result"}
         ]
         if not tool_indexes:
             return []
@@ -84,13 +158,13 @@ class SessionMessageIndex:
         for index in tool_indexes:
             start = index
             while start > 0:
-                previouskind = kind(snapshot.entries[active_ids[start - 1]])
+                previouskind = kinds[active_ids[start - 1]]
                 start -= 1
                 if previouskind == "user":
                     break
             end = index + 1
             while end < len(active_ids):
-                if kind(snapshot.entries[active_ids[end]]) == "user":
+                if kinds[active_ids[end]] == "user":
                     break
                 end += 1
             selected.update(range(start, end))
@@ -98,7 +172,7 @@ class SessionMessageIndex:
         entry_ids = [
             entry_id for index, entry_id in enumerate(active_ids) if index in selected
         ]
-        entries = self.storage.read_entries(session_id, snapshot, entry_ids)
+        entries = self.queries.read(session_id, entry_ids)
         if entries is None:
             return None
         messages: list[Message] = []
@@ -114,112 +188,22 @@ class SessionMessageIndex:
             messages.append(message)
         return messages
 
-    def tree_page(
-        self,
-        session_id: str,
-        *,
-        limit: int,
-        anchor_id: str | None,
-    ) -> TreeIndexPage | None:
-        """Read one newest-first tree page while keeping node rows chronological."""
-        snapshot = self.ensure(session_id)
-        if snapshot is None:
-            return None
-        ordered_ids = list(snapshot.entries)
-        end = len(ordered_ids)
-        if anchor_id is not None:
-            try:
-                end = ordered_ids.index(anchor_id)
-            except ValueError:
-                return None
-        start = max(0, end - limit)
-        selected_ids = ordered_ids[start:end]
-        entries = self.storage.read_entries(session_id, snapshot, selected_ids)
-        if entries is None:
-            return None
-        active = paths.active_ids(snapshot)
-        if active is None:
-            return None
-        child_counts = {entry_id: 0 for entry_id in snapshot.entries}
-        for entry_id, location in snapshot.entries.items():
-            entry_parent_id = location_parent_id(location)
-            if entry_parent_id in child_counts:
-                child_counts[entry_parent_id] += 1
-        return TreeIndexPage(
-            entries=entries,
-            leaf_id=snapshot.leaf_id,
-            active_ids=frozenset(active),
-            child_counts=child_counts,
-            total_entries=len(ordered_ids),
-            has_more=start > 0,
-        )
-
-    def context_window(
-        self,
-        session_id: str,
-        *,
-        limit: int,
-        include_instructions: bool,
-    ) -> ContextIndexWindow | None:
-        """Read a bounded active context tail and the latest checkpoint if present."""
-        snapshot = self.ensure(session_id)
-        if snapshot is None:
-            return None
-        active_ids = paths.active_ids(snapshot)
-        if active_ids is None:
-            return None
-        checkpoint_index = next(
-            (
-                index
-                for index in range(len(active_ids) - 1, -1, -1)
-                if kind(snapshot.entries[active_ids[index]]) == "memory_snapshot"
-            ),
-            None,
-        )
-        if checkpoint_index is None:
-            selected_ids = active_ids[-limit:] if limit else []
-            truncated = len(selected_ids) < len(active_ids)
-        else:
-            continuation = active_ids[checkpoint_index + 1 :]
-            selected_ids = [active_ids[checkpoint_index]]
-            if limit:
-                selected_ids.extend(continuation[-limit:])
-            truncated = len(selected_ids) < len(active_ids)
-
-        if include_instructions:
-            instruction_ids = [
-                entry_id
-                for entry_id in active_ids
-                if kind(snapshot.entries[entry_id]) == "instruction"
-            ]
-            selected = set(selected_ids)
-            selected_ids = [
-                *[entry_id for entry_id in instruction_ids if entry_id not in selected],
-                *selected_ids,
-            ]
-            truncated = len(set(selected_ids)) < len(active_ids)
-        entries = self.storage.read_entries(session_id, snapshot, selected_ids)
-        if entries is None:
-            return None
-        return ContextIndexWindow(
-            entries=entries,
-            total_entries=len(active_ids),
-            truncated=truncated,
-        )
-
+    @_snapshot
     def runtime_seed(self, session_id: str) -> RuntimeIndexSeed | None:
         """Read a compacted runtime seed without forcing a cold full index scan."""
-        snapshot = self.ensure(session_id)
+        snapshot = self.store.summary_record(session_id)
         if snapshot is None:
             return None
-        active_ids = paths.active_ids(snapshot)
+        rows = self.queries.path(session_id, snapshot.leaf_id)
+        active_ids = [entry_id for entry_id, _ in rows]
+        kinds = dict(rows)
         if not active_ids:
             return None
         checkpoint_index = next(
             (
                 index
                 for index in range(len(active_ids) - 1, -1, -1)
-                if kind(snapshot.entries[active_ids[index]]) == "memory_snapshot"
+                if kinds[active_ids[index]] == "memory_snapshot"
             ),
             None,
         )
@@ -227,9 +211,7 @@ class SessionMessageIndex:
             return None
 
         checkpoint_id = active_ids[checkpoint_index]
-        checkpoint_entries = self.storage.read_entries(
-            session_id, snapshot, [checkpoint_id]
-        )
+        checkpoint_entries = self.queries.read(session_id, [checkpoint_id])
         if not checkpoint_entries:
             return None
         checkpoint = checkpoint_entries[0]
@@ -248,15 +230,14 @@ class SessionMessageIndex:
             (
                 entry_id
                 for entry_id in active_ids[:checkpoint_index]
-                if kind(snapshot.entries[entry_id])
-                not in {"instruction", "memory_snapshot"}
+                if kinds[entry_id] not in {"instruction", "memory_snapshot"}
             ),
             None,
         )
         prior_skill_ids = [
             entry_id
             for entry_id in active_ids[:checkpoint_index]
-            if kind(snapshot.entries[entry_id]) == "skill_event"
+            if kinds[entry_id] == "skill_event"
         ]
         continuation_ids = active_ids[checkpoint_index + 1 :]
         prefix_ids = [
@@ -264,7 +245,7 @@ class SessionMessageIndex:
             *(entry_id for entry_id in prior_skill_ids if entry_id != cache_scope_id),
         ]
         selected_ids = [*prefix_ids, checkpoint_id, *continuation_ids]
-        entries = self.storage.read_entries(session_id, snapshot, selected_ids)
+        entries = self.queries.read(session_id, selected_ids)
         if not entries:
             return None
 
@@ -278,74 +259,53 @@ class SessionMessageIndex:
             total_entries=len(active_ids),
         )
 
+    @_snapshot
     def navigation_preview(
-        self,
-        session_id: str,
-        *,
-        target_id: str,
-        abandoned_limit: int,
+        self, session_id: str, *, target_id: str, abandoned_limit: int
     ) -> NavigationIndexPreview | None:
-        """Compare current and target parent chains without loading full entries."""
-        snapshot = self.ensure(session_id)
-        if snapshot is None or target_id not in snapshot.entries:
+        summary = self.store.summary_record(session_id)
+        target = self.navigation_target(session_id, target_id)
+        if summary is None or target is None:
             return None
-        current_ids = paths.active_ids(snapshot)
-        target_ids = paths.path_to(snapshot, target_id)
-        if current_ids is None or target_ids is None:
-            return None
-        common_count = 0
-        for current, target in zip(current_ids, target_ids, strict=False):
-            if current != target:
+        current = [i for i, _ in self.queries.path(session_id, summary.leaf_id)]
+        selected = [i for i, _ in self.queries.path(session_id, target_id)]
+        common = 0
+        for old, new in zip(current, selected):
+            if old != new:
                 break
-            common_count += 1
-        abandoned_ids = current_ids[common_count:]
-        selected_abandoned_ids = (
-            abandoned_ids[-abandoned_limit:] if abandoned_limit else []
-        )
-        read_ids = [target_id, *selected_abandoned_ids]
-        entries = self.storage.read_entries(session_id, snapshot, read_ids)
-        if entries is None or not entries:
+            common += 1
+        abandoned = current[common:]
+        ids = abandoned[-abandoned_limit:] if abandoned_limit else []
+        entries = self.queries.read(session_id, ids)
+        if entries is None:
             return None
         return NavigationIndexPreview(
-            target=entries[0],
-            current=target_id == snapshot.leaf_id,
-            abandoned=entries[1:],
-            abandoned_total=len(abandoned_ids),
-            abandoned_truncated=len(selected_abandoned_ids) < len(abandoned_ids),
+            target,
+            target_id == summary.leaf_id,
+            entries,
+            len(abandoned),
+            len(ids) < len(abandoned),
         )
 
+    @_snapshot
     def entry_tree_state(
-        self,
-        session_id: str,
-        entry_id: str,
+        self, session_id: str, entry_id: str
     ) -> tuple[ConversationEntry, bool, bool, int] | None:
-        snapshot = self.ensure(session_id)
-        if snapshot is None or entry_id not in snapshot.entries:
+        summary = self.store.summary_record(session_id)
+        entry = self.navigation_target(session_id, entry_id)
+        if summary is None or entry is None:
             return None
-        entries = self.storage.read_entries(session_id, snapshot, [entry_id])
-        if not entries:
-            return None
-        active_ids = paths.active_ids(snapshot)
-        if active_ids is None:
-            return None
-        child_count = sum(
-            location_parent_id(location) == entry_id
-            for location in snapshot.entries.values()
-        )
+        active = {i for i, _ in self.queries.path(session_id, summary.leaf_id)}
         return (
-            entries[0],
-            entry_id in set(active_ids),
-            entry_id == snapshot.leaf_id,
-            child_count,
+            entry,
+            entry_id in active,
+            entry_id == summary.leaf_id,
+            self.queries.children(session_id, [entry_id]).get(entry_id, 0),
         )
 
+    @_snapshot
     def navigation_target(
-        self,
-        session_id: str,
-        target_id: str,
+        self, session_id: str, target_id: str
     ) -> ConversationEntry | None:
-        snapshot = self.ensure(session_id)
-        if snapshot is None or target_id not in snapshot.entries:
-            return None
-        entries = self.storage.read_entries(session_id, snapshot, [target_id])
+        entries = self.queries.read(session_id, [target_id])
         return entries[0] if entries else None

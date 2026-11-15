@@ -65,7 +65,7 @@ def test_tool_worker_exports_owner_without_mutating_environment(
 def test_agent_snapshots_lineage_and_fork_preserves_it(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
     monkeypatch.setenv("YOKE_ROOT_SESSION_ID", "session")
     monkeypatch.setenv("YOKE_PARENT_RUN_ID", "parent")
     agent = Agent(provider=UsageProvider(), config=RunConfig(root=tmp_path))
@@ -89,7 +89,7 @@ def test_agent_snapshots_lineage_and_fork_preserves_it(
 def test_batch_respects_explicit_config(
     tmp_path: Path, monkeypatch, detach: bool
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
     monkeypatch.setenv("YOKE_ROOT_SESSION_ID", "inherited")
     monkeypatch.setenv("YOKE_PARENT_RUN_ID", "inherited-parent")
 
@@ -132,7 +132,7 @@ def test_nested_lineage_and_detached_environment() -> None:
 
 
 def test_subprocess_sdk_records_parent_session(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
     manager = CommandProcessManager()
     tool = PythonExecTool.bind(root=tmp_path, command_process_manager=manager)
     code = """
@@ -169,7 +169,7 @@ complete('hello', provider=Provider())
 def test_completion_inherits_context_and_can_detach(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
     with usage_metric_context(
         surface="sdk", root_session_id="root", sdk_run_id="parent"
     ):
@@ -188,7 +188,7 @@ def test_attribution_does_not_change_provider_requests(
     from yoke.agent.models import Message
     from yoke.ai.sdk.types import Skill
 
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
     requests: list[object] = []
 
     class RecordingProvider(UsageProvider):

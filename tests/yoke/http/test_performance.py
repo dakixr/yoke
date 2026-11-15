@@ -180,7 +180,7 @@ def test_read_cache_replays_in_place_store_append_exactly_once(tmp_path: Path) -
     assert "owned-test" not in after.active_path_entries[-1].metadata
 
 
-def test_read_cache_rehydrates_active_skills_from_append_metadata(
+def test_active_skills_read_from_sql_metadata_without_history(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -209,13 +209,12 @@ def test_read_cache_rehydrates_active_skills_from_append_metadata(
         raise AssertionError("append refresh must not deserialize the old session")
 
     monkeypatch.setattr(store, "load", fail)
-    after = cache.get("large")
+    after = store.summary_record("large")
+    assert after is not None
 
-    assert [item.name for item in after.record.active_skills] == ["demo"]
-    assert all(isinstance(item, ActiveSkill) for item in after.record.active_skills)
-    assert [item.model_copy(deep=True).name for item in after.record.active_skills] == [
-        "demo"
-    ]
+    assert [item.name for item in after.active_skills] == ["demo"]
+    assert all(isinstance(item, ActiveSkill) for item in after.active_skills)
+    assert [item.model_copy(deep=True).name for item in after.active_skills] == ["demo"]
 
 
 def test_live_tool_polling_does_not_load_large_persisted_session(

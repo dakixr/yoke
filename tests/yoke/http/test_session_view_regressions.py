@@ -248,8 +248,7 @@ def test_warm_index_reclassifies_appended_legacy_tool_context(
     state = _state(client)
     tree = _legacy_attach_image_tree(include_private=False)
     record, _ = _save_tree(state, "warm-legacy", tree, root)
-    index = state.session_service.message_index
-    prior = index.ensure("warm-legacy")
+    prior = state.session_service.store.session_file_signature("warm-legacy")
     assert prior is not None
 
     tree.append_message(
@@ -275,10 +274,15 @@ def test_warm_index_reclassifies_appended_legacy_tool_context(
         root,
         existing_record=record,
     )
-    refreshed = index.ensure("warm-legacy")
+    refreshed = state.session_service.store.session_file_signature("warm-legacy")
     assert refreshed is not None
-    assert refreshed.signature[1] > prior.signature[1]
-    assert refreshed.entries[private_id][1] == "tool_context"
+    assert refreshed[1] > prior[1]
+    topology = state.session_service.store.entry_topology("warm-legacy")
+    assert topology is not None
+    assert (
+        next(kind for entry_id, _, kind in topology.rows if entry_id == private_id)
+        == "tool_context"
+    )
 
     detail = client.get(
         f"/api/v1/session/warm-legacy/message/{private_id}",
