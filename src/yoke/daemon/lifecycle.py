@@ -42,6 +42,7 @@ class DaemonLifecycle:
         self.grace_seconds = grace_seconds
         self.poll_seconds = poll_seconds
         self.restart_pending = False
+        self._stop_pending = False
         self.exit_reason: str | None = None
         self._leases: dict[str, Lease] = {}
         self._busy: BusyProbe | None = None
@@ -101,14 +102,17 @@ class DaemonLifecycle:
     def request_restart_when_idle(self) -> None:
         self.restart_pending = True
 
+    def request_stop_when_idle(self) -> None:
+        self._stop_pending = True
+
     async def watch(self) -> None:
         """Exit after the grace period with no leases and no turns."""
         idle_since: float | None = None
         while self.exit_reason is None:
             await asyncio.sleep(self.poll_seconds)
             busy = await self.busy()
-            if self.restart_pending and not busy:
-                self.request_exit("restart")
+            if (self.restart_pending or self._stop_pending) and not busy:
+                self.request_exit("stop" if self._stop_pending else "restart")
                 return
             if not self.idle_exit or busy or self._leases:
                 idle_since = None

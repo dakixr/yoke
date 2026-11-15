@@ -6,6 +6,7 @@ import asyncio
 import signal
 import sys
 from contextlib import suppress
+from collections.abc import Callable
 
 from acp import run_agent
 
@@ -43,7 +44,9 @@ async def _run(native: NativeClient, *, lease_client: str | None) -> None:
                     await lease
 
 
-def _serve(native_factory, *, lease_client: str | None) -> int:  # noqa: ANN001
+def _serve(
+    native_factory: Callable[[], NativeClient], *, lease_client: str | None
+) -> int:
     try:
         asyncio.run(_run(native_factory(), lease_client=lease_client))
     except asyncio.CancelledError:

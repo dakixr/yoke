@@ -137,7 +137,12 @@ def connect_or_spawn(
         # A restart already happened and another build won the lock.
         action = "warn" if status["protocolVersion"] == protocol_version() else "refuse"
     if action == "restart":
-        restart_daemon(socket_path, status["pid"], timeout=timeout, paths=paths)
+        restarted = restart_daemon(
+            socket_path, status["pid"], timeout=timeout, paths=paths
+        )
+        if not restarted:
+            # A turn admitted after the status read gets the busy skew policy.
+            return connect_or_spawn(paths, timeout=timeout, allow_restart=allow_restart)
         return connect_or_spawn(paths, timeout=timeout, allow_restart=False)
     if action == "refuse":
         raise DaemonIncompatible(
@@ -165,11 +170,15 @@ def connect_or_spawn(
 
 def restart_daemon(
     socket_path: Path, pid: int, *, timeout: float, paths: DaemonPaths | None = None
-) -> None:
-    """Ask an idle daemon to exit and wait until it has."""
+) -> bool:
+    """Restart an idle daemon; return False if an admission made it busy."""
     with unix_client(socket_path) as client:
-        _data(client.post("daemon/restart", json={}))
+        response = client.post("daemon/restart", json={})
+        if response.status_code == 409:
+            return False
+        _data(response)
     wait_for_exit(socket_path, pid, timeout=timeout, paths=paths)
+    return True
 
 
 def wait_for_exit(

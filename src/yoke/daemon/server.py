@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import errno
 import importlib
-import logging
 import os
 import pkgutil
 import secrets
@@ -29,13 +28,9 @@ from yoke.daemon.lifecycle import DEFAULT_GRACE_SECONDS, DaemonLifecycle
 from yoke.daemon.paths import DEFAULT_PORT, DaemonPaths
 from yoke.daemon.peer import peer_checked
 
-LOGGER = logging.getLogger(__name__)
-
 # Spawned daemons take no arguments, so these are read from the environment.
 PORT_ENV = "YOKE_DAEMON_PORT"
 GRACE_ENV = "YOKE_DAEMON_IDLE_GRACE"
-# Testing hook: ``module:callable`` building the agent for each session.
-AGENT_FACTORY_ENV = "YOKE_DAEMON_AGENT_FACTORY"
 
 # Everything a turn can reach. Imported before serving, so a checkout updated
 # under a running daemon cannot mix new modules into the old process.
@@ -184,7 +179,6 @@ def _build_server(
         HttpAppSettings(
             auth_token=token,
             session_directory=session_directory,
-            agent_factory=_agent_factory_from_env(),
             daemon=lifecycle,
             daemon_socket=str(socket_path),
         )
@@ -246,11 +240,3 @@ def _bind_tcp(port: int) -> socket.socket | None:
             return None
         raise
     return sock
-
-
-def _agent_factory_from_env():  # noqa: ANN202
-    spec = os.environ.get(AGENT_FACTORY_ENV)
-    if not spec:
-        return None
-    module_name, _, attribute = spec.partition(":")
-    return getattr(importlib.import_module(module_name), attribute)

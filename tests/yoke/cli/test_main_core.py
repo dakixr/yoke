@@ -14,6 +14,7 @@ from yoke.cli.main_core import _inject_prompt_flag
     [
         ["serve", "--host", "127.0.0.1", "--port", "0"],
         ["acp"],
+        ["daemon", "status"],
         ["mcp", "demo"],
         ["--root", "/tmp/repo", "serve", "--port", "0"],
     ],
@@ -26,13 +27,36 @@ def test_prompt_injection_still_converts_bare_prompt() -> None:
     assert _inject_prompt_flag(["fix the tests"]) == ["--prompt", "fix the tests"]
 
 
-def test_acp_requires_native_daemon_environment() -> None:
+def test_acp_discovers_daemon_without_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("yoke.acp.runner.run_acp_with_daemon", lambda: 0)
     result = CliRunner().invoke(
         app, ["acp"], env={"YOKE_ACP_URL": "", "YOKE_ACP_TOKEN": ""}
     )
 
+    assert result.exit_code == 0
+
+
+def test_acp_explicit_url_requires_token() -> None:
+    result = CliRunner().invoke(
+        app, ["acp", "--url", "http://localhost:1234"], env={"YOKE_ACP_TOKEN": ""}
+    )
+
     assert result.exit_code == 2
-    assert "YOKE_ACP_URL and YOKE_ACP_TOKEN are required" in result.output
+    assert "explicit ACP URL requires" in result.output
+
+
+def test_acp_explicit_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "yoke.acp.runner.run_acp", lambda *args: calls.append(args) or 0
+    )
+    result = CliRunner().invoke(
+        app,
+        ["acp"],
+        env={"YOKE_ACP_URL": "http://localhost:1234", "YOKE_ACP_TOKEN": "secret"},
+    )
+    assert result.exit_code == 0
+    assert calls == [("http://localhost:1234", "secret")]
 
 
 @pytest.mark.parametrize(
