@@ -185,7 +185,7 @@ def test_concurrent_first_open_migrates_once(tmp_path: Path) -> None:
     ]
     assert [child.wait(60) for child in children] == [0, 0, 0, 0]
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
     assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
     connection.close()
@@ -258,7 +258,7 @@ def test_retention_deletes_idle_unpinned_sessions_with_their_rows(
             )
 
 
-def test_read_delta_returns_appends_and_edits_until_a_rewrite(tmp_path: Path) -> None:
+def test_sql_reads_follow_appends_and_rewrites(tmp_path: Path) -> None:
     store, _ = _saved(tmp_path)
     record = store.load("shared")
     signature = store.session_file_signature("shared")
@@ -274,10 +274,14 @@ def test_read_delta_returns_appends_and_edits_until_a_rewrite(tmp_path: Path) ->
         leaf_id=entry.id,
         appended_entries=[entry],
     )
-    delta = store.read_delta("shared", signature[1])
-    assert delta is not None
-    assert [item.id for item in delta.entries] == [entry.id]
-    assert delta.record.leaf_id == entry.id
+    from yoke.http.reads.message_index import SessionMessageIndex
+
+    page = SessionMessageIndex(store).page(
+        "shared", limit=1, order="desc", anchor_id=None
+    )
+    assert page is not None
+    assert [item.id for item in page.entries] == [entry.id]
+    assert store.load("shared").leaf_id == entry.id
 
     loaded = store.load("shared")
     replacement = ConversationEntry(kind="user", message=Message.user("rewritten"))
@@ -288,7 +292,12 @@ def test_read_delta_returns_appends_and_edits_until_a_rewrite(tmp_path: Path) ->
         existing=loaded,
         appended=None,
     )
-    assert store.read_delta("shared", signature[1]) is None
+    page = SessionMessageIndex(store).page(
+        "shared", limit=10, order="desc", anchor_id=None
+    )
+    assert page is not None
+    assert [item.id for item in page.entries] == [replacement.id]
+    assert not page.has_more
     rewritten = store.load("shared")
     assert [item.id for item in rewritten.conversation_entries] == [replacement.id]
 

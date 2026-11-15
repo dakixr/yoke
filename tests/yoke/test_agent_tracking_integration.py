@@ -112,7 +112,7 @@ def mixed_is_ready(rows: Rows) -> bool:
 def test_independent_runs_in_one_process_and_reuse(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path / "usage"))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "usage" / "yoke.db"))
     manager = CommandProcessManager()
     receipt = RegistryReceipt(manager)
     try:
@@ -146,11 +146,9 @@ def test_independent_runs_in_one_process_and_reuse(
             if row["status"] == "completed"
         )
         assert "SECRET_" not in json.dumps(final)
-        usage = [
-            json.loads(line)
-            for path in (tmp_path / "usage").rglob("*.jsonl")
-            for line in path.read_text().splitlines()
-        ]
+        from yoke.ai.providers.usage_writer import read_usage_events
+
+        usage = list(read_usage_events(database_path=tmp_path / "usage" / "yoke.db"))
         assert {row["sdk_run_id"] for row in usage} <= {row["runId"] for row in final}
         assert len(usage) == 3
     finally:
@@ -161,7 +159,7 @@ def test_independent_runs_in_one_process_and_reuse(
 def test_concurrent_hosts_cannot_cross_attribute_agents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path / "usage"))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "usage" / "yoke.db"))
 
     def run(owner: str) -> Rows:
         manager = CommandProcessManager()
@@ -189,7 +187,7 @@ def test_concurrent_hosts_cannot_cross_attribute_agents(
 def test_nested_sdk_tool_reports_to_original_host(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path / "usage"))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "usage" / "yoke.db"))
     manager = CommandProcessManager()
     receipt = RegistryReceipt(manager)
     try:
@@ -215,7 +213,7 @@ def test_nested_sdk_tool_reports_to_original_host(
 def test_worker_crash_does_not_claim_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path / "usage"))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "usage" / "yoke.db"))
     manager = CommandProcessManager()
     receipt = RegistryReceipt(manager)
     try:
@@ -243,7 +241,7 @@ def test_worker_crash_does_not_claim_success(
 def test_async_cancel_stays_running_until_real_worker_drains(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path / "usage"))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "usage" / "yoke.db"))
     manager = CommandProcessManager()
     receipt = RegistryReceipt(manager)
     try:
@@ -274,7 +272,7 @@ def test_async_cancel_stays_running_until_real_worker_drains(
 def test_mcp_launches_expose_real_sdk_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_name: str
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path / "usage"))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "usage" / "yoke.db"))
 
     async def scenario() -> None:
         service = create_service(MCPServerConfig(root=tmp_path))

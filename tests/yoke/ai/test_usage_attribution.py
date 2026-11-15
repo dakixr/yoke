@@ -57,8 +57,11 @@ class StructuredUsageProvider(UsageProvider):
 
 
 def read_records(root: Path) -> list[dict[str, object]]:
-    path = next(root.glob("test-provider/*.jsonl"))
-    return [json.loads(line) for line in path.read_text().splitlines()]
+    from yoke.ai.providers.usage_writer import read_usage_events
+
+    return list(
+        read_usage_events(database_path=root / "yoke.db", provider="test-provider")
+    )
 
 
 def test_usage_context_merges_and_restores_nested_values() -> None:
@@ -85,7 +88,7 @@ def test_usage_context_merges_and_restores_nested_values() -> None:
 def test_direct_sdk_completion_records_operation_and_run(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
 
     complete("hello", provider=UsageProvider())
 
@@ -98,7 +101,7 @@ def test_direct_sdk_completion_records_operation_and_run(
 
 
 def test_sdk_agent_records_model_iteration(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
     agent = Agent(
         provider=UsageProvider(),
         config=RunConfig(root=tmp_path, include_agents_file=False),
@@ -117,7 +120,7 @@ def test_sdk_agent_records_model_iteration(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_sdk_agent_marks_structured_output_retry(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
     agent = Agent(
         provider=StructuredUsageProvider(),
         config=RunConfig(root=tmp_path, include_agents_file=False),
@@ -140,7 +143,7 @@ def test_sdk_agent_marks_structured_output_retry(tmp_path: Path, monkeypatch) ->
 def test_run_many_preserves_batch_operation_across_async_worker(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "yoke.db"))
 
     async def run() -> None:
         await run_many(

@@ -5,24 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from yoke.agent.models import ConversationEntry
-from yoke.http.services.projectors import PUBLIC_CHAT_EXCLUDED_KINDS
-
-# Kept as an import-compatible alias for the index helpers. The policy itself
-# belongs to the public chat projector used by indexed and fallback reads.
-PUBLIC_EXCLUDED_KINDS = PUBLIC_CHAT_EXCLUDED_KINDS
-
-
-@dataclass(frozen=True, slots=True)
-class MessageIndexSnapshot:
-    """Entry topology at one stored session signature.
-
-    ``entries`` maps id -> [parent_id, kind, stored position]; positions follow
-    stored order. Payloads stay in the database until ``read_entries``.
-    """
-
-    signature: tuple[int, int]
-    leaf_id: str | None
-    entries: dict[str, list[object]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,13 +47,3 @@ class NavigationIndexPreview:
     abandoned: list[ConversationEntry]
     abandoned_total: int
     abandoned_truncated: bool
-
-
-def parent_id(location: list[object]) -> str | None:
-    value = location[0]
-    return value if isinstance(value, str) else None
-
-
-def kind(location: list[object]) -> str:
-    value = location[1]
-    return value if isinstance(value, str) else "control"

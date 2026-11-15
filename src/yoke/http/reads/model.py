@@ -1,4 +1,4 @@
-"""Index-first reads with one signature-consistent legacy fallback."""
+"""SQL reads with canonical projection for explicit full-record callers."""
 
 from __future__ import annotations
 

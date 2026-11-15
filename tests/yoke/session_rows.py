@@ -20,8 +20,8 @@ def stored_session_bytes(store: SessionStore, session_id: str) -> bytes:
             "SELECT * FROM sessions WHERE id = ?", (session_id,)
         ).fetchone()
         entries = connection.execute(
-            "SELECT seq, id, parent_id, kind, message, metadata, rev "
-            "FROM entries WHERE session_id = ? ORDER BY seq",
+            "SELECT seq, id, parent_id, kind, blobs.data, metadata, rev "
+            "FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 WHERE session_id = ? ORDER BY seq",
             (session_id,),
         ).fetchall()
     if session is None:
@@ -41,8 +41,8 @@ def stored_entry_rows(store: SessionStore, session_id: str) -> list[tuple[Any, .
         return [
             tuple(row)
             for row in connection.execute(
-                "SELECT seq, id, parent_id, kind, message, metadata, rev "
-                "FROM entries WHERE session_id = ? ORDER BY seq",
+                "SELECT seq, id, parent_id, kind, blobs.data, metadata, rev "
+                "FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 WHERE session_id = ? ORDER BY seq",
                 (session_id,),
             )
         ]

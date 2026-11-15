@@ -12,6 +12,7 @@ through the writer so it sees its own uncommitted rows.
 from __future__ import annotations
 
 import os
+import hashlib
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator
@@ -20,10 +21,7 @@ from importlib import resources
 from pathlib import Path
 from weakref import WeakValueDictionary
 
-# How long a writer waits for another process's transaction. Forking or
-# importing a 650 MB session holds the write lock for about 8 s, so the design's
-# 5 s would turn that into "database is locked" errors in a concurrent CLI.
-BUSY_TIMEOUT_MS = 30_000
+BUSY_TIMEOUT_MS = 5_000
 
 
 class DatabaseError(RuntimeError):
@@ -77,7 +75,11 @@ class Database:
         self._pid = os.getpid()
         self._writer = self._connect()
         try:
+            # Conversion of an existing large v1 database can exceed the
+            # normal write timeout. Concurrent starters wait for its migration.
+            self._writer.execute("PRAGMA busy_timeout=60000")
             self._migrate()
+            self._writer.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         except BaseException:
             self._writer.close()
             raise
@@ -91,6 +93,13 @@ class Database:
             check_same_thread=False,
         )
         connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        connection.create_function(
+            "yoke_sha256",
+            1,
+            lambda data: hashlib.sha256(data).hexdigest(),
+            deterministic=True,
+        )
+        connection.create_function("yoke_casefold", 1, str.casefold, deterministic=True)
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA synchronous=NORMAL")
         if query_only:
@@ -121,12 +130,56 @@ class Database:
             for version, sql in available[current:]:
                 for statement in _statements(sql):
                     connection.execute(statement)
+                if version == 2:
+                    from yoke.session.repository.provenance import (
+                        classify_legacy_entries,
+                    )
+
+                    classify_legacy_entries(connection)
                 connection.execute(f"PRAGMA user_version={version}")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
             raise
+
+    def maintain(self, *, pages: int = 256) -> None:
+        """Collect unreferenced blobs and reclaim a bounded number of idle pages.
+
+        Called by periodic session maintenance, outside turn transactions.
+        Existing databases without auto_vacuum need an offline VACUUM first.
+        """
+        # Maintenance never queues behind a local or cross-process writer.
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            if self._depth:
+                return
+            self._writer.execute("PRAGMA busy_timeout=0")
+            try:
+                with self.write() as connection:
+                    connection.execute(
+                        "DELETE FROM blobs WHERE sha256 IN (SELECT sha256 FROM blobs "
+                        "WHERE NOT EXISTS (SELECT 1 FROM entries WHERE message_sha256 = blobs.sha256) "
+                        "AND NOT EXISTS (SELECT 1 FROM uploads WHERE sha256 = blobs.sha256) LIMIT 128)"
+                    )
+                    for _ in range(max(0, pages)):
+                        if (
+                            connection.execute("PRAGMA freelist_count").fetchone()[0]
+                            == 0
+                        ):
+                            break
+                        connection.execute("PRAGMA incremental_vacuum(1)").fetchall()
+            except sqlite3.OperationalError as exc:
+                if exc.sqlite_errorcode not in {
+                    sqlite3.SQLITE_BUSY,
+                    sqlite3.SQLITE_LOCKED,
+                }:
+                    raise
+            finally:
+                self._writer.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        finally:
+            self._lock.release()
 
     def is_current(self) -> bool:
         """Return whether this object still owns the file now at its path."""

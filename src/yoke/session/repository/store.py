@@ -18,7 +18,7 @@ from yoke.session.repository.paths import (
     SESSION_RETENTION_DAYS,
     validate_session_id,
 )
-from yoke.session.repository.table import EntryTopology, SessionDelta, SessionTable
+from yoke.session.repository.table import EntryTopology, SessionTable
 from yoke.session.repository.tree import _resolve_saved_conversation_tree
 from yoke.session.repository.tree_index import SessionTreeIndex
 from yoke.session.repository.tree_writer import SessionTreeWriter
@@ -45,7 +45,7 @@ class SessionStore:
     """Session records stored in the shared SQLite database.
 
     ``directory`` still holds session state that is not in the database
-    (workspace leases, uploads). The database is chosen by
+    (workspace leases and disposable upload materializations). The database is chosen by
     :func:`database_path_for`, unless ``database_path`` is given. Queue,
     admission and event helpers take ``store.directory`` and resolve the
     database the same way, so pass ``database_path`` only for standalone
@@ -232,10 +232,6 @@ class SessionStore:
         """Read selected entries in order; None if any id is not stored."""
         return self._table.read_entries(session_id, entry_ids, raw_filter=raw_filter)
 
-    def read_delta(self, session_id: str, since_revision: int) -> SessionDelta | None:
-        """Return entries written after a signature revision, or None to reload."""
-        return self._table.delta(session_id, since_revision)
-
     def iter_entries(self, session_id: str) -> Generator[ConversationEntry]:
         """Decode stored entries in order, one at a time, from one snapshot.
 
@@ -299,6 +295,7 @@ class SessionStore:
             ):
                 return
             self._table.prune(SESSION_RETENTION_DAYS)
+            self.database.maintain()
             self._last_maintenance_at = time.monotonic()
 
     def fork(

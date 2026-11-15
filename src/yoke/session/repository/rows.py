@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from collections.abc import Iterable, Iterator
 from typing import Any
@@ -52,7 +53,7 @@ def encode_json(value: object) -> str:
 
 
 def encode_entry(entry: ConversationEntry) -> bytes:
-    """Return the immutable entry bytes stored in ``entries.message``."""
+    """Return the immutable entry bytes stored in ``blobs.data``."""
     return encode_json(entry.model_dump(mode="json")).encode("utf-8")
 
 
@@ -85,7 +86,7 @@ def entry_row(session_id: str, seq: int, entry: ConversationEntry, rev: int) -> 
 
 INSERT_ENTRY = (
     "INSERT INTO entries (session_id, seq, id, parent_id, kind, role, call_id, "
-    "created_at, message, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "created_at, message_sha256, rev) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -104,10 +105,19 @@ def insert_entries(
         for offset, entry in enumerate(entries):
             row = entry_row(session_id, first_seq + offset, entry, rev)
             totals[0] += 1
-            totals[1] += len(row[8])
-            yield row
+            raw = row[8]
+            totals[1] += len(raw)
+            digest = hashlib.sha256(raw).hexdigest()
+            connection.execute(
+                "INSERT OR IGNORE INTO blobs VALUES (?, ?)", (digest, raw)
+            )
+            yield (*row[:8], digest, *row[9:])
 
     connection.executemany(INSERT_ENTRY, rows())
+    if totals[0]:
+        from yoke.session.repository.provenance import classify_legacy_entries
+
+        classify_legacy_entries(connection, session_id=session_id, first_seq=first_seq)
     return totals[0], totals[1]
 
 

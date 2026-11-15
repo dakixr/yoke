@@ -1263,14 +1263,15 @@ def test_upload_metadata_failure_removes_partial_directory(
         filename="partial.png",
         headers=Headers({"content-type": "image/png"}),
     )
-    original_write_text = Path.write_text
+    import sqlite3
 
-    def fail_metadata(path: Path, *args, **kwargs):  # noqa: ANN002,ANN003,ANN202
-        if path.name == "metadata.json":
-            raise OSError("disk full")
-        return original_write_text(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "write_text", fail_metadata)
-    with pytest.raises(OSError, match="disk full"):
+    with service.store.database.write() as connection:
+        connection.execute(
+            "CREATE TRIGGER fail_upload BEFORE INSERT ON uploads BEGIN SELECT RAISE(ABORT, 'disk full'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="disk full"):
         asyncio.run(service.create(upload, session_id=None))
+    with service.store.database.read() as connection:
+        assert connection.execute("SELECT count(*) FROM uploads").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM blobs").fetchone()[0] == 0
     assert not service.directory.exists() or not list(service.directory.iterdir())

@@ -84,11 +84,11 @@ topology from the database and decodes only the entries a page shows.
 
 ### Usage and observability
 
-Every completed provider response is recorded automatically in daily JSONL
-files under `~/.yoke/usage-metric-logs/<provider>/`. Records include normalized
+Every completed provider response is recorded automatically in the
+`usage_events` table of `~/.yoke/yoke.db`. Records include normalized
 token usage and execution attribution for CLI, HTTP, and SDK calls. Writes are local,
-durably synchronized across concurrent Yoke processes, and can be redirected
-with `YOKE_USAGE_METRIC_LOG_DIR`. Persistent write failures are raised rather
+transactional across concurrent Yoke processes, and can be redirected
+with `YOKE_DB_PATH`. Persistent write failures are raised rather
 than silently dropping metrics.
 
 SDK observers provide `quiet`, `messages`, `actions`, and `full` trace levels.

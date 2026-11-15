@@ -1,1 +1,1 @@
-"""HTTP transcript indexes, cached read models, cursors, and tree reads."""
+"""SQL transcript queries, runtime snapshots, cursors and tree projections."""

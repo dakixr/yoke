@@ -59,7 +59,7 @@ class LaunchProvider(FixtureProvider):
 def test_background_agents_reach_http_and_acp_after_foreground_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("YOKE_USAGE_METRIC_LOG_DIR", str(tmp_path / "usage"))
+    monkeypatch.setenv("YOKE_DB_PATH", str(tmp_path / "usage" / "yoke.db"))
     provider = LaunchProvider()
     app = create_app(
         HttpAppSettings(

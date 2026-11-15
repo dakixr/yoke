@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import os
-import re
 from datetime import UTC
 from datetime import datetime
-from pathlib import Path
 from uuid import uuid4
 
 from yoke.ai.providers.base import provider_identity
@@ -16,7 +13,7 @@ from yoke.agent_runs.reporting import report_provider_usage
 from yoke.ai.providers.usage_context import (
     current_usage_metric_context,
 )
-from yoke.ai.providers.usage_writer import append_json_line
+from yoke.ai.providers.usage_writer import append_usage
 from yoke.ai.providers.usage_writer import UsageLogWriteError as UsageLogWriteError
 
 _USAGE_FIELDS = (
@@ -45,17 +42,7 @@ def record_provider_usage(provider: object, response: Message) -> None:
         "usage_reported": usage is not None,
         "usage": _usage_payload(usage),
     }
-    path = usage_log_root() / _safe_directory_name(provider_name)
-    path /= f"{completed_at.date().isoformat()}.jsonl"
-    append_json_line(path, record)
-
-
-def usage_log_root() -> Path:
-    """Return the configured provider usage metric directory."""
-    override = os.getenv("YOKE_USAGE_METRIC_LOG_DIR")
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / ".yoke" / "usage-metric-logs"
+    append_usage(record)
 
 
 def _provider_name(provider: object, usage: TokenUsage | None) -> str:
@@ -78,11 +65,6 @@ def _usage_payload(usage: TokenUsage | None) -> dict[str, int]:
         for field in _USAGE_FIELDS
         if isinstance((value := getattr(usage, field)), int)
     }
-
-
-def _safe_directory_name(value: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", value).strip(".-")
-    return normalized or "unknown"
 
 
 def _text(value: object) -> str | None:

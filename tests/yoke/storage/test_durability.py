@@ -102,8 +102,8 @@ def _check_consistent(directory: Path, session_id: str) -> None:
         assert row is not None
         entry_count, message_bytes, entry_seq, leaf_id = row
         count, size, max_seq = connection.execute(
-            "SELECT count(*), coalesce(sum(length(message)), 0), "
-            "coalesce(max(seq), 0) FROM entries WHERE session_id = ?",
+            "SELECT count(*), coalesce(sum(length(blobs.data)), 0), "
+            "coalesce(max(seq), 0) FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 WHERE session_id = ?",
             (session_id,),
         ).fetchone()
         assert (entry_count, message_bytes) == (count, size)

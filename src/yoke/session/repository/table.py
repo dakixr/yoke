@@ -43,19 +43,6 @@ class EntryTopology:
 
 
 @dataclass(frozen=True, slots=True)
-class SessionDelta:
-    """Entries inserted or edited after a revision, plus current metadata.
-
-    ``record`` has no entries but counts as fully loaded, so a caller can
-    attach its own entry list with ``model_copy``.
-    """
-
-    signature: tuple[int, int]
-    record: SessionRecord
-    entries: list[ConversationEntry]
-
-
-@dataclass(frozen=True, slots=True)
 class _State:
     rev: int
     tree_rev: int
@@ -80,7 +67,7 @@ class SessionTable:
             entries = [
                 decode_entry(message, metadata)
                 for message, metadata in connection.execute(
-                    "SELECT message, metadata FROM entries "
+                    "SELECT blobs.data, entries.metadata FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
                     "WHERE session_id = ? ORDER BY seq",
                     (session_id,),
                 )
@@ -159,7 +146,7 @@ class SessionTable:
                 chunk = unique[start : start + _READ_CHUNK]
                 marks = ", ".join("?" for _ in chunk)
                 for entry_id, message, metadata in connection.execute(
-                    "SELECT id, message, metadata FROM entries "
+                    "SELECT entries.id, blobs.data, entries.metadata FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
                     f"WHERE session_id = ? AND id IN ({marks})",
                     (session_id, *chunk),
                 ):
@@ -175,36 +162,11 @@ class SessionTable:
             seen.add(entry_id)
         return result
 
-    def delta(self, session_id: str, since_rev: int) -> SessionDelta | None:
-        """Return changes after ``since_rev``; None if a rewrite intervened."""
-        with self.database.read() as connection:
-            row = _session_row(connection, session_id)
-            if row is None:
-                return None
-            rewrite_rev = connection.execute(
-                "SELECT rewrite_rev FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()[0]
-            if rewrite_rev > since_rev:
-                return None
-            entries = [
-                decode_entry(message, metadata)
-                for message, metadata in connection.execute(
-                    "SELECT message, metadata FROM entries "
-                    "WHERE session_id = ? AND rev > ? ORDER BY seq",
-                    (session_id, since_rev),
-                )
-            ]
-        return SessionDelta(
-            signature=(row_message_bytes(row), row_rev(row)),
-            record=record_from_row(row, []),
-            entries=entries,
-        )
-
     def iter_entries(self, session_id: str) -> Generator[ConversationEntry]:
         """Decode stored entries one at a time from one read snapshot."""
         with self.database.read() as connection:
             for message, metadata in connection.execute(
-                "SELECT message, metadata FROM entries "
+                "SELECT blobs.data, entries.metadata FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
                 "WHERE session_id = ? ORDER BY seq",
                 (session_id,),
             ):
@@ -391,9 +353,9 @@ class SessionTable:
             _insert_session(connection, columns)
             connection.execute(
                 "INSERT INTO entries (session_id, seq, id, parent_id, kind, role, "
-                "call_id, created_at, message, metadata, rev) "
+                "call_id, created_at, message_sha256, metadata, rev) "
                 "SELECT ?, seq, id, parent_id, kind, role, call_id, created_at, "
-                "message, metadata, 1 FROM entries WHERE session_id = ?",
+                "message_sha256, metadata, 1 FROM entries WHERE session_id = ?",
                 (record.id, source_id),
             )
             return True
@@ -401,23 +363,21 @@ class SessionTable:
     def prune(self, retention_days: int) -> list[str]:
         """Delete unpinned sessions idle for longer than the retention window."""
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        with self.database.read() as connection:
+        expired = []
+        # Recheck pins and activity in the same transaction that deletes rows.
+        with self.database.write() as connection:
             rows = connection.execute(
                 "SELECT id, updated_at, created_at FROM sessions WHERE pinned = 0"
             ).fetchall()
-        expired = []
-        for session_id, updated_at, created_at in rows:
-            activity = parse_timestamp(updated_at) or parse_timestamp(created_at)
-            if activity is None:
-                continue
-            if activity.tzinfo is None:
-                activity = activity.replace(tzinfo=UTC)
-            if activity < cutoff:
-                expired.append(session_id)
-        if expired:
-            with self.database.write() as connection:
-                for session_id in expired:
+            for session_id, updated_at, created_at in rows:
+                activity = parse_timestamp(updated_at) or parse_timestamp(created_at)
+                if activity is None:
+                    continue
+                if activity.tzinfo is None:
+                    activity = activity.replace(tzinfo=UTC)
+                if activity < cutoff:
                     delete_session_rows(connection, session_id)
+                    expired.append(session_id)
         return expired
 
 

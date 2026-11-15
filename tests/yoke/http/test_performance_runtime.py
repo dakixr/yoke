@@ -297,7 +297,7 @@ def test_prompt_admission_returns_before_cold_session_materialization(
             thread.join(timeout=5)
 
 
-def test_live_turn_reuses_shared_session_snapshot_after_initial_read(
+def test_live_turn_reads_fresh_snapshot_after_independent_update(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -369,12 +369,19 @@ def test_live_turn_reuses_shared_session_snapshot_after_initial_read(
     )
     store = app.state.session_service.store
     store.save("large", _messages(500, payload=2048), root=tmp_path)
-    app.state.session_service.read_cache.get("large")
+    before = app.state.session_service.read_cache.get("large")
+    store.set_title(
+        "large", "Updated independently", existing_record=store.summary_record("large")
+    )
+    original_load = store.load
+    loaded_titles = []
 
-    def fail(*_args, **_kwargs):
-        raise AssertionError("live turn must reuse the primed shared read snapshot")
+    def observed_load(*args, **kwargs):
+        record = original_load(*args, **kwargs)
+        loaded_titles.append(record.title)
+        return record
 
-    monkeypatch.setattr(store, "load", fail)
+    monkeypatch.setattr(store, "load", observed_load)
     with TestClient(app) as client:
         admitted = client.post(
             "/api/v1/session/large/prompt",
@@ -405,6 +412,10 @@ def test_live_turn_reuses_shared_session_snapshot_after_initial_read(
             for part in message.get("content", [])
             if part.get("type") == "text"
         )
+
+    assert loaded_titles
+    assert set(loaded_titles) == {"Updated independently"}
+    assert before.record.title != "Updated independently"
 
 
 def test_descending_cold_message_page_reads_topology_without_full_load(
