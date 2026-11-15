@@ -193,6 +193,14 @@ when the upstream provider advertises a larger window. The catalog, runtime
 token budget, compaction policy, and context-usage display all use that capped
 value. OpenCode Go caps both of its models at 400,000 tokens.
 
+OpenCode Go can be routed through an OpenAI-compatible gateway such as the
+fleet's CLIProxy. Set `YOKE_OPENCODE_GO_BASE_URL` to the gateway's `/v1` URL
+(default `https://opencode.ai/zen/go/v1`) and, if the gateway namespaces Go
+models, `YOKE_OPENCODE_GO_MODEL_PREFIX` (for example `opencode-go`, which sends
+`opencode-go/<model>` upstream). Yoke model IDs stay `opencode-go:<model>`.
+`OPENCODE_API_KEY` is still required; a gateway that does its own auth can take
+a placeholder value.
+
 Codex uses a persistent Responses WebSocket transport and keeps response
 continuity, encrypted replay state, prompt-cache affinity, and routing metadata
 in memory. Session IDs provide stable cache scope across provider

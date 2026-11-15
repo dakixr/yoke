@@ -21,7 +21,6 @@ from yoke.ai.providers.openai_compat import (
 )
 from yoke.ai.providers.opencode_go.catalog import (
     MODEL_PROTOCOLS,
-    OPENAI_BASE_URL,
     PROVIDER_NAME,
     OpenCodeGoConfig,
     _max_output_tokens,
@@ -77,7 +76,7 @@ class OpenCodeGoProvider(
             OpenAICompatibleConfig(
                 api_key=config.api_key,
                 model=config.model,
-                base_url=OPENAI_BASE_URL,
+                base_url=config.base_url,
                 timeout_seconds=config.timeout_seconds,
                 max_retries=config.max_retries,
                 retry_backoff_seconds=config.retry_backoff_seconds,
@@ -90,6 +89,7 @@ class OpenCodeGoProvider(
             ),
             http_client=http_client,
             sleep=self._sleep,
+            upstream_model=config.upstream_model,
         )
 
     def _fork_client(self) -> httpx.Client | None:
@@ -174,10 +174,10 @@ class OpenCodeGoProvider(
     ) -> Message:
         return complete_response(
             client=self._client,
-            url=f"{OPENAI_BASE_URL}/responses",
+            url=f"{self.config.base_url}/responses",
             api_key=self.config.api_key,
             provider_name=PROVIDER_NAME,
-            model=self.config.model,
+            model=self.config.upstream_model(self.config.model),
             messages=messages,
             tools=tools,
             reasoning_effort=self.config.reasoning_effort,

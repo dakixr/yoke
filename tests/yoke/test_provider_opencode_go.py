@@ -309,3 +309,126 @@ def _chat_stream(text: str) -> str:
         )
         + "\n\ndata: [DONE]\n\n"
     )
+
+
+def _capture_provider(
+    model: str,
+    captured: list[dict[str, object]],
+    *,
+    base_url: str = "https://opencode.ai/zen/go/v1",
+    model_prefix: str = "",
+) -> OpenCodeGoProvider:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        captured.append({"url": str(request.url), "model": payload["model"]})
+        if request.url.path.endswith("/responses"):
+            return httpx.Response(
+                200,
+                json={
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "ok"}],
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, text=_chat_stream("ok"))
+
+    return OpenCodeGoProvider(
+        OpenCodeGoConfig(
+            api_key="test",
+            model=model,
+            base_url=base_url,
+            model_prefix=model_prefix,
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+
+@pytest.mark.parametrize(
+    "model,path",
+    [
+        ("deepseek-v4.1-flash", "chat/completions"),
+        ("muse-spark-1.3-contributor", "responses"),
+    ],
+)
+def test_opencode_go_defaults_to_direct_endpoint_and_bare_model(
+    model: str, path: str
+) -> None:
+    captured: list[dict[str, object]] = []
+    provider = _capture_provider(model, captured)
+    try:
+        provider.complete([Message.user("hello")], [])
+    finally:
+        provider.close()
+    assert captured == [
+        {"url": f"https://opencode.ai/zen/go/v1/{path}", "model": model}
+    ]
+
+
+@pytest.mark.parametrize(
+    "model,path",
+    [
+        ("deepseek-v4.1-flash", "chat/completions"),
+        ("muse-spark-1.3-contributor", "responses"),
+    ],
+)
+def test_opencode_go_gateway_base_url_and_upstream_model_prefix(
+    model: str, path: str
+) -> None:
+    captured: list[dict[str, object]] = []
+    provider = _capture_provider(
+        model,
+        captured,
+        base_url="http://fleet-spain:8317/v1/",
+        model_prefix="opencode-go",
+    )
+    try:
+        provider.complete([Message.user("hello")], [])
+        forked = cast(OpenCodeGoProvider, fork_provider(provider))
+        assert forked.config.base_url == "http://fleet-spain:8317/v1"
+        assert forked.config.model_prefix == "opencode-go"
+    finally:
+        provider.close()
+    assert captured == [
+        {"url": f"http://fleet-spain:8317/v1/{path}", "model": f"opencode-go/{model}"}
+    ]
+    # Yoke's own model ID stays unprefixed for sessions and selections.
+    assert provider.current_model_id() == model
+
+
+def test_opencode_go_register_provider_reads_gateway_environment() -> None:
+    from types import SimpleNamespace
+
+    from yoke.ai.providers.opencode_go.catalog import register_provider
+
+    def provider_for(env: dict[str, str]) -> OpenCodeGoProvider:
+        return register_provider(
+            SimpleNamespace(
+                env={"OPENCODE_API_KEY": "tailscale", **env},
+                model="opencode-go/deepseek-v4.1-flash",
+                session_id="s",
+                reasoning_effort=None,
+            )
+        )
+
+    direct = provider_for({})
+    gateway = provider_for(
+        {
+            "YOKE_OPENCODE_GO_BASE_URL": "http://fleet-spain:8317/v1",
+            "YOKE_OPENCODE_GO_MODEL_PREFIX": "opencode-go",
+        }
+    )
+    try:
+        assert direct.config.base_url == "https://opencode.ai/zen/go/v1"
+        assert direct.config.model_prefix == ""
+        assert gateway.config.base_url == "http://fleet-spain:8317/v1"
+        assert gateway.config.upstream_model("deepseek-v4.1-flash") == (
+            "opencode-go/deepseek-v4.1-flash"
+        )
+        assert gateway.config.model == "deepseek-v4.1-flash"
+    finally:
+        direct.close()
+        gateway.close()

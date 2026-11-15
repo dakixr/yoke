@@ -17,7 +17,9 @@ if TYPE_CHECKING:
 
 PROVIDER_NAME = "opencode-go"
 ENV_API_KEY = "OPENCODE_API_KEY"
-OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
+DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+ENV_BASE_URL = "YOKE_OPENCODE_GO_BASE_URL"
+ENV_MODEL_PREFIX = "YOKE_OPENCODE_GO_MODEL_PREFIX"
 
 DEEPSEEK_41_THINKING_LEVELS = ("low", "high", "max")
 MUSE_SPARK_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
@@ -78,6 +80,8 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
             api_key=api_key,
             model=_normalize_model_id(context.model or DEFAULT_MODEL_ID),
             session_id=context.session_id or uuid4().hex,
+            base_url=env.get(ENV_BASE_URL, "").strip() or DEFAULT_BASE_URL,
+            model_prefix=env.get(ENV_MODEL_PREFIX, "").strip(),
             timeout_seconds=float(env.get("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "900"),
             max_retries=int(env.get("YOKE_OPENCODE_GO_MAX_RETRIES") or "5"),
             reasoning_effort=(
@@ -93,6 +97,11 @@ class OpenCodeGoConfig(BaseModel):
     api_key: str
     model: str = DEFAULT_MODEL_ID
     session_id: str = Field(default_factory=lambda: uuid4().hex)
+    # A gateway such as CLIProxy can serve Go models under its own base URL
+    # and a namespaced upstream ID ("opencode-go/<id>"). Yoke's own model IDs
+    # stay unprefixed, so sessions and selections are unaffected.
+    base_url: str = DEFAULT_BASE_URL
+    model_prefix: str = ""
     timeout_seconds: float = 900.0
     max_retries: int = 5
     retry_backoff_seconds: float = 1.0
@@ -104,6 +113,23 @@ class OpenCodeGoConfig(BaseModel):
     @classmethod
     def validate_model(cls, value: str) -> str:
         return _normalize_model_id(value)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized.startswith(("http://", "https://")):
+            raise ValueError("base_url must be an http(s) URL")
+        return normalized
+
+    @field_validator("model_prefix")
+    @classmethod
+    def validate_model_prefix(cls, value: str) -> str:
+        return value.strip().strip("/")
+
+    def upstream_model(self, model_id: str) -> str:
+        """Return the model ID sent on the wire."""
+        return f"{self.model_prefix}/{model_id}" if self.model_prefix else model_id
 
     @field_validator("session_id")
     @classmethod

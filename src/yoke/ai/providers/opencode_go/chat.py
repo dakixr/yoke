@@ -28,6 +28,15 @@ class GoChatProvider(OpenAICompatibleProvider):
 
     _timeout_as_request_error = True
 
+    def __init__(
+        self,
+        *args: Any,
+        upstream_model: Callable[[str], str] = lambda model_id: model_id,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._upstream_model = upstream_model
+
     def _complete_impl(
         self,
         messages: list[Message],
@@ -36,7 +45,7 @@ class GoChatProvider(OpenAICompatibleProvider):
         cancel_requested: Callable[[], bool],
     ) -> Message:
         payload: dict[str, Any] = {
-            "model": self.config.model,
+            "model": self._upstream_model(self.config.model),
             "messages": [
                 serialize_message_for_openai(message)
                 for message in normalize_openai_request_messages(messages)
