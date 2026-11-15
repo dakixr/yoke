@@ -12,7 +12,7 @@ from yoke.http.models.mcp import (
     McpSessionPatchResponse,
 )
 from yoke.http.services.mcp_service import McpService
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 

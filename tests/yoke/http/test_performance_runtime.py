@@ -23,9 +23,9 @@ from yoke.session.repository.models import SessionRecord
 from yoke.session.repository.store import SessionStore
 from yoke.session.repository.writer import append_session_metadata
 from yoke.http.app import HttpAppSettings, create_app
-from yoke.http.services import runtime_factory
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_message_index import storage as index_storage
+from yoke.http.runtime import factory as runtime_factory
+from yoke.http.reads.message_index import SessionMessageIndex
+from yoke.http.reads.message_index import storage as index_storage
 from yoke.http.services.session_service import SessionService
 from yoke.session.events import SessionEventJournal
 
@@ -89,7 +89,7 @@ def test_compacted_runtime_seed_matches_full_provider_projection(
     ).project(ConversationProjection())
     index = SessionMessageIndex(store)
     try:
-        assert index._ensure("compacted") is not None
+        assert index.ensure("compacted") is not None
         seed = index.runtime_seed("compacted")
     finally:
         index.close()
@@ -163,7 +163,7 @@ def test_compacted_cold_turn_reaches_provider_without_full_session_load(
         leaf_id=exported.leaf_id,
         root=tmp_path,
     )
-    assert app.state.session_service.message_index._ensure("large") is not None
+    assert app.state.session_service.message_index.ensure("large") is not None
     original_load = store.load
 
     def guarded_load(session_id: str):  # noqa: ANN202
@@ -477,8 +477,8 @@ def test_descending_tail_page_follows_selected_branch(
             branch_assistant,
         ],
     )
-    store._write_session_record(record)
-    store._update_index(record)
+    store.write_session_record(record)
+    store.update_index(record)
     service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(service.message_index, "warm_async", lambda _session_id: None)
 
@@ -512,9 +512,9 @@ def test_descending_tail_page_honors_metadata_only_leaf_with_stale_index(
         leaf_id=tail.id,
         conversation_entries=[root, middle, tail],
     )
-    store._write_session_record(record)
-    store._update_index(record)
-    append_session_metadata(store._session_path("checkout"), {"leaf_id": middle.id})
+    store.write_session_record(record)
+    store.update_index(record)
+    append_session_metadata(store.session_path("checkout"), {"leaf_id": middle.id})
     service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(service.message_index, "warm_async", lambda _session_id: None)
 

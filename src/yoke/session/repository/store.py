@@ -3,37 +3,36 @@
 from __future__ import annotations
 
 import builtins
-import re
 from pathlib import Path
 
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
+from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.skills.models import ActiveSkill
-from yoke.session.repository.index_service import SessionIndexService
-from yoke.session.repository.index import session_file_ids
-from yoke.session.repository.load import load_existing_record
-from yoke.session.repository.load import reconcile_index_owned_metadata
-from yoke.session.repository.load import scan_canonical_session_summary
-from yoke.session.repository.models import SessionIndexEntry
 from yoke.session.repository.helpers import last_user_message_at
-from yoke.session.repository.tree_ops import _TreeOperations
-from yoke.session.repository.fork_ops import _ForkOperations
-from yoke.session.repository.metadata_ops import _MetadataOperations
-from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.index import SESSION_INDEX_SUMMARY_VERSION
+from yoke.session.repository.index_service import SessionIndexService
+from yoke.session.repository.load import load_existing_record
+from yoke.session.repository.models import SessionIndexEntry, SessionRecord
+from yoke.session.repository.paths import (
+    CURRENT_SESSION_SCHEMA_VERSION,
+    SESSION_INDEX_NAME,
+    session_path,
+)
 from yoke.session.repository.tree import _resolve_saved_conversation_tree
 from yoke.session.repository.tree_index import SessionTreeIndex
-from yoke.session.repository.utils import default_session_directory
-from yoke.session.repository.utils import normalize_root
-from yoke.session.repository.utils import normalize_title
-from yoke.session.repository.utils import timestamp
-from yoke.session.repository.writer import write_session_record
-
-SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-SESSION_INDEX_NAME = "index.json"
-SESSION_FILE_SUFFIX = ".jsonl"
-SESSION_RETENTION_DAYS = 30
-SESSION_MAINTENANCE_INTERVAL_SECONDS = 5.0
-CURRENT_SESSION_SCHEMA_VERSION = 5
+from yoke.session.repository.tree_writer import SessionTreeWriter
+from yoke.session.repository.utils import (
+    default_session_directory,
+    fork_session_title,
+    new_unique_session_id,
+    normalize_root,
+    normalize_title,
+    timestamp,
+)
+from yoke.session.repository.writer import (
+    append_session_metadata,
+    clone_canonical_session,
+    write_session_record,
+)
 
 
 class _UnsetReasoningEffort:
@@ -43,30 +42,23 @@ class _UnsetReasoningEffort:
 _UNSET_REASONING_EFFORT = _UnsetReasoningEffort()
 
 
-class SessionStore(_TreeOperations, _ForkOperations, _MetadataOperations):
+class SessionStore:
     """JSONL-backed store for CLI session records."""
 
     def __init__(self, directory: Path | None = None) -> None:
         self.directory = (directory or default_session_directory()).resolve()
-        self._index_service = SessionIndexService(
-            self.directory,
-            index_path=self._index_path,
-            session_path=self._session_path,
-            load_summary=lambda session_id: self._load_summary_for_index(session_id),
-            retention_days=SESSION_RETENTION_DAYS,
-            session_file_suffix=SESSION_FILE_SUFFIX,
-            session_id_pattern=SESSION_ID_PATTERN,
-            list_session_ids=lambda directory: session_file_ids(
-                directory,
-                session_file_suffix=SESSION_FILE_SUFFIX,
-                session_id_pattern=SESSION_ID_PATTERN,
-            ),
+        self._index_service = SessionIndexService(self.directory)
+        self._tree_writer = SessionTreeWriter(self.directory, self._index_service)
+        self.save_tree_delta = self._tree_writer.save_tree_delta
+        self.save_entry_metadata = self._tree_writer.save_entry_metadata
+        self.save_indexed_tree_navigation = (
+            self._tree_writer.save_indexed_tree_navigation
         )
-        self._index_cache = self._index_service._cache
+        self.save_indexed_entry_metadata = self._tree_writer.save_indexed_entry_metadata
 
     def load(self, session_id: str) -> SessionRecord:
         """Load a session record."""
-        path = self._session_path(session_id)
+        path = self.session_path(session_id)
         if not path.exists():
             return SessionRecord(id=session_id)
         record = load_existing_record(
@@ -158,7 +150,7 @@ class SessionStore(_TreeOperations, _ForkOperations, _MetadataOperations):
         )
 
         self.directory.mkdir(parents=True, exist_ok=True)
-        self._write_session_record(
+        self.write_session_record(
             record,
             existing_record=existing,
             trusted_append_entries=resolved.appended_entries,
@@ -191,7 +183,7 @@ class SessionStore(_TreeOperations, _ForkOperations, _MetadataOperations):
     ) -> builtins.list[SessionIndexEntry]:
         """List lightweight session summaries without loading conversation history."""
         if maintain:
-            self._maintain_index_if_due()
+            self._index_service.maintain_if_due()
         root_value = normalize_root(root)
         entries = [
             entry
@@ -244,31 +236,9 @@ class SessionStore(_TreeOperations, _ForkOperations, _MetadataOperations):
         """Return whether a persisted session exists."""
         return self._existing_session_path(session_id) is not None
 
-    def _session_path(self, session_id: str) -> Path:
-        if not SESSION_ID_PATTERN.fullmatch(session_id):
-            raise ValueError(
-                "Session id must start with an alphanumeric character and "
-                "use only letters, numbers, dot, underscore, or dash."
-            )
-        return self.directory / f"{session_id}{SESSION_FILE_SUFFIX}"
-
     def session_path(self, session_id: str) -> Path:
         """Return the validated path for one persisted session."""
-        return self._session_path(session_id)
-
-    def write_session_record(
-        self,
-        record: SessionRecord,
-        *,
-        existing_record: SessionRecord | None = None,
-        trusted_append_entries: tuple[ConversationEntry, ...] | None = None,
-    ) -> Path:
-        """Write one session record through the repository writer."""
-        return self._write_session_record(
-            record,
-            existing_record=existing_record,
-            trusted_append_entries=trusted_append_entries,
-        )
+        return session_path(self.directory, session_id)
 
     def update_index(
         self, record: SessionRecord, *, entry_count: int | None = None
@@ -282,58 +252,18 @@ class SessionStore(_TreeOperations, _ForkOperations, _MetadataOperations):
         """Update index metadata while retaining its known entry count."""
         return self._index_service.update_metadata(record, entry_count=entry_count)
 
-    def _update_index(
-        self, record: SessionRecord, *, entry_count: int | None = None
-    ) -> bool:
-        """Compatibility hook for existing internal persistence tests."""
-        return self.update_index(record, entry_count=entry_count)
-
-    def _update_index_metadata(
-        self, record: SessionRecord, *, entry_count: int | None = None
-    ) -> bool:
-        """Compatibility hook for existing internal persistence tests."""
-        return self.update_index_metadata(record, entry_count=entry_count)
-
     def _existing_session_path(self, session_id: str) -> Path | None:
-        path = self._session_path(session_id)
+        path = self.session_path(session_id)
         return path if path.exists() else None
 
     def _index_path(self) -> Path:
         return self.directory / SESSION_INDEX_NAME
 
-    def _load_summary_for_index(self, session_id: str) -> tuple[SessionRecord, int]:
-        path = self._session_path(session_id)
-        scanned = scan_canonical_session_summary(path, session_id)
-        if scanned is not None:
-            record, entry_count = scanned
-            return (
-                reconcile_index_owned_metadata(record, self.index_entry(session_id)),
-                entry_count,
-            )
-        record = load_existing_record(
-            self._index_service,
-            session_id,
-            path,
-            current_schema_version=CURRENT_SESSION_SCHEMA_VERSION,
-            update_index=False,
-        )
-        if record.version != CURRENT_SESSION_SCHEMA_VERSION:
-            raise ValueError(f"Unsupported session schema version: {record.version}.")
-        return record, len(record.conversation_entries)
-
     def maintain_index(self, *, force: bool = False) -> None:
         """Repair and prune the session index outside latency-sensitive requests."""
         self._index_service.maintain(force=force)
 
-    def _maintain_index_if_due(self) -> None:
-        """Run throttled index maintenance for list-style callers."""
-        self._index_service.maintain_if_due()
-
-    def _prune_index_and_sessions(self) -> bool:
-        """Compatibility hook for maintenance tests and internal callers."""
-        return self._index_service.prune()
-
-    def _write_session_record(
+    def write_session_record(
         self,
         record: SessionRecord,
         *,
@@ -343,7 +273,201 @@ class SessionStore(_TreeOperations, _ForkOperations, _MetadataOperations):
         self.directory.mkdir(parents=True, exist_ok=True)
         return write_session_record(
             record,
-            path=self._session_path(record.id),
+            path=self.session_path(record.id),
             existing_record=existing_record,
             trusted_append_entries=trusted_append_entries,
+        )
+
+    def fork(
+        self,
+        source_session_id: str,
+        *,
+        new_session_id_value: str | None = None,
+        root: Path | str | None = None,
+        title: str | None = None,
+        selected_leaf_id: str | None = None,
+        materialize_result: bool = True,
+    ) -> SessionRecord:
+        """Create a persisted copy of an existing session under a new id."""
+        fork_id = new_session_id_value or new_unique_session_id(self.exists)
+        if self.exists(fork_id):
+            raise ValueError(f"Session already exists: {fork_id}")
+        source_index = self.index_entry(source_session_id)
+        source_signature = self.session_file_signature(source_session_id)
+        if (
+            source_index is not None
+            and source_index.summary_version == SESSION_INDEX_SUMMARY_VERSION
+            and source_index.entry_count is not None
+            and source_signature is not None
+            and source_index.file_size == source_signature[0]
+            and source_index.file_mtime_ns == source_signature[1]
+        ):
+            now = timestamp()
+            fork_root = normalize_root(root) or source_index.root
+            fork_title = normalize_title(title) or fork_session_title(
+                source_index.title
+            )
+            fork_leaf = (
+                selected_leaf_id
+                if selected_leaf_id is not None
+                else source_index.leaf_id
+            )
+            forked = source_index.to_record().model_copy(
+                update={
+                    "id": fork_id,
+                    "created_at": now,
+                    "updated_at": now,
+                    "root": fork_root,
+                    "title": fork_title,
+                    "pinned": False,
+                    "archived_at": None,
+                    "context_usage": None,
+                    "leaf_id": fork_leaf,
+                }
+            )
+            if clone_canonical_session(
+                self.session_path(source_session_id),
+                self.session_path(fork_id),
+                metadata_changes={
+                    "id": fork_id,
+                    "created_at": now,
+                    "updated_at": now,
+                    "root": fork_root,
+                    "title": fork_title,
+                    "pinned": False,
+                    "archived_at": None,
+                    "context_usage": None,
+                    "leaf_id": fork_leaf,
+                },
+            ):
+                self.update_index(forked, entry_count=source_index.entry_count)
+                return self.load(fork_id) if materialize_result else forked
+
+        source = self.load(source_session_id)
+        if source.created_at is None and not source.conversation_entries:
+            raise ValueError(f"Session not found: {source_session_id}")
+        now = timestamp()
+        forked = source.model_copy(
+            deep=True,
+            update={
+                "id": fork_id,
+                "created_at": now,
+                "updated_at": now,
+                "root": normalize_root(root) or source.root,
+                "title": normalize_title(title) or fork_session_title(source.title),
+                "pinned": False,
+                "archived_at": None,
+                "context_usage": None,
+                "leaf_id": (
+                    selected_leaf_id if selected_leaf_id is not None else source.leaf_id
+                ),
+            },
+        )
+        self.write_session_record(forked)
+        self.update_index(forked)
+        return forked
+
+    def _patch_metadata(
+        self,
+        session_id: str,
+        values: dict[str, object],
+        *,
+        existing_record: SessionRecord | None = None,
+        error_name: str = "session",
+    ) -> SessionRecord:
+        record = existing_record or self.load(session_id)
+        if record.id != session_id:
+            raise ValueError(
+                f"Existing session record id does not match {error_name} id."
+            )
+        if record.created_at is None:
+            raise ValueError(f"Session not found: {session_id}")
+        updated = record.model_copy(update=values)
+        path = self.session_path(session_id)
+        if path.exists():
+            append_session_metadata(path, values)
+        else:
+            self.write_session_record(updated)
+        self._index_service.update_metadata(updated)
+        return updated
+
+    def set_pinned(
+        self,
+        session_id: str,
+        pinned: bool,
+        *,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        return self._patch_metadata(
+            session_id,
+            {"pinned": pinned},
+            existing_record=existing_record,
+            error_name="pin",
+        )
+
+    def set_title(
+        self,
+        session_id: str,
+        title: str | None,
+        *,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        return self._patch_metadata(
+            session_id,
+            {"title": normalize_title(title), "updated_at": timestamp()},
+            existing_record=existing_record,
+            error_name="title",
+        )
+
+    def set_archived(
+        self,
+        session_id: str,
+        archived: bool,
+        *,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        now = timestamp()
+        return self._patch_metadata(
+            session_id,
+            {"archived_at": now if archived else None, "updated_at": now},
+            existing_record=existing_record,
+            error_name="archive",
+        )
+
+    def set_selection(
+        self,
+        session_id: str,
+        *,
+        provider_name: str | None,
+        model_id: str | None,
+        reasoning_effort: str | None,
+        context_window_tokens: int | None,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        return self._patch_metadata(
+            session_id,
+            {
+                "provider_name": provider_name,
+                "model_id": model_id,
+                "reasoning_effort": reasoning_effort,
+                "context_window_tokens": context_window_tokens,
+                "context_usage": None,
+                "updated_at": timestamp(),
+            },
+            existing_record=existing_record,
+            error_name="selection",
+        )
+
+    def set_context_usage(
+        self,
+        session_id: str,
+        usage: dict[str, object],
+        *,
+        existing_record: SessionRecord | None = None,
+    ) -> SessionRecord:
+        record = existing_record or self.summary_record(session_id)
+        return self._patch_metadata(
+            session_id,
+            {"context_usage": dict(usage)},
+            existing_record=record,
         )

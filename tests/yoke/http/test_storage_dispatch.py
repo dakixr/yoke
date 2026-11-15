@@ -93,7 +93,7 @@ def test_manual_title_cannot_be_overwritten_by_a_final_save(
     from yoke.agent.loop import AgentResult
     from yoke.agent.models import ConversationEntry, Message
     from yoke.http.models.session import SessionPatchRequest
-    from yoke.http.services.session_runtime.execution import TurnOutcome
+    from yoke.http.runtime.turns import TurnOutcome
     from yoke.http.services.session_service import SessionService
     from tests.yoke.http.test_runtime_ownership import _execution, _runtime
 

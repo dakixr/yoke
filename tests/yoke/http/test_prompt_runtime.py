@@ -259,10 +259,8 @@ def test_long_turn_summary_persists_duration_and_tool_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = [100.0]
-    monkeypatch.setattr("yoke.http.services.runtime.monotonic", lambda: clock[0])
-    monkeypatch.setattr(
-        "yoke.http.services.session_runtime.finalize.monotonic", lambda: clock[0]
-    )
+    monkeypatch.setattr("yoke.http.runtime.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr("yoke.http.runtime.finalization.monotonic", lambda: clock[0])
     controller = FakeRuntimeController()
     app = create_app(
         HttpAppSettings(
@@ -494,7 +492,7 @@ def test_completed_turn_survives_session_index_replace_failure(
         root = tmp_path / "repo"
         root.mkdir()
         _create_session(client, root, "session-a")
-        cache = app.state.session_service.store._index_cache
+        cache = app.state.session_service.store._index_service._cache
 
         def deny_replace(_temporary: Path) -> None:
             raise PermissionError(5, "Access is denied")

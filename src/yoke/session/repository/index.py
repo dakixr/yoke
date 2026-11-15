@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
-from yoke.session.repository.models import SessionIndex
-from yoke.session.repository.models import SessionIndexEntry
-from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.models import (
+    SessionIndex,
+    SessionIndexEntry,
+    SessionRecord,
+)
 
 SESSION_INDEX_SUMMARY_VERSION = 3
 

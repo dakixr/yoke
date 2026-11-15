@@ -179,7 +179,7 @@ def test_interruption_checkpoint_copies_only_the_synthetic_suffix(
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
-    store._write_session_record(record)
+    store.write_session_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
     messages, snapshot = interrupted_turn_snapshot(
         messages=[],
@@ -277,7 +277,7 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
-    store._write_session_record(record)
+    store.write_session_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
     incoming = active.active_entries()
     appended = ConversationEntry(
@@ -303,7 +303,7 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
     monkeypatch.setattr("yoke.session.repository.tree.SessionTree.restore", fail)
     monkeypatch.setattr("yoke.session.repository.writer.append_jsonl_lines", fail)
     monkeypatch.setattr(store, "load", fail)
-    monkeypatch.setattr(store, "_prune_index_and_sessions", fail)
+    monkeypatch.setattr(store, "maintain_index", fail)
     monkeypatch.setattr(store, "save", track_save)
 
     save_active_session(
@@ -317,7 +317,7 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
     assert copies["count"] < 10
     assert active.record.conversation_entries[-1].id == appended.id
     assert active.tree_index.active_entry_refs()[-1].id == appended.id
-    with store._session_path(record.id).open(encoding="utf-8") as handle:
+    with store.session_path(record.id).open(encoding="utf-8") as handle:
         last_event = json.loads(list(handle)[-1])
     assert last_event["entry"]["id"] == appended.id
 
@@ -330,7 +330,7 @@ def test_index_metadata_updates_publish_copy_on_write_snapshot(tmp_path: Path) -
         root=tmp_path,
         title="before",
     )
-    published = store._index_cache.read()
+    published = store._index_service._cache.read()
     published_entry = published.sessions[record.id]
 
     store.set_title(
@@ -341,7 +341,7 @@ def test_index_metadata_updates_publish_copy_on_write_snapshot(tmp_path: Path) -
 
     assert published.sessions[record.id] is published_entry
     assert published.sessions[record.id].title == "before"
-    assert store._index_cache.read().sessions[record.id].title == "after"
+    assert store._index_service._cache.read().sessions[record.id].title == "after"
 
 
 def test_session_maintenance_uses_enumerated_file_metadata(
@@ -390,7 +390,7 @@ def test_clean_prompt_exit_does_not_capture_or_save_conversation(
 
     monkeypatch.setattr("yoke.cli.runtime.session.capture_agent_state", fail)
     monkeypatch.setattr(active.store, "save", fail)
-    monkeypatch.setattr(active.store, "_write_session_record", fail)
+    monkeypatch.setattr(active.store, "write_session_record", fail)
 
     try:
         persist_prompt_exit_state(
@@ -420,7 +420,7 @@ def test_prompt_exit_appends_only_changed_reasoning_metadata(
     record.updated_at = record.created_at
     store = SessionStore(tmp_path / "sessions")
     store.directory.mkdir(parents=True)
-    store._session_path(record.id).touch()
+    store.session_path(record.id).touch()
     active = ActiveSession(record.id, tmp_path, store, record)
     state = PromptCliState(
         messages=[],
@@ -439,7 +439,7 @@ def test_prompt_exit_appends_only_changed_reasoning_metadata(
         "yoke.session.repository.metadata.append_session_metadata",
         capture_metadata,
     )
-    monkeypatch.setattr(store, "_update_index", lambda _record: None)
+    monkeypatch.setattr(store, "update_index", lambda _record: None)
 
     try:
         persist_prompt_exit_state(
@@ -466,7 +466,7 @@ def test_unchanged_transcript_persistence_uses_retained_active_path(
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
-    store._write_session_record(record)
+    store.write_session_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
     messages = active.messages()
     agent = RuntimeAgent(provider=NoopProvider(), tools=[])
@@ -478,7 +478,7 @@ def test_unchanged_transcript_persistence_uses_retained_active_path(
 
     monkeypatch.setattr("yoke.agent.session_tree.SessionTree.reconcile", fail)
     monkeypatch.setattr(store, "load", fail)
-    monkeypatch.setattr(store, "_prune_index_and_sessions", fail)
+    monkeypatch.setattr(store, "maintain_index", fail)
 
     try:
         persist_session_state(active, agent, messages)
@@ -552,7 +552,7 @@ def test_store_load_streams_without_path_read_text(
         ],
         leaf_id="one",
     )
-    store._write_session_record(record)
+    store.write_session_record(record)
 
     def fail_read_text(*_args: object, **_kwargs: object) -> None:
         pytest.fail("Path.read_text loaded the complete session")
@@ -572,9 +572,9 @@ def test_tree_label_appends_one_indexed_entry_update(
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
-    store._write_session_record(record)
+    store.write_session_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
-    path = store._session_path(record.id)
+    path = store.session_path(record.id)
     size_before = path.stat().st_size
     scans_before = counted.scans
     copies = _count_entry_copies(monkeypatch)
@@ -582,7 +582,7 @@ def test_tree_label_appends_one_indexed_entry_update(
     def fail_rewrite(*_args: object, **_kwargs: object) -> None:
         pytest.fail("label update rewrote the complete session")
 
-    monkeypatch.setattr(store, "_write_session_record", fail_rewrite)
+    monkeypatch.setattr(store, "write_session_record", fail_rewrite)
 
     set_entry_label(active, leaf_id, "checkpoint")
 

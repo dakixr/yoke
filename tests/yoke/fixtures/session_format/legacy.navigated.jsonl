@@ -1,0 +1,10 @@
+{"type":"yoke_session","version":2}
+{"type":"metadata","version":5,"id":"legacy","leaf_id":"answer","active_skills":[],"skill_dirs":[],"created_at":"2026-11-14T00:00:00+00:00","updated_at":"2026-11-14T00:00:00+00:00","last_user_message_at":"2026-11-14T00:00:00+00:00","root":"/fixture/project","title":"Original","pinned":false,"archived_at":null,"provider_name":"fixture","model_id":"fixture-model","reasoning_effort":"medium","context_window_tokens":8192,"context_usage":{"total_tokens":42}}
+{"type":"entry","entry":{"kind":"user","message":{"role":"user","content":"Hello café","tool_call_id":null,"tool_calls":[],"phase":null,"reasoning_content":null,"reasoning_signature":null,"usage":null},"metadata":{},"id":"user","parent_id":null,"created_at":"2026-11-14T00:00:00+00:00"}}
+{"type":"entry","entry":{"kind":"assistant","message":{"role":"assistant","content":"First answer","tool_call_id":null,"tool_calls":[],"phase":null,"reasoning_content":null,"reasoning_signature":null,"usage":null},"metadata":{},"id":"answer","parent_id":"user","created_at":"2026-11-14T00:00:00+00:00"}}
+{"type":"entry","entry":{"kind":"assistant","message":{"role":"assistant","content":"Another branch","tool_call_id":null,"tool_calls":[],"phase":null,"reasoning_content":null,"reasoning_signature":null,"usage":null},"metadata":{},"id":"alternate","parent_id":"user","created_at":"2026-11-14T00:00:00+00:00"}}
+{"type":"metadata","title":"Patched title","updated_at":"2026-11-15T12:00:00+00:00"}
+{"type":"metadata","pinned":true}
+{"type":"metadata","updated_at":"2026-11-15T12:00:00+00:00"}
+{"type":"entry_metadata","entry_id":"answer","metadata":{"starred":true}}
+{"type":"metadata","leaf_id":"alternate","context_usage":null}

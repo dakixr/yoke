@@ -11,7 +11,7 @@ from yoke.http.models.common import LocationInfo
 from yoke.http.models.mcp import McpListResponse, McpServerInfo, McpToolInfo
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.redaction import redact_public_value
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.session import SessionStore
 from yoke.session.workspace import require_session_workspace, workspace_lease
 

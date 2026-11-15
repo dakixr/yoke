@@ -72,14 +72,14 @@ def test_deletion_after_agent_preparation_pauses_input_before_provider_call(
 ):
     h = harness
     runtime = h.app.state.runtime_registry.get_or_start("saved")
-    original = runtime.turn_worker.prepare
+    original = runtime.execution.prepare
 
     def prepare(*args, **kwargs):
         agent = original(*args, **kwargs)
         h.root.rmdir()
         return agent
 
-    monkeypatch.setattr(runtime.turn_worker, "prepare", prepare)
+    monkeypatch.setattr(runtime.execution, "prepare", prepare)
     admitted = req(
         h,
         "POST",
@@ -364,7 +364,7 @@ def test_cancelled_relocation_request_does_not_cancel_the_owned_transaction(
     harness, monkeypatch
 ):
     h = harness
-    from yoke.http.services.session_runtime import configuration as module
+    from yoke.http.runtime import operations as module
 
     original = module.relocate_session_workspace
     started, release = Event(), Event()

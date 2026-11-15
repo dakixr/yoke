@@ -12,15 +12,15 @@ from yoke.http.models.session import (
     SessionPatchRequest,
 )
 from yoke.http.services.event_broker import EventService
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.http.services.session_catalog import SessionCatalog
 from yoke.http.services.session_forks import SessionForks
-from yoke.http.services.session_message_index import SessionMessageIndex
+from yoke.http.reads.message_index import SessionMessageIndex
 from yoke.http.services.session_messages import SessionMessages
-from yoke.http.services.session_read_cache import SessionReadCache
-from yoke.http.services.session_read_model import SessionReadModel
+from yoke.http.reads.cache import SessionReadCache
+from yoke.http.reads.model import SessionReadModel
 from yoke.http.services.session_tree_mutations import SessionTreeMutations
-from yoke.http.services.session_tree_reads import SessionTreeReads
+from yoke.http.reads.tree import SessionTreeReads
 from yoke.session import SessionStore
 from yoke.session.workspace import workspace_lease
 

@@ -32,7 +32,7 @@ def test_handoff_resolves_equivalent_json_spellings_of_parent_id(
     path.write_bytes(
         path.read_bytes().replace(b'"id":"caf\xc3\xa9"', b'"id":"caf\\u00e9"')
     )
-    store._update_index(record)
+    store.update_index(record)
 
     fast = build_session_handoff("escaped", store=store)
     with monkeypatch.context() as patch:
@@ -75,6 +75,6 @@ def test_fast_handoff_rejects_an_unproven_parent_chain(tmp_path: Path) -> None:
             if b'"id":"root"' not in line
         )
     )
-    store._update_index(record)
+    store.update_index(record)
 
     assert read_handoff_context_window(store, record.id, recent_limit=100) is None

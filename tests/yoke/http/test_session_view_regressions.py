@@ -232,7 +232,7 @@ def test_cold_small_pages_classify_legacy_tool_context_before_counting(
     def fail(*_args, **_kwargs):
         raise AssertionError("cold legacy pagination must stay on the bounded tail")
 
-    monkeypatch.setattr(state.session_service.message_index, "_ensure", fail)
+    monkeypatch.setattr(state.session_service.message_index, "ensure", fail)
 
     seen, bodies = _paginate_messages(client, "cold-legacy", order="desc")
 
@@ -254,7 +254,7 @@ def test_warm_index_reclassifies_appended_legacy_tool_context(
     tree = _legacy_attach_image_tree(include_private=False)
     record, _ = _save_tree(state, "warm-legacy", tree, root)
     index = state.session_service.message_index
-    prior = index._ensure("warm-legacy")
+    prior = index.ensure("warm-legacy")
     assert prior is not None
 
     tree.append_message(
@@ -280,7 +280,7 @@ def test_warm_index_reclassifies_appended_legacy_tool_context(
         root,
         existing_record=record,
     )
-    refreshed = index._ensure("warm-legacy")
+    refreshed = index.ensure("warm-legacy")
     assert refreshed is not None
     assert refreshed.indexed_size > prior.indexed_size
     assert refreshed.entries[private_id][1] == "tool_context"

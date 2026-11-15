@@ -15,7 +15,7 @@ from yoke.http.models.skill import (
     SkillListResponse,
 )
 from yoke.http.services.pending_input_service import PendingInputService
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.http.services.skill_service import SkillService
 
 router = APIRouter(dependencies=[Depends(require_auth)])

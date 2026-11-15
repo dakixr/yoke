@@ -16,8 +16,8 @@ from yoke.agent.loop import in_process_tool as in_process_tool_module
 from yoke.agent.loop.in_process_tool import execute_in_process_tool
 from yoke.agent.models import Message
 from yoke.agent.tools import LocalTool
-from yoke.http.services.session_runtime.reaper import retire_resource
-from yoke.http.services.session_runtime.resources import SessionRuntimeResources
+from yoke.http.runtime.reaper import retire_resource
+from yoke.http.runtime.resources import SessionRuntimeResources
 from yoke.session import SessionRecord
 
 

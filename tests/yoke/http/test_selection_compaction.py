@@ -147,7 +147,7 @@ def test_selection_switches_runtime_and_persists_metadata(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.session_runtime.operations as runtime_module
+    import yoke.http.runtime.operations as runtime_module
 
     observed: UsageMetricContext | None = None
     original_switch = runtime_module.switch_agent_provider_model
@@ -249,7 +249,7 @@ def test_manual_compaction_propagates_http_session_usage_attribution(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.session_runtime.operations as runtime_module
+    import yoke.http.runtime.operations as runtime_module
 
     observed: UsageMetricContext | None = None
 

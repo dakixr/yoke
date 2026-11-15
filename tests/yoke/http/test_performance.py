@@ -16,9 +16,9 @@ from yoke.agent.observability import ToolTraceStore
 from yoke.agent.skills.models import ActiveSkill
 from yoke.session.repository.store import SessionStore
 from yoke.http.app import HttpAppSettings, create_app
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_message_index import storage as index_storage
-from yoke.http.services.session_read_cache import SessionReadCache
+from yoke.http.reads.message_index import SessionMessageIndex
+from yoke.http.reads.message_index import storage as index_storage
+from yoke.http.reads.cache import SessionReadCache
 from yoke.http.services.session_service import SessionService
 from yoke.http.services.skill_service import SkillService
 from yoke.http.services.tool_trace_service import ToolTraceService
@@ -139,7 +139,7 @@ def test_message_offset_index_keeps_leaf_across_unrelated_metadata(
     store = SessionStore(tmp_path / "sessions")
     record = store.save("session", _messages(20, payload=256), root=tmp_path)
     service = SessionService(store, message_index=SessionMessageIndex(store))
-    initial = service.message_index._ensure("session")
+    initial = service.message_index.ensure("session")
     assert initial is not None
     assert initial.leaf_id == record.leaf_id
 
@@ -147,7 +147,7 @@ def test_message_offset_index_keeps_leaf_across_unrelated_metadata(
     assert summary is not None
     store.set_title("session", "Renamed", existing_record=summary)
 
-    refreshed = service.message_index._ensure("session")
+    refreshed = service.message_index.ensure("session")
     assert refreshed is not None
     assert refreshed.leaf_id == record.leaf_id
     page = service.messages("session", limit=10, order="desc", cursor=None)
@@ -299,7 +299,7 @@ def test_historical_tool_list_reads_only_tool_turns_from_topology_index(
     ]
     store.save("large", messages, root=tmp_path)
     session_service = SessionService(store, message_index=SessionMessageIndex(store))
-    assert session_service.message_index._ensure("large") is not None
+    assert session_service.message_index.ensure("large") is not None
 
     class Registry:
         def get_if_loaded(self, session_id: str):  # noqa: ANN202
@@ -346,7 +346,7 @@ def test_historical_tool_trace_cache_reuses_and_invalidates(
     ]
     store.save("large", messages, root=tmp_path)
     session_service = SessionService(store, message_index=SessionMessageIndex(store))
-    assert session_service.message_index._ensure("large") is not None
+    assert session_service.message_index.ensure("large") is not None
 
     class Runtime:
         def __init__(self) -> None:
@@ -446,7 +446,7 @@ def test_context_and_tree_inspectors_are_bounded_and_index_backed(
     store = SessionStore(tmp_path / "sessions")
     store.save("large", _messages(800, payload=2048), root=tmp_path)
     service = SessionService(store, message_index=SessionMessageIndex(store))
-    assert service.message_index._ensure("large") is not None
+    assert service.message_index.ensure("large") is not None
 
     def fail(*_args, **_kwargs):
         raise AssertionError("bounded inspectors must not deserialize full history")
@@ -485,7 +485,7 @@ def test_runtime_seed_does_not_force_cold_topology_scan(
     def fail(*_args, **_kwargs):
         raise AssertionError("runtime seed must not scan or warm a cold sidecar")
 
-    monkeypatch.setattr(index, "_ensure", fail)
+    monkeypatch.setattr(index, "ensure", fail)
     monkeypatch.setattr(index, "warm_async", fail)
     try:
         assert index.runtime_seed("large") is None

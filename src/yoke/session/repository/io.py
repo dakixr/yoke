@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from io import StringIO
 
 from pydantic_core import from_json

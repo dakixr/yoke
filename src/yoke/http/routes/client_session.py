@@ -8,10 +8,6 @@ from fastapi import APIRouter, Depends, Request
 
 from yoke.http.auth import require_auth
 from yoke.http.models.client_session import ClientSessionRequest
-from yoke.http.services.session_runtime.configuration import (
-    configure_client,
-    detach_client,
-)
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -33,7 +29,9 @@ async def configure(
     request: Request, session_id: str, body: ClientSessionRequest
 ) -> dict[str, object]:
     runtime = request.app.state.runtime_registry.get_or_start(session_id)
-    data = await configure_client(runtime, body, request.app.state.human_input_service)
+    data = await runtime.operations.configure_client(
+        body, request.app.state.human_input_service
+    )
     record = request.app.state.session_service.get_session(session_id)
     request.app.state.thread_settlement_service.attach(
         session_id, body, Path(record.location.directory)
@@ -45,6 +43,6 @@ async def configure(
 async def detach(request: Request, session_id: str, owner: str) -> dict[str, object]:
     runtime = request.app.state.runtime_registry.get_if_loaded(session_id)
     if runtime is not None:
-        await detach_client(runtime, owner)
+        await runtime.operations.detach_client(owner)
     await request.app.state.thread_settlement_service.reconcile(session_id, owner)
     return {"data": {"detached": True}}

@@ -13,7 +13,7 @@ from yoke.agent.session_tree import ConversationProjection, SessionTree
 from yoke.agent.session_tree._tool_sequence import tail_open_tool_call_ids
 from yoke.ai.providers.codex.subscription.messages import convert_messages
 from yoke.ai.providers.openai_compat import serialize_message_for_openai
-from yoke.http.services.runtime_persistence import (
+from yoke.http.runtime.entry_persistence import (
     tag_continuation_entries,
     tag_input_entry,
     with_turn_summary,

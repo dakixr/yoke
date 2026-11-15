@@ -7,6 +7,9 @@ from yoke.cli.interactive.queue.manager import (
     open_queue_manager as open_queue_manager,
 )
 from yoke.cli.interactive.queue.persistence import (
+    PromptQueueRevisionConflict as PromptQueueRevisionConflict,
+)
+from yoke.cli.interactive.queue.persistence import (
     clear_prompt_queue as clear_prompt_queue,
 )
 from yoke.cli.interactive.queue.persistence import (
@@ -17,7 +20,4 @@ from yoke.cli.interactive.queue.persistence import (
 )
 from yoke.cli.interactive.queue.persistence import (
     persist_prompt_queue as persist_prompt_queue,
-)
-from yoke.cli.interactive.queue.persistence import (
-    PromptQueueRevisionConflict as PromptQueueRevisionConflict,
 )

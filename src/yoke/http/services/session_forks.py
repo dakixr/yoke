@@ -8,8 +8,8 @@ from yoke.agent.session_tree import SessionTree
 from yoke.agent.session_tree.projections import ConversationProjection
 from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.session import SessionForkRequest
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_read_model import SessionReadModel
+from yoke.http.reads.message_index import SessionMessageIndex
+from yoke.http.reads.model import SessionReadModel
 from yoke.session import (
     SessionRecord,
     SessionStore,

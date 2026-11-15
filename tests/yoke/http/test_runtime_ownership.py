@@ -24,7 +24,7 @@ from yoke.agent.tools.context import (
 from yoke.agent.tools.read import ReadTool
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.models.prompt import PromptAdmissionRequest
-from yoke.http.services.session_runtime.execution import TurnExecution, TurnOutcome
+from yoke.http.runtime.turns import TurnExecution, TurnOutcome
 from yoke.mcp.config import McpSessionPolicy, McpSessionServerPolicy
 from yoke.session.admissions import AdmissionRecord
 
@@ -87,16 +87,17 @@ def test_queued_worker_event_flood_cannot_publish_after_retirement(
         runtime.activity.state = "running"
         loop = asyncio.get_running_loop()
         loop_thread = get_ident()
+        execution.started_monotonic = monotonic() - 120
 
         def flood() -> None:
             for index in range(500):
-                runtime.agent_events.receive(
+                runtime.execution.receive(
                     loop,
                     execution,
                     "tool_execution_start",
                     {"tool_call_id": f"call-{index}", "tool_name": "read"},
                 )
-            runtime.agent_events.receive(
+            runtime.execution.receive(
                 loop, execution, "assistant_message", {"content": "late"}
             )
 
@@ -104,14 +105,18 @@ def test_queued_worker_event_flood_cannot_publish_after_retirement(
         thread.start()
         thread.join(2)
         assert not thread.is_alive()
-        # The loop has not yielded: receiving events must never publish or mutate
-        # loop-owned tool counts/activity on the worker.
+        # The loop has not yielded: workers count starts synchronously, while
+        # publication and activity remain owned by the loop.
         assert published == []
-        assert execution.tool_count == 0
+        assert execution.tool_count == 500
         assert await runtime.interrupt() == (True, 1)
         await asyncio.sleep(0)
         assert execution.retired_event.is_set()
-        assert execution.tool_count == 0
+        assert execution.tool_count == 500
+        interrupted = runtime.store.load("owned").conversation_entries[-1]
+        assert interrupted.metadata["yoke_turn_summary"]["tool_count"] == 500
+        runtime.execution.receive(loop, execution, "tool_execution_start", {})
+        assert execution.tool_count == 500
         assert all(thread_id == loop_thread for _, thread_id in published)
         assert [event for event, _ in published] == ["session.active.changed"]
         await registry.close()
@@ -325,7 +330,7 @@ def test_injected_factory_uses_indexed_runtime_seed_by_default(
         execution = _execution()
         runtime.activity.active = execution
         outcome = await runtime.run_blocking(
-            runtime.turn_worker.execute, execution, asyncio.get_running_loop()
+            runtime.execution.execute, execution, asyncio.get_running_loop()
         )
         assert outcome.error is None
         assert execution.append_persistence is not None

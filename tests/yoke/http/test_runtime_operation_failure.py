@@ -56,7 +56,7 @@ def test_accepted_compaction_failure_is_waitable_and_drains_admitted_prompt(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.session_runtime.operations as runtime_module
+    import yoke.http.runtime.operations as runtime_module
 
     compaction_started = Event()
     release_compaction = Event()
@@ -140,7 +140,7 @@ def test_request_bound_selection_failure_still_propagates(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.session_runtime.operations as runtime_module
+    import yoke.http.runtime.operations as runtime_module
 
     def fail_selection(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError("selection failed")

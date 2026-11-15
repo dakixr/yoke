@@ -14,7 +14,12 @@ from yoke.http.models.prompt import (
     QueueItem,
 )
 from yoke.session.admissions import AdmissionAttachment, AdmissionRecord
-from yoke.session.queue import PersistedPendingInput, PersistedPromptQueue
+from yoke.session.queue import (
+    PersistedPendingInput,
+    PersistedPromptQueue,
+    move_queue_item,
+)
+from yoke.session.queue import next_eligible_index as next_eligible_index
 
 
 def fingerprint(session_id: str, prompt: PromptInput, delivery: str) -> str:
@@ -138,34 +143,14 @@ def apply_operation(items, admissions, operation) -> None:  # noqa: ANN001
         admission.state = "removed"
         return
     if operation.op == "moveToStart":
-        items.pop(index)
-        items.insert(0, item)
+        move_queue_item(items, index, 0)
         return
     if operation.op == "moveBefore":
         target = _item_index(items, operation.before_id)
-        items.pop(index)
-        if index < target:
-            target -= 1
-        items.insert(target, item)
+        move_queue_item(items, index, target)
         return
     if operation.op == "moveAfter":
         target = _item_index(items, operation.after_id)
-        items.pop(index)
-        if index < target:
-            target -= 1
-        items.insert(target + 1, item)
+        move_queue_item(items, index, target, after=True)
         return
     raise ApiError(400, "invalid_queue_operation", "Unsupported queue operation.")
-
-
-def next_eligible_index(
-    items: list[PersistedPendingInput], *, allow_queue: bool
-) -> int | None:
-    for index, item in enumerate(items):
-        if item.kind == "steering" and not item.paused:
-            return index
-    if allow_queue:
-        for index, item in enumerate(items):
-            if not item.paused:
-                return index
-    return None

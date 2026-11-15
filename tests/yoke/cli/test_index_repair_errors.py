@@ -25,7 +25,7 @@ def test_transient_summary_failure_retains_prior_index_until_next_repair(
         raise PermissionError("temporarily unreadable")
 
     with monkeypatch.context() as patch:
-        patch.setattr(store, "_load_summary_for_index", denied)
+        patch.setattr(store._index_service, "_load_summary", denied)
         store.maintain_index(force=True)
         assert store.index_entry("known") == previous
         assert [record.title for record in store.list()] == ["old title"]
@@ -51,7 +51,7 @@ def test_unreadable_new_session_does_not_fabricate_an_index_entry(
     def denied(_session_id: str):
         raise PermissionError("temporarily unreadable")
 
-    monkeypatch.setattr(store, "_load_summary_for_index", denied)
+    monkeypatch.setattr(store._index_service, "_load_summary", denied)
     store.maintain_index(force=True)
 
     assert store.list() == []

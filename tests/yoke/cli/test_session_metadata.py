@@ -25,8 +25,8 @@ def test_provider_metadata_update_appends_without_reading_or_rewriting_history(
         created_at="2026-08-03T00:00:00+00:00",
         updated_at="2026-08-03T00:00:00+00:00",
     )
-    store._write_session_record(record)
-    path = store._session_path(record.id)
+    store.write_session_record(record)
+    path = store.session_path(record.id)
     original_bytes = path.read_bytes()
     active = ActiveSession(record.id, tmp_path, store, record)
     original_open = Path.open
@@ -41,7 +41,7 @@ def test_provider_metadata_update_appends_without_reading_or_rewriting_history(
 
     with monkeypatch.context() as guard:
         guard.setattr(store, "load", fail)
-        guard.setattr(store, "_write_session_record", fail)
+        guard.setattr(store, "write_session_record", fail)
         guard.setattr(Path, "open", append_only)
         save_active_session_metadata(
             active,

@@ -24,7 +24,7 @@ from yoke.agent.session_tree import (
 from yoke.agent.session_tree.projections import ConversationProjection
 from yoke.session.repository.io import SESSION_METADATA_EVENT
 from yoke.http.services.projectors import project_message_content
-from yoke.http.services.session_message_index import SessionMessageIndex
+from yoke.http.reads.message_index import SessionMessageIndex
 from yoke.http.services.session_service import SessionService
 from yoke.session import SessionStore
 
@@ -309,7 +309,7 @@ def test_truncated_cold_context_uses_bounded_tail_without_topology_build(
     def fail(*_args, **_kwargs):
         raise AssertionError("cold bounded Context must not build full topology")
 
-    monkeypatch.setattr(service.message_index, "_ensure", fail)
+    monkeypatch.setattr(service.message_index, "ensure", fail)
     monkeypatch.setattr(service.message_index, "warm_async", lambda *_args: None)
     monkeypatch.setattr(store, "load", fail)
     try:

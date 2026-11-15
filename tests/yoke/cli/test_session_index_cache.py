@@ -45,7 +45,7 @@ def _prune_with_paused_session_scan(
     scan_complete: Any,
     release_scan: Any,
 ) -> None:
-    import yoke.session.repository.store as store_module
+    import yoke.session.repository.index_service as store_module
 
     original_session_file_ids = store_module.session_file_ids
 
@@ -66,7 +66,7 @@ def _prune_with_paused_session_scan(
         return session_ids
 
     setattr(store_module, "session_file_ids", paused_session_file_ids)
-    SessionStore(Path(directory))._prune_index_and_sessions()
+    SessionStore(Path(directory)).maintain_index(force=True)
 
 
 def _save_session_in_process(directory: str, session_id: str) -> None:
@@ -256,11 +256,11 @@ def test_maintenance_removes_file_deleted_between_repair_and_prune(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.session.repository.store as store_module
+    import yoke.session.repository.index_service as store_module
 
     store = SessionStore(tmp_path / "sessions")
     store.save("deleted-during-maintenance", [], root=tmp_path)
-    session_path = store._session_path("deleted-during-maintenance")
+    session_path = store.session_path("deleted-during-maintenance")
 
     def delete_before_prune(*_args, **_kwargs) -> set[str]:
         session_path.unlink()
@@ -277,11 +277,11 @@ def test_prune_scans_session_names_inside_the_index_transaction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yoke.session.repository.store as store_module
+    import yoke.session.repository.index_service as store_module
 
     store = SessionStore(tmp_path / "sessions")
     store.save("kept", [], root=tmp_path)
-    original_update = store._index_cache.update
+    original_update = store._index_service._cache.update
     original_session_file_ids = store_module.session_file_ids
     inside_transaction = False
     scan_observed = False
@@ -303,10 +303,10 @@ def test_prune_scans_session_names_inside_the_index_transaction(
         scan_observed = True
         return original_session_file_ids(*args, **kwargs)
 
-    monkeypatch.setattr(store._index_cache, "update", tracked_update)
+    monkeypatch.setattr(store._index_service._cache, "update", tracked_update)
     monkeypatch.setattr(store_module, "session_file_ids", tracked_session_file_ids)
 
-    store._prune_index_and_sessions()
+    store.maintain_index(force=True)
 
     assert scan_observed is True
     assert store.index_entry("kept") is not None
@@ -333,7 +333,7 @@ def test_concurrent_session_creation_survives_a_stale_prune_scan(
         prune.start()
         assert scan_complete.wait(timeout=10)
         writer.start()
-        concurrent_path = store._session_path("concurrent")
+        concurrent_path = store.session_path("concurrent")
         deadline = time.monotonic() + 10
         while not concurrent_path.exists() and time.monotonic() < deadline:
             writer.join(timeout=0.01)
@@ -352,7 +352,10 @@ def test_concurrent_session_creation_survives_a_stale_prune_scan(
     assert prune.exitcode == 0
     assert writer.exitcode == 0
     restarted = SessionStore(directory)
-    assert set(restarted._index_cache.read().sessions) == {"base", "concurrent"}
+    assert set(restarted._index_service._cache.read().sessions) == {
+        "base",
+        "concurrent",
+    }
     assert restarted.load("concurrent").messages[-1].text_content() == (
         "created while maintenance held the index lock"
     )
@@ -363,12 +366,12 @@ def test_prune_without_directory_snapshot_keeps_direct_missing_file_check(
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
     store.save("missing", [], root=tmp_path)
-    index = store._index_cache.read().model_copy(deep=True)
-    store._session_path("missing").unlink()
+    index = store._index_service._cache.read().model_copy(deep=True)
+    store.session_path("missing").unlink()
 
     changed = prune_index_and_sessions(
         directory=store.directory,
-        session_path=store._session_path,
+        session_path=store.session_path,
         index=index,
         retention_days=30,
         existing_session_ids=set(),
@@ -385,7 +388,7 @@ def test_session_save_survives_and_repairs_an_index_write_failure(
     import yoke.session.repository.index_cache as index_cache_module
 
     store = SessionStore(tmp_path / "sessions")
-    original_replace = store._index_cache._replace_once
+    original_replace = store._index_service._cache._replace_once
     replace_attempts = 0
 
     def deny_replace(_temporary: Path) -> None:
@@ -393,7 +396,7 @@ def test_session_save_survives_and_repairs_an_index_write_failure(
         replace_attempts += 1
         raise PermissionError("index is locked")
 
-    monkeypatch.setattr(store._index_cache, "_replace_once", deny_replace)
+    monkeypatch.setattr(store._index_service._cache, "_replace_once", deny_replace)
     monkeypatch.setattr(index_cache_module.time, "sleep", lambda _seconds: None)
 
     saved = store.save(
@@ -402,14 +405,14 @@ def test_session_save_survives_and_repairs_an_index_write_failure(
         root=tmp_path,
     )
 
-    assert store._session_path(saved.id).exists()
+    assert store.session_path(saved.id).exists()
     assert store.load(saved.id).messages[-1].text_content() == "persist this turn"
     assert store.index_entry(saved.id) is not None
     assert not store._index_path().exists()
     assert replace_attempts == INDEX_WRITE_ATTEMPTS
     assert not list(store.directory.glob(".index.json.*.tmp"))
 
-    monkeypatch.setattr(store._index_cache, "_replace_once", original_replace)
+    monkeypatch.setattr(store._index_service._cache, "_replace_once", original_replace)
     store.maintain_index(force=True)
 
     assert store._index_path().exists()

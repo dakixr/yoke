@@ -12,7 +12,7 @@ from yoke.http.models.tool import ToolListResponse
 from yoke.http.models.tool import ToolPatchData
 from yoke.http.models.tool import ToolPatchRequest
 from yoke.http.models.tool import ToolPatchResponse
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.http.services.tool_service import ToolService
 
 

@@ -17,7 +17,7 @@ from tests.yoke.http.test_runtime_lifetime_regressions import (
 )
 from yoke.agent.models import AgentContext, ConversationEntry, ConversationLog, Message
 from yoke.http.app import HttpAppSettings, create_app
-from yoke.http.services.session_runtime.execution import TurnExecution
+from yoke.http.runtime.turns import TurnExecution
 from yoke.session import SessionRecord
 from yoke.session.admissions import AdmissionRecord
 
@@ -235,7 +235,7 @@ def test_retired_first_turn_checkpoint_cannot_replace_interruption_branch(
 
         monkeypatch.setattr(runtime.persistence, "persist_turn_entries", delayed)
         worker = Thread(
-            target=runtime.turn_worker.checkpoint,
+            target=runtime.execution.checkpoint,
             args=(execution, context),
             daemon=True,
         )
@@ -293,7 +293,7 @@ def test_interrupt_before_controller_first_step(tmp_path: Path) -> None:
 def test_retirement_transfer_failure_retries_without_false_drain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from yoke.http.services.session_runtime.resources import SessionRuntimeResources
+    from yoke.http.runtime.resources import SessionRuntimeResources
 
     original = SessionRuntimeResources.retire
     failed, allow_retirement = Event(), Event()
@@ -382,7 +382,7 @@ def test_multiple_generations_and_logical_wait_stay_independent(tmp_path: Path) 
 def test_failed_preparation_cleanup_is_owned_until_finished(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from yoke.http.services.session_runtime.resources import SessionRuntimeResources
+    from yoke.http.runtime.resources import SessionRuntimeResources
 
     cleanup_started, release_cleanup = Event(), Event()
     counts: dict[str, int] = defaultdict(int)

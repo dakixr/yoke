@@ -15,7 +15,7 @@ from yoke.agent.tools.command_process_support.output import RetainedProcessOutpu
 from yoke.agent.tools.command_process_types import MAX_RETAINED_OUTPUT_BYTES
 from yoke.agent.tools.processes.cursor import decode_cursor, ProcessPosition
 from yoke.http.services.process_service import ProcessService
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.mcp_server.execution.processes import page as mcp_process_page
 
 

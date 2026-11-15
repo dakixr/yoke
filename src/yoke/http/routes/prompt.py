@@ -16,7 +16,7 @@ from yoke.http.models.prompt import (
 )
 from yoke.http.models.session import InterruptData, InterruptResponse, WaitResponse
 from yoke.http.services.pending_input_service import PendingInputService
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.http.services.session_service import SessionService
 
 router = APIRouter(dependencies=[Depends(require_auth)])

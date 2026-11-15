@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr
 
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
+from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.state import transcript_messages_from_entries
 

@@ -461,7 +461,7 @@ def test_session_list_and_recent_locations_skip_request_path_maintenance(
     def fail(*_args, **_kwargs):
         raise AssertionError("HTTP list endpoints must not run index maintenance")
 
-    monkeypatch.setattr(store, "_maintain_index_if_due", fail)
+    monkeypatch.setattr(store._index_service, "maintain_if_due", fail)
 
     listed = client.get(
         "/api/v1/session",
@@ -599,7 +599,7 @@ def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None
         entry.pop(field, None)
     index_path.write_text(json.dumps(index_payload), encoding="utf-8")
 
-    session_path = store._session_path("legacy-index-session")
+    session_path = store.session_path("legacy-index-session")
     lines = session_path.read_text(encoding="utf-8").splitlines()
     metadata = json.loads(lines[1])
     metadata.pop("last_user_message_at", None)

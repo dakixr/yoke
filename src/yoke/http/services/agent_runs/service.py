@@ -12,7 +12,7 @@ from typing import Protocol
 from yoke.http.errors import session_not_found
 from yoke.http.models.agent_run import public_snapshot
 from yoke.http.services.event_broker import EventService
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 
 LOGGER = logging.getLogger(__name__)
 EVENT = "session.agent.updated"

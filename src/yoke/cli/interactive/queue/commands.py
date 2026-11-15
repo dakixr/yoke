@@ -5,8 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from yoke.cli.interactive.common import PendingPrompt
-from yoke.cli.interactive.queue.manager import edit_queue_prompt
-from yoke.cli.interactive.queue.manager import open_queue_manager
+from yoke.cli.interactive.queue.manager import edit_queue_prompt, open_queue_manager
 from yoke.cli.render.base import Console
 
 

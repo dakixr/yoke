@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request
 
 from yoke.http.auth import require_auth
 from yoke.http.models.session import SessionRelocateRequest, SessionResponse
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.http.services.session_service import SessionService
 
 router = APIRouter(dependencies=[Depends(require_auth)])

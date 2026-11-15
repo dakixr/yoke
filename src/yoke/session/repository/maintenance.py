@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from yoke.session.repository.models import SessionIndex

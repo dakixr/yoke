@@ -11,8 +11,8 @@ from yoke.http.models.session import (
     TreeNavigateResponse,
 )
 from yoke.http.services.session_catalog import SessionCatalog
-from yoke.http.services.session_cursors import revision_from_timestamp
-from yoke.http.services.session_read_model import SessionReadModel
+from yoke.http.reads.cursors import revision_from_timestamp
+from yoke.http.reads.model import SessionReadModel
 from yoke.session import SessionRecord
 
 

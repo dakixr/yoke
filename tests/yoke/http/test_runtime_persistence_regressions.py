@@ -369,7 +369,7 @@ def _run_combined_projection(
     app.state.runtime_registry.indexed_runtime_seed = indexed
     if indexed:
         index = app.state.session_service.message_index
-        assert index._ensure("session-a") is not None
+        assert index.ensure("session-a") is not None
         assert index.runtime_seed("session-a") is not None
     with TestClient(app) as client:
         admitted = client.post(

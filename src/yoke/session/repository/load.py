@@ -8,18 +8,18 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 from pydantic_core import from_json
 
-from yoke.session.repository.io import SESSION_ENTRY_EVENT
-from yoke.session.repository.io import SESSION_ENTRY_METADATA_EVENT
-from yoke.session.repository.io import SESSION_JSONL_HEADER_TYPE
-from yoke.session.repository.io import SESSION_JSONL_HEADER_VERSION
-from yoke.session.repository.io import SESSION_METADATA_EVENT
-from yoke.session.repository.io import decode_legacy_session_record
-from yoke.session.repository.io import decode_session_record_lines
-from yoke.session.repository.io import is_canonical_jsonl
-from yoke.session.repository.models import SessionIndexEntry
-from yoke.session.repository.models import SessionRecord
-from yoke.session.repository.writer import append_session_metadata
-from yoke.session.repository.writer import write_session_record
+from yoke.session.repository.io import (
+    SESSION_ENTRY_EVENT,
+    SESSION_ENTRY_METADATA_EVENT,
+    SESSION_JSONL_HEADER_TYPE,
+    SESSION_JSONL_HEADER_VERSION,
+    SESSION_METADATA_EVENT,
+    decode_legacy_session_record,
+    decode_session_record_lines,
+    is_canonical_jsonl,
+)
+from yoke.session.repository.models import SessionIndexEntry, SessionRecord
+from yoke.session.repository.writer import append_session_metadata, write_session_record
 
 if TYPE_CHECKING:
     from yoke.session.repository.index_service import SessionIndexService

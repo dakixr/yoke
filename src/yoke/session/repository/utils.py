@@ -5,8 +5,7 @@ from __future__ import annotations
 import os
 import secrets
 from collections.abc import Callable
-from datetime import UTC
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 

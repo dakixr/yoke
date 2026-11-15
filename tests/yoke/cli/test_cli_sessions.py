@@ -344,7 +344,7 @@ def test_session_load_reconciles_newer_index_title(tmp_path: Path, monkeypatch) 
         root=tmp_path,
         title="Generated title",
     )
-    index = store._index_cache.read()
+    index = store._index_service._cache.read()
     index.sessions["title-demo"].title = "Manual title"
     index.sessions["title-demo"].updated_at = "2999-01-01T00:00:00+00:00"
     store._index_path().write_text(index.model_dump_json(indent=2), encoding="utf-8")

@@ -6,9 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.session.repository.models import SessionRecord
-from yoke.session.repository.utils import normalize_root
-from yoke.session.repository.utils import normalize_title
-from yoke.session.repository.utils import timestamp
+from yoke.session.repository.utils import normalize_root, normalize_title, timestamp
 from yoke.session.repository.writer import append_session_metadata
 
 if TYPE_CHECKING:

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import textwrap
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 
@@ -14,6 +13,7 @@ from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )
+from yoke.session.queue import move_queue_item
 
 
 @dataclass(slots=True)
@@ -128,8 +128,7 @@ def _run_queue_manager(  # noqa: C901
         selected = selected_prompt()
         if selected is None:
             return
-        state.prompts.pop(state.selected_index)
-        state.prompts.insert(0, selected)
+        move_queue_item(state.prompts, state.selected_index, 0)
         state.selected_index = 0
         mutate("Promoted item to next.")
         event.app.invalidate()
@@ -162,10 +161,7 @@ def _run_queue_manager(  # noqa: C901
         if state.selected_index <= 0:
             return
         index = state.selected_index
-        state.prompts[index - 1], state.prompts[index] = (
-            state.prompts[index],
-            state.prompts[index - 1],
-        )
+        move_queue_item(state.prompts, index, index - 1)
         state.selected_index -= 1
         mutate("Moved item up.")
         event.app.invalidate()
@@ -176,10 +172,7 @@ def _run_queue_manager(  # noqa: C901
         if state.selected_index >= len(state.prompts) - 1:
             return
         index = state.selected_index
-        state.prompts[index + 1], state.prompts[index] = (
-            state.prompts[index],
-            state.prompts[index + 1],
-        )
+        move_queue_item(state.prompts, index, index + 1, after=True)
         state.selected_index += 1
         mutate("Moved item down.")
         event.app.invalidate()

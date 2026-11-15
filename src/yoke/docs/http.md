@@ -415,8 +415,10 @@ single unreadable session file is skipped rather than failing the complete
 session list.
 
 Large-session reads use a separate persistent byte-offset/topology sidecar.
-The implementation lives in `yoke.http.services.session_message_index`, with
-storage, queries, tail reading, and sidecar encoding in separate modules.
+The implementation lives in `yoke.http.reads.message_index`, with
+query methods on `SessionMessageIndex`, an `IndexStorage` owner for cached and
+durable topology, and tail-reading and sidecar-encoding modules. All reverse
+tail reads use `tail_scan.scan_tail`; callers supply their stopping rules.
 The initial latest-message, Context, Tree, and nearby tree-navigation reads have
 bounded reverse-scan paths that do not wait for a complete topology build. A
 single background worker builds or catches up the full sidecar afterward.
@@ -446,10 +448,34 @@ sidecar writer uses atomic replacement, so later source-index updates do not
 mutate the fork's linked snapshot. CLI callers that require an immediately
 materialized `SessionRecord` keep that existing return contract.
 
+The HTTP implementation separates route services in `yoke.http.services`, read
+models and projections in `yoke.http.reads`, and execution ownership in
+`yoke.http.runtime`. The runtime coordinator wires explicit dependencies into
+`TurnAdmission`, `TurnExecutor`, and `TurnFinalizer`. The executor owns worker
+submission, agent preparation, and event marshalling. Finalization owns logical
+completion and retirement; `SessionOperations` serializes idle configuration,
+model selection, compaction, and workspace relocation. Resources, persistence,
+status, and automatic titles have their own owners. These collaborators receive
+only the dependencies and callbacks they use, rather than a runtime object.
+
+Session file policy and index maintenance live in `yoke.session.repository`.
+`SessionStore` owns loading, metadata edits, saving, and forks; its tree writer
+receives the session directory and index service directly. Canonical and legacy
+fixture tests freeze session bytes across migration, metadata edits, navigation,
+and forks. Queue scheduling and list operations are shared in
+`yoke.session.queue`. Both HTTP and CLI prefer unpaused steering inputs, then
+ordinary queued work; the CLI supplies its existing attachment/continuation
+eligibility filter. CLI prompt and image actions use the same revision-state
+installation helpers.
+
 Each session has one serialized execution lane. Different sessions can execute
 at the same time, subject to the daemon-wide active-session limit. Disconnecting
 an HTTP request or event stream does not cancel admitted work. Use
 `POST /api/v1/session/{sessionID}/interrupt` to retire the active generation.
+
+Worker callbacks count tool starts under a lock before scheduling loop-side
+publication, so interruption summaries include starts whose events are still
+waiting on the loop. Retired events remain suppressed from SSE.
 
 Interruption persists dangling-tool recovery and the interrupted-turn marker as
 an append-only suffix. It does not deep-copy or reserialize historical entries;

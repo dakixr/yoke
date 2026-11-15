@@ -28,8 +28,8 @@ from yoke.http.models.tool_trace import (
     ToolTraceTime,
 )
 from yoke.http.services.redaction import redact_public_value
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_read_cache import SessionReadCache
+from yoke.http.reads.message_index import SessionMessageIndex
+from yoke.http.reads.cache import SessionReadCache
 from yoke.http.services.tool_trace.window import call_window
 from yoke.session import SessionStore
 

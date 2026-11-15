@@ -95,8 +95,8 @@ def test_model_switch_large_session_appends_only_metadata(
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
     record = SessionRecord(id="large", root=str(tmp_path))
-    store._write_session_record(record)
-    path = store._session_path(record.id)
+    store.write_session_record(record)
+    path = store.session_path(record.id)
     with path.open("ab") as handle:
         handle.write(b'{"type":"ignored","data":"')
         handle.write(b"x" * (52 * 1024 * 1024))

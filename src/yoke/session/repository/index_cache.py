@@ -14,7 +14,6 @@ from pydantic import ValidationError
 from yoke._file_io import exclusive_file_lock
 from yoke.session.repository.models import SessionIndex
 
-
 INDEX_WRITE_ATTEMPTS = 6
 INDEX_WRITE_RETRY_SECONDS = 0.02
 type FileSignature = tuple[int, int, int, int, int]

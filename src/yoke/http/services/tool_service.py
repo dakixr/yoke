@@ -7,7 +7,7 @@ from pathlib import Path
 from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.common import LocationInfo
 from yoke.http.models.tool import ToolInfo, ToolListResponse
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.session import SessionStore
 from yoke.session.workspace import require_session_workspace
 

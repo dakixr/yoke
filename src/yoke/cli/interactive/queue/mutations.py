@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from threading import Lock
 
 from yoke.cli.image_input import ImageAttachment
-from yoke.cli.interactive.common import PendingPrompt
-from yoke.cli.interactive.common import PromptCliState
+from yoke.cli.interactive.common import PendingPrompt, PromptCliState
 from yoke.cli.interactive.queue.images import (
     attach_pending_image as attach_pending_image,
 )
@@ -18,11 +16,17 @@ from yoke.cli.interactive.queue.images import (
 from yoke.cli.interactive.queue.images import (
     remove_pending_image as remove_pending_image,
 )
-from yoke.cli.interactive.queue.persistence import LoadedPromptQueue
-from yoke.cli.interactive.queue.persistence import PromptQueueRevisionConflict
-from yoke.cli.interactive.queue.persistence import commit_prompt_queue
-from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
+from yoke.cli.interactive.queue.persistence import (
+    PromptQueueRevisionConflict,
+    commit_prompt_queue,
+    load_prompt_queue_state,
+    queue_ensure_session,
+    queue_install_loaded,
+    queue_refresh_if_changed,
+    queue_reload,
+)
 from yoke.cli.runtime import ActiveSession
+from yoke.session.queue import next_eligible_index, remove_occurrences
 from yoke.session.workspace import WorkspaceUnavailable, require_workspace
 
 QUEUE_MANAGER_CONFLICT_NOTICE = (
@@ -49,9 +53,9 @@ def replace_prompt_queue(
 ) -> bool:
     """Save a manager replacement, rejecting any concurrent queue change."""
     with state_lock:
-        _ensure_session(state, active_session)
+        queue_ensure_session(state, active_session)
         if state.queue_revision != expected_revision:
-            _reload(state, active_session)
+            queue_reload(state, active_session)
             return False
         replacement = [prompt.copy_for_queue() for prompt in prompts]
         try:
@@ -62,7 +66,7 @@ def replace_prompt_queue(
                 expected_revision=expected_revision,
             )
         except PromptQueueRevisionConflict:
-            _reload(state, active_session)
+            queue_reload(state, active_session)
             return False
         state.pending_prompts = replacement
         state.queue_revision = revision
@@ -96,14 +100,16 @@ def queue_prompt_submission(
 ) -> bool:
     """Commit one submitted prompt and its consumed images together."""
     with state_lock:
-        _ensure_session(state, active_session)
+        queue_ensure_session(state, active_session)
         consumed_paths = [image.path for image in consumed_images]
         while True:
             matching = next(
                 (item for item in state.pending_prompts if item.id == prompt.id),
                 None,
             )
-            images = _remove_paths(state.pending_images, consumed_paths)
+            images = remove_occurrences(
+                state.pending_images, consumed_paths, key=lambda image: image.path
+            )
             if matching is not None:
                 if matching == prompt:
                     try:
@@ -114,13 +120,13 @@ def queue_prompt_submission(
                             expected_revision=state.queue_revision,
                         )
                     except PromptQueueRevisionConflict:
-                        _reload(state, active_session)
+                        queue_reload(state, active_session)
                         continue
                     state.pending_images = images
                     return True
                 loaded = load_prompt_queue_state(active_session)
                 if loaded.revision != state.queue_revision:
-                    _install_loaded(state, active_session, loaded)
+                    queue_install_loaded(state, active_session, loaded)
                     continue
                 state.status_message = (
                     f"Could not queue prompt: item ID {prompt.id} already exists."
@@ -135,7 +141,7 @@ def queue_prompt_submission(
                     expected_revision=state.queue_revision,
                 )
             except PromptQueueRevisionConflict:
-                _reload(state, active_session)
+                queue_reload(state, active_session)
                 continue
             state.pending_prompts = replacement
             state.pending_images = images
@@ -151,8 +157,8 @@ def observe_prompt_submission(
 ) -> tuple[list[ImageAttachment], bool]:
     """Return stable images and idleness after observing the current revision."""
     with state_lock:
-        _ensure_session(state, active_session)
-        _refresh_if_changed(state, active_session)
+        queue_ensure_session(state, active_session)
+        queue_refresh_if_changed(state, active_session)
         idle = state.worker is None and not state.pending_prompts
         return list(state.pending_images), idle
 
@@ -183,7 +189,7 @@ def dequeue_prompt_with_position(
 ) -> DequeuedPrompt | None:
     """Remove the next authoritative item and retain its position for recovery."""
     with state_lock:
-        _ensure_session(state, active_session)
+        queue_ensure_session(state, active_session)
         while True:
             index = next_pending_prompt_index(
                 state.pending_prompts,
@@ -192,7 +198,7 @@ def dequeue_prompt_with_position(
             if index is None:
                 loaded = load_prompt_queue_state(active_session)
                 if loaded.revision != state.queue_revision:
-                    _install_loaded(state, active_session, loaded)
+                    queue_install_loaded(state, active_session, loaded)
                     continue
                 return None
             try:
@@ -214,7 +220,7 @@ def dequeue_prompt_with_position(
                     expected_revision=state.queue_revision,
                 )
             except PromptQueueRevisionConflict:
-                _reload(state, active_session)
+                queue_reload(state, active_session)
                 continue
             state.pending_prompts = replacement
             state.queue_revision = revision
@@ -236,7 +242,7 @@ def restore_dequeued_prompt(
             and state.starting_prompt[0].id == dequeued.prompt.id
         ):
             state.starting_prompt = None
-        _ensure_session(state, active_session)
+        queue_ensure_session(state, active_session)
         while True:
             matching = next(
                 (
@@ -266,42 +272,11 @@ def restore_dequeued_prompt(
                     expected_revision=state.queue_revision,
                 )
             except PromptQueueRevisionConflict:
-                _reload(state, active_session)
+                queue_reload(state, active_session)
                 continue
             state.pending_prompts = replacement
             state.queue_revision = revision
             return
-
-
-def _ensure_session(state: PromptCliState, active_session: ActiveSession) -> None:
-    if state.queue_session_id is None:
-        state.queue_session_id = active_session.id
-    elif state.queue_session_id != active_session.id:
-        _reload(state, active_session)
-
-
-def _reload(state: PromptCliState, active_session: ActiveSession) -> None:
-    _install_loaded(state, active_session, load_prompt_queue_state(active_session))
-
-
-def _refresh_if_changed(
-    state: PromptCliState,
-    active_session: ActiveSession,
-) -> None:
-    loaded = load_prompt_queue_state(active_session)
-    if loaded.revision != state.queue_revision:
-        _install_loaded(state, active_session, loaded)
-
-
-def _install_loaded(
-    state: PromptCliState,
-    active_session: ActiveSession,
-    loaded: LoadedPromptQueue,
-) -> None:
-    state.pending_prompts = loaded.prompts
-    state.pending_images = loaded.pending_images
-    state.queue_revision = loaded.revision
-    state.queue_session_id = active_session.id
 
 
 def next_pending_prompt_index(
@@ -310,32 +285,11 @@ def next_pending_prompt_index(
     steering_only: bool = False,
 ) -> int | None:
     """Return the first runnable steering item, then ordinary queued work."""
-    for index, prompt in enumerate(prompts):
-        if prompt.kind == "steering" and not prompt.paused and _cli_runnable(prompt):
-            return index
-    if steering_only:
-        return None
-    for index, prompt in enumerate(prompts):
-        if not prompt.paused and _cli_runnable(prompt):
-            return index
-    return None
+    return next_eligible_index(
+        prompts, allow_queue=not steering_only, runnable=_cli_runnable
+    )
 
 
 def _cli_runnable(prompt: PendingPrompt) -> bool:
     """Keep HTTP-owned attachment/continuation inputs with the native daemon."""
     return not prompt.continuation and not prompt.attachments
-
-
-def _remove_paths(
-    images: list[ImageAttachment],
-    paths: list[Path],
-) -> list[ImageAttachment]:
-    remaining = list(images)
-    for path in paths:
-        index = next(
-            (index for index, image in enumerate(remaining) if image.path == path),
-            None,
-        )
-        if index is not None:
-            remaining.pop(index)
-    return remaining

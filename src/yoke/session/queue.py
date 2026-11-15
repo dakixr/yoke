@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from collections.abc import Iterator
+import os
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
+from yoke._file_io import atomic_write_text, exclusive_file_lock
 from yoke.agent.models import Message
-from yoke._file_io import atomic_write_text
-from yoke._file_io import exclusive_file_lock
 
 
 class PersistedPendingInput(BaseModel):
@@ -146,3 +142,58 @@ def _write_prompt_queue_path(path: Path, snapshot: PersistedPromptQueue) -> None
             pass
         return
     atomic_write_text(path, snapshot.model_dump_json(indent=2))
+
+
+class QueueCandidate(Protocol):
+    """The scheduling fields shared by native and CLI queue items."""
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def paused(self) -> bool: ...
+
+
+def next_eligible_index[Item: QueueCandidate](
+    items: Sequence[Item],
+    *,
+    allow_queue: bool,
+    runnable: Callable[[Item], bool] | None = None,
+) -> int | None:
+    """Prefer runnable steering inputs, retaining order within each delivery kind."""
+
+    def eligible(item: Item) -> bool:
+        return not item.paused and (runnable is None or runnable(item))
+
+    for index, item in enumerate(items):
+        if item.kind == "steering" and eligible(item):
+            return index
+    if allow_queue:
+        for index, item in enumerate(items):
+            if eligible(item):
+                return index
+    return None
+
+
+def remove_occurrences[Item, Key](
+    items: Sequence[Item], keys: Sequence[Key], *, key: Callable[[Item], Key]
+) -> list[Item]:
+    """Remove one matching occurrence per requested key, preserving duplicates."""
+    remaining = list(items)
+    for value in keys:
+        index = next(
+            (i for i, item in enumerate(remaining) if key(item) == value), None
+        )
+        if index is not None:
+            remaining.pop(index)
+    return remaining
+
+
+def move_queue_item[Item](
+    items: list[Item], index: int, target: int, *, after: bool = False
+) -> None:
+    """Move one item relative to a position in the original queue."""
+    item = items.pop(index)
+    if index < target:
+        target -= 1
+    items.insert(target + int(after), item)

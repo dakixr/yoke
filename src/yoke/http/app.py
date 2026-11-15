@@ -51,12 +51,12 @@ from yoke.http.services.mcp_service import McpService
 from yoke.http.services.path_policy import PathPolicy
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.process_service import ProcessService
-from yoke.http.services.runtime_registry import (
+from yoke.http.runtime.registry import (
     SessionAgentFactory,
     SessionRuntimeRegistry,
 )
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_read_cache import SessionReadCache
+from yoke.http.reads.message_index import SessionMessageIndex
+from yoke.http.reads.cache import SessionReadCache
 from yoke.http.services.session_service import SessionService
 from yoke.http.services.skill_service import SkillService
 from yoke.http.services.thread_settlement import ThreadSettlementService
@@ -244,7 +244,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
 
 def _build_http_session_agent(record):  # noqa: ANN001,ANN202
     """Import the CLI/provider runtime only when a session actually needs an agent."""
-    from yoke.http.services.runtime_factory import build_http_session_agent
+    from yoke.http.runtime.factory import build_http_session_agent
 
     return build_http_session_agent(record)
 
@@ -271,4 +271,4 @@ async def _warm_runtime_import(*, initial_delay_seconds: float) -> None:
 
 
 def _load_runtime_module() -> None:
-    import yoke.http.services.runtime  # noqa: F401,PLC0415
+    import yoke.http.runtime.runtime  # noqa: F401,PLC0415

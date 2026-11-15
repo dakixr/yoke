@@ -21,7 +21,7 @@ from yoke.session.workspace import workspace_lease
 
 if TYPE_CHECKING:
     from yoke.http.models.client_session import ClientSessionRequest
-    from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+    from yoke.http.runtime.registry import SessionRuntimeRegistry
     from yoke.http.services.session_service import SessionService
 
 LOGGER = logging.getLogger(__name__)

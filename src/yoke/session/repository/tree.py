@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from yoke.agent.message_sanitizer import normalize_tool_call_sequence
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
+from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.session_tree import SessionTree
 from yoke.session.repository.tree_index import SessionTreeIndex
 

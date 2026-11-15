@@ -14,7 +14,7 @@ from yoke.http.models.process import ProcessOutputCursor
 from yoke.http.models.process import ProcessOutputInfo
 from yoke.http.models.process import ProcessOutputResponse
 from yoke.http.models.process import ProcessResponse
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.runtime.registry import SessionRuntimeRegistry
 
 if TYPE_CHECKING:
     from yoke.agent.tools.command_process_manager import CommandProcessManager

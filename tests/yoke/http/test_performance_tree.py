@@ -8,8 +8,8 @@ from yoke.agent.models import ConversationEntry, Message
 from yoke.session.repository.models import SessionRecord
 from yoke.session.repository.store import SessionStore
 from yoke.http.models.session import SessionForkRequest, TreeNavigateRequest
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_message_index import storage as index_storage
+from yoke.http.reads.message_index import SessionMessageIndex
+from yoke.http.reads.message_index import storage as index_storage
 from yoke.http.services.session_service import SessionService
 
 
@@ -69,8 +69,8 @@ def test_tree_interactions_use_topology_index_without_loading_history(
             current_assistant,
         ],
     )
-    store._write_session_record(record)
-    store._update_index(record)
+    store.write_session_record(record)
+    store.update_index(record)
     service = SessionService(store, message_index=SessionMessageIndex(store))
     initial_tree = service.tree("branch", limit=20, cursor=None)
     original_load = store.load
@@ -134,7 +134,7 @@ def test_fork_clones_canonical_session_without_loading_history(
     store = SessionStore(tmp_path / "sessions")
     source = store.save("large", _messages(600, payload=2048), root=tmp_path)
     service = SessionService(store, message_index=SessionMessageIndex(store))
-    assert service.message_index._ensure("large") is not None
+    assert service.message_index.ensure("large") is not None
     target_id = source.conversation_entries[200].id
     original_load = store.load
     source_sidecar = store.directory / "read-index" / "large.json"

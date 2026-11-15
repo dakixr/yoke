@@ -24,7 +24,7 @@ from yoke.http.services.prompt_queue import (
     queue_data as _queue_data,
     receipt as _receipt,
 )
-from yoke.http.services.session_runtime.prompt_input import validate_prompt
+from yoke.http.runtime.prompt_input import validate_prompt
 from yoke.http.services.upload_service import UploadService
 from yoke.session import SessionStore
 from yoke.session.admissions import AdmissionAttachment, AdmissionRecord, AdmissionStore
