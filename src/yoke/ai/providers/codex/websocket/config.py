@@ -7,10 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlparse, urlunparse
 
-from pydantic import BaseModel
-
 from yoke._tls import tls_verification_enabled
-from yoke.agent.models import MessagePhase
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import (
     DEFAULT_BASE_URL,
@@ -39,10 +36,6 @@ RESPONSES_LITE_CLIENT_METADATA_KEY = (
 
 class CodexWebSocketTimeoutError(ProviderError):
     """Raised when an open WebSocket stops delivering response events."""
-
-
-class CodexPreviousResponseNotFoundError(ProviderError):
-    """Raised when the active account cannot access a prior response id."""
 
 
 def register_provider(context: Any) -> CodexProvider:
@@ -131,17 +124,6 @@ def optional_float_env(value: str | None, *, default: float | None) -> float | N
     if value.lower() in {"none", "off", "false", "0"}:
         return None
     return float(value)
-
-
-class CodexWebSocketParseState(BaseModel):
-    text_parts: list[str]
-    snapshot_text_parts: list[str] = []
-    function_calls: dict[str, dict[str, str]]
-    completed_payload: dict[str, Any] | None = None
-    response_id: str | None = None
-    usage_payload: object | None = None
-    phase: MessagePhase | None = None
-    output_items: list[dict[str, Any]] = []
 
 
 class CodexWebSocketConnection(Protocol):

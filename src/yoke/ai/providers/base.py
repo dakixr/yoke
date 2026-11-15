@@ -2,25 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Iterator
+import logging
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-import time
-import logging
-from typing import TYPE_CHECKING
-from typing import Literal
-from typing import Protocol
-from typing import cast
-from typing import runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, Self, cast, runtime_checkable
 
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import field_validator
-from pydantic import model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
+    import httpx
+
     from yoke.agent.models import ConversationEntry
 
 from yoke.agent.models import Message
@@ -193,6 +187,116 @@ class Provider(Protocol):
         ...
 
 
+class ProviderModelConfig(Protocol):
+    """Public model fields exposed by every built-in provider configuration."""
+
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def reasoning_effort(self) -> str | None: ...
+
+
+class Closeable(Protocol):
+    """The public client lifecycle needed by the built-in provider defaults."""
+
+    def close(self) -> None: ...
+
+
+class BaseProvider[ConfigT: BaseModel, ClientT: Closeable]:
+    """Defaults for built-in providers; plugins can still implement Provider.
+
+    Each subclass owns its config and transport. The two transport hooks cover
+    construction and borrowing without introspecting private client state.
+    """
+
+    config: ConfigT
+    provider_name: str
+    _client: ClientT
+    _owns_client: bool
+    _sleep: Callable[[float], None]
+    supports_image_inputs: bool | None = None
+    max_images_per_message: int | None = None
+    supports_image_generation: bool = False
+
+    def _new_client(self) -> ClientT:
+        raise NotImplementedError
+
+    def _fork_client(self) -> httpx.Client | None:
+        raise NotImplementedError
+
+    def fork_for_turn(self) -> Self:
+        """Copy request state and preserve borrowed transport ownership."""
+        factory = cast(Callable[..., Self], type(self))
+        return factory(
+            self.config.model_copy(deep=True),
+            http_client=self._fork_client(),
+            sleep=self._sleep,
+        )
+
+    def list_models(self) -> list[ProviderModelInfo]:
+        raise NotImplementedError
+
+    def set_model(self, model_id: str, *, reasoning_effort: str | None = None) -> None:
+        from yoke.ai.providers.model_selection import set_config_model_from_catalog
+
+        set_config_model_from_catalog(
+            self.config,
+            self.list_models(),
+            provider_name=self.provider_name,
+            model_id=model_id,
+            reasoning_effort=reasoning_effort,
+        )
+
+    def complete(
+        self, messages: list[Message], tools: list[dict[str, object]]
+    ) -> Message:
+        return self.complete_with_cancel(messages, tools, cancel_requested=never_cancel)
+
+    def complete_with_cancel(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        return self._with_request_cancellation(
+            lambda: self._complete_impl(
+                messages, tools, cancel_requested=cancel_requested
+            ),
+            cancel_requested=cancel_requested,
+        )
+
+    def _complete_impl(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, object]],
+        *,
+        cancel_requested: Callable[[], bool],
+    ) -> Message:
+        raise NotImplementedError
+
+    def _with_request_cancellation(
+        self, action: Callable[[], Message], *, cancel_requested: Callable[[], bool]
+    ) -> Message:
+        from yoke.ai.providers.cancellation import cancellation_watcher
+
+        if not self._owns_client:
+            return action()
+
+        def rebuild() -> None:
+            self._client = self._new_client()
+
+        with cancellation_watcher(
+            cancel_requested, lambda: self._client.close(), rebuild=rebuild
+        ):
+            return action()
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+
 ResponseContinuity = Literal["continue", "reset", "isolated"]
 
 
@@ -234,6 +338,19 @@ def provider_identity(provider: object) -> ProviderIdentity:
     def text(value: object) -> str | None:
         return value.strip() or None if isinstance(value, str) else None
 
+    if isinstance(provider, BaseProvider):
+        builtin = cast(BaseProvider[BaseModel, Closeable], provider)
+        config = cast(ProviderModelConfig, builtin.config)
+        model = (
+            provider.current_model_id()
+            if isinstance(provider, ModelCatalogProvider)
+            else config.model
+        )
+        return ProviderIdentity(
+            name=text(builtin.provider_name) or "unknown",
+            model=text(model),
+            reasoning_effort=text(config.reasoning_effort),
+        )
     config = getattr(provider, "config", None)
     current_model = getattr(provider, "current_model_id", None)
     model = (
@@ -244,6 +361,16 @@ def provider_identity(provider: object) -> ProviderIdentity:
         model=text(model),
         reasoning_effort=text(getattr(config, "reasoning_effort", None)),
     )
+
+
+def close_provider(provider: object) -> None:
+    """Close built-ins directly and preserve optional plugin lifecycle hooks."""
+    if isinstance(provider, BaseProvider):
+        cast(BaseProvider[BaseModel, Closeable], provider).close()
+        return
+    close = getattr(provider, "close", None)
+    if callable(close):
+        close()
 
 
 def fork_provider(provider: Provider) -> Provider:

@@ -1,0 +1,5761 @@
+{
+  "openai/429/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "message": "ok"
+  },
+  "openai/429/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Provider request was rate limited: retry"
+    }
+  },
+  "openai/429-zero/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "message": "ok"
+  },
+  "openai/429-zero/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Provider request was rate limited: retry"
+    }
+  },
+  "openai/429-90/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      10
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 10,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429,
+        "retry_after_seconds": 90.0
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "message": "ok"
+  },
+  "openai/429-90/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      10
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 10,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429,
+        "retry_after_seconds": 90.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Provider request was rate limited: retry"
+    }
+  },
+  "openai/503/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderServerError",
+        "message": "Provider server error: retry",
+        "max_retries": 1,
+        "status_code": 503
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "message": "ok"
+  },
+  "openai/503/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderServerError",
+        "message": "Provider server error: retry",
+        "max_retries": 1,
+        "status_code": 503
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "Provider server error: retry"
+    }
+  },
+  "openai/connect-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderError",
+        "message": "Provider request timed out.",
+        "max_retries": 1
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "message": "ok"
+  },
+  "openai/connect-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderError",
+        "message": "Provider request timed out.",
+        "max_retries": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Provider request timed out."
+    }
+  },
+  "openai/read-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Provider request timed out."
+    }
+  },
+  "openai/read-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Provider request timed out."
+    }
+  },
+  "openai/partial-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Provider request timed out after response bytes were received."
+    }
+  },
+  "openai/partial-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Provider request timed out after response bytes were received."
+    }
+  },
+  "openai/cancel-backoff/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "openai/cancel-backoff/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "openai-compatible",
+        "model": "test",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "test",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "zai/429/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "message": "ok"
+  },
+  "zai/429/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "ZAI request failed after 2 attempts: retry"
+    }
+  },
+  "zai/429-zero/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "message": "ok"
+  },
+  "zai/429-zero/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "ZAI request failed after 2 attempts: retry"
+    }
+  },
+  "zai/429-90/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      90.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "message": "ok"
+  },
+  "zai/429-90/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      90.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "ZAI request failed after 2 attempts: retry"
+    }
+  },
+  "zai/503/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "message": "ok"
+  },
+  "zai/503/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "ZAI request failed after 2 attempts: retry"
+    }
+  },
+  "zai/connect-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "message": "ok"
+  },
+  "zai/connect-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "ZAI request timed out after 2 attempts."
+    }
+  },
+  "zai/read-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "message": "ok"
+  },
+  "zai/read-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "ZAI request timed out after 2 attempts."
+    }
+  },
+  "zai/partial-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "ZAI stream interrupted after response bytes were received."
+    }
+  },
+  "zai/partial-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "ZAI stream interrupted after response bytes were received."
+    }
+  },
+  "zai/cancel-backoff/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "zai/cancel-backoff/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "go-chat/429/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "message": "ok"
+  },
+  "go-chat/429/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Provider request was rate limited: retry"
+    }
+  },
+  "go-chat/429-zero/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "message": "ok"
+  },
+  "go-chat/429-zero/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Provider request was rate limited: retry"
+    }
+  },
+  "go-chat/429-90/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      10
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 10,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429,
+        "retry_after_seconds": 90.0
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "message": "ok"
+  },
+  "go-chat/429-90/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      10
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 10,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429,
+        "retry_after_seconds": 90.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Provider request was rate limited: retry"
+    }
+  },
+  "go-chat/503/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderServerError",
+        "message": "Provider server error: retry",
+        "max_retries": 1,
+        "status_code": 503
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "message": "ok"
+  },
+  "go-chat/503/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderServerError",
+        "message": "Provider server error: retry",
+        "max_retries": 1,
+        "status_code": 503
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "Provider server error: retry"
+    }
+  },
+  "go-chat/connect-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderError",
+        "message": "Provider request failed: connect timeout",
+        "max_retries": 1
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "message": "ok"
+  },
+  "go-chat/connect-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderError",
+        "message": "Provider request failed: connect timeout",
+        "max_retries": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      },
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Provider request failed: connect timeout"
+    }
+  },
+  "go-chat/read-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "OpenCode Go stream interrupted."
+    }
+  },
+  "go-chat/read-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "OpenCode Go stream interrupted."
+    }
+  },
+  "go-chat/partial-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "OpenCode Go stream interrupted."
+    }
+  },
+  "go-chat/partial-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "OpenCode Go stream interrupted."
+    }
+  },
+  "go-chat/cancel-backoff/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "go-chat/cancel-backoff/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "deepseek-v4.1-flash",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "Provider request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "max_tokens": 65536,
+        "reasoning_effort": "high"
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "go-responses/429/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "opencode-go request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "go-responses/429/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "opencode-go request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "opencode-go request was rate limited: retry"
+    }
+  },
+  "go-responses/429-zero/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "opencode-go request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "go-responses/429-zero/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "opencode-go request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "opencode-go request was rate limited: retry"
+    }
+  },
+  "go-responses/429-90/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      10
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 10,
+        "error_type": "ProviderRateLimitError",
+        "message": "opencode-go request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429,
+        "retry_after_seconds": 90.0
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "go-responses/429-90/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      10
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 10,
+        "error_type": "ProviderRateLimitError",
+        "message": "opencode-go request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429,
+        "retry_after_seconds": 90.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "opencode-go request was rate limited: retry"
+    }
+  },
+  "go-responses/503/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderServerError",
+        "message": "opencode-go server error: retry",
+        "max_retries": 1,
+        "status_code": 503
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "go-responses/503/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderServerError",
+        "message": "opencode-go server error: retry",
+        "max_retries": 1,
+        "status_code": 503
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "opencode-go server error: retry"
+    }
+  },
+  "go-responses/connect-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderError",
+        "message": "opencode-go request timed out.",
+        "max_retries": 1
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "go-responses/connect-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderError",
+        "message": "opencode-go request timed out.",
+        "max_retries": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "opencode-go request timed out."
+    }
+  },
+  "go-responses/read-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderError",
+        "message": "opencode-go request timed out.",
+        "max_retries": 1
+      },
+      {
+        "event": "provider_recovered",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempts": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "go-responses/read-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_retry",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderError",
+        "message": "opencode-go request timed out.",
+        "max_retries": 1
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      },
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "opencode-go request timed out."
+    }
+  },
+  "go-responses/partial-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Provider request timed out after response bytes were received."
+    }
+  },
+  "go-responses/partial-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Provider request timed out after response bytes were received."
+    }
+  },
+  "go-responses/cancel-backoff/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "opencode-go request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "go-responses/cancel-backoff/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "provider_rate_limited",
+        "provider": "opencode-go",
+        "model": "muse-spark-1.3-contributor",
+        "attempt": 1,
+        "wait_seconds": 1.0,
+        "error_type": "ProviderRateLimitError",
+        "message": "opencode-go request was rate limited: retry",
+        "max_retries": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "muse-spark-1.3-contributor",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": false,
+        "max_output_tokens": 65536,
+        "reasoning": {
+          "effort": "high",
+          "summary": "auto",
+          "context": "all_turns"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "codex-http/429/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 429,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "rate_limited"
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "codex-http/429/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 429,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "rate_limited"
+      },
+      {
+        "event": "request_error",
+        "attempt": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Codex request was rate limited: retry"
+    }
+  },
+  "codex-http/429-zero/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 429,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "rate_limited"
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "codex-http/429-zero/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 429,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "rate_limited"
+      },
+      {
+        "event": "request_error",
+        "attempt": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Codex request was rate limited: retry"
+    }
+  },
+  "codex-http/429-90/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      10
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 429,
+        "wait_seconds": 10,
+        "retry_after_used": true,
+        "reason": "rate_limited"
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "codex-http/429-90/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      10
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 429,
+        "wait_seconds": 10,
+        "retry_after_used": true,
+        "reason": "rate_limited"
+      },
+      {
+        "event": "request_error",
+        "attempt": 1,
+        "status_code": 429
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Codex request was rate limited: retry"
+    }
+  },
+  "codex-http/503/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 503,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "server_error"
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "codex-http/503/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 503,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "server_error"
+      },
+      {
+        "event": "request_error",
+        "attempt": 1,
+        "status_code": 503
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "Codex server error: retry"
+    }
+  },
+  "codex-http/connect-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "timeout"
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "codex-http/connect-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "timeout"
+      },
+      {
+        "event": "request_error",
+        "attempt": 1,
+        "status_code": null
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex request timed out."
+    }
+  },
+  "codex-http/read-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "timeout"
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "message": "ok"
+  },
+  "codex-http/read-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "timeout"
+      },
+      {
+        "event": "request_error",
+        "attempt": 1,
+        "status_code": null
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex request timed out."
+    }
+  },
+  "codex-http/partial-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex stream interrupted after response bytes were received."
+    }
+  },
+  "codex-http/partial-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex stream interrupted after response bytes were received."
+    }
+  },
+  "codex-http/cancel-backoff/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 429,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "rate_limited"
+      },
+      {
+        "event": "request_cancelled",
+        "attempt": 0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "codex-http/cancel-backoff/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 429,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "rate_limited"
+      },
+      {
+        "event": "request_cancelled",
+        "attempt": 0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "codex-ws/429/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_rate_limited",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "message": null
+  },
+  "codex-ws/429/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_rate_limited",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Codex WebSocket handshake failed: server rejected WebSocket connection: HTTP 429"
+    }
+  },
+  "codex-ws/429-zero/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_rate_limited",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "message": null
+  },
+  "codex-ws/429-zero/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_rate_limited",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Codex WebSocket handshake failed: server rejected WebSocket connection: HTTP 429"
+    }
+  },
+  "codex-ws/429-90/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_rate_limited",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "message": null
+  },
+  "codex-ws/429-90/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_rate_limited",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [],
+    "error": {
+      "type": "ProviderRateLimitError",
+      "message": "Codex WebSocket handshake failed: server rejected WebSocket connection: HTTP 429"
+    }
+  },
+  "codex-ws/503/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_server_error",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "message": null
+  },
+  "codex-ws/503/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_server_error",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "Codex WebSocket handshake failed: server rejected WebSocket connection: HTTP 503"
+    }
+  },
+  "codex-ws/connect-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [
+      {
+        "event": "request_error",
+        "attempt": 0,
+        "status_code": null
+      }
+    ],
+    "payloads": [],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex WebSocket connection failed: connect timeout"
+    }
+  },
+  "codex-ws/connect-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [
+      {
+        "event": "request_error",
+        "attempt": 0,
+        "status_code": null
+      }
+    ],
+    "payloads": [],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex WebSocket connection failed: connect timeout"
+    }
+  },
+  "codex-ws/read-timeout/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_timeout",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "message": null
+  },
+  "codex-ws/read-timeout/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_timeout",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "error": {
+      "type": "CodexWebSocketTimeoutError",
+      "message": "Codex WebSocket timed out waiting for response."
+    }
+  },
+  "codex-ws/partial-timeout/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex WebSocket timed out after response bytes were received."
+    }
+  },
+  "codex-ws/partial-timeout/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [],
+    "events": [],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex WebSocket timed out after response bytes were received."
+    }
+  },
+  "codex-ws/cancel-backoff/recover": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_rate_limited",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "codex-ws/cancel-backoff/exhaust": {
+    "attempts": [
+      0
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "account_rotation",
+        "reason": "rate_limit"
+      },
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_rate_limited",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [],
+    "error": {
+      "type": "ProviderCancelledError",
+      "message": "Provider request cancelled."
+    }
+  },
+  "zai/illegal-messages/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [],
+    "events": [
+      {
+        "event": "illegal_messages_error",
+        "model": "glm-5.3-flash",
+        "detail": "messages parameter is illegal",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": "result",
+            "tool_call_id": "call"
+          }
+        ]
+      },
+      {
+        "event": "illegal_messages_recovery",
+        "model": "glm-5.3-flash",
+        "detail": "messages parameter is illegal",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "[Assistant tool calls] read({})\n[Tool result] result"
+          },
+          {
+            "role": "user",
+            "content": "Continue from the prior context and answer the latest request using the tool results already gathered."
+          }
+        ]
+      }
+    ],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": "result",
+            "tool_call_id": "call"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "[Assistant tool calls] read({})\n[Tool result] result"
+          },
+          {
+            "role": "user",
+            "content": "Continue from the prior context and answer the latest request using the tool results already gathered."
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "message": "ok"
+  },
+  "zai/illegal-messages/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [],
+    "events": [
+      {
+        "event": "illegal_messages_error",
+        "model": "glm-5.3-flash",
+        "detail": "messages parameter is illegal",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": "result",
+            "tool_call_id": "call"
+          }
+        ]
+      },
+      {
+        "event": "illegal_messages_recovery",
+        "model": "glm-5.3-flash",
+        "detail": "messages parameter is illegal",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "[Assistant tool calls] read({})\n[Tool result] result"
+          },
+          {
+            "role": "user",
+            "content": "Continue from the prior context and answer the latest request using the tool results already gathered."
+          }
+        ]
+      }
+    ],
+    "payloads": [
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": "result",
+            "tool_call_id": "call"
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      },
+      {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          },
+          {
+            "role": "assistant",
+            "content": "[Assistant tool calls] read({})\n[Tool result] result"
+          },
+          {
+            "role": "user",
+            "content": "Continue from the prior context and answer the latest request using the tool results already gathered."
+          }
+        ],
+        "stream": true,
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": true
+        },
+        "reasoning_effort": "max"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "ZAI request failed: messages parameter is illegal"
+    }
+  },
+  "codex-ws/disconnect/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_closed",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "message": null
+  },
+  "codex-ws/disconnect/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_closed",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "error": {
+      "type": "ProviderError",
+      "message": "Codex WebSocket closed before response.completed."
+    }
+  },
+  "codex-ws/anchor-missing/recover": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "previous_response_not_found",
+        "wait_seconds": 0.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "message": null
+  },
+  "codex-ws/transient-marker/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_server_error",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "Codex WebSocket stream failed: {'type': 'error', 'error': {'code': 'temporarily unavailable', 'message': 'retry'}}"
+    }
+  },
+  "codex-http/stream-server/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "status_code": 503,
+        "wait_seconds": 1.0,
+        "retry_after_used": false,
+        "reason": "stream_server_error"
+      },
+      {
+        "event": "request_error",
+        "attempt": 1,
+        "status_code": 503
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        }
+      }
+    ],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "Codex stream failed: {'type': 'error', 'error': {'code': 'server_error', 'message': 'retry'}}"
+    }
+  },
+  "codex-ws/stream-server/exhaust": {
+    "attempts": [
+      0,
+      1
+    ],
+    "sleeps": [
+      1.0
+    ],
+    "events": [
+      {
+        "event": "request_retry",
+        "attempt": 0,
+        "reason": "websocket_server_error",
+        "wait_seconds": 1.0
+      }
+    ],
+    "payloads": [
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      },
+      {
+        "model": "gpt-6.1-sol",
+        "store": false,
+        "stream": true,
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "verbosity": "medium"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "b0e56ad8e12a184628b54f6a97ebc2a52e322ce071a8777e622fd600a7dbd587",
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto",
+          "context": "all_turns"
+        },
+        "type": "response.create"
+      }
+    ],
+    "error": {
+      "type": "ProviderServerError",
+      "message": "Codex WebSocket stream failed: {'type': 'error', 'error': {'code': 'server_error', 'message': 'retry'}}"
+    }
+  }
+}

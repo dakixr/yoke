@@ -17,21 +17,29 @@ from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import OAuthCredentials
 from yoke.ai.providers.codex.subscription import CODEX_CLI_ORIGINATOR
-from yoke.ai.providers.codex.websockets import CodexWebSockets
-from yoke.ai.providers.codex.websockets import CodexWebSocketsConfig
-from yoke.ai.providers.codex.websockets import CodexWebSocketConnection
-from yoke.ai.providers.codex.websockets import CodexWebSocketParseState
-from yoke.ai.providers.codex.websockets import CodexWebSocketTimeoutError
-from yoke.ai.providers.codex.websockets import CodexPreviousResponseNotFoundError
-from yoke.ai.providers.codex.websockets import RESPONSES_WEBSOCKETS_BETA
-from yoke.ai.providers.codex.websockets import RESPONSES_LITE_CLIENT_METADATA_KEY
-from yoke.ai.providers.codex.websockets import X_CODEX_TURN_STATE_HEADER
-from yoke.ai.providers.codex.websockets import base_url_for_domain
-from yoke.ai.providers.codex.websockets import build_message_from_websocket_state
-from yoke.ai.providers.codex.websockets import handle_websocket_event
-from yoke.ai.providers.codex.websockets import map_websocket_error_event
-from yoke.ai.providers.codex.websockets import optional_float_env
-from yoke.ai.providers.codex.websockets import websocket_url_for_base
+from yoke.ai.providers.codex.websocket.provider import CodexProvider as CodexWebSockets
+from yoke.ai.providers.codex.websocket.config import (
+    CodexConfig as CodexWebSocketsConfig,
+)
+from yoke.ai.providers.codex.websocket.config import CodexWebSocketConnection
+from yoke.ai.providers.codex.events import (
+    CodexResponseState as CodexWebSocketParseState,
+)
+from yoke.ai.providers.codex.websocket.config import CodexWebSocketTimeoutError
+from yoke.ai.providers.codex.events import CodexPreviousResponseNotFoundError
+from yoke.ai.providers.codex.websocket.config import RESPONSES_WEBSOCKETS_BETA
+from yoke.ai.providers.codex.websocket.config import RESPONSES_LITE_CLIENT_METADATA_KEY
+from yoke.ai.providers.codex.websocket.config import X_CODEX_TURN_STATE_HEADER
+from yoke.ai.providers.codex.websocket.config import base_url_for_domain
+from yoke.ai.providers.codex.events import (
+    build_message as build_message_from_websocket_state,
+)
+from yoke.ai.providers.codex.events import reduce_event as handle_websocket_event
+from yoke.ai.providers.codex.events import (
+    classify_error_event as map_websocket_error_event,
+)
+from yoke.ai.providers.codex.websocket.config import optional_float_env
+from yoke.ai.providers.codex.websocket.config import websocket_url_for_base
 
 
 def _seed_response_chain(
@@ -286,7 +294,7 @@ def test_websocket_response_timeout_resets_after_each_event(
             return None
 
     monkeypatch.setattr(
-        "yoke.ai.providers.codex.websocket.transport.time.monotonic",
+        "yoke.ai.providers.codex.websocket.provider.time.monotonic",
         lambda: next(monotonic_values),
     )
     provider = CodexWebSockets(

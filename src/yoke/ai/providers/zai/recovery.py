@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+
 from yoke.agent.models import Message
-from yoke.ai.providers.openai_compat.content import normalize_openai_request_messages
-from yoke.ai.providers.openai_compat.content import serialize_message_for_openai
+from yoke.ai.providers.openai_compat.content import (
+    normalize_openai_request_messages,
+    serialize_message_for_openai,
+)
 from yoke.ai.providers.zai.models import ZAIConfig
 
 
@@ -24,7 +27,7 @@ class ZAIMessageRecovery:
     def __init__(self, config: ZAIConfig) -> None:
         self.config = config
 
-    def _prepare_messages(self, messages: list[Message]) -> list[Message]:
+    def prepare_messages(self, messages: list[Message]) -> list[Message]:
         prepared = normalize_openai_request_messages(messages)
         prepared = self._merge_leading_system_messages(prepared)
         for message in prepared:
@@ -33,7 +36,7 @@ class ZAIMessageRecovery:
         prepared = self._drop_empty_assistant_messages(prepared)
         return prepared
 
-    def _message_to_api_dict(self, message: Message) -> dict[str, object]:
+    def message_to_api_dict(self, message: Message) -> dict[str, object]:
         payload = serialize_message_for_openai(message)
         # Z.AI preserved-thinking mode requires complete, unmodified prior
         # reasoning_content. Yoke cannot guarantee that across compaction and
@@ -70,11 +73,11 @@ class ZAIMessageRecovery:
             )
         ]
 
-    def _looks_like_illegal_messages_error(self, detail: str) -> bool:
+    def looks_like_illegal_messages_error(self, detail: str) -> bool:
         normalized = detail.lower()
         return "messages parameter" in normalized
 
-    def _recover_illegal_messages(self, messages: list[Message]) -> list[Message]:
+    def recover_illegal_messages(self, messages: list[Message]) -> list[Message]:
         recovered: list[Message] = []
         system_messages: list[Message] = []
         index = 0
@@ -180,7 +183,7 @@ class ZAIMessageRecovery:
             return normalized
         return normalized[: limit - 3].rstrip() + "..."
 
-    def _log_debug_event(self, event: str, **payload: object) -> None:
+    def log_debug_event(self, event: str, **payload: object) -> None:
         if not self.config.debug_log_path:
             return
         record = {

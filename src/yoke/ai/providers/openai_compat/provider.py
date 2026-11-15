@@ -8,35 +8,30 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import ValidationError
-from pydantic import field_validator
-from pydantic import model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from yoke._tls import tls_verification_enabled
 from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import Message
-from yoke.ai.providers.cancellation import cancellation_watcher
-from yoke.ai.providers.base import Provider
-from yoke.ai.providers.base import ProviderCancelledError
-from yoke.ai.providers.base import ProviderError
-from yoke.ai.providers.base import ProviderModelInfo
-from yoke.ai.providers.model_selection import ModelCatalogMixin
-from yoke.ai.providers.model_selection import cloned_model_catalog
-from yoke.ai.providers.model_selection import (
-    current_model_info_from_catalog,
+from yoke.ai.providers.base import (
+    BaseProvider,
+    ProviderCancelledError,
+    ProviderError,
+    ProviderModelInfo,
 )
+from yoke.ai.providers.cancellation import cancellation_watcher
+from yoke.ai.providers.http_retry import HTTPRetryPolicy, response_error, run_with_retry
 from yoke.ai.providers.model_selection import (
+    ModelCatalogMixin,
+    cloned_model_catalog,
+    current_model_info_from_catalog,
     set_config_model_from_catalog,
 )
+from yoke.ai.providers.openai_compat.client import LazyHttpClient
 from yoke.ai.providers.openai_compat.content import (
     normalize_openai_request_messages,
-)
-from yoke.ai.providers.openai_compat.content import (
     serialize_message_for_openai,
 )
-from yoke.ai.providers.openai_compat.client import LazyHttpClient
 from yoke.ai.providers.openai_compat.events import (
     emit_recovery_event,
 )
@@ -46,7 +41,6 @@ from yoke.ai.providers.openai_compat.helpers import (
 from yoke.ai.providers.openai_compat.models import (
     OpenAICompatibleChatCompletionResponse,
 )
-from yoke.ai.providers.openai_compat.retry import OpenAICompatibleRetryMixin
 from yoke.ai.providers.usage import parse_token_usage
 
 from . import models as _compat_models
@@ -131,7 +125,8 @@ class OpenAICompatibleConfig(BaseModel):
 
 
 class OpenAICompatibleProvider(
-    ModelCatalogMixin[OpenAICompatibleConfig], OpenAICompatibleRetryMixin, Provider
+    ModelCatalogMixin[OpenAICompatibleConfig],
+    BaseProvider[OpenAICompatibleConfig, LazyHttpClient],
 ):
     """Provider for generic OpenAI-compatible chat-completions endpoints.
 
@@ -139,6 +134,7 @@ class OpenAICompatibleProvider(
     standard OpenAI `/chat/completions` request shape.
     """
 
+    _timeout_as_request_error = False
     supports_image_inputs = True
     max_images_per_message = 50
 
@@ -177,14 +173,8 @@ class OpenAICompatibleProvider(
             ),
         )
 
-    def fork_for_turn(self) -> OpenAICompatibleProvider:
-        """Copy request state, retaining a borrowed transport without owning it."""
-        forked = type(self)(
-            self.config.model_copy(deep=True),
-            http_client=None if self._owns_client else self._client.get_client(),
-            sleep=self._sleep,
-        )
-        return forked
+    def _fork_client(self) -> httpx.Client | None:
+        return None if self._owns_client else self._client.get_client()
 
     def list_models(self) -> list[ProviderModelInfo]:
         """Return the configured model catalog for this provider."""
@@ -218,16 +208,6 @@ class OpenAICompatibleProvider(
                 self.config.reasoning_effort
             ),
             supports_image_inputs=self.supports_image_inputs,
-        )
-
-    def set_model(self, model_id: str, *, reasoning_effort: str | None = None) -> None:
-        """Switch to a provider-advertised model and optional thinking level."""
-        set_config_model_from_catalog(
-            self.config,
-            self.list_models(),
-            provider_name=self.provider_name,
-            model_id=model_id,
-            reasoning_effort=reasoning_effort,
         )
 
     def set_request_header(self, name: str, value: str) -> None:
@@ -268,52 +248,14 @@ class OpenAICompatibleProvider(
         if self.config.max_tokens is not None:
             payload["max_tokens"] = self.config.max_tokens
         payload = sanitize_json_surrogates(payload)
-        last_error: ProviderError | None = None
-        for attempt in range(self.config.max_retries + 1):
-            if cancel_requested():
-                raise ProviderCancelledError()
-            try:
-                response = self._client.post(
-                    self._chat_completions_url(),
-                    json=payload,
-                    headers=self._headers,
-                )
-            except httpx.TimeoutException as exc:
-                if cancel_requested():
-                    raise ProviderCancelledError() from exc
-                last_error = ProviderError("Provider request timed out.")
-                # A read timeout on this non-streaming endpoint means a
-                # generation is in flight; replaying it duplicates work.
-                if isinstance(exc, httpx.ReadTimeout):
-                    raise last_error from exc
-                if attempt < self.config.max_retries:
-                    self._reset_transport_for_retry()
-                    self._retry_sleep(
-                        last_error,
-                        attempt=attempt,
-                        cancel_requested=cancel_requested,
-                    )
-                    continue
-                raise last_error from exc
-            except httpx.RequestError as exc:
-                if cancel_requested():
-                    raise ProviderCancelledError() from exc
-                last_error = self._handle_request_error(
-                    exc,
-                    attempt=attempt,
-                    cancel_requested=cancel_requested,
-                )
-                if last_error is not None:
-                    continue
-                raise ProviderError(f"Provider request failed: {exc}") from exc
 
-            last_error = self._handle_error_response(
-                response,
-                attempt=attempt,
-                cancel_requested=cancel_requested,
+        def attempt(number: int) -> Message:
+            response = self._client.post(
+                self._chat_completions_url(), json=payload, headers=self._headers
             )
-            if last_error is not None:
-                continue
+            error = response_error(response)
+            if error is not None:
+                raise error
 
             response_model = OpenAICompatibleChatCompletionResponse
             try:
@@ -334,13 +276,34 @@ class OpenAICompatibleProvider(
             emit_recovery_event(
                 provider_name=self.provider_name,
                 model_id=self.config.model,
-                attempts=attempt,
+                attempts=number,
             )
             return message
 
-        if last_error is not None:
-            raise last_error
-        raise ProviderError("Provider request failed unexpectedly.")
+        return self._run_request(attempt, cancel_requested=cancel_requested)
+
+    def _run_request(
+        self, attempt: Callable[[int], Message], *, cancel_requested: Callable[[], bool]
+    ) -> Message:
+        policy = HTTPRetryPolicy(
+            self.provider_name,
+            self.config.model,
+            self.config.max_retries,
+            self.config.retry_backoff_seconds,
+            self.config.max_retry_backoff_seconds,
+            read_timeout_fail_fast=True,
+            timeout_as_request_error=self._timeout_as_request_error,
+            reset_client=self._reset_transport_for_retry,
+        )
+        return run_with_retry(
+            attempt,
+            lambda error, number: policy.classify(
+                error, number, cancel_requested=cancel_requested
+            ),
+            max_retries=self.config.max_retries,
+            cancel_requested=cancel_requested,
+            sleep=self._sleep,
+        )
 
     def complete_with_cancel(
         self,

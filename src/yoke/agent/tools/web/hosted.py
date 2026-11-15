@@ -9,7 +9,12 @@ from yoke.agent.models import Message
 from yoke.ai.providers.base import Provider
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import complete_with_cancel
-from yoke.ai.providers.base import fork_provider
+from yoke.ai.providers.base import (
+    fork_provider,
+    CancellableProvider,
+    close_provider,
+    provider_identity,
+)
 
 CODEX_HOSTED_WEB_SEARCH_TOOL: dict[str, object] = {
     "type": "web_search",
@@ -25,8 +30,8 @@ concisely, include direct source links, and clearly identify uncertainty.
 
 def supports_hosted_web_search(provider: object) -> bool:
     """Return whether the active provider exposes Codex hosted search."""
-    return getattr(provider, "provider_name", None) == "codex" and callable(
-        getattr(provider, "complete_with_cancel", None)
+    return provider_identity(provider).name == "codex" and isinstance(
+        provider, CancellableProvider
     )
 
 
@@ -64,9 +69,7 @@ def hosted_web_research(
         }
     finally:
         if isolated_provider is not provider:
-            close = getattr(isolated_provider, "close", None)
-            if callable(close):
-                close()
+            close_provider(isolated_provider)
 
 
 def _reset_isolated_session(provider: Provider) -> None:

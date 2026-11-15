@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 
-from yoke.ai.providers.http_retry import error_detail as error_detail
-from yoke.ai.providers.http_retry import retry_after_seconds as retry_after_seconds
-
-
 def clamp_reasoning_effort(model: str, effort: str) -> str:
     normalized = effort.strip().lower()
     allowed = ("none", "minimal", "low", "medium", "high", "xhigh", "max")

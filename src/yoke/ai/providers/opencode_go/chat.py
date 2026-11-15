@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderCancelledError, ProviderError
-from yoke.ai.providers.http_retry import StreamProgress
+from yoke.ai.providers.http_retry import StreamProgress, response_error
 from yoke.ai.providers.openai_compat.content import (
     normalize_openai_request_messages,
     serialize_message_for_openai,
@@ -25,6 +25,8 @@ from yoke.ai.providers.usage import parse_token_usage
 
 class GoChatProvider(OpenAICompatibleProvider):
     """Keep Go's wire protocol out of the shared OpenAI-compatible provider."""
+
+    _timeout_as_request_error = True
 
     def _complete_impl(
         self,
@@ -49,9 +51,8 @@ class GoChatProvider(OpenAICompatibleProvider):
         if self.config.reasoning_effort:
             payload["reasoning_effort"] = self.config.reasoning_effort
         payload = sanitize_json_surrogates(payload)
-        for attempt in range(self.config.max_retries + 1):
-            if cancel_requested():
-                raise ProviderCancelledError()
+
+        def attempt(number: int) -> Message:
             progress: StreamProgress | None = None
             try:
                 with self._client.get_client().stream(
@@ -60,17 +61,9 @@ class GoChatProvider(OpenAICompatibleProvider):
                     json=payload,
                     headers=self._headers,
                 ) as response:
-                    if response.is_error:
-                        response.read()
-                        if (
-                            self._handle_error_response(
-                                response,
-                                attempt=attempt,
-                                cancel_requested=cancel_requested,
-                            )
-                            is not None
-                        ):
-                            continue
+                    error = response_error(response)
+                    if error is not None:
+                        raise error
                     progress = StreamProgress(response)
                     message = read_completion(
                         response, cancel_requested, self.config.model
@@ -78,28 +71,25 @@ class GoChatProvider(OpenAICompatibleProvider):
                     emit_recovery_event(
                         provider_name=self.provider_name,
                         model_id=self.config.model,
-                        attempts=attempt,
+                        attempts=number,
                     )
                     return message
             except httpx.HTTPError as exc:
                 if cancel_requested():
                     raise ProviderCancelledError() from exc
-                # Do not replay a generation after receiving a successful stream.
-                # A read timeout may mean the generation is still running.
                 if (progress is not None and progress.started) or isinstance(
                     exc, httpx.ReadTimeout
                 ):
                     raise ProviderError("OpenCode Go stream interrupted.") from exc
-                if (
-                    isinstance(exc, httpx.RequestError)
-                    and self._handle_request_error(
-                        exc, attempt=attempt, cancel_requested=cancel_requested
-                    )
-                    is not None
-                ):
-                    continue
+                if isinstance(exc, httpx.RequestError):
+                    # The common HTTP policy maps transient transport errors.
+                    from yoke.ai.providers.http_retry import should_retry_request_error
+
+                    if should_retry_request_error(exc):
+                        raise
                 raise ProviderError("OpenCode Go connection failed.") from exc
-        raise ProviderError("OpenCode Go retry limit reached.")
+
+        return self._run_request(attempt, cancel_requested=cancel_requested)
 
 
 def read_completion(

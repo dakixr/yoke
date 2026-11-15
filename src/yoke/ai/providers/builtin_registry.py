@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import cast
 
-from yoke.ai.providers.base import Provider
-from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.base import Provider, ProviderModelInfo
 from yoke.ai.providers.plugins import ProviderPluginContext
 
 BUILTIN_PROVIDER_NAMES = ("codex", "opencode-go", "zai")
 _PROVIDER_MODULES = {
-    "codex": "yoke.ai.providers.codex.websockets",
+    "codex": "yoke.ai.providers.codex.websocket.provider",
     "opencode-go": "yoke.ai.providers.opencode_go",
     "zai": "yoke.ai.providers.zai",
 }

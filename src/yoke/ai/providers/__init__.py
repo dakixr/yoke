@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
-from typing import Any
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from yoke.ai.providers.base import CancellableProvider as CancellableProvider
@@ -17,18 +16,20 @@ if TYPE_CHECKING:
     from yoke.ai.providers.codex.subscription import (
         CodexSubscriptionProvider as CodexSubscriptionProvider,
     )
-    from yoke.ai.providers.codex.websockets import CodexWebSockets as CodexWebSockets
-    from yoke.ai.providers.codex.websockets import (
-        CodexWebSocketsConfig as CodexWebSocketsConfig,
+    from yoke.ai.providers.codex.websocket.config import (
+        CodexConfig as CodexWebSocketsConfig,
     )
-    from yoke.ai.providers.opencode_go import OpenCodeGoConfig as OpenCodeGoConfig
-    from yoke.ai.providers.opencode_go import OpenCodeGoProvider as OpenCodeGoProvider
+    from yoke.ai.providers.codex.websocket.provider import (
+        CodexProvider as CodexWebSockets,
+    )
     from yoke.ai.providers.openai_compat import (
         OpenAICompatibleConfig as OpenAICompatibleConfig,
     )
     from yoke.ai.providers.openai_compat import (
         OpenAICompatibleProvider as OpenAICompatibleProvider,
     )
+    from yoke.ai.providers.opencode_go import OpenCodeGoConfig as OpenCodeGoConfig
+    from yoke.ai.providers.opencode_go import OpenCodeGoProvider as OpenCodeGoProvider
     from yoke.ai.providers.resolution import ProviderReadiness as ProviderReadiness
     from yoke.ai.providers.resolution import ProviderRef as ProviderRef
     from yoke.ai.providers.resolution import (
@@ -76,10 +77,10 @@ _LAZY_EXPORTS = {
         "yoke.ai.providers.codex.subscription",
         "CodexSubscriptionProvider",
     ),
-    "CodexWebSockets": ("yoke.ai.providers.codex.websockets", "CodexWebSockets"),
+    "CodexWebSockets": ("yoke.ai.providers.codex.websocket.provider", "CodexProvider"),
     "CodexWebSocketsConfig": (
-        "yoke.ai.providers.codex.websockets",
-        "CodexWebSocketsConfig",
+        "yoke.ai.providers.codex.websocket.config",
+        "CodexConfig",
     ),
     "OpenCodeGoConfig": ("yoke.ai.providers.opencode_go", "OpenCodeGoConfig"),
     "OpenCodeGoProvider": ("yoke.ai.providers.opencode_go", "OpenCodeGoProvider"),

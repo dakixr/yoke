@@ -21,6 +21,7 @@ from yoke._tls import tls_verification_enabled
 from yoke.ai.providers.base import (
     ProviderError,
 )
+from yoke.ai.providers.http_retry import error_detail
 
 from .catalog import (
     AUTHORIZE_URL,
@@ -30,7 +31,7 @@ from .catalog import (
     SCOPE,
     TOKEN_URL,
 )
-from .helpers import error_detail, first_query_value
+from .helpers import first_query_value
 from .models import OAuthCredentials
 
 

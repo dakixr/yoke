@@ -91,8 +91,29 @@ configuration.
 Provider HTTP retries share capped exponential backoff with bounded jitter.
 `Retry-After` accepts seconds or an HTTP date, including an explicit zero delay.
 Connect and pool timeouts can retry. Read timeouts can retry before any response
-bytes arrive. Once a response stream has delivered bytes, a timeout fails the
-request without replaying the generation. This also applies to Codex WebSockets.
+bytes arrive. OpenAI-compatible chat completions and OpenCode Go chat fail
+immediately on every read timeout, including one before the first response byte,
+because a generation may still be running. ZAI honors the full `Retry-After`
+value even when it exceeds the configured backoff cap. Other HTTP providers cap
+that delay. Once a response stream has delivered bytes, a timeout fails without
+replaying the generation. Codex WebSockets also fail on a disconnect after a
+response frame; an idle socket closed before the next response can reconnect.
+
+Codex HTTP and WebSocket responses use the same event reducer and transient
+error markers. WebSockets now recognize `server_is_overloaded`, `temporarily
+unavailable`, `currently overloaded`, and `try again later`. Explicit server and
+rate-limit error events still use the provider retry budget. Plain-text error
+bodies are limited to 500 characters; HTML error pages use the HTTP reason phrase.
+
+Built-in providers inherit the concrete `BaseProvider` in
+`yoke.ai.providers.base`. It supplies model selection, completion dispatch,
+transport ownership, cancellation, and HTTP fork defaults. The minimal `Provider`
+protocol remains the contract for plugins. Codex request builders accept config,
+cache key, and turn state explicitly, and providers own their mutable state.
+Internal imports use `codex.websocket.provider`, `codex.websocket.config`, and
+`codex.events`; the `codex.websockets` shim and private host protocols were removed.
+The lazy top-level `CodexWebSockets` and `CodexWebSocketsConfig` names remain
+available.
 
 Built-in providers implement `fork_for_turn()` to copy request state and config.
 A fork retains an injected HTTP client as a borrowed transport; closing the fork

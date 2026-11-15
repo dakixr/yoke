@@ -28,7 +28,9 @@ from yoke.ai.providers.codex.subscription import clamp_reasoning_effort
 from yoke.ai.providers.codex.subscription import convert_messages
 from yoke.ai.providers.codex.subscription import is_invalid_oauth_token_error
 from yoke.ai.providers.base import ProviderCancelledError
-from yoke.ai.providers.codex.websockets import CodexWebSocketsConfig
+from yoke.ai.providers.codex.websocket.config import (
+    CodexConfig as CodexWebSocketsConfig,
+)
 
 
 def _write_fallback_auth(path: Path, credentials: OAuthCredentials) -> None:
@@ -247,7 +249,7 @@ def test_codex_provider_relogs_via_fallback_auth_when_request_token_is_invalid(
         return fresh_credentials
 
     monkeypatch.setattr(
-        "yoke.ai.providers.codex.subscription.request.login_openai_codex",
+        "yoke.ai.providers.codex.subscription.provider.login_openai_codex",
         fake_login,
     )
 

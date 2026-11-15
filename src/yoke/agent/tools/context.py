@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.agent.models import Message
-from yoke.ai.providers.base import ModelCatalogProvider, Provider
+from yoke.ai.providers.base import (
+    BaseProvider,
+    ModelCatalogProvider,
+    Provider,
+    provider_identity,
+)
 
 if TYPE_CHECKING:
     from yoke.agent.tools.base import LocalTool
@@ -168,10 +173,14 @@ def normalize_tool_registration(
 
 def resolve_model_identity(provider: Provider) -> ModelIdentity:
     """Resolve normalized public identity metadata from a provider."""
-    provider_name = _provider_name(provider)
-    config = getattr(provider, "config", None)
-    model_id = _model_id(provider, config)
-    reasoning_effort = getattr(config, "reasoning_effort", None)
+    identity = provider_identity(provider)
+    provider_name = (
+        identity.name.strip().lower()
+        if isinstance(provider, BaseProvider)
+        else _provider_name(provider)
+    )
+    model_id = identity.model
+    reasoning_effort = identity.reasoning_effort
     if not isinstance(reasoning_effort, str) or not reasoning_effort.strip():
         reasoning_effort = None
     else:
@@ -199,13 +208,3 @@ def _provider_name(provider: object) -> str:
     if not isinstance(candidate, str) or not candidate.strip():
         candidate = provider.__class__.__name__
     return candidate.strip().lower()
-
-
-def _model_id(provider: object, config: object) -> str | None:
-    if isinstance(provider, ModelCatalogProvider):
-        model_id = provider.current_model_id()
-    else:
-        model_id = getattr(config, "model", None)
-    if not isinstance(model_id, str) or not model_id.strip():
-        return None
-    return model_id.strip()

@@ -13,7 +13,7 @@ from yoke.agent.compaction import DEFAULT_RESERVED_OUTPUT_TOKENS
 from yoke.agent.compaction import DEFAULT_TOTAL_CONTEXT_TOKENS
 from yoke.agent.context import ContextManager
 from yoke.ai.providers.base import ModelCatalogProvider
-from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.base import ProviderModelInfo, BaseProvider, provider_identity
 
 _DEFAULT_RESERVED_OUTPUT_RATIO = 0.16
 _DEFAULT_KEEP_RECENT_RATIO = 0.11
@@ -118,8 +118,7 @@ def _provider_model_info_or_fallback(provider: object) -> ProviderModelInfo:
     try:
         return _require_provider_model_info(provider)
     except ValueError:
-        config = getattr(provider, "config", None)
-        model = getattr(config, "model", None)
+        model = provider_identity(provider).model
         if not isinstance(model, str) or not model.strip():
             model = provider.__class__.__name__
         return ProviderModelInfo(
@@ -133,13 +132,17 @@ def _provider_model_info_or_fallback(provider: object) -> ProviderModelInfo:
                 "high",
                 "xhigh",
             ),
-            supports_image_inputs=getattr(provider, "supports_image_inputs", None),
+            supports_image_inputs=(
+                provider.supports_image_inputs
+                if isinstance(provider, BaseProvider)
+                else getattr(provider, "supports_image_inputs", None)
+            ),
         )
 
 
 def _provider_name(provider: object) -> str:
-    provider_name = getattr(provider, "provider_name", None)
-    if isinstance(provider_name, str) and provider_name.strip():
+    provider_name = provider_identity(provider).name
+    if provider_name != "unknown":
         return provider_name.strip().lower()
     return provider.__class__.__name__.strip().lower()
 

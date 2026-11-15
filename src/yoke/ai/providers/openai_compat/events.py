@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from yoke.ai.providers.base import ProviderError
-from yoke.ai.providers.base import ProviderRateLimitError
-from yoke.ai.providers.base import emit_provider_event
+from yoke.ai.providers.base import (
+    ProviderError,
+    ProviderRateLimitError,
+    emit_provider_event,
+)
 
 
 def emit_retry_event(
@@ -27,10 +29,12 @@ def emit_retry_event(
     }
     if max_retries is not None:
         payload["max_retries"] = max_retries
-    status_code = getattr(error, "status_code", None)
+    status_code = error.status_code
     if status_code is not None:
         payload["status_code"] = status_code
-    retry_after = getattr(error, "retry_after_seconds", None)
+    retry_after = (
+        error.retry_after_seconds if isinstance(error, ProviderRateLimitError) else None
+    )
     if isinstance(retry_after, int | float):
         payload["retry_after_seconds"] = retry_after
     emit_provider_event(_retry_event_name(error), payload)

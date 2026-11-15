@@ -19,7 +19,10 @@ from yoke.ai.providers.codex.subscription.messages import (
     convert_text_message,
     message_item,
 )
-from yoke.ai.providers.codex.websockets import CodexWebSockets, CodexWebSocketsConfig
+from yoke.ai.providers.codex.websocket.provider import CodexProvider as CodexWebSockets
+from yoke.ai.providers.codex.websocket.config import (
+    CodexConfig as CodexWebSocketsConfig,
+)
 
 IMAGE_URL = "data:image/png;base64," + ("a" * 64)
 

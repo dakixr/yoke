@@ -12,7 +12,12 @@ from yoke.agent.context import ContextManager
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.provider_transition import prepare_context_for_provider
 from yoke.ai.providers.base import ModelCatalogProvider
-from yoke.ai.providers.base import ProviderModelInfo
+from yoke.ai.providers.base import (
+    ProviderModelInfo,
+    BaseProvider,
+    close_provider,
+    provider_identity,
+)
 from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
 from yoke.ai.providers.resolution import build_provider
 
@@ -80,16 +85,14 @@ def capture_provider_session_state(agent: object) -> ProviderSessionState:
     provider = getattr(agent, "provider", None)
     if provider is None:
         return ProviderSessionState()
-    provider_name = getattr(provider, "provider_name", None)
-    if not isinstance(provider_name, str) or not provider_name.strip():
-        provider_name = getattr(provider.__class__, "__name__", None)
-    config = getattr(provider, "config", None)
-    reasoning_effort = getattr(config, "reasoning_effort", None)
-    if not isinstance(reasoning_effort, str) or not reasoning_effort.strip():
-        reasoning_effort = None
+    identity = provider_identity(provider)
+    provider_name = (
+        identity.name if identity.name != "unknown" else provider.__class__.__name__
+    )
+    reasoning_effort = identity.reasoning_effort
     return provider_session_state_from_values(
         provider_name=provider_name,
-        model_id=_provider_model_id(provider, config),
+        model_id=identity.model,
         reasoning_effort=reasoning_effort,
         context_window_tokens=_provider_context_window_tokens(provider),
     )
@@ -108,17 +111,20 @@ def set_agent_model(
     target_provider = _target_provider_for_model(provider, model_id=model_id)
     transition = prepare_context_for_provider(agent, target_provider=target_provider)
     source_model_id = provider.current_model_id()
-    source_effort = getattr(getattr(provider, "config", None), "reasoning_effort", None)
+    source_effort = provider_identity(provider).reasoning_effort
     resolved_effort = compatible_reasoning_effort_for_model(
         target_provider.model_info,
         reasoning_effort,
     )
     try:
         provider.set_model(model_id, reasoning_effort=resolved_effort)
-        provider_config = getattr(provider, "config", None)
-        if provider_config is not None and hasattr(provider_config, "reasoning_effort"):
-            with suppress(AttributeError, TypeError):
-                setattr(provider_config, "reasoning_effort", resolved_effort)
+        if not isinstance(provider, BaseProvider):
+            provider_config = getattr(provider, "config", None)
+            if provider_config is not None and hasattr(
+                provider_config, "reasoning_effort"
+            ):
+                with suppress(AttributeError, TypeError):
+                    setattr(provider_config, "reasoning_effort", resolved_effort)
     except Exception:
         with suppress(Exception):
             if source_model_id is not None:
@@ -186,27 +192,14 @@ def switch_agent_provider_model(
                     provider=previous_provider,
                 )
         with suppress(Exception):
-            close_target = getattr(target_provider, "close", None)
-            if callable(close_target):
-                close_target()
+            close_provider(target_provider)
         raise
     if retire_previous is not None:
         retire_previous(previous_provider)
     else:
-        close_previous = getattr(previous_provider, "close", None)
-        if callable(close_previous):
-            with suppress(Exception):
-                close_previous()
+        with suppress(Exception):
+            close_provider(previous_provider)
     return capture_provider_session_state(agent)
-
-
-def _provider_model_id(provider: object, config: object) -> str | None:
-    if isinstance(provider, ModelCatalogProvider):
-        return provider.current_model_id()
-    model = getattr(config, "model", None)
-    if isinstance(model, str) and model.strip():
-        return model.strip()
-    return None
 
 
 def _provider_context_window_tokens(provider: object) -> int | None:
@@ -218,7 +211,7 @@ def _provider_context_window_tokens(provider: object) -> int | None:
 
 def _current_provider_name(agent: object) -> str | None:
     provider = getattr(agent, "provider", None)
-    provider_name = getattr(provider, "provider_name", None)
+    provider_name = provider_identity(provider).name
     if not isinstance(provider_name, str) or not provider_name.strip():
         return None
     return provider_name.strip().lower()
@@ -238,7 +231,7 @@ def _target_provider_for_model(
     for model_info in models:
         if model_info.id == model_id:
             return TargetModelProvider(
-                provider_name=getattr(provider, "provider_name", "provider"),
+                provider_name=provider.provider_name,
                 model_info=model_info,
             )
     available = ", ".join(sorted(model.id for model in models))

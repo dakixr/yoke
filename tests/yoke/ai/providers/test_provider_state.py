@@ -23,8 +23,6 @@ from yoke.ai.providers.cancellation import cancellation_watcher
 from yoke.ai.providers.codex.subscription import (
     CodexSubscriptionProvider,
 )
-from yoke.ai.providers.codex.subscription.host import CodexHTTPHost
-from yoke.ai.providers.codex.websocket.host import CodexWebSocketHost
 from yoke.ai.providers.codex.websocket.provider import CodexProvider
 
 from tests.yoke.ai.providers.transport_support import (
@@ -84,12 +82,12 @@ def test_builtin_identity_catalog_and_fork(kind: str, tmp_path: Path) -> None:
             provider.close()
 
 
-def test_codex_hosts_are_structurally_checked(tmp_path: Path) -> None:
+def test_codex_concrete_providers_share_config_contract(tmp_path: Path) -> None:
     http = _provider("codex-http", tmp_path, None)
     websocket = _provider("codex-ws", tmp_path, None)
     # Concrete declarations make pyright validate both implementations.
-    http_host: CodexHTTPHost = cast(CodexSubscriptionProvider, http)
-    ws_host: CodexWebSocketHost = cast(CodexProvider, websocket)
+    http_host: CodexSubscriptionProvider = cast(CodexSubscriptionProvider, http)
+    ws_host: CodexProvider = cast(CodexProvider, websocket)
     assert http_host.config.model == ws_host.config.model
     http.close()
     websocket.close()
@@ -201,7 +199,7 @@ def test_websocket_timeout_replay_stops_after_first_frame(
     # Force the idle deadline to expire on the next loop without sleeping.
     ticks = iter(range(1000))
     monkeypatch.setattr(
-        "yoke.ai.providers.codex.websocket.transport.time.monotonic",
+        "yoke.ai.providers.codex.websocket.provider.time.monotonic",
         lambda: next(ticks),
     )
     provider.config.timeout_seconds = 1.5

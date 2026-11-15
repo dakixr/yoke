@@ -7,26 +7,19 @@ from typing import Any
 
 import httpx
 
-from yoke.agent.models import Message
-from yoke.agent.models import ToolCall
-from yoke.agent.models import ToolFunction
-from yoke.ai.providers.base import ProviderCancelledError
+from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.ai.providers.base import ProviderError
-from yoke.ai.providers.base import ProviderRateLimitError
-from yoke.ai.providers.base import ProviderServerError
-from yoke.ai.providers.base import sleep_with_cancel
 from yoke.ai.providers.http_retry import (
-    backoff_seconds,
+    HTTPRetryPolicy,
     post_response,
-    retryable_status,
-    error_detail,
+    response_error,
+    run_with_retry,
 )
-from yoke.ai.providers.http_retry import retry_after_seconds
-from yoke.ai.providers.openai_compat import normalize_openai_request_messages
-from yoke.ai.providers.openai_compat import serialize_message_for_openai
+from yoke.ai.providers.openai_compat import (
+    normalize_openai_request_messages,
+    serialize_message_for_openai,
+)
 from yoke.ai.providers.openai_compat.events import emit_recovery_event
-from yoke.ai.providers.openai_compat.events import emit_retry_event
-from yoke.ai.providers.http_retry import should_retry_request_error
 from yoke.ai.providers.usage import parse_token_usage
 
 
@@ -63,109 +56,48 @@ def complete_response(
         "Content-Type": "application/json",
         **(request_headers or {}),
     }
-    last_error: ProviderError | None = None
-    for attempt in range(max_retries + 1):
-        if cancel_requested():
-            raise ProviderCancelledError()
+
+    def attempt(number: int) -> Message:
+        active_client = get_client() if get_client is not None else client
+        response = post_response(active_client, url, json=payload, headers=headers)
+        error = response_error(response, prefix=provider_name)
+        if error is not None:
+            raise error
         try:
-            active_client = get_client() if get_client is not None else client
-            response = post_response(active_client, url, json=payload, headers=headers)
-        except httpx.TimeoutException as exc:
-            last_error = ProviderError(f"{provider_name} request timed out.")
-            if attempt < max_retries:
-                if reset_client is not None:
-                    reset_client()
-                _sleep_before_retry(
-                    attempt,
-                    error=last_error,
-                    provider_name=provider_name,
-                    model=model,
-                    max_retries=max_retries,
-                    retry_backoff_seconds=retry_backoff_seconds,
-                    max_retry_backoff_seconds=max_retry_backoff_seconds,
-                    cancel_requested=cancel_requested,
-                    sleep=sleep,
-                )
-                continue
-            raise last_error from exc
-        except httpx.RequestError as exc:
-            if cancel_requested():
-                raise ProviderCancelledError() from exc
-            if not should_retry_request_error(exc):
-                raise ProviderError(f"{provider_name} request failed: {exc}") from exc
-            last_error = ProviderError(f"{provider_name} request failed: {exc}")
-            if attempt < max_retries:
-                if reset_client is not None:
-                    reset_client()
-                _sleep_before_retry(
-                    attempt,
-                    error=last_error,
-                    provider_name=provider_name,
-                    model=model,
-                    max_retries=max_retries,
-                    retry_backoff_seconds=retry_backoff_seconds,
-                    max_retry_backoff_seconds=max_retry_backoff_seconds,
-                    cancel_requested=cancel_requested,
-                    sleep=sleep,
-                )
-                continue
-            raise last_error from exc
-
-        if response.status_code == 429:
-            retry_after = retry_after_seconds(response)
-            last_error = ProviderRateLimitError(
-                f"{provider_name} request was rate limited: {error_detail(response)}",
-                retry_after_seconds=retry_after,
-            )
-        elif retryable_status(response.status_code):
-            last_error = ProviderServerError(
-                f"{provider_name} server error: {error_detail(response)}",
-                status_code=response.status_code,
-            )
-        elif response.is_error:
+            result = response.json()
+        except ValueError as exc:
             raise ProviderError(
-                f"{provider_name} request failed: {error_detail(response)}",
-                status_code=response.status_code,
+                f"{provider_name} returned an invalid response payload."
+            ) from exc
+        if not isinstance(result, dict):
+            raise ProviderError(
+                f"{provider_name} returned an invalid response payload."
             )
-        else:
-            try:
-                result = response.json()
-            except ValueError as exc:
-                raise ProviderError(
-                    f"{provider_name} returned an invalid response payload."
-                ) from exc
-            if not isinstance(result, dict):
-                raise ProviderError(
-                    f"{provider_name} returned an invalid response payload."
-                )
-            message = _response_message(
-                result,
-                provider_name=provider_name,
-                model=model,
-            )
-            emit_recovery_event(
-                provider_name=provider_name,
-                model_id=model,
-                attempts=attempt,
-            )
-            return message
+        message = _response_message(result, provider_name=provider_name, model=model)
+        emit_recovery_event(
+            provider_name=provider_name, model_id=model, attempts=number
+        )
+        return message
 
-        if attempt < max_retries:
-            _sleep_before_retry(
-                attempt,
-                error=last_error,
-                provider_name=provider_name,
-                model=model,
-                max_retries=max_retries,
-                retry_after_seconds=getattr(last_error, "retry_after_seconds", None),
-                retry_backoff_seconds=retry_backoff_seconds,
-                max_retry_backoff_seconds=max_retry_backoff_seconds,
-                cancel_requested=cancel_requested,
-                sleep=sleep,
-            )
-            continue
-        raise last_error
-    raise ProviderError(f"{provider_name} request failed unexpectedly.")
+    policy = HTTPRetryPolicy(
+        provider_name,
+        model,
+        max_retries,
+        retry_backoff_seconds,
+        max_retry_backoff_seconds,
+        prefix=provider_name,
+        check_timeout_cancel=False,
+        reset_client=reset_client,
+    )
+    return run_with_retry(
+        attempt,
+        lambda error, number: policy.classify(
+            error, number, cancel_requested=cancel_requested
+        ),
+        max_retries=max_retries,
+        cancel_requested=cancel_requested,
+        sleep=sleep,
+    )
 
 
 def _request_payload(
@@ -317,33 +249,3 @@ def _response_message(
             payload.get("usage"), provider_name=provider_name, model_id=model
         ),
     )
-
-
-def _sleep_before_retry(
-    attempt: int,
-    *,
-    error: ProviderError,
-    provider_name: str,
-    model: str,
-    max_retries: int,
-    retry_backoff_seconds: float,
-    max_retry_backoff_seconds: float,
-    cancel_requested: Callable[[], bool],
-    sleep: Callable[[float], None],
-    retry_after_seconds: float | None = None,
-) -> None:
-    backoff = backoff_seconds(
-        attempt,
-        retry_backoff_seconds,
-        max_retry_backoff_seconds,
-        retry_after_seconds,
-    )
-    emit_retry_event(
-        error,
-        provider_name=provider_name,
-        model_id=model,
-        attempt=attempt,
-        max_retries=max_retries,
-        wait_seconds=backoff,
-    )
-    sleep_with_cancel(backoff, cancel_requested=cancel_requested, sleep=sleep)

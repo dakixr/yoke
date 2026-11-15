@@ -11,9 +11,9 @@ from yoke._tls import tls_verification_enabled
 from yoke.ai.providers.base import (
     ProviderError,
 )
+from yoke.ai.providers.http_retry import error_detail
 
 from .catalog import DEFAULT_USAGE_URL
-from .helpers import error_detail
 from .models import OAuthCredentials
 from .oauth import refresh_openai_codex_token
 from .profiles import (

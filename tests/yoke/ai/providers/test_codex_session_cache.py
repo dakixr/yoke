@@ -11,7 +11,7 @@ from yoke.ai.providers.base import Provider
 from yoke.ai.providers.codex.subscription import (
     register_provider as register_subscription_provider,
 )
-from yoke.ai.providers.codex.websockets import register_provider
+from yoke.ai.providers.codex.websocket.config import register_provider
 
 
 class ProviderContext:

@@ -9,10 +9,9 @@ import httpx
 
 from yoke._tls import tls_verification_enabled
 from yoke.agent.models import Message
-from yoke.ai.providers.cancellation import cancellation_watcher
-from yoke.ai.providers.base import Provider, ProviderModelInfo
-from yoke.ai.providers.model_selection import ModelCatalogMixin
+from yoke.ai.providers.base import BaseProvider, ProviderModelInfo
 from yoke.ai.providers.model_selection import (
+    ModelCatalogMixin,
     cloned_model_catalog,
     set_config_model_from_catalog,
 )
@@ -20,8 +19,6 @@ from yoke.ai.providers.openai_compat import (
     OpenAICompatibleConfig,
     OpenAICompatibleProvider,
 )
-from yoke.ai.providers.responses import complete_response
-from yoke.ai.providers.opencode_go.chat import GoChatProvider
 from yoke.ai.providers.opencode_go.catalog import (
     MODEL_PROTOCOLS,
     OPENAI_BASE_URL,
@@ -30,9 +27,13 @@ from yoke.ai.providers.opencode_go.catalog import (
     _max_output_tokens,
     _normalize_model_id,
 )
+from yoke.ai.providers.opencode_go.chat import GoChatProvider
+from yoke.ai.providers.responses import complete_response
 
 
-class OpenCodeGoProvider(ModelCatalogMixin[OpenCodeGoConfig], Provider):
+class OpenCodeGoProvider(
+    ModelCatalogMixin[OpenCodeGoConfig], BaseProvider[OpenCodeGoConfig, httpx.Client]
+):
     provider_name = PROVIDER_NAME
     supports_image_inputs = True
     max_images_per_message = 50
@@ -91,14 +92,8 @@ class OpenCodeGoProvider(ModelCatalogMixin[OpenCodeGoConfig], Provider):
             sleep=self._sleep,
         )
 
-    def fork_for_turn(self) -> OpenCodeGoProvider:
-        """Copy request state, retaining a borrowed transport without owning it."""
-        forked = type(self)(
-            self.config.model_copy(deep=True),
-            http_client=None if self._owns_client else self._client,
-            sleep=self._sleep,
-        )
-        return forked
+    def _fork_client(self) -> httpx.Client | None:
+        return None if self._owns_client else self._client
 
     def list_models(self) -> list[ProviderModelInfo]:
         return cloned_model_catalog(self.config.model_catalog)
@@ -203,22 +198,3 @@ class OpenCodeGoProvider(ModelCatalogMixin[OpenCodeGoConfig], Provider):
             return
         self._client.close()
         self._client = self._new_client()
-
-    def _with_request_cancellation(
-        self,
-        action: Callable[[], Message],
-        *,
-        cancel_requested: Callable[[], bool],
-    ) -> Message:
-        if not self._owns_client:
-            return action()
-
-        def rebuild() -> None:
-            self._client = self._new_client()
-
-        with cancellation_watcher(
-            cancel_requested,
-            lambda: self._client.close(),
-            rebuild=rebuild,
-        ):
-            return action()
