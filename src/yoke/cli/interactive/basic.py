@@ -234,6 +234,7 @@ def _drain_basic_input_queue(
         submitted_prompts: list[str] = []
         handled, state.messages, active_session = handle_slash_command(
             prompt,
+            basic_mode=True,
             agent=agent,
             active_session=active_session,
             messages=state.messages,

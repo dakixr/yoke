@@ -7,11 +7,10 @@ from collections.abc import Callable
 import pytest
 
 from yoke.agent.context import ContextManager
+from yoke.agent.conversation import project_conversation
 from yoke.agent.context.compaction_projection import (
     next_compaction_generation_from_active_path,
 )
-from yoke.agent.context.helpers import next_compaction_generation
-from yoke.agent.context.helpers import recent_log_messages
 from yoke.agent.loop.cache_scope import conversation_cache_scope
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
@@ -220,3 +219,28 @@ def test_fast_post_compaction_state_matches_established_projection(
         )
     )
     assert conversation_cache_scope(context) == scope_before
+
+
+def recent_log_messages(context: AgentContext) -> list[Message]:
+    """Return recent non-instruction, non-snapshot conversation messages."""
+    projection = project_conversation(
+        context.conversation_log.entries,
+        leaf_id=context.conversation_log.leaf_id,
+    )
+    return [message.model_copy(deep=True) for message in projection.provider_messages]
+
+
+def next_compaction_generation(context: AgentContext) -> int:
+    """Compute the next compaction generation number."""
+    snapshot = project_conversation(
+        context.conversation_log.entries,
+        leaf_id=context.conversation_log.leaf_id,
+    ).checkpoint
+    if snapshot is None:
+        return 1
+    if snapshot.compaction_handoff is not None:
+        return snapshot.compaction_handoff.generation + 1
+    current = snapshot.metadata.get("generation")
+    if isinstance(current, int):
+        return current + 1
+    return 2

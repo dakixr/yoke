@@ -18,9 +18,9 @@ from yoke.cli.interactive.tool_inspector.trace import (
 from yoke.cli.interactive.tool_inspector.trace import (
     ToolTraceStore as ToolTraceStore,
 )
-from yoke.cli.interactive.tool_inspector.transcript import (
+from yoke.cli.interactive.tool_inspector.trace import (
     entries_from_messages as entries_from_messages,
 )
-from yoke.cli.interactive.tool_inspector.transcript import (
+from yoke.cli.interactive.tool_inspector.trace import (
     merge_trace_entries as merge_trace_entries,
 )

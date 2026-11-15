@@ -6,13 +6,13 @@ import asyncio
 import hmac
 import html
 import json
-import os
 import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
+from mcp.server.auth.provider import AuthorizeError, TokenError
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.provider import AuthorizationCode
 from mcp.server.auth.provider import AuthorizationParams
@@ -24,6 +24,10 @@ from mcp.shared.auth import OAuthToken
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
 from starlette.responses import RedirectResponse
+
+
+from yoke._file_io import atomic_write_text
+from yoke.mcp_server.auth_consent import ConsentAttempts, consent_html
 
 
 _ACCESS_TOKEN_SECONDS = 60 * 60
@@ -65,6 +69,7 @@ class SingleUserOAuthProvider(
         self._access_tokens: dict[str, AccessToken] = {}
         self._refresh_tokens: dict[str, RefreshToken] = {}
         self._pending: dict[str, _PendingAuthorization] = {}
+        self._consent_attempts = ConsentAttempts()
         self._load_state()
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -102,15 +107,13 @@ class SingleUserOAuthProvider(
         params: AuthorizationParams,
     ) -> str:
         if params.resource not in {None, self.resource_url}:
-            from mcp.server.auth.provider import AuthorizeError
-
             raise AuthorizeError(
                 error="invalid_target",
                 error_description="Unknown MCP resource",
             )
         request_id = secrets.token_urlsafe(32)
         async with self._lock:
-            self._prune_ephemeral()
+            self._prune_expired()
             self._pending[request_id] = _PendingAuthorization(
                 client_id=client.client_id,
                 params=params,
@@ -123,8 +126,11 @@ class SingleUserOAuthProvider(
         client: OAuthClientInformationFull,
         authorization_code: str,
     ) -> AuthorizationCode | None:
-        code = self._authorization_codes.get(authorization_code)
-        return code if code and code.client_id == client.client_id else None
+        async with self._lock:
+            if self._prune_expired():
+                self._save_state()
+            code = self._authorization_codes.get(authorization_code)
+            return code if code and code.client_id == client.client_id else None
 
     async def exchange_authorization_code(
         self,
@@ -132,10 +138,9 @@ class SingleUserOAuthProvider(
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
         async with self._lock:
+            self._prune_expired()
             stored = self._authorization_codes.pop(authorization_code.code, None)
             if stored is None or stored.client_id != client.client_id:
-                from mcp.server.auth.provider import TokenError
-
                 raise TokenError(
                     error="invalid_grant",
                     error_description="Authorization code is invalid or already used",
@@ -149,8 +154,11 @@ class SingleUserOAuthProvider(
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
-        token = self._refresh_tokens.get(refresh_token)
-        return token if token and token.client_id == client.client_id else None
+        async with self._lock:
+            if self._prune_expired():
+                self._save_state()
+            token = self._refresh_tokens.get(refresh_token)
+            return token if token and token.client_id == client.client_id else None
 
     async def exchange_refresh_token(
         self,
@@ -159,10 +167,9 @@ class SingleUserOAuthProvider(
         scopes: list[str],
     ) -> OAuthToken:
         async with self._lock:
+            self._prune_expired()
             stored = self._refresh_tokens.pop(refresh_token.token, None)
             if stored is None or stored.client_id != client.client_id:
-                from mcp.server.auth.provider import TokenError
-
                 raise TokenError(
                     error="invalid_grant",
                     error_description="Refresh token is invalid or already used",
@@ -172,14 +179,10 @@ class SingleUserOAuthProvider(
             return token
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        access_token = self._access_tokens.get(token)
-        if access_token and access_token.expires_at:
-            if access_token.expires_at < int(time.time()):
-                async with self._lock:
-                    self._access_tokens.pop(token, None)
-                    self._save_state()
-                return None
-        return access_token
+        async with self._lock:
+            if self._prune_expired():
+                self._save_state()
+            return self._access_tokens.get(token)
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         async with self._lock:
@@ -199,7 +202,7 @@ class SingleUserOAuthProvider(
         scopes = html.escape(" ".join(pending.params.scopes or [])) or "Yoke tools"
         escaped_request_id = html.escape(request_id, quote=True)
         return HTMLResponse(
-            _consent_html(client_name, scopes, escaped_request_id),
+            consent_html(client_name, scopes, escaped_request_id),
             headers={
                 "Cache-Control": "no-store",
                 "Content-Security-Policy": (
@@ -215,27 +218,37 @@ class SingleUserOAuthProvider(
         form = await request.form()
         request_id = str(form.get("request_id", ""))
         password = str(form.get("password", ""))
-        pending = self._pending.get(request_id)
-        if pending is None or pending.expires_at < time.time():
-            return HTMLResponse("Authorization request expired", status_code=400)
-        if not hmac.compare_digest(
-            password.encode(), self.authorization_password.encode()
-        ):
-            return HTMLResponse(
-                _consent_html(
-                    "ChatGPT",
-                    "Yoke tools",
-                    html.escape(request_id, quote=True),
-                    error=True,
-                ),
-                status_code=401,
-                headers={"Cache-Control": "no-store"},
-            )
-
         async with self._lock:
-            pending = self._pending.pop(request_id, None)
-            if pending is None or pending.expires_at < time.time():
+            self._prune_expired()
+            pending = self._pending.get(request_id)
+            if pending is None:
                 return HTMLResponse("Authorization request expired", status_code=400)
+            retry_after = self._consent_attempts.retry_after(pending.client_id)
+            if retry_after:
+                return HTMLResponse(
+                    "Too many authorization attempts. Try again later.",
+                    status_code=429,
+                    headers={
+                        "Retry-After": str(retry_after),
+                        "Cache-Control": "no-store",
+                    },
+                )
+            if not hmac.compare_digest(
+                password.encode(), self.authorization_password.encode()
+            ):
+                self._consent_attempts.failed(pending.client_id)
+                return HTMLResponse(
+                    consent_html(
+                        "ChatGPT",
+                        "Yoke tools",
+                        html.escape(request_id, quote=True),
+                        error=True,
+                    ),
+                    status_code=401,
+                    headers={"Cache-Control": "no-store"},
+                )
+            self._consent_attempts.succeeded(pending.client_id)
+            self._pending.pop(request_id)
             code_value = secrets.token_urlsafe(32)
             self._authorization_codes[code_value] = AuthorizationCode(
                 code=code_value,
@@ -252,8 +265,6 @@ class SingleUserOAuthProvider(
             )
         query = f"code={code_value}"
         if pending.params.state is not None:
-            from urllib.parse import quote
-
             query += f"&state={quote(pending.params.state, safe='')}"
         separator = "&" if "?" in str(pending.params.redirect_uri) else "?"
         return RedirectResponse(
@@ -288,18 +299,20 @@ class SingleUserOAuthProvider(
             refresh_token=refresh_value,
         )
 
-    def _prune_ephemeral(self) -> None:
+    def _prune_expired(self) -> bool:
         now = time.time()
-        self._pending = {
-            key: value
-            for key, value in self._pending.items()
-            if value.expires_at >= now
-        }
-        self._authorization_codes = {
-            key: value
-            for key, value in self._authorization_codes.items()
-            if value.expires_at >= now
-        }
+        changed = False
+        for records in (
+            self._pending,
+            self._authorization_codes,
+            self._access_tokens,
+            self._refresh_tokens,
+        ):
+            for key, value in list(records.items()):
+                if value.expires_at is not None and value.expires_at <= now:
+                    del records[key]
+                    changed = True
+        return changed
 
     def _load_state(self) -> None:
         if not self.state_file.exists():
@@ -329,10 +342,11 @@ class SingleUserOAuthProvider(
             key: token.model_copy(update={"subject": _TOKEN_SUBJECT})
             for key, token in refresh_tokens.items()
         }
-        if needs_subject_migration:
+        if self._prune_expired() or needs_subject_migration:
             self._save_state()
 
     def _save_state(self) -> None:
+        self._prune_expired()
         self.state_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         payload = {
             "clients": {
@@ -348,35 +362,4 @@ class SingleUserOAuthProvider(
                 for key, value in self._refresh_tokens.items()
             },
         }
-        temporary = self.state_file.with_suffix(f"{self.state_file.suffix}.tmp")
-        temporary.write_text(json.dumps(payload, separators=(",", ":")))
-        temporary.chmod(0o600)
-        os.replace(temporary, self.state_file)
-
-
-def _consent_html(
-    client_name: str,
-    scopes: str,
-    request_id: str,
-    *,
-    error: bool = False,
-) -> str:
-    error_html = (
-        '<p class="error">That authorization password was not valid.</p>'
-        if error
-        else ""
-    )
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Authorize Yoke MCP</title><style>
-body{{font:16px system-ui;background:#111827;color:#f9fafb;display:grid;place-items:center;min-height:100vh;margin:0}}
-main{{width:min(440px,calc(100% - 40px));background:#1f2937;padding:28px;border-radius:16px}}
-h1{{margin-top:0}} input,button{{box-sizing:border-box;width:100%;padding:12px;margin-top:12px;border-radius:8px}}
-button{{background:#f97316;color:white;border:0;font-weight:700;cursor:pointer}} .muted{{color:#9ca3af}} .error{{color:#fca5a5}}
-</style></head><body><main><h1>Authorize Yoke MCP</h1>
-<p><strong>{client_name}</strong> is requesting access to <strong>{scopes}</strong>.</p>
-<p class="muted">This permits ChatGPT to read, modify, and run commands as the Yoke MCP service account.</p>
-{error_html}<form method="post" action="/oauth/consent">
-<input type="hidden" name="request_id" value="{request_id}">
-<label>Authorization password<input type="password" name="password" required autofocus autocomplete="current-password"></label>
-<button type="submit">Authorize ChatGPT</button></form></main></body></html>"""
+        atomic_write_text(self.state_file, json.dumps(payload, separators=(",", ":")))

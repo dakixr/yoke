@@ -198,15 +198,6 @@ def initialize_owned_context_state(
     return context
 
 
-def recent_log_messages(context: AgentContext) -> list[Message]:
-    """Return recent non-instruction, non-snapshot conversation messages."""
-    projection = project_conversation(
-        context.conversation_log.entries,
-        leaf_id=context.conversation_log.leaf_id,
-    )
-    return [message.model_copy(deep=True) for message in projection.provider_messages]
-
-
 def _runtime_message(entry: ConversationEntry) -> Message:
     """Return one runtime message with non-persisted projection provenance."""
     assert entry.message is not None  # noqa: S101
@@ -321,22 +312,6 @@ def strip_persisted_memory_messages(
                 continue
         stripped.append(message.model_copy(deep=True))
     return stripped
-
-
-def next_compaction_generation(context: AgentContext) -> int:
-    """Compute the next compaction generation number."""
-    snapshot = project_conversation(
-        context.conversation_log.entries,
-        leaf_id=context.conversation_log.leaf_id,
-    ).checkpoint
-    if snapshot is None:
-        return 1
-    if snapshot.compaction_handoff is not None:
-        return snapshot.compaction_handoff.generation + 1
-    current = snapshot.metadata.get("generation")
-    if isinstance(current, int):
-        return current + 1
-    return 2
 
 
 def normalize_instructions(

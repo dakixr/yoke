@@ -39,17 +39,6 @@ class DequeuedPrompt:
     index: int
 
 
-def rebind_prompt_queue(
-    *,
-    state: PromptCliState,
-    state_lock: Lock,
-    active_session: ActiveSession,
-) -> None:
-    """Replace local queue state with one session's persisted queue."""
-    with state_lock:
-        _reload(state, active_session)
-
-
 def replace_prompt_queue(
     *,
     state: PromptCliState,

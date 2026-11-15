@@ -73,10 +73,6 @@ class ActiveSkill(BaseModel):
                 f"skill file `{self.source_path}` could not be read: {exc}"
             )
 
-    def cache_content(self) -> None:
-        """Store canonical instructions inline for durable session resumes."""
-        self.content = self.load_content()
-
     def prepare_for_prompt(self) -> str:
         """Return instructions and cache refreshed content for resumes."""
         content = self.load_content()

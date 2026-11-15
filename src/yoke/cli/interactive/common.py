@@ -45,6 +45,13 @@ SHORTCUT_LINES = (
     "Type `$skill-name` in a prompt to activate one or more skills.",
     "Use `/shortcuts` or `?` to show this list again.",
 )
+BASIC_SHORTCUTS_NOTICE = (
+    "Basic mode shortcuts:\n"
+    "Press `Enter` to send a line. Inputs sent during a turn are queued.\n"
+    "Press `Ctrl+C` to stop and exit, or type `exit` or `quit` to leave.\n"
+    "Use `/image path` to attach an image and `/skill name` to activate a skill.\n"
+    "Use `/shortcuts` or `?` to show this list again."
+)
 SHORTCUTS_NOTICE = "Keyboard shortcuts:\n" + "\n".join(SHORTCUT_LINES)
 
 
@@ -56,6 +63,7 @@ def session_resume_notice(session_id: str) -> str:
 def handle_slash_command(
     command: str,
     *,
+    basic_mode: bool = False,
     agent: AgentRunner,
     active_session: ActiveSession,
     messages: list[Message],
@@ -76,6 +84,11 @@ def handle_slash_command(
         handle_slash_command as dispatch,
     )
 
+    if basic_mode and command.strip().lower() in {"/shortcuts", "?"}:
+        from yoke.cli.render import print_scrollback_notice
+
+        print_scrollback_notice(console, BASIC_SHORTCUTS_NOTICE)
+        return True, messages, active_session
     return dispatch(
         command,
         agent=agent,

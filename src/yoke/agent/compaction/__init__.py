@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     )
     from .render import (
         build_compaction_summary_prompt,
-        build_summary_handoff_messages,
         is_real_user_message,
         render_message,
         summary_source_text,
@@ -61,7 +60,6 @@ _CORE_EXPORTS = (
 _TYPE_EXPORTS = ("CompactionBoundary", "CompactionReason")
 _RENDER_EXPORTS = (
     "build_compaction_summary_prompt",
-    "build_summary_handoff_messages",
     "is_real_user_message",
     "render_message",
     "summary_source_text",
@@ -100,7 +98,6 @@ __all__ = (
     "CompactionBoundary",
     "CompactionReason",
     "build_compaction_summary_prompt",
-    "build_summary_handoff_messages",
     "is_real_user_message",
     "render_message",
     "summary_source_text",

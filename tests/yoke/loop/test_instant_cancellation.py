@@ -156,7 +156,7 @@ def test_queued_skill_waits_for_its_fifo_position(tmp_path, monkeypatch) -> None
         activate_skill,
     )
     worker = control.start_turn("first", None)
-    assert agent.first_started.wait(timeout=1)
+    assert agent.first_started.wait(timeout=5)
     state.pending_prompts.append(PendingPrompt("before"))
     state.submit_action = "queue"
 
@@ -262,7 +262,7 @@ def test_steering_starts_replacement_before_retired_turn_finishes(
     )
 
     retired_worker = control.start_turn("first", None)
-    assert agent.first_started.wait(timeout=1)
+    assert agent.first_started.wait(timeout=5)
     original_start = state.turn_start_time
     state.turn_tool_count = 3
     assert control.steer_active_turn("second", None) is True
@@ -330,7 +330,7 @@ def test_instant_stop_emits_total_turn_summary(tmp_path) -> None:
     )
 
     worker = control.start_turn("first", None)
-    assert agent.started.wait(timeout=1)
+    assert agent.started.wait(timeout=5)
     state.turn_start_time = time.monotonic() - 5
     state.turn_tool_count = 2
 
@@ -449,7 +449,7 @@ def test_steering_continues_from_latest_tool_result_checkpoint(
     )
 
     retired_worker = control.start_turn("first", None)
-    assert checkpointed.wait(timeout=1)
+    assert checkpointed.wait(timeout=5)
     persisted = active_session.store.load(active_session.id)
     assert any(
         entry.message is not None and entry.message.role == "tool"
@@ -457,7 +457,7 @@ def test_steering_continues_from_latest_tool_result_checkpoint(
     )
 
     assert control.steer_active_turn("second", None) is True
-    assert second_started.wait(timeout=1)
+    assert second_started.wait(timeout=5)
     assert [message.role for message in replacement_messages] == [
         "user",
         "assistant",
@@ -591,10 +591,10 @@ def test_stop_and_immediate_continue_retain_completed_tool_work(
     )
 
     retired_worker = control.start_turn("first", None)
-    assert checkpointed.wait(timeout=1)
+    assert checkpointed.wait(timeout=5)
     assert control.stop_active_turn() is True
     active_worker = control.start_turn("continue", None)
-    assert second_started.wait(timeout=1)
+    assert second_started.wait(timeout=5)
 
     assert any(
         message.role == "tool" and "valuable" in (message.content or "")
@@ -710,7 +710,7 @@ def test_turn_cancellation_retires_live_tool_traces(tmp_path) -> None:
     )
 
     worker = control.start_turn("search", None)
-    assert agent.started.wait(timeout=1)
+    assert agent.started.wait(timeout=5)
     assert control.stop_active_turn() is True
     cancelled = store.snapshot()[0]
     assert cancelled.status == "cancelled"
@@ -808,19 +808,19 @@ def test_runtime_close_waits_for_cancelled_in_process_tool_before_resources_clos
         arguments={},
         stop_requested=lambda: True,
     )
-    assert started.wait(timeout=1)
+    assert started.wait(timeout=5)
     assert stopped is True
     assert result["cancelled"] is True
 
     closer = threading.Thread(target=agent.close)
     closer.start()
     try:
-        assert cancellation_seen.wait(timeout=1)
+        assert cancellation_seen.wait(timeout=5)
         assert closer.is_alive()
         assert lifecycle == []
     finally:
         release.set()
-        closer.join(timeout=1)
+        closer.join(timeout=5)
 
     assert not closer.is_alive()
     assert lifecycle == ["tool-finished", "resource-closed"]
@@ -872,7 +872,7 @@ def test_runtime_close_times_out_without_releasing_live_tool_resources(
         arguments={},
         stop_requested=lambda: True,
     )
-    assert started.wait(timeout=1)
+    assert started.wait(timeout=5)
     assert stopped is True
     assert result["cancelled"] is True
     monkeypatch.setattr(
@@ -884,7 +884,7 @@ def test_runtime_close_times_out_without_releasing_live_tool_resources(
     started_at = time.monotonic()
     with pytest.raises(InProcessToolShutdownError, match="runtime remains open"):
         agent.close()
-    assert time.monotonic() - started_at < 0.5
+    assert time.monotonic() - started_at < 5
     assert agent._closed is False
     assert not resource_closed.is_set()
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Literal
 
 from yoke.http.models.common import ApiModel
 
@@ -18,7 +17,3 @@ class UploadInfo(ApiModel):
 
 class UploadResponse(ApiModel):
     data: UploadInfo
-
-
-class UploadPurpose(ApiModel):
-    purpose: Literal["promptAttachment"] = "promptAttachment"

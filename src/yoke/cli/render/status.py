@@ -307,13 +307,14 @@ class InteractiveRenderer:
             self._turn_has_tool_output = True
 
     def print_intro(self) -> None:
-        """Print the interactive intro banner."""
+        """Print the basic input-mode intro banner."""
         print_version_banner(self._console)
         self._console.print(
             Text(
-                "yoke interactive mode. Type `exit` or `quit` to leave. "
-                "Press `Esc` twice to stop the current turn.\n"
-                "Use Ctrl+J for a new line.\n",
+                "yoke basic mode. Press Enter to send a line.\n"
+                "Inputs sent during a turn are queued. "
+                "Press Ctrl+C to stop and exit, or type `exit` or `quit` to leave.\n"
+                "Use /shortcuts for basic mode commands.\n",
                 style="dim",
             )
         )

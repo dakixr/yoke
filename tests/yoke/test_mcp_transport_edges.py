@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from yoke.mcp.client import StdioMcpClient
+from yoke.mcp.environment import server_environment
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp_server.search import MCPRipgrepTool
 from yoke.agent.tools.rg import RipgrepTool
@@ -78,3 +79,19 @@ def test_read_only_ripgrep_ignores_config_without_changing_agent_tool(
     assert tool.execute()["ok"] is True
     assert len(calls) == 1
     assert ("--no-config" in calls[0]) is ignore_config
+
+
+def test_stdio_environment_requires_explicit_secret_allowlist(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("PATH", "/bin")
+    monkeypatch.setenv("HOME", "/home/test")
+    monkeypatch.setenv("SECRET_KEY", "secret")
+    config = McpServerConfig(
+        name="test", command="unused", env_vars=("SECRET_KEY",), env={"OVERRIDE": "yes"}
+    )
+    environment = server_environment(config)
+    assert environment["PATH"] == "/bin"
+    assert environment["SECRET_KEY"] == "secret"
+    assert "UNRELATED_KEY" not in environment
+    assert environment["OVERRIDE"] == "yes"

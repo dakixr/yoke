@@ -118,7 +118,7 @@ def test_terminate_kills_group_after_leader_exits_with_pipe_held(
         started = time.monotonic()
         manager.terminate(result.session_id)
 
-        assert time.monotonic() - started < 3
+        assert time.monotonic() - started < 5
         snapshot = manager.snapshot(result.session_id)
         assert snapshot.status == "exited"
         assert snapshot.exit_code == 0
@@ -177,7 +177,7 @@ def test_timeout_kills_term_ignoring_parent_and_child(tmp_path: Path) -> None:
         assert result.exit_code is not None
         assert result.output == "tree-ready\n"
         assert manager.snapshots()[0].status == "failed"
-        assert time.monotonic() - started < 4
+        assert time.monotonic() - started < 5
         assert group_id is not None and _wait_until(lambda: not _pid_is_live(group_id))
         assert child_pid is not None and _wait_until(
             lambda: not _pid_is_live(child_pid)

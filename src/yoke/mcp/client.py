@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import os
 import queue
 import subprocess
 import threading
@@ -18,6 +17,7 @@ from typing import Protocol
 
 
 from yoke.mcp.config import McpServerConfig
+from yoke.mcp.environment import server_environment
 
 
 JSON = dict[str, Any]
@@ -62,18 +62,9 @@ class StdioMcpClient:
         """Start and initialize the MCP server."""
         if self._process is not None:
             return
-        if self.server.transport != "stdio":
-            raise McpClientError(
-                f"MCP transport `{self.server.transport}` is not supported yet; use stdio"
-            )
         if self.server.command is None:
             raise McpClientError("Missing MCP stdio command")
-        env = {key: value for key, value in os.environ.items() if value is not None}
-        for name in self.server.env_vars:
-            if name in os.environ:
-                env[name] = os.environ[name]
-        if self.server.env:
-            env.update(self.server.env)
+        env = server_environment(self.server)
         self._process = subprocess.Popen(
             [self.server.command, *self.server.args],
             cwd=str(self.server.cwd or self.root),

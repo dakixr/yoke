@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -34,6 +36,9 @@ from yoke.session.workspace import (
 
 if TYPE_CHECKING:
     from yoke.cli.bootstrap.types import ResolvedAgentConfig
+
+logger = logging.getLogger(__name__)
+
 
 harness_root = Path(__file__).parent.parent.parent
 
@@ -100,8 +105,10 @@ def build_cli_agent_from_args(
         if callable(close):
             try:
                 close()
-            except BaseException:
-                pass
+            except Exception:
+                logger.debug(
+                    "Could not close provider after startup failure", exc_info=True
+                )
         # The directory may disappear between preflight and binding tools.
         status = inspect_workspace(args.root)
         if isinstance(exc, (OSError, ValueError)) and not status.available:

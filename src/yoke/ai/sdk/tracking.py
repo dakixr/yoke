@@ -17,7 +17,7 @@ from yoke.agent_runs.context import (
     current_binding,
 )
 from yoke.agent_runs.protocol import RegistrationError
-from yoke.agent_runs.reclamation import REVOCATIONS
+from yoke.agent_runs.reclamation import REVOCATIONS, Revocations
 from yoke.agent_runs.reporting import Reporter, bind_reporter
 from yoke.ai.providers.usage_context import current_usage_metric_context
 from yoke.ai.sdk.resources import ProviderLease
@@ -30,12 +30,15 @@ if TYPE_CHECKING:
 class RunAuthority:
     """One SDK instance's authority, independent of retained prompt history."""
 
-    def __init__(self, host: Binding | None = None) -> None:
+    def __init__(
+        self, host: Binding | None = None, *, revocations: Revocations | None = None
+    ) -> None:
+        self._revocations = revocations if revocations is not None else REVOCATIONS
         self.binding = host
         self._source = host
         self._owned = False
         self._request_id = secrets.token_urlsafe(24)
-        self._ticket = REVOCATIONS.reserve() if host is not None else None
+        self._ticket = self._revocations.reserve() if host is not None else None
         if host is not None:
             try:
                 self.acquire()
@@ -68,9 +71,9 @@ class RunAuthority:
         try:
             revoke()
         except Exception:
-            REVOCATIONS.defer(ticket, revoke)
+            self._revocations.defer(ticket, revoke)
         else:
-            REVOCATIONS.release(ticket)
+            self._revocations.release(ticket)
 
 
 def fork_ownership(

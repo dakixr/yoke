@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from yoke.agent.context import ContextManager
 from yoke.agent.loop.lifecycle import complete_iteration_model
 from yoke.agent.loop.lifecycle import completed_result
@@ -25,6 +27,9 @@ from yoke.agent.loop.types import ToolResultCheckpoint
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ToolCall
 from yoke.agent.tools import LocalTool
+
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeAgentIterationMixin:
@@ -194,6 +199,11 @@ class RuntimeAgentIterationMixin:
             invocation = tool.parse_arguments(arguments)
             pending = invocation.pending_context_messages(result)
         except Exception:
+            logger.warning(
+                "Could not collect pending context for tool %s",
+                tool_name,
+                exc_info=True,
+            )
             return
         for message in pending:
             if message.role == "system":

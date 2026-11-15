@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -23,6 +25,8 @@ from yoke.cli.tools.policy import known_builtin_capability_ids
 from yoke.cli.tools.policy import update_config_file
 
 DEFAULT_ROOT = Path.cwd().absolute()
+
+logger = logging.getLogger(__name__)
 
 tools_app = typer.Typer(help="Manage dynamically loaded tools.")
 
@@ -193,6 +197,9 @@ def _validate_tool_name(name: str, *, root: Path) -> None:
     try:
         report = build_tool_report(root=root)
     except Exception:
+        logger.warning(
+            "Could not discover tools while validating %s", name, exc_info=True
+        )
         return
     known = {entry.tool.name for entry in report.discovered_tools}
     if name in known:

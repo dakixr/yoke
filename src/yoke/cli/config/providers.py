@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,18 +24,11 @@ from yoke.cli.providers.selection import resolve_cli_reasoning_effort
 from yoke.cli.providers.selection import parse_cli_model_ref
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from yoke.cli.config.runtime import CLIArgs
     from yoke.cli.tools.policy import PiConfig
 
-    BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
-    BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
-else:
-    from collections.abc import Callable
-
-    BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
-    BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
+BuiltinProviderFactory = Callable[[ProviderPluginContext], Provider]
+BuiltinModelLister = Callable[[ProviderPluginContext], list[ProviderModelInfo]]
 
 # These override maps remain as explicit injection seams for embedders and tests.
 _BUILTIN_PROVIDER_FACTORIES: dict[str, BuiltinProviderFactory] = {}

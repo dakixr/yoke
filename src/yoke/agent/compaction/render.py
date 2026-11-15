@@ -12,18 +12,6 @@ if TYPE_CHECKING:
     from yoke.agent.compaction.core import CompactionPreparation
 
 
-def build_summary_handoff_messages(
-    preparation: CompactionPreparation,
-) -> list[Message]:
-    """Build legacy flattened input, unused by runtime epoch compaction."""
-    from yoke.agent.compaction.core import COMPACTION_SUMMARY_PROMPT
-
-    return [
-        Message.system(COMPACTION_SUMMARY_PROMPT),
-        Message.user(summary_source_text(preparation)),
-    ]
-
-
 def build_compaction_summary_prompt(target_tokens: int) -> str:
     """Build the appended handoff instruction for one target size."""
     if target_tokens <= 0:

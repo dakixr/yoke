@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from pathlib import Path
 import threading
 
 from mcp.types import CallToolResult
@@ -222,9 +221,3 @@ def _encode_json_result(result: dict[str, object]) -> CallToolResult:
         structured_content=result,
         is_error=not bool(result.get("ok", True)),
     )
-
-
-def result_target_path(arguments: dict[str, object]) -> Path | None:
-    """Return a path-like audit target without reading or logging file contents."""
-    value = arguments.get("path") or arguments.get("workdir")
-    return Path(value) if isinstance(value, str) else None

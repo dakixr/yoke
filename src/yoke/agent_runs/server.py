@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import os
 from pathlib import Path
 import shutil
@@ -16,6 +18,9 @@ from yoke.agent_runs.protocol import OPERATION_TIMEOUT, receive, send
 
 if TYPE_CHECKING:
     from yoke.agent_runs.registry import AgentRunRegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 class Server:
@@ -81,10 +86,13 @@ class Server:
                     result = self.registry.dispatch(frame, pid=pid)
                     send(connection, {"ok": True, **result}, deadline)
                 except Exception:
+                    logger.warning("Agent run dispatch failed", exc_info=True)
                     try:
                         send(connection, {"ok": False}, deadline)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Could not send agent run failure response", exc_info=True
+                        )
 
     def close(self) -> None:
         self.stopped.set()

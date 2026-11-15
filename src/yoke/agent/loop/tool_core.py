@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import json
 from collections.abc import Sequence
 
@@ -17,6 +19,9 @@ from yoke.agent.loop.types import StopRequested
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ToolCall
 from yoke.agent.tools import LocalTool
+
+
+logger = logging.getLogger(__name__)
 
 
 def index_tools(tools: Sequence[LocalTool]) -> dict[str, LocalTool]:
@@ -174,8 +179,10 @@ def finalize_tool_result(
     try:
         invocation = prepare_tool(tools, tool_call.function.name, arguments)
         invocation.apply_result(context, finalized)
-    except Exception:  # noqa: S110
-        pass
+    except Exception:
+        logger.warning(
+            "Could not apply result for tool %s", tool_call.function.name, exc_info=True
+        )
     if after_tool_call is not None:
         hook_result = after_tool_call(
             AfterToolCallContext(

@@ -227,6 +227,18 @@ def test_oauth_discovery_dcr_pkce_refresh_and_mcp_access(tmp_path: Path) -> None
                 )
                 assert token.status_code == 200
                 tokens = token.json()
+                replay = await client.post(
+                    "/token",
+                    data={
+                        "grant_type": "authorization_code",
+                        "client_id": client_id,
+                        "code": callback_query["code"][0],
+                        "code_verifier": verifier,
+                        "redirect_uri": "http://localhost/callback",
+                        "resource": "http://localhost/mcp",
+                    },
+                )
+                assert replay.status_code == 400
 
                 refreshed = await client.post(
                     "/token",
@@ -349,3 +361,104 @@ def test_oauth_state_migrates_legacy_subjects(tmp_path: Path) -> None:
     }
     assert subjects == {"yoke-mcp-user"}
     assert token.access_token in migrated["access_tokens"]
+
+
+def test_oauth_consent_locks_out_repeated_wrong_passwords(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        service = create_service(
+            MCPServerConfig(
+                root=tmp_path,
+                oauth_issuer_url="http://localhost",
+                oauth_authorization_password="authorize-me",
+                oauth_state_file=tmp_path / "oauth.json",
+            )
+        )
+        transport = httpx2.ASGITransport(app=service.app)
+        async with service.server.session_manager.run():
+            async with httpx2.AsyncClient(
+                transport=transport,
+                base_url="http://localhost",
+                headers={"Host": "localhost"},
+                follow_redirects=False,
+            ) as client:
+                registration = await client.post(
+                    "/register",
+                    json={
+                        "client_name": "ChatGPT test",
+                        "redirect_uris": ["http://localhost/callback"],
+                        "token_endpoint_auth_method": "none",
+                        "grant_types": ["authorization_code", "refresh_token"],
+                        "response_types": ["code"],
+                    },
+                )
+                client_id = registration.json()["client_id"]
+                challenge = (
+                    base64.urlsafe_b64encode(hashlib.sha256(b"v" * 64).digest())
+                    .decode()
+                    .rstrip("=")
+                )
+                authorization = await client.get(
+                    "/authorize",
+                    params={
+                        "client_id": client_id,
+                        "redirect_uri": "http://localhost/callback",
+                        "response_type": "code",
+                        "code_challenge": challenge,
+                        "code_challenge_method": "S256",
+                        "scope": "yoke",
+                        "state": "state-value",
+                        "resource": "http://localhost/mcp",
+                    },
+                )
+                consent_url = authorization.headers["location"]
+                request_id = parse_qs(urlparse(consent_url).query)["request_id"][0]
+                for _ in range(3):
+                    rejected = await client.post(
+                        "/oauth/consent",
+                        data={"request_id": request_id, "password": "wrong"},
+                    )
+                    assert rejected.status_code == 401
+                # Even the correct password is refused while locked out.
+                locked = await client.post(
+                    "/oauth/consent",
+                    data={"request_id": request_id, "password": "authorize-me"},
+                )
+                assert locked.status_code == 429
+                assert int(locked.headers["Retry-After"]) > 0
+
+    asyncio.run(scenario())
+
+
+def test_consent_attempts_reset_after_success() -> None:
+    from yoke.mcp_server.auth_consent import ConsentAttempts
+
+    attempts = ConsentAttempts()
+    for _ in range(3):
+        attempts.failed("client")
+    assert attempts.retry_after("client") > 0
+    attempts.succeeded("client")
+    assert attempts.retry_after("client") == 0
+
+
+def test_oauth_expired_access_token_is_rejected(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        from mcp.server.auth.provider import AccessToken
+
+        provider = SingleUserOAuthProvider(
+            issuer_url="http://localhost",
+            resource_url="http://localhost/mcp",
+            authorization_password="authorize-me",
+            state_file=tmp_path / "oauth.json",
+            allowed_redirect_hosts=("localhost",),
+        )
+        provider._access_tokens["expired"] = AccessToken(
+            token="expired",
+            client_id="client",
+            scopes=["yoke"],
+            expires_at=1,
+            resource="http://localhost/mcp",
+            subject="yoke-mcp-user",
+        )
+        assert await provider.load_access_token("expired") is None
+
+    asyncio.run(scenario())

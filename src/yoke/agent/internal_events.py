@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 
 COMMAND_COMPLETION_EVENT = "command_completion"
@@ -18,10 +17,3 @@ def is_command_completion_message(message: Message | None) -> bool:
             COMMAND_COMPLETION_NOTICE_PREFIX
         )
     )
-
-
-def is_command_completion_entry(entry: ConversationEntry) -> bool:
-    """Recognize current metadata and legacy text-only completion notices."""
-    return entry.metadata.get(
-        INTERNAL_EVENT_METADATA_KEY
-    ) == COMMAND_COMPLETION_EVENT or is_command_completion_message(entry.message)

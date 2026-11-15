@@ -9,7 +9,8 @@ import pytest
 
 from yoke.agent.conversation import render_memory_message
 from yoke.agent.models import Message, ToolCall, ToolFunction
-from yoke.cli.main import CLIArgs, run_resume_cli
+from yoke.cli.config import CLIArgs
+from yoke.cli.runtime import run_resume_cli
 from yoke.cli.render import build_console, print_session_scrollback
 from yoke.cli.session import SessionStore
 

@@ -33,7 +33,8 @@ from pathlib import Path
 import pytest
 
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.main import CLIArgs, run_cli
+from yoke.cli.config import CLIArgs
+from yoke.cli.runtime import run_cli
 from yoke.cli.render import build_console
 from yoke.cli.runtime import create_active_session
 from yoke.cli.session import SessionStore

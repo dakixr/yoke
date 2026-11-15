@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from time import time_ns
 from pathlib import Path
 from threading import Lock
 from typing import Literal
@@ -11,6 +13,8 @@ from pydantic import Field
 
 from yoke._file_io import atomic_write_text
 
+
+logger = logging.getLogger(__name__)
 
 INPUT_ID_METADATA_KEY = "yoke_input_id"
 
@@ -65,7 +69,19 @@ class AdmissionStore:
                 return AdmissionSnapshot()
             try:
                 return AdmissionSnapshot.model_validate_json(path.read_text("utf-8"))
-            except (OSError, ValueError):
+            except OSError:
+                # A read failure must not turn existing records into an empty save.
+                logger.warning("Could not read admissions file %s", path, exc_info=True)
+                raise
+            except ValueError:
+                backup = path.with_name(f"{path.name}.corrupt-{time_ns()}")
+                logger.warning(
+                    "Corrupt admissions file %s; moving to %s",
+                    path,
+                    backup,
+                    exc_info=True,
+                )
+                path.replace(backup)
                 return AdmissionSnapshot()
 
     def save(self, session_id: str, snapshot: AdmissionSnapshot) -> None:

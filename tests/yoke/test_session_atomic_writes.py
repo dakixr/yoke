@@ -55,3 +55,14 @@ def test_concurrent_admission_writes_use_distinct_temporary_paths(
     assert len(set(temporary_paths)) == 2
     assert set(snapshot.records) in [{"first"}, {"second"}]
     assert not [path for path in destination.parent.iterdir() if path.suffix == ".tmp"]
+
+
+def test_corrupt_admission_is_quarantined(tmp_path: Path) -> None:
+    directory = tmp_path / "sessions"
+    path = directory / "inputs" / "broken.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json", encoding="utf-8")
+    snapshot = AdmissionStore(directory).load("broken")
+    assert snapshot.records == {}
+    assert not path.exists()
+    assert len(list(path.parent.glob("broken.json.corrupt-*"))) == 1

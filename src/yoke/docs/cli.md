@@ -1123,3 +1123,9 @@ By default yoke uses the current directory as the workspace root — all file to
 ```bash
 yoke --root /path/to/project "..."
 ```
+
+MCP stdio subprocesses receive a small runtime environment (`PATH`, home and
+user paths, locale, terminal, shell, temporary-directory, XDG directories,
+proxy and CA-certificate variables, and Windows system paths). Other inherited variables are excluded by default. Add variable names to
+`env_vars` to copy their current values, or set explicit values in `env`; those
+explicit values win.

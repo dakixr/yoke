@@ -10,7 +10,7 @@ from yoke.agent.context import ContextManager
 from yoke.agent.loop import AgentResult
 from yoke.agent.models import Message
 from yoke.cli.bootstrap.types import ToolLoadReport
-from yoke.cli.main import CLIArgs
+from yoke.cli.config import CLIArgs
 from yoke.cli.runtime import create_active_session
 
 

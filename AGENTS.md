@@ -1,6 +1,6 @@
 Keep the documentation at src/yoke/docs up to date when making changes to code in src/yoke.
 
-When adding or changing interactive keyboard shortcuts, update the startup shortcuts message in `src/yoke/cli/interactive/prompt/rendering.py` and the `/shortcuts` notice in `src/yoke/cli/interactive/common.py`.
+When adding or changing interactive keyboard shortcuts, update the basic-mode startup message in `src/yoke/cli/render/status.py` and the mode-specific `/shortcuts` notices in `src/yoke/cli/interactive/common.py`. Prompt-toolkit startup in `src/yoke/cli/interactive/prompt/rendering.py` prints only the version banner.
 
 Prefer deep modules with clear seams over flat files sharing a prefix. New Python files under `src/yoke` must stay at or below 400 lines. Do not increase an existing oversized module; split it into deeper modules when modifying it substantially.
 
