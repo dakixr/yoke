@@ -1,18 +1,19 @@
-"""Shared persisted prompt-queue values and sidecar I/O."""
+"""Shared persisted prompt-queue values and their database transactions."""
 
 from __future__ import annotations
 
-import os
+import json
+import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
-from yoke._file_io import atomic_write_text, exclusive_file_lock
 from yoke.agent.models import Message
+from yoke.session.inputs import ensure_input_row, session_database, sync_input_row
 
 
 class PersistedPendingInput(BaseModel):
@@ -29,7 +30,7 @@ class PersistedPendingInput(BaseModel):
 
 
 class PersistedPromptQueue(BaseModel):
-    """Crash-safe prompt queue sidecar shared by CLI and HTTP readers."""
+    """Crash-safe prompt queue shared by CLI and HTTP processes."""
 
     version: int = 1
     revision: int = 0
@@ -39,71 +40,42 @@ class PersistedPromptQueue(BaseModel):
 
 @dataclass(slots=True)
 class PromptQueueTransaction:
-    """One queue snapshot held under its cross-process mutation lock."""
+    """One queue snapshot read inside an open write transaction.
+
+    ``commit`` writes the snapshot into that transaction; it becomes durable
+    when the surrounding ``prompt_queue_transaction`` block exits normally.
+    """
 
     snapshot: PersistedPromptQueue
-    _path: Path
+    _connection: sqlite3.Connection
+    _session_id: str
 
     def commit(self) -> None:
-        """Persist the transaction snapshot while retaining the queue lock."""
-        _write_prompt_queue_path(self._path, self.snapshot)
-
-
-def prompt_queue_path(session_directory: Path, session_id: str) -> Path:
-    """Return the sidecar path for one persisted session queue."""
-    return session_directory / "queues" / f"{session_id}.json"
+        """Write the snapshot while the queue transaction is still held."""
+        _write_queue(self._connection, self._session_id, self.snapshot)
 
 
 def load_prompt_queue_snapshot(
     session_directory: Path,
     session_id: str,
 ) -> PersistedPromptQueue:
-    """Load one queue sidecar, returning an empty snapshot when absent/corrupt."""
-    return _load_prompt_queue_path(prompt_queue_path(session_directory, session_id))
+    """Load one committed queue, empty when the session has none."""
+    with session_database(session_directory).read() as connection:
+        return _read_queue(connection, session_id)
 
 
 def load_prompt_queue_snapshots(
     session_directory: Path,
     session_ids: Iterable[str],
 ) -> dict[str, PersistedPromptQueue]:
-    """Load selected queue sidecars with one directory enumeration."""
-    requested = set(session_ids)
+    """Load selected queues from one consistent snapshot."""
+    requested = list(dict.fromkeys(session_ids))
     if not requested:
         return {}
-    requested_keys = {os.path.normcase(session_id) for session_id in requested}
-    normalized_suffix = os.path.normcase(".json")
-    queue_directory = session_directory / "queues"
-    try:
-        paths = queue_directory.iterdir()
-        matching = {
-            os.path.normcase(path.stem): path
-            for path in paths
-            if os.path.normcase(path.suffix) == normalized_suffix
-            and os.path.normcase(path.stem) in requested_keys
-        }
-    except (FileNotFoundError, NotADirectoryError):
-        matching = {}
-    except OSError:
+    with session_database(session_directory).read() as connection:
         return {
-            session_id: load_prompt_queue_snapshot(session_directory, session_id)
-            for session_id in requested
+            session_id: _read_queue(connection, session_id) for session_id in requested
         }
-    return {
-        session_id: (
-            _load_prompt_queue_path(path)
-            if (path := matching.get(os.path.normcase(session_id))) is not None
-            else PersistedPromptQueue()
-        )
-        for session_id in requested
-    }
-
-
-def _load_prompt_queue_path(path: Path) -> PersistedPromptQueue:
-    """Load one known queue path, returning an empty snapshot on failure."""
-    try:
-        return PersistedPromptQueue.model_validate_json(path.read_text("utf-8"))
-    except (OSError, ValidationError, ValueError):
-        return PersistedPromptQueue()
 
 
 def write_prompt_queue_snapshot(
@@ -111,11 +83,9 @@ def write_prompt_queue_snapshot(
     session_id: str,
     snapshot: PersistedPromptQueue,
 ) -> None:
-    """Atomically persist one queue snapshot without resetting its revision."""
-    path = prompt_queue_path(session_directory, session_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with exclusive_file_lock(path.with_name(f".{path.name}.lock")):
-        _write_prompt_queue_path(path, snapshot)
+    """Persist one queue snapshot without resetting its revision."""
+    with session_database(session_directory).write() as connection:
+        _write_queue(connection, session_id, snapshot)
 
 
 @contextmanager
@@ -123,25 +93,83 @@ def prompt_queue_transaction(
     session_directory: Path,
     session_id: str,
 ) -> Iterator[PromptQueueTransaction]:
-    """Lock, load, and expose one queue for a read-modify-write transaction."""
-    path = prompt_queue_path(session_directory, session_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with exclusive_file_lock(path.with_name(f".{path.name}.lock")):
+    """Load one queue inside a write transaction for read-modify-write.
+
+    The transaction excludes every other writer, in this and other processes,
+    until the block exits. Admission, event and metadata writes made inside
+    the block commit atomically with the queue; an exception rolls them back.
+    """
+    with session_database(session_directory).write() as connection:
         yield PromptQueueTransaction(
-            snapshot=_load_prompt_queue_path(path),
-            _path=path,
+            snapshot=_read_queue(connection, session_id),
+            _connection=connection,
+            _session_id=session_id,
         )
 
 
-def _write_prompt_queue_path(path: Path, snapshot: PersistedPromptQueue) -> None:
-    """Persist a queue snapshot while the caller holds its mutation lock."""
+def _read_queue(
+    connection: sqlite3.Connection, session_id: str
+) -> PersistedPromptQueue:
+    meta = connection.execute(
+        "SELECT queue_rev, pending_images FROM session_queues WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    prompts = [
+        PersistedPendingInput.model_validate_json(pending)
+        for (pending,) in connection.execute(
+            "SELECT pending FROM inputs WHERE session_id = ? AND position IS NOT NULL "
+            "ORDER BY position",
+            (session_id,),
+        )
+    ]
+    if meta is None:
+        return PersistedPromptQueue(prompts=prompts)
+    return PersistedPromptQueue(
+        revision=int(meta[0]),
+        prompts=prompts,
+        pending_images=json.loads(meta[1]),
+    )
+
+
+def _write_queue(
+    connection: sqlite3.Connection,
+    session_id: str,
+    snapshot: PersistedPromptQueue,
+) -> None:
+    ids = [item.id for item in snapshot.prompts]
+    if len(set(ids)) != len(ids):
+        raise ValueError("A prompt queue cannot contain the same input id twice.")
+    previous = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT id FROM inputs WHERE session_id = ? AND position IS NOT NULL",
+            (session_id,),
+        )
+    ]
+    connection.execute(
+        "UPDATE inputs SET position = NULL, pending = NULL "
+        "WHERE session_id = ? AND position IS NOT NULL",
+        (session_id,),
+    )
+    for position, item in enumerate(snapshot.prompts):
+        ensure_input_row(connection, session_id, item.id)
+        connection.execute(
+            "UPDATE inputs SET position = ?, pending = ? WHERE session_id = ? AND id = ?",
+            (position, item.model_dump_json(), session_id, item.id),
+        )
+    for input_id in dict.fromkeys([*previous, *ids]):
+        sync_input_row(connection, session_id, input_id)
     if snapshot.revision == 0 and not snapshot.prompts and not snapshot.pending_images:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
+        connection.execute(
+            "DELETE FROM session_queues WHERE session_id = ?", (session_id,)
+        )
         return
-    atomic_write_text(path, snapshot.model_dump_json(indent=2))
+    connection.execute(
+        "INSERT INTO session_queues (session_id, queue_rev, pending_images) "
+        "VALUES (?, ?, ?) ON CONFLICT (session_id) DO UPDATE SET "
+        "queue_rev = excluded.queue_rev, pending_images = excluded.pending_images",
+        (session_id, snapshot.revision, json.dumps(snapshot.pending_images)),
+    )
 
 
 class QueueCandidate(Protocol):

@@ -5,7 +5,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic_core import to_json
 
 from yoke.agent.models import (
     Message,
@@ -22,7 +21,6 @@ from yoke.agent.session_tree import (
     SessionTree,
 )
 from yoke.agent.session_tree.projections import ConversationProjection
-from yoke.session.repository.io import SESSION_METADATA_EVENT
 from yoke.http.services.projectors import project_message_content
 from yoke.http.reads.message_index import SessionMessageIndex
 from yoke.http.services.session_service import SessionService
@@ -184,10 +182,9 @@ def test_forced_fallback_uses_last_entry_when_saved_leaf_is_null(
         [Message.user("first"), Message.assistant("second")]
     )
     _save_tree(store, "null-leaf", tree, tmp_path)
-    path = store.directory / "null-leaf.jsonl"
-    with path.open("ab") as handle:
-        handle.write(to_json({"type": SESSION_METADATA_EVENT, "leaf_id": None}))
-        handle.write(b"\n")
+    summary = store.summary_record("null-leaf")
+    assert summary is not None
+    store.update_metadata(summary.model_copy(update={"leaf_id": None}), ["leaf_id"])
 
     service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(
@@ -290,7 +287,7 @@ def test_forced_fallback_rejects_invalid_saved_topology(
         service.close()
 
 
-def test_truncated_cold_context_uses_bounded_tail_without_topology_build(
+def test_truncated_cold_context_reads_index_without_full_load(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -307,9 +304,8 @@ def test_truncated_cold_context_uses_bounded_tail_without_topology_build(
     service = SessionService(store, message_index=SessionMessageIndex(store))
 
     def fail(*_args, **_kwargs):
-        raise AssertionError("cold bounded Context must not build full topology")
+        raise AssertionError("cold bounded Context must not load the full session")
 
-    monkeypatch.setattr(service.message_index, "ensure", fail)
     monkeypatch.setattr(service.message_index, "warm_async", lambda *_args: None)
     monkeypatch.setattr(store, "load", fail)
     try:

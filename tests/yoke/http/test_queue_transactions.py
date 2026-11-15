@@ -46,20 +46,11 @@ def test_interleaved_queue_transactions_preserve_both_mutations(
     assert [item.id for item in snapshot.prompts] == ["first", "second"]
 
 
-def test_concurrent_queue_writes_use_distinct_temporary_paths(
+def test_concurrent_queue_writes_each_commit_a_whole_snapshot(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     session_directory = tmp_path / "sessions"
-    destination = session_directory / "queues" / "shared.json"
     start = Barrier(3)
-    temporary_paths: list[Path] = []
-    original_replace = Path.replace
-
-    def capture_replace(path: Path, target: Path) -> Path:
-        if target == destination:
-            temporary_paths.append(path)
-        return original_replace(path, target)
 
     def write(input_id: str, revision: int) -> None:
         start.wait(timeout=5)
@@ -72,7 +63,6 @@ def test_concurrent_queue_writes_use_distinct_temporary_paths(
             ),
         )
 
-    monkeypatch.setattr(Path, "replace", capture_replace)
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(write, "first", 1)
         second = executor.submit(write, "second", 2)
@@ -81,11 +71,10 @@ def test_concurrent_queue_writes_use_distinct_temporary_paths(
         second.result(timeout=5)
 
     snapshot = load_prompt_queue_snapshot(session_directory, "shared")
-    assert len(temporary_paths) == 2
-    assert len(set(temporary_paths)) == 2
-    assert snapshot.revision in {1, 2}
-    assert [item.id for item in snapshot.prompts] in [["first"], ["second"]]
-    assert not [path for path in destination.parent.iterdir() if path.suffix == ".tmp"]
+    assert (snapshot.revision, [item.id for item in snapshot.prompts]) in [
+        (1, ["first"]),
+        (2, ["second"]),
+    ]
 
 
 def _pending(input_id: str) -> PersistedPendingInput:

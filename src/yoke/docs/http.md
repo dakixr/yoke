@@ -354,26 +354,23 @@ instead of silently dropping fresh attachments.
 A saved session is independent of an HTTP connection. Listing sessions does
 not construct model providers or live runtimes. The daemon loads a
 `SessionRuntime` only when an operation needs process-local execution state.
-Session lists and recent-location discovery are served from the lightweight
-session index rather than parsing conversation history. The index stores the
-selection and tree summary needed by list cards, the latest user-message time,
-and a file signature. Changed,
-missing, legacy, or unreadable session files are repaired individually. The
+Session lists and recent-location discovery are served from session rows
+rather than parsing conversation history; list queries never read entry
+payloads. A row stores the selection and tree summary needed by list cards, the
+latest user-message time, the entry count and a revision. The
 session-list response includes the filtered total separately from the paged
 rows, so UI counters do not expose the current page size as product state. The
 browser retains that total during both initial bootstrap and later list
 refreshes, keeping the settled-session shelf available immediately. The
-daemon binds and can open the browser before filesystem repair and retention
-maintenance. Existing stores get a short startup grace period, then repair runs
+daemon binds and can open the browser before retention maintenance, which runs
 in a background task, so `yoke serve --open` and list requests never pay for
-those scans. Repair uses a metadata-bearing directory pass and a name-only
-prune pass instead of issuing repeated path existence and stat calls for every
-session. An individual metadata failure falls back to reading that session,
-and the prune pass catches files deleted while repair was running. Parsed index
-snapshots are reused until `index.json` changes, including same-process index
-updates. An index written by an older Yoke version is enriched by background
-maintenance; steady-state list latency is independent of conversation-history
-size.
+it. Steady-state list latency is independent of conversation-history size.
+The CLI and the daemon share the database through WAL. Prompt admission, its
+durable event and the queue change commit in one transaction, and live events
+are published only after that commit. A queue edit based on an old revision
+returns `409 queue_revision_conflict`, and a tree edit that loses a race with
+another writer returns `409 tree_revision_conflict`, whichever process made the
+other change.
 The browser requests `lastUserDesc` ordering for its session sidebar, so agent
 completion, tool activity, title edits, and model changes do not move a session
 ahead of one the user interacted with more recently. Sessions without a user
@@ -387,10 +384,7 @@ unread from its right-click menu. Opening the session clears `Done`. A later
 running, stopping, attention, error, or pending-queue state replaces it
 immediately. Queue counts
 separate runnable steer/queued prompts from paused prompts. Session-list pages
-load their queue summaries with one enumeration of the queue-sidecar directory,
-rather than one filesystem probe per visible session. If enumeration is denied
-or fails transiently, the list falls back to exact per-session reads so valid
-queue state is not reported as empty. Session-list and single-session refreshes
+load their queue summaries from one database snapshot. Session-list and single-session refreshes
 keep a newer locally known queue revision instead of letting an older summary
 overwrite the sidebar card. Settling is rejected while the runtime is busy or
 any queued prompt remains, including paused prompts.
@@ -409,21 +403,18 @@ same prompt-admission request; the browser mirrors that reopen optimistically
 and restores the settled state if admission fails.
 The sidebar connection dot also follows the event-stream state rather than
 remaining green during reconnect or resynchronization.
-Session listing also accepts the immediately preceding `session_stream` v1
-storage format and rewrites it to the current JSONL format on first load. A
-single unreadable session file is skipped rather than failing the complete
-session list.
+Sessions saved as JSONL by earlier releases appear only after
+`yoke db import-legacy`.
 
-Large-session reads use a separate persistent byte-offset/topology sidecar.
-The implementation lives in `yoke.http.reads.message_index`, with
-query methods on `SessionMessageIndex`, an `IndexStorage` owner for cached and
-durable topology, and tail-reading and sidecar-encoding modules. All reverse
-tail reads use `tail_scan.scan_tail`; callers supply their stopping rules.
-The initial latest-message, Context, Tree, and nearby tree-navigation reads have
-bounded reverse-scan paths that do not wait for a complete topology build. A
-single background worker builds or catches up the full sidecar afterward.
-Normal append-only writes reconcile incrementally, so a session growing from
-hundreds of megabytes does not make each refresh reread its historical prefix.
+Large-session reads use the entry topology stored in the database (id, parent
+and kind per entry, without payloads). The implementation lives in
+`yoke.http.reads.message_index`, with query methods on `SessionMessageIndex`
+and an `IndexStorage` owner that caches one topology per session revision.
+Latest-message, Context, Tree and navigation reads walk that topology and
+decode only the entries they return; on the largest real session (7,564
+entries, 650 MB) the topology query takes about 0.25 s. The shared read cache
+catches up from the rows written since its cached revision, so a growing
+session does not reload its historical prefix after each turn.
 Queue, permission, question, skill, metadata, and process-local tool/runtime
 lookups do not load conversation history merely to prove that a session exists.
 
@@ -439,13 +430,9 @@ abandoned-entry previews and report the total/truncation state. These bounds are
 HTTP-inspector behavior; they do not change the conversation used by the model
 runtime.
 
-Canonical full-session forks use a stable file clone plus a small metadata
-delta instead of decoding and reserializing every historical message. The HTTP
-path returns lightweight fork metadata and seeds the fork's read sidecar. When
-the source has a persisted read sidecar, the fork reuses that immutable snapshot
-with a hard link instead of serializing or copying the topology map again. The
-sidecar writer uses atomic replacement, so later source-index updates do not
-mutate the fork's linked snapshot. CLI callers that require an immediately
+Full-session forks copy the source's entry rows inside one SQL statement
+instead of decoding and reserializing every historical message. The HTTP path
+returns lightweight fork metadata. CLI callers that require an immediately
 materialized `SessionRecord` keep that existing return contract.
 
 The HTTP implementation separates route services in `yoke.http.services`, read
@@ -783,15 +770,12 @@ the saved model state is ready. SessionRuntime is also the sole owner of loading
 active conversation state; the HTTP agent factory no longer restores the same
 history a second time before provider work can begin.
 
-When a current persistent topology sidecar contains a self-contained compaction
-checkpoint, cold turn startup reconstructs the compact runtime state directly
-from indexed entry offsets instead of deserializing the historical session
+When the session's latest active compaction checkpoint is self-contained, cold
+turn startup reconstructs the compact runtime state from the stored topology
+and the selected entries instead of deserializing the historical session
 prefix. The reconstructed provider-message projection and conversation cache
-scope are required to match the established full-tree projection. Prompt startup
-does not synchronously build a missing topology sidecar: a cold sidecar miss
-falls back to the normal session read rather than scanning the same large file
-twice, while transcript and Tree tail reads continue to warm sidecars in the
-background. A stale append-only sidecar is caught up incrementally.
+scope are required to match the established full-tree projection. Without such
+a checkpoint, startup falls back to the normal session read.
 
 Turn checkpoints and settlement persist only the suffix created by that turn,
 grafted onto the canonical saved leaf, so the reduced runtime representation

@@ -60,8 +60,8 @@ do not consume the model context until needed.
 
 ### Sessions and performance
 
-CLI sessions are append-oriented JSONL event streams under
-`~/.yoke/sessions/`. They retain conversation branches, provider/model state,
+Sessions live in one SQLite database, `~/.yoke/yoke.db`, shared by the CLI and
+the HTTP daemon through WAL. They retain conversation branches, provider/model state,
 tool activity, compaction checkpoints, titles, and pins. Response continuity,
 prompt-cache affinity, context projection, and bounded compaction keep long
 sessions efficient without discarding the canonical event history.
@@ -70,14 +70,17 @@ SDK agents can save portable state snapshots and autosave durable roles. The
 async API serializes calls on one stateful agent, while `run_many()` creates a
 fresh isolated agent and provider for every bounded fan-out task.
 
-Session indexes, prompt queues, and usage logs share the portable file lock in
-`yoke._file_io`. Their write policies stay separate: index replacement retries,
-atomic queue snapshots, and usage-log append rollback and disk flushing.
+Sessions, conversation entries, durable events, prompt admissions and prompt
+queues are rows in that database. Every write is a `BEGIN IMMEDIATE`
+transaction, so a CLI and a daemon editing the same session serialize through
+SQLite instead of file locks; queue and tree edits compare-and-swap on stored
+revisions. Usage logs and workspace leases still use the portable file lock in
+`yoke._file_io`.
 
 The persistence implementation is exposed from `yoke.session` and organized
-under `yoke.session.repository`; CLI, HTTP, ACP, and handoff code use that
-shared repository. HTTP transcript pagination keeps a bounded topology snapshot
-cache and warms durable sidecars in the background.
+under `yoke.session.repository` on top of `yoke.storage`; CLI, HTTP, ACP, and
+handoff code use that shared repository. HTTP transcript pagination reads entry
+topology from the database and decodes only the entries a page shows.
 
 ### Usage and observability
 

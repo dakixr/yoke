@@ -6,24 +6,18 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Lock
 
-from pydantic import ValidationError
-from pydantic_core import from_json
-
 from yoke.agent.models import ConversationEntry
-from yoke.agent.skills.models import ActiveSkill
 from yoke.http.services.projectors import public_chat_entries
 from yoke.session import SessionStore
-from yoke.session.repository.io import (
-    SESSION_ENTRY_EVENT,
-    SESSION_ENTRY_METADATA_EVENT,
-    SESSION_METADATA_EVENT,
-)
 from yoke.session.repository.models import SessionRecord
 
 
 @dataclass(frozen=True, slots=True)
 class SessionReadSnapshot:
-    """One file-signature-consistent session read projection."""
+    """One signature-consistent session read projection.
+
+    ``signature`` is the store's (stored message bytes, row revision).
+    """
 
     signature: tuple[int, int]
     record: SessionRecord
@@ -48,10 +42,11 @@ class SessionReadCache:
     """Singleflight and retain a few parsed sessions for HTTP reads.
 
     A browser opens one session by issuing several concurrent requests. Without
-    singleflight, every request can parse the same large JSONL file at once.
-    The cache is bounded by source-file bytes and entry count, while always
+    singleflight, every request can decode the same large session at once.
+    The cache is bounded by stored message bytes and entry count, while always
     retaining the newest snapshot even if one unusually large session exceeds
-    the nominal byte budget.
+    the nominal byte budget. A newer revision is caught up from the rows
+    written since the cached one, unless the entries were rewritten.
     """
 
     def __init__(
@@ -93,13 +88,15 @@ class SessionReadCache:
             if cached is not None:
                 return cached
             prior = self._get_any_cached(session_id)
-            if prior is not None and signature[0] > prior.signature[0]:
-                appended = self._append_snapshot(session_id, prior, signature)
+            if prior is not None and signature[1] > prior.signature[1]:
+                appended = self._append_snapshot(session_id, prior)
                 if appended is not None:
                     self._store(session_id, appended)
                     return appended
+            # Label the snapshot with the signature read before loading. A write
+            # in between is then caught up by the next delta, never hidden.
             record = self.store.load(session_id)
-            final_signature = self.store.session_file_signature(session_id) or signature
+            final_signature = signature
             entries_by_id = {entry.id: entry for entry in record.conversation_entries}
             active_path_entries = tuple(
                 _active_path_entries(entries_by_id, record.leaf_id)
@@ -130,100 +127,40 @@ class SessionReadCache:
         self,
         session_id: str,
         prior: SessionReadSnapshot,
-        signature: tuple[int, int],
     ) -> SessionReadSnapshot | None:
-        path = self.store.directory / f"{session_id}.jsonl"
-        byte_count = signature[0] - prior.signature[0]
-        try:
-            with path.open("rb") as handle:
-                handle.seek(prior.signature[0])
-                raw = handle.read(byte_count)
-        except OSError:
+        delta = self.store.read_delta(session_id, prior.signature[1])
+        if delta is None:
             return None
-        if not raw or not raw.endswith(b"\n"):
-            return None
+        signature = delta.signature
 
         # ``SessionStore.save`` intentionally extends an append-proven existing
         # record in place to avoid copying a huge historical prefix. A cached
         # record can therefore already expose the new Python objects while its
-        # file signature and lookup maps still describe the old snapshot. Trim
-        # back to the indexed prefix here, then replay the durable JSONL delta
-        # exactly once.
+        # signature and lookup maps still describe the old snapshot. Trim back
+        # to the indexed prefix here, then apply the stored delta exactly once.
         known_entry_count = len(prior.entry_positions)
         entries = list(prior.record.conversation_entries[:known_entry_count])
         by_id = dict(prior.entries_by_id)
         positions = dict(prior.entry_positions)
-        changes: dict[str, object] = {}
         appended_entries: list[ConversationEntry] = []
         replaced_topology = False
-        for line in raw.splitlines():
-            if not line.strip():
-                continue
-            try:
-                payload = from_json(line)
-            except ValueError:
-                return None
-            if not isinstance(payload, dict):
-                return None
-            payload_type = payload.get("type")
-            if payload_type == SESSION_METADATA_EVENT:
-                changes.update(
-                    {key: value for key, value in payload.items() if key != "type"}
-                )
-                continue
-            if payload_type == SESSION_ENTRY_EVENT:
-                raw_entry = payload.get("entry")
-                if not isinstance(raw_entry, dict):
-                    return None
-                entry = ConversationEntry.model_validate(raw_entry)
-                if entry.id in positions:
-                    # Duplicate entry events are valid replacement semantics but
-                    # rare. A full reload keeps that edge case simple and exact.
-                    return None
+        for entry in delta.entries:
+            position = positions.get(entry.id)
+            if position is None:
                 positions[entry.id] = len(entries)
                 entries.append(entry)
                 by_id[entry.id] = entry
                 appended_entries.append(entry)
                 continue
-            if payload_type == SESSION_ENTRY_METADATA_EVENT:
-                entry_id = payload.get("entry_id")
-                metadata = payload.get("metadata")
-                if not isinstance(entry_id, str) or not isinstance(metadata, dict):
-                    continue
-                position = positions.get(entry_id)
-                existing = by_id.get(entry_id)
-                if position is None or existing is None:
-                    continue
-                replacement = existing.model_copy(
-                    update={"metadata": metadata},
-                    deep=True,
-                )
-                entries[position] = replacement
-                by_id[entry_id] = replacement
-                replaced_topology = True
-                continue
-            return None
-
-        # Metadata deltas are decoded from JSON, while model_copy(update=...)
-        # deliberately skips validation. Rehydrate nested models before the
-        # fast append path installs the delta into a typed SessionRecord.
-        if "active_skills" in changes:
-            raw_active_skills = changes["active_skills"]
-            if not isinstance(raw_active_skills, list):
+            if appended_entries or by_id[entry.id].parent_id != entry.parent_id:
+                # Stored messages are immutable, so an edited row only carries
+                # new metadata. Anything else is rare; reload it exactly.
                 return None
-            try:
-                changes["active_skills"] = [
-                    ActiveSkill.model_validate(skill) for skill in raw_active_skills
-                ]
-            except ValidationError:
-                return None
+            entries[position] = entry
+            by_id[entry.id] = entry
+            replaced_topology = True
 
-        record = prior.record.model_copy(
-            update={
-                **changes,
-                "conversation_entries": entries,
-            }
-        )
+        record = delta.record.model_copy(update={"conversation_entries": entries})
         active_path_entries: tuple[ConversationEntry, ...]
         active_entries: tuple[ConversationEntry, ...]
         if (

@@ -5,6 +5,9 @@ from yoke.session.repository.models import (
     SessionIndexEntry as SessionIndexEntry,
 )
 from yoke.session.repository.models import SessionRecord as SessionRecord
+from yoke.session.repository.models import (
+    SessionTreeConflict as SessionTreeConflict,
+)
 from yoke.session.repository.store import SessionStore as SessionStore
 from yoke.session.repository.tree_index import (
     SessionTreeIndex as SessionTreeIndex,

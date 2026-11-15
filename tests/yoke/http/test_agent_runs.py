@@ -215,7 +215,9 @@ def test_duplicates_out_of_order_and_private_fields_never_persist(
         registry.change(snapshot(status="completed", version=3))
         assert service.snapshots("owner")[0]["status"] == "completed"
         assert app.state.event_journal.latest_sequence("owner") == 2
-        content = (tmp_path / "events" / "owner.jsonl").read_text()
+        events, _ = app.state.event_journal.history("owner", limit=100)
+        content = "".join(event.model_dump_json() for event in events)
+        assert content
         assert "private" not in content
         assert "credentials" not in content
         registry.change(

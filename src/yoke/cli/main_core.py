@@ -23,6 +23,7 @@ _SUBCOMMANDS = frozenset(
         "acp",
         "resume",
         "session-handoff",
+        "db",
         "tools",
         "models",
         "providers",

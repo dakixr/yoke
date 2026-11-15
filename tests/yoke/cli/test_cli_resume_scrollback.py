@@ -412,25 +412,25 @@ def test_resume_does_not_write_unchanged_session_before_interactive(
     assert save_calls == []
 
 
-def test_save_reuses_loaded_record_without_decoding_file_again(
+def test_save_reuses_loaded_record_without_decoding_history_again(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     store = SessionStore(directory=tmp_path)
     store.save("current", [Message.user("hello")], root=tmp_path)
     loaded = store.load("current")
-    monkeypatch.setattr(
-        "yoke.session.repository.writer.decode_session_record_lines",
-        lambda *_args, **_kwargs: pytest.fail("session was decoded again"),
-    )
-
-    store.save(
-        "current",
-        loaded.messages,
-        conversation_entries=loaded.conversation_entries,
-        leaf_id=loaded.leaf_id,
-        root=tmp_path,
-        existing_record=loaded,
-    )
+    with monkeypatch.context() as guard:
+        guard.setattr(
+            "yoke.session.repository.table.decode_entry",
+            lambda *_args, **_kwargs: pytest.fail("session was decoded again"),
+        )
+        store.save(
+            "current",
+            loaded.messages,
+            conversation_entries=loaded.conversation_entries,
+            leaf_id=loaded.leaf_id,
+            root=tmp_path,
+            existing_record=loaded,
+        )
 
     assert store.load("current").messages[0].text_content() == "hello"

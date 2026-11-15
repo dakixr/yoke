@@ -26,6 +26,7 @@ from yoke.session.workspace import (
 from yoke.session.workspace import workspace_lease
 
 from .support import CaptureStream, FakeAgent
+from tests.yoke.session_rows import stored_session_bytes
 
 
 @pytest.mark.parametrize("mode", ["new", "session", "resume", "fork"])
@@ -38,7 +39,7 @@ def test_invalid_workspace_rejected_before_agent_construction(
     root.mkdir()
     store = SessionStore()
     store.save("saved", [Message.user("history")], root=root)
-    before = (store.directory / "saved.jsonl").read_bytes()
+    before = stored_session_bytes(store, "saved")
     root.rmdir()
     if invalid == "file":
         root.write_text("not a directory", encoding="utf-8")
@@ -64,7 +65,7 @@ def test_invalid_workspace_rejected_before_agent_construction(
     builder.assert_not_called()
     if agent is not None:
         assert agent.seen_history_lengths == []
-    assert (store.directory / "saved.jsonl").read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
     assert [record.id for record in store.list()] == ["saved"]
     assert "Falling back" not in stderr.getvalue()
     if mode in {"resume", "session"}:
@@ -125,14 +126,14 @@ def test_relocation_preserves_history_and_noop_does_not_write(
     assert relocated.leaf_id == original.leaf_id
     assert relocated.root == str(tmp_path)
     assert not old.exists()
-    before = (store.directory / "saved.jsonl").read_bytes()
+    before = stored_session_bytes(store, "saved")
     assert (
         run_resume_cli(
             args, "saved", relocate=tmp_path, agent=FakeAgent(), stdout=CaptureStream()
         )
         == 0
     )
-    assert (store.directory / "saved.jsonl").read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
 
 
 @pytest.mark.parametrize("target_kind", ["missing", "file"])
@@ -146,7 +147,7 @@ def test_invalid_relocation_leaves_saved_session_unchanged(
         target.write_text("file", encoding="utf-8")
     builder = Mock(side_effect=AssertionError("constructed provider"))
     monkeypatch.setattr("yoke.cli.runtime.startup.build_cli_agent_from_args", builder)
-    before = (store.directory / "saved.jsonl").read_bytes()
+    before = stored_session_bytes(store, "saved")
     assert (
         run_resume_cli(
             CLIArgs(root=str(tmp_path)),
@@ -158,7 +159,7 @@ def test_invalid_relocation_leaves_saved_session_unchanged(
         == 1
     )
     builder.assert_not_called()
-    assert (store.directory / "saved.jsonl").read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
 
 
 def test_root_selector_does_not_relocate_saved_workspace(
@@ -198,7 +199,7 @@ def test_rootless_saved_records_require_explicit_relocation(
     with pytest.raises(WorkspaceUnavailable) as error:
         workspaces.session_workspace(original)
     assert error.value.details["status"] == "unconfigured"
-    before = (store.directory / "legacy.jsonl").read_bytes()
+    before = stored_session_bytes(store, "legacy")
     builder = Mock(side_effect=AssertionError("constructed provider"))
     monkeypatch.setattr("yoke.cli.runtime.startup.build_cli_agent_from_args", builder)
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", lambda *a, **k: 0)
@@ -211,7 +212,7 @@ def test_rootless_saved_records_require_explicit_relocation(
         assert run_cli(args, stderr=stderr) == 1
     builder.assert_not_called()
     assert "--relocate" in stderr.getvalue()
-    assert (store.directory / "legacy.jsonl").read_bytes() == before
+    assert stored_session_bytes(store, "legacy") == before
     assert run_resume_cli(args, "legacy", relocate=tmp_path, agent=FakeAgent()) == 0
     relocated = store.load("legacy")
     assert relocated.root == str(tmp_path)
@@ -232,7 +233,7 @@ def test_fork_recovers_into_valid_target_without_modifying_source(
     store = SessionStore()
     old = tmp_path / "missing"
     original = store.save("source", [Message.user("history")], root=old)
-    before = (store.directory / "source.jsonl").read_bytes()
+    before = stored_session_bytes(store, "source")
     seen = []
 
     def interactive(args, _agent, _messages, **kwargs):
@@ -254,7 +255,7 @@ def test_fork_recovers_into_valid_target_without_modifying_source(
         == 0
     )
     assert len(seen) == 1
-    assert (store.directory / "source.jsonl").read_bytes() == before
+    assert stored_session_bytes(store, "source") == before
     assert not old.exists()
     with workspace_lease(store, seen[0].id, exclusive=True):
         pass
@@ -354,7 +355,7 @@ def test_busy_relocation_is_recoverable_before_provider_construction(
     target = tmp_path / "target"
     target.mkdir()
     store.save("saved", [Message.user("history")], root=tmp_path)
-    before = (store.directory / "saved.jsonl").read_bytes()
+    before = stored_session_bytes(store, "saved")
     builder = Mock(side_effect=AssertionError("constructed provider"))
     monkeypatch.setattr("yoke.cli.runtime.startup.build_cli_agent_from_args", builder)
     stderr = CaptureStream()
@@ -364,7 +365,7 @@ def test_busy_relocation_is_recoverable_before_provider_construction(
         )
     assert result == 1
     assert "in use" in stderr.getvalue()
-    assert (store.directory / "saved.jsonl").read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
     builder.assert_not_called()
 
 

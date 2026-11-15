@@ -1,4 +1,7 @@
-"""Session file serialization helpers."""
+"""Decoders for the JSONL session files written before the SQLite store.
+
+Only ``yoke db import-legacy`` reads these files.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +11,6 @@ from io import StringIO
 
 from pydantic_core import from_json
 
-from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import ConversationEntry
 from yoke.session.repository.models import SessionRecord
 
@@ -42,80 +44,6 @@ def decode_legacy_session_record(raw_text: str) -> SessionRecord:
         return SessionRecord.model_validate_json(_json_object_from_jsonl(raw_text))
     except ValueError:
         return _decode_legacy_event_stream(raw_text)
-
-
-def record_jsonl(record: SessionRecord) -> str:
-    """Encode a session record as a canonical JSONL event stream."""
-    return "".join(record_jsonl_lines(record))
-
-
-def record_jsonl_lines(record: SessionRecord) -> list[str]:
-    """Return canonical JSONL lines for a complete session record."""
-    return [
-        _jsonl_line(
-            {
-                "type": SESSION_JSONL_HEADER_TYPE,
-                "version": SESSION_JSONL_HEADER_VERSION,
-            }
-        ),
-        _jsonl_line(_metadata_event(record)),
-        *(_jsonl_line(_entry_event(entry)) for entry in record.conversation_entries),
-    ]
-
-
-def append_jsonl_lines(
-    existing_record: SessionRecord,
-    new_record: SessionRecord,
-) -> list[str] | None:
-    """Return append-only JSONL lines, or None if a rewrite is required."""
-    if not _entries_are_append_only(
-        existing_record.conversation_entries,
-        new_record.conversation_entries,
-    ):
-        return None
-    return trusted_append_jsonl_lines(
-        existing_record,
-        new_record,
-        new_record.conversation_entries[len(existing_record.conversation_entries) :],
-    )
-
-
-def trusted_append_jsonl_lines(
-    existing_record: SessionRecord,
-    new_record: SessionRecord,
-    appended_entries: Iterable[ConversationEntry],
-) -> list[str]:
-    """Encode an append delta whose topology was already proven by its owner."""
-    metadata_delta = _metadata_delta_event(existing_record, new_record)
-    lines = [_jsonl_line(metadata_delta)] if len(metadata_delta) > 1 else []
-    lines.extend(_jsonl_line(_entry_event(entry)) for entry in appended_entries)
-    return lines
-
-
-def metadata_delta_jsonl_line(changes: dict[str, object]) -> str:
-    """Encode a small metadata update as one JSONL event."""
-    if "type" in changes or "conversation_entries" in changes:
-        raise ValueError("Metadata delta contains a reserved session field.")
-    return _jsonl_line({"type": SESSION_METADATA_EVENT, **changes})
-
-
-def entry_metadata_jsonl_line(
-    entry_id: str,
-    metadata: dict[str, object],
-) -> str:
-    """Encode an in-place metadata replacement for one persisted entry."""
-    return _jsonl_line(
-        {
-            "type": SESSION_ENTRY_METADATA_EVENT,
-            "entry_id": entry_id,
-            "metadata": metadata,
-        }
-    )
-
-
-def entry_jsonl_line(entry: ConversationEntry) -> str:
-    """Encode one canonical conversation-entry event as a JSONL line."""
-    return _jsonl_line(_entry_event(entry))
 
 
 def is_canonical_jsonl(raw_text: str) -> bool:
@@ -224,60 +152,6 @@ def _decode_legacy_event_stream(raw_text: str) -> SessionRecord:
     if entries and not metadata.get("leaf_id"):
         metadata["leaf_id"] = entries[-1].id
     return SessionRecord.model_validate(metadata)
-
-
-def _metadata_event(record: SessionRecord) -> dict[str, object]:
-    return {"type": SESSION_METADATA_EVENT, **_metadata_payload(record)}
-
-
-def _metadata_delta_event(
-    existing_record: SessionRecord,
-    new_record: SessionRecord,
-) -> dict[str, object]:
-    existing = _metadata_payload(existing_record)
-    current = _metadata_payload(new_record)
-    return {
-        "type": SESSION_METADATA_EVENT,
-        **{key: value for key, value in current.items() if existing.get(key) != value},
-    }
-
-
-def _metadata_payload(record: SessionRecord) -> dict[str, object]:
-    return record.model_dump(
-        mode="json",
-        exclude={"conversation_entries"},
-    )
-
-
-def _entry_event(entry: ConversationEntry) -> dict[str, object]:
-    return {
-        "type": SESSION_ENTRY_EVENT,
-        "entry": entry.model_dump(mode="json"),
-    }
-
-
-def _entries_are_append_only(
-    existing_entries: list[ConversationEntry],
-    new_entries: list[ConversationEntry],
-) -> bool:
-    if len(new_entries) < len(existing_entries):
-        return False
-    return all(
-        existing_entry == new_entries[index]
-        for index, existing_entry in enumerate(existing_entries)
-    )
-
-
-def _jsonl_line(payload: dict[str, object]) -> str:
-    sanitized_payload = sanitize_json_surrogates(payload)
-    return (
-        json.dumps(
-            sanitized_payload,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
-        + "\n"
-    )
 
 
 def _json_object_from_jsonl(raw_text: str) -> str:

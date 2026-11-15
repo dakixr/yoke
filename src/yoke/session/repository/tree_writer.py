@@ -1,30 +1,30 @@
+"""Persist validated tree edits as compare-and-swap transactions."""
+
 from __future__ import annotations
 
 import builtins
 from collections.abc import Sequence
-from pathlib import Path
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.skills.models import ActiveSkill
 from yoke.session.repository.helpers import last_user_message_at
-from yoke.session.repository.index_service import SessionIndexService
 from yoke.session.repository.models import SessionRecord
-from yoke.session.repository.paths import session_path
+from yoke.session.repository.rows import changed_fields
+from yoke.session.repository.table import SessionTable
 from yoke.session.repository.tree_index import SessionTreeIndex
 from yoke.session.repository.utils import timestamp
-from yoke.session.repository.writer import (
-    append_session_entry_metadata,
-    append_session_tree_delta,
-    write_session_record,
-)
 
 
 class SessionTreeWriter:
-    """Persist validated tree edits without owning store or loading policy."""
+    """Persist tree selections, appends and entry metadata edits.
 
-    def __init__(self, directory: Path, index: SessionIndexService) -> None:
-        self.directory = directory
-        self.index = index
+    Each edit checks the stored tree revision the caller's record was read at
+    (when known) inside its write transaction. A concurrent tree change by
+    another writer raises ``SessionTreeConflict`` instead of being overwritten.
+    """
+
+    def __init__(self, table: SessionTable) -> None:
+        self.table = table
 
     def save_tree_delta(
         self,
@@ -59,12 +59,14 @@ class SessionTreeWriter:
                 ),
             }
         )
-        self.directory.mkdir(parents=True, exist_ok=True)
-        write_session_record(
-            record,
-            path=session_path(self.directory, session_id),
-            existing_record=existing_record,
-            trusted_append_entries=proven,
+        record.stamp_tree_revision(
+            self.table.append_tree(
+                record,
+                changed_fields(existing_record, record),
+                proven,
+                expected_tree_rev=existing_record.tree_revision,
+                require_existing=False,
+            )
         )
         if proven:
             record.conversation_entries.extend(proven)
@@ -73,7 +75,6 @@ class SessionTreeWriter:
             leaf_id,
             proven,
         )
-        self.index.update(record)
         return record
 
     def save_entry_metadata(
@@ -96,26 +97,19 @@ class SessionTreeWriter:
             tree_index.replace(entries, existing_record.leaf_id)
             position = tree_index.entry_position(entry.id)
         entries[position] = entry
-        now = timestamp()
         record = existing_record.model_copy(
-            update={
-                "conversation_entries": entries,
-                "updated_at": now,
-            }
+            update={"conversation_entries": entries, "updated_at": timestamp()}
         )
-        path = session_path(self.directory, session_id)
-        if path.exists():
-            append_session_entry_metadata(
-                path,
-                entry_id=entry.id,
-                entry_metadata=entry.metadata,
-                session_changes={"updated_at": now},
+        record.stamp_tree_revision(
+            self.table.replace_entry_metadata(
+                record,
+                entry,
+                ["updated_at"],
+                expected_tree_rev=existing_record.tree_revision,
+                require_existing=False,
             )
-        else:
-            self.directory.mkdir(parents=True, exist_ok=True)
-            write_session_record(record, path=path)
+        )
         tree_index.commit_entry_replacement(entries, entry)
-        self.index.update_metadata(record)
         return record
 
     def save_indexed_tree_navigation(
@@ -131,13 +125,9 @@ class SessionTreeWriter:
         """Persist a topology-proven tree checkout without loading old entries."""
         if existing_record.id != session_id:
             raise ValueError("Existing session record id does not match save id.")
-        path = session_path(self.directory, session_id)
-        if not path.exists():
-            raise ValueError(f"Session not found: {session_id}")
-        now = timestamp()
         updates: dict[str, object] = {
             "leaf_id": leaf_id,
-            "updated_at": now,
+            "updated_at": timestamp(),
             "last_user_message_at": last_user_message_at(
                 existing_record.last_user_message_at,
                 appended_entries,
@@ -148,29 +138,15 @@ class SessionTreeWriter:
         if active_skills is not None:
             updates["active_skills"] = list(active_skills)
         record = existing_record.model_copy(update=updates)
-        session_changes: dict[str, object] = {
-            "leaf_id": leaf_id,
-            "updated_at": now,
-            "last_user_message_at": record.last_user_message_at,
-        }
-        if clear_context_usage:
-            session_changes["context_usage"] = None
-        if active_skills is not None:
-            session_changes["active_skills"] = [
-                skill.model_dump(mode="json") for skill in active_skills
-            ]
-        append_session_tree_delta(
-            path,
-            session_changes=session_changes,
-            appended_entries=appended_entries,
+        record.stamp_tree_revision(
+            self.table.append_tree(
+                record,
+                updates,
+                appended_entries,
+                expected_tree_rev=existing_record.tree_revision,
+                require_existing=True,
+            )
         )
-        existing_index = self.index.entry(session_id)
-        entry_count = (
-            (existing_index.entry_count or 0) + len(appended_entries)
-            if existing_index is not None and existing_index.entry_count is not None
-            else len(existing_record.conversation_entries) + len(appended_entries)
-        )
-        self.index.update_metadata(record, entry_count=entry_count)
         return record
 
     def save_indexed_entry_metadata(
@@ -183,16 +159,14 @@ class SessionTreeWriter:
         """Persist one proven entry metadata update without loading the tree."""
         if existing_record.id != session_id:
             raise ValueError("Existing session record id does not match save id.")
-        path = session_path(self.directory, session_id)
-        if not path.exists():
-            raise ValueError(f"Session not found: {session_id}")
-        now = timestamp()
-        record = existing_record.model_copy(update={"updated_at": now})
-        append_session_entry_metadata(
-            path,
-            entry_id=entry.id,
-            entry_metadata=entry.metadata,
-            session_changes={"updated_at": now},
+        record = existing_record.model_copy(update={"updated_at": timestamp()})
+        record.stamp_tree_revision(
+            self.table.replace_entry_metadata(
+                record,
+                entry,
+                ["updated_at"],
+                expected_tree_rev=existing_record.tree_revision,
+                require_existing=True,
+            )
         )
-        self.index.update_metadata(record)
         return record

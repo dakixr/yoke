@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from yoke.session.repository.models import SessionRecord
 from yoke.session.repository.utils import normalize_root, normalize_title, timestamp
-from yoke.session.repository.writer import append_session_metadata
 
 if TYPE_CHECKING:
     from yoke.session.repository.store import SessionStore
@@ -24,7 +23,7 @@ def update_loaded_provider_state(
     reasoning_effort: str | None,
     context_window_tokens: int | None,
 ) -> SessionRecord:
-    """Append provider metadata and return an updated loaded record."""
+    """Persist changed provider metadata and update the loaded record in place."""
     changes: dict[str, object] = {
         "root": normalize_root(root) or record.root,
         "title": normalize_title(title) or record.title,
@@ -42,14 +41,8 @@ def update_loaded_provider_state(
     changes["updated_at"] = now
     if record.created_at is None:
         changes["created_at"] = now
-    updated = record.model_copy(update=changes)
-    path = store.session_path(record.id)
-    store.directory.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        append_session_metadata(path, changes)
-    else:
-        store.write_session_record(updated)
+    updated = store.update_metadata(record.model_copy(update=changes), changes)
     for key, value in changes.items():
         setattr(record, key, value)
-    store.update_index(updated)
+    record.stamp_tree_revision(updated.tree_revision)
     return record

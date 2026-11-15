@@ -13,7 +13,6 @@ from yoke.agent.models import ToolCall
 from yoke.agent.models import ToolFunction
 from yoke.agent.session_tree import SessionTree
 from yoke.cli.main import main
-from yoke.session.repository.writer import append_session_tree_delta
 from yoke.session import SessionStore
 from yoke.session.handoff import build_session_handoff
 
@@ -130,7 +129,7 @@ def test_session_handoff_keeps_tool_state_without_dumping_inline_image_bytes(
     assert captured.err == ""
 
 
-def test_session_handoff_falls_back_when_jsonl_is_newer_than_index(
+def test_session_handoff_reads_entries_appended_by_another_writer(
     tmp_path: Path,
 ) -> None:
     session_id = "handoff-stale-index"
@@ -143,14 +142,15 @@ def test_session_handoff_falls_back_when_jsonl_is_newer_than_index(
         leaf_id=tree.leaf_id,
         root=tmp_path,
     )
-    index_path = store.directory / "index.json"
-    stale_index = index_path.read_bytes()
+    summary = store.summary_record(session_id)
+    assert summary is not None and tree.leaf_id is not None
 
     tree.append_message(Message.assistant("Answer appended before index update"))
     appended = tree.entries[-1]
-    append_session_tree_delta(
-        store.directory / f"{session_id}.jsonl",
-        session_changes={"leaf_id": tree.leaf_id},
+    SessionStore(store.directory).save_indexed_tree_navigation(
+        session_id,
+        existing_record=summary,
+        leaf_id=appended.id,
         appended_entries=(appended,),
     )
 
@@ -165,7 +165,6 @@ def test_session_handoff_falls_back_when_jsonl_is_newer_than_index(
         "Original request",
         "Answer appended before index update",
     ]
-    assert index_path.read_bytes() == stale_index
 
 
 def test_session_handoff_compacts_tool_detail_by_default_and_full_opts_in(

@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Literal
 
 from yoke._file_io import file_lock
 from yoke.session.repository.models import SessionRecord
+from yoke.session.repository.paths import validate_session_id
 from yoke.session.repository.utils import timestamp
-from yoke.session.repository.writer import append_session_metadata
 
 if TYPE_CHECKING:
     from yoke.agent.loop.agent import RuntimeAgent
@@ -213,7 +213,7 @@ def workspace_lease(
     and resource cleanup. A retired worker must retain its lease until it really
     stops, not merely until a client receives an interruption acknowledgement.
     """
-    store.session_path(session_id)  # Validate before constructing a sidecar path.
+    validate_session_id(session_id)  # Validate before constructing a lock path.
     directory = store.directory / "workspaces"
     directory.mkdir(parents=True, exist_ok=True)
     lock = file_lock(
@@ -240,9 +240,8 @@ def relocate_session_workspace(
 ) -> SessionRecord:
     """Rebind a quiet session without rewriting any conversation entries.
 
-    Queue locking serializes admission with the durable root update. A failed
-    validation or busy check writes neither history nor metadata. Index repair
-    remains best-effort after the authoritative JSONL metadata append.
+    One queue transaction serializes admission with the durable root update. A
+    failed validation or busy check writes neither history nor metadata.
     """
     from yoke.session.admissions import AdmissionStore
     from yoke.session.queue import prompt_queue_transaction
@@ -286,7 +285,4 @@ def relocate_session_workspace(
                 "context_usage": None,
                 "skill_dirs": [],
             }
-            updated = record.model_copy(update=changes)
-            append_session_metadata(store.session_path(session_id), changes)
-            store.update_index_metadata(updated)
-            return updated
+            return store.update_metadata(record.model_copy(update=changes), changes)

@@ -21,22 +21,23 @@ from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.render import build_console
 from yoke.cli.runtime import create_active_session, run_cli
 from yoke.session import SessionStore
-from yoke.session.repository.io import decode_session_record
+from yoke.session.legacy.importer import import_legacy_sessions
 from yoke.session.repository.models import SessionRecord
-from yoke.session.repository.writer import write_session_record
+
+from tests.yoke.session_rows import stored_entry_rows
 
 from .support import CaptureStream, FakeAgent
 
 
-def session_payload(path: Path) -> dict[str, Any]:
+def session_payload(session_dir: Path, session_id: str) -> dict[str, Any]:
     return cast(
         dict[str, Any],
-        decode_session_record(path.read_text(encoding="utf-8")).model_dump(mode="json"),
+        SessionStore(session_dir).load(session_id).model_dump(mode="json"),
     )
 
 
-def test_session_store_migrates_legacy_session_stream(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
+def test_importer_migrates_legacy_session_stream(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "db")
     entry = ConversationEntry(kind="user", message=Message.user("legacy hello"))
     record = SessionRecord(
         version=4,
@@ -49,7 +50,8 @@ def test_session_store_migrates_legacy_session_stream(tmp_path: Path) -> None:
         updated_at="2026-08-01T12:01:00+00:00",
     )
     metadata = record.model_dump(mode="json", exclude={"conversation_entries"})
-    path = tmp_path / "legacy-stream.jsonl"
+    path = tmp_path / "legacy" / "legacy-stream.jsonl"
+    path.parent.mkdir()
     path.write_text(
         "\n".join(
             [
@@ -67,6 +69,8 @@ def test_session_store_migrates_legacy_session_stream(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    [result] = import_legacy_sessions(store, path.parent)
+    assert result.status == "imported", result.detail
     loaded = store.load("legacy-stream")
 
     assert loaded.version == 5
@@ -74,9 +78,6 @@ def test_session_store_migrates_legacy_session_stream(tmp_path: Path) -> None:
     assert [message.plain_text_content for message in loaded.messages] == [
         "legacy hello"
     ]
-    assert path.read_text(encoding="utf-8").startswith(
-        '{"type":"yoke_session","version":2}\n'
-    )
     assert store.load("legacy-stream") == loaded
 
 
@@ -111,11 +112,12 @@ def test_full_session_record_still_rejects_a_leaf_without_history() -> None:
         _ = corrupt.messages
 
 
-def test_session_store_does_not_rewrite_unsupported_legacy_schema(
+def test_importer_rejects_unsupported_legacy_schema_without_rewriting(
     tmp_path: Path,
 ) -> None:
-    store = SessionStore(tmp_path)
-    path = tmp_path / "too-old.jsonl"
+    store = SessionStore(tmp_path / "db")
+    path = tmp_path / "legacy" / "too-old.jsonl"
+    path.parent.mkdir()
     raw_text = (
         "\n".join(
             [
@@ -132,9 +134,11 @@ def test_session_store_does_not_rewrite_unsupported_legacy_schema(
     )
     path.write_text(raw_text, encoding="utf-8")
 
-    with pytest.raises(ValueError, match="Unsupported session schema version: 3"):
-        store.load("too-old")
+    [result] = import_legacy_sessions(store, path.parent)
 
+    assert result.status == "failed"
+    assert result.detail == "Unsupported session schema version: 3."
+    assert not store.exists("too-old")
     assert path.read_text(encoding="utf-8") == raw_text
 
 
@@ -192,7 +196,7 @@ def test_cli_session_json_keeps_transcript_after_compaction(
         "older answer alpha" in (message.content or "") for message in record.messages
     )
     assert any(entry.kind == "memory_snapshot" for entry in record.conversation_entries)
-    payload = session_payload(session_dir / "compact-demo.jsonl")
+    payload = session_payload(session_dir, "compact-demo")
     assert "messages" not in payload
     assert any(
         "older answer alpha" in (entry["message"].get("content") or "")
@@ -286,15 +290,13 @@ def test_session_writer_normalizes_surrogate_pair_prompt(
             ),
         ],
     )
-    path = tmp_path / "emoji-demo.jsonl"
+    store = SessionStore(tmp_path)
+    assert store.insert_record(record)
 
-    write_session_record(
-        record,
-        path=path,
+    raw_text = "".join(
+        bytes(row[4]).decode("utf-8") for row in stored_entry_rows(store, "emoji-demo")
     )
-
-    raw_text = path.read_text(encoding="utf-8")
-    decoded = decode_session_record(raw_text)
+    decoded = store.load("emoji-demo")
 
     assert "😊" in raw_text
     assert "�" in raw_text
@@ -334,29 +336,7 @@ def test_session_save_can_clear_skills_and_skill_directories(
     assert loaded.skill_dirs == []
 
 
-def test_session_load_reconciles_newer_index_title(tmp_path: Path, monkeypatch) -> None:
-    session_dir = tmp_path / "sessions"
-    monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
-    store = SessionStore()
-    store.save(
-        "title-demo",
-        [Message.user("hello")],
-        root=tmp_path,
-        title="Generated title",
-    )
-    index = store._index_service._cache.read()
-    index.sessions["title-demo"].title = "Manual title"
-    index.sessions["title-demo"].updated_at = "2999-01-01T00:00:00+00:00"
-    store._index_path().write_text(index.model_dump_json(indent=2), encoding="utf-8")
-
-    loaded = store.load("title-demo")
-    reloaded = store.load("title-demo")
-
-    assert loaded.title == "Manual title"
-    assert reloaded.title == "Manual title"
-
-
-def test_title_slash_command_persists_jsonl_title(tmp_path: Path, monkeypatch) -> None:
+def test_title_slash_command_persists_title(tmp_path: Path, monkeypatch) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     store = SessionStore()
@@ -379,9 +359,7 @@ def test_title_slash_command_persists_jsonl_title(tmp_path: Path, monkeypatch) -
         messages=messages,
         console=build_console(CaptureStream()),
     )
-    record = decode_session_record(
-        (session_dir / "title-command.jsonl").read_text(encoding="utf-8")
-    )
+    record = SessionStore(session_dir).load("title-command")
 
     assert handled is True
     assert record.title == "Manual title"
@@ -482,7 +460,7 @@ def test_session_store_fork_copies_session_without_pin(
     assert forked.provider_name == "codex"
     assert forked.model_id == "gpt-5.6-sol"
     assert forked.context_usage is None
-    assert (session_dir / "forked.jsonl").exists()
+    assert SessionStore(session_dir).exists("forked")
 
 
 def test_fork_slash_command_switches_to_persisted_copy(
@@ -522,7 +500,7 @@ def test_fork_slash_command_switches_to_persisted_copy(
     assert forked.messages == messages
     assert forked.title == "Fork title (fork)"
     assert provider.session_ids == [forked_session.id]
-    assert (session_dir / f"{forked_session.id}.jsonl").exists()
+    assert SessionStore(session_dir).exists(forked_session.id)
     assert f"Forked session fork-source -> {forked_session.id}" in (
         console_stream.getvalue()
     )
@@ -611,7 +589,7 @@ def test_info_slash_command_prints_active_session_metadata(
     assert "Session id: info-demo" in output
     assert "Title: Info demo" in output
     assert "Pinned: no" in output
-    assert f"Path: {session_dir / 'info-demo.jsonl'}" in output
+    assert f"Database: {session_dir / 'yoke.db'}" in output
     assert "Provider: codex" in output
     assert "Model: gpt-5.6-sol" in output
     assert "Messages: 2" in output

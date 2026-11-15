@@ -21,9 +21,11 @@ from typing import Any
 from urllib.request import Request
 from urllib.request import urlopen
 
-from yoke.session.repository.index import SESSION_INDEX_SUMMARY_VERSION
-from yoke.session.repository.models import SessionIndex
-from yoke.session.repository.models import SessionIndexEntry
+from yoke.agent.models import ConversationEntry
+from yoke.agent.models import Message
+from yoke.session import SessionStore
+from yoke.session.events import SessionEventJournal
+from yoke.session.legacy.importer import import_legacy_sessions
 
 
 TOKEN = "yoke-perf-benchmark"
@@ -168,7 +170,7 @@ def _write_session(
     entries: int,
     payload_bytes: int,
     archived: bool = False,
-) -> SessionIndexEntry:
+) -> None:
     timestamp = "2026-08-27T12:00:00+00:00"
     archived_at = timestamp if archived else None
     leaf_id = f"entry-{entries - 1:08d}" if entries else None
@@ -206,45 +208,16 @@ def _write_session(
                 )
             )
             parent = entry_id
-    stat = path.stat()
-    return SessionIndexEntry(
-        id=session_id,
-        root=str(root),
-        title=f"Benchmark {session_id}",
-        created_at=timestamp,
-        updated_at=timestamp,
-        archived_at=archived_at,
-        provider_name="codex",
-        model_id="gpt-5.6-codex",
-        reasoning_effort="medium",
-        leaf_id=leaf_id,
-        entry_count=entries,
-        file_size=stat.st_size,
-        file_mtime_ns=stat.st_mtime_ns,
-        summary_version=SESSION_INDEX_SUMMARY_VERSION,
-    )
 
 
-def _write_event_journal(path: Path, *, session_id: str, events: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = "2026-08-27T12:00:00+00:00"
-    with path.open("w", encoding="utf-8", newline="\n") as handle:
+def _write_events(session_dir: Path, *, session_id: str, events: int) -> None:
+    journal = SessionEventJournal(session_dir)
+    with journal.database.write():
         for seq in range(1, events + 1):
-            handle.write(
-                json.dumps(
-                    {
-                        "id": f"evt_{seq:012d}",
-                        "type": "session.message.updated",
-                        "time": timestamp,
-                        "session_id": session_id,
-                        "seq": seq,
-                        "version": 1,
-                        "data": {"entryID": f"entry-{seq:08d}"},
-                        "location": None,
-                    },
-                    separators=(",", ":"),
-                )
-                + "\n"
+            journal.append(
+                session_id,
+                "session.message.updated",
+                {"entryID": f"entry-{seq:08d}"},
             )
 
 
@@ -255,38 +228,22 @@ def _append_session_entry(
     parent_id: str,
     entry_id: str,
 ) -> None:
-    path = session_dir / f"{session_id}.jsonl"
-    timestamp = "2026-08-27T12:00:01+00:00"
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(
-            json.dumps(
-                {
-                    "type": "metadata",
-                    "leaf_id": entry_id,
-                    "updated_at": timestamp,
-                },
-                separators=(",", ":"),
-            )
-            + "\n"
-        )
-        handle.write(
-            _entry_line(
-                entry_id=entry_id,
-                parent_id=parent_id,
-                content="incremental refresh",
-                created_at=timestamp,
-            )
-        )
-
-
-def _make_index_stale(session_dir: Path) -> None:
-    path = session_dir / "index.json"
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    for entry in payload.get("sessions", {}).values():
-        entry.pop("file_size", None)
-        entry.pop("file_mtime_ns", None)
-        entry["summary_version"] = 0
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    """Append one entry from this (separate) process while the server runs."""
+    store = SessionStore(session_dir)
+    summary = store.summary_record(session_id)
+    assert summary is not None
+    entry = ConversationEntry(
+        kind="user",
+        id=entry_id,
+        parent_id=parent_id,
+        message=Message.user("incremental refresh"),
+    )
+    store.save_indexed_tree_navigation(
+        session_id,
+        existing_record=summary,
+        leaf_id=entry_id,
+        appended_entries=(entry,),
+    )
 
 
 def build_fixture(
@@ -300,11 +257,12 @@ def build_fixture(
     root = directory / "workspace"
     root.mkdir(exist_ok=True)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
-    entries: dict[str, SessionIndexEntry] = {}
+    legacy = directory / "legacy-jsonl"
+    legacy.mkdir(exist_ok=True)
     for index in range(session_count):
         session_id = f"small-{index:05d}"
-        entries[session_id] = _write_session(
-            directory / f"{session_id}.jsonl",
+        _write_session(
+            legacy / f"{session_id}.jsonl",
             session_id=session_id,
             root=root,
             entries=1,
@@ -315,30 +273,28 @@ def build_fixture(
     bytes_per_entry = 8192
     large_entries = max(1, large_mib * 1024 * 1024 // (bytes_per_entry + 512))
     large_id = "large-session"
-    entries[large_id] = _write_session(
-        directory / f"{large_id}.jsonl",
+    _write_session(
+        legacy / f"{large_id}.jsonl",
         session_id=large_id,
         root=root,
         entries=large_entries,
         payload_bytes=bytes_per_entry,
     )
-    index = SessionIndex(sessions=entries)
-    (directory / "index.json").write_text(
-        index.model_dump_json(indent=2), encoding="utf-8"
-    )
-    _write_event_journal(
-        directory / "events" / f"{large_id}.jsonl",
-        session_id=large_id,
-        events=event_count,
-    )
+    store = SessionStore(directory)
+    results = list(import_legacy_sessions(store, legacy))
+    assert all(result.status == "imported" for result in results), results
+    shutil.rmtree(legacy)
+    _write_events(directory, session_id=large_id, events=event_count)
+    signature = store.session_file_signature(large_id)
+    assert signature is not None
     return {
         "largeSessionID": large_id,
         "root": str(root),
-        "sessionCount": len(entries),
+        "sessionCount": len(results),
         "largeEntries": large_entries,
-        "largeBytes": (directory / f"{large_id}.jsonl").stat().st_size,
+        "largeBytes": signature[0],
         "eventCount": event_count,
-        "eventBytes": (directory / "events" / f"{large_id}.jsonl").stat().st_size,
+        "databaseBytes": store.database_path.stat().st_size,
     }
 
 

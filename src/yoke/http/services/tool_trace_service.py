@@ -259,12 +259,10 @@ class ToolTraceService:
             return self._persisted_cache_session_locks.setdefault(session_id, Lock())
 
     def _session_fingerprint(self, session_id: str) -> tuple[int, int, int]:
-        path = self.store.directory / f"{session_id}.jsonl"
-        try:
-            stat = path.stat()
-        except OSError as exc:
-            raise session_not_found() from exc
-        return stat.st_ino, stat.st_size, stat.st_mtime_ns
+        signature = self.store.session_file_signature(session_id)
+        if signature is None:
+            raise session_not_found()
+        return 0, signature[0], signature[1]
 
     def _project(
         self,

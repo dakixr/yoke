@@ -1,23 +1,23 @@
-"""Legacy provenance repair for the persistent HTTP message index."""
+"""Legacy provenance repair for the HTTP message index."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from pydantic_core import from_json
+from collections.abc import Callable
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tool_context import normalize_legacy_tool_context_entries
-from yoke.http.reads.message_index.models import kind, length, offset, parent_id
+from yoke.http.reads.message_index.models import kind, parent_id
+
+type EntryReader = Callable[[str], ConversationEntry | None]
 
 
 def mark_legacy_tool_context_locations(
-    source: Path,
+    read: EntryReader,
     locations: dict[str, list[object]],
     *,
     candidate_ids: list[str] | None = None,
 ) -> None:
-    """Mark legacy tool-injected image entries as tool context in the sidecar."""
+    """Mark legacy tool-injected image entries as tool context in the index."""
     candidate_scope = set(candidate_ids) if candidate_ids is not None else None
     candidates = [
         entry_id
@@ -29,47 +29,25 @@ def mark_legacy_tool_context_locations(
     ]
     if not candidates:
         return
-    try:
-        with source.open("rb") as handle:
-            cache: dict[str, ConversationEntry | None] = {}
+    cache: dict[str, ConversationEntry | None] = {}
 
-            def read(entry_id: str) -> ConversationEntry | None:
-                if entry_id in cache:
-                    return cache[entry_id]
-                location = locations.get(entry_id)
-                if location is None:
-                    cache[entry_id] = None
-                    return None
-                handle.seek(offset(location))
-                try:
-                    payload = from_json(handle.read(length(location)).strip())
-                    raw_entry = (
-                        payload.get("entry") if isinstance(payload, dict) else None
-                    )
-                    entry = (
-                        ConversationEntry.model_validate(raw_entry)
-                        if isinstance(raw_entry, dict)
-                        else None
-                    )
-                except (ValueError, OSError):
-                    entry = None
-                cache[entry_id] = entry
-                return entry
+    def cached_read(entry_id: str) -> ConversationEntry | None:
+        if entry_id not in cache:
+            cache[entry_id] = read(entry_id) if entry_id in locations else None
+        return cache[entry_id]
 
-            for candidate_id in candidates:
-                ancestry = _read_ancestry(locations, read, candidate_id)
-                if ancestry is None:
-                    continue
-                normalize_legacy_tool_context_entries(ancestry)
-                if ancestry[0].kind == "tool_context":
-                    locations[candidate_id][1] = "tool_context"
-    except OSError:
-        return
+    for candidate_id in candidates:
+        ancestry = _read_ancestry(locations, cached_read, candidate_id)
+        if ancestry is None:
+            continue
+        normalize_legacy_tool_context_entries(ancestry)
+        if ancestry[0].kind == "tool_context":
+            locations[candidate_id][1] = "tool_context"
 
 
 def _read_ancestry(
     locations: dict[str, list[object]],
-    read,
+    read: EntryReader,
     candidate_id: str,
 ) -> list[ConversationEntry] | None:
     """Read the finite provenance chain needed by the shared normalizer."""

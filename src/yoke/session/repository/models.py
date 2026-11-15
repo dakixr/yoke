@@ -8,6 +8,21 @@ from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.state import transcript_messages_from_entries
 
+SESSION_INDEX_SUMMARY_VERSION = 3
+
+
+class SessionTreeConflict(ValueError):
+    """A tree edit was based on an obsolete stored tree revision."""
+
+    def __init__(self, session_id: str, expected: int, actual: int) -> None:
+        super().__init__(
+            f"Session {session_id} tree changed (expected revision {expected}, "
+            f"found {actual})."
+        )
+        self.session_id = session_id
+        self.expected = expected
+        self.actual = actual
+
 
 class SessionRecord(BaseModel):
     """Persisted CLI session state."""
@@ -31,6 +46,25 @@ class SessionRecord(BaseModel):
     context_window_tokens: int | None = None
     context_usage: dict[str, object] | None = None
     _history_loaded: bool = PrivateAttr(default=True)
+    _tree_rev: int | None = PrivateAttr(default=None)
+
+    @property
+    def tree_revision(self) -> int | None:
+        """Stored tree revision this record was read or written at, if known."""
+        return self._tree_rev
+
+    def stamp_tree_revision(self, revision: int | None) -> None:
+        """Record the stored tree revision this value reflects."""
+        self._tree_rev = revision
+
+    @property
+    def history_loaded(self) -> bool:
+        """Whether conversation_entries holds the complete stored history."""
+        return self._history_loaded
+
+    def mark_summary(self) -> None:
+        """Mark this record as metadata only, without conversation history."""
+        self._history_loaded = False
 
     @property
     def messages(self) -> list[Message]:
@@ -87,7 +121,7 @@ class SessionIndexEntry(BaseModel):
             active_skills=[skill.model_copy(deep=True) for skill in self.active_skills],
             skill_dirs=list(self.skill_dirs),
         )
-        record._history_loaded = False
+        record.mark_summary()
         return record
 
 

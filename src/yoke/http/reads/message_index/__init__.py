@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from yoke.agent.models import ConversationEntry, Message
 from yoke.http.reads.message_index import paths as paths
-from yoke.http.reads.message_index import sidecar as sidecar
-from yoke.http.reads.message_index import tail as tail
-from yoke.http.reads.message_index import tail_navigation as tail_navigation
 from yoke.http.reads.message_index.models import (
     PUBLIC_EXCLUDED_KINDS,
     ContextIndexWindow,
@@ -14,9 +11,7 @@ from yoke.http.reads.message_index.models import (
     NavigationIndexPreview,
     RuntimeIndexSeed,
     TreeIndexPage,
-    can_append,
     kind,
-    prefix_hash,
 )
 from yoke.http.reads.message_index.models import (
     parent_id as location_parent_id,
@@ -33,7 +28,6 @@ class SessionMessageIndex:
         self.storage = IndexStorage(store, max_cached_sessions)
         self.ensure = self.storage.ensure
         self.warm_async = self.storage.warm_async
-        self.clone_sidecar = self.storage.clone_sidecar
         self.close = self.storage.close
 
     def page(
@@ -44,16 +38,7 @@ class SessionMessageIndex:
         order: str,
         anchor_id: str | None,
     ) -> MessagePage | None:
-        snapshot = self.storage.current_snapshot(session_id)
-        if snapshot is None and order == "desc":
-            page = tail_navigation.tail_page(
-                self.store, session_id, limit=limit, anchor_id=anchor_id
-            )
-            if page is not None:
-                self.warm_async(session_id)
-                return page
-        if snapshot is None:
-            snapshot = self.ensure(session_id)
+        snapshot = self.ensure(session_id)
         if snapshot is None:
             return None
         if order == "desc":
@@ -80,13 +65,7 @@ class SessionMessageIndex:
 
     def tool_trace_messages(self, session_id: str) -> list[Message] | None:
         """Read only active-branch turns that contain persisted tool activity."""
-        snapshot = self.storage.current_snapshot(session_id)
-        if snapshot is None:
-            has_tools = tail.has_persisted_tool_entries(self.store, session_id)
-            if has_tools is False:
-                self.warm_async(session_id)
-                return []
-            snapshot = self.ensure(session_id)
+        snapshot = self.ensure(session_id)
         if snapshot is None:
             return None
         active_ids = paths.active_ids(snapshot)
@@ -143,16 +122,7 @@ class SessionMessageIndex:
         anchor_id: str | None,
     ) -> TreeIndexPage | None:
         """Read one newest-first tree page while keeping node rows chronological."""
-        snapshot = self.storage.current_snapshot(session_id)
-        if snapshot is None and anchor_id is None:
-            tail_page = tail.tail_tree_page(
-                self.store, self.storage, session_id, limit=limit
-            )
-            if tail_page is not None:
-                self.warm_async(session_id)
-                return tail_page
-        if snapshot is None:
-            snapshot = self.ensure(session_id)
+        snapshot = self.ensure(session_id)
         if snapshot is None:
             return None
         ordered_ids = list(snapshot.entries)
@@ -192,18 +162,7 @@ class SessionMessageIndex:
         include_instructions: bool,
     ) -> ContextIndexWindow | None:
         """Read a bounded active context tail and the latest checkpoint if present."""
-        snapshot = self.storage.current_snapshot(session_id)
-        if snapshot is None:
-            tail_window = tail.tail_context_window(
-                self.store,
-                session_id,
-                limit=limit,
-                include_instructions=include_instructions,
-            )
-            if tail_window is not None:
-                self.warm_async(session_id)
-                return tail_window
-            snapshot = self.ensure(session_id)
+        snapshot = self.ensure(session_id)
         if snapshot is None:
             return None
         active_ids = paths.active_ids(snapshot)
@@ -250,24 +209,7 @@ class SessionMessageIndex:
 
     def runtime_seed(self, session_id: str) -> RuntimeIndexSeed | None:
         """Read a compacted runtime seed without forcing a cold full index scan."""
-        snapshot = self.storage.current_snapshot(session_id)
-        if snapshot is None:
-            prior = self.storage.cache.get(session_id) or sidecar.load_sidecar(
-                self.store.directory, session_id
-            )
-            if prior is None:
-                return None
-            source = self.store.directory / f"{session_id}.jsonl"
-            try:
-                stat = source.stat()
-            except OSError:
-                return None
-            source_prefix_hash = prefix_hash(source, stat.st_size)
-            if source_prefix_hash is None or not can_append(
-                prior, stat.st_size, source_prefix_hash
-            ):
-                return None
-            snapshot = self.ensure(session_id)
+        snapshot = self.ensure(session_id)
         if snapshot is None:
             return None
         active_ids = paths.active_ids(snapshot)
@@ -344,19 +286,7 @@ class SessionMessageIndex:
         abandoned_limit: int,
     ) -> NavigationIndexPreview | None:
         """Compare current and target parent chains without loading full entries."""
-        snapshot = self.storage.current_snapshot(session_id)
-        if snapshot is None:
-            tail_preview = tail_navigation.tail_navigation_preview(
-                self.store,
-                self.storage,
-                session_id,
-                target_id=target_id,
-                abandoned_limit=abandoned_limit,
-            )
-            if tail_preview is not None:
-                self.warm_async(session_id)
-                return tail_preview
-            snapshot = self.ensure(session_id)
+        snapshot = self.ensure(session_id)
         if snapshot is None or target_id not in snapshot.entries:
             return None
         current_ids = paths.active_ids(snapshot)
@@ -414,13 +344,7 @@ class SessionMessageIndex:
         session_id: str,
         target_id: str,
     ) -> ConversationEntry | None:
-        snapshot = self.storage.current_snapshot(session_id)
-        if snapshot is None:
-            entry = tail_navigation.tail_entry(self.store, session_id, target_id)
-            if entry is not None:
-                self.warm_async(session_id)
-                return entry
-            snapshot = self.ensure(session_id)
+        snapshot = self.ensure(session_id)
         if snapshot is None or target_id not in snapshot.entries:
             return None
         entries = self.storage.read_entries(session_id, snapshot, [target_id])

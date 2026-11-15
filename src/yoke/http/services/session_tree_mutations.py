@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from yoke.http.errors import ApiError
 from yoke.http.models.session import (
     TreeEntryPatchData,
@@ -13,7 +16,7 @@ from yoke.http.models.session import (
 from yoke.http.services.session_catalog import SessionCatalog
 from yoke.http.reads.cursors import revision_from_timestamp
 from yoke.http.reads.model import SessionReadModel
-from yoke.session import SessionRecord
+from yoke.session import SessionRecord, SessionTreeConflict
 
 
 class SessionTreeMutations:
@@ -31,7 +34,8 @@ class SessionTreeMutations:
         )
         edit = self.read_model.edit(session_id, request.target_id)
         self.require_revision(edit.record, request.expected_revision)
-        updated, outcome = edit.navigate(request.branch_summary)
+        with self.tree_conflicts(session_id, request.expected_revision):
+            updated, outcome = edit.navigate(request.branch_summary)
         revision = revision_from_timestamp(updated.updated_at)
         if updated is not edit.record:
             self.catalog.publish(
@@ -63,7 +67,8 @@ class SessionTreeMutations:
         self.require_revision(self.read_model.summary(session_id), expected_revision)
         edit = self.read_model.edit(session_id, entry_id, label=True)
         self.require_revision(edit.record, expected_revision)
-        updated, entry = edit.label(label)
+        with self.tree_conflicts(session_id, expected_revision):
+            updated, entry = edit.label(label)
         revision = revision_from_timestamp(updated.updated_at)
         self.catalog.publish(
             updated, "session.tree.updated", {"revision": revision, "entryID": entry_id}
@@ -71,6 +76,22 @@ class SessionTreeMutations:
         return TreeEntryPatchResponse(
             data=TreeEntryPatchData(revision=revision, entry=entry)
         )
+
+    @contextmanager
+    def tree_conflicts(self, session_id: str, expected: int) -> Iterator[None]:
+        """Report a concurrent tree change caught by the store as a 409."""
+        try:
+            yield
+        except SessionTreeConflict as exc:
+            actual = revision_from_timestamp(
+                self.read_model.summary(session_id).updated_at
+            )
+            raise ApiError(
+                409,
+                "tree_revision_conflict",
+                f"Tree changed since revision {expected}.",
+                {"expectedRevision": expected, "actualRevision": actual},
+            ) from exc
 
     @staticmethod
     def require_revision(record: SessionRecord, expected: int) -> None:

@@ -21,6 +21,8 @@ from yoke.http.runtime.entry_persistence import (
 from yoke.session.admissions import INPUT_ID_METADATA_KEY, AdmissionRecord
 from yoke.session.interrupt import interrupted_turn_snapshot
 
+from tests.yoke.session_rows import stored_entry_rows
+
 
 @pytest.mark.parametrize("mode", ["missing", "persisted", "continuation", "empty"])
 @pytest.mark.parametrize("dangling", [False, True])
@@ -113,7 +115,7 @@ def test_interruption_only_copies_and_appends_new_entries(
                 "unfinished",
             )
         before = [entry.model_dump() for entry in snapshot.record.conversation_entries]
-        prefix = store.directory.joinpath("session-a.jsonl").read_bytes()
+        prefix = stored_entry_rows(store, "session-a")
         # Reference the original full-history algorithm before installing guards.
         active = snapshot.owned_active_path()
         _, expected = interrupted_turn_snapshot(
@@ -202,9 +204,7 @@ def test_interruption_only_copies_and_appends_new_entries(
         assert saved.title == "Preserved title"
         assert saved.provider_name == "fixture"
         assert saved.model_id == "model"
-        assert (
-            store.directory.joinpath("session-a.jsonl").read_bytes().startswith(prefix)
-        )
+        assert stored_entry_rows(store, "session-a")[: len(prefix)] == prefix
         assert store.index_entry("session-a").entry_count == len(
             saved.conversation_entries
         )

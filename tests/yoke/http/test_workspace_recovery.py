@@ -11,6 +11,7 @@ from yoke.agent.models import Message
 from yoke.cli.config import runtime as config_runtime
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.session.workspace import WorkspaceBusy, relocate_session_workspace
+from tests.yoke.session_rows import stored_entry_bytes, stored_session_bytes
 
 
 TOKEN = "workspace-recovery-test"
@@ -156,7 +157,7 @@ def test_root_dependent_endpoints_return_one_actionable_error_without_provider_w
 ):
     h = harness
     h.root.rmdir()
-    original = (h.store.directory / "saved.jsonl").read_bytes()
+    original = stored_session_bytes(h.store, "saved")
     response = req(h, method, path, **({"json": body} if body is not None else {}))
     assert response.status_code == 409, response.text
     error = response.json()["error"]
@@ -168,7 +169,7 @@ def test_root_dependent_endpoints_return_one_actionable_error_without_provider_w
     }
     assert error["requestID"]
     assert not h.roots and not h.calls
-    assert (h.store.directory / "saved.jsonl").read_bytes() == original
+    assert stored_session_bytes(h.store, "saved") == original
     assert not h.root.exists()
 
 
@@ -195,16 +196,16 @@ def test_relocation_preserves_identity_history_and_rejects_stale_or_invalid_targ
 ):
     h = harness
     h.root.rmdir()
-    before = (h.store.directory / "saved.jsonl").read_bytes()
+    history = stored_entry_bytes(h.store, "saved")
     moved = relocate(h, expectedDirectory=str(h.root))
     assert moved.status_code == 200, moved.text
     assert moved.json()["data"]["workspace"]["status"] == "available"
     assert moved.json()["data"]["id"] == "saved"
     assert h.store.load("saved").conversation_entries == h.record.conversation_entries
-    after = (h.store.directory / "saved.jsonl").read_bytes()
-    assert after.startswith(before)
+    after = stored_session_bytes(h.store, "saved")
+    assert stored_entry_bytes(h.store, "saved") == history
     assert relocate(h, expectedDirectory=str(h.root)).status_code == 200
-    assert (h.store.directory / "saved.jsonl").read_bytes() == after
+    assert stored_session_bytes(h.store, "saved") == after
     third = h.target / "third"
     third.mkdir()
     stale = req(

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import StringIO
-import json
 from pathlib import Path
 from threading import RLock
 from typing import Never
@@ -13,6 +12,7 @@ from yoke.agent.budget import build_provider_context_manager
 from yoke.agent.conversation import project_conversation
 from yoke.agent.loop import INTERRUPTED_TURN_NOTICE
 from yoke.agent.loop import RuntimeAgent
+from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.models import TokenUsage
 from yoke.agent.state import active_branch_entries
@@ -32,6 +32,8 @@ from yoke.cli.runtime import persist_session_state
 from yoke.cli.runtime import ActiveSession
 from yoke.session.repository import SessionRecord
 from yoke.session import SessionStore
+
+from tests.yoke.session_rows import stored_entry_bytes
 
 from .support import active_session_for
 
@@ -90,17 +92,20 @@ class SwitchableProvider:
             self.config.reasoning_effort = reasoning_effort
 
 
-def test_model_switch_large_session_appends_only_metadata(
+def test_model_switch_large_session_writes_only_metadata(
     tmp_path: Path, monkeypatch
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
-    record = SessionRecord(id="large", root=str(tmp_path))
-    store.write_session_record(record)
-    path = store.session_path(record.id)
-    with path.open("ab") as handle:
-        handle.write(b'{"type":"ignored","data":"')
-        handle.write(b"x" * (52 * 1024 * 1024))
-        handle.write(b'"}\n')
+    record = SessionRecord(
+        id="large",
+        root=str(tmp_path),
+        conversation_entries=[
+            ConversationEntry(kind="user", message=Message.user("x" * 1024))
+            for _ in range(64)
+        ],
+    )
+    assert store.insert_record(record)
+    history = stored_entry_bytes(store, record.id)
     active_session = ActiveSession(record.id, tmp_path, store, record)
     agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
 
@@ -113,7 +118,7 @@ def test_model_switch_large_session_appends_only_metadata(
         fail,
     )
     monkeypatch.setattr(SessionStore, "load", fail)
-    before = path.stat().st_size
+    monkeypatch.setattr(SessionStore, "save", fail)
 
     result = _switch_model(
         "demo:gpt-b",
@@ -124,14 +129,11 @@ def test_model_switch_large_session_appends_only_metadata(
         console=build_console(StringIO()),
         args=CLIArgs(root=str(tmp_path)),
     )
-    appended = path.stat().st_size - before
-    with path.open("rb") as handle:
-        handle.seek(-min(path.stat().st_size, 1_000), 2)
-        last_event = json.loads(handle.read().splitlines()[-1])
     assert result == []
-    assert appended < 1_000
-    assert last_event["type"] == "metadata"
-    assert last_event["model_id"] == "gpt-b"
+    assert stored_entry_bytes(store, record.id) == history
+    summary = store.summary_record(record.id)
+    assert summary is not None
+    assert summary.model_id == "gpt-b"
 
 
 def test_model_switch_survives_metadata_write_failure(

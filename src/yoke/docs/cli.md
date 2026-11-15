@@ -619,47 +619,50 @@ tool activity caused by those turns. A persisted compaction summary remains in
 the handoff, so a short tail keeps the session's earlier working context without
 replaying its old transcript.
 
-The bounded reader uses the index only when its summary version, entry count,
-and journal file signature are current. A stale index falls back to the
-authoritative session journal without repairing the index on the read path.
+The bounded reader walks the active branch over the stored entry topology and
+decodes only the selected entries. A broken parent chain falls back to the
+complete session load.
 
 Use `--max-chars <n>` to change the output bound, or `--format json` when a
 structured consumer needs the same portable handoff. The built-in
 `yoke-sessions` skill uses handoffs to inspect saved sessions and to recover the
 saved root, provider, model, and reasoning effort before automated continuation.
 
-Sessions are stored under `~/.yoke/sessions/` as append-only `.jsonl` files and
-auto-expire after 30 days. The CLI owns session files, indexes, ids, and resume
-selection; the stored agent state uses structured conversation entries so
-memory snapshots, typed compaction handoffs, and branched session trees can be
-restored without flattening to transcript text. Yoke streams the typed JSONL
-events from disk and uses an entry-id index to replace repeated entry events.
-The streaming decoder uses Pydantic's native JSON parser. This avoids a second
-complete text copy, reduces temporary decode memory, and avoids repeated
-duplicate-entry scans at startup. Current sessions use the typed JSONL event
-format. Yoke also recognizes the immediately preceding `session_stream` v1 and
-snapshot JSON formats; the first successful load rewrites those files atomically
-into the current format. Other obsolete or malformed session files still fail
-with a direct load error rather than being guessed at. Session listings skip an
-unreadable file so one damaged session cannot block access to every other saved
-session.
-The session index is a rebuildable cache rather than the source of truth. Index
-updates serialize their complete read-modify-write transaction across
-processes, use a unique temporary file, and retry transient Windows replacement
-denials with bounded backoff. If the cache still cannot be replaced after the
-session JSONL has been committed, the save succeeds, keeps a process-local
-index snapshot, and schedules index repair instead of failing the accepted
-turn. Same-process writes reuse an unchanged parsed index snapshot. Background
-repair uses one metadata-bearing directory pass plus one name-only prune pass,
-avoiding repeated path probes that become expensive on Windows when hundreds
-of sessions are present. A transient metadata failure for one enumerated file
-falls back to reading that session instead of making it disappear from the
-index.
-If that read also fails temporarily, repair retains the previous indexed summary
-with its old signature and retries later. Confirmed-invalid and deleted sessions
-are still omitted.
-Metadata-only changes, including `/model`, append only changed metadata fields
-and update the loaded record in memory. They do not rebuild or reload the
+Sessions are stored in the SQLite database `~/.yoke/yoke.db` and auto-expire
+after 30 days unless pinned. Set `YOKE_DB_PATH` to use another database file;
+`YOKE_SESSION_DIR` relocates both the database (as `yoke.db` inside it) and the
+remaining session files (workspace leases and uploads, still under
+`~/.yoke/sessions/` by default). Settings and credentials stay files. The CLI
+and the HTTP daemon share the database through WAL, so both can write at once:
+each write is one `BEGIN IMMEDIATE` transaction, and a process waits up to 30
+seconds for another process's transaction. The stored agent state uses
+structured conversation entries so memory snapshots, typed compaction handoffs,
+and branched session trees can be restored without flattening to transcript
+text. Each entry row keeps the exact JSON bytes of the entry; a later label or
+other metadata edit is stored beside it rather than appended, and an entry
+append commits together with its session row. A database written by a newer
+Yoke release is refused rather than opened.
+
+Sessions saved by earlier releases as JSONL files under `~/.yoke/sessions/` are
+not read. Import them explicitly:
+
+```bash
+yoke db import-legacy --all             # every session in ~/.yoke/sessions
+yoke db import-legacy 20240421-143022-abc1 --from /path/to/sessions
+yoke db info                            # path, schema version, sizes, counts
+yoke db backup ~/yoke-backup.db         # consistent copy via VACUUM INTO
+```
+
+The importer reads each file with the previous JSONL loader (including newer
+titles and pins kept in that directory's `index.json`), inserts it in one
+transaction, reads it back and compares every entry with the loaded record. A
+mismatch is deleted again and reported. Reruns skip sessions already in the
+database, so an interrupted import resumes where it stopped. Imported sessions
+keep their original timestamps, so sessions idle for more than 30 days are
+removed by the next retention pass unless pinned. Durable HTTP event journals
+and pending queues are not imported.
+Metadata-only changes, including `/model`, write only the changed session
+columns and update the loaded record in memory. They do not rebuild or reload the
 conversation. Interactive shutdown also trusts the latest accepted turn
 checkpoint. It saves only changed provider metadata and queue content instead
 of capturing and reconciling the complete conversation again. Context-usage
@@ -688,7 +691,7 @@ compaction checkpoints, and typed runtime, provider, audit, and scrollback
 projections. Callers append intents and request projections instead of editing
 entry IDs or rebuilding paths. An active CLI session validates the complete
 topology once and retains entry and parent indexes. Prompt, stop, steer, and
-context-estimate paths then walk and copy only the selected branch. The JSONL
+context-estimate paths then walk and copy only the selected branch. The SQLite
 session store remains a persistence adapter at the `SessionTree` seam.
 
 An isolated CLI turn takes ownership of its already-copied, validated active
@@ -698,8 +701,8 @@ runtime projection until a mutation changes it. Accepted turns transfer their
 owned context back to the primary runtime instead of rebuilding it.
 
 Normal saves prove that the runtime branch extends the retained active path.
-They sanitize only the new suffix, append that suffix with its metadata delta,
-and update the loaded record and indexes in memory. The writer trusts this proof
+They sanitize only the new suffix, insert that suffix with the changed session
+columns in one transaction, and update the loaded record and indexes in memory. The writer trusts this proof
 instead of comparing every persisted entry. Branch changes and legacy inputs
 still use complete `SessionTree` reconciliation. Retention cleanup runs when
 sessions are listed instead of delaying each turn checkpoint.
@@ -748,9 +751,10 @@ shown at the top of the table and are protected from normal session-retention
 cleanup. Pass `--all` to list saved sessions across every workspace root
 instead of only the current root; that view adds a root-path column before the
 session id.
-If an external index edit has newer metadata than the JSONL stream, loading the
-session appends that metadata back to the JSONL file so a manual title or pin
-state survives resume.
+Tree navigation and label edits compare-and-swap on the session's stored tree
+revision. If another process changed the tree since the session was loaded, the
+edit fails instead of overwriting it; title, pin and model edits by another
+process are never overwritten by a turn save.
 Use `--fork <session-id>` to copy an existing session into a new session id and
 continue there without appending to the original; `--fork` cannot be combined
 with `--session` because one selects a source session and the other names the

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: ANN401,D100,D103,D105,S101
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 import json
 from pathlib import Path
 from threading import Lock
@@ -30,8 +30,10 @@ from yoke.cli.runtime.tree import default_folded_tree_ids
 from yoke.cli.runtime.tree import set_entry_label
 from yoke.session.repository import SessionRecord
 from yoke.session import SessionStore
-from yoke.session.repository.io import decode_session_record
-from yoke.session.repository.io import record_jsonl
+from yoke.session.legacy.jsonl import decode_session_record
+from yoke.session.repository.table import SessionTable
+
+from tests.yoke.session_rows import stored_entry_rows
 
 ENTRY_COUNT = 50_000
 ACTIVE_COUNT = 32
@@ -179,7 +181,7 @@ def test_interruption_checkpoint_copies_only_the_synthetic_suffix(
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
-    store.write_session_record(record)
+    store.insert_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
     messages, snapshot = interrupted_turn_snapshot(
         messages=[],
@@ -277,7 +279,7 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
-    store.write_session_record(record)
+    store.insert_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
     incoming = active.active_entries()
     appended = ConversationEntry(
@@ -301,7 +303,7 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
         return saved
 
     monkeypatch.setattr("yoke.session.repository.tree.SessionTree.restore", fail)
-    monkeypatch.setattr("yoke.session.repository.writer.append_jsonl_lines", fail)
+    monkeypatch.setattr("yoke.session.repository.table._extends", fail)
     monkeypatch.setattr(store, "load", fail)
     monkeypatch.setattr(store, "maintain_index", fail)
     monkeypatch.setattr(store, "save", track_save)
@@ -317,50 +319,7 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
     assert copies["count"] < 10
     assert active.record.conversation_entries[-1].id == appended.id
     assert active.tree_index.active_entry_refs()[-1].id == appended.id
-    with store.session_path(record.id).open(encoding="utf-8") as handle:
-        last_event = json.loads(list(handle)[-1])
-    assert last_event["entry"]["id"] == appended.id
-
-
-def test_index_metadata_updates_publish_copy_on_write_snapshot(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path / "sessions")
-    record = store.save(
-        "copy-on-write",
-        [Message.user("hello")],
-        root=tmp_path,
-        title="before",
-    )
-    published = store._index_service._cache.read()
-    published_entry = published.sessions[record.id]
-
-    store.set_title(
-        record.id,
-        "after",
-        existing_record=store.summary_record(record.id),
-    )
-
-    assert published.sessions[record.id] is published_entry
-    assert published.sessions[record.id].title == "before"
-    assert store._index_service._cache.read().sessions[record.id].title == "after"
-
-
-def test_session_maintenance_uses_enumerated_file_metadata(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = SessionStore(tmp_path / "sessions")
-    for index in range(8):
-        store.save(f"session-{index}", [], root=tmp_path)
-    original_stat = Path.stat
-
-    def reject_session_path_stat(path: Path, *args: Any, **kwargs: Any):
-        if path.parent == store.directory and path.suffix == ".jsonl":
-            pytest.fail("maintenance restatted an enumerated session path")
-        return original_stat(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "stat", reject_session_path_stat)
-
-    store.maintain_index(force=True)
+    assert stored_entry_rows(store, record.id)[-1][1] == appended.id
 
 
 def test_clean_prompt_exit_does_not_capture_or_save_conversation(
@@ -390,7 +349,7 @@ def test_clean_prompt_exit_does_not_capture_or_save_conversation(
 
     monkeypatch.setattr("yoke.cli.runtime.session.capture_agent_state", fail)
     monkeypatch.setattr(active.store, "save", fail)
-    monkeypatch.setattr(active.store, "write_session_record", fail)
+    monkeypatch.setattr(active.store, "update_metadata", fail)
 
     try:
         persist_prompt_exit_state(
@@ -406,7 +365,7 @@ def test_clean_prompt_exit_does_not_capture_or_save_conversation(
     assert copies["count"] == 0
 
 
-def test_prompt_exit_appends_only_changed_reasoning_metadata(
+def test_prompt_exit_writes_only_changed_reasoning_metadata(
     large_tree: tuple[list[ConversationEntry], str],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -419,8 +378,7 @@ def test_prompt_exit_appends_only_changed_reasoning_metadata(
     record.created_at = "2026-08-03T00:00:00+00:00"
     record.updated_at = record.created_at
     store = SessionStore(tmp_path / "sessions")
-    store.directory.mkdir(parents=True)
-    store.session_path(record.id).touch()
+    store.insert_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
     state = PromptCliState(
         messages=[],
@@ -432,14 +390,13 @@ def test_prompt_exit_appends_only_changed_reasoning_metadata(
     copies = _count_entry_copies(monkeypatch)
     events: list[dict[str, object]] = []
 
-    def capture_metadata(_path: Path, changes: dict[str, object]) -> None:
-        events.append(changes)
+    def capture_metadata(
+        updated: SessionRecord, fields: Iterable[str]
+    ) -> SessionRecord:
+        events.append({field: getattr(updated, field) for field in fields})
+        return updated
 
-    monkeypatch.setattr(
-        "yoke.session.repository.metadata.append_session_metadata",
-        capture_metadata,
-    )
-    monkeypatch.setattr(store, "update_index", lambda _record: None)
+    monkeypatch.setattr(store, "update_metadata", capture_metadata)
 
     try:
         persist_prompt_exit_state(
@@ -466,7 +423,7 @@ def test_unchanged_transcript_persistence_uses_retained_active_path(
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
-    store.write_session_record(record)
+    store.insert_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
     messages = active.messages()
     agent = RuntimeAgent(provider=NoopProvider(), tools=[])
@@ -552,7 +509,7 @@ def test_store_load_streams_without_path_read_text(
         ],
         leaf_id="one",
     )
-    store.write_session_record(record)
+    store.insert_record(record)
 
     def fail_read_text(*_args: object, **_kwargs: object) -> None:
         pytest.fail("Path.read_text loaded the complete session")
@@ -564,7 +521,7 @@ def test_store_load_streams_without_path_read_text(
     assert loaded.conversation_entries[0].id == "one"
 
 
-def test_tree_label_appends_one_indexed_entry_update(
+def test_tree_label_writes_one_indexed_entry_update(
     large_tree: tuple[list[ConversationEntry], str],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -572,23 +529,27 @@ def test_tree_label_appends_one_indexed_entry_update(
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
-    store.write_session_record(record)
+    store.insert_record(record)
     active = ActiveSession(record.id, tmp_path, store, record)
-    path = store.session_path(record.id)
-    size_before = path.stat().st_size
+    rows_before = stored_entry_rows(store, record.id)
     scans_before = counted.scans
     copies = _count_entry_copies(monkeypatch)
 
     def fail_rewrite(*_args: object, **_kwargs: object) -> None:
         pytest.fail("label update rewrote the complete session")
 
-    monkeypatch.setattr(store, "write_session_record", fail_rewrite)
+    monkeypatch.setattr(SessionTable, "write_record", fail_rewrite)
 
     set_entry_label(active, leaf_id, "checkpoint")
 
     assert counted.scans == scans_before + 2
     assert copies["count"] == 2
-    assert path.stat().st_size - size_before < 1_000
+    rows_after = stored_entry_rows(store, record.id)
+    changed = [
+        index for index, row in enumerate(rows_after) if row != rows_before[index]
+    ]
+    assert len(rows_after) == len(rows_before)
+    assert [rows_after[index][1] for index in changed] == [leaf_id]
     assert record.conversation_entries[ACTIVE_COUNT - 1].metadata == {}
     loaded = store.load(record.id)
     assert loaded.conversation_entries[ACTIVE_COUNT - 1].metadata == {
@@ -607,7 +568,7 @@ def test_duplicate_entry_replacement_uses_latest_event_order() -> None:
     )
     replacement = first.model_copy(update={"metadata": {"replacement": True}})
     raw = (
-        record_jsonl(record)
+        _legacy_jsonl(record)
         + json.dumps(
             {
                 "type": "entry",
@@ -624,3 +585,19 @@ def test_duplicate_entry_replacement_uses_latest_event_order() -> None:
         "first",
     ]
     assert decoded.conversation_entries[-1].metadata == {"replacement": True}
+
+
+def _legacy_jsonl(record: SessionRecord) -> str:
+    """Encode a record the way the JSONL store wrote it."""
+    lines = [
+        {"type": "yoke_session", "version": 2},
+        {
+            "type": "metadata",
+            **record.model_dump(mode="json", exclude={"conversation_entries"}),
+        },
+        *(
+            {"type": "entry", "entry": entry.model_dump(mode="json")}
+            for entry in record.conversation_entries
+        ),
+    ]
+    return "".join(json.dumps(line) + "\n" for line in lines)

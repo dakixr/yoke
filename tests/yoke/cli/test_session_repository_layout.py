@@ -7,27 +7,35 @@ from pathlib import Path
 from yoke.agent.models import Message
 from yoke.session import SessionStore
 
+from tests.yoke.session_rows import stored_entry_bytes, stored_session_bytes
 
-def test_canonical_session_noop_round_trip_preserves_bytes(tmp_path: Path) -> None:
+
+def test_noop_save_round_trip_leaves_stored_entries_untouched(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "sessions")
     store.save("fixture", [Message.user("hello"), Message.assistant("world")])
-    path = store.session_path("fixture")
-    original = path.read_bytes()
+    original = stored_entry_bytes(store, "fixture")
 
     record = store.load("fixture")
-    store.write_session_record(record, existing_record=record)
+    store.save(
+        "fixture",
+        [],
+        conversation_entries=list(record.conversation_entries),
+        leaf_id=record.leaf_id,
+        existing_record=record,
+    )
 
-    assert path.read_bytes() == original
+    assert stored_entry_bytes(store, "fixture") == original
+    assert store.load("fixture").conversation_entries == record.conversation_entries
 
 
-def test_metadata_patch_keeps_canonical_layout_and_reloads(tmp_path: Path) -> None:
+def test_metadata_patch_only_touches_the_session_row(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "sessions")
     store.save("fixture", [Message.user("hello")])
-    path = store.session_path("fixture")
-    before = path.read_bytes()
+    entries = stored_entry_bytes(store, "fixture")
+    row = stored_session_bytes(store, "fixture")
 
     store.set_title("fixture", "A title")
 
-    after = path.read_bytes()
-    assert after.startswith(before)
+    assert stored_entry_bytes(store, "fixture") == entries
+    assert stored_session_bytes(store, "fixture") != row
     assert store.load("fixture").title == "A title"

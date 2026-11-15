@@ -16,6 +16,7 @@ from yoke.session.queue import (
     PersistedPromptQueue,
     write_prompt_queue_snapshot,
 )
+from tests.yoke.session_rows import stored_entry_bytes, stored_session_bytes
 from yoke.session.workspace import (
     WorkspaceBusy,
     WorkspaceConflict,
@@ -92,18 +93,18 @@ def test_history_is_readable_after_deletion_and_relocation_only_appends_metadata
     tmp_path,
 ):
     store, original, old, new = saved(tmp_path)
-    path = store.directory / "saved.jsonl"
-    before = path.read_bytes()
+    before = stored_session_bytes(store, "saved")
+    history = stored_entry_bytes(store, "saved")
     old.rmdir()
     loaded = store.load("saved")
     assert loaded.messages == original.messages
     assert store.list(root=old)[0].id == "saved"
-    assert path.read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
     with pytest.raises(WorkspaceUnavailable):
         require_session_workspace(loaded)
 
     moved = relocate_session_workspace(store, "saved", new, expected_root=str(old))
-    assert path.read_bytes().startswith(before)
+    assert stored_entry_bytes(store, "saved") == history
     assert not old.exists()
     assert moved.id == original.id
     assert moved.root == str(new)
@@ -124,34 +125,32 @@ def test_history_is_readable_after_deletion_and_relocation_only_appends_metadata
 def test_relocation_is_idempotent_but_rejects_a_stale_third_destination(tmp_path):
     store, _, old, new = saved(tmp_path)
     moved = relocate_session_workspace(store, "saved", new, expected_root=str(old))
-    path = store.directory / "saved.jsonl"
-    before = path.read_bytes()
+    before = stored_session_bytes(store, "saved")
     assert (
         relocate_session_workspace(store, "saved", new, expected_root=str(old)) == moved
     )
-    assert path.read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
     with pytest.raises(WorkspaceConflict):
         relocate_session_workspace(store, "saved", old, expected_root=str(old))
-    assert path.read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
 
 
 def test_invalid_destination_and_failed_append_leave_history_and_binding_unchanged(
     tmp_path, monkeypatch
 ):
     store, record, _, new = saved(tmp_path)
-    path = store.directory / "saved.jsonl"
-    before = path.read_bytes()
+    before = stored_session_bytes(store, "saved")
     with pytest.raises(WorkspaceUnavailable):
         relocate_session_workspace(store, "saved", tmp_path / "absent")
-    assert path.read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
 
     def fail(*_args):
         raise OSError("disk full")
 
-    monkeypatch.setattr("yoke.session.workspace.append_session_metadata", fail)
+    monkeypatch.setattr(SessionStore, "update_metadata", fail)
     with pytest.raises(OSError, match="disk full"):
         relocate_session_workspace(store, "saved", new)
-    assert path.read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
     assert store.load("saved") == record
 
 
@@ -224,10 +223,10 @@ def test_relocation_never_retargets_pending_work(tmp_path, kind):
             "saved", AdmissionSnapshot(records={"input": admission})
         )
     write_prompt_queue_snapshot(store.directory, "saved", queue)
-    before = (store.directory / "saved.jsonl").read_bytes()
+    before = stored_session_bytes(store, "saved")
     with pytest.raises(WorkspaceBusy, match="pending"):
         relocate_session_workspace(store, "saved", new)
-    assert (store.directory / "saved.jsonl").read_bytes() == before
+    assert stored_session_bytes(store, "saved") == before
     assert store.load("saved").root == record.root
 
 

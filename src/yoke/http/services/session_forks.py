@@ -63,7 +63,6 @@ class SessionForks:
                 else None,
                 materialize_result=False,
             )
-            self.message_index.clone_sidecar(session_id, fork_id)
             data: dict[str, object] = {
                 "sessionID": forked.id,
                 "sourceSessionID": session_id,

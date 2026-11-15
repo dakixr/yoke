@@ -19,7 +19,6 @@ from benchmark_http_performance_support import ServerProcess
 from benchmark_http_performance_support import Timing
 from benchmark_http_performance_support import _append_session_entry
 from benchmark_http_performance_support import _json_request
-from benchmark_http_performance_support import _make_index_stale
 from benchmark_http_performance_support import _request
 from benchmark_http_performance_support import build_fixture
 
@@ -177,43 +176,6 @@ def benchmark_open_startup(session_dir: Path) -> dict[str, float]:
         process.close()
 
 
-def benchmark_stale_startup_open(
-    session_dir: Path,
-    fixture: dict[str, Any],
-) -> dict[str, Any]:
-    """Measure first browser-like requests while an existing index needs repair."""
-    process = ServerProcess(session_dir, open_browser=True)
-    process.start()
-    try:
-        process.wait_ready()
-        assert process.port is not None
-        assert process.listening_at is not None and process.opening_at is not None
-        session_id = fixture["largeSessionID"]
-        paths = [
-            "/api/v1/session?archived=false&limit=100&order=updatedDesc",
-            "/api/v1/session?archived=true&limit=30&order=updatedDesc",
-            "/api/v1/location/recent",
-            f"/api/v1/session/{session_id}",
-            f"/api/v1/session/{session_id}/message?limit=100&order=desc&branch=active",
-            f"/api/v1/session/{session_id}/queue",
-            f"/api/v1/session/{session_id}/permission",
-            f"/api/v1/session/{session_id}/question",
-        ]
-        started = time.perf_counter()
-        with ThreadPoolExecutor(max_workers=len(paths)) as executor:
-            timings = list(
-                executor.map(lambda path: _request(process.port or 0, path), paths)
-            )
-        return {
-            "listenSeconds": process.listening_at - process.started_at,
-            "browserOpenSeconds": process.opening_at - process.started_at,
-            "firstBundleSeconds": time.perf_counter() - started,
-            "requests": [asdict(item) for item in timings],
-        }
-    finally:
-        process.close()
-
-
 def benchmark_restart_message(
     session_dir: Path,
     fixture: dict[str, Any],
@@ -266,11 +228,6 @@ def main() -> None:
             "restart": benchmark_restart_message(fixture_dir, fixture),
             "serveOpen": benchmark_open_startup(fixture_dir),
         }
-        _make_index_stale(fixture_dir)
-        result["serveOpenStaleIndex"] = benchmark_stale_startup_open(
-            fixture_dir,
-            fixture,
-        )
         print(json.dumps(result, indent=2))
     finally:
         if created_temp and not args.keep:

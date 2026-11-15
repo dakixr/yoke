@@ -9,7 +9,6 @@ from yoke.session.repository.models import SessionRecord
 from yoke.session.repository.store import SessionStore
 from yoke.http.models.session import SessionForkRequest, TreeNavigateRequest
 from yoke.http.reads.message_index import SessionMessageIndex
-from yoke.http.reads.message_index import storage as index_storage
 from yoke.http.services.session_service import SessionService
 
 
@@ -69,8 +68,7 @@ def test_tree_interactions_use_topology_index_without_loading_history(
             current_assistant,
         ],
     )
-    store.write_session_record(record)
-    store.update_index(record)
+    store.insert_record(record)
     service = SessionService(store, message_index=SessionMessageIndex(store))
     initial_tree = service.tree("branch", limit=20, cursor=None)
     original_load = store.load
@@ -127,7 +125,7 @@ def test_tree_interactions_use_topology_index_without_loading_history(
     assert summary.metadata["summary"] == "preserve this handoff"
 
 
-def test_fork_clones_canonical_session_without_loading_history(
+def test_fork_copies_session_rows_without_loading_history(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -137,22 +135,11 @@ def test_fork_clones_canonical_session_without_loading_history(
     assert service.message_index.ensure("large") is not None
     target_id = source.conversation_entries[200].id
     original_load = store.load
-    source_sidecar = store.directory / "read-index" / "large.json"
-    assert source_sidecar.exists()
 
     def fail(*_args, **_kwargs):
-        raise AssertionError("canonical forks must not deserialize session history")
+        raise AssertionError("forks must not deserialize session history")
 
     monkeypatch.setattr(store, "load", fail)
-    monkeypatch.setattr(
-        index_storage,
-        "write_sidecar",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError(
-                "fork should reuse the persisted sidecar without serializing it"
-            )
-        ),
-    )
     full = service.fork_session(
         "large",
         SessionForkRequest(id="full-fork", title="Full fork"),
@@ -174,8 +161,6 @@ def test_fork_clones_canonical_session_without_loading_history(
     assert branch.title == "Branch fork"
     assert branch.tree.entry_count == len(source.conversation_entries)
     assert branch.tree.leaf_id == target_id
-    assert (store.directory / "read-index" / "full-fork.json").exists()
-    assert (store.directory / "read-index" / "branch-fork.json").exists()
 
     full_record = original_load("full-fork")
     branch_record = original_load("branch-fork")
@@ -186,13 +171,5 @@ def test_fork_clones_canonical_session_without_loading_history(
     assert branch_record.leaf_id == target_id
     assert len(branch_record.conversation_entries) == len(source.conversation_entries)
 
-    original_scan = index_storage.scan
-
-    def guard_scan(*args, **kwargs):
-        if kwargs.get("start") == 0:
-            raise AssertionError("forked sidecar should avoid a full topology rescan")
-        return original_scan(*args, **kwargs)
-
-    monkeypatch.setattr(index_storage, "scan", guard_scan)
     page = service.messages("full-fork", limit=10, order="desc", cursor=None)
     assert len(page.data) == 10

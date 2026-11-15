@@ -9,12 +9,45 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
+DATABASE_FILE_NAME = "yoke.db"
+
+
 def default_session_directory() -> Path:
-    """Return the default directory used for CLI session records."""
+    """Return the directory for session file state that is not in the database.
+
+    Workspace leases and uploads live here. ``YOKE_SESSION_DIR`` relocates it
+    together with the database, which keeps tests and tools fully isolated.
+    """
     override = os.getenv("YOKE_SESSION_DIR")
     if override:
         return Path(override)
     return Path.home() / ".yoke" / "sessions"
+
+
+def default_database_path() -> Path:
+    """Return the global database: YOKE_DB_PATH, YOKE_SESSION_DIR, or ~/.yoke."""
+    override = os.getenv("YOKE_DB_PATH")
+    if override:
+        return Path(override).expanduser()
+    session_override = os.getenv("YOKE_SESSION_DIR")
+    if session_override:
+        return Path(session_override) / DATABASE_FILE_NAME
+    return Path.home() / ".yoke" / DATABASE_FILE_NAME
+
+
+def database_path_for(directory: Path | None) -> Path:
+    """Return the database that holds sessions for a session directory.
+
+    The default session directory maps to the global database. Any other
+    directory (tests, embedded SDK stores) keeps its own ``yoke.db`` inside it.
+    """
+    if directory is None:
+        return default_database_path()
+    resolved = directory.expanduser().resolve()
+    default = default_session_directory().expanduser().resolve()
+    if resolved == default:
+        return default_database_path()
+    return resolved / DATABASE_FILE_NAME
 
 
 def new_session_id() -> str:

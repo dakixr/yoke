@@ -4,6 +4,7 @@ from yoke.session.repository import SessionIndex as SessionIndex
 from yoke.session.repository import SessionIndexEntry as SessionIndexEntry
 from yoke.session.repository import SessionRecord as SessionRecord
 from yoke.session.repository import SessionStore as SessionStore
+from yoke.session.repository import SessionTreeConflict as SessionTreeConflict
 from yoke.session.repository import SessionTreeIndex as SessionTreeIndex
 from yoke.session.repository import (
     default_session_directory as default_session_directory,

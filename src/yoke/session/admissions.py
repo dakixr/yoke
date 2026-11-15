@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import logging
-from time import time_ns
 from pathlib import Path
-from threading import Lock
 from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import Field
 
-from yoke._file_io import atomic_write_text
-
-
-logger = logging.getLogger(__name__)
+from yoke.session.inputs import ensure_input_row, session_database, sync_input_row
 
 INPUT_ID_METADATA_KEY = "yoke_input_id"
 
@@ -55,43 +49,44 @@ class AdmissionSnapshot(BaseModel):
 
 
 class AdmissionStore:
-    """Atomic per-session admission snapshot repository."""
+    """Per-session admission records in the shared ``inputs`` table."""
 
     def __init__(self, session_directory: Path) -> None:
         self.session_directory = session_directory.resolve()
-        self._locks_lock = Lock()
-        self._locks: dict[str, Lock] = {}
+        self.database = session_database(self.session_directory)
 
     def load(self, session_id: str) -> AdmissionSnapshot:
-        path = self._path(session_id)
-        with self._lock_for(session_id):
-            if not path.exists():
-                return AdmissionSnapshot()
-            try:
-                return AdmissionSnapshot.model_validate_json(path.read_text("utf-8"))
-            except OSError:
-                # A read failure must not turn existing records into an empty save.
-                logger.warning("Could not read admissions file %s", path, exc_info=True)
-                raise
-            except ValueError:
-                backup = path.with_name(f"{path.name}.corrupt-{time_ns()}")
-                logger.warning(
-                    "Corrupt admissions file %s; moving to %s",
-                    path,
-                    backup,
-                    exc_info=True,
-                )
-                path.replace(backup)
-                return AdmissionSnapshot()
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT admission FROM inputs "
+                "WHERE session_id = ? AND admission IS NOT NULL "
+                "ORDER BY admitted_seq, id",
+                (session_id,),
+            ).fetchall()
+        records = [AdmissionRecord.model_validate_json(row[0]) for row in rows]
+        return AdmissionSnapshot(records={record.id: record for record in records})
 
     def save(self, session_id: str, snapshot: AdmissionSnapshot) -> None:
-        path = self._path(session_id)
-        with self._lock_for(session_id):
-            atomic_write_text(path, snapshot.model_dump_json(indent=2))
-
-    def _path(self, session_id: str) -> Path:
-        return self.session_directory / "inputs" / f"{session_id}.json"
-
-    def _lock_for(self, session_id: str) -> Lock:
-        with self._locks_lock:
-            return self._locks.setdefault(session_id, Lock())
+        with self.database.write() as connection:
+            stored = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT id FROM inputs "
+                    "WHERE session_id = ? AND admission IS NOT NULL",
+                    (session_id,),
+                )
+            ]
+            for input_id in set(stored) - set(snapshot.records):
+                connection.execute(
+                    "UPDATE inputs SET admission = NULL "
+                    "WHERE session_id = ? AND id = ?",
+                    (session_id, input_id),
+                )
+            for input_id, record in snapshot.records.items():
+                ensure_input_row(connection, session_id, input_id)
+                connection.execute(
+                    "UPDATE inputs SET admission = ? WHERE session_id = ? AND id = ?",
+                    (record.model_dump_json(), session_id, input_id),
+                )
+            for input_id in dict.fromkeys([*stored, *snapshot.records]):
+                sync_input_row(connection, session_id, input_id)

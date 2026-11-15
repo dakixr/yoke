@@ -24,6 +24,8 @@ from yoke.cli.providers.state import ProviderSessionState
 from yoke.cli.runtime.cli import run_cli, run_resume_cli
 from yoke.session import SessionStore
 
+from tests.yoke.session_rows import stored_session_bytes
+
 from .support import CaptureStream
 
 
@@ -476,7 +478,7 @@ def test_named_and_forked_sessions_use_saved_selection(
         model_id=saved_model,
         reasoning_effort="low",
     )
-    original = (store.directory / "saved.jsonl").read_bytes()
+    original = stored_session_bytes(store, "saved")
     opened = []
 
     def interactive(args, agent, messages, **kwargs) -> int:
@@ -512,7 +514,7 @@ def test_named_and_forked_sessions_use_saved_selection(
     else:
         assert warning == ""
     if fork:
-        assert (store.directory / "saved.jsonl").read_bytes() == original
+        assert stored_session_bytes(store, "saved") == original
     assert config_path.read_bytes() == config_before
 
 
@@ -529,8 +531,7 @@ def test_strict_continuation_failure_does_not_modify_or_fork_source(
         provider_name="zai",
         model_id="retired",
     )
-    path = store.directory / "saved.jsonl"
-    original = path.read_bytes()
+    original = stored_session_bytes(store, "saved")
     args = CLIArgs(
         root=str(tmp_path),
         session=None if fork else "saved",
@@ -545,8 +546,8 @@ def test_strict_continuation_failure_does_not_modify_or_fork_source(
 
     assert "Unknown model" in stderr.getvalue()
     assert "Warning:" not in stderr.getvalue()
-    assert path.read_bytes() == original
-    assert list(store.directory.glob("*.jsonl")) == [path]
+    assert stored_session_bytes(store, "saved") == original
+    assert [entry.id for entry in store.list_index_entries()] == ["saved"]
 
 
 @pytest.mark.parametrize("mode", ["session", "fork", "resume"])
@@ -602,8 +603,7 @@ def test_invalid_cli_thinking_effort_fails_before_session_changes(
         model_id="gpt-6.1-sol",
         reasoning_effort="low",
     )
-    path = store.directory / "saved.jsonl"
-    original = path.read_bytes()
+    original = stored_session_bytes(store, "saved")
     selection = f"codex:gpt-6.1-sol:{effort}"
     argv = ["--root", str(tmp_path), "--model", selection]
     if mode == "resume":
@@ -619,5 +619,5 @@ def test_invalid_cli_thinking_effort_fails_before_session_changes(
     assert result.exit_code == 1, result.output
     assert "thinking effort" in result.output
     assert "Warning:" not in result.output
-    assert path.read_bytes() == original
-    assert list(store.directory.glob("*.jsonl")) == [path]
+    assert stored_session_bytes(store, "saved") == original
+    assert [entry.id for entry in store.list_index_entries()] == ["saved"]

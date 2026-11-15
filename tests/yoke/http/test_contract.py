@@ -25,6 +25,7 @@ from yoke.agent.session_tree import SessionTree
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.resolution import ProviderReadiness
 from yoke.http.app import HttpAppSettings, create_app
+from yoke.session.legacy.importer import import_legacy_sessions
 from yoke.session.queue import (
     PersistedPendingInput,
     PersistedPromptQueue,
@@ -461,7 +462,7 @@ def test_session_list_and_recent_locations_skip_request_path_maintenance(
     def fail(*_args, **_kwargs):
         raise AssertionError("HTTP list endpoints must not run index maintenance")
 
-    monkeypatch.setattr(store._index_service, "maintain_if_due", fail)
+    monkeypatch.setattr(store, "maintain_index", fail)
 
     listed = client.get(
         "/api/v1/session",
@@ -562,83 +563,15 @@ def test_location_browse_expands_home_and_rejects_relative_paths(
     assert relative.json()["error"]["code"] == "location_path_not_absolute"
 
 
-def test_session_list_enriches_legacy_index_summary_once(tmp_path: Path) -> None:
+def test_imported_legacy_stream_is_listed(tmp_path: Path) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
-    state = getattr(client.app, "state")
-    store = state.session_service.store
-    messages = [Message.user("hello"), Message.assistant("world")]
-    tree = SessionTree.from_messages(messages)
-    exported = tree.export_for_persistence()
-    store.save(
-        "legacy-index-session",
-        messages,
-        conversation_entries=list(exported.entries),
-        leaf_id=exported.leaf_id,
-        root=root,
-        provider_name="codex",
-        model_id="gpt-test",
-        reasoning_effort="medium",
-    )
-
-    index_path = store._index_path()
-    index_payload = json.loads(index_path.read_text(encoding="utf-8"))
-    entry = index_payload["sessions"]["legacy-index-session"]
-    for field in (
-        "provider_name",
-        "model_id",
-        "reasoning_effort",
-        "last_user_message_at",
-        "leaf_id",
-        "entry_count",
-        "file_size",
-        "file_mtime_ns",
-        "summary_version",
-    ):
-        entry.pop(field, None)
-    index_path.write_text(json.dumps(index_payload), encoding="utf-8")
-
-    session_path = store.session_path("legacy-index-session")
-    lines = session_path.read_text(encoding="utf-8").splitlines()
-    metadata = json.loads(lines[1])
-    metadata.pop("last_user_message_at", None)
-    lines[1] = json.dumps(metadata, separators=(",", ":"))
-    session_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    restarted = _client(tmp_path)
-    _fastapi(restarted).state.session_service.store.maintain_index(force=True)
-    listed = restarted.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"archived": False},
-    )
-    assert listed.status_code == 200
-    item = listed.json()["data"][0]
-    assert item["selection"] == {
-        "provider": "codex",
-        "model": "gpt-test",
-        "reasoningEffort": "medium",
-    }
-    assert item["tree"] == {
-        "leafID": exported.leaf_id,
-        "entryCount": len(exported.entries),
-    }
-    assert item["time"]["lastUserMessage"] == exported.entries[0].created_at
-    repaired = json.loads(index_path.read_text(encoding="utf-8"))
-    assert repaired["sessions"]["legacy-index-session"]["summary_version"] == 3
-
-
-def test_session_maintenance_migrates_legacy_stream_without_index_entry(
-    tmp_path: Path,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    session_path = tmp_path / "sessions" / "legacy-mac.jsonl"
-    _write_legacy_session_stream(session_path, root=root)
-    state = getattr(client.app, "state")
-    state.session_service.store.maintain_index(force=True)
+    legacy = tmp_path / "legacy"
+    _write_legacy_session_stream(legacy / "legacy-mac.jsonl", root=root)
+    store = getattr(client.app, "state").session_service.store
+    [result] = import_legacy_sessions(store, legacy)
+    assert result.status == "imported", result.detail
 
     response = client.get(
         "/api/v1/session",
@@ -649,29 +582,26 @@ def test_session_maintenance_migrates_legacy_stream_without_index_entry(
     assert response.status_code == 200
     assert [item["id"] for item in response.json()["data"]] == ["legacy-mac"]
     assert response.json()["data"][0]["title"] == "Legacy Mac session"
-    assert session_path.read_text(encoding="utf-8").startswith(
-        '{"type":"yoke_session","version":2}\n'
-    )
 
 
-def test_session_maintenance_skips_unreadable_session_file(tmp_path: Path) -> None:
+def test_unreadable_legacy_session_is_not_imported(tmp_path: Path) -> None:
     client = _client(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
-    for session_id in ("broken-session", "good-session"):
-        created = client.post(
-            "/api/v1/session",
-            headers=_auth(),
-            json={"id": session_id, "location": {"directory": str(root)}},
-        )
-        assert created.status_code == 200
-    session_dir = tmp_path / "sessions"
-    (session_dir / "broken-session.jsonl").write_text(
+    created = client.post(
+        "/api/v1/session",
+        headers=_auth(),
+        json={"id": "good-session", "location": {"directory": str(root)}},
+    )
+    assert created.status_code == 200
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    (legacy / "broken-session.jsonl").write_text(
         '{"not":"a recoverable session"}\n',
         encoding="utf-8",
     )
-    state = getattr(client.app, "state")
-    state.session_service.store.maintain_index(force=True)
+    store = getattr(client.app, "state").session_service.store
+    assert [r.status for r in import_legacy_sessions(store, legacy)] == ["failed"]
 
     response = client.get(
         "/api/v1/session",

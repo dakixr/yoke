@@ -21,11 +21,10 @@ from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.session_tree import ConversationProjection, SessionTree
 from yoke.session.repository.models import SessionRecord
 from yoke.session.repository.store import SessionStore
-from yoke.session.repository.writer import append_session_metadata
+
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.runtime import factory as runtime_factory
 from yoke.http.reads.message_index import SessionMessageIndex
-from yoke.http.reads.message_index import storage as index_storage
 from yoke.http.services.session_service import SessionService
 from yoke.session.events import SessionEventJournal
 
@@ -408,7 +407,7 @@ def test_live_turn_reuses_shared_session_snapshot_after_initial_read(
         )
 
 
-def test_descending_cold_message_page_uses_tail_without_topology_scan(
+def test_descending_cold_message_page_reads_topology_without_full_load(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -418,9 +417,8 @@ def test_descending_cold_message_page_uses_tail_without_topology_scan(
     monkeypatch.setattr(service.message_index, "warm_async", lambda _session_id: None)
 
     def fail(*_args, **_kwargs):
-        raise AssertionError("cold latest page must not build the full topology index")
+        raise AssertionError("cold latest page must not load the full session")
 
-    monkeypatch.setattr(index_storage, "scan", fail)
     monkeypatch.setattr(store, "load", fail)
     page = service.messages("large", limit=100, order="desc", cursor=None)
 
@@ -477,8 +475,7 @@ def test_descending_tail_page_follows_selected_branch(
             branch_assistant,
         ],
     )
-    store.write_session_record(record)
-    store.update_index(record)
+    store.insert_record(record)
     service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(service.message_index, "warm_async", lambda _session_id: None)
 
@@ -488,7 +485,7 @@ def test_descending_tail_page_follows_selected_branch(
     assert texts == ["branch assistant", "branch user", "shared", "root"]
 
 
-def test_descending_tail_page_honors_metadata_only_leaf_with_stale_index(
+def test_descending_page_honors_metadata_only_leaf_change(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -512,9 +509,8 @@ def test_descending_tail_page_honors_metadata_only_leaf_with_stale_index(
         leaf_id=tail.id,
         conversation_entries=[root, middle, tail],
     )
-    store.write_session_record(record)
-    store.update_index(record)
-    append_session_metadata(store.session_path("checkout"), {"leaf_id": middle.id})
+    store.insert_record(record)
+    store.update_metadata(record.model_copy(update={"leaf_id": middle.id}), ["leaf_id"])
     service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(service.message_index, "warm_async", lambda _session_id: None)
 

@@ -3,21 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import BinaryIO
-
-from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
-from yoke.session.repository.index import SESSION_INDEX_SUMMARY_VERSION
 from yoke.session.repository.store import SessionStore
-
-_ENTRY_PREFIX = b'{"type":"entry","entry":{"kind":'
-_MESSAGE_MARKER = b',"message":'
-_ID_MARKER = b',"id":'
-_PARENT_MARKER = b',"parent_id":'
-_CREATED_MARKER = b',"created_at":'
-_SCAN_CHUNK = 1 << 20
-_TAIL_BYTES = 1 << 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,15 +17,6 @@ class HandoffContextWindow:
     truncated: bool
 
 
-@dataclass(frozen=True, slots=True)
-class _EntryLocation:
-    entry_id: str
-    parent_id: str | None
-    kind: str
-    offset: int
-    length: int
-
-
 def read_handoff_context_window(
     store: SessionStore,
     session_id: str,
@@ -45,139 +24,45 @@ def read_handoff_context_window(
     recent_limit: int,
 ) -> HandoffContextWindow | None:
     """Read the latest checkpoint and recent active tail without full session decode."""
-    summary = store.index_entry(session_id)
-    source_signature = store.session_file_signature(session_id)
-    if (
-        summary is None
-        or not summary.leaf_id
-        or summary.summary_version != SESSION_INDEX_SUMMARY_VERSION
-        or summary.entry_count is None
-        or source_signature is None
-        or summary.file_size != source_signature[0]
-        or summary.file_mtime_ns != source_signature[1]
-    ):
+    topology = store.entry_topology(session_id)
+    if topology is None or not topology.leaf_id:
         return None
-    source = store.directory / f"{session_id}.jsonl"
-    source_size = source_signature[0]
+    nodes = {entry_id: (parent, kind) for entry_id, parent, kind in topology.rows}
+    recent: list[str] = []
+    checkpoint: str | None = None
+    current: str | None = topology.leaf_id
+    seen: set[str] = set()
+    while current is not None and current not in seen:
+        node = nodes.get(current)
+        if node is None:
+            break
+        seen.add(current)
+        entry_id = current
+        current, kind = node
+        if kind == "memory_snapshot":
+            checkpoint = entry_id
+            break
+        if len(recent) < recent_limit:
+            recent.append(entry_id)
 
-    recent: list[_EntryLocation] = []
-    checkpoint: _EntryLocation | None = None
-    current: str | None = summary.leaf_id
-    active_seen = 0
-    with source.open("rb") as handle:
-        for start, end in _reverse_line_ranges(handle, source_size):
-            if current is None:
-                break
-            topology = _entry_topology(handle, start, end)
-            if topology is None or topology.entry_id != current:
-                continue
-            active_seen += 1
-            current = topology.parent_id
-            if topology.kind == "memory_snapshot":
-                checkpoint = topology
-                break
-            if len(recent) < recent_limit:
-                recent.append(topology)
-
-        # A missing parent is not an intentional context bound. Let the canonical
-        # loader validate any chain we could not follow to its root or checkpoint.
-        if active_seen == 0 or (current is not None and checkpoint is None):
-            return None
-
-        selected = list(reversed(recent))
-        if checkpoint is not None:
-            selected.insert(0, checkpoint)
-        entries = [_read_entry(handle, location) for location in selected]
-
+    # A missing parent is not an intentional context bound. Let the canonical
+    # loader validate any chain we could not follow to its root or checkpoint.
+    if not seen or (current is not None and checkpoint is None):
+        return None
+    selected = list(reversed(recent))
+    if checkpoint is not None:
+        selected.insert(0, checkpoint)
+    entries = store.read_entries(
+        session_id, selected, raw_filter=_elide_embedded_image_data
+    )
+    if entries is None:
+        return None
     return HandoffContextWindow(
         entries=entries,
-        total_entries=summary.entry_count,
+        total_entries=len(topology.rows),
         truncated=(
-            checkpoint is not None or active_seen > len(recent) or current is not None
+            checkpoint is not None or len(seen) > len(recent) or current is not None
         ),
-    )
-
-
-def _reverse_line_ranges(
-    handle: BinaryIO,
-    size: int,
-):
-    """Yield JSONL byte ranges newest-first with fixed memory usage."""
-    line_end = size
-    if size:
-        handle.seek(size - 1)
-        if handle.read(1) == b"\n":
-            line_end -= 1
-    cursor = line_end
-    while cursor > 0:
-        chunk_start = max(0, cursor - _SCAN_CHUNK)
-        handle.seek(chunk_start)
-        chunk = handle.read(cursor - chunk_start)
-        search_end = len(chunk)
-        while search_end:
-            newline = chunk.rfind(b"\n", 0, search_end)
-            if newline < 0:
-                break
-            line_start = chunk_start + newline + 1
-            if line_start < line_end:
-                yield line_start, line_end
-            line_end = chunk_start + newline
-            search_end = newline
-        cursor = chunk_start
-    if line_end > 0:
-        yield 0, line_end
-
-
-def _entry_topology(
-    handle: BinaryIO,
-    start: int,
-    end: int,
-) -> _EntryLocation | None:
-    length = end - start
-    if length <= len(_ENTRY_PREFIX):
-        return None
-    handle.seek(start)
-    prefix = handle.read(min(length, 512))
-    if not prefix.startswith(_ENTRY_PREFIX):
-        return None
-    message_at = prefix.find(_MESSAGE_MARKER, len(_ENTRY_PREFIX))
-    if message_at < 0:
-        return None
-    kind = _decode_json_string(prefix[len(_ENTRY_PREFIX) : message_at])
-    if kind is None:
-        return None
-
-    tail_start = max(start, end - _TAIL_BYTES)
-    handle.seek(tail_start)
-    tail = handle.read(end - tail_start)
-    id_at = tail.rfind(_ID_MARKER)
-    parent_at = tail.rfind(_PARENT_MARKER)
-    created_at = tail.rfind(_CREATED_MARKER)
-    if min(id_at, parent_at, created_at) < 0 or not id_at < parent_at < created_at:
-        return None
-    entry_id = _decode_json_string(tail[id_at + len(_ID_MARKER) : parent_at])
-    raw_parent = tail[parent_at + len(_PARENT_MARKER) : created_at]
-    parent_id = None if raw_parent == b"null" else _decode_json_string(raw_parent)
-    if entry_id is None or raw_parent != b"null" and parent_id is None:
-        return None
-    return _EntryLocation(
-        entry_id=entry_id,
-        parent_id=parent_id,
-        kind=kind,
-        offset=start,
-        length=length,
-    )
-
-
-def _read_entry(handle: BinaryIO, location: _EntryLocation) -> ConversationEntry:
-    handle.seek(location.offset)
-    raw = handle.read(location.length)
-    sanitized = _elide_embedded_image_data(raw)
-    payload = from_json(sanitized)
-    if not isinstance(payload, dict) or not isinstance(payload.get("entry"), dict):
-        raise ValueError(f"Invalid session entry: {location.entry_id}")
-    return ConversationEntry.model_validate(payload["entry"]).model_copy(
-        update={"kind": location.kind}
     )
 
 
@@ -208,11 +93,3 @@ def _elide_embedded_image_data(raw: bytes) -> bytes:
             parts.append(result[search_from:])
             result = b"".join(parts)
     return result
-
-
-def _decode_json_string(value: bytes) -> str | None:
-    try:
-        decoded = from_json(value)
-    except ValueError:
-        return None
-    return decoded if isinstance(decoded, str) else None

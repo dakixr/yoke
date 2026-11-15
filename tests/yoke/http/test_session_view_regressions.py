@@ -203,7 +203,7 @@ def test_forced_message_fallback_filters_tool_context_before_pagination(
     ]
 
 
-def test_cold_small_pages_classify_legacy_tool_context_before_counting(
+def test_small_pages_classify_legacy_tool_context_before_counting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,11 +228,6 @@ def test_cold_small_pages_classify_legacy_tool_context_before_counting(
         "warm_async",
         lambda *_args: None,
     )
-
-    def fail(*_args, **_kwargs):
-        raise AssertionError("cold legacy pagination must stay on the bounded tail")
-
-    monkeypatch.setattr(state.session_service.message_index, "ensure", fail)
 
     seen, bodies = _paginate_messages(client, "cold-legacy", order="desc")
 
@@ -282,7 +277,7 @@ def test_warm_index_reclassifies_appended_legacy_tool_context(
     )
     refreshed = index.ensure("warm-legacy")
     assert refreshed is not None
-    assert refreshed.indexed_size > prior.indexed_size
+    assert refreshed.signature[1] > prior.signature[1]
     assert refreshed.entries[private_id][1] == "tool_context"
 
     detail = client.get(

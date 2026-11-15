@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from yoke.agent.models import Message
 from yoke.cli.render import print_scrollback_notice
@@ -42,7 +41,7 @@ def print_session_info(
         f"Title: {record.title or 'Untitled session'}",
         f"Pinned: {_yes_no(record.pinned)}",
         f"Root: {active_session.root}",
-        f"Path: {_session_path(active_session)}",
+        f"Database: {active_session.store.database_path}",
         f"Provider: {record.provider_name or 'unknown'}",
         f"Model: {record.model_id or 'unknown'}",
         f"Messages: {len(active_session.messages())}",
@@ -53,10 +52,6 @@ def print_session_info(
         f"Context window: {_context_window_text(record.context_window_tokens)}",
     ]
     print_scrollback_notice(console, "\n".join(lines))
-
-
-def _session_path(active_session: ActiveSession) -> Path:
-    return active_session.store.directory / f"{active_session.id}.jsonl"
 
 
 def _yes_no(value: bool) -> str:

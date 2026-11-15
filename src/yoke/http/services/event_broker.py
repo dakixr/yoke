@@ -139,7 +139,9 @@ class EventService:
             location=location,
         )
         public = public_event_from_session_event(event)
-        self.broker.publish(public)
+        # Inside a write transaction (admission, queue edits) publish only once
+        # the event is durable, so a client refetch sees the committed state.
+        self.journal.after_commit(lambda: self.broker.publish(public))
         return public
 
     def live(

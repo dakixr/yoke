@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 
 # ruff: noqa: ANN001,D100,D103,S101
 from pathlib import Path
@@ -17,7 +16,6 @@ from yoke.agent.skills.models import ActiveSkill
 from yoke.session.repository.store import SessionStore
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.reads.message_index import SessionMessageIndex
-from yoke.http.reads.message_index import storage as index_storage
 from yoke.http.reads.cache import SessionReadCache
 from yoke.http.services.session_service import SessionService
 from yoke.http.services.skill_service import SkillService
@@ -85,7 +83,7 @@ def test_session_metadata_patches_do_not_deserialize_history_or_lose_entry_count
     assert store.index_entry("large").entry_count == original_count
 
 
-def test_message_offset_index_survives_service_restart_without_source_rescan(
+def test_message_index_after_service_restart_avoids_full_load(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -94,19 +92,14 @@ def test_message_offset_index_survives_service_restart_without_source_rescan(
     first = SessionService(store, message_index=SessionMessageIndex(store))
     page = first.messages("large", limit=100, order="desc", cursor=None)
     assert len(page.data) == 100
-    sidecar = store.directory / "read-index" / "large.json"
-    deadline = time.monotonic() + 2
-    while not sidecar.exists() and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert sidecar.exists()
     first.close()
 
     restarted = SessionService(store, message_index=SessionMessageIndex(store))
 
     def fail(*_args, **_kwargs):
-        raise AssertionError("current sidecar should avoid a source topology rescan")
+        raise AssertionError("a restarted index must not deserialize the session")
 
-    monkeypatch.setattr(index_storage, "scan", fail)
+    monkeypatch.setattr(store, "load", fail)
     page = restarted.messages("large", limit=100, order="desc", cursor=None)
     assert len(page.data) == 100
 
@@ -474,7 +467,7 @@ def test_context_and_tree_inspectors_are_bounded_and_index_backed(
     assert older.data.entries[-1].id != tree.data.entries[-1].id
 
 
-def test_runtime_seed_does_not_force_cold_topology_scan(
+def test_runtime_seed_without_checkpoint_avoids_full_load(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -483,9 +476,9 @@ def test_runtime_seed_does_not_force_cold_topology_scan(
     index = SessionMessageIndex(store)
 
     def fail(*_args, **_kwargs):
-        raise AssertionError("runtime seed must not scan or warm a cold sidecar")
+        raise AssertionError("runtime seed must not deserialize the session")
 
-    monkeypatch.setattr(index, "ensure", fail)
+    monkeypatch.setattr(store, "load", fail)
     monkeypatch.setattr(index, "warm_async", fail)
     try:
         assert index.runtime_seed("large") is None

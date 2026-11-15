@@ -326,6 +326,16 @@ def register_commands(app: typer.Typer) -> None:
 
     @app.command(
         context_settings=_DELEGATE_CONTEXT_SETTINGS,
+        help="Inspect, back up, and import into the session database.",
+    )
+    def db(ctx: typer.Context) -> None:
+        """Delegate to the database sub-application."""
+        from yoke.cli.db_app import db_app
+
+        raise typer.Exit(_run_lazy_typer_app(db_app, list(ctx.args), "yoke db"))
+
+    @app.command(
+        context_settings=_DELEGATE_CONTEXT_SETTINGS,
         help="Manage dynamically loaded tools.",
     )
     def tools(ctx: typer.Context) -> None:

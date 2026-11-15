@@ -12,7 +12,7 @@ from yoke.session.handoff import build_session_handoff
 from yoke.session.handoff.reader import read_handoff_context_window
 
 
-def test_handoff_resolves_equivalent_json_spellings_of_parent_id(
+def test_handoff_fast_path_matches_canonical_for_non_ascii_ids(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
@@ -25,14 +25,9 @@ def test_handoff_resolves_equivalent_json_spellings_of_parent_id(
         kind="assistant",
         message=Message.assistant("Latest answer"),
     )
-    record = store.save(
+    store.save(
         "escaped", [], conversation_entries=[root, leaf], leaf_id=leaf.id, root=tmp_path
     )
-    path = store.directory / "escaped.jsonl"
-    path.write_bytes(
-        path.read_bytes().replace(b'"id":"caf\xc3\xa9"', b'"id":"caf\\u00e9"')
-    )
-    store.update_index(record)
 
     fast = build_session_handoff("escaped", store=store)
     with monkeypatch.context() as patch:
@@ -67,14 +62,9 @@ def test_fast_handoff_rejects_an_unproven_parent_chain(tmp_path: Path) -> None:
         leaf_id=leaf.id,
         root=tmp_path,
     )
-    path = store.directory / "broken-chain.jsonl"
-    path.write_bytes(
-        b"".join(
-            line
-            for line in path.read_bytes().splitlines(keepends=True)
-            if b'"id":"root"' not in line
+    with store.database.write() as connection:
+        connection.execute(
+            "DELETE FROM entries WHERE session_id = ? AND id = 'root'", (record.id,)
         )
-    )
-    store.update_index(record)
 
     assert read_handoff_context_window(store, record.id, recent_limit=100) is None
