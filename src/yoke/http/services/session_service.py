@@ -70,7 +70,7 @@ class SessionService(SessionCatalog):
             raise ApiError(400, "empty_mutation", "At least one field is required.")
         # Validate existence before choosing a gate, without projecting a card.
         await asyncio.get_running_loop().run_in_executor(
-            runtimes.executor, self.read_model.summary, session_id
+            runtimes.storage_executor, self.read_model.summary, session_id
         )
         runtime = runtimes.get_or_start(session_id)
         loop = asyncio.get_running_loop()

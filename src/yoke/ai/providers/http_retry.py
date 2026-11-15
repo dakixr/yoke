@@ -98,7 +98,11 @@ def backoff_seconds(
 
 def retry_after_seconds(response: httpx.Response) -> float | None:
     """Parse Retry-After delta seconds or an absolute HTTP date."""
-    value = response.headers.get("retry-after")
+    return parse_retry_after(response.headers.get("retry-after"))
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After header value from any transport."""
     if not value:
         return None
     try:

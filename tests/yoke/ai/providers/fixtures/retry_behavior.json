@@ -4525,7 +4525,7 @@
       1
     ],
     "sleeps": [
-      1.0
+      90.0
     ],
     "events": [
       {
@@ -4536,7 +4536,7 @@
         "event": "request_retry",
         "attempt": 0,
         "reason": "websocket_rate_limited",
-        "wait_seconds": 1.0
+        "wait_seconds": 90.0
       }
     ],
     "payloads": [
@@ -4580,7 +4580,7 @@
       1
     ],
     "sleeps": [
-      1.0
+      90.0
     ],
     "events": [
       {
@@ -4591,7 +4591,7 @@
         "event": "request_retry",
         "attempt": 0,
         "reason": "websocket_rate_limited",
-        "wait_seconds": 1.0
+        "wait_seconds": 90.0
       }
     ],
     "payloads": [],

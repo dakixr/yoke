@@ -52,7 +52,11 @@ from yoke.ai.providers.codex.websocket.config import (
     ssl_context_for_websocket_url,
     websocket_url_for_base,
 )
-from yoke.ai.providers.http_retry import RetryDecision, run_with_retry
+from yoke.ai.providers.http_retry import (
+    RetryDecision,
+    parse_retry_after,
+    run_with_retry,
+)
 
 from .config import register_provider as register_provider
 
@@ -559,7 +563,12 @@ def map_websocket_status_error(exc: InvalidStatus) -> ProviderError:
     status_code = exc.response.status_code
     message = f"Codex WebSocket handshake failed: {exc}"
     if status_code == 429:
-        return ProviderRateLimitError(message)
+        return ProviderRateLimitError(
+            message,
+            retry_after_seconds=parse_retry_after(
+                exc.response.headers.get("retry-after")
+            ),
+        )
     if status_code in {500, 502, 503, 504}:
         return ProviderServerError(message, status_code=status_code)
     return ProviderError(

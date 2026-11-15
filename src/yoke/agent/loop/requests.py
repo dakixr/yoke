@@ -119,6 +119,7 @@ class ModelRequests:
         iteration: int = 0,
         after_tool_results: bool = False,
         reason: CompactionReason = "threshold",
+        stop_requested: StopRequested | None = None,
     ) -> CompactionAttempt:
         """Generate a handoff and start a reduced provider-context epoch."""
         context = self.context
@@ -130,7 +131,7 @@ class ModelRequests:
         )
         if preparation is None:
             return CompactionAttempt()
-        summary = self._summarize(preparation)
+        summary = self._summarize(preparation, stop_requested)
         if summary is None:
             emit_compaction_failed(
                 on_event,
@@ -157,7 +158,9 @@ class ModelRequests:
         return CompactionAttempt(result=result, preparation=preparation)
 
     def _summarize(
-        self, preparation: CompactionPreparation
+        self,
+        preparation: CompactionPreparation,
+        stop_requested: StopRequested | None = None,
     ) -> tuple[Message, Message] | None:
         """Generate a handoff by extending the current provider epoch once."""
         context = self.context
@@ -184,10 +187,14 @@ class ModelRequests:
                     self.runtime.provider,
                     provider_messages,
                     self.runtime.tool_definitions(),
+                    cancel_requested=stop_requested,
                 )
             summary = (response.plain_text_content or "").strip()
             if not summary:
                 raise ValueError("Compaction provider returned an empty summary.")
+        except ProviderCancelledError as exc:
+            # A stop is not a failed compaction: record nothing, end the run.
+            raise AgentStoppedError() from exc
         except Exception as exc:
             metadata: dict[str, object] = {
                 "ok": False,
@@ -221,7 +228,9 @@ class ModelRequests:
         """Start one reduced epoch and retry the rejected request once."""
         context = self.context
         on_event = self.on_event
-        compaction = self.compact(iteration=iteration, reason="overflow_retry")
+        compaction = self.compact(
+            iteration=iteration, reason="overflow_retry", stop_requested=stop_requested
+        )
         if compaction.failed or compaction.result is None:
             return None
         self._guard_images()

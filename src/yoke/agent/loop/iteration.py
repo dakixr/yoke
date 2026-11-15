@@ -289,7 +289,9 @@ class AgentRun:
 
     def _pre_model(self, iteration: int) -> bool:
         self.runtime.command_notices.append(self.context)
-        compaction = self.requests.compact(iteration=iteration)
+        compaction = self.requests.compact(
+            iteration=iteration, stop_requested=self.stop_requested
+        )
         if compaction.failed:
             return True
         if compaction.result is not None:
@@ -303,7 +305,11 @@ class AgentRun:
         if self.runtime.refresh_tools(force=True):
             self.runtime.sync_context_instructions(self.context)
         self.requests.emit_usage(iteration=iteration, reason="tool_results")
-        compaction = self.requests.compact(iteration=iteration, after_tool_results=True)
+        compaction = self.requests.compact(
+            iteration=iteration,
+            after_tool_results=True,
+            stop_requested=self.stop_requested,
+        )
         if compaction.failed:
             raise AgentStoppedError()
         if compaction.result is not None:

@@ -62,7 +62,7 @@ async def admit_prompt(
     body: PromptAdmissionRequest,
 ) -> PromptAdmissionResponse:
     receipt = await asyncio.get_running_loop().run_in_executor(
-        _registry(request).executor, _pending(request).admit, session_id, body
+        _registry(request).storage_executor, _pending(request).admit, session_id, body
     )
     if body.resume:
         await _registry(request).get_or_start(session_id).wake()
@@ -89,7 +89,10 @@ async def patch_queue(
     body: QueuePatchRequest,
 ) -> QueueResponse:
     data = await asyncio.get_running_loop().run_in_executor(
-        _registry(request).executor, _pending(request).patch_queue, session_id, body
+        _registry(request).storage_executor,
+        _pending(request).patch_queue,
+        session_id,
+        body,
     )
     await _registry(request).get_or_start(session_id).wake()
     return QueueResponse(data=data)
