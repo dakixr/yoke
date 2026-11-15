@@ -1,0 +1,16 @@
+# Example only. Copy to ~/.config/systemd/user/yoke-daemon.service and edit paths.
+[Unit]
+Description=Yoke per-user daemon
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/yoke serve --daemon --no-idle-exit
+# Optional private file containing provider environment, mode 0600:
+# EnvironmentFile=%h/.config/yoke/daemon.env
+Restart=always
+RestartSec=1
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

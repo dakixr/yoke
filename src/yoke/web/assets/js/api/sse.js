@@ -26,7 +26,7 @@ export class SseClient {
       this.abortController = new AbortController();
       try {
         this.onState?.("connecting", null);
-        const response = await fetch("/api/v1/event", {
+        const response = await fetch("/api/v1/event?client=web", {
           headers: this.headers(),
           signal: this.abortController.signal,
         });

@@ -55,6 +55,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/daemon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Daemon Status */
+        get: operations["daemonStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/daemon/lease": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daemon Lease
+         * @description Hold the daemon up for as long as this stream stays open.
+         */
+        get: operations["daemonLease"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/daemon/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Daemon Restart
+         * @description Exit so the next client starts current code; never interrupts a turn.
+         */
+        post: operations["daemonRestart"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/daemon/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Daemon Stop */
+        post: operations["daemonStop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/event": {
         parameters: {
             query?: never;
@@ -1037,10 +1111,6 @@ export interface components {
              * @enum {string}
              */
             observation: "live" | "stale" | "lost";
-            /** Origintoolcallid */
-            originToolCallId?: string | null;
-            /** Originturnid */
-            originTurnId?: string | number | null;
             /** Parentagentid */
             parentAgentId?: string | null;
             /** Parentrunid */
@@ -1283,6 +1353,66 @@ export interface components {
             /** Previous */
             previous?: string | null;
         };
+        /** DaemonControlData */
+        DaemonControlData: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "restart" | "stop";
+            /**
+             * Scheduled
+             * @enum {string}
+             */
+            scheduled: "now" | "when_idle";
+        };
+        /** DaemonControlResponse */
+        DaemonControlResponse: {
+            data: components["schemas"]["DaemonControlData"];
+        };
+        /** DaemonRestartRequest */
+        DaemonRestartRequest: {
+            /**
+             * Whenidle
+             * @description When busy, restart once no turn is running instead of refusing.
+             * @default false
+             */
+            whenIdle: boolean;
+        };
+        /** DaemonStatusData */
+        DaemonStatusData: {
+            /** Buildid */
+            buildID: string;
+            /** Busy */
+            busy: boolean;
+            /** Idleexit */
+            idleExit: boolean;
+            /** Leases */
+            leases: components["schemas"]["LeaseInfo"][];
+            /** Pid */
+            pid: number;
+            /** Port */
+            port?: number | null;
+            /** Protocolversion */
+            protocolVersion: string;
+            /** Restartpending */
+            restartPending: boolean;
+            /** Socket */
+            socket?: string | null;
+        };
+        /** DaemonStatusResponse */
+        DaemonStatusResponse: {
+            data: components["schemas"]["DaemonStatusData"];
+        };
+        /** DaemonStopRequest */
+        DaemonStopRequest: {
+            /**
+             * Force
+             * @description Stop even while turns are running; they are interrupted.
+             * @default false
+             */
+            force: boolean;
+        };
         /** DrainData */
         DrainData: {
             /** Activeworkers */
@@ -1418,6 +1548,8 @@ export interface components {
         };
         /** HealthData */
         HealthData: {
+            /** Buildid */
+            buildID: string;
             /** Healthy */
             healthy: boolean;
             /** Protocolversion */
@@ -1458,6 +1590,17 @@ export interface components {
         /** InterruptResponse */
         InterruptResponse: {
             data: components["schemas"]["InterruptData"];
+        };
+        /** LeaseInfo */
+        LeaseInfo: {
+            /** Client */
+            client: string;
+            /** Id */
+            id: string;
+            /** Openedat */
+            openedAt: number;
+            /** Pid */
+            pid?: number | null;
         };
         /** LocationBrowseEntry */
         LocationBrowseEntry: {
@@ -2778,7 +2921,7 @@ export interface operations {
             };
         };
     };
-    streamEvents: {
+    daemonStatus: {
         parameters: {
             query?: never;
             header?: never;
@@ -2793,7 +2936,137 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["DaemonStatusResponse"];
+                };
+            };
+        };
+    };
+    daemonLease: {
+        parameters: {
+            query: {
+                client: string;
+                pid?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    daemonRestart: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DaemonRestartRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DaemonControlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    daemonStop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DaemonStopRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DaemonControlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    streamEvents: {
+        parameters: {
+            query?: {
+                /** @description Name this client; under `yoke serve --daemon` the stream is a lease. */
+                client?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

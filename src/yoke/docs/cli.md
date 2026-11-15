@@ -65,9 +65,17 @@ emoji aliases are not interpreted as Rich formatting.
 suppresses the startup token line for service managers that inject
 `YOKE_HTTP_TOKEN` through a protected environment file.
 
-`yoke acp` exposes that running daemon over Agent Client Protocol on stdio. It
-uses `YOKE_ACP_URL` and `YOKE_ACP_TOKEN`, keeps Yoke's HTTP runtime authoritative
-for sessions, tools, models, and cancellation, and advertises only models whose
+`yoke serve --daemon` runs the per-user daemon with a uid-authorized Unix
+socket and loopback HTTP on port 8770. It exits about five seconds after its last
+client lease closes and all running or queued work drains. `--no-idle-exit`
+keeps it running under systemd. `yoke daemon status|restart|stop` manages it;
+restart and stop refuse while busy unless `--when-idle` or `--force` is supplied,
+respectively. The ordinary CLI still runs in process during this phase.
+
+`yoke acp` discovers or starts that daemon and holds a lease over stdio's
+lifetime. `--url` or `YOKE_ACP_URL` selects an explicit HTTP server and requires
+`--token` or `YOKE_ACP_TOKEN`. It keeps Yoke's HTTP runtime authoritative for
+sessions, tools, models, and cancellation, and advertises only models whose
 native providers are currently ready. ACP supports text prompts, inline images,
 embedded file attachments, model and reasoning selection, session load/resume,
 tool lifecycle updates, client MCP servers, plans, interactive questions, and
@@ -148,15 +156,15 @@ may impose smaller limits. Mooncake's T3 adapter currently caps its complete
 encoded prompt at 15 MiB to fit T3's 16 MiB transport frame; base64 encoding
 reduces the usable raw attachment budget to roughly 11 MiB.
 
-For a local service pair, run the HTTP daemon once and let clients launch ACP
-peers as needed:
+Local ACP clients only need:
 
 ```bash
-YOKE_HTTP_TOKEN="$TOKEN" YOKE_HTTP_SESSION_DIR="$HOME/.yoke/t3-sessions" \
-  yoke serve --host 127.0.0.1 --port 8770 --hide-token
-
-YOKE_ACP_URL=http://127.0.0.1:8770 YOKE_ACP_TOKEN="$TOKEN" yoke acp
+yoke acp
 ```
+
+For an always-on daemon use the sample [systemd user unit](../../../docs/yoke-daemon.service).
+See [daemon transport and lifecycle](http.md#per-user-daemon) for discovery paths,
+port conflicts, build skew, and control endpoints.
 
 ---
 

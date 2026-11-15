@@ -134,14 +134,17 @@ def register_commands(app: typer.Typer) -> None:
             typer.Option("--host", help="HTTP bind host. Defaults to loopback only."),
         ] = "127.0.0.1",
         port: Annotated[
-            int,
+            int | None,
             typer.Option(
                 "--port",
                 min=0,
                 max=65535,
-                help="HTTP port. Use 0 for an ephemeral port.",
+                help=(
+                    "HTTP port. Use 0 for an ephemeral port. Defaults to 8765, "
+                    "or 8770 (YOKE_DAEMON_PORT) with --daemon."
+                ),
             ),
-        ] = 8765,
+        ] = None,
         token: Annotated[
             str | None,
             typer.Option(
@@ -188,25 +191,59 @@ def register_commands(app: typer.Typer) -> None:
                 help="Print the bearer token at startup.",
             ),
         ] = True,
+        daemon: Annotated[
+            bool,
+            typer.Option(
+                "--daemon",
+                help=(
+                    "Run the per-user daemon: Unix socket plus 127.0.0.1 TCP, "
+                    "token in ~/.yoke/daemon.json. Clients start it on demand."
+                ),
+            ),
+        ] = False,
+        no_idle_exit: Annotated[
+            bool,
+            typer.Option(
+                "--no-idle-exit",
+                help="With --daemon, keep running with no clients (for systemd).",
+            ),
+        ] = False,
     ) -> None:
         """Run the process-wide Yoke HTTP API."""
         import click
+
+        resolved_session_dir = (
+            session_dir.expanduser().resolve() if session_dir is not None else None
+        )
+        if daemon:
+            from yoke.daemon.server import run_daemon_from_environment
+
+            try:
+                result = run_daemon_from_environment(
+                    port=port,
+                    idle_exit=not no_idle_exit,
+                    verbose=verbose,
+                    session_directory=resolved_session_dir,
+                )
+            except (OSError, ValueError) as exc:
+                click.echo(f"Error: {exc}", err=True)
+                raise typer.Exit(1) from exc
+            raise typer.Exit(result)
+        if no_idle_exit:
+            click.echo("Error: --no-idle-exit requires --daemon.", err=True)
+            raise typer.Exit(2)
 
         from yoke.http.server import run_server
 
         try:
             result = run_server(
                 host=host,
-                port=port,
+                port=8765 if port is None else port,
                 auth_token=token,
                 allow_remote=allow_remote,
                 open_browser=open_browser,
                 verbose=verbose,
-                session_directory=(
-                    session_dir.expanduser().resolve()
-                    if session_dir is not None
-                    else None
-                ),
+                session_directory=resolved_session_dir,
                 show_token=show_token,
             )
         except (OSError, ValueError) as exc:
@@ -221,7 +258,7 @@ def register_commands(app: typer.Typer) -> None:
             typer.Option(
                 "--url",
                 envvar="YOKE_ACP_URL",
-                help="Base URL of the process-wide Yoke HTTP daemon.",
+                help="Explicit HTTP server URL. Otherwise discover or start the local daemon.",
             ),
         ] = None,
         token: Annotated[
@@ -237,10 +274,15 @@ def register_commands(app: typer.Typer) -> None:
         """Serve Yoke over Agent Client Protocol on stdio."""
         import click
 
-        from yoke.acp.runner import run_acp
+        from yoke.acp.runner import run_acp, run_acp_with_daemon
 
-        if not url or not token:
-            click.echo("Error: YOKE_ACP_URL and YOKE_ACP_TOKEN are required.", err=True)
+        if not url:
+            raise typer.Exit(run_acp_with_daemon())
+        if not token:
+            click.echo(
+                "Error: an explicit ACP URL requires YOKE_ACP_TOKEN or --token.",
+                err=True,
+            )
             raise typer.Exit(2)
         raise typer.Exit(run_acp(url, token))
 
@@ -333,6 +375,17 @@ def register_commands(app: typer.Typer) -> None:
         from yoke.cli.db_app import db_app
 
         raise typer.Exit(_run_lazy_typer_app(db_app, list(ctx.args), "yoke db"))
+
+    @app.command(
+        name="daemon",
+        context_settings=_DELEGATE_CONTEXT_SETTINGS,
+        help="Show, restart or stop the per-user Yoke daemon.",
+    )
+    def daemon_command(ctx: typer.Context) -> None:
+        """Delegate to the daemon sub-application."""
+        from yoke.cli.daemon_app import daemon_app
+
+        raise typer.Exit(_run_lazy_typer_app(daemon_app, list(ctx.args), "yoke daemon"))
 
     @app.command(
         context_settings=_DELEGATE_CONTEXT_SETTINGS,

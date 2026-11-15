@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from fastapi import Depends
 
 from yoke._version import __version__
+from yoke.daemon.build import build_id, protocol_version
 from yoke.http.auth import require_auth
 from yoke.http.models.capabilities import CapabilitiesData
 from yoke.http.models.capabilities import CapabilitiesResponse
@@ -21,7 +22,12 @@ router = APIRouter()
 @router.get("/health", response_model=HealthResponse, operation_id="health")
 def health() -> HealthResponse:
     return HealthResponse(
-        data=HealthData(healthy=True, version=__version__, protocol_version="1")
+        data=HealthData(
+            healthy=True,
+            version=__version__,
+            protocol_version=protocol_version(),
+            build_id=build_id(),
+        )
     )
 
 

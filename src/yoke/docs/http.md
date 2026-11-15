@@ -15,6 +15,61 @@ process-wide Yoke runtime without a wrapper daemon. `yoke acp` can then expose
 that daemon over stdio ACP while this HTTP service remains the authority for
 session state and physical worker drain.
 
+## Per-user daemon
+
+`yoke serve --daemon` runs one daemon per user. The exclusive lifetime flock on
+`~/.yoke/daemon.lock` is taken before binding. A losing startup racer exits 0.
+After a crash, the next lock holder replaces the stale socket and discovery
+record without trusting a pid from disk.
+
+The local listener is `$XDG_RUNTIME_DIR/yoke/daemon.sock`, falling back to
+`~/.yoke/run/daemon.sock`. It accepts only the kernel-reported `SO_PEERCRED` uid
+of the daemon user, with no bearer token. The browser listener is
+`127.0.0.1:8770`, authenticated with a bearer token. If the port is occupied,
+the daemon reports it and continues socket-only. `--port` or `YOKE_DAEMON_PORT`
+overrides that port; zero requests an ephemeral port. `~/.yoke/daemon.json`,
+mode 0600, records pid, build id, protocol version, socket, selected port and
+token. Detached startup logs go to `~/.yoke/run/daemon.log`.
+
+`yoke.daemon.client.connect_or_spawn()` discovers or starts a detached daemon
+in its own process session, then polls for up to five seconds. ACP uses this
+helper by default. The interactive and headless CLI still run in process.
+No live systemd service is migrated automatically. A sample user unit is in
+[`docs/yoke-daemon.service`](../../../docs/yoke-daemon.service).
+
+A lease is an authenticated open event stream that identifies the client.
+`GET /api/v1/event?client=web` makes the normal feed a lease. Alternatively,
+`GET /api/v1/daemon/lease?client=acp&pid=123` emits `daemon.lease`, heartbeats,
+and `daemon.exiting`. Disconnect releases the lease. Browser tabs and local
+ACP processes identify themselves this way. With no leases and no running,
+retired-but-draining, or queued turns, the daemon exits after about five seconds.
+Queued inputs keep it alive even when paused. `--no-idle-exit` disables idle
+exit for systemd. Tool background processes are closed during daemon shutdown.
+
+`GET /api/v1/health` includes `buildID` as version, git HEAD and dirty flag,
+plus `protocolVersion`. The daemon eagerly imports the packaged runtime before
+accepting clients, keeping a later checkout update out of its loaded code.
+Workspace tools and provider plugins still share the daemon's Python process
+and environment; a daemon crash affects every attached client's turns.
+
+Authenticated daemon controls are:
+
+- `GET /api/v1/daemon`: pid, build, listeners, leases, busy and restart status.
+- `POST /api/v1/daemon/restart` with optional `{"whenIdle":true}`: refuse busy
+  restarts with 409, or schedule exit after work drains. Clients rediscover and
+  spawn the replacement; systemd restarts an always-on daemon.
+- `POST /api/v1/daemon/stop` with optional `{"force":true}`: refuse busy stops
+  with 409 unless explicitly forced. A stop ends local ACP's lease reconnect
+  loop. Starting another client can start a fresh daemon.
+
+The CLI equivalents are `yoke daemon status`, `restart [--when-idle]`, and
+`stop [--force]`. Status exits 1 when none answers. Restart starts a daemon if
+none exists. Build mismatch while idle requests a restart and reattaches.
+While busy, compatible clients attach with one warning and schedule an idle
+restart; incompatible clients refuse. Another client's turn is never interrupted
+by skew handling. Provider credentials come from the daemon's startup environment
+and saved settings until per-client environment support arrives.
+
 ACP reports native HTTP failures with the failure category, operation, and
 elapsed time, for example `Native HTTP read timeout during POST session/wait
 after 35.0s`. These errors describe the local ACP-to-daemon request, not the
