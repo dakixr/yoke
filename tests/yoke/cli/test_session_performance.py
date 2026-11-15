@@ -19,7 +19,7 @@ from yoke.cli.interactive.prompt.cancellation import (
     interrupted_turn_snapshot,
 )
 from yoke.cli.interactive.prompt.loop import persist_prompt_exit_state
-from yoke.cli.interactive.prompt.turns import prepare_turn_agent
+from yoke.cli.runtime.turn_agent import prepare_turn_agent
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import tree_view
 from yoke.cli.runtime import persist_session_state

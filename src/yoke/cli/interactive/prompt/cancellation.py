@@ -5,13 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Event, Lock
 
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
+from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.common import prompt_turn_tracking
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime import AgentRunner
-from yoke.cli.runtime import persist_session_state
+from yoke.cli.runtime import ActiveSession, AgentRunner, persist_session_state
 from yoke.session.interrupt import interrupted_turn_snapshot
 
 
@@ -24,7 +20,7 @@ def retire_active_turn(
     retire_tool_traces: Callable[[int], None],
 ) -> tuple[list[Message], list[ConversationEntry]]:
     """Fence an active turn and return its synthetic continuation state."""
-    abandoned_turn_ids, _ = prompt_turn_tracking(state)
+    abandoned_turn_ids, _ = (state.abandoned_turn_ids, state.steered_turn_ids)
     stop_event.set()
     abandoned_turn_ids.add(state.active_turn_id)
     retire_tool_traces(state.active_turn_id)

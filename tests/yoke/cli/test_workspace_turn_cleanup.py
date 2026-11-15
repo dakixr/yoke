@@ -15,9 +15,10 @@ from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
 from yoke.agent.state import conversation_entries_from_messages
 from yoke.agent.tools import ReadTool, ToolRegistrationContext, ToolRegistrationResult
-from yoke.cli.interactive.prompt import runtime
-from yoke.cli.interactive.prompt import turns
+from yoke.cli.interactive import turn_runner
 from yoke.cli.interactive.common import PromptCliState, TurnFailure
+from yoke.cli.interactive.prompt import turns
+from yoke.cli.runtime import turn_agent as runtime
 from yoke.session.workspace import WorkspaceBusy, WorkspaceUnavailable, workspace_lease
 
 from .support import active_session_for
@@ -166,7 +167,7 @@ def test_rejection_after_preparation_does_not_promote_unexecuted_fork(
     )
     lock, outcomes, retired = Lock(), [], []
     monkeypatch.setattr(
-        turns, "start_session_title_generation", lambda *a, **k: root.rmdir()
+        turn_runner, "start_session_title_generation", lambda *a, **k: root.rmdir()
     )
     monkeypatch.setattr(
         turns,
@@ -186,7 +187,7 @@ def test_rejection_after_preparation_does_not_promote_unexecuted_fork(
             active_session=active,
             stop_event=Event(),
             user_message=Message.user("hello"),
-            callbacks={"handle_outcome": lambda _id, result: outcomes.append(result)},
+            handle_outcome=lambda _id, result: outcomes.append(result),
             turn_renderer_factory=Mock(),
         )
         outcome = outcomes[0]

@@ -5,28 +5,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
-from typing import Literal
+from typing import Annotated, Literal
 
 import typer
 
 from yoke.cli.commands.resume import register_resume_command
-from yoke.cli.main_core import CWD
-from yoke.cli.main_core import _run_lazy_typer_app
-from yoke.cli.main_core import build_cli_args
+from yoke.cli.main_core import CWD, _run_lazy_typer_app, build_cli_args
+from yoke.cli.main_utility_commands import register_utility_commands
 
 
 def register_commands(app: typer.Typer) -> None:
     """Attach all CLI command handlers to *app*."""
 
-    @app.command()
-    def version() -> None:
-        """Print the yoke version and exit."""
-        import click
-
-        from yoke._version import __version__
-
-        click.echo(__version__)
+    register_utility_commands(app)
 
     @app.callback()
     def cli(
@@ -302,8 +293,10 @@ def register_commands(app: typer.Typer) -> None:
         """Print portable active-branch context for another agent."""
         import click
 
-        from yoke.session.handoff import build_session_handoff
-        from yoke.session.handoff import render_session_handoff_markdown
+        from yoke.session.handoff import (
+            build_session_handoff,
+            render_session_handoff_markdown,
+        )
 
         normalized_format = output_format.strip().casefold()
         if normalized_format not in {"markdown", "json"}:
@@ -362,30 +355,6 @@ def register_commands(app: typer.Typer) -> None:
         raise typer.Exit(
             _run_lazy_typer_app(providers_app, list(ctx.args), "yoke providers")
         )
-
-    @app.command("mcp")
-    def mcp_command(
-        server: Annotated[
-            str | None,
-            typer.Argument(help="Optional MCP server name to inspect."),
-        ] = None,
-        root: Annotated[
-            Path,
-            typer.Option(
-                "--root",
-                help="Workspace root used for .yoke/mcp.json and MCP roots/list.",
-                file_okay=False,
-                dir_okay=True,
-                resolve_path=True,
-            ),
-        ] = CWD,
-    ) -> None:
-        """Show configured MCP servers and compact tool lists."""
-        import click
-
-        from yoke.cli.mcp_app import format_mcp_status
-
-        click.echo(format_mcp_status(root=root, home=Path.home(), server=server))
 
     @app.command(
         context_settings=_DELEGATE_CONTEXT_SETTINGS,

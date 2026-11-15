@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 # ruff: noqa: S101,D100,D103,ANN401
-
 import json
 from pathlib import Path
-from typing import Any
-from typing import cast
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -13,17 +11,15 @@ import pytest
 from yoke.agent.compaction import COMPACTION_SUMMARY_PROMPT
 from yoke.agent.context import CompactionPolicy, ContextManager
 from yoke.agent.loop import RuntimeAgent
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
+from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.session_tree import InvalidCurrentError
 from yoke.agent.skills.models import ActiveSkill
 from yoke.ai.providers.base import Provider
-from yoke.cli.interactive import session_commands
-from yoke.cli.interactive.common import handle_slash_command
 from yoke.cli.config import CLIArgs
-from yoke.cli.runtime import run_cli
+from yoke.cli.interactive import session_commands
+from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.render import build_console
-from yoke.cli.runtime import create_active_session
+from yoke.cli.runtime import create_active_session, run_cli
 from yoke.cli.session import SessionStore
 from yoke.cli.session.io import decode_session_record
 from yoke.cli.session.models import SessionRecord

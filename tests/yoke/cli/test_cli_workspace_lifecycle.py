@@ -13,29 +13,34 @@ from unittest.mock import Mock
 
 import pytest
 
-from yoke.agent.models import Message
 from yoke.agent.loop.agent import RuntimeAgent
+from yoke.agent.models import Message
 from yoke.agent.skills.models import ActiveSkill
 from yoke.cli.bootstrap.config import ToolDiscoveryProvider
 from yoke.cli.config import CLIArgs
 from yoke.cli.config import runtime as config_runtime
 from yoke.cli.interactive.basic import _start_basic_turn
-from yoke.cli.interactive.common import BasicCliState, PromptCliState, TurnFailure
-from yoke.cli.interactive.common import PendingPrompt, TurnStopped, TurnSuccess
-from yoke.cli.interactive.common import handle_slash_command
-from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
-from yoke.cli.interactive.prompt.lifecycle import PersistentPromptLifecycle
-from yoke.cli.interactive.prompt.lifecycle import _Submission
-from yoke.cli.interactive.prompt.turns import run_prompt_turn
+from yoke.cli.interactive.commands import handle_slash_command
+from yoke.cli.interactive.common import (
+    BasicCliState,
+    PendingPrompt,
+    PromptCliState,
+    TurnFailure,
+    TurnStopped,
+    TurnSuccess,
+)
 from yoke.cli.interactive.prompt import turns
-from yoke.cli.interactive.prompt import runtime as turn_runtime
+from yoke.cli.interactive.prompt.lifecycle import PersistentPromptLifecycle, _Submission
+from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
+from yoke.cli.interactive.prompt.turns import run_prompt_turn
 from yoke.cli.interactive.queue.mutations import append_prompt, dequeue_prompt
 from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
 from yoke.cli.render import InteractiveRenderer, build_console
+from yoke.cli.runtime import turn_agent as turn_runtime
 from yoke.cli.runtime.cli import run_cli, run_resume_cli
 from yoke.cli.runtime.lifetime import close_cli_owned_agent, register_cli_owned_agent
-from yoke.cli.runtime.workspaces import retain_workspace_lease
 from yoke.cli.runtime.session import create_active_session
+from yoke.cli.runtime.workspaces import retain_workspace_lease
 from yoke.cli.session import SessionStore
 from yoke.session.workspace import WorkspaceBusy, WorkspaceUnavailable, workspace_lease
 
@@ -186,7 +191,7 @@ def test_deleted_workspace_reports_turn_failure_without_executing(
     root.rmdir()
     agent = FakeAgent()
     prepare = Mock(side_effect=AssertionError("forked provider before validation"))
-    monkeypatch.setattr("yoke.cli.interactive.prompt.turns.prepare_turn_agent", prepare)
+    monkeypatch.setattr("yoke.cli.interactive.turn_runner.prepare_turn_agent", prepare)
     results: Queue[TurnSuccess | TurnStopped | TurnFailure] = Queue()
     if mode == "basic":
         thread = _start_basic_turn(
@@ -210,7 +215,7 @@ def test_deleted_workspace_reports_turn_failure_without_executing(
             active_session=active,
             stop_event=Event(),
             user_message=None,
-            callbacks={"handle_outcome": lambda turn_id, outcome: results.put(outcome)},
+            handle_outcome=lambda turn_id, outcome: results.put(outcome),
             turn_renderer_factory=Mock(),
         )
     outcome = results.get(timeout=1)
@@ -339,7 +344,7 @@ def test_retired_turn_keeps_lease_until_detached_cleanup(
     def invocation() -> None:
         retain_workspace_lease(active.store, active.id)
         register_cli_owned_agent(primary)
-        fork = turns.prepare_turn_agent(
+        fork = turn_runtime.prepare_turn_agent(
             primary, messages=[], entries=[], active_session=active
         )
         turns.retire_turn_agent(fork, primary_agent=primary)

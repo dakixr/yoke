@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Iterable
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Protocol
 
-from yoke.cli.interactive.common import SLASH_COMMANDS
-from yoke.cli.interactive.common import SlashCommand
-from prompt_toolkit.completion import Completer
-from prompt_toolkit.completion import Completion
-from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
+
+from yoke.cli.interactive.commands import SLASH_COMMANDS
+from yoke.cli.interactive.commands import Command as SlashCommand
 
 
 class SkillLike(Protocol):

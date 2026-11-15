@@ -7,21 +7,28 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from yoke.ai.providers.base import Provider
-from yoke.ai.providers.base import ProviderModelInfo
-from yoke.ai.providers.base import ModelCatalogProvider
+from yoke.ai.providers.base import ModelCatalogProvider, Provider, ProviderModelInfo
 from yoke.ai.providers.credentials import provider_environment
-from yoke.ai.providers.plugins import ProviderPluginContext
-from yoke.ai.providers.plugins import available_custom_provider_names
-from yoke.ai.providers.plugins import create_custom_provider
-from yoke.ai.providers.resolution import BUILTIN_PROVIDER_NAMES
-from yoke.ai.providers.resolution import build_builtin_provider
-from yoke.ai.providers.resolution import list_provider_models
-from yoke.ai.providers.resolution import UnknownModelError
-from yoke.cli.config.default_model import load_effective_yoke_config
-from yoke.cli.config.default_model import parse_config_default_model
-from yoke.cli.providers.selection import resolve_cli_reasoning_effort
-from yoke.cli.providers.selection import parse_cli_model_ref
+from yoke.ai.providers.plugins import (
+    ProviderPluginContext,
+    available_custom_provider_names,
+    create_custom_provider,
+)
+from yoke.ai.providers.resolution import (
+    BUILTIN_PROVIDER_NAMES,
+    UnknownModelError,
+    build_builtin_provider,
+    list_provider_models,
+)
+from yoke.cli.config.default_model import (
+    load_effective_yoke_config,
+    parse_config_default_model,
+)
+from yoke.cli.config.resources import close_quietly
+from yoke.cli.providers.selection import (
+    parse_cli_model_ref,
+    resolve_cli_reasoning_effort,
+)
 
 if TYPE_CHECKING:
     from yoke.cli.config.runtime import CLIArgs
@@ -65,9 +72,7 @@ def build_provider_from_args(args: CLIArgs) -> Provider:
                     model, args.reasoning_effort, provider_name=provider.provider_name
                 )
         except ValueError:
-            close = getattr(provider, "close", None)
-            if callable(close):
-                close()
+            close_quietly(provider, suppress_errors=False)
             raise
     return provider
 

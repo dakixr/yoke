@@ -10,8 +10,7 @@ from yoke.agent.models import Message
 from yoke.cli.image_input import format_attachment_lines
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.renderer import format_bottom_toolbar
-from yoke.cli.render import print_session_scrollback
-from yoke.cli.render import print_scrollback_notice
+from yoke.cli.interactive.seeding import seed_session
 from yoke.cli.render import print_version_banner
 
 
@@ -26,20 +25,14 @@ def initialize_prompt_toolkit_session(
 ) -> None:
     """Print the version banner and seed the session when needed."""
     print_version_banner(scrollback_console)
-    if replay_session and state.messages:
-        if replay_notice:
-            print_scrollback_notice(scrollback_console, replay_notice)
-        print_session_scrollback(
-            scrollback_console,
-            replay_messages or state.messages,
-        )
-    if replay_session or not state.messages or state.messages[-1].role != "user":
-        return
-    seeded_message = state.messages[-1].model_copy(deep=True)
-    seeded_prompt = seeded_message.display_text_content() or ""
-    state.messages = state.messages[:-1]
-    if seeded_prompt:
-        start_turn(seeded_prompt, user_message=seeded_message)
+    seed_session(
+        state,
+        replay_session=replay_session,
+        replay_messages=replay_messages,
+        replay_notice=replay_notice,
+        console=scrollback_console,
+        start_turn=lambda prompt, message: start_turn(prompt, user_message=message),
+    )
 
 
 def build_prompt_toolbar(

@@ -2,43 +2,44 @@
 
 from __future__ import annotations
 
-import time
 from queue import Empty, Queue
 from threading import Event, Thread
 
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.cli.config import RUN_ERRORS
+from yoke.agent.loop.agent import RuntimeAgent
+from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.image_input import build_user_message
-from yoke.cli.interactive.common import BasicCliState
-from yoke.cli.interactive.common import InputFunc
-from yoke.cli.interactive.common import InputInterrupted
-from yoke.cli.interactive.common import PendingPrompt
-from yoke.cli.interactive.common import TurnFailure
-from yoke.cli.interactive.common import TurnStopped
-from yoke.cli.interactive.common import TurnSuccess
-from yoke.cli.interactive.common import handle_slash_command
+from yoke.cli.interactive.command_host import CommandCallbacks
+from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.interactive.common import (
-    partial_conversation_entries_from_error,
+    BasicCliState,
+    InputFunc,
+    InputInterrupted,
+    PendingPrompt,
+    TurnFailure,
+    TurnStopped,
+    TurnSuccess,
+    session_resume_notice,
 )
-from yoke.cli.interactive.common import partial_messages_from_error
-from yoke.cli.interactive.common import session_resume_notice
-from yoke.cli.render import InteractiveRenderer
-from yoke.cli.render import OutputStream
-from yoke.cli.render import build_console
-from yoke.cli.render import print_agent_output
-from yoke.cli.render import print_error
-from yoke.cli.render import print_scrollback_notice
-from yoke.cli.render import print_session_scrollback
-from yoke.cli.render import print_user_prompt
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime import AgentRunner
-from yoke.cli.runtime import execute_turn
-from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime import session_usage_metric_context
-from yoke.cli.runtime import start_session_title_generation
-from yoke.cli.runtime import sync_agent_skill_state_to_session
-from yoke.session.workspace import WorkspaceUnavailable, require_workspace
+from yoke.cli.interactive.events import WakeQueue, start_basic_input_reader
+from yoke.cli.interactive.seeding import seed_session
+from yoke.cli.interactive.turn_runner import TurnRunner
+from yoke.cli.render import (
+    InteractiveRenderer,
+    OutputStream,
+    build_console,
+    print_agent_output,
+    print_error,
+    print_scrollback_notice,
+    print_user_prompt,
+)
+from yoke.cli.runtime import (
+    ActiveSession,
+    AgentRunner,
+    persist_session_state,
+    sync_agent_skill_state_to_session,
+)
+from yoke.cli.runtime.turn_agent import retire_turn_agent
+from yoke.session.workspace import promote_session_turn
 
 
 def run_basic_interactive_cli(
@@ -57,9 +58,11 @@ def run_basic_interactive_cli(
     state = BasicCliState(messages=list(session_messages), pending_prompts=[])
     stdout_console = build_console(stdout)
     renderer = InteractiveRenderer(stdout)
-    input_queue: Queue[str | None | InputInterrupted] = Queue()
-    result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped] = Queue()
-    _start_basic_input_reader(input_func, input_queue)
+    input_queue: Queue[str | None | InputInterrupted] = WakeQueue(state.wakeup)
+    result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped] = WakeQueue(
+        state.wakeup
+    )
+    start_basic_input_reader(input_func, input_queue)
     if stdout_console.is_terminal:
         renderer.print_intro()
     _seed_basic_session_if_needed(
@@ -75,6 +78,7 @@ def run_basic_interactive_cli(
         result_queue=result_queue,
     )
     while True:
+        state.wakeup.clear()
         try:
             outcome = result_queue.get_nowait()
         except Empty:
@@ -111,7 +115,8 @@ def run_basic_interactive_cli(
             if state.input_closed:
                 stdout_console.print()
             return 0
-        time.sleep(0.05)
+        if input_queue.empty() and result_queue.empty():
+            state.wakeup.wait()
 
 
 def _request_basic_exit(
@@ -127,6 +132,7 @@ def _request_basic_exit(
             worker.join(timeout=0.05)
             if state.worker is worker:
                 state.worker = None
+            state.wakeup.set()
 
         Thread(target=release_worker_slot, daemon=True, name="yoke-basic-stop").start()
     if state.exit_notice_emitted:
@@ -150,56 +156,40 @@ def _start_basic_turn(
     user_message: Message | None = None,
 ) -> Thread:
     history = list(state.messages)
-    title_messages = [*history, user_message or Message.user(prompt)]
     stop_event = Event()
     state.active_stop_request = stop_event
     sync_agent_skill_state_to_session(active_session, agent)
 
     def checkpoint_tool_result(
+        turn_agent: AgentRunner,
         messages: list[Message],
         conversation_entries: list[ConversationEntry],
     ) -> None:
+        if stop_event.is_set():
+            return
+        if isinstance(agent, RuntimeAgent) and isinstance(turn_agent, RuntimeAgent):
+            agent.active_skills = [
+                skill.model_copy(deep=True) for skill in turn_agent.active_skills
+            ]
+        state.messages = list(messages)
         persist_session_state(
             active_session,
-            agent,
+            turn_agent,
             messages,
             conversation_entries=conversation_entries,
         )
 
     def run_turn() -> None:
-        try:
-            require_workspace(active_session.root, session_id=active_session.id)
-            start_session_title_generation(
-                active_session,
-                agent,
-                prompt,
-                messages=title_messages,
-            )
-            with session_usage_metric_context(active_session, prompt):
-                result = execute_turn(
-                    agent,
-                    prompt,
-                    history,
-                    stderr=stderr,
-                    indicator=renderer,
-                    stop_requested=stop_event.is_set,
-                    user_message=user_message,
-                    conversation_entries=active_session.active_entries(),
-                    after_tool_result_appended=checkpoint_tool_result,
-                )
-            if result.status == "stopped":
-                result_queue.put(TurnStopped(result=result))
-                return
-        except (*RUN_ERRORS, WorkspaceUnavailable) as exc:
-            result_queue.put(
-                TurnFailure(
-                    error=exc,
-                    messages=partial_messages_from_error(exc),
-                    conversation_entries=partial_conversation_entries_from_error(exc),
-                )
-            )
-            return
-        result_queue.put(TurnSuccess(result=result))
+        outcome = TurnRunner(agent, active_session).run(
+            prompt,
+            history,
+            entries=active_session.active_entries(),
+            stop_event=stop_event,
+            user_message=user_message,
+            indicator=renderer,
+            checkpoint=checkpoint_tool_result,
+        )
+        result_queue.put(outcome)
 
     thread = Thread(target=run_turn, daemon=True)
     thread.start()
@@ -218,7 +208,10 @@ def _drain_basic_input_queue(
     result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped],
 ) -> ActiveSession:
     while True:
-        prompt = input_queue.get_nowait()
+        try:
+            prompt = input_queue.get_nowait()
+        except Empty:
+            return active_session
         if isinstance(prompt, InputInterrupted):
             _request_basic_exit(state, console, active_session)
             continue
@@ -234,13 +227,14 @@ def _drain_basic_input_queue(
         submitted_prompts: list[str] = []
         handled, state.messages, active_session = handle_slash_command(
             prompt,
-            basic_mode=True,
+            host=CommandCallbacks(
+                basic_mode=True, on_submit_prompt=submitted_prompts.append
+            ),
             agent=agent,
             active_session=active_session,
             messages=state.messages,
             console=console,
             pending_images=state.pending_images,
-            on_submit_prompt=submitted_prompts.append,
         )
         if handled:
             if not submitted_prompts:
@@ -290,24 +284,40 @@ def _handle_basic_outcome(
 ) -> None:
     state.worker = None
     state.active_stop_request = None
+    outcome_agent = outcome.agent or agent
+    if (
+        isinstance(agent, RuntimeAgent)
+        and isinstance(outcome_agent, RuntimeAgent)
+        and outcome_agent is not agent
+    ):
+        promote_session_turn(agent, outcome_agent)
+        outcome_agent = agent
     if isinstance(outcome, TurnFailure):
         if outcome.messages is not None:
             state.messages = outcome.messages
             persist_session_state(
                 active_session,
-                agent,
+                outcome_agent,
                 state.messages,
                 conversation_entries=outcome.conversation_entries,
             )
         print_error(console, str(outcome.error))
     elif isinstance(outcome, TurnStopped):
-        if outcome.result is not None:
-            state.messages = outcome.result.messages
+        stopped_messages = (
+            outcome.result.messages if outcome.result is not None else outcome.messages
+        )
+        stopped_entries = (
+            outcome.result.conversation_entries
+            if outcome.result is not None
+            else outcome.conversation_entries
+        )
+        if stopped_messages is not None:
+            state.messages = stopped_messages
             persist_session_state(
                 active_session,
-                agent,
+                outcome_agent,
                 state.messages,
-                conversation_entries=outcome.result.conversation_entries,
+                conversation_entries=stopped_entries,
             )
         print_scrollback_notice(
             console,
@@ -317,12 +327,13 @@ def _handle_basic_outcome(
         state.messages = outcome.result.messages
         persist_session_state(
             active_session,
-            agent,
+            outcome_agent,
             state.messages,
             conversation_entries=outcome.result.conversation_entries,
         )
         print_agent_output(console, outcome.result.output)
         print("\a", end="", flush=True)
+    retire_turn_agent(outcome.agent, primary_agent=agent)
     if not state.pending_prompts:
         return
     pending = state.pending_prompts.pop(0)
@@ -340,28 +351,6 @@ def _handle_basic_outcome(
     )
 
 
-def _start_basic_input_reader(
-    input_func: InputFunc,
-    input_queue: Queue[str | None | InputInterrupted],
-) -> None:
-    def read_input() -> None:
-        while True:
-            try:
-                raw = input_func("› ")
-            except KeyboardInterrupt:
-                input_queue.put(InputInterrupted())
-                return
-            except (EOFError, StopIteration):
-                input_queue.put(None)
-                return
-            prompt = raw.strip()
-            input_queue.put(prompt)
-            if prompt.lower() in {"exit", "quit"}:
-                return
-
-    Thread(target=read_input, daemon=True).start()
-
-
 def _seed_basic_session_if_needed(
     *,
     state: BasicCliState,
@@ -375,25 +364,25 @@ def _seed_basic_session_if_needed(
     renderer: InteractiveRenderer,
     result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped],
 ) -> None:
-    if replay_session and state.messages:
-        if replay_notice:
-            print_scrollback_notice(console, replay_notice)
-        print_session_scrollback(console, replay_messages or state.messages)
-    if replay_session or not state.messages or state.messages[-1].role != "user":
-        return
-    seeded_message = state.messages[-1].model_copy(deep=True)
-    seeded_prompt = seeded_message.text_content() or ""
-    state.messages = state.messages[:-1]
-    if not seeded_prompt:
-        return
-    print_user_prompt(console, seeded_prompt)
-    state.worker = _start_basic_turn(
-        seeded_prompt,
-        state=state,
-        active_session=active_session,
-        agent=agent,
-        stderr=stderr,
-        renderer=renderer,
-        result_queue=result_queue,
-        user_message=seeded_message,
+    def start_seed(prompt: str, message: Message) -> Thread:
+        print_user_prompt(console, prompt)
+        state.worker = _start_basic_turn(
+            prompt,
+            state=state,
+            active_session=active_session,
+            agent=agent,
+            stderr=stderr,
+            renderer=renderer,
+            result_queue=result_queue,
+            user_message=message,
+        )
+        return state.worker
+
+    seed_session(
+        state,
+        replay_session=replay_session,
+        replay_messages=replay_messages,
+        replay_notice=replay_notice,
+        console=console,
+        start_turn=start_seed,
     )

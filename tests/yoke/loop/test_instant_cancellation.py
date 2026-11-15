@@ -1,37 +1,33 @@
 from __future__ import annotations
 
 # ruff: noqa: ANN401, D100, D101, D102, D103, S101
-
 import io
 import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+
 import yoke.agent.loop.in_process_tool as in_process_tool_module
 import yoke.agent.loop.tool_process as tool_process_module
-
-from yoke.agent.loop import AgentResult
-from yoke.agent.loop import RuntimeAgent
-from yoke.agent.loop.in_process_tool import execute_in_process_tool
-from yoke.agent.loop.in_process_tool import InProcessToolShutdownError
-from yoke.agent.loop.tool_process import ToolProcessInvocation
-from yoke.agent.loop.tool_process import _process_context
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.agent.models import ToolCall
-from yoke.agent.models import ToolFunction
+from yoke.agent.loop import AgentResult, RuntimeAgent
+from yoke.agent.loop.in_process_tool import (
+    InProcessToolShutdownError,
+    execute_in_process_tool,
+)
+from yoke.agent.loop.tool_process import ToolProcessInvocation, _process_context
+from yoke.agent.models import ConversationEntry, Message, ToolCall, ToolFunction
 from yoke.agent.state import conversation_entries_from_messages
-from yoke.agent.tools import LocalTool
-from yoke.agent.tools import ToolRuntimeContext
-from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.common import PendingPrompt
-from yoke.cli.interactive.common import format_context_usage_text
+from yoke.agent.tools import LocalTool, ToolRuntimeContext
+from yoke.cli.interactive.common import (
+    PendingPrompt,
+    PromptCliState,
+    format_context_usage_text,
+)
 from yoke.cli.interactive.prompt.control import (
     create_prompt_toolkit_control,
 )
@@ -42,12 +38,11 @@ from yoke.cli.interactive.prompt.scrollback import ScrollbackKind
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.render import build_console
-from yoke.mcp.client import McpClientError
-from yoke.mcp.client import StdioMcpClient
+from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.mcp.client import McpClientError, StdioMcpClient
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp.http_client import StreamableHttpClient
-from yoke.session.interrupt import active_branch_entries
-from yoke.session.interrupt import interrupted_turn_snapshot
+from yoke.session.interrupt import active_branch_entries, interrupted_turn_snapshot
 
 from ..cli.support import active_session_for
 
@@ -131,7 +126,7 @@ def test_queued_skill_waits_for_its_fifo_position(tmp_path, monkeypatch) -> None
     )
     agent = QueueAgent()
     active_session = active_session_for(tmp_path)
-    active_session_ref = {"active_session": active_session}
+    active_session_ref = ActiveSessionRef(active_session)
     state_lock = threading.Lock()
     console = build_console(io.StringIO())
     control = create_prompt_toolkit_control(
@@ -252,7 +247,7 @@ def test_steering_starts_replacement_before_retired_turn_finishes(
     control = create_prompt_toolkit_control(
         state=state,
         agent=agent,
-        active_session_ref={"active_session": active_session},
+        active_session_ref=ActiveSessionRef(active_session),
         renderer=_renderer(),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
@@ -320,7 +315,7 @@ def test_instant_stop_emits_total_turn_summary(tmp_path) -> None:
     control = create_prompt_toolkit_control(
         state=state,
         agent=agent,
-        active_session_ref={"active_session": active_session_for(tmp_path)},
+        active_session_ref=ActiveSessionRef(active_session_for(tmp_path)),
         renderer=_renderer(emit_turn_summary=summaries.append),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
@@ -425,7 +420,7 @@ def test_steering_continues_from_latest_tool_result_checkpoint(
         )
 
     monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.turns.execute_turn",
+        "yoke.cli.interactive.turn_runner.execute_turn",
         fake_execute_turn,
     )
     state = PromptCliState(
@@ -439,7 +434,7 @@ def test_steering_continues_from_latest_tool_result_checkpoint(
     control = create_prompt_toolkit_control(
         state=state,
         agent=UnusedAgent(),
-        active_session_ref={"active_session": active_session},
+        active_session_ref=ActiveSessionRef(active_session),
         renderer=_renderer(),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
@@ -568,7 +563,7 @@ def test_stop_and_immediate_continue_retain_completed_tool_work(
         )
 
     monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.turns.execute_turn",
+        "yoke.cli.interactive.turn_runner.execute_turn",
         fake_execute_turn,
     )
     state = PromptCliState(
@@ -581,7 +576,7 @@ def test_stop_and_immediate_continue_retain_completed_tool_work(
     control = create_prompt_toolkit_control(
         state=state,
         agent=UnusedAgent(),
-        active_session_ref={"active_session": active_session},
+        active_session_ref=ActiveSessionRef(active_session),
         renderer=_renderer(),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
@@ -699,7 +694,7 @@ def test_turn_cancellation_retires_live_tool_traces(tmp_path) -> None:
     control = create_prompt_toolkit_control(
         state=state,
         agent=agent,
-        active_session_ref={"active_session": active_session_for(tmp_path)},
+        active_session_ref=ActiveSessionRef(active_session_for(tmp_path)),
         renderer=renderer,
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,

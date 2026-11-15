@@ -6,23 +6,30 @@ from collections.abc import Callable, Mapping
 from threading import Lock, Thread
 
 from yoke.agent.models import Message
-from yoke.cli.interactive.completion.menu import YokeCompletionsMenu
-from yoke.cli.interactive.common import PendingPrompt
-from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.common import handle_slash_command
-from yoke.cli.interactive.prompt.lifecycle import PromptLifecycleConfig
-from yoke.cli.interactive.prompt.lifecycle import run_persistent_prompt_application
+from yoke.cli.interactive.command_host import CommandCallbacks
+from yoke.cli.interactive.commands import find_command, handle_slash_command
+from yoke.cli.interactive.common import PendingPrompt, PromptCliState
+from yoke.cli.interactive.completion.layout import (
+    configure_prompt_session_completion_menu,
+)
+from yoke.cli.interactive.prompt.lifecycle import (
+    PromptLifecycleConfig,
+    run_persistent_prompt_application,
+)
 from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
-from yoke.cli.interactive.queue.mutations import QUEUE_MANAGER_CONFLICT_NOTICE
-from yoke.cli.interactive.queue.mutations import attach_pending_image
-from yoke.cli.interactive.queue.mutations import dequeue_prompt_with_position
-from yoke.cli.interactive.queue.mutations import replace_prompt_queue
-from yoke.cli.interactive.queue.mutations import restore_dequeued_prompt
+from yoke.cli.interactive.queue.mutations import (
+    QUEUE_MANAGER_CONFLICT_NOTICE,
+    attach_pending_image,
+    dequeue_prompt_with_position,
+    replace_prompt_queue,
+    restore_dequeued_prompt,
+)
 from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
 from yoke.cli.interactive.skill_commands import is_skill_command
 from yoke.cli.render import print_scrollback_notice, print_session_scrollback
 from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.cli.runtime.metadata import persist_active_session_metadata
 
 
@@ -62,7 +69,7 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     *,
     state: PromptCliState,
     agent: AgentRunner,
-    active_session_ref: dict[str, ActiveSession],
+    active_session_ref: ActiveSessionRef,
     scrollback_console,
     state_lock: Lock,
     update_status: Callable[[str], None],
@@ -79,15 +86,15 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     submit_action: str | None = None,
 ) -> ActiveSession:
     """Process one submitted prompt-toolkit prompt."""
-    active_session = active_session_ref["active_session"]
+    active_session = active_session_ref.value
     with state_lock:
         action = state.submit_action if submit_action is None else submit_action
         if submit_action is None:
             state.submit_action = "steer"
     if not prompt and not state.pending_images:
         return active_session
-    normalized = prompt.strip().lower()
-    if normalized in {"/new", "/fork"}:
+    item = find_command(prompt)
+    if item is not None and item.changes_session:
         with state_lock:
             active_work = state.worker is not None or state.turn_handoff_active
         if active_work:
@@ -142,12 +149,12 @@ def process_prompt_toolkit_prompt(  # noqa: C901
             console=scrollback_console,
             pending_images=state.pending_images,
             pending_prompts=manager_prompts,
-            on_queue_replace=save_manager_queue,
+            host=CommandCallbacks(on_queue_replace=save_manager_queue),
         )
         if handled:
             with state_lock:
                 state.messages = updated_messages
-                active_session_ref["active_session"] = updated_session
+                active_session_ref.value = updated_session
                 active_worker = (
                     state.worker is not None and state.active_stop_request is not None
                 )
@@ -192,15 +199,22 @@ def process_prompt_toolkit_prompt(  # noqa: C901
                 )
                 raise
             return updated_session
-    if prompt.strip().lower() == "/compact" and start_compaction is not None:
+
+    command_deferred = False
+
+    def try_start_compaction() -> bool:
+        nonlocal command_deferred
         with state_lock:
             idle = state.worker is None and not state.pending_prompts
-        if idle:
+        if idle and start_compaction is not None:
+            command_deferred = True
             start_compaction()
             if request_context_usage is not None:
                 request_context_usage("")
             invalidate_prompt()
-            return active_session_ref["active_session"]
+            return True
+        return False
+
     replay_messages_ref: list[list[Message] | None] = [None]
     handled, updated_messages, updated_session = handle_slash_command(
         prompt,
@@ -209,36 +223,42 @@ def process_prompt_toolkit_prompt(  # noqa: C901
         messages=state.messages,
         console=scrollback_console,
         pending_images=state.pending_images,
-        on_context_usage=lambda payload: update_status_context_usage(
-            payload,
-            state=state,
-            state_lock=state_lock,
-            invalidate_prompt=invalidate_prompt,
-            format_context_usage_text=format_context_usage_text,
+        host=CommandCallbacks(
+            start_compaction=try_start_compaction,
+            on_context_usage=lambda payload: update_status_context_usage(
+                payload,
+                state=state,
+                state_lock=state_lock,
+                invalidate_prompt=invalidate_prompt,
+                format_context_usage_text=format_context_usage_text,
+            ),
+            on_editor_text=on_editor_text,
+            on_submit_prompt=lambda submitted: submit_prompt_toolkit_prompt(
+                submitted,
+                action=action,
+                state=state,
+                active_session=active_session,
+                state_lock=state_lock,
+                invalidate_prompt=invalidate_prompt,
+                start_turn=start_turn,
+                steer_active_turn=steer_active_turn,
+            ),
+            on_image_attached=lambda attachment: attach_pending_image(
+                state=state,
+                state_lock=state_lock,
+                active_session=active_session,
+                attachment=attachment,
+            ),
+            on_replay_messages=lambda messages: replay_messages_ref.__setitem__(
+                0,
+                list(messages),
+            ),
+            on_process_inspector=open_process_inspector,
+            supports_tree=True,
         ),
-        on_editor_text=on_editor_text,
-        on_submit_prompt=lambda submitted: submit_prompt_toolkit_prompt(
-            submitted,
-            action=action,
-            state=state,
-            active_session=active_session,
-            state_lock=state_lock,
-            invalidate_prompt=invalidate_prompt,
-            start_turn=start_turn,
-            steer_active_turn=steer_active_turn,
-        ),
-        on_image_attached=lambda attachment: attach_pending_image(
-            state=state,
-            state_lock=state_lock,
-            active_session=active_session,
-            attachment=attachment,
-        ),
-        on_replay_messages=lambda messages: replay_messages_ref.__setitem__(
-            0,
-            list(messages),
-        ),
-        on_process_inspector=open_process_inspector,
     )
+    if command_deferred:
+        return active_session_ref.value
     if handled:
         provider_config = getattr(getattr(agent, "provider", None), "config", None)
         provider_effort = getattr(provider_config, "reasoning_effort", None)
@@ -249,7 +269,7 @@ def process_prompt_toolkit_prompt(  # noqa: C901
         )
         with state_lock:
             state.messages = updated_messages
-            active_session_ref["active_session"] = updated_session
+            active_session_ref.value = updated_session
             if switched_queue is not None:
                 state.pending_prompts = switched_queue.prompts
                 state.pending_images = switched_queue.pending_images
@@ -278,13 +298,13 @@ def process_prompt_toolkit_prompt(  # noqa: C901
         start_turn=start_turn,
         steer_active_turn=steer_active_turn,
     )
-    return active_session_ref["active_session"]
+    return active_session_ref.value
 
 
 def run_prompt_toolkit_event_loop(
     *,
     state: PromptCliState,
-    active_session_ref: dict[str, ActiveSession],
+    active_session_ref: ActiveSessionRef,
     agent: AgentRunner,
     prompt_session,
     completer,
@@ -348,7 +368,7 @@ def run_prompt_toolkit_event_loop(
 
     def persist_exit() -> None:
         with state_lock:
-            active_session = active_session_ref["active_session"]
+            active_session = active_session_ref.value
         persist_prompt_exit_state(
             state=state,
             state_lock=state_lock,
@@ -370,31 +390,3 @@ def run_prompt_toolkit_event_loop(
             request_exit=request_exit,
         )
     )
-
-
-def configure_prompt_session_completion_menu(prompt_session) -> None:
-    """Replace prompt-toolkit's default popup with yoke's completion menu."""
-    try:
-        from prompt_toolkit.filters import has_focus
-        from prompt_toolkit.layout.containers import Float
-
-        default_buffer_window = prompt_session.layout.current_window
-        default_buffer_window.content.menu_position = lambda: 0
-        completion_filter = has_focus(prompt_session.default_buffer)
-        prompt_wrapper = prompt_session.layout.container.children[0]
-        float_container = prompt_wrapper.alternative_content
-        floats = float_container.floats
-        floats[:2] = [
-            Float(
-                xcursor=True,
-                ycursor=True,
-                transparent=True,
-                content=YokeCompletionsMenu(
-                    max_height=6,
-                    extra_filter=completion_filter,
-                ),
-            )
-        ]
-        default_buffer_window.height = prompt_session._get_default_buffer_control_height
-    except (AttributeError, IndexError, TypeError):
-        return

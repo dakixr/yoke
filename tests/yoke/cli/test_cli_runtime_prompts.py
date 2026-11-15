@@ -1,42 +1,41 @@
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from queue import Queue
-from threading import Event
-from threading import Lock
-from threading import Thread
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 from typing import cast
 
-from yoke.agent.models import Message
+import pytest
+
+from yoke.agent.models import (
+    Message,
+    MessageImageURLContentPart,
+    MessageTextContentPart,
+)
 from yoke.agent.state import conversation_entries_from_messages
-from yoke.cli.interactive.tree_selector import TreeSelectorResult
-from yoke.cli.interactive.common import format_context_usage_text
+from yoke.cli.config import CLIArgs
+from yoke.cli.interactive.basic import _start_basic_turn
+from yoke.cli.interactive.common import (
+    BasicCliState,
+    PromptCliState,
+    TurnSuccess,
+    format_context_usage_text,
+)
 from yoke.cli.interactive.prompt.loop import (
     process_prompt_toolkit_prompt,
 )
-
-from yoke.agent.models import MessageImageURLContentPart
-from yoke.agent.models import MessageTextContentPart
-from yoke.cli.interactive.basic import _start_basic_turn
-from yoke.cli.interactive.common import BasicCliState
-from yoke.cli.interactive.common import TurnSuccess
-from yoke.cli.render import InteractiveRenderer
-from yoke.cli.runtime.lifetime import close_cli_owned_agent
-from yoke.cli.runtime.lifetime import register_cli_owned_agent
+from yoke.cli.interactive.tree_selector import TreeSelectorResult
+from yoke.cli.render import InteractiveRenderer, build_console
+from yoke.cli.runtime import create_active_session, run_cli
+from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.runtime.lifetime import close_cli_owned_agent, register_cli_owned_agent
 from yoke.cli.runtime.session import save_active_session
-from yoke.cli.runtime.title import start_session_title_generation
-from yoke.cli.runtime.title import wait_for_session_title
-
-import base64
-from pathlib import Path
-
-import pytest
-
-from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.config import CLIArgs
-from yoke.cli.runtime import run_cli
-from yoke.cli.render import build_console
-from yoke.cli.runtime import create_active_session
+from yoke.cli.runtime.title import (
+    start_session_title_generation,
+    wait_for_session_title,
+)
 from yoke.cli.session import SessionStore
 
 from .support import CaptureStream, FakeAgent, ImageAwareAgent, active_session_for
@@ -239,7 +238,7 @@ def test_prompt_state_adopts_provider_effort_after_model_command(
         "/model",
         state=state,
         agent=agent,
-        active_session_ref={"active_session": active_session},
+        active_session_ref=ActiveSessionRef(active_session),
         scrollback_console=build_console(CaptureStream()),
         state_lock=Lock(),
         update_status=lambda _message: None,
@@ -491,18 +490,18 @@ def test_tree_navigation_reprints_history_after_state_update(
         messages=list(active_session.record.messages),
         pending_prompts=[],
     )
-    active_session_ref = {"active_session": active_session}
+    active_session_ref = ActiveSessionRef(active_session)
     stdout = CaptureStream()
     console = build_console(stdout)
     monkeypatch.setattr(
-        "yoke.cli.interactive.slash_commands.select_tree_entry_interactive",
+        "yoke.cli.interactive.tree_command.select_tree_entry_interactive",
         lambda *_args, **_kwargs: TreeSelectorResult(
             "select",
             assistant_entry.id,
         ),
     )
     monkeypatch.setattr(
-        "yoke.cli.interactive.slash_commands._ask_branch_summary_choice",
+        "yoke.cli.interactive.tree_command._ask_branch_summary_choice",
         lambda: (False, None),
     )
     monkeypatch.setattr(

@@ -6,18 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.loop.tool_core import index_tools
-from yoke.cli.bootstrap.types import LoadedTool
-from yoke.cli.bootstrap.types import ToolLoadReport
+from yoke.cli.bootstrap.types import LoadedTool, ToolLoadReport
 from yoke.cli.render.base import Console
-from yoke.cli.runtime.selector.ui import select_list_item_interactive
 from yoke.cli.runtime.selector.multiselect import (
     select_table_items_interactive,
 )
-from yoke.cli.runtime.selector.ui import SelectorTableColumns
-from yoke.cli.tools.policy import PiConfig
-from yoke.cli.tools.policy import ToolPolicy
-from yoke.cli.tools.policy import update_config_file
+from yoke.cli.runtime.selector.ui import (
+    SelectorTableColumns,
+    select_list_item_interactive,
+)
+from yoke.cli.tools.policy import PiConfig, ToolPolicy, update_config_file
 
 
 @dataclass(slots=True, frozen=True)
@@ -210,13 +208,9 @@ def _apply_session_tool_changes(
         tool for name, tool in agent.tools.items() if name not in visible_tool_names
     ]
     selected_tools.extend(hidden_runtime_tools)
-    if getattr(agent, "_tool_factory", None) is None:
-        agent.tools = index_tools(selected_tools)
-    else:
-        hidden_names = {tool.name for tool in hidden_runtime_tools}
-        agent.set_session_enabled_tools(active_names | hidden_names)
-    agent.tool_report = _tool_report_with_active_names(report, active_names)
-    agent._install_session_filtered_tool_system_messages()
+    agent.apply_tool_selection(
+        selected_tools, report=_tool_report_with_active_names(report, active_names)
+    )
 
 
 def _tool_scope_config_path(

@@ -15,13 +15,14 @@ from rich.console import Console
 from yoke.agent.models import Message
 from yoke.agent.tools.command_process_manager import CommandProcessManager
 from yoke.cli.interactive.basic import run_basic_interactive_cli
+from yoke.cli.interactive.command_host import CommandCallbacks
+from yoke.cli.interactive.commands import SLASH_COMMANDS, handle_slash_command
 from yoke.cli.interactive.common import (
     PromptCliState,
-    SLASH_COMMANDS,
-    handle_slash_command,
 )
 from yoke.cli.interactive.completion import SlashCommandCompleter
 from yoke.cli.interactive.prompt.loop import process_prompt_toolkit_prompt
+from yoke.cli.runtime.base import ActiveSessionRef
 
 from .support import CaptureStream, FakeAgent, active_session_for
 
@@ -116,7 +117,7 @@ def test_agents_command_groups_latest_run_without_changing_state(
         active_session=active,
         messages=messages,
         console=Console(file=stream, width=160, color_system=None),
-        on_process_inspector=inspector,
+        host=CommandCallbacks(on_process_inspector=inspector),
     )
     output = stream.getvalue()
     assert handled and returned is messages and session is active
@@ -276,7 +277,7 @@ def test_prompt_toolkit_dispatches_agents_without_starting_a_turn(
         "/agents",
         state=state,
         agent=agent,
-        active_session_ref={"active_session": active},
+        active_session_ref=ActiveSessionRef(active),
         scrollback_console=Console(file=stream, width=160),
         state_lock=Lock(),
         update_status=lambda _message: None,

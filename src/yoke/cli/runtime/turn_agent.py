@@ -8,11 +8,15 @@ from threading import Thread
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.loop.in_process_tool import wait_for_in_process_tools
 from yoke.agent.models import ConversationEntry, Message
+from yoke.cli.config.resources import close_quietly
 from yoke.cli.runtime import ActiveSession, AgentRunner
 from yoke.cli.runtime.workspaces import retain_turn_workspace, take_turn_workspace
-from yoke.session.workspace import WorkspaceConflict
-from yoke.session.workspace import require_session_workspace, require_workspace
-from yoke.session.workspace import workspace_lease
+from yoke.session.workspace import (
+    WorkspaceConflict,
+    require_session_workspace,
+    require_workspace,
+    workspace_lease,
+)
 
 
 def prepare_turn_agent(
@@ -83,10 +87,10 @@ def retire_turn_agent(
                 wait_for_in_process_tools(tool_map)
                 turn_agent.close()
             finally:
-                close = getattr(provider, "close", None)
-                if callable(close) and provider is not getattr(
-                    primary_agent, "provider", None
+                if (
+                    not isinstance(primary_agent, RuntimeAgent)
+                    or provider is not primary_agent.provider
                 ):
-                    close()
+                    close_quietly(provider, suppress_errors=False)
 
     Thread(target=release, daemon=True, name="yoke-turn-reaper").start()

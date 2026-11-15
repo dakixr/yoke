@@ -6,7 +6,6 @@ from collections.abc import Callable
 from threading import Lock
 
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.common import prompt_turn_tracking
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 
 
@@ -24,7 +23,10 @@ def make_turn_scoped_renderer_factory(
 
         def _active(self) -> bool:
             with state_lock:
-                abandoned_turn_ids, _ = prompt_turn_tracking(state)
+                abandoned_turn_ids, _ = (
+                    state.abandoned_turn_ids,
+                    state.steered_turn_ids,
+                )
                 active_turn_id = state.active_turn_id
             return (
                 self.turn_id == active_turn_id

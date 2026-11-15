@@ -5,58 +5,58 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from threading import Lock
-from typing import TYPE_CHECKING
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from yoke.agent.models import Message
-from yoke.cli.config import CLIArgs
-from yoke.cli.config import format_provider_model_status
-from yoke.cli.image_input import ImageAttachment
-from yoke.cli.image_input import resolve_image_path
-from yoke.cli.interactive.completion import SlashCommandCompleter
-from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.common import estimate_context_usage_text
-from yoke.cli.interactive.common import format_context_usage_text
-from yoke.cli.path_display import format_root_label
-from yoke.cli.interactive.prompt.keys import (
-    cycle_prompt_thinking_effort,
-    insert_attachment_reference,
-    register_prompt_toolkit_key_bindings,
+from yoke.cli.config import CLIArgs, format_provider_model_status
+from yoke.cli.image_input import ImageAttachment, resolve_image_path
+from yoke.cli.interactive.common import (
+    PromptCliState,
+    estimate_context_usage_text,
+    format_context_usage_text,
 )
-from yoke.cli.interactive.prompt.clipboard import ClipboardPasteResult
-from yoke.cli.interactive.prompt.clipboard import start_clipboard_paste
+from yoke.cli.interactive.completion import SlashCommandCompleter
+from yoke.cli.interactive.prompt.clipboard import (
+    ClipboardPasteResult,
+    start_clipboard_paste,
+)
+from yoke.cli.interactive.prompt.context_usage import ContextUsageWorker
 from yoke.cli.interactive.prompt.control import (
     create_prompt_toolkit_control,
 )  # noqa: E501
 from yoke.cli.interactive.prompt.inspectors import (
     create_inspector_launchers,
 )
-from yoke.cli.interactive.prompt.context_usage import ContextUsageWorker
+from yoke.cli.interactive.prompt.keys import (
+    cycle_prompt_thinking_effort,
+    insert_attachment_reference,
+    register_prompt_toolkit_key_bindings,
+)
 from yoke.cli.interactive.prompt.loop import (
     run_prompt_toolkit_event_loop,
 )  # noqa: E501
+from yoke.cli.interactive.prompt.paste import (
+    patch_prompt_toolkit_input_for_multiline_paste,
+)
+from yoke.cli.interactive.prompt.rendering import (
+    initialize_prompt_toolkit_session,
+)  # noqa: E501
+from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
 from yoke.cli.interactive.prompt.summary import format_turn_summary
 from yoke.cli.interactive.prompt.win32 import (
     patch_prompt_toolkit_win32_executor_shutdown,
-)
-from yoke.cli.interactive.prompt.paste import (
-    patch_prompt_toolkit_input_for_multiline_paste,
 )
 from yoke.cli.interactive.queue.mutations import attach_pending_image
 from yoke.cli.interactive.queue.mutations import (
     remove_pending_image as persist_remove_pending_image,
 )
 from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
-from yoke.cli.interactive.prompt.rendering import (
-    initialize_prompt_toolkit_session,
-)  # noqa: E501
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
-from yoke.cli.render import OutputStream
-from yoke.cli.render import build_console
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime import AgentRunner
-from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
+from yoke.cli.path_display import format_root_label
+from yoke.cli.render import OutputStream, build_console
+from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime.base import ActiveSessionRef
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
@@ -91,8 +91,6 @@ def run_prompt_toolkit_cli(  # noqa: C901
         pending_images=restored_queue.pending_images,
         queue_revision=restored_queue.revision,
         queue_session_id=active_session.id,
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
         thinking_effort=(
             provider_effort
             if isinstance(provider_effort, str) and provider_effort.strip()
@@ -104,7 +102,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
         return format_provider_model_status(agent)
 
     def refresh_session_title_text() -> str | None:
-        return session_ref["active_session"].title
+        return session_ref.value.title
 
     spinner_frames = ("▰▱▱", "▱▰▱", "▱▱▰", "▱▰▱")
     state_lock = Lock()
@@ -118,14 +116,14 @@ def run_prompt_toolkit_cli(  # noqa: C901
         on_app_created(prompt_session)
     scrollback_console = build_console(cast(OutputStream, sys.stdout))
     scrollback = BatchedScrollback(scrollback_console)
-    session_ref: dict[str, ActiveSession] = {"active_session": active_session}
+    session_ref: ActiveSessionRef = ActiveSessionRef(active_session)
     root_label = format_root_label(active_session.root)
     tool_trace_store = ToolTraceStore()
 
     def estimate_toolbar_context(prompt: str = "") -> str | None:
         with state_lock:
             message_snapshot = list(state.messages)
-            current_session = session_ref["active_session"]
+            current_session = session_ref.value
         conversation_entries_snapshot = current_session.active_entries()
         return estimate_context_usage_text(
             agent,
@@ -217,7 +215,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
         attach_pending_image(
             state=state,
             state_lock=state_lock,
-            active_session=session_ref["active_session"],
+            active_session=session_ref.value,
             attachment=attachment,
         )
         update_status(f"Attached image: {attachment.label}")
@@ -226,7 +224,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
         removed = persist_remove_pending_image(
             state=state,
             state_lock=state_lock,
-            active_session=session_ref["active_session"],
+            active_session=session_ref.value,
             index=index,
         )
         if removed is None:
@@ -254,7 +252,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
                     attachment = ImageAttachment(
                         path=resolve_image_path(
                             result.text,
-                            root=session_ref["active_session"].root,
+                            root=session_ref.value.root,
                         )
                     )
                 except ValueError:

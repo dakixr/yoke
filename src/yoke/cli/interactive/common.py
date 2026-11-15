@@ -2,110 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Mapping
-from collections.abc import Sequence
-from dataclasses import dataclass
-from dataclasses import field
-from datetime import UTC
-from datetime import datetime
-from threading import Event
-from threading import Thread
-from typing import Literal
-from typing import Protocol
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from threading import Event, Thread
+from typing import Literal, Protocol
 from uuid import uuid4
 
-from yoke.agent.message_sanitizer import normalize_tool_call_sequence
 from yoke.agent.loop import AgentResult
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
+from yoke.agent.message_sanitizer import normalize_tool_call_sequence
+from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.image_input import ImageAttachment
-from yoke.cli.render.base import Console
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime import AgentRunner
-from yoke.cli.runtime import estimate_context_usage
+from yoke.cli.runtime import AgentRunner, estimate_context_usage
 
 COMPACTION_IN_PROGRESS_NOTICE = "Compacting conversation..."
-SHORTCUT_LINES = (
-    "Type `exit` or `quit` to leave.",
-    "Press `Enter` to send, or to steer during a turn.",
-    "Press `Tab` to queue behind the current turn.",
-    "Press `Shift+Tab` to cycle thinking effort.",
-    "Press `Esc` twice to stop the current turn.",
-    "Press `Ctrl+J` or `Shift+Enter` to insert a newline.",
-    "Press `Esc` then `Enter` to insert a newline.",
-    "Use `Left` or `Right` to move across prompt text and newlines.",
-    "Press `Ctrl+V` or `Alt+V` to paste text or attach an image.",
-    "Press `Ctrl+U` to remove the last pending image.",
-    "Press `Ctrl+X` then `O` to open the tool inspector.",
-    "Press `Ctrl+X` then `Ctrl+P` to open the process inspector.",
-    "Press `Ctrl+X` then `Q` to open the queue manager.",
-    "Press `Ctrl+X` then `M` to switch model.",
-    "Press `Ctrl+X` then `T` to open the session tree.",
-    "Type `$skill-name` in a prompt to activate one or more skills.",
-    "Use `/shortcuts` or `?` to show this list again.",
-)
-BASIC_SHORTCUTS_NOTICE = (
-    "Basic mode shortcuts:\n"
-    "Press `Enter` to send a line. Inputs sent during a turn are queued.\n"
-    "Press `Ctrl+C` to stop and exit, or type `exit` or `quit` to leave.\n"
-    "Use `/image path` to attach an image and `/skill name` to activate a skill.\n"
-    "Use `/shortcuts` or `?` to show this list again."
-)
-SHORTCUTS_NOTICE = "Keyboard shortcuts:\n" + "\n".join(SHORTCUT_LINES)
 
 
 def session_resume_notice(session_id: str) -> str:
     """Return the canonical command shown when leaving an interactive session."""
     return f"To resume this session run:\nyoke resume {session_id}"
-
-
-def handle_slash_command(
-    command: str,
-    *,
-    basic_mode: bool = False,
-    agent: AgentRunner,
-    active_session: ActiveSession,
-    messages: list[Message],
-    console: Console,
-    pending_images: list[ImageAttachment] | None = None,
-    pending_prompts: list[PendingPrompt] | None = None,
-    on_context_usage: Callable[[dict[str, object]], None] | None = None,
-    on_editor_text: Callable[[str], None] | None = None,
-    on_submit_prompt: Callable[[str], None] | None = None,
-    on_queue_changed: Callable[[], None] | None = None,
-    on_queue_replace: (Callable[[list[PendingPrompt]], str | None] | None) = None,
-    on_image_attached: Callable[[ImageAttachment], None] | None = None,
-    on_replay_messages: Callable[[list[Message]], None] | None = None,
-    on_process_inspector: Callable[[], None] | None = None,
-) -> tuple[bool, list[Message], ActiveSession]:
-    """Dispatch a slash command without importing the dispatcher eagerly."""
-    from yoke.cli.interactive.slash_commands import (
-        handle_slash_command as dispatch,
-    )
-
-    if basic_mode and command.strip().lower() in {"/shortcuts", "?"}:
-        from yoke.cli.render import print_scrollback_notice
-
-        print_scrollback_notice(console, BASIC_SHORTCUTS_NOTICE)
-        return True, messages, active_session
-    return dispatch(
-        command,
-        agent=agent,
-        active_session=active_session,
-        messages=messages,
-        console=console,
-        pending_images=pending_images,
-        pending_prompts=pending_prompts,
-        on_context_usage=on_context_usage,
-        on_editor_text=on_editor_text,
-        on_submit_prompt=on_submit_prompt,
-        on_queue_changed=on_queue_changed,
-        on_queue_replace=on_queue_replace,
-        on_image_attached=on_image_attached,
-        on_replay_messages=on_replay_messages,
-        on_process_inspector=on_process_inspector,
-    )
 
 
 class InputFunc(Protocol):
@@ -179,54 +94,6 @@ class PendingPrompt:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class SlashCommand:
-    """Interactive slash command metadata."""
-
-    name: str
-    description: str
-    usage: str | None = None
-
-
-SLASH_COMMANDS: tuple[SlashCommand, ...] = (
-    SlashCommand(
-        "/compact",
-        "Summarize older conversation context into memory.",
-    ),
-    SlashCommand("/shortcuts", "Show interactive keyboard shortcuts."),
-    SlashCommand("?", "Alias for /shortcuts."),
-    SlashCommand("/new", "Start a fresh session in the current workspace."),
-    SlashCommand("/pin", "Pin or unpin the active session."),
-    SlashCommand("/info", "Show active session metadata."),
-    SlashCommand("/fork", "Copy this session and continue in the fork."),
-    SlashCommand("/title", "Rename the active session.", "new-title"),
-    SlashCommand("/regenerate-title", "Generate a new title from this conversation."),
-    SlashCommand("/tree", "Navigate the current session tree."),
-    SlashCommand(
-        "/model",
-        "Open the model switcher.",
-    ),
-    SlashCommand(
-        "/tools",
-        "Toggle available tools for this run only.",
-    ),
-    SlashCommand(
-        "/mcp",
-        "Manage MCP servers and tools for this session, repo, or globally.",
-        "server",
-    ),
-    SlashCommand("/queue", "Open the interactive prompt queue manager."),
-    SlashCommand("/ps", "Inspect command processes for this live runtime."),
-    SlashCommand("/agents", "Show the latest SDK agent runs for this live runtime."),
-    SlashCommand("/image", "Attach an image file to the next prompt.", "path"),
-    SlashCommand(
-        "/skill",
-        "Activate a discovered skill for this session.",
-        "name [prompt]",
-    ),
-)
-
-
 @dataclass(slots=True)
 class BasicCliState:
     """Mutable state for the basic interactive CLI loop."""
@@ -237,6 +104,7 @@ class BasicCliState:
     worker: Thread | None = None
     active_stop_request: Event | None = None
     shutdown_requested: bool = False
+    wakeup: Event = field(default_factory=Event, repr=False)
     input_closed: bool = False
     exit_notice_emitted: bool = False
 
@@ -257,8 +125,8 @@ class PromptCliState:
     starting_prompt: tuple[PendingPrompt, int] | None = None
     continuation_entries: list[ConversationEntry] | None = None
     active_turn_id: int = 0
-    abandoned_turn_ids: set[int] | None = None
-    steered_turn_ids: set[int] | None = None
+    abandoned_turn_ids: set[int] = field(default_factory=set)
+    steered_turn_ids: set[int] = field(default_factory=set)
     shutdown_requested: bool = False
     exit_notice_emitted: bool = False
     status_message: str = ""
@@ -277,17 +145,6 @@ class PromptCliState:
     spinner_index: int = 0
     thinking_effort: str | None = None
     next_editor_text: str | None = None
-
-
-def prompt_turn_tracking(
-    state: PromptCliState,
-) -> tuple[set[int], set[int]]:
-    """Return abandoned and steered turn tracking sets."""
-    abandoned = state.abandoned_turn_ids
-    steered = state.steered_turn_ids
-    if abandoned is None or steered is None:
-        raise RuntimeError("Prompt CLI turn tracking state is not initialized")
-    return abandoned, steered
 
 
 def partial_messages_from_error(error: Exception) -> list[Message] | None:

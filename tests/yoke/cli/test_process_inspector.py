@@ -19,26 +19,22 @@ from yoke.agent.tools.command_process_types import (
 )
 from yoke.ai.providers.base import Provider
 from yoke.cli.config import CLIArgs
-from yoke.cli.interactive.common import handle_slash_command
+from yoke.cli.interactive.command_host import CommandCallbacks
+from yoke.cli.interactive.commands import handle_slash_command
+from yoke.cli.interactive.process_commands import _safe_text, print_process_table
 from yoke.cli.interactive.process_inspector import ProcessInspectorState
 from yoke.cli.interactive.process_inspector.app import (
     PROCESS_INSPECTOR_MIN_REDRAW_INTERVAL,
-)
-from yoke.cli.interactive.process_inspector.app import ProcessSnapshotCache
-from yoke.cli.interactive.process_inspector.app import (
+    ProcessSnapshotCache,
     open_live_process_inspector,
 )
 from yoke.cli.interactive.process_inspector.render import (
     render_view_html,
 )
-from yoke.cli.interactive.process_commands import _safe_text
-from yoke.cli.interactive.process_commands import print_process_table
 from yoke.cli.render import build_console
 from yoke.cli.runtime import create_active_session
 
-from .support import CaptureStream
-from .support import FakeAgent
-from .support import FakeProvider
+from .support import CaptureStream, FakeAgent, FakeProvider
 
 
 def _snapshot(
@@ -212,7 +208,7 @@ def test_ps_slash_command_opens_prompt_toolkit_inspector(
         active_session=active_session,
         messages=[],
         console=build_console(CaptureStream()),
-        on_process_inspector=lambda: opened.append(True),
+        host=CommandCallbacks(on_process_inspector=lambda: opened.append(True)),
     )
 
     assert handled is True

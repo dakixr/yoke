@@ -7,40 +7,41 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from io import StringIO
-from threading import Event
-from threading import Lock
-from threading import Thread
+from threading import Event, Lock, Thread
 
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.common import PendingPrompt
-from yoke.cli.interactive.common import session_resume_notice
-from yoke.cli.interactive.common import handle_slash_command
+from yoke.agent.models import ConversationEntry, Message
+from yoke.cli.interactive.command_host import CommandCallbacks
+from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.interactive.common import (
+    PendingPrompt,
+    PromptCliState,
     TurnFailure,
     TurnStopped,
     TurnSuccess,
+    session_resume_notice,
 )
 from yoke.cli.interactive.prompt.cancellation import (
     persist_stopped_turn_if_idle,
+    retire_active_turn,
 )
-from yoke.cli.interactive.prompt.cancellation import retire_active_turn
 from yoke.cli.interactive.prompt.compaction import (
     start_prompt_compaction,
 )
+from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
+from yoke.cli.interactive.prompt.turns import (
+    emit_turn_summary,
+    finish_prompt_turn,
+    handle_prompt_turn_outcome,
+    run_prompt_turn,
+)
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
+from yoke.cli.interactive.skill_commands import is_skill_command
 from yoke.cli.interactive.turn_renderer import (
     make_turn_scoped_renderer_factory,
 )
-from yoke.cli.runtime import ActiveSession, AgentRunner
 from yoke.cli.render import build_console
-from yoke.cli.interactive.prompt.turns import finish_prompt_turn
-from yoke.cli.interactive.prompt.turns import emit_turn_summary
-from yoke.cli.interactive.prompt.turns import handle_prompt_turn_outcome
-from yoke.cli.interactive.prompt.turns import run_prompt_turn
-from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
-from yoke.cli.interactive.skill_commands import is_skill_command
+from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime.base import ActiveSessionRef
 
 
 @dataclass(slots=True)
@@ -59,7 +60,7 @@ def create_prompt_toolkit_control(  # noqa: C901
     *,
     state: PromptCliState,
     agent: AgentRunner,
-    active_session_ref: dict[str, ActiveSession],
+    active_session_ref: ActiveSessionRef,
     renderer: PromptToolkitLiveRenderer,
     state_lock: Lock,
     request_context_usage: Callable[[str], None],
@@ -75,7 +76,6 @@ def create_prompt_toolkit_control(  # noqa: C901
         renderer=renderer,
     )
     retire_traces = retire_tool_traces or (lambda _turn_id: None)
-    callbacks: dict[str, Callable[..., object]] = {}
 
     def request_exit() -> None:
         with state_lock:
@@ -87,7 +87,7 @@ def create_prompt_toolkit_control(  # noqa: C901
             _emit_prompt_exit_notice(
                 state=state,
                 state_lock=state_lock,
-                active_session=active_session_ref["active_session"],
+                active_session=active_session_ref.value,
                 scrollback=scrollback,
             )
         update_status("Stopping")
@@ -113,8 +113,8 @@ def create_prompt_toolkit_control(  # noqa: C901
             )
             state.continuation_entries = None
         if turn_entries is None:
-            turn_entries = active_session_ref["active_session"].active_entries()
-        with active_session_ref["active_session"].save_lock:
+            turn_entries = active_session_ref.value.active_entries()
+        with active_session_ref.value.save_lock:
             with state_lock:
                 state.active_turn_id += 1
                 turn_id = state.active_turn_id
@@ -139,10 +139,10 @@ def create_prompt_toolkit_control(  # noqa: C901
                 state=state,
                 state_lock=state_lock,
                 agent=agent,
-                active_session=active_session_ref["active_session"],
+                active_session=active_session_ref.value,
                 stop_event=stop_event,
                 user_message=active_user_message,
-                callbacks=callbacks,
+                handle_outcome=handle_outcome,
                 turn_renderer_factory=turn_renderer_factory,
                 message_snapshot=turn_messages,
                 conversation_entries_snapshot=turn_entries,
@@ -169,10 +169,10 @@ def create_prompt_toolkit_control(  # noqa: C901
             handled, updated_messages, updated_session = handle_slash_command(
                 pending.prompt,
                 agent=agent,
-                active_session=active_session_ref["active_session"],
+                active_session=active_session_ref.value,
                 messages=state.messages,
                 console=build_console(captured_output),
-                on_submit_prompt=submit_skill_prompt,
+                host=CommandCallbacks(on_submit_prompt=submit_skill_prompt),
             )
             if captured := captured_output.getvalue():
                 scrollback.emit("raw", captured)
@@ -180,7 +180,7 @@ def create_prompt_toolkit_control(  # noqa: C901
                 break
             with state_lock:
                 state.messages = updated_messages
-                active_session_ref["active_session"] = updated_session
+                active_session_ref.value = updated_session
                 turn_started = state.worker is not None
             if turn_started:
                 return
@@ -197,7 +197,7 @@ def create_prompt_toolkit_control(  # noqa: C901
             _emit_prompt_exit_notice(
                 state=state,
                 state_lock=state_lock,
-                active_session=active_session_ref["active_session"],
+                active_session=active_session_ref.value,
                 scrollback=scrollback,
             )
             invalidate_prompt()
@@ -216,7 +216,7 @@ def create_prompt_toolkit_control(  # noqa: C901
                 state=state,
                 state_lock=state_lock,
                 agent=agent,
-                active_session=active_session_ref["active_session"],
+                active_session=active_session_ref.value,
                 renderer=renderer,
                 scrollback=scrollback,
             )
@@ -226,7 +226,7 @@ def create_prompt_toolkit_control(  # noqa: C901
         pending, should_finish = finish_prompt_turn(
             state=state,
             state_lock=state_lock,
-            active_session=active_session_ref["active_session"],
+            active_session=active_session_ref.value,
             request_context_usage=request_context_usage,
         )
         start_pending_prompt(pending, should_finish)
@@ -244,7 +244,7 @@ def create_prompt_toolkit_control(  # noqa: C901
             turn_out_tok = state.turn_output_tokens
             messages, entries = retire_active_turn(
                 state=state,
-                active_session=active_session_ref["active_session"],
+                active_session=active_session_ref.value,
                 stop_event=stop_event,
                 status_message="",
                 retire_tool_traces=retire_traces,
@@ -256,7 +256,7 @@ def create_prompt_toolkit_control(  # noqa: C901
                 "state": state,
                 "state_lock": state_lock,
                 "retired_turn_id": retired_turn_id,
-                "active_session": active_session_ref["active_session"],
+                "active_session": active_session_ref.value,
                 "agent": agent,
                 "messages": messages,
                 "entries": entries,
@@ -287,7 +287,7 @@ def create_prompt_toolkit_control(  # noqa: C901
                 return False
             messages, entries = retire_active_turn(
                 state=state,
-                active_session=active_session_ref["active_session"],
+                active_session=active_session_ref.value,
                 stop_event=stop_event,
                 status_message="Steering",
                 retire_tool_traces=retire_traces,
@@ -303,7 +303,6 @@ def create_prompt_toolkit_control(  # noqa: C901
         invalidate_prompt()
         return True
 
-    callbacks["handle_outcome"] = handle_outcome
     return PromptToolkitControl(
         start_turn=start_turn,
         start_pending_prompt=start_pending_prompt,

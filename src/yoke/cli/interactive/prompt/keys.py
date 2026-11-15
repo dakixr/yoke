@@ -3,18 +3,107 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from yoke.cli.image_input import ImageAttachment
-from yoke.cli.image_input import format_attachment_reference
+from yoke.cli.image_input import ImageAttachment, format_attachment_reference
+from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.completion.menu import (
     apply_completion,
-)
-from yoke.cli.interactive.completion.menu import (
     register_completion_menu_key_bindings,
+    selected_completion,
 )
-from yoke.cli.interactive.completion.menu import selected_completion
-from yoke.cli.interactive.common import PromptCliState
+
+
+@dataclass(frozen=True, slots=True)
+class Binding:
+    """Key sequences and the help shown for one action."""
+
+    sequences: tuple[tuple[str, ...], ...]
+    help: str
+
+
+def _newline_binding() -> Binding:
+    from prompt_toolkit.key_binding import KeyBindings
+
+    try:
+        KeyBindings().add("s-enter")
+    except ValueError:
+        return Binding(
+            (("c-j",), ("escape", "enter")),
+            "Press `Ctrl+J` or `Esc` then `Enter` to insert a newline.",
+        )
+    return Binding(
+        (("c-j",), ("s-enter",)), "Press `Ctrl+J` or `Shift+Enter` to insert a newline."
+    )
+
+
+BINDINGS = {
+    "stop": Binding(
+        (("escape", "escape"),), "Press `Esc` twice to stop the current turn."
+    ),
+    "submit": Binding(
+        (("enter",),), "Press `Enter` to send, or to steer during a turn."
+    ),
+    "queue": Binding((("tab",),), "Press `Tab` to queue behind the current turn."),
+    "effort": Binding(
+        (("escape", "tab"), ("s-tab",)), "Press `Shift+Tab` to cycle thinking effort."
+    ),
+    "newline": _newline_binding(),
+    "paste": Binding(
+        (("escape", "v"), ("c-v",)),
+        "Press `Ctrl+V` or `Alt+V` to paste text or attach an image.",
+    ),
+    "remove_image": Binding(
+        (("c-u",),), "Press `Ctrl+U` to remove the last pending image."
+    ),
+    "tools": Binding(
+        (("c-x", "o"),), "Press `Ctrl+X` then `O` to open the tool inspector."
+    ),
+    "processes": Binding(
+        (("c-x", "c-p"),), "Press `Ctrl+X` then `Ctrl+P` to open the process inspector."
+    ),
+    "queue_manager": Binding(
+        (("c-x", "q"),), "Press `Ctrl+X` then `Q` to open the queue manager."
+    ),
+    "model": Binding((("c-x", "m"),), "Press `Ctrl+X` then `M` to switch model."),
+    "tree": Binding(
+        (("c-x", "t"),), "Press `Ctrl+X` then `T` to open the session tree."
+    ),
+}
+BASIC_BINDINGS = (
+    Binding(
+        (("enter",),),
+        "Press `Enter` to send a line. Inputs sent during a turn are queued.",
+    ),
+    Binding(
+        (("c-c",),),
+        "Press `Ctrl+C` to stop and exit, or type `exit` or `quit` to leave.",
+    ),
+)
+
+
+def shortcut_notice(*, basic: bool = False) -> str:
+    """Build startup and /shortcuts help from the registered bindings."""
+    if basic:
+        lines = [binding.help for binding in BASIC_BINDINGS]
+        lines.append(
+            "Use `/image path` to attach an image and `/skill name` to activate a skill."
+        )
+    else:
+        lines = ["Type `exit` or `quit` to leave."]
+        lines.extend(binding.help for binding in BINDINGS.values())
+        lines.extend(
+            (
+                "Use `Left` or `Right` to move across prompt text and newlines.",
+                "Type `$skill-name` in a prompt to activate one or more skills.",
+            )
+        )
+    lines.append("Use `/shortcuts` or `?` to show this list again.")
+    return (
+        "Basic mode shortcuts:\n" if basic else "Keyboard shortcuts:\n"
+    ) + "\n".join(lines)
+
 
 DEFAULT_THINKING_EFFORT_VALUES: tuple[str, ...] = (
     "none",
@@ -44,12 +133,20 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     """Register prompt-toolkit key bindings."""
     register_completion_menu_key_bindings(key_bindings)
 
-    @key_bindings.add("escape", "escape")
+    def bind(name: str):
+        def register(handler):
+            for sequence in BINDINGS[name].sequences:
+                key_bindings.add(*sequence)(handler)
+            return handler
+
+        return register
+
+    @bind("stop")
     def _stop_current_turn(event) -> None:
         if stop_active_turn():
             event.app.invalidate()
 
-    @key_bindings.add("enter")
+    @bind("submit")
     def _submit_prompt(event) -> None:
         complete_state = event.current_buffer.complete_state
         completion = selected_completion(complete_state)
@@ -61,7 +158,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         state.submit_action = "steer"
         event.current_buffer.validate_and_handle()
 
-    @key_bindings.add("tab")
+    @bind("queue")
     def _complete_or_queue_prompt(event) -> None:
         complete_state = getattr(event.current_buffer, "complete_state", None)
         completion = selected_completion(complete_state)
@@ -72,8 +169,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         state.submit_action = "queue"
         event.current_buffer.validate_and_handle()
 
-    @key_bindings.add("escape", "tab")
-    @key_bindings.add("s-tab")
+    @bind("effort")
     def _cycle_thinking_effort(event) -> None:
         del event
         effort = cycle_thinking_effort()
@@ -85,34 +181,33 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
             return
         update_status(f"Thinking effort: {effort}")
 
-    @key_bindings.add("c-j")
+    @bind("newline")
     def _insert_newline(event) -> None:
         event.current_buffer.insert_text("\n")
 
-    @key_bindings.add("escape", "v")
-    @key_bindings.add("c-v")
+    @bind("paste")
     def _paste_image_or_text(event) -> None:
         text = event.app.clipboard.get_data().text
         request_clipboard_paste(event.current_buffer, text)
 
-    @key_bindings.add("c-u")
+    @bind("remove_image")
     def _remove_last_image(event) -> None:
         del event
         remove_last_image()
 
-    @key_bindings.add("c-x", "o")
+    @bind("tools")
     def _open_tool_inspector(event) -> None:
         del event
         if open_tool_inspector is not None:
             open_tool_inspector()
 
-    @key_bindings.add("c-x", "c-p")
+    @bind("processes")
     def _open_process_inspector(event) -> None:
         del event
         if open_process_inspector is not None:
             open_process_inspector()
 
-    @key_bindings.add("c-x", "q")
+    @bind("queue_manager")
     def _open_queue_manager(event) -> None:
         if open_queue_manager is None:
             return
@@ -120,7 +215,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         event.current_buffer.text = "/queue"
         event.current_buffer.validate_and_handle()
 
-    @key_bindings.add("c-x", "m")
+    @bind("model")
     def _open_model_selector(event) -> None:
         if open_model_selector is None:
             return
@@ -128,17 +223,12 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         event.current_buffer.text = "/model"
         event.current_buffer.validate_and_handle()
 
-    @key_bindings.add("c-x", "t")
+    @bind("tree")
     def _open_session_tree(event) -> None:
         if open_tree_selector is not None:
             open_tree_selector(event.current_buffer.text)
         event.current_buffer.text = "/tree"
         event.current_buffer.validate_and_handle()
-
-    try:
-        key_bindings.add("s-enter")(_insert_newline)
-    except ValueError:
-        key_bindings.add("escape", "enter")(_insert_newline)
 
 
 def _insert_mention_separator(buffer: Any) -> None:

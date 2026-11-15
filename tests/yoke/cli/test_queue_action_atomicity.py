@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,D103,S101
-
 import base64
 from pathlib import Path
 from threading import Event, Lock, Thread
@@ -9,15 +8,21 @@ from threading import Event, Lock, Thread
 import pytest
 
 from yoke.cli.image_input import ImageAttachment
-from yoke.cli.interactive.common import PendingPrompt, PromptCliState
-from yoke.cli.interactive.common import format_context_usage_text
+from yoke.cli.interactive.common import (
+    PendingPrompt,
+    PromptCliState,
+    format_context_usage_text,
+)
 from yoke.cli.interactive.prompt.loop import process_prompt_toolkit_prompt
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.queue import manager
 from yoke.cli.interactive.queue.mutations import attach_pending_image
-from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
-from yoke.cli.interactive.queue.persistence import persist_prompt_queue
+from yoke.cli.interactive.queue.persistence import (
+    load_prompt_queue_state,
+    persist_prompt_queue,
+)
 from yoke.cli.render import build_console
+from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.session.queue import load_prompt_queue_snapshot
 
 from .support import CaptureStream, FakeAgent, active_session_for
@@ -66,7 +71,7 @@ def _process_queue_manager(
         "/queue",
         state=state,
         agent=FakeAgent(),
-        active_session_ref={"active_session": active_session},
+        active_session_ref=ActiveSessionRef(active_session),
         scrollback_console=build_console(stdout or CaptureStream()),
         state_lock=Lock(),
         update_status=lambda _message: None,
@@ -418,7 +423,7 @@ def test_active_worker_rejects_session_switch(tmp_path: Path, command: str) -> N
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
     state.worker = Thread()
-    active_ref = {"active_session": active}
+    active_ref = ActiveSessionRef(active)
     stdout = CaptureStream()
 
     result = process_prompt_toolkit_prompt(
@@ -437,7 +442,7 @@ def test_active_worker_rejects_session_switch(tmp_path: Path, command: str) -> N
     )
 
     assert result is active
-    assert active_ref["active_session"] is active
+    assert active_ref.value is active
     assert "Finish or stop the active turn" in stdout.getvalue()
 
 
@@ -449,7 +454,7 @@ def test_worker_completion_after_switch_rejection_does_not_create_session(
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
     state.worker = Thread()
-    active_ref = {"active_session": active}
+    active_ref = ActiveSessionRef(active)
     notice_entered = Event()
     release_notice = Event()
     results = []
@@ -487,4 +492,4 @@ def test_worker_completion_after_switch_rejection_does_not_create_session(
 
     assert not command.is_alive()
     assert results == [active]
-    assert active_ref["active_session"] is active
+    assert active_ref.value is active

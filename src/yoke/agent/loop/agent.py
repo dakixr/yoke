@@ -205,6 +205,26 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         self._context = None
         self._context_owned_for_run = False
 
+    def apply_tool_selection(
+        self, tools: Sequence[LocalTool], *, report: ToolLoadReport | None = None
+    ) -> None:
+        """Apply session tool selection and rebuild its registered instructions.
+
+        Callers pass the complete selection, including hidden runtime tools.
+        Factory-backed runtimes rebuild through their normal registration path.
+        Replace the report after registration and before installing its filtered
+        instructions, preserving the menu's existing instruction ordering.
+        """
+        if self._tool_factory is None:
+            from yoke.agent.loop.tool_core import index_tools
+
+            self.tools = index_tools(tools)
+        else:
+            self.set_session_enabled_tools({tool.name for tool in tools})
+        if report is not None:
+            self.tool_report = report
+        self._install_session_filtered_tool_system_messages()
+
     def close(self) -> None:
         """Release tool resources owned by this runtime."""
         if self._closed:

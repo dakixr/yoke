@@ -12,12 +12,14 @@ import pytest
 
 from yoke.agent.models import Message
 from yoke.agent.state import conversation_entries_from_messages
+from yoke.cli.interactive import turn_runner
 from yoke.cli.interactive.common import PendingPrompt, PromptCliState, TurnFailure
 from yoke.cli.interactive.prompt import turns
 from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.queue.mutations import append_prompt, dequeue_prompt
 from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
+from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.session.queue import load_prompt_queue_snapshot
 from yoke.session.workspace import WorkspaceUnavailable, require_workspace
 
@@ -46,7 +48,7 @@ def _run_and_finish(active, state, lock, agent, prompt, user_message):
         active_session=active,
         stop_event=Event(),
         user_message=user_message,
-        callbacks={"handle_outcome": lambda _id, outcome: outcomes.append(outcome)},
+        handle_outcome=lambda _id, outcome: outcomes.append(outcome),
         turn_renderer_factory=Mock(),
     )
     assert len(outcomes) == 1
@@ -194,8 +196,8 @@ def test_workspace_error_after_execution_does_not_restore_duplicate(
         root.rmdir()
         require_workspace(root, session_id=active.id)
 
-    monkeypatch.setattr(turns, "execute_turn", execute)
-    monkeypatch.setattr(turns, "start_session_title_generation", Mock())
+    monkeypatch.setattr(turn_runner, "execute_turn", execute)
+    monkeypatch.setattr(turn_runner, "start_session_title_generation", Mock())
     outcome = _run_and_finish(
         active, state, lock, agent, pending.prompt, pending.user_message
     )
@@ -232,7 +234,7 @@ def test_control_transfers_queue_identity_before_worker_starts(
         state=state,
         state_lock=lock,
         agent=agent,
-        active_session_ref={"active_session": active},
+        active_session_ref=ActiveSessionRef(active),
         renderer=Mock(),
         scrollback=Mock(),
         request_context_usage=Mock(),

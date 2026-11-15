@@ -3,35 +3,28 @@
 from __future__ import annotations
 
 import logging
-
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+from yoke.agent.budget import build_provider_context_manager
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.skills import ActiveSkill
-from yoke.agent.skills import SkillRegistry
-from yoke.agent.skills import load_skill_registry
+from yoke.agent.skills import ActiveSkill, SkillRegistry, load_skill_registry
 from yoke.agent.skills.paths import default_skill_dirs
-from yoke.ai.providers.base import ProviderError
-from yoke.ai.providers.base import Provider
+from yoke.agent.tools import ToolRegistrationContext, ToolRegistrationResult
+from yoke.ai.providers.base import Provider, ProviderError
 from yoke.ai.providers.model_selection import current_model_id_from_config
 from yoke.ai.providers.resolution import UnknownModelError
-from yoke.agent.tools import ToolRegistrationContext
-from yoke.agent.tools import ToolRegistrationResult
-from yoke.agent.budget import build_provider_context_manager
-from yoke.cli.bootstrap.config import ToolDiscoveryProvider
-from yoke.cli.bootstrap.config import resolve_agent_config
+from yoke.cli.bootstrap.config import ToolDiscoveryProvider, resolve_agent_config
 from yoke.cli.bootstrap.types import ToolLoadReport
-from yoke.cli.config.providers import build_provider_from_args
-from yoke.cli.config.providers import prepare_provider_args
+from yoke.cli.config.providers import build_provider_from_args, prepare_provider_args
+from yoke.cli.config.resources import close_quietly
 from yoke.session.workspace import (
-    require_workspace,
-    inspect_workspace,
     WorkspaceUnavailable,
+    inspect_workspace,
+    require_workspace,
 )
 
 if TYPE_CHECKING:
@@ -101,14 +94,12 @@ def build_cli_agent_from_args(
         built.startup_warning = warning
         return built
     except BaseException as exc:
-        close = getattr(provider, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception:
-                logger.debug(
-                    "Could not close provider after startup failure", exc_info=True
-                )
+        try:
+            close_quietly(provider, suppress_errors=False)
+        except Exception:
+            logger.debug(
+                "Could not close provider after startup failure", exc_info=True
+            )
         # The directory may disappear between preflight and binding tools.
         status = inspect_workspace(args.root)
         if isinstance(exc, (OSError, ValueError)) and not status.available:

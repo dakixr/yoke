@@ -8,23 +8,27 @@ from threading import Lock
 from rich.status import Status
 from rich.text import Text
 
-from yoke.cli.render.base import OutputStream
-from yoke.cli.render.base import build_console
-from yoke.cli.render.base import format_compaction_note
-from yoke.cli.render.base import format_tool_preview
-from yoke.cli.render.base import format_tool_result_error
-from yoke.cli.render.base import print_version_banner
+from yoke.agent.activity import activity_status_for_event
+from yoke.cli.render.base import (
+    OutputStream,
+    build_console,
+    format_compaction_note,
+    format_tool_preview,
+    format_tool_result_error,
+    print_version_banner,
+)
 from yoke.cli.render.base import print_agent_output as print_rendered_agent_output
-from yoke.cli.render.provider_events import PROVIDER_WARNING_STYLE
-from yoke.cli.render.provider_events import format_provider_event
-from yoke.cli.render.provider_events import is_provider_event
-from yoke.cli.render.provider_events import provider_status_for_event
+from yoke.cli.render.provider_events import (
+    PROVIDER_WARNING_STYLE,
+    format_provider_event,
+    is_provider_event,
+    provider_status_for_event,
+)
 from yoke.cli.render.scrollback import (
     print_scrollback_commentary,
+    print_scrollback_notice,
+    print_tool_response_divider,
 )
-from yoke.cli.render.scrollback import print_scrollback_notice
-from yoke.cli.render.scrollback import print_tool_response_divider
-from yoke.agent.activity import activity_status_for_event
 
 
 class StatusIndicator:
@@ -309,15 +313,9 @@ class InteractiveRenderer:
     def print_intro(self) -> None:
         """Print the basic input-mode intro banner."""
         print_version_banner(self._console)
-        self._console.print(
-            Text(
-                "yoke basic mode. Press Enter to send a line.\n"
-                "Inputs sent during a turn are queued. "
-                "Press Ctrl+C to stop and exit, or type `exit` or `quit` to leave.\n"
-                "Use /shortcuts for basic mode commands.\n",
-                style="dim",
-            )
-        )
+        from yoke.cli.interactive.prompt.keys import shortcut_notice
+
+        self._console.print(Text(shortcut_notice(basic=True) + "\n", style="dim"))
 
     def print_agent_output(self, text: str) -> None:
         """Print a complete assistant block."""

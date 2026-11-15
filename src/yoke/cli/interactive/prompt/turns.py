@@ -4,44 +4,36 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from threading import Event
-from threading import Lock
+from threading import Event, Lock
 
-from yoke.agent.loop import AgentStoppedError
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.session.workspace import promote_session_turn as promote_runtime_fork
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.agent.state import capture_agent_state
-from yoke.cli.config import RUN_ERRORS
-from yoke.cli.interactive.common import PendingPrompt
-from yoke.cli.interactive.common import PromptCliState
+from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.interactive.common import (
+    PendingPrompt,
+    PromptCliState,
     TurnFailure,
     TurnStopped,
     TurnSuccess,
 )
-from yoke.cli.interactive.common import (
-    partial_conversation_entries_from_error,
+from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
+from yoke.cli.interactive.queue.mutations import (
+    DequeuedPrompt,
+    dequeue_prompt,
+    restore_dequeued_prompt,
 )
-from yoke.cli.interactive.common import partial_messages_from_error
-from yoke.cli.interactive.common import prompt_turn_tracking
-from yoke.cli.interactive.queue.mutations import dequeue_prompt
-from yoke.cli.interactive.queue.mutations import DequeuedPrompt, restore_dequeued_prompt
 from yoke.cli.interactive.queue.mutations import (
     next_pending_prompt_index as next_pending_prompt_index,
 )
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
-from yoke.cli.runtime import ActiveSession, AgentRunner, EventRenderer
-from yoke.cli.runtime import execute_turn
-from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime import session_usage_metric_context
-from yoke.cli.runtime import start_session_title_generation
-from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
-from yoke.cli.interactive.prompt.runtime import prepare_turn_agent as prepare_turn_agent
-from yoke.cli.interactive.prompt.runtime import retire_turn_agent as retire_turn_agent
-from yoke.session.workspace import WorkspaceError, WorkspaceUnavailable
-from yoke.session.workspace import require_workspace
+from yoke.cli.interactive.turn_runner import TurnRunner
+from yoke.cli.runtime import (
+    ActiveSession,
+    AgentRunner,
+    EventRenderer,
+    persist_session_state,
+)
+from yoke.cli.runtime.turn_agent import retire_turn_agent as retire_turn_agent
+from yoke.session.workspace import promote_session_turn as promote_runtime_fork
 
 
 def run_prompt_turn(
@@ -54,7 +46,7 @@ def run_prompt_turn(
     active_session: ActiveSession,
     stop_event: Event,
     user_message: Message | None,
-    callbacks: dict[str, Callable[..., object]],
+    handle_outcome: Callable[[int, TurnSuccess | TurnFailure | TurnStopped], None],
     turn_renderer_factory: Callable[[int], EventRenderer],
     message_snapshot: list[Message] | None = None,
     conversation_entries_snapshot: list[ConversationEntry] | None = None,
@@ -67,17 +59,16 @@ def run_prompt_turn(
             state.starting_prompt = None
     if starting_prompt is None:
         starting_prompt = (PendingPrompt(prompt, user_message=user_message), 0)
-    execution_started = False
     messages = (
         message_snapshot if message_snapshot is not None else list(state.messages)
     )
     entries = conversation_entries_snapshot
     if entries is None:
         entries = active_session.active_entries()
-    title_messages = [*messages, user_message or Message.user(prompt)]
-    turn_agent = agent
+    runner = TurnRunner(agent, active_session)
 
     def checkpoint_tool_result(
+        turn_agent: AgentRunner,
         checkpoint_messages: list[Message],
         checkpoint_entries: list[ConversationEntry],
     ) -> None:
@@ -102,66 +93,17 @@ def run_prompt_turn(
                 conversation_entries=checkpoint_entries,
             )
 
-    try:
-        require_workspace(active_session.root, session_id=active_session.id)
-        turn_agent = prepare_turn_agent(
-            agent,
-            messages=messages,
-            entries=entries or [],
-            active_session=active_session,
-        )
-        start_session_title_generation(
-            active_session,
-            agent,
-            prompt,
-            messages=title_messages,
-        )
-        with session_usage_metric_context(active_session, prompt):
-            require_workspace(active_session.root, session_id=active_session.id)
-            execution_started = True
-            result = execute_turn(
-                turn_agent,
-                prompt,
-                messages,
-                indicator=turn_renderer_factory(turn_id),
-                stop_requested=stop_event.is_set,
-                user_message=user_message,
-                conversation_entries=entries,
-                after_tool_result_appended=checkpoint_tool_result,
-            )
-        if result.status == "stopped":
-            callbacks["handle_outcome"](
-                turn_id, TurnStopped(result=result, agent=turn_agent)
-            )
-            return
-    except AgentStoppedError:
-        state_snapshot = capture_agent_state(turn_agent)
-        callbacks["handle_outcome"](
-            turn_id,
-            TurnStopped(
-                messages=state_snapshot.messages,
-                conversation_entries=state_snapshot.conversation_entries,
-                agent=turn_agent,
-            ),
-        )
-        return
-    except (*RUN_ERRORS, WorkspaceError) as exc:
-        callbacks["handle_outcome"](
-            turn_id,
-            TurnFailure(
-                error=exc,
-                messages=partial_messages_from_error(exc),
-                conversation_entries=partial_conversation_entries_from_error(exc),
-                agent=turn_agent,
-                rejected_prompt=(
-                    starting_prompt
-                    if isinstance(exc, WorkspaceUnavailable) and not execution_started
-                    else None
-                ),
-            ),
-        )
-        return
-    callbacks["handle_outcome"](turn_id, TurnSuccess(result=result, agent=turn_agent))
+    outcome = runner.run(
+        prompt,
+        messages,
+        entries=entries,
+        stop_event=stop_event,
+        user_message=user_message,
+        indicator=turn_renderer_factory(turn_id),
+        checkpoint=checkpoint_tool_result,
+        starting_prompt=starting_prompt,
+    )
+    handle_outcome(turn_id, outcome)
 
 
 def handle_prompt_turn_outcome(
@@ -177,7 +119,10 @@ def handle_prompt_turn_outcome(
 ) -> bool | None:
     """Apply a completed turn outcome to prompt-toolkit session state."""
     with state_lock:
-        abandoned_turn_ids, steered_turn_ids = prompt_turn_tracking(state)
+        abandoned_turn_ids, steered_turn_ids = (
+            state.abandoned_turn_ids,
+            state.steered_turn_ids,
+        )
         if turn_id != state.active_turn_id or turn_id in abandoned_turn_ids:
             abandoned_turn_ids.discard(turn_id)
             steered_turn_ids.discard(turn_id)

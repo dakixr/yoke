@@ -29,8 +29,14 @@ yoke --image screenshot.png "describe this screenshot"
 yoke --headless --image chart.png --image legend.png "summarize these charts"
 ```
 
-Interactive startup prints only the tool-loading summary and version banner.
-Run `/shortcuts` or `?` when you want the keyboard shortcut reference.
+Prompt-toolkit startup prints only the tool-loading summary and version banner.
+Run `/help` for commands and `/shortcuts` or `?` for the keyboard reference.
+Basic mode, selected when stdout is not a terminal or an input function is
+supplied by an embedding application, queues lines submitted during a turn. Its
+terminal startup and `/shortcuts` use the same basic-mode help. Both modes share
+turn preparation, cancellation error handling, and session replay. Seeded user
+messages retain their original text and image blocks; their displayed prompt uses
+the transcript text projection.
 
 Interactive mode keeps one prompt-toolkit application alive for the complete
 session. Prompt submissions are serialized away from the terminal event loop,
@@ -408,7 +414,16 @@ turn.
   provider/model, message counts, timestamps, and context-window metadata.
 - Use `/fork` to copy the current saved session into a new persisted session and
   continue future turns in that fork.
-- Use `/shortcuts` or `?` to print the interactive keyboard shortcuts in scrollback.
+- Use `/help` to list commands and their argument syntax.
+- Use `/shortcuts` or `?` to print the active mode's keyboard shortcuts in scrollback.
+  Newline help shows `Ctrl+J` plus the binding supported by this installation,
+  either `Shift+Enter` or `Esc` then `Enter`.
+
+Command dispatch, completion, usage validation, and terminal-control policy use
+the registry in `cli/interactive/commands.py`. Shortcut registration and help use
+the binding table in `cli/interactive/prompt/keys.py`. The `/tools` menu applies
+selections through `RuntimeAgent.apply_tool_selection()`, preserving registered
+tool instructions and hidden runtime tools.
 
 Pending image attachments are shown in the bottom toolbar and are sent with the
 next submitted prompt. Submitted CLI and `attach_image` tool images are stored

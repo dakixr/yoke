@@ -9,10 +9,14 @@ from yoke.cli.interactive.common import PendingPrompt, PromptCliState
 from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 from yoke.cli.render import format_compaction_note
-from yoke.cli.runtime import ActiveSession, AgentRunner
-from yoke.cli.runtime import force_compact_history
-from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime import session_usage_metric_context
+from yoke.cli.runtime import (
+    ActiveSession,
+    AgentRunner,
+    force_compact_history,
+    persist_session_state,
+    session_usage_metric_context,
+)
+from yoke.cli.runtime.base import ActiveSessionRef
 
 
 def start_prompt_compaction(
@@ -20,7 +24,7 @@ def start_prompt_compaction(
     state: PromptCliState,
     state_lock: Lock,
     agent: AgentRunner,
-    active_session_ref: dict[str, ActiveSession],
+    active_session_ref: ActiveSessionRef,
     scrollback: ScrollbackSink,
     request_context_usage: Callable[[str], None],
     update_status: Callable[[str], None],
@@ -30,7 +34,7 @@ def start_prompt_compaction(
     scrollback.emit("notice", "Compacting conversation...")
     with state_lock:
         message_snapshot = list(state.messages)
-        current_session = active_session_ref["active_session"]
+        current_session = active_session_ref.value
     conversation_entries_snapshot = current_session.active_entries()
 
     def run_compaction() -> None:
@@ -48,13 +52,13 @@ def start_prompt_compaction(
                 state=state,
                 state_lock=state_lock,
                 agent=agent,
-                active_session=active_session_ref["active_session"],
+                active_session=active_session_ref.value,
                 scrollback=scrollback,
             )
         pending, should_finish = finish_prompt_turn(
             state=state,
             state_lock=state_lock,
-            active_session=active_session_ref["active_session"],
+            active_session=active_session_ref.value,
             request_context_usage=request_context_usage,
         )
         start_pending_prompt(pending, should_finish)

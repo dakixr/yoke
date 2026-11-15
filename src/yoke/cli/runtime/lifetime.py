@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
 from contextlib import ExitStack, suppress
 from contextvars import ContextVar
 from functools import wraps
 from inspect import signature
-import logging
 from threading import Thread
-import time
-from typing import cast
 
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.loop.in_process_tool import InProcessToolShutdownError
-from yoke.agent.loop.in_process_tool import wait_for_in_process_tools
+from yoke.agent.loop.in_process_tool import (
+    InProcessToolShutdownError,
+    wait_for_in_process_tools,
+)
+from yoke.cli.config.resources import close_quietly
 from yoke.cli.runtime.workspaces import CLIWorkspaces, cli_workspaces
 
 LOGGER = logging.getLogger(__name__)
@@ -101,9 +103,7 @@ def _close_cli_owned_runtime(
 ) -> None:
     """Close a CLI-owned runtime followed by its current provider."""
     try:
-        close = getattr(agent, "close", None)
-        if callable(close):
-            cast(Callable[[], None], close)()
+        close_quietly(agent, suppress_errors=False)
     except InProcessToolShutdownError:
         if isinstance(agent, RuntimeAgent) and not agent.closed:
             Thread(
@@ -116,9 +116,7 @@ def _close_cli_owned_runtime(
     finally:
         if not isinstance(agent, RuntimeAgent) or agent.closed:
             provider = getattr(agent, "provider", None)
-            close_provider = getattr(provider, "close", None)
-            if callable(close_provider):
-                cast(Callable[[], None], close_provider)()
+            close_quietly(provider, suppress_errors=False)
 
 
 def _finish_detached_runtime(agent: RuntimeAgent, leases: ExitStack) -> None:

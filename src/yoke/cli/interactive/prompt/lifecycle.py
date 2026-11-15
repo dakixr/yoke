@@ -252,29 +252,21 @@ class PersistentPromptLifecycle:
 
 
 def _normalize_submitted_prompt(prompt: str) -> str:
-    normalized = prompt.strip().lower()
-    if normalized in {
-        "exit",
-        "quit",
-        "/compact",
-        "/shortcuts",
-        "?",
-        "/new",
-        "/pin",
-        "/info",
-        "/fork",
-        "/tree",
-    }:
+    from yoke.cli.interactive.commands import find_command
+
+    item = find_command(prompt)
+    if prompt.strip().lower() in {"exit", "quit"} or (
+        item is not None and not item.takes_args
+    ):
         return prompt.strip()
     return prompt
 
 
 def _requires_terminal_control(prompt: str) -> bool:
-    normalized = prompt.strip().lower()
-    if normalized == "?":
-        return True
-    command = normalized.partition(" ")[0]
-    return command.startswith("/") and command not in {"/compact", "/ps"}
+    from yoke.cli.interactive.commands import find_command
+
+    item = find_command(prompt)
+    return item.needs_terminal if item is not None else prompt.strip().startswith("/")
 
 
 def run_persistent_prompt_application(config: PromptLifecycleConfig) -> int:
