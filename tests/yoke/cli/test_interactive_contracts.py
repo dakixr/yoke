@@ -71,15 +71,19 @@ def test_registry_dispatch_usage_completion_and_lifecycle_agree(
         handler.assert_called()
     if not entry.takes_args:
         handler.reset_mock()
-        commands.handle_slash_command(
+        handled = commands.handle_slash_command(
             entry.name + " unexpected",
             agent=FakeAgent(),
             active_session=session,
             messages=[],
             console=build_console(output),
-        )
+        )[0]
         handler.assert_not_called()
-        assert f"Usage: {entry.usage_text}" in output.getvalue()
+        if entry.rejects_args:
+            assert f"Usage: {entry.usage_text}" in output.getvalue()
+        else:
+            # Extra text after an argument-less command is a model prompt.
+            assert handled is False
     if entry.min_args:
         handler.reset_mock()
         commands.handle_slash_command(
@@ -324,3 +328,32 @@ def test_host_compaction_does_not_overwrite_a_fast_worker_result(tmp_path):
         format_context_usage_text=lambda _usage: None,
     )
     assert state.messages is compacted
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["? why does this fail", "/new feature: add X", "/help me fix this", "/tree view"],
+)
+def test_argless_command_words_followed_by_text_are_model_prompts(text: str) -> None:
+    from yoke.cli.interactive.commands import find_command
+
+    assert find_command(text) is None
+
+
+@pytest.mark.parametrize(
+    "text,name",
+    [
+        ("?", "/shortcuts"),
+        ("/new", "/new"),
+        ("/pin extra", "/pin"),
+        ("/ps now", "/ps"),
+        ("/title Better name", "/title"),
+    ],
+)
+def test_command_matching_keeps_usage_errors_for_strict_commands(
+    text: str, name: str
+) -> None:
+    from yoke.cli.interactive.commands import find_command
+
+    item = find_command(text)
+    assert item is not None and item.name == name

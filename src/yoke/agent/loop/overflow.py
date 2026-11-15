@@ -10,6 +10,7 @@ from yoke.agent.multimodal import messages_for_provider_capabilities
 from yoke.agent.models import AgentContext
 from yoke.agent.models import Message
 from yoke.agent.usage import compact_usage_payload
+from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.base import ProviderRequestContext
 from yoke.ai.providers.base import complete_with_cancel
@@ -94,6 +95,7 @@ def retry_with_compacted_history(
     on_event: AgentEventHandler | None,
     compact_context,
     emit_event: Callable[[str, dict[str, object]], None],
+    stop_requested: Callable[[], bool] | None = None,
 ) -> Message | None:
     """Start one reduced epoch and retry the rejected request once."""
     compaction = compact_context(
@@ -117,11 +119,15 @@ def retry_with_compacted_history(
                 agent.provider,
                 provider_messages,
                 agent._tool_definitions(),
+                cancel_requested=stop_requested,
                 request_context=ProviderRequestContext(
                     cache_scope=conversation_cache_scope(context),
                     response_continuity="reset",
                 ),
             )
+    except ProviderCancelledError:
+        # A stop during the retry is a stop, not a failed recovery.
+        raise
     except ProviderError:
         return None
     context.provider_epoch_reset = False

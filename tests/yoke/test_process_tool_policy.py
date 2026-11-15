@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 import sys
 import threading
+import time
 from typing import Any, cast
 
 import pytest
@@ -114,8 +115,11 @@ def test_completion_does_not_return_on_chatty_output_or_page_limit(manager, tmp_
         tmp_path,
         "import time\nfor i in range(25):\n print('x'*200, flush=True)\n time.sleep(0.01)\n",
     )
+    began = time.monotonic()
     result = read(manager, tmp_path, started, wait_ms=2_000, max_bytes=1024)
     assert result["reason"] == "completed"
+    # Lower bound only: chatty output must not end the wait early.
+    assert time.monotonic() - began >= 0.15
     item = result["items"][0]
     assert not item["running"] and item["has_more_output"]
     output = started["output"] + item["output"]
@@ -378,6 +382,7 @@ def test_manager_close_wakes_event_waiters_without_cancellation_callback(
         daemon=True,
     )
     worker.start()
+    time.sleep(0.03)  # Let the waiter block before close wakes it.
     manager.close()
     worker.join(timeout=5)
     assert not worker.is_alive()

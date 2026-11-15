@@ -328,6 +328,7 @@ def test_completion_deadline_ignores_intermediate_output(
                     "python_exec", {"code": code, "mode": "background"}
                 )
             )
+            before = time.monotonic()
             result = structured(
                 await client.call_tool(
                     "process_read",
@@ -338,7 +339,8 @@ def test_completion_deadline_ignores_intermediate_output(
                     },
                 )
             )
-
+            # Lower bound only: intermediate output must not end the wait early.
+            assert time.monotonic() - before >= 0.15
             assert result["reason"] == "deadline"
             item = result["items"][0]
             assert item["running"] and not item["timed_out"]

@@ -85,7 +85,10 @@ class GoChatProvider(OpenAICompatibleProvider):
                 if cancel_requested():
                     raise ProviderCancelledError() from exc
                 # Do not replay a generation after receiving a successful stream.
-                if progress is not None and progress.started:
+                # A read timeout may mean the generation is still running.
+                if (progress is not None and progress.started) or isinstance(
+                    exc, httpx.ReadTimeout
+                ):
                     raise ProviderError("OpenCode Go stream interrupted.") from exc
                 if (
                     isinstance(exc, httpx.RequestError)

@@ -102,14 +102,18 @@ def complete_iteration_model(
         raise AgentStoppedError() from exc
     except ProviderError as exc:
         if should_retry_after_overflow(exc):
-            recovered = retry_with_compacted_history(
-                agent,
-                context,
-                iteration=iteration,
-                on_event=on_event,
-                compact_context=compact_context_for_iteration,
-                emit_event=lambda event, payload: emit(on_event, event, payload),
-            )
+            try:
+                recovered = retry_with_compacted_history(
+                    agent,
+                    context,
+                    iteration=iteration,
+                    on_event=on_event,
+                    compact_context=compact_context_for_iteration,
+                    emit_event=lambda event, payload: emit(on_event, event, payload),
+                    stop_requested=stop_requested,
+                )
+            except ProviderCancelledError as cancelled:
+                raise AgentStoppedError() from cancelled
             if recovered is not None:
                 return recovered
         exc.partial_messages = context.messages

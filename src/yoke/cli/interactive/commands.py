@@ -30,6 +30,9 @@ class Command:
     aliases: tuple[str, ...] = ()
     usage: str | None = None
     takes_args: bool = False
+    # Arguments to an argument-less command normally make the text a model
+    # prompt ("/help me fix this", "? why"). These report a usage error instead.
+    rejects_args: bool = False
     needs_terminal: bool = True
     available_in_basic: bool = True
     min_args: int = 0
@@ -75,17 +78,20 @@ SLASH_COMMANDS: tuple[Command, ...] = (
         "/pin",
         "Pin or unpin the active session.",
         handlers.pin,
+        rejects_args=True,
     ),
     Command(
         "/info",
         "Show active session metadata.",
         handlers.info,
+        rejects_args=True,
     ),
     Command(
         "/fork",
         "Copy this session and continue in the fork.",
         handlers.fork,
         changes_session=True,
+        rejects_args=True,
     ),
     Command(
         "/title",
@@ -99,6 +105,7 @@ SLASH_COMMANDS: tuple[Command, ...] = (
         "/regenerate-title",
         "Generate a new title from this conversation.",
         handlers.regenerate_title,
+        rejects_args=True,
     ),
     Command(
         "/tree",
@@ -135,11 +142,13 @@ SLASH_COMMANDS: tuple[Command, ...] = (
         "Inspect command processes for this live runtime.",
         handlers.ps,
         needs_terminal=False,
+        rejects_args=True,
     ),
     Command(
         "/agents",
         "Show the latest SDK agent runs for this live runtime.",
         handlers.agents,
+        rejects_args=True,
     ),
     Command(
         "/image",
@@ -165,8 +174,14 @@ COMMANDS_BY_NAME = {
 
 
 def find_command(text: str) -> Command | None:
+    """Return the command this text invokes, or None for a model prompt."""
     words = text.strip().split(maxsplit=1)
-    return COMMANDS_BY_NAME.get(words[0].lower()) if words else None
+    if not words:
+        return None
+    item = COMMANDS_BY_NAME.get(words[0].lower())
+    if item is None or len(words) == 1 or item.takes_args or item.rejects_args:
+        return item
+    return None
 
 
 def handle_slash_command(

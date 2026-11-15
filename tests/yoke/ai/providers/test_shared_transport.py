@@ -73,7 +73,17 @@ def test_timeout_replay_requires_no_response_bytes(
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         provider = _provider(kind, tmp_path, client)
         try:
-            if failure in ("partial-line", "output"):
+            # Non-streaming openai-compatible and Go chat requests fail fast on
+            # read timeouts: the generation may still be running server-side.
+            read_timeout_fails_fast = kind in ("openai", "go-chat") and failure in (
+                "headers",
+                "empty-stream",
+            )
+            if read_timeout_fails_fast:
+                with pytest.raises(ProviderError):
+                    provider.complete([Message.user("hello")], [])
+                assert attempts == 1
+            elif failure in ("partial-line", "output"):
                 with pytest.raises(ProviderError, match="(interrupted|response bytes)"):
                     provider.complete([Message.user("hello")], [])
                 assert attempts == 1
@@ -114,6 +124,30 @@ def test_all_http_providers_retry_transient_status(
             assert provider.complete([Message.user("hello")], []).text_content() == "ok"
             assert attempts == 2
             assert delays == [0.0]
+        finally:
+            provider.close()
+
+
+def test_zai_honors_full_retry_after_beyond_backoff_cap(tmp_path: Path) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(
+                429,
+                json={"error": {"message": "slow down"}},
+                headers={"retry-after": "90"},
+            )
+        return _response("zai")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        provider = _provider("zai", tmp_path, client, delays.append)
+        try:
+            assert provider.complete([Message.user("hello")], []).text_content() == "ok"
+            assert delays == [90.0]
         finally:
             provider.close()
 

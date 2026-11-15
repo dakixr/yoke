@@ -61,6 +61,7 @@ class SessionRuntime:
         message_index: SessionMessageIndex | None,
         indexed_runtime_seed: bool,
         executor: Executor,
+        storage_executor: Executor,
         active_slots: asyncio.Semaphore,
     ) -> None:
         self.session_id = session_id
@@ -73,6 +74,7 @@ class SessionRuntime:
         self.indexed_runtime_seed = indexed_runtime_seed
         index_entry = store.index_entry(session_id)
         self.executor = executor
+        self.storage_executor = storage_executor
         self.active_slots = active_slots
         self.gate = asyncio.Lock()
         self.resources = SessionRuntimeResources(
@@ -246,7 +248,7 @@ class SessionRuntime:
         self, function: Callable[P, T], *args: P.args, **kwargs: P.kwargs
     ) -> T:
         future = asyncio.get_running_loop().run_in_executor(
-            self.executor, partial(function, *args, **kwargs)
+            self.storage_executor, partial(function, *args, **kwargs)
         )
         try:
             return await asyncio.shield(future)

@@ -282,6 +282,10 @@ class OpenAICompatibleProvider(
                 if cancel_requested():
                     raise ProviderCancelledError() from exc
                 last_error = ProviderError("Provider request timed out.")
+                # A read timeout on this non-streaming endpoint means a
+                # generation is in flight; replaying it duplicates work.
+                if isinstance(exc, httpx.ReadTimeout):
+                    raise last_error from exc
                 if attempt < self.config.max_retries:
                     self._reset_transport_for_retry()
                     self._retry_sleep(

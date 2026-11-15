@@ -337,3 +337,44 @@ def test_agent_loop_stops_when_epoch_handoff_is_empty(
     assert any(
         "older answer alpha" in (message.content or "") for message in result.messages
     )
+
+
+def test_stop_during_overflow_compaction_cancels_the_retry(tmp_path: Path) -> None:
+    import pytest
+
+    from yoke.agent.loop.types import AgentStoppedError
+
+    stopped = False
+
+    class StopDuringCompaction(OverflowRetryProvider):
+        def complete(
+            self, messages: list[Message], tools: list[dict[str, object]]
+        ) -> Message:
+            nonlocal stopped
+            if messages[-1].content == COMPACTION_SUMMARY_PROMPT:
+                # The user stops while the overflow compaction runs.
+                stopped = True
+            return super().complete(messages, tools)
+
+    provider = StopDuringCompaction()
+    agent = RuntimeAgent(
+        provider=provider,
+        tools=[],
+        context_manager=ContextManager(
+            instructions=[Message.system("system prompt")],
+            compaction_policy=CompactionPolicy(
+                max_total_tokens=800,
+                reserved_output_tokens=100,
+                keep_recent_tokens=120,
+            ),
+        ),
+        messages=[
+            Message.user("older request"),
+            Message.assistant("older response " + ("alpha " * 120)),
+        ],
+    )
+
+    with pytest.raises(AgentStoppedError):
+        agent.run("newest request", stop_requested=lambda: stopped)
+    # The overflowed call and the compaction ran; the retry did not.
+    assert provider.calls == 2

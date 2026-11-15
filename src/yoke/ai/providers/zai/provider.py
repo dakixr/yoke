@@ -185,13 +185,15 @@ class ZAIProvider(
                             retry_after_seconds=retry_after,
                         )
                         if attempt < self.config.max_retries:
+                            # ZAI honors the server's full Retry-After value.
                             sleep_with_cancel(
                                 backoff_seconds(
                                     attempt,
                                     self.config.retry_backoff_seconds,
                                     self.config.max_retry_backoff_seconds,
-                                    retry_after,
-                                ),
+                                )
+                                if retry_after is None
+                                else retry_after,
                                 cancel_requested=cancel_requested,
                                 sleep=self._sleep,
                             )

@@ -70,6 +70,12 @@ class SessionRuntimeRegistry:
             max_workers=workers,
             thread_name_prefix="yoke-http-turn",
         )
+        # Control-plane storage gets its own pool: a retired turn thread stuck
+        # inside a tool must not delay interrupt or metadata persistence.
+        self.storage_executor = ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="yoke-http-storage",
+        )
         self._lock = Lock()
         self._runtimes: dict[str, SessionRuntime] = {}
         self._workspace_tasks: set[asyncio.Task[SessionRecord]] = set()
@@ -94,6 +100,7 @@ class SessionRuntimeRegistry:
                     message_index=self.message_index,
                     indexed_runtime_seed=self.indexed_runtime_seed,
                     executor=self.executor,
+                    storage_executor=self.storage_executor,
                     active_slots=self.active_slots,
                 )
                 self._runtimes[session_id] = runtime
@@ -299,3 +306,4 @@ class SessionRuntimeRegistry:
                 return
             self._executor_closed = True
         self.executor.shutdown(wait=False, cancel_futures=True)
+        self.storage_executor.shutdown(wait=False, cancel_futures=True)
