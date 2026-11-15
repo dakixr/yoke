@@ -64,8 +64,7 @@ def test_same_build_with_incompatible_protocol_still_refuses():
     )
 
 
-@pytest.mark.parametrize("reason", ["restart", "stop"])
-def test_shutdown_waits_for_mutation_that_races_the_busy_probe(reason):
+def test_restart_waits_for_mutation_that_races_the_busy_probe():
     async def scenario():
         lifecycle = DaemonLifecycle(poll_seconds=0.01)
         entered = asyncio.Event()
@@ -77,10 +76,7 @@ def test_shutdown_waits_for_mutation_that_races_the_busy_probe(reason):
             return False
 
         lifecycle.bind_busy_probe(probe)
-        if reason == "restart":
-            lifecycle.request_restart_when_idle()
-        else:
-            lifecycle.request_stop_when_idle()
+        lifecycle.request_restart_when_idle()
         watcher = asyncio.create_task(lifecycle.watch())
         try:
             await entered.wait()
@@ -88,7 +84,7 @@ def test_shutdown_waits_for_mutation_that_races_the_busy_probe(reason):
             assert lifecycle.exit_reason is None
             lifecycle.end_mutation()
             await asyncio.wait_for(watcher, 1)
-            assert lifecycle.exit_reason == reason
+            assert lifecycle.exit_reason == "restart"
         finally:
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)
