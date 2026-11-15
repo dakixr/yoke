@@ -10,6 +10,7 @@ from fastapi import Query
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
+from yoke.daemon.lifecycle import DaemonLifecycle
 from yoke.http.auth import require_auth
 from yoke.http.models.event import HistoryResponse
 from yoke.http.services.event_broker import GlobalEventBroker
@@ -22,8 +23,17 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 
 
 @router.get("/event", operation_id="streamEvents")
-async def stream_events(request: Request) -> StreamingResponse:
+async def stream_events(
+    request: Request,
+    client: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description="Name this client; under `yoke serve --daemon` the stream is a lease.",
+    ),
+) -> StreamingResponse:
     broker: GlobalEventBroker = request.app.state.event_broker
+    lifecycle: DaemonLifecycle | None = getattr(request.app.state, "daemon", None)
     subscription = broker.subscribe()
     connected = live_event(
         "server.connected",
@@ -31,6 +41,12 @@ async def stream_events(request: Request) -> StreamingResponse:
     )
 
     async def body():  # noqa: ANN202
+        # Opened inside the body so the generator's finally always closes it.
+        lease = (
+            lifecycle.open_lease(client)
+            if lifecycle is not None and client is not None
+            else None
+        )
         try:
             yield _sse(connected)
             while not subscription.closed or not subscription.queue.empty():
@@ -44,6 +60,8 @@ async def stream_events(request: Request) -> StreamingResponse:
                 yield _sse(event)
         finally:
             broker.unsubscribe(subscription)
+            if lease is not None and lifecycle is not None:
+                lifecycle.close_lease(lease)
 
     return StreamingResponse(
         body(),

@@ -25,6 +25,7 @@ from yoke.http.routes import (
     catalog,
     client_session,
     command,
+    daemon,
     event,
     filesystem,
     health,
@@ -64,6 +65,7 @@ from yoke.http.services.tool_service import ToolService
 from yoke.http.services.tool_trace_service import ToolTraceService
 from yoke.http.services.upload_service import UploadService
 from yoke.http.web import install_web_routes
+from yoke.daemon.lifecycle import DaemonLifecycle
 from yoke.session import SessionStore
 from yoke.session.admissions import AdmissionStore
 from yoke.session.events import SessionEventJournal
@@ -80,6 +82,9 @@ class HttpAppSettings:
     max_worker_threads: int | None = None
     agent_factory: SessionAgentFactory | None = None
     indexed_runtime_seed: bool = True
+    # Set by ``yoke serve --daemon``: leases, idle exit and the peer-checked socket.
+    daemon: DaemonLifecycle | None = None
+    daemon_socket: str | None = None
 
 
 def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
@@ -110,6 +115,11 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     )
     agent_runs = AgentRunService(runtime_registry, events)
     thread_settlement = ThreadSettlementService(session_service, runtime_registry)
+    lifecycle = configured.daemon
+    if lifecycle is not None:
+        from yoke.daemon.work import DaemonWork
+
+        lifecycle.bind_busy_probe(DaemonWork(store, runtime_registry).busy)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -124,15 +134,18 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         runtime_import_task = asyncio.create_task(
             _warm_runtime_import(initial_delay_seconds=1.5)
         )
+        background = [
+            settlement_task,
+            maintenance_task,
+            runtime_import_task,
+            agent_run_task,
+        ]
+        if lifecycle is not None:
+            background.append(asyncio.create_task(lifecycle.watch()))
         try:
             yield
         finally:
-            for task in (
-                settlement_task,
-                maintenance_task,
-                runtime_import_task,
-                agent_run_task,
-            ):
+            for task in background:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
@@ -155,6 +168,8 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.auth_token = configured.auth_token
+    app.state.daemon = lifecycle
+    app.state.daemon_socket = configured.daemon_socket
     app.state.server_instance_id = f"srv_{secrets.token_hex(8)}"
     app.state.event_broker = broker
     app.state.event_journal = journal
@@ -186,7 +201,26 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         request.state.request_id = (
             request.headers.get("x-request-id") or f"req_{uuid4().hex}"
         )
-        response = await call_next(request)
+        mutation = (
+            lifecycle is not None
+            and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and request.url.path.startswith("/api/v1/session")
+            and not request.url.path.endswith(("/wait", "/drain"))
+        )
+        if lifecycle is not None and lifecycle.exit_reason is not None:
+            return error_response(
+                request,
+                status_code=503,
+                code="daemon_exiting",
+                message="The daemon is shutting down; reconnect.",
+            )
+        if mutation and lifecycle is not None:
+            lifecycle.begin_mutation()
+        try:
+            response = await call_next(request)
+        finally:
+            if mutation and lifecycle is not None:
+                lifecycle.end_mutation()
         response.headers["X-Request-ID"] = request.state.request_id
         return response
 
@@ -224,6 +258,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.include_router(agent_run.router, prefix="/api/v1")
     app.include_router(catalog.router, prefix="/api/v1")
     app.include_router(command.router, prefix="/api/v1")
+    app.include_router(daemon.router, prefix="/api/v1")
     app.include_router(event.router, prefix="/api/v1")
     app.include_router(filesystem.router, prefix="/api/v1")
     app.include_router(location.router, prefix="/api/v1")

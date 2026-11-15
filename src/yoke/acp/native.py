@@ -37,12 +37,20 @@ def fail(message: str) -> RequestError:
 class NativeClient:
     """Small client for the native Yoke HTTP session API."""
 
-    def __init__(self, url: str, token: str) -> None:
+    def __init__(self, url: str, token: str | None, *, uds: str | None = None) -> None:
+        """Connect over TCP with a bearer token, or over the daemon socket *uds*.
+
+        The daemon authorizes socket peers by uid, so *token* may be ``None``.
+        """
+        limits = httpx.Limits(keepalive_expiry=NATIVE_KEEPALIVE_EXPIRY_SECONDS)
         self.http = httpx.AsyncClient(
             base_url=url.rstrip("/") + "/api/v1/",
-            headers={"Authorization": "Bearer " + token},
+            headers={"Authorization": "Bearer " + token} if token else None,
             timeout=35,
-            limits=httpx.Limits(keepalive_expiry=NATIVE_KEEPALIVE_EXPIRY_SECONDS),
+            limits=limits,
+            transport=(
+                httpx.AsyncHTTPTransport(uds=uds, limits=limits) if uds else None
+            ),
             trust_env=False,
             follow_redirects=False,
         )

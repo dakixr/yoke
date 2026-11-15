@@ -21,6 +21,7 @@ _SUBCOMMANDS = frozenset(
         "login",
         "serve",
         "acp",
+        "daemon",
         "resume",
         "session-handoff",
         "db",

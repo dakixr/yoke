@@ -1,21 +1,40 @@
 # ACP and T3 Code
 
-`yoke acp` is a stdio ACP agent backed by a running `yoke serve` daemon.
-The daemon owns durable conversations and execution. Closing an ACP connection
-releases its client tool configuration and prompt observers. Saved sessions
-remain available, and T3 settlement synchronization continues in the daemon.
+`yoke acp` is a stdio ACP agent backed by the per-user Yoke daemon.
+With no URL, it discovers the Unix socket or starts a detached
+`yoke serve --daemon`, then holds a named event-stream lease until ACP closes.
+The daemon owns durable conversations and execution. Closing ACP releases its
+client tool configuration and prompt observers. Saved sessions remain available.
 
 ## T3 Code setup
 
-Run the current Yoke version on both sides. Supply `YOKE_HTTP_TOKEN` to the
-daemon and the same credential as `YOKE_ACP_TOKEN` to the ACP process. Set
-`YOKE_ACP_URL` to the daemon's base URL. A service manager must also receive
-the provider environment used by ordinary Yoke, including any configured
-`YOKE_CODEX_DOMAIN`, `YOKE_CODEX_API_KEY`, `OPENCODE_API_KEY`, and `ZAI_API_KEY`.
-A systemd service does not inherit the launching terminal's environment. Supply
-these values in its protected environment file, or use Yoke's provider login
-commands to save credentials in the private provider store. Use
-`serve --hide-token` for service logs.
+Use `yoke acp` as the local command. No URL or bearer token is needed for the
+local Unix socket, which authenticates the peer's uid. Discovery waits up to
+five seconds for startup; daemon output goes to `~/.yoke/run/daemon.log`.
+`yoke daemon status`, `restart`, and `stop` inspect or control it.
+
+An explicit `--url` or `YOKE_ACP_URL` selects an existing HTTP server instead.
+That mode requires `--token` or `YOKE_ACP_TOKEN` and does not auto-spawn a daemon
+or acquire a local daemon lease. Existing launchers with both environment
+variables continue using their configured server.
+
+Provider credentials and settings must be available to the daemon. An
+auto-spawned daemon inherits the first client's environment. Later clients do
+not replace that environment in this phase. A systemd daemon needs its provider
+environment in a protected environment file, or credentials saved with Yoke's
+provider login commands. See [the sample user unit](../../../docs/yoke-daemon.service).
+No running host service is changed by installing this code.
+
+Different client and daemon builds trigger an idle restart. A busy daemon with
+a compatible protocol accepts the client with one warning and restarts after
+its work drains. An incompatible busy daemon refuses attachment without
+interrupting its turns. ACP reconnects its lease after a restart; individual
+session requests are not retried because they might already be admitted.
+
+The existing per-session ACP ownership lock remains during this phase. It
+prevents two ACP peers from replacing each other's client tool configuration.
+It is separate from the daemon lease and can be removed when the session API
+supports multiple independent clients.
 
 In T3's provider settings, add an ACP provider using a local command. Use
 `yoke acp` if T3 already inherits the required environment. Otherwise point it

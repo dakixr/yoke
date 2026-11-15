@@ -916,6 +916,154 @@
         "title": "CursorInfo",
         "type": "object"
       },
+      "DaemonControlData": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "restart",
+              "stop"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "scheduled": {
+            "enum": [
+              "now",
+              "when_idle"
+            ],
+            "title": "Scheduled",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "scheduled"
+        ],
+        "title": "DaemonControlData",
+        "type": "object"
+      },
+      "DaemonControlResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DaemonControlData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "DaemonControlResponse",
+        "type": "object"
+      },
+      "DaemonRestartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "whenIdle": {
+            "default": false,
+            "description": "When busy, restart once no turn is running instead of refusing.",
+            "title": "Whenidle",
+            "type": "boolean"
+          }
+        },
+        "title": "DaemonRestartRequest",
+        "type": "object"
+      },
+      "DaemonStatusData": {
+        "additionalProperties": false,
+        "properties": {
+          "buildID": {
+            "title": "Buildid",
+            "type": "string"
+          },
+          "busy": {
+            "title": "Busy",
+            "type": "boolean"
+          },
+          "idleExit": {
+            "title": "Idleexit",
+            "type": "boolean"
+          },
+          "leases": {
+            "items": {
+              "$ref": "#/components/schemas/LeaseInfo"
+            },
+            "title": "Leases",
+            "type": "array"
+          },
+          "pid": {
+            "title": "Pid",
+            "type": "integer"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "protocolVersion": {
+            "title": "Protocolversion",
+            "type": "string"
+          },
+          "restartPending": {
+            "title": "Restartpending",
+            "type": "boolean"
+          },
+          "socket": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Socket"
+          }
+        },
+        "required": [
+          "pid",
+          "buildID",
+          "protocolVersion",
+          "idleExit",
+          "busy",
+          "restartPending",
+          "leases"
+        ],
+        "title": "DaemonStatusData",
+        "type": "object"
+      },
+      "DaemonStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DaemonStatusData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "DaemonStatusResponse",
+        "type": "object"
+      },
+      "DaemonStopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "default": false,
+            "description": "Stop even while turns are running; they are interrupted.",
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "title": "DaemonStopRequest",
+        "type": "object"
+      },
       "DrainData": {
         "additionalProperties": false,
         "properties": {
@@ -1156,6 +1304,10 @@
       "HealthData": {
         "additionalProperties": false,
         "properties": {
+          "buildID": {
+            "title": "Buildid",
+            "type": "string"
+          },
           "healthy": {
             "title": "Healthy",
             "type": "boolean"
@@ -1172,7 +1324,8 @@
         "required": [
           "healthy",
           "version",
-          "protocolVersion"
+          "protocolVersion",
+          "buildID"
         ],
         "title": "HealthData",
         "type": "object"
@@ -1279,6 +1432,41 @@
           "data"
         ],
         "title": "InterruptResponse",
+        "type": "object"
+      },
+      "LeaseInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "client": {
+            "title": "Client",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "openedAt": {
+            "title": "Openedat",
+            "type": "number"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          }
+        },
+        "required": [
+          "id",
+          "client",
+          "openedAt"
+        ],
+        "title": "LeaseInfo",
         "type": "object"
       },
       "LocationBrowseEntry": {
@@ -4932,9 +5120,58 @@
         "summary": "List Commands"
       }
     },
-    "/api/v1/event": {
+    "/api/v1/daemon": {
       "get": {
-        "operationId": "streamEvents",
+        "operationId": "daemonStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Daemon Status"
+      }
+    },
+    "/api/v1/daemon/lease": {
+      "get": {
+        "description": "Hold the daemon up for as long as this stream stays open.",
+        "operationId": "daemonLease",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "client",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Client",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pid",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -4943,6 +5180,155 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Daemon Lease"
+      }
+    },
+    "/api/v1/daemon/restart": {
+      "post": {
+        "description": "Exit so the next client starts current code; never interrupts a turn.",
+        "operationId": "daemonRestart",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DaemonRestartRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonControlResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Daemon Restart"
+      }
+    },
+    "/api/v1/daemon/stop": {
+      "post": {
+        "operationId": "daemonStop",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DaemonStopRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonControlResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Daemon Stop"
+      }
+    },
+    "/api/v1/event": {
+      "get": {
+        "operationId": "streamEvents",
+        "parameters": [
+          {
+            "description": "Name this client; under `yoke serve --daemon` the stream is a lease.",
+            "in": "query",
+            "name": "client",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Name this client; under `yoke serve --daemon` the stream is a lease.",
+              "title": "Client"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Stream Events"

@@ -9,6 +9,7 @@ class HealthData(ApiModel):
     healthy: bool
     version: str
     protocol_version: str
+    build_id: str
 
 
 class HealthResponse(ApiModel):

@@ -1,0 +1,112 @@
+"""Unit checks for peer credentials, skew decisions and shutdown races."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import socket
+
+import pytest
+
+from yoke.daemon.client import skew_action
+from yoke.daemon.lifecycle import DaemonLifecycle
+from yoke.daemon.peer import connection_authorized, peer_authorized, peer_uid
+
+
+def test_peer_check_rejects_other_and_unknown_uids():
+    assert peer_authorized(123, owner_uid=123)
+    assert not peer_authorized(456, owner_uid=123)
+    assert not peer_authorized(None, owner_uid=123)
+
+
+def test_kernel_peer_uid_is_current_user():
+    left, right = socket.socketpair()
+    try:
+        assert peer_uid(left) == os.getuid()
+        assert connection_authorized(left)
+    finally:
+        left.close()
+        right.close()
+
+
+@pytest.mark.parametrize(
+    "busy,protocol,expected",
+    [
+        (False, "1", "restart"),
+        (False, "2", "restart"),
+        (True, "1", "warn"),
+        (True, "2", "refuse"),
+    ],
+)
+def test_skew_policy(busy, protocol, expected):
+    assert (
+        skew_action(
+            client_build="new",
+            client_protocol=protocol,
+            daemon_build="old",
+            daemon_protocol="1",
+            busy=busy,
+        )
+        == expected
+    )
+
+
+def test_same_build_with_incompatible_protocol_still_refuses():
+    assert (
+        skew_action(
+            client_build="same",
+            client_protocol="2",
+            daemon_build="same",
+            daemon_protocol="1",
+            busy=True,
+        )
+        == "refuse"
+    )
+
+
+def test_restart_waits_for_mutation_that_races_the_busy_probe():
+    async def scenario():
+        lifecycle = DaemonLifecycle(poll_seconds=0.01)
+        entered = asyncio.Event()
+
+        async def probe():
+            if not entered.is_set():
+                lifecycle.begin_mutation()
+                entered.set()
+            return False
+
+        lifecycle.bind_busy_probe(probe)
+        lifecycle.request_restart_when_idle()
+        watcher = asyncio.create_task(lifecycle.watch())
+        try:
+            await entered.wait()
+            await asyncio.sleep(0.03)
+            assert lifecycle.exit_reason is None
+            lifecycle.end_mutation()
+            await asyncio.wait_for(watcher, 1)
+            assert lifecycle.exit_reason == "restart"
+        finally:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_idle_timer_resets_when_a_new_lease_arrives():
+    async def scenario():
+        lifecycle = DaemonLifecycle(grace_seconds=0.12, poll_seconds=0.01)
+        watcher = asyncio.create_task(lifecycle.watch())
+        try:
+            await asyncio.sleep(0.08)
+            lease = lifecycle.open_lease("test")
+            await asyncio.sleep(0.08)
+            lifecycle.close_lease(lease)
+            await asyncio.sleep(0.08)
+            assert lifecycle.exit_reason is None
+            await asyncio.wait_for(watcher, 1)
+            assert lifecycle.exit_reason == "idle"
+        finally:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+
+    asyncio.run(scenario())
