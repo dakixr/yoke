@@ -53,8 +53,6 @@ class AgentRunSnapshot(BaseModel):
     )
     attempt: Count | None = None
     taskId: Identity | None = None
-    originToolCallId: Identity | None = None
-    originTurnId: Identity | int | None = None
     effort: Short | None = None
     typedUsage: AgentUsage | None = None
 

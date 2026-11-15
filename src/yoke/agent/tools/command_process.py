@@ -7,6 +7,7 @@ import signal
 import subprocess
 import threading
 import time
+import codecs
 from collections.abc import Callable
 from collections.abc import Iterator
 from datetime import datetime
@@ -37,6 +38,10 @@ READER_JOIN_RESERVE_SECONDS = 0.1
 
 class _ManagedCommandProcess:
     """Own one child process plus buffered output readers."""
+
+    decoder_factory: Callable[[], codecs.IncrementalDecoder] = staticmethod(
+        command_decoder
+    )
 
     def __init__(
         self,
@@ -112,7 +117,7 @@ class _ManagedCommandProcess:
         thread.start()
 
     def _reader_main(self, read_chunk: Callable[[], bytes]) -> None:
-        decoder = command_decoder()
+        decoder = self.decoder_factory()
         try:
             for raw in self._read_chunks(read_chunk):
                 decoded = decoder.decode(raw)

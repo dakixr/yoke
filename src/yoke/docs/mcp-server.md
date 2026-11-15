@@ -64,6 +64,12 @@ processes and handles are never persisted and are terminated when the service
 stops. Run one ASGI worker unless process ownership is moved to a separate
 executor.
 
+Stdio and Streamable HTTP MCP clients share one session implementation for the
+handshake, paginated tool discovery, metadata parsing, and calls. Both
+transports invalidate their catalogue on `notifications/tools/list_changed`.
+The ACP adapter owns one native SSE subscription and fans events and
+reconciliation ticks out to its process, agent, and session observers.
+
 ## Inspecting SDK agents
 
 The injected Python bridge imports only its client-side dependencies in child

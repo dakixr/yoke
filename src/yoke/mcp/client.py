@@ -10,39 +10,25 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from typing import Protocol
 
 
-from yoke.mcp.config import McpServerConfig
 from yoke.mcp.environment import server_environment
+from yoke.mcp.config import McpServerConfig
+from yoke.mcp.session import JSON, McpClientError, McpSession
+from yoke.mcp.session import McpToolInfo
+
+if TYPE_CHECKING:
+    StreamableHttpClient: type[Any]
 
 
-JSON = dict[str, Any]
-MCP_PROTOCOL_VERSION = "2025-03-26"
-
-
-class McpClientError(RuntimeError):
-    """Raised when an MCP client operation fails."""
-
-
-@dataclass(slots=True, frozen=True)
-class McpToolInfo:
-    """Compact MCP tool metadata."""
-
-    name: str
-    description: str
-    input_schema: JSON
-    output_schema: JSON | None = None
-    annotations: JSON | None = None
-
-
-class StdioMcpClient:
+class StdioMcpClient(McpSession):
     """JSON-RPC MCP client for stdio servers."""
 
     def __init__(self, server: McpServerConfig, *, root: Path) -> None:
+        super().__init__(server, root=root)
         self.server = server
         self.root = root.resolve()
         self._process: subprocess.Popen[str] | None = None
@@ -54,12 +40,9 @@ class StdioMcpClient:
         self._reader: threading.Thread | None = None
         self._stderr_reader: threading.Thread | None = None
         self._closed = False
-        self._tool_cache: tuple[McpToolInfo, ...] | None = None
-        self._tools_changed = False
-        self.server_instructions: str | None = None
 
-    def start(self) -> None:
-        """Start and initialize the MCP server."""
+    def _open_transport(self) -> None:
+        """Start the stdio process before the shared handshake."""
         if self._process is not None:
             return
         if self.server.command is None:
@@ -84,85 +67,6 @@ class StdioMcpClient:
         self._stderr_reader = threading.Thread(target=self._drain_stderr, daemon=True)
         self._reader.start()
         self._stderr_reader.start()
-        try:
-            result = self.request(
-                "initialize",
-                {
-                    "protocolVersion": MCP_PROTOCOL_VERSION,
-                    "capabilities": {"roots": {"listChanged": False}},
-                    "clientInfo": {"name": "yoke", "version": "0"},
-                },
-                timeout=self.server.startup_timeout_sec,
-            )
-            instructions = result.get("instructions")
-            if isinstance(instructions, str) and instructions.strip():
-                self.server_instructions = instructions.strip()
-            self.notify("notifications/initialized")
-        except BaseException:
-            self.close()
-            raise
-
-    def list_tools(self, *, force: bool = False) -> tuple[McpToolInfo, ...]:
-        self.start()
-        if self._tool_cache is not None and not force and not self._tools_changed:
-            return self._tool_cache
-        tools: list[McpToolInfo] = []
-        cursor: str | None = None
-        for _page in range(100):
-            params = {"cursor": cursor} if cursor else None
-            result = self.request(
-                "tools/list",
-                params,
-                timeout=self.server.tool_timeout_sec,
-            )
-            raw_tools = result.get("tools", [])
-            if not isinstance(raw_tools, list):
-                raise McpClientError("MCP tools/list returned invalid tools")
-            for item in raw_tools:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get("name")
-                if not isinstance(name, str) or not name.strip():
-                    continue
-                description = item.get("description")
-                schema = item.get("inputSchema") or item.get("input_schema") or {}
-                tools.append(
-                    McpToolInfo(
-                        name=name,
-                        description=description if isinstance(description, str) else "",
-                        input_schema=schema if isinstance(schema, dict) else {},
-                        output_schema=item.get("outputSchema")
-                        if isinstance(item.get("outputSchema"), dict)
-                        else None,
-                        annotations=item.get("annotations")
-                        if isinstance(item.get("annotations"), dict)
-                        else None,
-                    )
-                )
-            next_cursor = result.get("nextCursor")
-            if not isinstance(next_cursor, str) or not next_cursor:
-                break
-            cursor = next_cursor
-        else:
-            raise McpClientError("MCP tools/list exceeded 100 pages")
-        self._tool_cache = tuple(tools)
-        self._tools_changed = False
-        return self._tool_cache
-
-    def call_tool(
-        self,
-        name: str,
-        arguments: JSON,
-        *,
-        cancel_requested: Callable[[], bool] | None = None,
-    ) -> JSON:
-        self.start()
-        return self.request(
-            "tools/call",
-            {"name": name, "arguments": arguments},
-            timeout=self.server.tool_timeout_sec,
-            cancel_requested=cancel_requested,
-        )
 
     def request(
         self,
@@ -217,7 +121,7 @@ class StdioMcpClient:
             payload["params"] = params
         self._send(payload)
 
-    def close(self) -> None:
+    def _close_transport(self) -> None:
         self._closed = True
         process = self._process
         self._process = None
@@ -361,7 +265,13 @@ class McpClient(Protocol):
     def close(self) -> None: ...
 
 
-from yoke.mcp.http_client import StreamableHttpClient
+def __getattr__(name: str) -> Any:
+    """Keep the historical HTTP-client import without an import cycle."""
+    if name == "StreamableHttpClient":
+        from yoke.mcp.http_client import StreamableHttpClient
+
+        return StreamableHttpClient
+    raise AttributeError(name)
 
 
 def create_mcp_client(server: McpServerConfig, *, root: Path) -> McpClient:
@@ -369,5 +279,7 @@ def create_mcp_client(server: McpServerConfig, *, root: Path) -> McpClient:
     if server.transport == "stdio":
         return StdioMcpClient(server, root=root)
     if server.transport in {"streamable-http", "http"}:
+        from yoke.mcp.http_client import StreamableHttpClient
+
         return StreamableHttpClient(server, root=root)
     raise McpClientError(f"MCP transport `{server.transport}` is not supported yet")

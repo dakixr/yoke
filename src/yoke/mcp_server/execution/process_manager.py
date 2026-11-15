@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import codecs
-from collections.abc import Callable
 
 from yoke.agent.tools.command_process import _ManagedCommandProcess
 from yoke.agent.tools.command_process_manager import (
@@ -12,20 +11,9 @@ from yoke.agent.tools.command_process_manager import (
 
 
 class UTF8CommandProcess(_ManagedCommandProcess):
-    def _reader_main(self, read_chunk: Callable[[], bytes]) -> None:
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        try:
-            for raw in self._read_chunks(read_chunk):
-                decoded = decoder.decode(raw)
-                if decoded:
-                    self._append_output(decoded.encode("utf-8"))
-        except (OSError, ValueError):
-            pass
-        finally:
-            tail = decoder.decode(b"", final=True)
-            if tail:
-                self._append_output(tail.encode("utf-8"))
-            self._reader_finished()
+    decoder_factory = staticmethod(
+        lambda: codecs.getincrementaldecoder("utf-8")(errors="replace")
+    )
 
 
 class MCPProcessManager(CommandProcessManager):

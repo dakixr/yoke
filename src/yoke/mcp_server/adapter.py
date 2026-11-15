@@ -97,27 +97,20 @@ class ToolAdapter:
             call.begin_execution()
             result = await self.execution.dispatch(name, arguments)
             call.observe(result)
-            raw_budget = arguments.get("max_output_tokens")
-            if name == "python_exec" and raw_budget is None:
-                raw_budget = self.config.max_output_tokens
-            budget = (
-                min(64000, raw_budget * 4) if isinstance(raw_budget, int) else 32000
+            action = (
+                self.execution.action(name) if name in self.execution.actions else None
             )
-            if name == "result_read":
-                budget = 150000
-            elif name == "process_read":
-                budget = 400000
-            elif name == "export_file":
-                budget = 3 * 1024 * 1024
+            process, batch, process_recipe = policy.encoding_flags(name)
             call.stage = "result_encoding"
             encoded = encode(
                 result,
                 self.execution.store,
-                budget=budget,
+                budget=policy.budget(self.config, name, arguments),
                 legacy_text=self.config.legacy_result_text,
-                batch=name == "batch_read" and bool(result.get("ok")),
-                process=name in {"python_exec", "process_read"},
-                process_recipe=name == "check_patch",
+                batch=batch and bool(result.get("ok")),
+                process=process or (action.encode_process if action else False),
+                process_recipe=process_recipe
+                or (action.process_recipe if action else False),
             )
             call.stage = "complete" if call.ok else "execution"
             return encoded
@@ -127,7 +120,7 @@ class ToolAdapter:
             return _encode_json_result(
                 call.error("UNKNOWN_TOOL", f"Unknown tool: {name}")
             )
-        parsed_arguments = self._with_runtime_defaults(name, arguments)
+        parsed_arguments = policy.arguments(self.config, name, arguments)
         cancelled = threading.Event()
         binding: dict[str, object] = {
             "root": self.config.root,
@@ -138,7 +131,6 @@ class ToolAdapter:
                 self.config.default_yield_ms, self.config.max_remote_wait_ms
             ),
         }
-        binding["mcp_manager"] = self.downstream_manager
         prototype = spec.tool_class.bind(
             **binding,
         )
@@ -151,18 +143,21 @@ class ToolAdapter:
             raise
         call.observe(result)
         call.stage = "result_encoding"
+        budget_kind = spec.budget_kind
         raw_budget = parsed_arguments.get("max_output_tokens")
         encoded = (
             encode(
                 result,
                 self.execution.store,
-                budget=min(64000, raw_budget * 4)
+                budget=policy.budget(self.config, name, parsed_arguments)
+                if budget_kind != "default"
+                else min(64000, raw_budget * 4)
                 if isinstance(raw_budget, int)
                 else 32000,
                 legacy_text=self.config.legacy_result_text,
-                process=True,
+                process=spec.encode_process,
             )
-            if name in {"command_exec", "process_input"}
+            if spec.encode_process
             else _encode_tool_result(spec, result)
         )
         call.stage = "complete" if call.ok else "execution"
@@ -185,6 +180,7 @@ class ToolAdapter:
     def _with_runtime_defaults(
         self, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
+        """Compatibility seam for callers that predate policy.arguments."""
         return policy.arguments(self.config, name, arguments)
 
 

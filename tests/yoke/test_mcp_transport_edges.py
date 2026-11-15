@@ -6,7 +6,7 @@ from pathlib import Path
 import queue
 import subprocess
 from threading import Event, Thread
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -79,6 +79,26 @@ def test_read_only_ripgrep_ignores_config_without_changing_agent_tool(
     assert tool.execute()["ok"] is True
     assert len(calls) == 1
     assert ("--no-config" in calls[0]) is ignore_config
+
+
+def test_public_search_hook_preserves_rendered_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("yoke.agent.tools.rg._resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        "yoke.agent.tools.rg.subprocess.run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"type":"match","data":{"path":{"text":"a.py"},"lines":{"text":"needle\\n"},"line_number":1,"submatches":[]}}\n',
+            stderr="",
+        ),
+    )
+    tool = cast(
+        MCPRipgrepTool,
+        MCPRipgrepTool.bind(root=tmp_path).parse_arguments({"patterns": ["needle"]}),
+    )
+    assert tool.execute() == tool.run(cancel=None, capture_limit=4 * 1024 * 1024)
 
 
 def test_stdio_environment_requires_explicit_secret_allowlist(

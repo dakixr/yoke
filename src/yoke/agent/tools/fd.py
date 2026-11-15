@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import Literal
 
@@ -15,7 +16,9 @@ from pydantic import ConfigDict, Field, model_validator
 
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.search_common import bound_text
+from yoke.agent.tools.search_common import add_option
 from yoke.agent.tools.search_common import path_detail
+from yoke.agent.tools.search_common import run_search_process
 from yoke.agent.tools.search_common import split_nul_paths
 
 
@@ -132,6 +135,15 @@ class FdTool(WorkspaceTool):
         return self
 
     def execute(self) -> dict[str, object]:
+        return self.run(cancel=None, capture_limit=4 * 1024 * 1024)
+
+    def run(
+        self,
+        *,
+        cancel: threading.Event | None,
+        capture_limit: int,
+    ) -> dict[str, object]:
+        """Execute fd for MCP composition with bounded cancellation."""
         try:
             fd_binary = _resolve_fd_binary()
             search_root = self._resolve_search_root()
@@ -139,6 +151,14 @@ class FdTool(WorkspaceTool):
         except (FileNotFoundError, ValueError) as exc:
             return self._error(str(exc))
 
+        if cancel is not None:
+            return run_search_process(
+                command,
+                search_root,
+                self._render_output,
+                cancel=cancel,
+                capture_limit=capture_limit,
+            )
         try:
             completed = subprocess.run(
                 command,
@@ -178,32 +198,66 @@ class FdTool(WorkspaceTool):
     def _build_command(self, binary: str, search_root: Path) -> list[str]:
         del search_root
         command = [binary]
+        command.extend(self._type_options())
+        command.extend(self._matching_options())
+        command.extend(self._scope_options())
+        command.append("--print0")
+
+        can_limit_natively = (
+            self.limit is not None
+            and self.take == "first"
+            and self.sort == "none"
+            and self.filter_pattern is None
+        )
+        add_option(
+            command,
+            can_limit_natively,
+            "--max-results",
+            str(self.limit or 0),
+        )
+        for path in self.paths:
+            command.extend(["--search-path", path])
+        if self.pattern is not None:
+            command.extend(["--", self.pattern])
+        return command
+
+    def _type_options(self) -> list[str]:
+        command: list[str] = []
         for file_type in self.types:
             command.extend(["--type", file_type])
         for extension in self.extensions:
             command.extend(["--extension", extension])
         for exclude in self.excludes:
             command.extend(["--exclude", exclude])
+        return command
+
+    def _matching_options(self) -> list[str]:
+        command: list[str] = []
         if self.match_mode == "glob":
             command.append("--glob")
         elif self.match_mode == "fixed":
             command.append("--fixed-strings")
-        if self.case == "sensitive":
-            command.append("--case-sensitive")
-        elif self.case == "insensitive":
-            command.append("--ignore-case")
-        if self.full_path:
-            command.append("--full-path")
-        if self.hidden:
-            command.append("--hidden")
-        if self.ignore == "none":
-            command.append("--no-ignore")
-        elif self.ignore == "no_vcs":
-            command.append("--no-ignore-vcs")
+        command.extend(
+            {
+                "auto": [],
+                "sensitive": ["--case-sensitive"],
+                "insensitive": ["--ignore-case"],
+            }[self.case]
+        )
+        add_option(command, self.full_path, "--full-path")
+        return command
+
+    def _scope_options(self) -> list[str]:
+        command: list[str] = []
+        add_option(command, self.hidden, "--hidden")
+        command.extend(
+            {"normal": [], "none": ["--no-ignore"], "no_vcs": ["--no-ignore-vcs"]}[
+                self.ignore
+            ]
+        )
         for ignore_file in self.ignore_files:
             command.extend(["--ignore-file", ignore_file])
-        if self.follow_symlinks:
-            command.append("--follow")
+        add_option(command, self.follow_symlinks, "--follow")
         if self.min_depth is not None:
             command.extend(["--min-depth", str(self.min_depth)])
         if self.max_depth is not None:
@@ -216,21 +270,6 @@ class FdTool(WorkspaceTool):
             command.extend(["--size", self.size])
         if self.absolute_paths:
             command.append("--absolute-path")
-        command.append("--print0")
-
-        can_limit_natively = (
-            self.limit is not None
-            and self.take == "first"
-            and self.sort == "none"
-            and self.filter_pattern is None
-        )
-        if can_limit_natively:
-            command.extend(["--max-results", str(self.limit)])
-
-        for path in self.paths:
-            command.extend(["--search-path", path])
-        if self.pattern is not None:
-            command.extend(["--", self.pattern])
         return command
 
     def _render_output(

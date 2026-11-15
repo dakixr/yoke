@@ -133,6 +133,8 @@ class ProcessMonitor:
         # Native process invalidations are ephemeral and may be dropped by a
         # busy broker. This only verifies state, never reruns or signals a job.
         self._reconciliation_tick = reconciliation_tick or self._tick
+        self._use_hub = reconciliation_tick is None
+        self._hub_subscription = False
 
     @staticmethod
     async def _tick() -> None:
@@ -148,12 +150,19 @@ class ProcessMonitor:
             async with self._lock:
                 if self._closed:
                     return
-                if self._watch_task is None or self._watch_task.done():
+                if self._use_hub and not self._hub_subscription:
+                    await self.native.event_hub.subscribe(self._on_event)
+                    self._hub_subscription = True
+                    await self.native.event_hub.ready.wait()
+                elif not self._use_hub and (
+                    self._watch_task is None or self._watch_task.done()
+                ):
                     self._ready = asyncio.Event()
                     self._watch_task = asyncio.create_task(self._watch(self._ready))
                 watch = self._watch_task
-                await self._ready.wait()
-                if self._closed or watch.done():
+                if not self._use_hub:
+                    await self._ready.wait()
+                if self._closed or (watch is not None and watch.done()):
                     return
                 items = await self.native.data(
                     "GET", "process", params={"sessionID": session_id, "limit": 200}
@@ -204,6 +213,33 @@ class ProcessMonitor:
                     watch.cancel()
             if watch is not None:
                 await asyncio.gather(watch, return_exceptions=True)
+
+    async def _on_event(self, event: dict[str, object] | None) -> None:
+        async with self._lock:
+            for process_id, observed in list(self._observed.items()):
+                if event is not None and event.get("type") == "__disconnected__":
+                    await observed.publish(None)
+                    self._observed.pop(process_id, None)
+                    continue
+                if event is not None and event.get("sessionID") not in (
+                    observed.session_id,
+                    None,
+                ):
+                    continue
+                try:
+                    info = await self._snapshot(
+                        observed.session_id, observed.runtime_id, process_id
+                    )
+                    if await observed.publish(info) != "running":
+                        self._observed.pop(process_id, None)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    LOGGER.exception("Process observation refresh failed")
+                    try:
+                        await observed.publish(None)
+                    finally:
+                        self._observed.pop(process_id, None)
 
     async def _snapshot(
         self, session_id: str, runtime_id: int, process_id: str
@@ -283,6 +319,15 @@ class ProcessMonitor:
     async def close(self) -> None:
         """End observation, not the underlying jobs."""
         self._closed = True
+        if self._hub_subscription:
+            async with self._lock:
+                pending = list(self._observed.values())
+                self._observed.clear()
+                for observed in pending:
+                    await observed.publish(None)
+        if self._hub_subscription:
+            await self.native.event_hub.unsubscribe(self._on_event)
+            self._hub_subscription = False
         watch = self._watch_task
         if watch is not None:
             watch.cancel()

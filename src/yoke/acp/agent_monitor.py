@@ -36,6 +36,8 @@ class AgentMonitor:
         self._capability_checked = False
         self._tick = reconciliation_tick or self._reconciliation_tick
         self._retry = reconnect_tick or self._reconnect_tick
+        self._hub_subscription = False
+        self._use_hub = reconciliation_tick is None and reconnect_tick is None
 
     @staticmethod
     async def _reconciliation_tick() -> None:
@@ -69,10 +71,24 @@ class AgentMonitor:
                 LOGGER.warning("Initial agent observation unavailable")
             if self._unsupported:
                 self._sessions.clear()
-            elif self._sessions and (
-                self._watch_task is None or self._watch_task.done()
+            elif self._use_hub and self._sessions and not self._hub_subscription:
+                await self.native.event_hub.subscribe(self._on_event)
+                self._hub_subscription = True
+            elif (
+                not self._use_hub
+                and self._sessions
+                and (self._watch_task is None or self._watch_task.done())
             ):
                 self._watch_task = asyncio.create_task(self._watch())
+
+    async def _on_event(self, event: dict[str, object] | None) -> None:
+        async with self._lock:
+            if event is not None and event.get("type") == "__disconnected__":
+                await self._lost()
+                return
+            for session_id in list(self._sessions):
+                if event is None or event.get("sessionID") == session_id:
+                    await self._refresh(session_id)
 
     async def _refresh(self, session_id: str) -> None:
         try:
@@ -176,10 +192,16 @@ class AgentMonitor:
                 self._watch_task = None
         if watch is not None:
             await asyncio.gather(watch, return_exceptions=True)
+        if not self._sessions and self._hub_subscription:
+            await self.native.event_hub.unsubscribe(self._on_event)
+            self._hub_subscription = False
 
     async def close(self) -> None:
         """Close every watcher, leaving native jobs untouched."""
         self._closed = True
+        if self._hub_subscription:
+            await self.native.event_hub.unsubscribe(self._on_event)
+            self._hub_subscription = False
         watch = self._watch_task
         if watch is not None:
             watch.cancel()

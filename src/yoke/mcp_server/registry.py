@@ -31,6 +31,9 @@ class ExposedTool:
     tool_class: type[LocalTool]
     annotations: ToolAnnotations
     result_kind: Literal["json", "image"] = "json"
+    budget_kind: Literal["default", "python", "result", "process", "export"] = "default"
+    encode_process: bool = False
+    process_recipe: bool = False
 
 
 READ_ONLY = ToolAnnotations(
@@ -117,6 +120,7 @@ TOOL_REGISTRY = {
             "after completion. Use process_read for waiting and remaining output.",
             MCPExecCommandTool,
             EXECUTION,
+            encode_process=True,
         ),
         ExposedTool(
             "python_exec",
@@ -126,6 +130,7 @@ TOOL_REGISTRY = {
             "Use process_read to wait or page output, process_input to send stdin.",
             PythonExecTool,
             EXECUTION,
+            budget_kind="python",
         ),
         ExposedTool(
             "process_input",
@@ -136,6 +141,8 @@ TOOL_REGISTRY = {
             "retained output. Use process_read for observation without input.",
             MCPProcessInputTool,
             EXECUTION,
+            budget_kind="process",
+            encode_process=True,
         ),
         ExposedTool(
             "agent_runs",

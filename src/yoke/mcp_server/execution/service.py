@@ -28,7 +28,7 @@ from yoke.mcp_server.execution import (
     wrappers,
 )
 from yoke.mcp_server.execution.bridge import ComposePython, PythonBridge
-from yoke.mcp_server.execution.catalog import ACTIONS, descriptor
+from yoke.mcp_server.execution.catalog import ACTIONS, Action, descriptor
 from yoke.mcp_server.execution.models import (
     BatchRead,
     DownstreamCall,
@@ -76,6 +76,14 @@ class ExecutionService:
 
     def accepts(self, name: str) -> bool:
         return name in ACTIONS or name in self.wrappers
+
+    @property
+    def actions(self) -> dict[str, Action]:
+        return ACTIONS
+
+    def action(self, name: str) -> Action:
+        """Return the execution metadata used by adapter encoding."""
+        return ACTIONS[name]
 
     def tools(self) -> dict[str, Tool]:
         result = {

@@ -14,7 +14,9 @@ class Invalidations(asyncio.Queue[dict[str, Any]]):
 
     def put_nowait(self, item: dict[str, Any]) -> None:
         session_id = item.get("sessionID")
-        if item.get("type") != self.event_type or not isinstance(session_id, str):
+        if self.event_type != "*" and item.get("type") != self.event_type:
+            return
+        if not isinstance(session_id, str):
             return
         if session_id in self._queued:
             return

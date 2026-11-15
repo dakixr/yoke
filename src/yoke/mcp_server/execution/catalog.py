@@ -28,6 +28,9 @@ class Action:
     model: type[BaseModel]
     description: str
     read_only: bool
+    budget_kind: str = "default"
+    encode_process: bool = False
+    process_recipe: bool = False
 
 
 ACTIONS = {
@@ -50,15 +53,19 @@ ACTIONS = {
         ComposePython,
         "Run Python with the yoke_mcp helper library. tools.call reaches local reads; tools.mcp uses shared downstream clients. Declare exact downstream effects in managed_calls unless server policy grants a reviewed read. output.emit retains selected data. Auto mode uses the host's normal initial completion wait; background returns immediately. timeout is a separate execution deadline. Every started process retains a session ID and opaque cursor. Use process_read(wait_ms=...) for longer waits or remaining output.",
         False,
+        "python",
     ),
     "result_read": Action(
         ResultRead,
         "Read a retained result handle with a repeatable byte cursor or select top-level fields. Handles expire after 15 minutes and belong to this single-user service, not an individual chat.",
         True,
+        "result",
     ),
     "process_read": Action(
         ProcessRead,
         "Observe 1..16 unique process sessions without consuming output. Each session takes a session_id and optional opaque cursor copied from its previous result. By default wait for ALL sessions to complete, up to wait_ms. Increase wait_ms for long-running jobs within the advertised host maximum. until=output_or_completion returns on ANY unread output or terminal session. wait_ms=0 takes a snapshot. max_bytes is shared across the batch. Follow each returned cursor while running or has_more_output. Deadlines never kill processes. Use process_input for stdin and process_cancel to terminate.",
+        True,
+        "process",
         True,
     ),
     "process_cancel": Action(
@@ -80,6 +87,9 @@ ACTIONS = {
         CheckPatch,
         "Version 1 execution recipe: apply an explicitly supplied patch only when all expected file hashes match, then run exact named argv checks. Returns patch outcome, check outcomes and diff. Not a transaction; checks may have side effects.",
         False,
+        "default",
+        False,
+        True,
     ),
     "import_files": Action(
         ImportFiles,
@@ -95,6 +105,7 @@ ACTIONS = {
         ExportFile,
         "Export exact local bytes as bounded base64 pages for programmatic clients. Pin expected_sha256 on later pages. This does not automatically create a ChatGPT attachment; do not manually copy large base64 through the model.",
         True,
+        "export",
     ),
 }
 

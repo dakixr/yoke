@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 from acp import schema as s
 
@@ -23,12 +23,15 @@ class SessionNotifications:
         self.requests: dict[tuple[str, str], asyncio.Task[None]] = {}
         self.compactions: dict[str, str] = {}
         self.roots: dict[str, str] = {}
+        self._hub_subscription = False
 
     async def attach(self, session_id: str) -> None:
         self.sessions.add(session_id)
         await self.refresh(session_id, commands=True)
-        if self.task is None or self.task.done():
-            self.task = asyncio.create_task(self.watch())
+        if not self._hub_subscription:
+            await self.agent.native.event_hub.subscribe(self._on_event)
+            self._hub_subscription = True
+            await self.agent.native.event_hub.ready.wait()
 
     async def detach(self, session_id: str) -> None:
         self.sessions.discard(session_id)
@@ -42,6 +45,9 @@ class SessionNotifications:
                 await asyncio.gather(task, return_exceptions=True)
 
     async def close(self) -> None:
+        if self._hub_subscription:
+            await self.agent.native.event_hub.unsubscribe(self._on_event)
+            self._hub_subscription = False
         if self.task is not None:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
@@ -73,7 +79,7 @@ class SessionNotifications:
                 session_id,
                 data,
                 self.agent.catalogs[session_id],
-                self.agent.default_model or self.agent.sessions[session_id]["model"],
+                self.agent.default_model or self.agent.sessions[session_id].model,
             )
             if before != self.agent.options(session_id):
                 await self.publish(
@@ -272,6 +278,25 @@ class SessionNotifications:
                     await native.data("POST", path + "/reject")
             except Exception:  # noqa: BLE001 - native cancellation may already have resolved it
                 LOGGER.debug("Interactive request already resolved")
+
+    async def _on_event(self, item: dict[str, object] | None) -> None:
+        if item is None:
+            for session_id in list(self.sessions):
+                await self.refresh(session_id)
+            return
+        event_type = item.get("type")
+        session_id = item.get("sessionID")
+        if event_type == "catalog.updated":
+            for attached in list(self.sessions):
+                await self.refresh(attached, commands=True)
+        elif isinstance(event_type, str) and isinstance(session_id, str):
+            if session_id in self.sessions:
+                data = item.get("data")
+                await self.event(
+                    session_id,
+                    event_type,
+                    cast(dict[str, Any], data) if isinstance(data, dict) else {},
+                )
 
     async def watch(self) -> None:
         while self.sessions:

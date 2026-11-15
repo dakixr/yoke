@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -12,8 +13,10 @@ from pydantic import ConfigDict, Field, model_validator
 
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.search_common import bound_text
+from yoke.agent.tools.search_common import add_option
 from yoke.agent.tools.search_common import parse_nul_counts
 from yoke.agent.tools.search_common import parse_rg_json_items
+from yoke.agent.tools.search_common import run_search_process
 from yoke.agent.tools.search_common import split_nul_paths
 
 
@@ -138,6 +141,15 @@ class RipgrepTool(WorkspaceTool):
         return self
 
     def execute(self) -> dict[str, object]:
+        return self.run(cancel=None, capture_limit=4 * 1024 * 1024)
+
+    def run(
+        self,
+        *,
+        cancel: threading.Event | None,
+        capture_limit: int,
+    ) -> dict[str, object]:
+        """Execute ripgrep for MCP composition with bounded cancellation."""
         try:
             rg_binary = _resolve_rg_binary()
             search_root = self._resolve_search_root()
@@ -145,6 +157,14 @@ class RipgrepTool(WorkspaceTool):
         except (FileNotFoundError, ValueError) as exc:
             return self._error(str(exc))
 
+        if cancel is not None:
+            return run_search_process(
+                command,
+                search_root,
+                self._render_output,
+                cancel=cancel,
+                capture_limit=capture_limit,
+            )
         try:
             completed = subprocess.run(
                 command,
@@ -183,56 +203,63 @@ class RipgrepTool(WorkspaceTool):
 
     def _build_command(self, binary: str, search_root: Path) -> list[str]:
         command = [binary]
-        if not self.read_rg_config:
-            command.append("--no-config")
+        add_option(command, not self.read_rg_config, "--no-config")
+        command.extend(self._mode_options())
+        command.extend(self._matching_options())
+        command.extend(self._scope_options())
 
-        if self.mode == "matches":
-            command.append("--json")
-        elif self.mode == "files":
-            command.extend(["--files", "--null"])
-        elif self.mode == "files_with_matches":
-            command.extend(["--files-with-matches", "--null"])
-        elif self.mode == "count":
-            command.extend(["--count", "--with-filename", "--null"])
+        command.append("--")
+        command.extend(self.paths or [str(search_root)])
+        return command
 
-        if self.case == "insensitive":
-            command.append("--ignore-case")
-        elif self.case == "smart":
-            command.append("--smart-case")
+    def _mode_options(self) -> list[str]:
+        return {
+            "matches": ["--json"],
+            "files": ["--files", "--null"],
+            "files_with_matches": ["--files-with-matches", "--null"],
+            "count": ["--count", "--with-filename", "--null"],
+        }[self.mode]
 
-        if self.matching == "fixed":
-            command.append("--fixed-strings")
-        elif self.matching == "word":
-            command.append("--word-regexp")
-        if self.pcre2:
-            command.append("--pcre2")
-        if self.multiline:
-            command.append("--multiline")
-        if self.invert:
-            command.append("--invert-match")
+    def _matching_options(self) -> list[str]:
+        command: list[str] = []
+        command.extend(
+            {
+                "sensitive": [],
+                "insensitive": ["--ignore-case"],
+                "smart": ["--smart-case"],
+            }[self.case]
+        )
+        command.extend(
+            {"regex": [], "fixed": ["--fixed-strings"], "word": ["--word-regexp"]}[
+                self.matching
+            ]
+        )
+        add_option(command, self.pcre2, "--pcre2")
+        add_option(command, self.multiline, "--multiline")
+        add_option(command, self.invert, "--invert-match")
         if self.context_before:
             command.extend(["--before-context", str(self.context_before)])
         if self.context_after:
             command.extend(["--after-context", str(self.context_after)])
         if self.max_matches_per_file is not None:
             command.extend(["--max-count", str(self.max_matches_per_file)])
-        if self.hidden:
-            command.append("--hidden")
-        if self.ignore == "none":
-            command.append("--no-ignore")
-        elif self.ignore == "no_vcs":
-            command.append("--no-ignore-vcs")
-        if self.sort == "path":
-            command.extend(["--sort", "path"])
+        return command
+
+    def _scope_options(self) -> list[str]:
+        command: list[str] = []
+        add_option(command, self.hidden, "--hidden")
+        command.extend(
+            {"normal": [], "none": ["--no-ignore"], "no_vcs": ["--no-ignore-vcs"]}[
+                self.ignore
+            ]
+        )
+        add_option(command, self.sort == "path", "--sort", "path")
         for glob in self.globs:
             command.extend(["--glob", glob])
         for file_type in self.types:
             command.extend(["--type", file_type])
         for pattern in self.patterns:
             command.extend(["--regexp", pattern])
-
-        command.append("--")
-        command.extend(self.paths or [str(search_root)])
         return command
 
     def _render_output(

@@ -6,20 +6,18 @@ from __future__ import annotations
 
 import json
 import threading
+from contextlib import suppress
 from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 
 from yoke._tls import tls_verification_enabled
-from yoke.mcp.client import JSON
-from yoke.mcp.client import MCP_PROTOCOL_VERSION
-from yoke.mcp.client import McpClientError
-from yoke.mcp.client import McpToolInfo
 from yoke.mcp.config import McpServerConfig
+from yoke.mcp.session import JSON, McpClientError, McpSession
 
 
-class StreamableHttpClient:
+class StreamableHttpClient(McpSession):
     """Synchronous MCP client for the Streamable HTTP transport."""
 
     def __init__(
@@ -29,6 +27,7 @@ class StreamableHttpClient:
         root: Path,
         http_client: httpx.Client | None = None,
     ) -> None:
+        super().__init__(server, root=root)
         if server.transport not in {"streamable-http", "http"}:
             raise McpClientError(
                 f"StreamableHttpClient does not support transport `{server.transport}`"
@@ -47,95 +46,25 @@ class StreamableHttpClient:
         self._owns_client = http_client is None
         self._session_id: str | None = None
         self._protocol_version: str | None = None
-        self._initialized = False
         self._next_id = 0
-        self._tool_cache: tuple[McpToolInfo, ...] | None = None
-        self.server_instructions: str | None = None
 
-    def start(self) -> None:
-        """Initialize the MCP session over Streamable HTTP."""
-        if self._initialized:
-            return
-        result = self.request(
-            "initialize",
-            {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {"roots": {"listChanged": False}},
-                "clientInfo": {"name": "yoke", "version": "0"},
-            },
-            timeout=self.server.startup_timeout_sec,
-        )
+    def _open_transport(self) -> None:
+        """The HTTP transport opens lazily on each request."""
+
+    def _after_initialize(self, result: JSON) -> None:
         version = result.get("protocolVersion")
         if isinstance(version, str) and version:
             self._protocol_version = version
-        instructions = result.get("instructions")
-        if isinstance(instructions, str) and instructions.strip():
-            self.server_instructions = instructions.strip()
-        self.notify("notifications/initialized")
-        self._initialized = True
 
-    def list_tools(self, *, force: bool = False) -> tuple[McpToolInfo, ...]:
-        """List all tools exposed by this MCP server."""
-        self.start()
-        if self._tool_cache is not None and not force:
-            return self._tool_cache
-        tools: list[McpToolInfo] = []
-        cursor: str | None = None
-        for _page in range(100):
-            params = {"cursor": cursor} if cursor else None
-            result = self.request(
-                "tools/list",
-                params,
-                timeout=self.server.tool_timeout_sec,
-            )
-            raw_tools = result.get("tools", [])
-            if not isinstance(raw_tools, list):
-                raise McpClientError("MCP tools/list returned invalid tools")
-            for item in raw_tools:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get("name")
-                if not isinstance(name, str) or not name.strip():
-                    continue
-                description = item.get("description")
-                schema = item.get("inputSchema") or item.get("input_schema") or {}
-                tools.append(
-                    McpToolInfo(
-                        name=name,
-                        description=description if isinstance(description, str) else "",
-                        input_schema=schema if isinstance(schema, dict) else {},
-                        output_schema=item.get("outputSchema")
-                        if isinstance(item.get("outputSchema"), dict)
-                        else None,
-                        annotations=item.get("annotations")
-                        if isinstance(item.get("annotations"), dict)
-                        else None,
-                    )
-                )
-            next_cursor = result.get("nextCursor")
-            if not isinstance(next_cursor, str) or not next_cursor:
-                break
-            cursor = next_cursor
-        else:
-            raise McpClientError("MCP tools/list exceeded 100 pages")
-        self._tool_cache = tuple(tools)
-        return self._tool_cache
-
-    def call_tool(
-        self,
-        name: str,
-        arguments: JSON,
-        *,
-        cancel_requested: Callable[[], bool] | None = None,
-    ) -> JSON:
-        """Call an MCP tool."""
-        self.start()
-        return self.request(
-            "tools/call",
-            {"name": name, "arguments": arguments},
-            timeout=self.server.tool_timeout_sec,
-            cancel_requested=cancel_requested,
-        )
+    def _close_transport(self) -> None:
+        """Terminate the remote session and close owned HTTP resources."""
+        if self._session_id is not None:
+            with suppress(Exception):
+                self._client.delete(self.url, headers=self._headers())
+        if self._owns_client:
+            self._client.close()
+        self._session_id = None
+        self._protocol_version = None
 
     def request(
         self,
@@ -172,20 +101,6 @@ class StreamableHttpClient:
         if params is not None:
             payload["params"] = params
         self._post_notification(payload, timeout=self.server.tool_timeout_sec)
-
-    def close(self) -> None:
-        """Terminate the session and close the HTTP client."""
-        if self._session_id is not None:
-            with suppress_exceptions:
-                self._client.delete(
-                    self.url,
-                    headers=self._headers(),
-                )
-        if self._owns_client:
-            self._client.close()
-        self._session_id = None
-        self._protocol_version = None
-        self._initialized = False
 
     def _post_request(
         self,
@@ -227,6 +142,7 @@ class StreamableHttpClient:
                         response.iter_lines(),
                         payload.get("id"),
                         cancel_requested=cancel_requested,
+                        on_notification=self._handle_notification,
                     )
                 if content_type == "application/json":
                     response.read()
@@ -271,22 +187,13 @@ class StreamableHttpClient:
         if isinstance(session_id, str) and session_id.strip():
             self._session_id = session_id.strip()
 
+    def _handle_notification(self, message: JSON) -> None:
+        if message.get("method") == "notifications/tools/list_changed":
+            self._tools_changed = True
+
     def _allocate_id(self) -> int:
         self._next_id += 1
         return self._next_id
-
-
-class _SuppressExceptions:
-    """Context manager that silently ignores exceptions."""
-
-    def __enter__(self) -> "_SuppressExceptions":
-        return self
-
-    def __exit__(self, *_args: object) -> bool:
-        return True
-
-
-suppress_exceptions = _SuppressExceptions()
 
 
 def _wait_for_response_in_sse(
@@ -294,6 +201,7 @@ def _wait_for_response_in_sse(
     expected_id: object,
     *,
     cancel_requested: Callable[[], bool] | None = None,
+    on_notification: Callable[[JSON], None] | None = None,
 ) -> JSON:
     """Parse an SSE stream and return the JSON-RPC response matching expected_id."""
     current_data: list[str] = []
@@ -308,6 +216,8 @@ def _wait_for_response_in_sse(
                 current_data = []
                 if message is None:
                     continue
+                if on_notification is not None and "method" in message:
+                    on_notification(message)
                 if _message_matches_id(message, expected_id) and _is_response(message):
                     return message
             continue
@@ -316,12 +226,11 @@ def _wait_for_response_in_sse(
             current_data.append(data[1:] if data.startswith(" ") else data)
     if current_data:
         message = _parse_sse_event(current_data)
-        if (
-            message is not None
-            and _message_matches_id(message, expected_id)
-            and _is_response(message)
-        ):
-            return message
+        if message is not None:
+            if on_notification is not None and "method" in message:
+                on_notification(message)
+            if _message_matches_id(message, expected_id) and _is_response(message):
+                return message
     if cancel_requested is not None and cancel_requested():
         raise McpClientError("MCP HTTP request cancelled")
     raise McpClientError("MCP SSE stream ended without a matching JSON-RPC response")

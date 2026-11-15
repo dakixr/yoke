@@ -4,6 +4,13 @@ from typing import Any
 
 from yoke.mcp_server.config import MCPServerConfig
 
+_BUDGET_KINDS = {
+    "python_exec": "python",
+    "result_read": "result",
+    "process_read": "process",
+    "export_file": "export",
+}
+
 
 def defaults(config: MCPServerConfig, name: str) -> dict[str, Any]:
     values: dict[str, Any] = {}
@@ -45,3 +52,26 @@ def schema(config: MCPServerConfig, name: str, value: dict[str, Any]) -> None:
         for variant in wait.get("anyOf", []):
             if variant.get("type") == "integer":
                 variant["maximum"] = config.max_remote_wait_ms
+
+
+def budget(config: MCPServerConfig, name: str, arguments: dict[str, Any]) -> int:
+    """Select the bounded response budget for one execution action."""
+    raw = arguments.get("max_output_tokens")
+    if name == "python_exec" and raw is None:
+        raw = config.max_output_tokens
+    if name == "result_read":
+        return 150_000
+    if name == "process_read":
+        return 400_000
+    if name == "export_file":
+        return 3 * 1024 * 1024
+    return min(64_000, raw * 4) if isinstance(raw, int) else 32_000
+
+
+def encoding_flags(name: str) -> tuple[bool, bool, bool]:
+    """Return (process, batch, process_recipe) for result encoding."""
+    return (
+        name in {"python_exec", "process_read"},
+        name == "batch_read",
+        name == "check_patch",
+    )

@@ -16,8 +16,10 @@ from acp import RequestError
 from yoke.acp.agent_monitor import AgentMonitor
 from yoke.acp.observation.errors import NativeHttpError
 from yoke.acp.observation.errors import native_request_failure
+from yoke.acp.observation.hub import NativeEventHub
 from yoke.acp.process_monitor import ProcessMonitor
 from yoke.acp.prompting import InlineAttachment
+from yoke.acp.state import ActiveTurn
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 
@@ -46,6 +48,7 @@ class NativeClient:
         )
         self.process_monitor = ProcessMonitor(self)
         self.agent_monitor = AgentMonitor(self)
+        self.event_hub = NativeEventHub(self)
 
     @staticmethod
     def path(session_id: str, suffix: str = "") -> str:
@@ -55,6 +58,7 @@ class NativeClient:
         """Close the underlying HTTP client."""
         await self.agent_monitor.close()
         await self.process_monitor.close()
+        await self.event_hub.close()
         await self.http.aclose()
 
     async def request(self, method: str, path: str, **kwargs: Any) -> Any:
@@ -204,12 +208,12 @@ class NativeClient:
         for message_id, text in answers:
             await emit("answer", {"messageID": message_id, "content": text})
 
-    async def turn(
+    async def turn(  # noqa: C901 - lifecycle state machine kept linear for wire ordering
         self,
         session_id: str,
         text: str,
         input_id: str,
-        work: dict[str, Any],
+        work: ActiveTurn,
         emit: Emit,
         *,
         attachments: list[InlineAttachment] | None = None,
@@ -300,7 +304,7 @@ class NativeClient:
                 raise fail("Native admission receipt is invalid or removed")
             after = max(after, receipt.get("admittedSeq", after))
             while outcome is None:
-                if work["cancel"]:
+                if work.cancel:
                     await self.stop(session_id)
                     finished = True
                     return "cancelled"
@@ -323,7 +327,7 @@ class NativeClient:
                 if idle_without_receipt:
                     raise fail("Native workers ended without a settlement receipt")
                 incoming = asyncio.create_task(queue.get())
-                stopped = asyncio.create_task(work["wake"].wait())
+                stopped = asyncio.create_task(work.wake.wait())
                 waited = asyncio.create_task(
                     self.data("POST", self.path(session_id, "/wait?timeoutMs=1000"))
                 )
@@ -350,7 +354,7 @@ class NativeClient:
             await self.drained(session_id)
             finished = True
             await receive()
-            if outcome == "stopped" or work["cancel"]:
+            if outcome == "stopped" or work.cancel:
                 return "cancelled"
             if outcome != "completed":
                 raise fail("Native runtime failed")

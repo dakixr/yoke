@@ -7,50 +7,7 @@ from typing import ClassVar, Literal, Protocol, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from yoke.agent.tools.base import LocalTool
-
-
-class AgentUsage(BaseModel):
-    """Cumulative usage reported by the SDK, without inferred costs."""
-
-    model_config = ConfigDict(extra="ignore", strict=True, allow_inf_nan=False)
-    totalTokens: int | None = None
-    inputTokens: int | None = None
-    outputTokens: int | None = None
-    cachedInputTokens: int | None = None
-    reasoningOutputTokens: int | None = None
-    toolUses: int | None = None
-    durationMs: float | None = None
-
-
-class AgentRunSnapshot(BaseModel):
-    """Public registry fields only, never process commands, prompts or output."""
-
-    model_config = ConfigDict(extra="ignore", strict=True)
-    schemaVersion: Literal[1]
-    agentId: str
-    runId: str
-    sessionID: str | None
-    parentRunId: str | None
-    parentAgentId: str | None
-    runtimeSessionID: int | None
-    name: str
-    provider: str
-    model: str | None
-    status: Literal["running", "completed", "failed", "cancelled", "interrupted"]
-    observation: Literal["live", "stale", "lost"]
-    startedAt: str
-    finishedAt: str | None
-    lastSeenAt: str
-    updatedAt: str
-    version: int
-    lastToolName: str | None
-    errorType: str | None
-    attempt: int | None = None
-    taskId: str | None = None
-    originToolCallId: str | None = None
-    originTurnId: str | None = None
-    effort: str | None = None
-    typedUsage: AgentUsage | None = None
+from yoke.http.models.agent_run import AgentRunSnapshot
 
 
 class AgentRunsOutput(BaseModel):

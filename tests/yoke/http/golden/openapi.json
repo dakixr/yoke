@@ -186,35 +186,6 @@
             "title": "Observation",
             "type": "string"
           },
-          "originToolCallId": {
-            "anyOf": [
-              {
-                "maxLength": 256,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Origintoolcallid"
-          },
-          "originTurnId": {
-            "anyOf": [
-              {
-                "maxLength": 256,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Originturnid"
-          },
           "parentAgentId": {
             "anyOf": [
               {

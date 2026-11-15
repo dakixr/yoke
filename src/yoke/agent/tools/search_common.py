@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-import stat
 import json
+import os
+import selectors
+import stat
+import subprocess
+import threading
+import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -141,3 +147,75 @@ def bound_text(text: str, limit: int) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False
     return text[:limit], True
+
+
+def run_search_process(
+    command: list[str],
+    cwd: Path,
+    render: Callable[[str, str, list[str], int], dict[str, object]],
+    *,
+    cancel: threading.Event | None,
+    capture_limit: int,
+) -> dict[str, object]:
+    """Run a search command with bounded, cancellable stdout/stderr capture."""
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    buffers = {"out": bytearray(), "err": bytearray()}
+    truncated = False
+    deadline = time.monotonic() + 20
+    try:
+        with selectors.DefaultSelector() as selector:
+            assert process.stdout is not None and process.stderr is not None
+            selector.register(process.stdout, selectors.EVENT_READ, "out")
+            selector.register(process.stderr, selectors.EVENT_READ, "err")
+            while selector.get_map():
+                if (cancel and cancel.is_set()) or time.monotonic() >= deadline:
+                    process.terminate()
+                    return {
+                        "ok": False,
+                        "status": "cancelled"
+                        if cancel and cancel.is_set()
+                        else "error",
+                        "error": "Search cancelled or timed out",
+                    }
+                for key, _ in selector.select(0.05):
+                    data = os.read(key.fd, 65536)
+                    if not data:
+                        selector.unregister(key.fileobj)
+                        continue
+                    buffers[key.data].extend(data)
+                    if sum(len(value) for value in buffers.values()) >= capture_limit:
+                        truncated = True
+                        break
+                if truncated:
+                    break
+        if truncated:
+            process.terminate()
+        code = process.wait(timeout=2)
+        stdout = buffers["out"].decode("utf-8", errors="replace")
+        stderr = buffers["err"].decode("utf-8", errors="replace")
+        effective_code = 0 if truncated and code not in {0, 1} else code
+        result = render(stdout, stderr, command, effective_code)
+        if truncated:
+            result["truncated"] = True
+        result["complete"] = not result.get("truncated", False)
+        return result
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        if process.stdout:
+            process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
+
+
+def add_option(command: list[str], condition: bool, *values: str) -> None:
+    """Append one optional command-line option when its condition is true."""
+    if condition:
+        command.extend(values)

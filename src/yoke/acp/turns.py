@@ -12,6 +12,7 @@ from acp import schema as s
 
 from yoke.acp.prompting import decode_prompt
 from yoke.acp.tools import ToolCallProjector
+from yoke.acp.state import ActiveTurn
 
 if TYPE_CHECKING:
     from yoke.acp.bridge import YokeAcpAgent
@@ -138,19 +139,19 @@ async def prompt(
     decoded = decode_prompt(
         blocks,
         meta,
-        images=agent.catalogs[session_id][agent.sessions[session_id]["model"]]["images"]
+        images=agent.catalogs[session_id][agent.sessions[session_id].model]["images"]
         is True,
     )
     input_id = meta.get("yokeInputID", kwargs.get("yokeInputID", str(uuid.uuid4())))
     if not isinstance(input_id, str) or not input_id.strip():
         raise RequestError(-32602, "yokeInputID must be a nonempty string")
     async with agent.exclusive(session_id):
-        work = {
-            "cancel": False,
-            "wake": asyncio.Event(),
-            "done": asyncio.Event(),
-            "task": asyncio.current_task(),
-        }
+        work = ActiveTurn(
+            cancel=False,
+            wake=asyncio.Event(),
+            done=asyncio.Event(),
+            task=asyncio.current_task(),
+        )
         agent.active[session_id] = work
         tools = ToolCallProjector()
         reason = "failed"
@@ -170,12 +171,12 @@ async def prompt(
         finally:
             try:
                 for update in tools.finish(
-                    interrupted=reason == "cancelled" or work["cancel"]
+                    interrupted=reason == "cancelled" or work.cancel
                 ):
                     try:
                         await agent.update(session_id, update)
                     except Exception:  # noqa: BLE001 - preserve the original turn error
                         break
             finally:
-                work["done"].set()
+                work.done.set()
                 agent.active.pop(session_id, None)

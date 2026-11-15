@@ -256,9 +256,9 @@ class SessionLifecycle:
         agent = self.agent
         work = agent.active.get(session_id)
         if work is not None:
-            work["cancel"] = True
-            work["wake"].set()
-            await work["done"].wait()
+            work.cancel = True
+            work.wake.set()
+            await work.done.wait()
         await agent.notifications.detach(session_id)
         await agent.native.agent_monitor.detach(session_id)
         if session_id in self.configs:

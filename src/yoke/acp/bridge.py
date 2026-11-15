@@ -17,6 +17,7 @@ from yoke.acp.ownership import session_owner
 from yoke.acp.turns import prompt as run_prompt
 from yoke.acp.sessions import SessionLifecycle, MODES
 from yoke.acp.notifications import SessionNotifications
+from yoke.acp.state import AcpSession, ActiveTurn, ModelCatalog
 
 type AcpMcpServer = s.HttpMcpServer | s.SseMcpServer | s.AcpMcpServer | s.McpServerStdio
 
@@ -26,12 +27,12 @@ class YokeAcpAgent:
 
     def __init__(self, native: NativeClient) -> None:
         self.native = native
-        self.catalogs: dict[str, dict[str, dict[str, Any]]] = {}
-        self.catalog: dict[str, dict[str, Any]] = {}
+        self.catalogs: dict[str, ModelCatalog] = {}
+        self.catalog: ModelCatalog = {}
         self.default_model: str | None = None
-        self.sessions: dict[str, dict[str, Any]] = {}
+        self.sessions: dict[str, AcpSession] = {}
         self.busy: set[str] = set()
-        self.active: dict[str, dict[str, Any]] = {}
+        self.active: dict[str, ActiveTurn] = {}
         self.conn: Any = None
         self.lifecycle = SessionLifecycle(self)
         self.notifications = SessionNotifications(self)
@@ -139,7 +140,7 @@ class YokeAcpAgent:
                 "name": "Model",
                 "category": "model",
                 "type": "select",
-                "currentValue": selection["model"],
+                "currentValue": selection.model,
                 "options": models,
             },
             {
@@ -160,7 +161,7 @@ class YokeAcpAgent:
                 ],
             },
         ]
-        efforts = catalog[selection["model"]]["reasoningEfforts"]
+        efforts = catalog[selection.model]["reasoningEfforts"]
         if efforts:
             result.insert(
                 1,
@@ -169,7 +170,7 @@ class YokeAcpAgent:
                     "name": "Reasoning effort",
                     "category": "thought_level",
                     "type": "select",
-                    "currentValue": selection["effort"],
+                    "currentValue": selection.effort,
                     "options": [
                         {"value": effort, "name": effort} for effort in efforts
                     ],
@@ -197,7 +198,7 @@ class YokeAcpAgent:
         if effort is not None and effort not in catalog[model]["reasoningEfforts"]:
             raise fail("Native session reasoning effort is unsupported by its model")
         self.catalogs[session_id] = catalog
-        self.sessions[session_id] = {"model": model, "effort": effort}
+        self.sessions[session_id] = AcpSession(model=model, effort=effort)
 
     @asynccontextmanager
     async def exclusive(self, session_id: str):  # noqa: ANN202
@@ -305,7 +306,8 @@ class YokeAcpAgent:
             if not isinstance(value, str):
                 raise RequestError(-32602, "Unsupported config value")
             catalog = self.catalogs[session_id]
-            selection = dict(self.sessions[session_id])
+            current = self.sessions[session_id]
+            selection = {"model": current.model, "effort": current.effort}
             if config_id == "model":
                 if value not in catalog:
                     raise RequestError(-32602, "Unsupported model")
@@ -328,7 +330,9 @@ class YokeAcpAgent:
                     "reasoningEffort": selection["effort"],
                 },
             )
-            self.sessions[session_id] = selection
+            self.sessions[session_id] = AcpSession(
+                model=selection["model"], effort=selection["effort"]
+            )
         else:
             raise RequestError(-32602, "Unsupported config option or model")
         if self.lifecycle.enabled:
@@ -371,20 +375,20 @@ class YokeAcpAgent:
 
     async def cancel(self, session_id: str, **_kwargs: Any) -> None:
         if work := self.active.get(session_id):
-            work["cancel"] = True
-            work["wake"].set()
+            work.cancel = True
+            work.wake.set()
             await self.notifications.cancel_requests(session_id)
-            await work["done"].wait()
+            await work.done.wait()
 
     async def close(self) -> None:
         """Cancel owned prompt handlers and close the native client."""
         work = list(self.active.values())
         for item in work:
-            task = item.get("task")
+            task = item.task
             if task is not None:
                 task.cancel()
         await asyncio.gather(
-            *(item["task"] for item in work if item.get("task") is not None),
+            *(item.task for item in work if item.task is not None),
             return_exceptions=True,
         )
         await self.notifications.close()
