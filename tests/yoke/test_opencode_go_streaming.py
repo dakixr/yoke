@@ -98,7 +98,7 @@ def test_fragmented_interleaved_tools_reasoning_and_usage() -> None:
         assert message.usage.cached_input_tokens == 80
         assert message.usage.reasoning_tokens == 10
         assert message.usage.total_tokens == 120
-        assert message.usage.model_id == "glm-5.3-flash"
+        assert message.usage.model_id == "deepseek-v4.1-flash"
     finally:
         p.close()
 
@@ -268,13 +268,13 @@ def test_request_projection_matches_established_converter(
     old = OpenAICompatibleProvider(
         OpenAICompatibleConfig(
             api_key="test",
-            model="glm-5.3-flash",
+            model="deepseek-v4.1-flash",
             max_tokens=65536,
             reasoning_effort="max",
         ),
         http_client=client,
     )
-    new = provider(handler)
+    new = provider(handler, model="deepseek-v4.1-flash", reasoning_effort="max")
     tools: list[dict[str, object]] = [
         {
             "type": "function",
@@ -285,7 +285,6 @@ def test_request_projection_matches_established_converter(
         old.complete(messages, tools)
         new.complete(messages, tools)
         before, after = bodies
-        before.pop("reasoning_effort")
         assert after.pop("stream") is True
         assert after.pop("stream_options") == {"include_usage": True}
         assert before == after

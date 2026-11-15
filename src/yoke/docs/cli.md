@@ -162,7 +162,7 @@ Select models with `provider:model` or `provider:model:thinking_effort`:
 yoke --model codex:gpt-6.1-sol:medium "..."
 yoke --model codex:gpt-6-astra:max "..."
 yoke --model opencode-go:muse-spark-1.3-contributor:high "..."
-yoke --model opencode-go:glm-5.3-flash "..."
+yoke --model opencode-go:deepseek-v4.1-flash "..."
 yoke --model zai:glm-5.3-flash:max "..."
 ```
 
@@ -179,14 +179,13 @@ Provider selections without a model use these defaults:
 | Provider | Default selection |
 | --- | --- |
 | `codex` | `codex:gpt-6.1-sol:medium` |
-| `opencode-go` | `opencode-go:glm-5.3-flash` |
+| `opencode-go` | `opencode-go:deepseek-v4.1-flash:high` |
 | `zai` | `zai:glm-5.3-flash:max` |
 
-Yoke caps `glm-5.3-flash` at a 400,000-token context window for both
-`opencode-go` and `zai`, even when the upstream provider advertises a larger
-window. The catalog, runtime token budget, compaction policy, and context-usage
-display all use that capped value. OpenCode Go also caps
-`deepseek-v4.1-flash` at 400,000 tokens.
+Yoke caps `glm-5.3-flash` at a 400,000-token context window for `zai`, even
+when the upstream provider advertises a larger window. The catalog, runtime
+token budget, compaction policy, and context-usage display all use that capped
+value. OpenCode Go caps both of its models at 400,000 tokens.
 
 Codex uses a persistent Responses WebSocket transport and keeps response
 continuity, encrypted replay state, prompt-cache affinity, and routing metadata
@@ -217,20 +216,17 @@ Yoke caps its context window at 400,000 tokens and supports image inputs and
 `none`, `low`, `medium`, `high`, `xhigh`, and `max` reasoning efforts (default:
 `medium`).
 
-OpenCode Go advertises its maintained model catalog, including the Contributor
-tier of `muse-spark-1.3-contributor`. Yoke caps its upstream 1,048,576-token
-window at 400,000 tokens for agentic work and exposes `minimal`, `low`,
-`medium`, `high`, and `xhigh` reasoning efforts (default: `high`). Muse Spark
-uses the Responses path; GLM-5.3-Flash and DeepSeek V4.1 Flash
-(`deepseek-v4.1-flash`) use OpenAI-compatible chat completions. DeepSeek V4.1
-Flash supports image inputs and `low`, `high`,
-and `max` reasoning efforts (default: `high`). Yoke sends `x-opencode-session` with one stable value per
-Yoke session, including retries and resumed conversations. Forked sessions
-receive a new value. Z.ai exposes GLM-5.3-Flash with `low`, `high`, and `max` reasoning
-efforts, defaulting to `max`. OpenCode Go GLM uses server-managed reasoning,
-matching OpenCode, and exposes no effort choices. The CLI rejects explicit or
-saved effort selections for that model. Omit the effort to use server-managed
-reasoning. Go chat requests stream text, reasoning, tool
+OpenCode Go advertises two models. The Contributor tier of
+`muse-spark-1.3-contributor` caps at 400,000 tokens for agentic work and
+exposes `minimal`, `low`, `medium`, `high`, and `xhigh` reasoning efforts
+(default: `high`). Muse Spark uses the Responses path. DeepSeek V4.1 Flash
+(`deepseek-v4.1-flash`) is the default OpenCode Go model and uses
+OpenAI-compatible chat completions. It supports image inputs and `low`,
+`high`, and `max` reasoning efforts (default: `high`). Yoke sends
+`x-opencode-session` with one stable value per Yoke session, including retries
+and resumed conversations. Forked sessions receive a new value. Z.ai exposes
+GLM-5.3-Flash with `low`, `high`, and `max` reasoning efforts, defaulting to
+`max`. Go chat requests stream text, reasoning, tool
 calls, and usage internally, then return one complete response to Yoke. A
 truncated stream fails without executing partial tool calls or replaying the
 generation. Message serialization and session cache headers remain unchanged.
@@ -246,7 +242,7 @@ Use these commands to inspect or change defaults:
 ```bash
 yoke models list
 yoke models set codex:gpt-6.1-sol:medium
-yoke models set opencode-go:glm-5.3-flash
+yoke models set opencode-go:deepseek-v4.1-flash:high
 yoke models set zai:glm-5.3-flash:max
 yoke models set
 yoke models set --repo

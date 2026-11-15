@@ -7,11 +7,13 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.model_selection import default_reasoning_effort_for_model
 from yoke.ai.providers.resolution import BUILTIN_PROVIDER_NAMES, list_provider_models
 from yoke.cli.config import CLIArgs
 from yoke.cli.config.providers import build_provider_from_args, prepare_provider_args
 from yoke.cli.main import app
+from yoke.cli.providers.selection import resolve_cli_reasoning_effort
 from yoke.cli.tools.policy import PiConfig
 
 
@@ -53,7 +55,6 @@ def test_models_set_round_trips_every_advertised_thinking_level(
     [
         ("codex:gpt-6.1-sol:ultra", "Supported: low, medium, high, xhigh, max"),
         ("zai:glm-5.3-flash:medium", "Supported: low, high, max"),
-        ("opencode-go:glm-5.3-flash:high", "no configurable levels"),
         ("codex:gpt-6.1-sol:", "non-empty thinking effort"),
     ],
 )
@@ -84,6 +85,17 @@ def test_invalid_effort_without_explicit_model_rejects_provider_default(
 
     with pytest.raises(ValueError, match="Unsupported thinking effort 'medium'"):
         build_provider_from_args(args)
+
+
+def test_effort_on_model_without_levels_reports_no_configurable_levels() -> None:
+    model = ProviderModelInfo(
+        id="level-less",
+        display_name="Level-less",
+        context_window_tokens=1_000,
+    )
+
+    with pytest.raises(ValueError, match="no configurable levels"):
+        resolve_cli_reasoning_effort(model, "high", provider_name="demo")
 
 
 def test_models_set_normalizes_effort_case(tmp_path: Path) -> None:

@@ -344,9 +344,10 @@ cleared draft again.
 Provider image limits apply only to provider-bound projections. When a model
 has a request-wide image limit, Yoke keeps the newest allowed images and
 replaces older image parts with text notes while leaving canonical conversation
-history unchanged. OpenCode-Go GLM-5.3-Flash currently uses an eight-image
-request limit. A newest user message that itself exceeds the provider's
-per-message limit is rejected instead of silently dropping fresh attachments.
+history unchanged. No current built-in model declares a request-wide limit, so
+the limit path only applies to custom providers and tests. A newest user
+message that itself exceeds the provider's per-message limit is rejected
+instead of silently dropping fresh attachments.
 
 ## Session and execution model
 

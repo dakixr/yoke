@@ -64,7 +64,7 @@ def write_default(root: Path, model: str) -> Path:
     ("provider_name", "default_model", "default_effort"),
     [
         ("zai", "glm-5.3-flash", "max"),
-        ("opencode-go", "glm-5.3-flash", None),
+        ("opencode-go", "deepseek-v4.1-flash", "high"),
         ("codex", "gpt-6.1-sol", "medium"),
     ],
 )

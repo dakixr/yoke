@@ -45,8 +45,7 @@ class GoChatProvider(OpenAICompatibleProvider):
             payload.update(tools=tools, tool_choice="auto")
         if self.config.max_tokens is not None:
             payload["max_tokens"] = self.config.max_tokens
-        # OpenCode's GLM variants are empty: the service controls reasoning.
-        if self.config.model != "glm-5.3-flash" and self.config.reasoning_effort:
+        if self.config.reasoning_effort:
             payload["reasoning_effort"] = self.config.reasoning_effort
         payload = sanitize_json_surrogates(payload)
         for attempt in range(self.config.max_retries + 1):

@@ -47,7 +47,8 @@ The model picker includes every model from every ready Yoke provider. Compare
 list` when entries are missing. Credentials must reach the daemon, even if the
 ACP launcher already has them. Restart the daemon after changing its service
 environment, then refresh Yoke in T3's provider settings. Matching model names
-include their provider so the two GLM entries remain distinguishable. New ACP
+include their provider so same-named models from different providers remain
+distinguishable. New ACP
 sessions use the workspace's configured default model and reasoning effort;
 switching models uses that model's supported reasoning choices and default.
 

@@ -107,7 +107,7 @@ def test_build_provider_constructs_opencode_go_from_explicit_env(
     tmp_path: Path,
 ) -> None:
     provider = build_provider(
-        "opencode-go:glm-5.3-flash",
+        "opencode-go:deepseek-v4.1-flash",
         env={"OPENCODE_API_KEY": "test"},
         home=tmp_path,
         session_id="saved-session",
@@ -116,8 +116,8 @@ def test_build_provider_constructs_opencode_go_from_explicit_env(
     assert isinstance(provider, OpenCodeGoProvider)
     try:
         assert provider.config.api_key == "test"
-        assert provider.config.model == "glm-5.3-flash"
-        assert provider.config.reasoning_effort is None
+        assert provider.config.model == "deepseek-v4.1-flash"
+        assert provider.config.reasoning_effort == "high"
         assert provider.config.session_id == "saved-session"
     finally:
         provider.close()

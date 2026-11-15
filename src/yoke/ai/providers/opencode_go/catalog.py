@@ -21,10 +21,10 @@ OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1"
 
 DEEPSEEK_41_THINKING_LEVELS = ("low", "high", "max")
 MUSE_SPARK_THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
+DEFAULT_MODEL_ID = "deepseek-v4.1-flash"
 
 MODEL_PROTOCOLS = {
     "muse-spark-1.3-contributor": "responses",
-    "glm-5.3-flash": "openai",
     "deepseek-v4.1-flash": "openai",
 }
 
@@ -35,13 +35,6 @@ MODEL_CATALOG = build_model_catalog(
         context_window_tokens=400_000,
         thinking_levels=MUSE_SPARK_THINKING_LEVELS,
         default_thinking_level="high",
-        supports_image_inputs=True,
-    ),
-    ProviderModelInfo(
-        id="glm-5.3-flash",
-        display_name="GLM-5.3-Flash",
-        context_window_tokens=400_000,
-        thinking_levels=(),
         supports_image_inputs=True,
     ),
     ProviderModelInfo(
@@ -83,7 +76,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
     return OpenCodeGoProvider(
         OpenCodeGoConfig(
             api_key=api_key,
-            model=_normalize_model_id(context.model or "glm-5.3-flash"),
+            model=_normalize_model_id(context.model or DEFAULT_MODEL_ID),
             session_id=context.session_id or uuid4().hex,
             timeout_seconds=float(env.get("YOKE_OPENCODE_GO_TIMEOUT_SECONDS") or "900"),
             max_retries=int(env.get("YOKE_OPENCODE_GO_MAX_RETRIES") or "5"),
@@ -98,7 +91,7 @@ def register_provider(context: Any) -> OpenCodeGoProvider:
 
 class OpenCodeGoConfig(BaseModel):
     api_key: str
-    model: str = "glm-5.3-flash"
+    model: str = DEFAULT_MODEL_ID
     session_id: str = Field(default_factory=lambda: uuid4().hex)
     timeout_seconds: float = 900.0
     max_retries: int = 5
