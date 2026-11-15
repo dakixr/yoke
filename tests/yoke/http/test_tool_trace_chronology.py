@@ -3,30 +3,23 @@
 from __future__ import annotations
 
 # ruff: noqa: D102,D103,S101
-
 import json
-from datetime import UTC
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
-from yoke.agent.models import Message
-from yoke.agent.models import ToolCall
-from yoke.agent.models import ToolFunction
+from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.agent.observability import ToolTraceStore
 from yoke.agent.session_tree import SessionTree
-from yoke.http.app import HttpAppSettings
-from yoke.http.app import create_app
+from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.errors import ApiError
 from yoke.http.models.tool_trace import ToolCallListResponse
-from yoke.http.services.cursor import encode_cursor
-from yoke.http.services.cursor import query_fingerprint
+from yoke.http.services.cursor import encode_cursor, query_fingerprint
 from yoke.http.services.tool_trace_service import ToolTraceService
 from yoke.session import SessionStore
-
 
 SESSION = "chronology"
 Order = Literal["oldest", "latest"]
@@ -36,7 +29,8 @@ class _Runtime:
     def __init__(self, traces: ToolTraceStore) -> None:
         self.traces = traces
 
-    def tool_trace_store(self) -> ToolTraceStore:
+    @property
+    def tool_traces(self) -> ToolTraceStore:
         return self.traces
 
     def latest_turn_id(self) -> int:

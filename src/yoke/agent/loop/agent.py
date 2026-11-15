@@ -10,38 +10,30 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.agent.context import ContextManager
-from yoke.agent.loop.iteration import RuntimeAgentIterationMixin
+from yoke.agent.loop.forking import copy_tool_for_fork, copy_tool_for_runtime
 from yoke.agent.loop.in_process_tool import shutdown_in_process_tools
-from yoke.agent.loop.forking import copy_tool_for_fork
-from yoke.agent.loop.forking import copy_tool_for_runtime
-from yoke.agent.loop.state import context_for_run
-from yoke.agent.loop.state import persist_run_context
+from yoke.agent.loop.iteration import RuntimeAgentIterationMixin
 from yoke.agent.loop.resources import release_tool_resources
-from yoke.agent.loop.types import AfterToolCallHook
-from yoke.agent.loop.types import AgentEventHandler
-from yoke.agent.loop.types import AgentResult
-from yoke.agent.loop.types import BeforeToolCallHook
-from yoke.agent.loop.types import StopRequested
-from yoke.agent.loop.types import ToolExecutionMode
-from yoke.agent.loop.types import ToolResultCheckpoint
-from yoke.agent.loop.tool_registration import ToolRegistrationMixin
-from yoke.agent.loop.tool_registration import bound_tool_path
-from yoke.agent.models import AgentContext
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.agent.skills.models import ActiveSkill
-from yoke.agent.skills.models import SkillSpec
+from yoke.agent.loop.state import context_for_run, persist_run_context
+from yoke.agent.loop.tool_registration import ToolRegistrationMixin, bound_tool_path
+from yoke.agent.loop.types import (
+    AfterToolCallHook,
+    AgentEventHandler,
+    AgentResult,
+    BeforeToolCallHook,
+    StopRequested,
+    ToolExecutionMode,
+    ToolResultCheckpoint,
+)
+from yoke.agent.models import AgentContext, ConversationEntry, Message
+from yoke.agent.skills.models import ActiveSkill, SkillSpec
 from yoke.agent.skills.registry import SkillRegistry
-from yoke.agent.tools import LocalTool
-from yoke.agent.tools import ModelIdentity
-from yoke.agent.tools import RegisterTools
+from yoke.agent.tools import LocalTool, ModelIdentity, RegisterTools
 from yoke.agent.tools.command_process_manager import (
     CommandProcessManager,
 )
-from yoke.agent.tools.context import resolve_model_identity
-from yoke.ai.providers.base import Provider
-from yoke.ai.providers.base import ProviderError
-from yoke.ai.providers.base import fork_provider
+from yoke.agent.tools.context import ToolSessionContext, resolve_model_identity
+from yoke.ai.providers.base import Provider, ProviderError, fork_provider
 
 if TYPE_CHECKING:
     from yoke.cli.bootstrap.types import ToolLoadReport
@@ -67,6 +59,7 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         messages: Sequence[Message] | None = None,
         conversation_entries: Sequence[ConversationEntry] | None = None,
         tool_factory: RegisterTools | None = None,
+        tool_session_context: ToolSessionContext | None = None,
         tool_root: Path | None = None,
         tool_home: Path | None = None,
         command_process_manager: CommandProcessManager | None = None,
@@ -80,6 +73,7 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
         self.provider = provider
         self._closed = False
         self._tool_factory = tool_factory
+        self.tool_session_context = tool_session_context or ToolSessionContext()
         self._tool_root = (
             tool_root or bound_tool_path(tools, "root") or Path.cwd()
         ).resolve()
@@ -149,6 +143,7 @@ class RuntimeAgent(ToolRegistrationMixin, RuntimeAgentIterationMixin):
                 provider=provider,
                 tools=[copy_tool_for_fork(tool) for tool in self.tools.values()],
                 tool_factory=self._tool_factory,
+                tool_session_context=self.tool_session_context,
                 tool_root=self._tool_root,
                 tool_home=self._tool_home,
                 command_process_manager=self.command_process_manager,

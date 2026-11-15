@@ -1,30 +1,25 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,D101,D102,D103,S101
-
 import asyncio
 from collections import defaultdict
 from pathlib import Path
-from threading import Event
-from threading import Thread
+from threading import Event, Thread
 
 import pytest
 from fastapi.testclient import TestClient
 
-from yoke.agent.models import AgentContext
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import ConversationLog
-from yoke.agent.models import Message
-from yoke.http.app import HttpAppSettings, create_app
-from yoke.http.services.session_runtime.execution import TurnExecution
-from yoke.session import SessionRecord
-from yoke.session.admissions import AdmissionRecord
 from tests.yoke.http.test_runtime_lifetime_regressions import (
     TOKEN,
     CustomAgent,
     _auth,
     _create_session,
 )
+from yoke.agent.models import AgentContext, ConversationEntry, ConversationLog, Message
+from yoke.http.app import HttpAppSettings, create_app
+from yoke.http.services.session_runtime.execution import TurnExecution
+from yoke.session import SessionRecord
+from yoke.session.admissions import AdmissionRecord
 
 
 def drain(client: TestClient, timeout: int = 20) -> dict:
@@ -66,6 +61,7 @@ def test_drain_tracks_retired_worker_and_cleanup(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=lambda record: Agent(record, counts),
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -79,7 +75,7 @@ def test_drain_tracks_retired_worker_and_cleanup(
             assert response.status_code == 200
             assert started.wait(2)
             runtime = app.state.runtime_registry.get_if_loaded("session-a")
-            task = runtime._active.task
+            task = runtime.activity.active.task
             assert drain(client) == {"drained": False, "activeWorkers": 1}
             stopped = client.post(
                 "/api/v1/session/session-a/interrupt", headers=_auth()
@@ -128,6 +124,7 @@ def test_prestart_interrupt_and_cancelled_drain_observer(tmp_path: Path) -> None
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=factory,
+            indexed_runtime_seed=False,
             max_active_sessions=1,
         )
     )
@@ -214,8 +211,10 @@ def test_retired_first_turn_checkpoint_cannot_replace_interruption_branch(
             automatic_title=False,
         )
         first = ConversationEntry(kind="user", message=Message.user("run"))
-        runtime._persist_turn_entries(execution, [first], input_id=admission.id)
-        active = runtime._snapshot().owned_active_path()
+        runtime.persistence.persist_turn_entries(
+            execution, [first], input_id=admission.id
+        )
+        active = runtime.persistence.snapshot().owned_active_path()
         stale = [entry.model_copy(deep=True) for entry in active]
         stale.append(
             ConversationEntry(
@@ -227,24 +226,24 @@ def test_retired_first_turn_checkpoint_cannot_replace_interruption_branch(
         context = AgentContext(conversation_log=ConversationLog(entries=stale))
 
         entered, release = Event(), Event()
-        original = runtime._persist_turn_entries
+        original = runtime.persistence.persist_turn_entries
 
         def delayed(*args, **kwargs):
             entered.set()
             assert release.wait(5), "test did not release stale checkpoint"
             return original(*args, **kwargs)
 
-        monkeypatch.setattr(runtime, "_persist_turn_entries", delayed)
+        monkeypatch.setattr(runtime.persistence, "persist_turn_entries", delayed)
         worker = Thread(
-            target=runtime._checkpoint,
-            args=(execution, object(), context),
+            target=runtime.turn_worker.checkpoint,
+            args=(execution, context),
             daemon=True,
         )
         worker.start()
         assert entered.wait(2)
 
         execution.retired_event.set()
-        runtime._persist_interrupted_checkpoint(admission)
+        runtime.persistence.persist_interruption(admission)
         interrupted = runtime.store.load("session-a")
         assert interrupted is not None
         interrupted_leaf = interrupted.leaf_id
@@ -278,9 +277,9 @@ def test_interrupt_before_controller_first_step(tmp_path: Path) -> None:
         registry = app.state.runtime_registry
 
         async def start_and_interrupt() -> None:
-            await registry.wake("session-a")
+            await registry.get_or_start("session-a").wake()
             runtime = registry.get_if_loaded("session-a")
-            execution = runtime._active
+            execution = runtime.activity.active
             assert not execution.worker_started
             assert await runtime.interrupt() == (True, execution.turn_id)
             assert await runtime.workers.drain(1) == 0
@@ -312,6 +311,7 @@ def test_retirement_transfer_failure_retries_without_false_drain(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=lambda record: CustomAgent(record, counts),
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -347,6 +347,7 @@ def test_multiple_generations_and_logical_wait_stay_independent(tmp_path: Path) 
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=lambda record: Agent(record, counts),
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -405,6 +406,7 @@ def test_failed_preparation_cleanup_is_owned_until_finished(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=lambda record: Agent(record, counts),
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:

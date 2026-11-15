@@ -2,23 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
 import mimetypes
-from pathlib import Path
 import re
 import secrets
 import shutil
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi import UploadFile
 from pydantic import BaseModel
 
 from yoke.agent.attachments import attachment_mime, attachment_name, validate_attachment
-from yoke.http.errors import ApiError
+from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.upload import UploadInfo
 from yoke.session import SessionStore
-
 
 MAX_UPLOAD_BYTES = 20_971_520
 UPLOAD_TTL = timedelta(days=1)
@@ -50,7 +47,7 @@ class UploadService:
     ) -> UploadInfo:
         self.gc_expired_orphans()
         if session_id is not None and not self.store.exists(session_id):
-            raise ApiError(404, "session_not_found", "Session was not found.")
+            raise session_not_found()
         name = attachment_name(upload.filename or "attachment")
         mime = (
             upload.content_type

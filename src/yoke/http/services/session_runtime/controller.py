@@ -44,65 +44,71 @@ def retire_owned(
     return completion
 
 
-def launch_controller(runtime: SessionRuntime, execution: TurnExecution) -> None:
-    tracker = runtime.workers
-    tracker.admit(execution.turn_id)
+class TurnController:
+    """Own physical worker tasks until cleanup completes."""
 
-    def finished(_task: asyncio.Task[None]) -> None:
-        try:
-            if not execution.worker_started:
-                execution.workspace_use.close()
-        finally:
-            tracker.release(execution.turn_id)
+    def __init__(self, runtime: SessionRuntime) -> None:
+        self.runtime = runtime
 
-    execution.task = asyncio.create_task(
-        run_execution(runtime, execution),
-        name=f"yoke-http-session-{runtime.session_id}-{execution.turn_id}",
-    )
-    execution.task.add_done_callback(finished)
+    def launch(self, execution: TurnExecution) -> None:
+        tracker = self.runtime.workers
+        tracker.admit(execution.turn_id)
 
+        def finished(_task: asyncio.Task[None]) -> None:
+            try:
+                if not execution.worker_started:
+                    execution.workspace_use.close()
+            finally:
+                tracker.release(execution.turn_id)
 
-async def run_execution(runtime: SessionRuntime, execution: TurnExecution) -> None:
-    worker: Future[TurnOutcome] | None = None
-    completion: Future[None] = Future()
-    cancelled = False
-    preparation_cleanup: list[Future[None]] = []
-    loop = asyncio.get_running_loop()
-    try:
-        if execution.cold_start:
-            # Preserve the admission response's head start on cold session loads.
-            await asyncio.sleep(0.05)
-        await runtime.active_slots.acquire()
-        execution.slot_acquired = True
-        if execution.retired_event.is_set():
-            return
-        worker = runtime.executor.submit(
-            lambda: execute_with_cleanup(
-                lambda: runtime._execute_sync(execution, loop), preparation_cleanup
-            ),
+        execution.task = asyncio.create_task(
+            self.run(execution),
+            name=f"yoke-http-session-{self.runtime.session_id}-{execution.turn_id}",
         )
-        execution.worker_started = True
-        runtime.workers.retain(execution.turn_id, completion)
-        outcome = await asyncio.shield(asyncio.wrap_future(worker))
-        await runtime._finish_execution(execution, outcome)
-    except asyncio.CancelledError:
-        cancelled = True
-        raise
-    except Exception as exc:  # controller finalization boundary
-        await runtime._finish_execution_error(execution, exc)
-    finally:
-        if worker is None:
-            runtime._release_slot(execution)
-        else:
-            retain_cancelled_worker(
-                worker,
-                loop=loop,
-                retire_agent=lambda agent: retire_owned(
-                    runtime.resources, agent, preparation_cleanup
+        execution.task.add_done_callback(finished)
+
+    async def run(self, execution: TurnExecution) -> None:
+        worker: Future[TurnOutcome] | None = None
+        completion: Future[None] = Future()
+        cancelled = False
+        preparation_cleanup: list[Future[None]] = []
+        loop = asyncio.get_running_loop()
+        try:
+            if execution.cold_start:
+                # Preserve the admission response's head start on cold session loads.
+                await asyncio.sleep(0.05)
+            await self.runtime.active_slots.acquire()
+            execution.slot_acquired = True
+            if execution.retired_event.is_set():
+                return
+            worker = self.runtime.executor.submit(
+                lambda: execute_with_cleanup(
+                    lambda: self.runtime.turn_worker.execute(execution, loop),
+                    preparation_cleanup,
                 ),
-                release_slot=lambda: runtime._release_slot(execution),
-                release_resources=execution.workspace_use.close,
-                completed=lambda: completion.set_result(None),
             )
-            if not cancelled:
-                await asyncio.shield(asyncio.wrap_future(completion))
+            execution.worker_started = True
+            self.runtime.workers.retain(execution.turn_id, completion)
+            outcome = await asyncio.shield(asyncio.wrap_future(worker))
+            await self.runtime.finalizer.finish(execution, outcome)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        except Exception as exc:  # controller finalization boundary
+            await self.runtime.finalizer.fail(execution, exc)
+        finally:
+            if worker is None:
+                self.runtime.release_slot(execution)
+            else:
+                retain_cancelled_worker(
+                    worker,
+                    loop=loop,
+                    retire_agent=lambda agent: retire_owned(
+                        self.runtime.resources, agent, preparation_cleanup
+                    ),
+                    release_slot=lambda: self.runtime.release_slot(execution),
+                    release_resources=execution.workspace_use.close,
+                    completed=lambda: completion.set_result(None),
+                )
+                if not cancelled:
+                    await asyncio.shield(asyncio.wrap_future(completion))

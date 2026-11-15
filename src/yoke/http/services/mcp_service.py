@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from yoke.http.errors import ApiError
+from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.common import LocationInfo
-from yoke.http.models.mcp import McpListResponse
-from yoke.http.models.mcp import McpServerInfo
-from yoke.http.models.mcp import McpToolInfo
+from yoke.http.models.mcp import McpListResponse, McpServerInfo, McpToolInfo
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
@@ -160,7 +157,7 @@ class McpService:
         if session_id is not None:
             record = self.store.summary_record(session_id)
             if record is None:
-                raise ApiError(404, "session_not_found", "Session was not found.")
+                raise session_not_found()
             return require_session_workspace(record)
         root = Path(directory or Path.cwd()).resolve()
         if not root.is_dir():

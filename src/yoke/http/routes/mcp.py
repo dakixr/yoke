@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import Query
-from fastapi import Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from yoke.http.auth import require_auth
 from yoke.http.errors import ApiError
-from yoke.http.models.mcp import McpListResponse
-from yoke.http.models.mcp import McpSessionPatchRequest
-from yoke.http.models.mcp import McpSessionPatchResponse
+from yoke.http.models.mcp import (
+    McpListResponse,
+    McpSessionPatchRequest,
+    McpSessionPatchResponse,
+)
 from yoke.http.services.mcp_service import McpService
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
-
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -91,8 +89,7 @@ async def patch_session_mcp_server(
             update_disabled_tools=update_disabled_tools,
         )
     else:
-        await runtimes.idle_mutation(
-            session_id,
+        await runtimes.get_or_start(session_id).idle_mutation(
             lambda: service.patch_persisted(
                 session_id,
                 server_name,

@@ -1,28 +1,24 @@
 from __future__ import annotations
+from tests.yoke.http.fake_session_agent import FakeSessionAgent
 
 # ruff: noqa: D100,D101,D102,D103,S101
-
 import asyncio
+import logging
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-import logging
 from pathlib import Path
 from threading import Event
-import time
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
 
-from yoke.agent.loop import AgentResult
-from yoke.agent.loop import RuntimeAgent
+from yoke.agent.loop import AgentResult, RuntimeAgent
 from yoke.agent.models import Message
 from yoke.agent.session_tree import SessionTree
-from yoke.http.app import HttpAppSettings
-from yoke.http.app import create_app
+from yoke.http.app import HttpAppSettings, create_app
 from yoke.session import SessionRecord
-
 
 TOKEN = "runtime-lifetime-secret"
 
@@ -44,8 +40,9 @@ def _create_session(client: TestClient, root: Path, session_id: str) -> None:
     assert response.status_code == 200
 
 
-class CustomAgent:
+class CustomAgent(FakeSessionAgent):
     supports_user_message = True
+    supports_message_history = False
 
     def __init__(
         self,
@@ -54,18 +51,21 @@ class CustomAgent:
         *,
         fail: bool = False,
     ) -> None:
+        super().__init__(record)
         self.record = record
         self.close_counts = close_counts
         self.fail = fail
 
-    def run(self, prompt: str, *, user_message: Message, **_kwargs) -> AgentResult:
+    def run(
+        self, prompt: str, *, user_message: Message | None = None, **_kwargs
+    ) -> AgentResult:
         if self.fail:
             raise RuntimeError("agent failed")
         tree = SessionTree.restore(
             self.record.conversation_entries,
             self.record.leaf_id,
         )
-        tree.append_message(user_message)
+        tree.append_message(user_message or Message.user(prompt))
         tree.append_message(Message.assistant(f"done:{prompt}"))
         return AgentResult(
             output=f"done:{prompt}",
@@ -75,7 +75,9 @@ class CustomAgent:
         )
 
     def close(self) -> None:
-        self.close_counts[self.record.id] += 1
+        if self.fake_is_turn:
+            self.close_counts[self.record.id] += 1
+        super().close()
 
 
 @pytest.mark.parametrize(("fail", "expected_state"), [(False, "idle"), (True, "error")])
@@ -94,6 +96,7 @@ def test_completed_and_failed_custom_agents_are_closed_once(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=factory,
+            indexed_runtime_seed=False,
         )
     )
     root = tmp_path / "repo"
@@ -329,7 +332,7 @@ def test_controller_task_cancellation_retains_outcome_and_physical_slot(
             assert provider_started.wait(1)
             runtime = app.state.runtime_registry.get_if_loaded("session-a")
             assert runtime is not None
-            execution = runtime._active
+            execution = runtime.activity.active
             assert execution is not None
             task = execution.task
             assert task is not None
@@ -497,6 +500,7 @@ def test_persistence_and_failure_journal_errors_leave_stable_recoverable_state(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=factory,
+            indexed_runtime_seed=False,
             max_active_sessions=1,
         )
     )
@@ -510,7 +514,9 @@ def test_persistence_and_failure_journal_errors_leave_stable_recoverable_state(
         def fail_persistence(*_args, **_kwargs) -> None:
             raise OSError("turn persistence failed")
 
-        monkeypatch.setattr(runtime, "_persist_turn_entries", fail_persistence)
+        monkeypatch.setattr(
+            runtime.persistence, "persist_turn_entries", fail_persistence
+        )
         original_durable = runtime.events.durable
 
         def fail_failure_event(session_id, event_type, *args, **kwargs):
@@ -536,7 +542,7 @@ def test_persistence_and_failure_journal_errors_leave_stable_recoverable_state(
         )
         assert waited.status_code == 200
         assert waited.json()["data"]["state"] == "error"
-        assert runtime._active is None
+        assert runtime.activity.active is None
         admission = app.state.pending_input_service.admissions.load(
             "session-a"
         ).records["uncertain-input"]

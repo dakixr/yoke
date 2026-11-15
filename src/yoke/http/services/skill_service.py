@@ -6,12 +6,14 @@ from pathlib import Path
 
 from yoke.agent.skills import load_skill_registry
 from yoke.agent.skills.paths import default_skill_dirs
-from yoke.http.errors import ApiError
+from yoke.http.errors import session_not_found
 from yoke.http.models.common import LocationInfo
-from yoke.http.models.skill import SessionSkillData
-from yoke.http.models.skill import SessionSkillResponse
-from yoke.http.models.skill import SkillInfo
-from yoke.http.models.skill import SkillListResponse
+from yoke.http.models.skill import (
+    SessionSkillData,
+    SessionSkillResponse,
+    SkillInfo,
+    SkillListResponse,
+)
 from yoke.session import SessionStore
 from yoke.session.workspace import require_session_workspace, require_workspace
 
@@ -71,7 +73,7 @@ class SkillService:
     def _require_record(self, session_id: str):  # noqa: ANN202
         record = self.store.summary_record(session_id)
         if record is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
+            raise session_not_found()
         return record
 
 

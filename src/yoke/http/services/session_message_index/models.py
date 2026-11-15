@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
 from yoke.http.services.projectors import PUBLIC_CHAT_EXCLUDED_KINDS
-
 
 INDEX_VERSION = 3
 # Kept as an import-compatible alias for the index helpers. The policy itself
@@ -43,6 +42,7 @@ class TreeIndexPage:
     child_counts: dict[str, int]
     total_entries: int
     has_more: bool
+    legacy_tool_context_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

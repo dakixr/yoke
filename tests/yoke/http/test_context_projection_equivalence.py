@@ -1,26 +1,30 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,D103,S101
-
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from pydantic_core import to_json
 
-from yoke.agent.models import Message
-from yoke.agent.models import MessageImageURL
-from yoke.agent.models import MessageImageURLContentPart
-from yoke.agent.models import MessageLocalImageContentPart
-from yoke.agent.models import MessageTextContentPart
-from yoke.agent.models import ToolCall
-from yoke.agent.models import ToolFunction
-from yoke.agent.session_tree import InvalidCheckpointError
-from yoke.agent.session_tree import MissingParentError
-from yoke.agent.session_tree import SessionTree
+from yoke.agent.models import (
+    Message,
+    MessageImageURL,
+    MessageImageURLContentPart,
+    MessageLocalImageContentPart,
+    MessageTextContentPart,
+    ToolCall,
+    ToolFunction,
+)
+from yoke.agent.session_tree import (
+    InvalidCheckpointError,
+    MissingParentError,
+    SessionTree,
+)
 from yoke.agent.session_tree.projections import ConversationProjection
 from yoke.cli.session.io import SESSION_METADATA_EVENT
 from yoke.http.services.projectors import project_message_content
+from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_service import SessionService
 from yoke.session import SessionStore
 
@@ -108,7 +112,7 @@ def test_forced_fallback_matches_canonical_saved_tree_projection(
     store = SessionStore(tmp_path / "sessions")
     tree = _representative_tree()
     record = _save_tree(store, "context-session", tree, tmp_path)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(
         service.message_index,
         "context_window",
@@ -185,7 +189,7 @@ def test_forced_fallback_uses_last_entry_when_saved_leaf_is_null(
         handle.write(to_json({"type": SESSION_METADATA_EVENT, "leaf_id": None}))
         handle.write(b"\n")
 
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(
         service.message_index,
         "context_window",
@@ -232,7 +236,7 @@ def test_forced_fallback_rejects_corrupt_older_applicable_checkpoint(
         leaf_id=exported.leaf_id,
         root=tmp_path,
     )
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(
         service.message_index,
         "context_window",
@@ -262,15 +266,15 @@ def test_forced_fallback_rejects_invalid_saved_topology(
     _save_tree(store, "invalid-topology", tree, tmp_path)
     record = store.load("invalid-topology")
     record.conversation_entries[-1].parent_id = "missing-parent"
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(
         service.message_index,
         "context_window",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        service,
-        "_require_snapshot",
+        service.read_model,
+        "snapshot",
         lambda _session_id: SimpleNamespace(record=record),
     )
     try:
@@ -300,7 +304,7 @@ def test_truncated_cold_context_uses_bounded_tail_without_topology_build(
         )
     ]
     store.save("cold-context", messages, root=tmp_path)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
 
     def fail(*_args, **_kwargs):
         raise AssertionError("cold bounded Context must not build full topology")
@@ -328,3 +332,41 @@ def test_truncated_cold_context_uses_bounded_tail_without_topology_build(
     assert response.data.total_entries == 200
     assert response.data.retained_entries == 2
     assert response.data.truncated is True
+
+
+def test_fallback_tree_and_navigation_match_canonical_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from yoke.http.services.projectors import project_tree
+
+    store = SessionStore(tmp_path / "sessions")
+    record = _save_tree(store, "tree-read-model", _representative_tree(), tmp_path)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
+    monkeypatch.setattr(
+        service.message_index, "tree_page", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        service.message_index, "navigation_preview", lambda *_args, **_kwargs: None
+    )
+    try:
+        actual = service.tree(record.id, limit=200, cursor=None).data.entries
+        expected = project_tree(record.conversation_entries, record.leaf_id)
+        assert [item.model_dump() for item in actual] == [
+            item.model_dump() for item in expected
+        ]
+        tree = SessionTree.restore(record.conversation_entries, record.leaf_id)
+        target = next(
+            entry for entry in record.conversation_entries if entry.kind == "user"
+        )
+        canonical = tree.preview_navigation(tree.ref_from_persisted_id(target.id))
+        preview = service.navigation_preview(
+            record.id, target_id=target.id, include_abandoned=True
+        ).data
+        assert preview.editor_text == canonical.editor_text
+        assert preview.current == canonical.current
+        assert preview.abandoned_total == len(canonical.abandoned)
+        assert [item.kind for item in preview.abandoned] == [
+            item.kind for item in canonical.abandoned
+        ]
+    finally:
+        service.close()

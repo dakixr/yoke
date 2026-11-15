@@ -4,41 +4,37 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import Query
-from fastapi import Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from yoke.agent.provider_transition import ContextWindowTooSmallError
 from yoke.http.auth import require_auth
 from yoke.http.errors import ApiError
-from yoke.http.models.session import MessageListResponse
-from yoke.http.models.session import MessageResponse
-from yoke.http.models.session import ContextResponse
-from yoke.http.models.session import SessionActiveResponse
-from yoke.http.models.session import SessionCreateRequest
-from yoke.http.models.session import SessionCompactionData
-from yoke.http.models.session import SessionCompactionRequest
-from yoke.http.models.session import SessionCompactionResponse
-from yoke.http.models.session import SessionForkRequest
-from yoke.http.models.session import SessionInfo
-from yoke.http.models.session import SessionListResponse
-from yoke.http.models.session import SessionPatchRequest
-from yoke.http.models.session import SessionResponse
-from yoke.http.models.session import SessionSelection
-from yoke.http.models.session import SessionSelectionRequest
-from yoke.http.models.session import SessionSelectionResponse
-from yoke.http.models.session import SessionSelectionResult
-from yoke.http.models.session import TreeResponse
-from yoke.http.models.session import TreeEntryPatchRequest
-from yoke.http.models.session import TreeEntryPatchResponse
-from yoke.http.models.session import TreeNavigateRequest
-from yoke.http.models.session import TreeNavigateResponse
-from yoke.http.models.session import TreeNavigationPreviewResponse
-from yoke.http.services.session_service import SessionService
+from yoke.http.models.session import (
+    ContextResponse,
+    MessageListResponse,
+    MessageResponse,
+    SessionActiveResponse,
+    SessionCompactionData,
+    SessionCompactionRequest,
+    SessionCompactionResponse,
+    SessionCreateRequest,
+    SessionForkRequest,
+    SessionListResponse,
+    SessionPatchRequest,
+    SessionResponse,
+    SessionSelection,
+    SessionSelectionRequest,
+    SessionSelectionResponse,
+    SessionSelectionResult,
+    TreeEntryPatchRequest,
+    TreeEntryPatchResponse,
+    TreeNavigateRequest,
+    TreeNavigateResponse,
+    TreeNavigationPreviewResponse,
+    TreeResponse,
+)
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
-from yoke.session.workspace import workspace_lease
-
+from yoke.http.services.session_service import SessionService
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -114,34 +110,9 @@ async def patch_session(
     session_id: str,
     body: SessionPatchRequest,
 ) -> SessionResponse:
-    fields = body.model_fields_set
-
-    def mutate() -> SessionInfo:
-        with workspace_lease(_service(request).store, session_id):
-            return mutate_metadata()
-
-    def mutate_metadata() -> SessionInfo:
-        return _service(request).patch_session(
-            session_id,
-            title_set="title" in fields,
-            title=body.title,
-            pinned_set="pinned" in fields,
-            pinned=body.pinned,
-            archived_set="archived" in fields,
-            archived=body.archived,
-            before_mutation=(
-                lambda: _runtimes(request).cancel_automatic_title(session_id)
-            )
-            if "title" in fields
-            else None,
-        )
-
-    data = (
-        await _runtimes(request).idle_mutation(session_id, mutate)
-        if body.archived is True
-        else mutate()
+    return SessionResponse(
+        data=await _service(request).patch(_runtimes(request), session_id, body)
     )
-    return SessionResponse(data=data)
 
 
 @router.post(
@@ -167,13 +138,15 @@ async def select_session_model(
     session_id: str,
     body: SessionSelectionRequest,
 ) -> SessionSelectionResponse:
-    _service(request).get_session(session_id)
     try:
-        state = await _runtimes(request).select_model(
-            session_id,
-            provider_name=body.provider,
-            model_id=body.model,
-            reasoning_effort=body.reasoning_effort,
+        state = (
+            await _runtimes(request)
+            .get_or_start(session_id)
+            .select_model(
+                provider_name=body.provider,
+                model_id=body.model,
+                reasoning_effort=body.reasoning_effort,
+            )
         )
     except ContextWindowTooSmallError as exc:
         raise ApiError(
@@ -217,8 +190,7 @@ async def compact_session(
     body: SessionCompactionRequest,
 ) -> SessionCompactionResponse:
     del body
-    _service(request).get_session(session_id)
-    operation_id = await _runtimes(request).compact(session_id)
+    operation_id = await _runtimes(request).get_or_start(session_id).compact()
     return SessionCompactionResponse(
         data=SessionCompactionData(operation_id=operation_id)
     )
@@ -234,20 +206,11 @@ async def regenerate_session_title(
     session_id: str,
 ) -> SessionResponse:
     service = _service(request)
-    service.get_session(session_id)
     runtimes = _runtimes(request)
     runtimes.cancel_automatic_title(session_id)
     title = await runtimes.regenerate_title(session_id)
     return SessionResponse(
-        data=service.patch_session(
-            session_id,
-            title_set=True,
-            title=title,
-            pinned_set=False,
-            pinned=None,
-            archived_set=False,
-            archived=None,
-        )
+        data=await service.patch(runtimes, session_id, SessionPatchRequest(title=title))
     )
 
 
@@ -352,8 +315,7 @@ async def navigate_tree(
 ) -> TreeNavigateResponse:
     registry: SessionRuntimeRegistry = request.app.state.runtime_registry
     service = _service(request)
-    return await registry.idle_mutation(
-        session_id,
+    return await registry.get_or_start(session_id).idle_mutation(
         lambda: service.navigate_tree(session_id, body),
     )
 
@@ -371,8 +333,7 @@ async def patch_tree_entry(
 ) -> TreeEntryPatchResponse:
     registry: SessionRuntimeRegistry = request.app.state.runtime_registry
     service = _service(request)
-    return await registry.idle_mutation(
-        session_id,
+    return await registry.get_or_start(session_id).idle_mutation(
         lambda: service.set_tree_label(
             session_id,
             entry_id,

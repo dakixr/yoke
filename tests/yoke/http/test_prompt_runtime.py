@@ -1,15 +1,14 @@
 from __future__ import annotations
+from tests.yoke.http.fake_session_agent import FakeSessionAgent
 
 # ruff: noqa: D100,D101,D102,D103,S101
-
 import asyncio
 import base64
+import time
 from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
-from threading import Event
-from threading import Lock
-import time
+from threading import Event, Lock
 
 import pytest
 from fastapi import UploadFile
@@ -19,16 +18,14 @@ from starlette.datastructures import Headers
 
 from yoke.agent.loop import AgentResult
 from yoke.agent.models import Message
-from yoke.agent.session_tree import ConversationProjection
-from yoke.agent.session_tree import SessionTree
-from yoke.ai.providers.usage_context import current_usage_metric_context
-from yoke.ai.providers.usage_context import UsageMetricContext
-from yoke.http.app import HttpAppSettings
-from yoke.http.app import create_app
+from yoke.agent.session_tree import ConversationProjection, SessionTree
+from yoke.ai.providers.usage_context import (
+    UsageMetricContext,
+    current_usage_metric_context,
+)
+from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.services.upload_service import UploadService
-from yoke.session import SessionRecord
-from yoke.session import SessionStore
-
+from yoke.session import SessionRecord, SessionStore
 
 TOKEN = "runtime-secret"
 
@@ -62,12 +59,14 @@ class FakeRuntimeController:
             self.running_sessions.discard(session_id)
 
 
-class FakeAgent:
+class FakeAgent(FakeSessionAgent):
     supports_user_message = True
+    supports_message_history = False
 
     def __init__(
         self, record: SessionRecord, controller: FakeRuntimeController
     ) -> None:
+        super().__init__(record)
         self.record = record.model_copy(deep=True)
         self.controller = controller
 
@@ -76,8 +75,10 @@ class FakeAgent:
         prompt: str,
         *,
         user_message: Message | None = None,
+        append_user_message: bool = True,
         on_event=None,
         stop_requested=None,
+        **_kwargs,
     ) -> AgentResult:
         self.controller.usage_contexts[prompt] = current_usage_metric_context()
         self.controller.enter(self.record.id)
@@ -203,6 +204,7 @@ def test_parallel_tool_activity_stays_running_until_all_tools_finish(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -258,12 +260,16 @@ def test_long_turn_summary_persists_duration_and_tool_count(
 ) -> None:
     clock = [100.0]
     monkeypatch.setattr("yoke.http.services.runtime.monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        "yoke.http.services.session_runtime.finalize.monotonic", lambda: clock[0]
+    )
     controller = FakeRuntimeController()
     app = create_app(
         HttpAppSettings(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -303,6 +309,7 @@ def test_latest_context_usage_is_durable_after_turn_settlement(tmp_path: Path) -
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -368,6 +375,7 @@ def test_context_usage_is_available_while_turn_is_still_running(tmp_path: Path) 
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -432,6 +440,7 @@ def test_http_prompt_propagates_session_usage_attribution(tmp_path: Path) -> Non
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -478,6 +487,7 @@ def test_completed_turn_survives_session_index_replace_failure(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -539,6 +549,7 @@ def test_prompt_admission_reopens_archived_session(tmp_path: Path) -> None:
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -593,6 +604,7 @@ def test_wake_reopens_archived_session_before_pending_work_runs(tmp_path: Path) 
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -656,6 +668,7 @@ def test_session_archive_rejects_running_runtime(tmp_path: Path) -> None:
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -697,6 +710,7 @@ def test_queued_turn_promotion_does_not_publish_idle_between_turns(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -761,6 +775,7 @@ def test_prompt_admission_is_idempotent_and_queue_patch_is_revision_checked(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -839,6 +854,7 @@ def test_consuming_last_prompt_preserves_queue_revision(tmp_path: Path) -> None:
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -898,6 +914,7 @@ def test_two_sessions_run_concurrently_and_steer_fences_old_generation(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
             max_active_sessions=4,
         )
     )
@@ -997,6 +1014,7 @@ def test_uploaded_image_survives_admission_and_runtime_persistence(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -1076,6 +1094,7 @@ def test_queued_uploaded_image_survives_daemon_restart(tmp_path: Path) -> None:
             auth_token=TOKEN,
             session_directory=session_directory,
             agent_factory=first_controller.factory,
+            indexed_runtime_seed=False,
         )
     )
 
@@ -1124,6 +1143,7 @@ def test_queued_uploaded_image_survives_daemon_restart(tmp_path: Path) -> None:
             auth_token=TOKEN,
             session_directory=session_directory,
             agent_factory=second_controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(second_app) as client:
@@ -1169,6 +1189,7 @@ def test_queue_attachment_cleanup_waits_for_last_active_reference(
             auth_token=TOKEN,
             session_directory=session_directory,
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:
@@ -1258,6 +1279,7 @@ def test_unbound_upload_binds_to_first_admitting_session(tmp_path: Path) -> None
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=controller.factory,
+            indexed_runtime_seed=False,
         )
     )
     with TestClient(app) as client:

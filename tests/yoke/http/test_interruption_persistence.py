@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.yoke.http.test_attachment_continuation import RecordingProvider, app_for
 from yoke.agent.models import ConversationEntry, Message, ToolCall, ToolFunction
 from yoke.agent.session_tree import ConversationProjection, SessionTree
 from yoke.agent.session_tree._tool_sequence import tail_open_tool_call_ids
@@ -17,10 +18,8 @@ from yoke.http.services.runtime_persistence import (
     tag_input_entry,
     with_turn_summary,
 )
-from yoke.http.services.session_runtime.interruption import persist_interruption
 from yoke.session.admissions import INPUT_ID_METADATA_KEY, AdmissionRecord
 from yoke.session.interrupt import interrupted_turn_snapshot
-from tests.yoke.http.test_attachment_continuation import RecordingProvider, app_for
 
 
 @pytest.mark.parametrize("mode", ["missing", "persisted", "continuation", "empty"])
@@ -108,7 +107,7 @@ def test_interruption_only_copies_and_appends_new_entries(
     )
     with TestClient(app):
         runtime = app.state.runtime_registry.get_or_start("session-a")
-        snapshot = runtime._snapshot()
+        snapshot = runtime.persistence.snapshot()
         if dangling and mode != "empty":
             assert tail_open_tool_call_ids(snapshot.active_path_entries) == (
                 "unfinished",
@@ -153,8 +152,12 @@ def test_interruption_only_copies_and_appends_new_entries(
 
         with monkeypatch.context() as guarded:
             guarded.setattr(ConversationEntry, "model_copy", guard_copy)
-            guarded.setattr(runtime, "_save_entries_locked", reject_full_save)
-            persist_interruption(runtime, admission, duration_seconds=120, tool_count=3)
+            guarded.setattr(
+                runtime.persistence, "_save_entries_locked", reject_full_save
+            )
+            runtime.persistence.persist_interruption(
+                admission, duration_seconds=120, tool_count=3
+            )
 
         assert [
             entry.model_dump() for entry in snapshot.record.conversation_entries
@@ -205,7 +208,7 @@ def test_interruption_only_copies_and_appends_new_entries(
         assert store.index_entry("session-a").entry_count == len(
             saved.conversation_entries
         )
-        assert runtime._snapshot().record.leaf_id == saved.leaf_id
+        assert runtime.persistence.snapshot().record.leaf_id == saved.leaf_id
         tagged_users = [
             e
             for e in saved.conversation_entries

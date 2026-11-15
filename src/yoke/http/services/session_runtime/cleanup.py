@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import Future
 from dataclasses import dataclass
-import logging
 from typing import TYPE_CHECKING
 
 from yoke.agent.loop.agent import RuntimeAgent
@@ -53,7 +53,7 @@ class AgentCleanup:
                     return False
                 self.agent_terminal = True
         if self.provider is None:
-            self.provider = self.owner._remove_terminal_agent(self.agent)
+            self.provider = self.owner.remove_terminal_agent(self.agent)
         if self.provider is not None:
             close_provider = getattr(self.provider, "close", None)
             try:
@@ -67,7 +67,7 @@ class AgentCleanup:
                         self.owner.session_id,
                     )
                 return False
-            self.owner._remove_terminal_provider(self.provider)
+            self.owner.remove_terminal_provider(self.provider)
             self.provider = None
-        self.owner._finish_cleanup(self)
+        self.owner.finish_cleanup(self)
         return True

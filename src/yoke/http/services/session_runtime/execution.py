@@ -10,6 +10,7 @@ from typing import Literal
 
 from yoke.agent.loop import AgentResult
 from yoke.agent.models import ConversationEntry
+from yoke.agent.loop.agent import RuntimeAgent
 from yoke.http.services.runtime_context_usage import RuntimeContextUsageState
 from yoke.http.services.runtime_start import RuntimeAppendPersistence
 from yoke.session.admissions import AdmissionRecord
@@ -53,7 +54,7 @@ class TurnExecution:
 class TurnOutcome:
     """Worker result handed back to the asyncio controller."""
 
-    agent: object | None
+    agent: RuntimeAgent | None
     result: AgentResult | None = None
     error: BaseException | None = None
     partial_entries: list[ConversationEntry] | None = None

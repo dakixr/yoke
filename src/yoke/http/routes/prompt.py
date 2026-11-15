@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import Query
-from fastapi import Request
+import asyncio
+
+from fastapi import APIRouter, Depends, Query, Request
 
 from yoke.http.auth import require_auth
 from yoke.http.models.drain import DrainData, DrainResponse
-from yoke.http.models.prompt import PromptAdmissionRequest
-from yoke.http.models.prompt import PromptAdmissionResponse
-from yoke.http.models.prompt import QueuePatchRequest
-from yoke.http.models.prompt import QueueResponse
-from yoke.http.models.session import InterruptData
-from yoke.http.models.session import InterruptResponse
-from yoke.http.models.session import WaitResponse
+from yoke.http.models.prompt import (
+    PromptAdmissionRequest,
+    PromptAdmissionResponse,
+    QueuePatchRequest,
+    QueueResponse,
+)
+from yoke.http.models.session import InterruptData, InterruptResponse, WaitResponse
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
 from yoke.http.services.session_service import SessionService
-
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -63,9 +61,11 @@ async def admit_prompt(
     session_id: str,
     body: PromptAdmissionRequest,
 ) -> PromptAdmissionResponse:
-    receipt = _pending(request).admit(session_id, body)
+    receipt = await asyncio.get_running_loop().run_in_executor(
+        _registry(request).executor, _pending(request).admit, session_id, body
+    )
     if body.resume:
-        await _registry(request).wake(session_id)
+        await _registry(request).get_or_start(session_id).wake()
     return PromptAdmissionResponse(data=receipt)
 
 
@@ -88,8 +88,10 @@ async def patch_queue(
     session_id: str,
     body: QueuePatchRequest,
 ) -> QueueResponse:
-    data = _pending(request).patch_queue(session_id, body)
-    await _registry(request).wake(session_id)
+    data = await asyncio.get_running_loop().run_in_executor(
+        _registry(request).executor, _pending(request).patch_queue, session_id, body
+    )
+    await _registry(request).get_or_start(session_id).wake()
     return QueueResponse(data=data)
 
 

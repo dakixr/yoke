@@ -2,33 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import UTC
-from datetime import datetime
 import secrets
+from datetime import UTC, datetime
 from typing import Literal
 
-from yoke.http.errors import ApiError
-from yoke.http.models.prompt import PromptAdmissionReceipt
-from yoke.http.models.prompt import PromptAdmissionRequest
-from yoke.http.models.prompt import PromptInput
-from yoke.http.models.prompt import QueueData
-from yoke.http.models.prompt import QueuePatchRequest
-from yoke.http.services.event_broker import EventService
-from yoke.http.services.upload_service import UploadService
-from yoke.http.services.session_runtime.prompt_input import validate_prompt
-from yoke.session import SessionStore
-from yoke.session.workspace import (
-    WorkspaceBusy,
-    inspect_workspace,
-    require_session_workspace,
-    workspace_lease,
+from yoke.http.errors import ApiError, session_not_found
+from yoke.http.models.prompt import (
+    PromptAdmissionReceipt,
+    PromptAdmissionRequest,
+    PromptInput,
+    QueueData,
+    QueuePatchRequest,
 )
-from yoke.session.workspace_inputs import reconcile_workspace_inputs
-from yoke.session.admissions import AdmissionAttachment
-from yoke.session.admissions import AdmissionRecord
-from yoke.session.admissions import AdmissionStore
-from yoke.session.queue import PersistedPendingInput
-from yoke.session.queue import prompt_queue_transaction
+from yoke.http.services.event_broker import EventService
 from yoke.http.services.prompt_queue import (
     apply_operation as _apply_operation,
     fingerprint as _fingerprint,
@@ -38,6 +24,18 @@ from yoke.http.services.prompt_queue import (
     queue_data as _queue_data,
     receipt as _receipt,
 )
+from yoke.http.services.session_runtime.prompt_input import validate_prompt
+from yoke.http.services.upload_service import UploadService
+from yoke.session import SessionStore
+from yoke.session.admissions import AdmissionAttachment, AdmissionRecord, AdmissionStore
+from yoke.session.queue import PersistedPendingInput, prompt_queue_transaction
+from yoke.session.workspace import (
+    WorkspaceBusy,
+    inspect_workspace,
+    require_session_workspace,
+    workspace_lease,
+)
+from yoke.session.workspace_inputs import reconcile_workspace_inputs
 
 
 class PendingInputService:
@@ -378,7 +376,7 @@ class PendingInputService:
     def _require_session(self, session_id: str):  # noqa: ANN202
         record = self.store.summary_record(session_id)
         if record is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
+            raise session_not_found()
         return record
 
     def _validate_prompt(self, session_id: str, prompt: PromptInput) -> None:

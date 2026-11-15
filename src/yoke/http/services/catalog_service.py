@@ -2,24 +2,33 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 from threading import Lock
-import time
 from typing import Any
 
-from yoke.ai.providers.resolution import available_provider_names
-from yoke.ai.providers.resolution import list_provider_models
-from yoke.ai.providers.resolution import list_provider_readiness
-from yoke.ai.providers.model_selection import compatible_reasoning_effort_for_model
-from yoke.ai.providers.model_selection import default_reasoning_effort_for_model
-from yoke.cli.config.default_model import load_effective_yoke_config
-from yoke.cli.config.default_model import parse_config_default_model
+from yoke.ai.providers.model_selection import (
+    compatible_reasoning_effort_for_model,
+    default_reasoning_effort_for_model,
+)
+from yoke.ai.providers.resolution import (
+    available_provider_names,
+    list_provider_models,
+    list_provider_readiness,
+)
+from yoke.cli.config.default_model import (
+    load_effective_yoke_config,
+    parse_config_default_model,
+)
 from yoke.http.errors import ApiError
-from yoke.http.models.catalog import ModelCapabilities
-from yoke.http.models.catalog import ModelInfo
-from yoke.http.models.catalog import ModelListResponse
-from yoke.http.models.catalog import ProviderInfo
-from yoke.http.models.catalog import ProviderListResponse
+from yoke.http.models.catalog import (
+    ModelCapabilities,
+    ModelInfo,
+    ModelListResponse,
+    ProviderInfo,
+    ProviderListResponse,
+)
 from yoke.http.models.common import LocationInfo
 from yoke.http.models.session import SessionSelection
 from yoke.http.services.redaction import redact_public_value
@@ -92,6 +101,11 @@ class CatalogService:
             try:
                 models = self._provider_models(provider_name)
             except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "Model catalog failed for %s (%s)",
+                    provider_name,
+                    type(exc).__name__,
+                )
                 if provider is not None:
                     raise ApiError(
                         503,

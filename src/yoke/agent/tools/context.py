@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.agent.models import Message
-from yoke.ai.providers.base import ModelCatalogProvider
-from yoke.ai.providers.base import Provider
+from yoke.ai.providers.base import ModelCatalogProvider, Provider
 
 if TYPE_CHECKING:
     from yoke.agent.tools.base import LocalTool
+    from yoke.http.services.client_session import ClientSession
+    from yoke.mcp.config import McpSessionPolicy
 
 
 def never_cancel() -> bool:
@@ -43,6 +43,14 @@ class ModelIdentity:
         return f"{self.provider_name}:{self.model_id}"
 
 
+@dataclass(slots=True)
+class ToolSessionContext:
+    """Session-local tool policy, independent of provider identity."""
+
+    mcp_policy: McpSessionPolicy | None = None
+    client_session: ClientSession | None = None
+
+
 @dataclass(slots=True, frozen=True)
 class ToolRegistrationContext:
     """Context passed to a provider-aware tool registration callback."""
@@ -51,6 +59,9 @@ class ToolRegistrationContext:
     home: Path
     provider: Provider
     model: ModelIdentity
+    session: ToolSessionContext = field(
+        default_factory=ToolSessionContext, kw_only=True
+    )
     cancel_requested: Callable[[], bool] = never_cancel
 
     @property
@@ -87,6 +98,9 @@ class ToolRuntimeContext:
     home: Path
     provider: Provider
     model: ModelIdentity
+    session: ToolSessionContext = field(
+        default_factory=ToolSessionContext, kw_only=True
+    )
     cancel_requested: Callable[[], bool] = never_cancel
     command_process_manager: object | None = None
     seen_command_completion_events: set[str] | None = None

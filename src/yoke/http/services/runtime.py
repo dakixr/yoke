@@ -1,90 +1,53 @@
-"""One serialized HTTP-owned execution lane for a Yoke session."""
+"""The asyncio admission and lifecycle gate for one HTTP-owned session."""
 
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import Executor
-from datetime import UTC
-from datetime import datetime
 import logging
-import secrets
-from pathlib import Path
-from threading import Event
-from threading import Lock
-from time import monotonic
 from collections.abc import Callable
-from typing import Literal
-from typing import TypeVar
+from concurrent.futures import Executor
+from datetime import UTC, datetime
+from functools import partial
+from threading import Event
+from time import monotonic
 
-from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.compaction import force_compact_agent
-from yoke.agent.models import AgentContext
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
 from yoke.agent.observability import ToolTraceStore
-from yoke.agent.provider_selection import ProviderSessionState
-from yoke.agent.provider_selection import switch_agent_provider_model
-from yoke.agent.skills import activate_skills
-from yoke.agent.skills import load_skill_registry
-from yoke.agent.skills.paths import default_skill_dirs
-from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.agent.session_tree import SessionTree
 from yoke.http.models.session import ActiveRuntimeInfo
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
-from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.runtime_factory import SessionAgentFactory
-from yoke.http.services.runtime_factory import http_session_usage_metric_context
+from yoke.http.services.runtime_title import SessionTitleAutomation
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
-from yoke.http.services.session_read_cache import SessionReadSnapshot
-from yoke.http.services.runtime_start import RuntimeAppendPersistence
-from yoke.http.services.runtime_start import indexed_runtime_start
-from yoke.http.services.runtime_persistence import active_skill_list
-from yoke.http.services.runtime_persistence import normalized_runtime_entry_count
-from yoke.http.services.runtime_persistence import tag_input_entry
-from yoke.http.services.runtime_persistence import tag_continuation_entries
-from yoke.http.services.runtime_persistence import with_turn_summary
-from yoke.http.services.session_runtime import SessionRuntimeResources
-from yoke.http.services.session_runtime.controller import launch_controller
-from yoke.http.services.session_runtime.workers import WorkerTracker
+from yoke.http.services.session_runtime.agent_events import AgentEvents
+from yoke.http.services.session_runtime.configuration import RuntimeConfiguration
+from yoke.http.services.session_runtime.controller import TurnController
 from yoke.http.services.session_runtime.execution import (
     ReservedInput,
     TurnExecution,
-    TurnOutcome,
-    SessionOperation,
 )
-from yoke.http.services.session_runtime.inputs import reserve_next_input
-from yoke.http.services.session_runtime.interruption import persist_interruption
-from yoke.http.services.session_runtime.prompt_input import (
-    user_message as admission_user_message,
-    validate_execution_images,
-)
+from yoke.http.services.session_runtime.finalize import TurnFinalizer
+from yoke.http.services.session_runtime.inputs import RuntimeInputs
+from yoke.http.services.session_runtime.operations import SessionOperations
+from yoke.http.services.session_runtime.persistence import TurnPersistence
+from yoke.http.services.session_runtime.resources import SessionRuntimeResources
+from yoke.http.services.session_runtime.status import RuntimeStatus
+from yoke.http.services.session_runtime.turn_worker import TurnWorker
+from yoke.http.services.session_runtime.workers import WorkerTracker
 from yoke.http.services.session_runtime.workspace import (
-    mutates_workspace,
-    pause_workspace_input,
     require_runtime_workspace,
-    synchronize_runtime_workspace,
-    uses_workspace,
-    workspace_ready,
 )
-from yoke.session.workspace import WorkspaceUnavailable, workspace_lease
-from yoke.http.services.runtime_title import SessionTitleAutomation
-from yoke.session import SessionRecord
-from yoke.session import SessionStore
-from yoke.agent.activity import activity_status_for_event
-from yoke.session.admissions import AdmissionRecord
 from yoke.mcp.config import McpSessionPolicy
-from yoke.http.services.session_runtime.configuration import apply_mcp_policy
+from yoke.session import SessionRecord, SessionStore
+from yoke.session.admissions import AdmissionRecord
+from yoke.session.workspace import WorkspaceBusy, WorkspaceUnavailable, workspace_lease
 
-type RuntimeState = Literal["idle", "running", "stopping", "waiting_input", "error"]
-T = TypeVar("T")
 LOGGER = logging.getLogger(__name__)
 
 
 class SessionRuntime:
-    """Serialize one session while allowing retired workers to finish safely."""
+    """Serialize admission and lifecycle through one asyncio gate."""
 
     def __init__(
         self,
@@ -109,59 +72,88 @@ class SessionRuntime:
         self.message_index = message_index
         self.indexed_runtime_seed = indexed_runtime_seed
         index_entry = store.index_entry(session_id)
-        self._event_location = index_entry.root if index_entry is not None else None
         self.executor = executor
         self.active_slots = active_slots
-        self._lock = asyncio.Lock()
-        self._persistence_lock = Lock()
+        self.gate = asyncio.Lock()
         self.resources = SessionRuntimeResources(
             session_id=session_id,
             agent_factory=agent_factory,
             executor=executor,
-            on_process_change=self._on_process_change,
+            on_process_change=self.on_process_change,
             store=store,
         )
         self.tool_traces = ToolTraceStore()
         self.workers = WorkerTracker()
-        self._active: TurnExecution | None = None
-        self._operation: SessionOperation | None = None
-        self._automatic_title = SessionTitleAutomation(
+        self.activity = RuntimeStatus(
+            session_id, events, index_entry.root if index_entry is not None else None
+        )
+        self.persistence = TurnPersistence(
+            session_id, store, pending_inputs, read_cache
+        )
+        self.automatic_title = SessionTitleAutomation(
             session_id,
             store=store,
             events=events,
             read_cache=read_cache,
             agent_factory=agent_factory,
             executor=executor,
-            persistence_lock=self._persistence_lock,
-            user_message_factory=self._user_message_for_admission,
+            persistence_lock=self.persistence.lock,
+            user_message_factory=self.persistence.user_message,
         )
         self._turn_counter = 0
-        self._state: RuntimeState = "idle"
-        self._last_error: str | None = None
-        self._activity_status: str | None = None
-        self._active_tool_call_ids: dict[int, set[str]] = {}
-
-    set_mcp_policy = apply_mcp_policy
+        self.inputs = RuntimeInputs(self)
+        self.configuration = RuntimeConfiguration(self)
+        self.operations = SessionOperations(self)
+        self.agent_events = AgentEvents(self)
+        self.turn_worker = TurnWorker(self)
+        self.finalizer = TurnFinalizer(self)
+        self.controller = TurnController(self)
+        self.select_model = self.operations.select_model
+        self.compact = self.operations.compact
+        self.activate_skill = self.configuration.activate_skill
+        self.set_tools = self.configuration.set_tools
+        self.set_mcp_policy = self.configuration.set_mcp_policy
 
     async def wake(self) -> None:
         """Start eligible work or apply a pending steer at a safe control boundary."""
-        async with self._lock:
-            if not workspace_ready(self):
+        async with self.gate:
+            try:
+                await self.run_blocking(require_runtime_workspace, self)
+            except WorkspaceUnavailable as exc:
+                if self.activity.active is None and self.activity.operation is None:
+                    self.activity.state = "error"
+                    self.activity.last_error = str(exc)
+                    self.activity.best_effort_publish_activity(None)
                 return
-            self._reopen_archived_locked()
-            if self._operation is not None:
+            await self.run_blocking(self._reopen_archived_locked)
+            if self.activity.operation is not None:
                 return
-            if self._active is not None:
-                steering = reserve_next_input(self, allow_queue=False, recover=False)
+            if self.activity.active is not None:
+                steering = await self.reserve_input(allow_queue=False, recover=False)
                 if steering is None:
                     return
                 with steering.workspace_use:
-                    await self._retire_locked(reason="steering")
-                    self._start_locked(steering)
+                    await self.finalizer.retire(reason="steering")
+                    self.start(steering)
                 return
-            admission = self._recover_or_next_locked()
+            admission = await self.reserve_input()
             if admission is not None:
-                self._start_locked(admission)
+                self.start(admission)
+
+    async def reserve_input(
+        self, *, allow_queue: bool = True, recover: bool = True
+    ) -> ReservedInput | None:
+        """Recover input on a worker and report workspace failures on the loop."""
+        try:
+            return await self.run_blocking(
+                self.inputs.reserve, allow_queue=allow_queue, recover=recover
+            )
+        except WorkspaceUnavailable as exc:
+            if self.activity.active is None and self.activity.operation is None:
+                self.activity.state = "error"
+                self.activity.last_error = str(exc)
+                self.activity.best_effort_publish_activity(None)
+            return None
 
     def _reopen_archived_locked(self) -> None:
         record = self.store.summary_record(self.session_id)
@@ -186,11 +178,11 @@ class SessionRuntime:
 
     async def interrupt(self) -> tuple[bool, int | None]:
         """Retire the current generation without consuming queued work."""
-        async with self._lock:
-            if self._active is None:
+        async with self.gate:
+            if self.activity.active is None:
                 return False, None
-            turn_id = self._active.turn_id
-            await self._retire_locked(reason="user")
+            turn_id = self.activity.active.turn_id
+            await self.finalizer.retire(reason="user")
             return True, turn_id
 
     async def wait(self, timeout_seconds: float | None = None) -> ActiveRuntimeInfo:
@@ -198,14 +190,14 @@ class SessionRuntime:
 
         async def wait_idle() -> None:
             while True:
-                async with self._lock:
-                    if self._active is None and self._operation is None:
+                async with self.gate:
+                    if self.activity.active is None and self.activity.operation is None:
                         return
                     task = (
-                        self._active.task
-                        if self._active is not None
-                        else self._operation.task
-                        if self._operation is not None
+                        self.activity.active.task
+                        if self.activity.active is not None
+                        else self.activity.operation.task
+                        if self.activity.operation is not None
                         else None
                     )
                 if task is None:
@@ -221,11 +213,11 @@ class SessionRuntime:
 
     async def status(self) -> ActiveRuntimeInfo:
         """Return process-local activity without loading durable session metadata."""
-        async with self._lock:
-            active = self._active
-            operation = self._operation
+        async with self.gate:
+            active = self.activity.active
+            operation = self.activity.operation
             return ActiveRuntimeInfo(
-                state=self._state,
+                state=self.activity.state,
                 turn_id=active.turn_id if active is not None else None,
                 started_at=(
                     active.started_at
@@ -234,149 +226,45 @@ class SessionRuntime:
                     if operation is not None
                     else None
                 ),
-                activity=self._activity_status,
-                last_error=self._last_error,
+                activity=self.activity.activity,
+                last_error=self.activity.last_error,
             )
 
-    async def idle_mutation(self, mutation: Callable[[], T]) -> T:
+    async def idle_mutation[T](self, mutation: Callable[[], T]) -> T:
         """Run a synchronous session mutation while prompt starts are excluded."""
-        async with self._lock:
-            if self._active is not None or self._operation is not None:
-                from yoke.http.errors import ApiError
 
-                raise ApiError(
-                    409,
-                    "session_busy",
-                    "Session must be idle for this operation.",
-                )
+        def mutate() -> T:
             with workspace_lease(self.store, self.session_id):
+                self.resources.synchronize_workspace()
                 return mutation()
 
-    async def select_model(
-        self,
-        *,
-        provider_name: str,
-        model_id: str,
-        reasoning_effort: str | None,
-    ) -> ProviderSessionState:
-        """Apply one provider/model selection while the session is idle."""
-        async with self._lock:
-            self._require_no_work_locked()
-            require_runtime_workspace(self)
-            operation = self._new_operation("selection")
-            self._operation = operation
-            task = asyncio.create_task(
-                self._run_selection(
-                    operation,
-                    provider_name=provider_name,
-                    model_id=model_id,
-                    reasoning_effort=reasoning_effort,
-                ),
-                name=f"yoke-http-selection-{self.session_id}",
-            )
-            operation.task = task
-        result = await task
-        assert isinstance(result, ProviderSessionState)
-        return result
+        async with self.gate:
+            self.activity.require_idle()
+            return await self.run_blocking(mutate)
 
-    async def compact(self) -> str:
-        """Schedule one manual compaction and return its operation identity."""
-        async with self._lock:
-            self._require_no_work_locked()
-            require_runtime_workspace(self)
-            operation = self._new_operation("compaction")
-            self._operation = operation
-            self._state = "running"
-            self._last_error = None
-            self._activity_status = "Compacting"
-            self.events.durable(
-                self.session_id,
-                "session.compaction.started",
-                {"operationID": operation.id, "reason": "manual"},
-                location=self._event_location,
-            )
-            self._publish_activity(None)
-            task = asyncio.create_task(
-                self._run_compaction(operation),
-                name=f"yoke-http-compaction-{self.session_id}",
-            )
-            operation.task = task
-            return operation.id
-
-    @mutates_workspace
-    async def activate_skill(self, skill_name: str) -> ActiveSkill:
-        """Activate one skill and append the same tree marker used by the CLI."""
-        async with self._lock:
-            self._require_no_work_locked()
-            require_runtime_workspace(self)
-            record = self._record()
-            with self.resources.lock:
-                primary = self.resources.primary_locked()
-                registry = (
-                    primary.skill_registry
-                    if primary is not None and primary.skill_registry is not None
-                    else load_skill_registry(
-                        default_skill_dirs(Path(record.root or Path.cwd()))
-                    )
-                )
-                activation = activate_skills(
-                    registry=registry,
-                    active_skills=(
-                        primary.active_skills
-                        if primary is not None
-                        else record.active_skills
-                    ),
-                    names=[skill_name],
-                )
-                if activation.missing:
-                    from yoke.http.errors import ApiError
-
-                    raise ApiError(
-                        404,
-                        "skill_not_found",
-                        f"Unknown skill: {skill_name}",
-                    )
-                tree = SessionTree.import_legacy(
-                    record.conversation_entries,
-                    record.leaf_id,
-                )
-                tree.append_active_skills(activation.activated_skills)
-                exported = tree.export_for_persistence()
-                self._persist_entries(
-                    list(exported.entries),
-                    input_id=None,
-                    active_skills=activation.active_skills,
-                )
-                if primary is not None:
-                    primary.active_skills = [
-                        skill.model_copy(deep=True)
-                        for skill in activation.active_skills
-                    ]
-                    active = tree.export_active_for_persistence()
-                    primary.load_owned_conversation(
-                        list(active.entries),
-                        available_skills=primary.available_skills,
-                        active_skills=activation.active_skills,
-                    )
-                    primary.refresh_tools(force=True)
-            activated = activation.activated_skills[-1]
-            self.events.durable(
-                self.session_id,
-                "session.skill.activated",
-                {"skill": activated.name},
-                location=self._event_location,
-            )
-            return activated.model_copy(deep=True)
+    async def run_blocking[T, **P](
+        self, function: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+    ) -> T:
+        future = asyncio.get_running_loop().run_in_executor(
+            self.executor, partial(function, *args, **kwargs)
+        )
+        try:
+            return await asyncio.shield(future)
+        except asyncio.CancelledError:
+            await asyncio.shield(future)
+            raise
 
     async def close(self) -> None:
         """Stop current work and release the primary runtime."""
         operation_task: asyncio.Task[object] | None = None
         try:
-            async with self._lock:
-                if self._active is not None:
-                    await self._retire_locked(reason="shutdown")
+            async with self.gate:
+                if self.activity.active is not None:
+                    await self.finalizer.retire(reason="shutdown")
                 operation_task = (
-                    self._operation.task if self._operation is not None else None
+                    self.activity.operation.task
+                    if self.activity.operation is not None
+                    else None
                 )
             if operation_task is not None:
                 try:
@@ -386,202 +274,13 @@ class SessionRuntime:
                         "Session operation failed during runtime shutdown: %s",
                         self.session_id,
                     )
-            await self._automatic_title.close()
+            await self.automatic_title.close()
         finally:
             await self.resources.close()
-
-    async def _run_selection(
-        self,
-        operation: SessionOperation,
-        *,
-        provider_name: str,
-        model_id: str,
-        reasoning_effort: str | None,
-    ) -> ProviderSessionState:
-        await self.active_slots.acquire()
-        try:
-            loop = asyncio.get_running_loop()
-            state = await loop.run_in_executor(
-                self.executor,
-                self._select_sync,
-                provider_name,
-                model_id,
-                reasoning_effort,
-            )
-        except BaseException as exc:
-            await self._finish_operation_error(operation, exc)
-            raise
-        finally:
-            self.active_slots.release()
-        await self._finish_operation_success(operation)
-        return state
-
-    @uses_workspace
-    def _select_sync(
-        self,
-        provider_name: str,
-        model_id: str,
-        reasoning_effort: str | None,
-    ) -> ProviderSessionState:
-        snapshot = self._snapshot()
-        record = snapshot.record
-        agent = self.resources.ensure_primary(
-            record,
-            load_state=True,
-            active_entries=snapshot.owned_active_path(),
-        )
-        if not isinstance(agent, RuntimeAgent):
-            raise ValueError("Model switching requires a RuntimeAgent-backed session.")
-        try:
-            with http_session_usage_metric_context(record):
-                state = switch_agent_provider_model(
-                    agent,
-                    provider_name=provider_name,
-                    model_id=model_id,
-                    reasoning_effort=reasoning_effort,
-                    session_id=self.session_id,
-                    retire_previous=self.resources.retire_provider,
-                )
-        finally:
-            self.resources.register_provider(agent.provider)
-        updated = self.store.set_selection(
-            self.session_id,
-            provider_name=state.provider_name,
-            model_id=state.model_id,
-            reasoning_effort=state.reasoning_effort,
-            context_window_tokens=state.context_window_tokens,
-            existing_record=record,
-        )
-        self.events.durable(
-            self.session_id,
-            "session.selection.changed",
-            {
-                "provider": updated.provider_name,
-                "model": updated.model_id,
-                "reasoningEffort": updated.reasoning_effort,
-            },
-            location=updated.root,
-        )
-        return state
-
-    async def _run_compaction(self, operation: SessionOperation) -> object:
-        await self.active_slots.acquire()
-        try:
-            loop = asyncio.get_running_loop()
-            payload = await loop.run_in_executor(self.executor, self._compact_sync)
-        except Exception as exc:  # accepted operations settle into runtime status
-            await self._finish_operation_error(operation, exc)
-            return {"compacted": False}
-        finally:
-            self.active_slots.release()
-        await self._finish_operation_success(operation)
-        return payload
-
-    @uses_workspace
-    def _compact_sync(self) -> dict[str, object]:
-        snapshot = self._snapshot()
-        record = snapshot.record
-        agent = self.resources.ensure_primary(
-            record,
-            load_state=True,
-            active_entries=snapshot.owned_active_path(),
-        )
-        if not isinstance(agent, RuntimeAgent):
-            raise ValueError("Compaction requires a RuntimeAgent-backed session.")
-        with http_session_usage_metric_context(record):
-            compacted = force_compact_agent(
-                agent,
-                agent.messages,
-                conversation_entries=agent.conversation_entries,
-            )
-        payload: dict[str, object]
-        if compacted is None:
-            payload = {"compacted": False}
-        else:
-            self._persist_entries(
-                compacted.conversation_entries,
-                input_id=None,
-                active_skills=agent.active_skills,
-            )
-            payload = {
-                "compacted": True,
-                "summarizedMessages": len(compacted.preparation.messages_to_summarize),
-                "keptMessages": len(compacted.preparation.kept_messages),
-                "messageCount": len(compacted.messages),
-                "inputTokens": compacted.preparation.estimate.input_tokens,
-                "compactedInputTokens": compacted.compacted_estimate.input_tokens,
-            }
-        self.events.durable(
-            self.session_id,
-            "session.compaction.ended",
-            payload,
-            location=self._event_location,
-        )
-        return payload
-
-    async def _finish_operation_success(self, operation: SessionOperation) -> None:
-        async with self._lock:
-            if self._operation is not operation:
-                return
-            self._operation = None
-            self._last_error = None
-            self._activity_status = None
-            next_admission = self._recover_or_next_locked()
-            if next_admission is not None:
-                self._start_locked(next_admission)
-            else:
-                self._state = "error" if self._last_error else "idle"
-                self._publish_activity(None)
-
-    async def _finish_operation_error(
-        self,
-        operation: SessionOperation,
-        error: BaseException,
-    ) -> None:
-        async with self._lock:
-            if self._operation is not operation:
-                return
-            self._operation = None
-            self._state = "error"
-            self._last_error = str(error)
-            self._activity_status = None
-            self._best_effort_durable(
-                f"session.{operation.kind}.failed",
-                {"operationID": operation.id, "error": self._last_error},
-            )
-            self._best_effort_publish_activity(None)
-            if operation.kind == "compaction":
-                next_admission = self._recover_or_next_locked()
-                if next_admission is not None:
-                    self._start_locked(next_admission)
-
-    def _new_operation(
-        self,
-        kind: Literal["selection", "compaction"],
-    ) -> SessionOperation:
-        return SessionOperation(
-            id=f"op_{secrets.token_hex(12)}",
-            kind=kind,
-            started_at=datetime.now(UTC).isoformat(),
-        )
-
-    def _require_no_work_locked(self) -> None:
-        if self._active is not None or self._operation is not None:
-            from yoke.http.errors import ApiError
-
-            raise ApiError(
-                409,
-                "session_busy",
-                "Session must be idle for this operation.",
-            )
 
     def process_manager(self) -> CommandProcessManager | None:
         """Return the live command manager when this runtime has built an agent."""
         return self.resources.process_manager()
-
-    def tool_trace_store(self) -> ToolTraceStore:
-        """Return this runtime's shared live tool trace store."""
-        return self.tool_traces
 
     def latest_turn_id(self) -> int:
         """Return the newest process-local turn id without touching persistence."""
@@ -589,91 +288,30 @@ class SessionRuntime:
 
     def cancel_automatic_title(self) -> None:
         """Prevent an in-flight automatic title from replacing an explicit edit."""
-        self._automatic_title.cancel()
-
-    def _record(self) -> SessionRecord:
-        """Return the shared signature-consistent record snapshot for this session."""
-        return self._snapshot().record
-
-    def _record_for_execution(self, execution: TurnExecution) -> SessionRecord:
-        """Return turn metadata without forcing a full parse for indexed starts."""
-        if execution.append_persistence is None:
-            return self._record()
-        record = self.store.summary_record(self.session_id)
-        if record is None:
-            raise FileNotFoundError(self.session_id)
-        if record.root is not None:
-            self._event_location = record.root
-        return record
-
-    def _snapshot(self) -> SessionReadSnapshot:
-        """Return the shared parsed snapshot and keep event location current."""
-        snapshot = self.read_cache.get(self.session_id)
-        record = snapshot.record
-        if record.root is not None:
-            self._event_location = record.root
-        return snapshot
+        self.automatic_title.cancel()
 
     def session_enabled_tool_names(self) -> set[str] | None:
         """Return the process-local tool allowlist without loading an agent."""
-        synchronize_runtime_workspace(self)
+        self.resources.synchronize_workspace()
         return self.resources.session_enabled_tool_names()
 
     def mcp_session_policy(self) -> McpSessionPolicy:
         """Return a defensive process-local MCP policy snapshot."""
-        synchronize_runtime_workspace(self)
+        self.resources.synchronize_workspace()
         return self.resources.mcp_session_policy()
 
-    @mutates_workspace
-    async def set_tools(
-        self,
-        *,
-        discovered_names: set[str],
-        default_enabled_names: set[str],
-        enabled: set[str],
-        disabled: set[str],
-    ) -> set[str]:
-        """Apply a session-only tool allowlist without changing config files."""
-        async with self._lock:
-            self._require_no_work_locked()
-            unknown = (enabled | disabled) - discovered_names
-            if unknown:
-                from yoke.http.errors import ApiError
-
-                raise ApiError(
-                    400,
-                    "unknown_tool",
-                    f"Unknown tools: {', '.join(sorted(unknown))}.",
-                )
-            next_enabled = self.resources.set_tools(
-                discovered_names=discovered_names,
-                default_enabled_names=default_enabled_names,
-                enabled=enabled,
-                disabled=disabled,
-            )
-            self.events.live(
-                "session.tool.config.changed",
-                {"enabled": sorted(next_enabled)},
-                session_id=self.session_id,
-                location=self._event_location,
-            )
-            return set(next_enabled)
-
-    def _recover_or_next_locked(self) -> ReservedInput | None:
-        return reserve_next_input(self)
-
-    def _start_locked(self, reserved: ReservedInput) -> None:
+    def start(self, reserved: ReservedInput) -> None:
         with reserved.workspace_use:
             try:
-                execution = self._launch_execution(reserved.admission)
+                execution = self.launch_execution(reserved.admission)
                 execution.workspace_use = reserved.workspace_use.pop_all()
             except BaseException as exc:
-                self._active = None
-                self._state = "error"
-                self._last_error = str(exc)
+                self.activity.active = None
+                self.activity.state = "error"
+                self.activity.last_error = str(exc)
                 raise
 
-    def _launch_execution(self, admission: AdmissionRecord) -> TurnExecution:
+    def launch_execution(self, admission: AdmissionRecord) -> TurnExecution:
         self._turn_counter += 1
         cold_start = (
             not self.resources.has_primary()
@@ -693,584 +331,34 @@ class SessionRuntime:
             cold_start=cold_start,
             automatic_title=automatic_title,
         )
-        self._active = execution
-        self._state = "running"
-        self._last_error = None
-        self._activity_status = "Loading session" if cold_start else "Thinking"
-        self._active_tool_call_ids = {execution.turn_id: set()}
-        self._publish_activity(execution)
-        launch_controller(self, execution)
+        self.activity.active = execution
+        self.activity.state = "running"
+        self.activity.last_error = None
+        self.activity.activity = "Loading session" if cold_start else "Thinking"
+        self.activity.tool_call_ids = {execution.turn_id: set()}
+        self.activity.publish_activity(execution)
+        self.controller.launch(execution)
         return execution
 
-    async def _retire_locked(self, *, reason: str) -> None:
-        execution = self._active
-        if execution is None:
-            return
-        self._state = "stopping"
-        execution.stop_event.set()
-        execution.retired_event.set()
-        self.tool_traces.retire_turn(execution.turn_id)
-        self._persist_interrupted_checkpoint(
-            execution.admission,
-            duration_seconds=monotonic() - execution.started_monotonic,
-            tool_count=execution.tool_count,
-        )
-        self.pending_inputs.settle(
-            self.session_id,
-            execution.admission.id,
-            outcome="stopped",
-        )
-        self.events.durable(
-            self.session_id,
-            "session.interrupted",
-            {
-                "inputID": execution.admission.id,
-                "turnID": execution.turn_id,
-                "reason": reason,
-            },
-            location=self._event_location,
-        )
-        self._release_slot(execution)
-        if execution.task is not None and not execution.worker_started:
-            execution.task.cancel()
-        self._active = None
-        self._state = "idle"
-        self._activity_status = None
-        self._active_tool_call_ids.pop(execution.turn_id, None)
-        self._publish_activity(None)
-
-    def _execute_sync(
-        self,
-        execution: TurnExecution,
-        loop: asyncio.AbstractEventLoop,
-    ) -> TurnOutcome:
-        turn_agent: object | None = None
-        try:
-            indexed = (
-                indexed_runtime_start(
-                    self.store,
-                    self.message_index,
-                    self.session_id,
-                    has_attachments=bool(execution.admission.attachments),
-                )
-                if self.indexed_runtime_seed
-                else None
-            )
-            snapshot: SessionReadSnapshot | None = None
-            if indexed is None:
-                snapshot = self._snapshot()
-                record = snapshot.record
-                active_entries = snapshot.runtime_active_path()
-                if record.leaf_id is not None:
-                    execution.append_persistence = RuntimeAppendPersistence(
-                        runtime_entry_count=normalized_runtime_entry_count(
-                            active_entries
-                        ),
-                        leaf_id=record.leaf_id,
-                        leaf_is_instruction=bool(
-                            active_entries
-                            and active_entries[-1].id == record.leaf_id
-                            and active_entries[-1].kind == "instruction"
-                        ),
-                    )
-            else:
-                record = indexed.record
-                active_entries = indexed.entries
-                execution.append_persistence = indexed.persistence
-                if record.root is not None:
-                    self._event_location = record.root
-            execution.baseline_entry_ids = {entry.id for entry in active_entries}
-            if execution.automatic_title and not execution.retired_event.is_set():
-                loop.call_soon_threadsafe(
-                    self._automatic_title.start,
-                    execution.admission,
-                )
-            if self._activity_status == "Loading session":
-                self._activity_status = "Thinking"
-                self._publish_activity(execution)
-            turn_agent = self._prepare_turn_agent(
-                record,
-                active_entries=active_entries,
-                snapshot=snapshot,
-            )
-            if isinstance(turn_agent, RuntimeAgent):
-                validate_execution_images(execution.admission, turn_agent.provider)
-            execution.context_usage.configure(
-                record.context_window_tokens,
-                (
-                    turn_agent.context_manager.max_total_tokens
-                    if isinstance(turn_agent, RuntimeAgent)
-                    else None
-                ),
-            )
-            user_message = (
-                None
-                if execution.admission.continuation
-                else self._user_message_for_admission(record, execution.admission)
-            )
-            # Construction can be slow enough for the directory to disappear
-            # after tool binding. Reject before the model sees the input so the
-            # admission remains recoverable instead of being falsely settled.
-            require_runtime_workspace(self)
-
-            def callback(event: str, payload: dict[str, object]) -> None:
-                self._on_agent_event(execution, event, payload)
-
-            with http_session_usage_metric_context(
-                record,
-                execution.admission.prompt,
-            ):
-                if isinstance(turn_agent, RuntimeAgent):
-
-                    def checkpoint(context: AgentContext) -> None:
-                        self._checkpoint(execution, turn_agent, context)
-
-                    execution.execution_started = True
-                    result = turn_agent.run(
-                        execution.admission.prompt,
-                        user_message=user_message,
-                        append_user_message=not execution.admission.continuation,
-                        on_event=callback,
-                        stop_requested=execution.stop_event.is_set,
-                        active_skills=record.active_skills,
-                        available_skills=turn_agent.available_skills,
-                        after_tool_result_appended=checkpoint,
-                        before_tool_call=(
-                            self.resources.client_session.before_tool(
-                                turn_agent.before_tool_call, execution.stop_event.is_set
-                            )
-                            if self.resources.client_session is not None
-                            else turn_agent.before_tool_call
-                        ),
-                    )
-                else:
-                    run = getattr(turn_agent, "run")
-                    kwargs: dict[str, object] = {
-                        "on_event": callback,
-                        "stop_requested": execution.stop_event.is_set,
-                    }
-                    if getattr(turn_agent, "supports_user_message", False):
-                        kwargs["user_message"] = user_message
-                    if execution.admission.continuation:
-                        kwargs["append_user_message"] = False
-                    execution.execution_started = True
-                    result = run(execution.admission.prompt, **kwargs)
-            return TurnOutcome(agent=turn_agent, result=result)
-        except BaseException as exc:  # worker boundary must report every failure
-            partial = getattr(exc, "partial_conversation_entries", None)
-            if partial is None and isinstance(turn_agent, RuntimeAgent):
-                partial = turn_agent.conversation_entries
-            return TurnOutcome(
-                agent=turn_agent,
-                error=exc,
-                partial_entries=list(partial) if partial is not None else None,
-            )
-
-    async def _finish_execution(
-        self,
-        execution: TurnExecution,
-        outcome: TurnOutcome,
-    ) -> None:
-        async with self._lock:
-            self._release_slot(execution)
-            if execution.retired_event.is_set() or self._active is not execution:
-                return
-            record = self._record_for_execution(execution)
-            if outcome.result is not None:
-                entries = with_turn_summary(
-                    outcome.result.conversation_entries or [],
-                    duration_seconds=monotonic() - execution.started_monotonic,
-                    tool_count=execution.tool_count,
-                )
-                if entries:
-                    self._persist_turn_entries(
-                        execution,
-                        entries,
-                        input_id=execution.admission.id,
-                        active_skills=(
-                            outcome.agent.active_skills
-                            if isinstance(outcome.agent, RuntimeAgent)
-                            else record.active_skills
-                        ),
-                    )
-                if outcome.result.status == "completed":
-                    self.resources.promote(outcome.agent)
-                    settlement = "completed"
-                else:
-                    settlement = "stopped"
-                self.pending_inputs.settle(
-                    self.session_id,
-                    execution.admission.id,
-                    outcome=settlement,
-                )
-                record = self._record_for_execution(execution)
-                self.events.durable(
-                    self.session_id,
-                    "session.message.updated",
-                    {
-                        "inputID": execution.admission.id,
-                        "turnID": execution.turn_id,
-                        "status": outcome.result.status,
-                        "leafID": record.leaf_id,
-                    },
-                    location=record.root,
-                )
-            else:
-                if outcome.partial_entries:
-                    partial_entries = with_turn_summary(
-                        outcome.partial_entries,
-                        duration_seconds=monotonic() - execution.started_monotonic,
-                        tool_count=execution.tool_count,
-                    )
-                    self._persist_turn_entries(
-                        execution,
-                        partial_entries,
-                        input_id=execution.admission.id,
-                    )
-                    record = self._record_for_execution(execution)
-                if (
-                    isinstance(outcome.error, WorkspaceUnavailable)
-                    and not execution.execution_started
-                ):
-                    pause_workspace_input(self, execution.admission)
-                else:
-                    self.pending_inputs.settle(
-                        self.session_id, execution.admission.id, outcome="failed"
-                    )
-                self._last_error = str(outcome.error or "Agent execution failed.")
-                self.events.durable(
-                    self.session_id,
-                    "session.runtime.failed",
-                    {
-                        "inputID": execution.admission.id,
-                        "turnID": execution.turn_id,
-                        "error": self._last_error,
-                    },
-                    location=record.root,
-                )
-            record = execution.context_usage.persist(
-                store=self.store,
-                events=self.events,
-                session_id=self.session_id,
-                record=record,
-            )
-            self._active = None
-            self._activity_status = None
-            self._active_tool_call_ids.pop(execution.turn_id, None)
-            next_admission = self._recover_or_next_locked()
-            if next_admission is not None:
-                self._start_locked(next_admission)
-            else:
-                self._state = "error" if self._last_error else "idle"
-                self._publish_activity(None)
-
-    async def _finish_execution_error(
-        self,
-        execution: TurnExecution,
-        error: BaseException,
-    ) -> None:
-        """Recover local controller state after uncertain final persistence."""
-        self._release_slot(execution)
-        LOGGER.error(
-            "HTTP runtime finalization failed for session %s input %s.",
-            self.session_id,
-            execution.admission.id,
-            exc_info=(type(error), error, error.__traceback__),
-        )
-        async with self._lock:
-            if self._active is not execution:
-                return
-            self._active = None
-            self._state = "error"
-            self._last_error = "Session finalization failed."
-            self._activity_status = None
-            self._active_tool_call_ids.pop(execution.turn_id, None)
-            self._best_effort_durable(
-                "session.runtime.failed",
-                {
-                    "inputID": execution.admission.id,
-                    "turnID": execution.turn_id,
-                    "error": self._last_error,
-                },
-            )
-            self._best_effort_publish_activity(None)
-
-    @uses_workspace
-    def _prepare_turn_agent(
-        self,
-        record: SessionRecord,
-        *,
-        active_entries: list[ConversationEntry] | None,
-        snapshot: SessionReadSnapshot | None,
-    ) -> object:
-        def load_active_entries() -> list[ConversationEntry]:
-            assert snapshot is not None
-            return snapshot.owned_active_path()
-
-        return self.resources.prepare_turn(
-            record,
-            active_entries=active_entries,
-            load_active_entries=load_active_entries,
-        )
-
-    def _checkpoint(
-        self,
-        execution: TurnExecution,
-        turn_agent: RuntimeAgent,
-        context: AgentContext,
-    ) -> None:
-        if execution.retired_event.is_set():
-            return
-        self._persist_turn_entries(
-            execution,
-            list(context.conversation_log.entries),
-            input_id=execution.admission.id,
-            active_skills=context.active_skills,
-        )
-
-    def _persist_interrupted_checkpoint(
-        self,
-        admission: AdmissionRecord,
-        *,
-        duration_seconds: float | None = None,
-        tool_count: int = 0,
-    ) -> None:
-        persist_interruption(
-            self, admission, duration_seconds=duration_seconds, tool_count=tool_count
-        )
-
-    def _user_message_for_admission(
-        self,
-        record: SessionRecord,
-        admission: AdmissionRecord,
-    ) -> Message:
-        return admission_user_message(
-            self.pending_inputs, self.session_id, record, admission
-        )
-
-    def _persist_entries(
-        self,
-        entries: list[ConversationEntry],
-        *,
-        input_id: str | None,
-        active_skills: object | None = None,
-    ) -> None:
-        with self._persistence_lock:
-            self._save_entries_locked(
-                entries,
-                input_id=input_id,
-                active_skills=active_skills,
-            )
-
-    def _persist_turn_entries(
-        self,
-        execution: TurnExecution,
-        entries: list[ConversationEntry],
-        *,
-        input_id: str | None,
-        active_skills: object | None = None,
-    ) -> None:
-        with self._persistence_lock:
-            # Interrupt persistence owns the saved branch once retirement wins.
-            # Recheck under the same lock used by both writers so a worker that
-            # passed an earlier checkpoint guard cannot overwrite that branch.
-            if execution.retired_event.is_set():
-                return
-            if execution.admission.continuation:
-                entries = tag_continuation_entries(
-                    entries, execution.admission.id, execution.baseline_entry_ids
-                )
-                input_id = None
-            persistence = execution.append_persistence
-            if persistence is None:
-                self._save_entries_locked(
-                    entries,
-                    input_id=input_id,
-                    active_skills=active_skills,
-                )
-                return
-            persistence.append(
-                self.store,
-                self.session_id,
-                entries,
-                input_id=input_id,
-                active_skills=active_skill_list(active_skills),
-            )
-
-    def _save_entries_locked(
-        self,
-        entries: list[ConversationEntry],
-        *,
-        input_id: str | None,
-        active_skills: object | None = None,
-    ) -> None:
-        current = self._record()
-        copied = [entry.model_copy(deep=True) for entry in entries]
-        if input_id is not None:
-            tag_input_entry(copied, input_id)
-        leaf_id = copied[-1].id if copied else current.leaf_id
-        resolved_skills = active_skill_list(active_skills)
-        skills = current.active_skills if resolved_skills is None else resolved_skills
-        self.store.save(
-            self.session_id,
-            [],
-            conversation_entries=copied,
-            leaf_id=leaf_id,
-            active_skills=skills,
-            skill_dirs=current.skill_dirs,
-            root=current.root,
-            title=current.title,
-            provider_name=current.provider_name,
-            model_id=current.model_id,
-            reasoning_effort=current.reasoning_effort,
-            context_window_tokens=current.context_window_tokens,
-            existing_record=current,
-        )
-
-    def _on_agent_event(
-        self,
-        execution: TurnExecution,
-        event: str,
-        payload: dict[str, object],
-    ) -> None:
-        if execution.retired_event.is_set():
-            return
-        traced_payload = dict(payload)
-        traced_payload["turn_id"] = execution.turn_id
-        self.tool_traces.record_event(event, traced_payload)
-        if execution.retired_event.is_set() or self._active is not execution:
-            return
-        active_tool_call_ids = self._active_tool_call_ids.setdefault(
-            execution.turn_id,
-            set(),
-        )
-        call_id = payload.get("tool_call_id")
-        if event == "tool_execution_start":
-            execution.tool_count += 1
-            if isinstance(call_id, str):
-                active_tool_call_ids.add(call_id)
-        elif event == "tool_execution_end" and isinstance(call_id, str):
-            active_tool_call_ids.discard(call_id)
-        next_activity = activity_status_for_event(
-            event,
-            payload,
-            current=self._activity_status or "Thinking",
-        )
-        if event == "tool_execution_end" and active_tool_call_ids:
-            next_activity = "Running tool"
-        if next_activity is not None and next_activity != self._activity_status:
-            self._activity_status = next_activity
-            self._publish_activity(execution)
-        usage_update = execution.context_usage.capture(
-            event,
-            payload,
-            turn_id=execution.turn_id,
-            input_id=execution.admission.id,
-        )
-        if event == "model_end" and usage_update is not None:
-            with self._persistence_lock:
-                execution.context_usage.persist_latest(
-                    store=self.store,
-                    session_id=self.session_id,
-                )
-            self.events.live(
-                "session.context.updated",
-                usage_update,
-                session_id=self.session_id,
-                location=self._event_location,
-            )
-        event_type = _PUBLIC_AGENT_EVENTS.get(event)
-        if event_type is None:
-            return
-        if execution.retired_event.is_set() or self._active is not execution:
-            return
-        if event == "context_usage":
-            data = usage_update or {}
-        else:
-            redacted = redact_public_value(payload)
-            data = dict(redacted) if isinstance(redacted, dict) else {"value": redacted}
-            data.pop("provider_result_projection", None)
-        if event != "context_usage":
-            data["turnID"] = execution.turn_id
-            data["inputID"] = execution.admission.id
-        self.events.live(
-            event_type,
-            data,
-            session_id=self.session_id,
-            location=self._event_location,
-        )
-
-    def _publish_activity(self, execution: TurnExecution | None) -> None:
-        if execution is not None and (
-            execution.retired_event.is_set() or self._active is not execution
-        ):
-            return
-        self.events.live(
-            "session.active.changed",
-            {
-                "state": self._state,
-                "turnID": execution.turn_id if execution is not None else None,
-                "startedAt": execution.started_at if execution is not None else None,
-                "error": self._last_error,
-                "activity": self._activity_status,
-            },
-            session_id=self.session_id,
-            location=self._event_location,
-        )
-
-    def _best_effort_durable(
-        self,
-        event_type: str,
-        data: dict[str, object],
-    ) -> None:
-        """Report a controller failure without making cleanup depend on the journal."""
-        try:
-            self.events.durable(
-                self.session_id,
-                event_type,
-                data,
-                location=self._event_location,
-            )
-        except Exception:  # noqa: BLE001
-            LOGGER.exception(
-                "Failed to journal %s for session %s.",
-                event_type,
-                self.session_id,
-            )
-
-    def _best_effort_publish_activity(
-        self,
-        execution: TurnExecution | None,
-    ) -> None:
-        """Publish terminal local state without making cleanup depend on the broker."""
-        try:
-            self._publish_activity(execution)
-        except Exception:  # noqa: BLE001
-            LOGGER.exception(
-                "Failed to publish terminal activity for session %s.",
-                self.session_id,
-            )
-
-    def _on_process_change(self) -> None:
+    def on_process_change(self) -> None:
         self.events.live(
             "session.process.updated",
             {},
             session_id=self.session_id,
-            location=self._event_location,
+            location=self.activity.event_location,
         )
 
-    def _release_slot(self, execution: TurnExecution) -> None:
+    def release_slot(self, execution: TurnExecution) -> None:
         if execution.slot_acquired and not execution.slot_released:
             execution.slot_released = True
             self.active_slots.release()
 
-
-_PUBLIC_AGENT_EVENTS = {
-    "assistant_message": "session.message.updated",
-    "tool_execution_start": "session.tool.started",
-    "tool_execution_end": "session.tool.ended",
-    "compaction_start": "session.compaction.started",
-    "compaction_progress": "session.compaction.delta",
-    "compaction_end": "session.compaction.ended",
-    "context_usage": "session.context.updated",
-}
+    async def relocate_workspace(
+        self, directory: str, *, expected_root: str | None
+    ) -> SessionRecord:
+        async with self.gate:
+            if self.activity.active is not None or self.activity.operation is not None:
+                raise WorkspaceBusy(self.session_id)
+            return await self.configuration.relocate_workspace(
+                directory, expected_root=expected_root
+            )

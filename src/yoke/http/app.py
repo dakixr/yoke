@@ -3,67 +3,71 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
-from contextlib import suppress
+import secrets
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-import secrets
 from uuid import uuid4
 
-from fastapi import FastAPI
-from fastapi import Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from yoke.http.errors import ApiError
-from yoke.http.errors import api_error_handler
-from yoke.http.errors import error_response
-from yoke.http.errors import validation_error_handler
-from yoke.http.errors import workspace_error_handler
-from yoke.session.workspace import WorkspaceError
-from yoke.http.routes import health
-from yoke.http.routes import client_session
-from yoke.http.routes import agent_run
-from yoke.http.routes import catalog
-from yoke.http.routes import command
-from yoke.http.routes import event
-from yoke.http.routes import filesystem
-from yoke.http.routes import location
-from yoke.http.routes import mcp
-from yoke.http.routes import permission
-from yoke.http.routes import prompt
-from yoke.http.routes import process
-from yoke.http.routes import question
-from yoke.http.routes import session
-from yoke.http.routes import skill
-from yoke.http.routes import tool_trace
-from yoke.http.routes import tool
-from yoke.http.routes import upload
-from yoke.http.routes import workspace
-from yoke.http.services.location_service import LocationService
+from yoke.http.errors import (
+    ApiError,
+    api_error_handler,
+    error_response,
+    validation_error_handler,
+    workspace_error_handler,
+)
+from yoke.http.routes import (
+    agent_run,
+    catalog,
+    client_session,
+    command,
+    event,
+    filesystem,
+    health,
+    location,
+    mcp,
+    permission,
+    process,
+    prompt,
+    question,
+    session,
+    skill,
+    tool,
+    tool_trace,
+    upload,
+    workspace,
+)
 from yoke.http.services.agent_runs import AgentRunService
-from yoke.http.services.mcp_service import McpService
 from yoke.http.services.catalog_service import CatalogService
-from yoke.http.services.event_broker import EventService
-from yoke.http.services.event_broker import GlobalEventBroker
-from yoke.http.services.pending_input_service import PendingInputService
+from yoke.http.services.event_broker import EventService, GlobalEventBroker
 from yoke.http.services.filesystem_service import FilesystemService
 from yoke.http.services.human_input_service import HumanInputService
-from yoke.http.services.thread_settlement import ThreadSettlementService
+from yoke.http.services.location_service import LocationService
+from yoke.http.services.mcp_service import McpService
 from yoke.http.services.path_policy import PathPolicy
+from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.process_service import ProcessService
-from yoke.http.services.runtime_registry import SessionAgentFactory
-from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.services.runtime_registry import (
+    SessionAgentFactory,
+    SessionRuntimeRegistry,
+)
+from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.http.services.session_service import SessionService
 from yoke.http.services.skill_service import SkillService
-from yoke.http.services.tool_trace_service import ToolTraceService
+from yoke.http.services.thread_settlement import ThreadSettlementService
 from yoke.http.services.tool_service import ToolService
+from yoke.http.services.tool_trace_service import ToolTraceService
 from yoke.http.services.upload_service import UploadService
 from yoke.http.web import install_web_routes
 from yoke.session import SessionStore
 from yoke.session.admissions import AdmissionStore
 from yoke.session.events import SessionEventJournal
+from yoke.session.workspace import WorkspaceError
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +79,7 @@ class HttpAppSettings:
     max_active_sessions: int = 4
     max_worker_threads: int | None = None
     agent_factory: SessionAgentFactory | None = None
+    indexed_runtime_seed: bool = True
 
 
 def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
@@ -88,15 +93,18 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     uploads = UploadService(store)
     pending_inputs = PendingInputService(store, admissions, events, uploads)
     read_cache = SessionReadCache(store)
-    session_service = SessionService(store, events, read_cache=read_cache)
+    message_index = SessionMessageIndex(store)
+    session_service = SessionService(
+        store, events, read_cache=read_cache, message_index=message_index
+    )
     runtime_registry = SessionRuntimeRegistry(
         store=store,
         pending_inputs=pending_inputs,
         events=events,
         agent_factory=configured.agent_factory or _build_http_session_agent,
         read_cache=read_cache,
-        message_index=session_service.message_index,
-        indexed_runtime_seed=configured.agent_factory is None,
+        message_index=message_index,
+        indexed_runtime_seed=configured.indexed_runtime_seed,
         max_active_sessions=configured.max_active_sessions,
         max_worker_threads=configured.max_worker_threads,
     )
@@ -168,7 +176,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         store,
         runtime_registry,
         read_cache=read_cache,
-        message_index=session_service.message_index,
+        message_index=message_index,
     )
     app.state.tool_service = ToolService(store, runtime_registry)
     app.state.upload_service = uploads

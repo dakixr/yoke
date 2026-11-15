@@ -1,37 +1,33 @@
 from __future__ import annotations
+from tests.yoke.http.fake_session_agent import FakeSessionAgent
+
+import time
 
 # ruff: noqa: ANN001,D100,D103,S101
-
 from pathlib import Path
-
-from yoke.http.services.session_message_index import storage as index_storage
-from threading import Event
-from threading import Thread
-import time
+from threading import Event, Thread
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from yoke.agent.loop import AgentResult
-from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.agent.session_tree import ConversationProjection
-from yoke.agent.session_tree import SessionTree
-from yoke.cli.session.models import SessionRecord
-from yoke.cli.session.store import SessionStore
-from yoke.cli.session.writer import append_session_metadata
-from yoke.http.app import HttpAppSettings
-from yoke.http.app import create_app
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_service import SessionService
-from yoke.http.services import runtime_factory
 import yoke.http.app as app_module
-from yoke.session.events import SessionEventJournal
 from tests.yoke.http.performance_helpers import TOKEN
 from tests.yoke.http.performance_helpers import auth_headers as _auth
 from tests.yoke.http.performance_helpers import messages as _messages
 from tests.yoke.http.performance_helpers import projected_text as _projected_text
+from yoke.agent.loop import AgentResult
+from yoke.agent.loop.agent import RuntimeAgent
+from yoke.agent.models import ConversationEntry, Message
+from yoke.agent.session_tree import ConversationProjection, SessionTree
+from yoke.cli.session.models import SessionRecord
+from yoke.cli.session.store import SessionStore
+from yoke.cli.session.writer import append_session_metadata
+from yoke.http.app import HttpAppSettings, create_app
+from yoke.http.services import runtime_factory
+from yoke.http.services.session_message_index import SessionMessageIndex
+from yoke.http.services.session_message_index import storage as index_storage
+from yoke.http.services.session_service import SessionService
+from yoke.session.events import SessionEventJournal
 
 
 def test_http_agent_factory_leaves_conversation_loading_to_runtime(
@@ -235,10 +231,12 @@ def test_prompt_admission_returns_before_cold_session_materialization(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    class Agent:
+    class Agent(FakeSessionAgent):
         supports_user_message = True
+        supports_message_history = False
 
         def __init__(self, record: SessionRecord) -> None:
+            super().__init__(record)
             del record
 
         def run(self, *_args, **_kwargs):  # noqa: ANN202
@@ -249,6 +247,7 @@ def test_prompt_admission_returns_before_cold_session_materialization(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=Agent,
+            indexed_runtime_seed=False,
         )
     )
     store = app.state.session_service.store
@@ -303,10 +302,12 @@ def test_live_turn_reuses_shared_session_snapshot_after_initial_read(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    class Agent:
+    class Agent(FakeSessionAgent):
         supports_user_message = True
+        supports_message_history = False
 
         def __init__(self, record: SessionRecord) -> None:
+            super().__init__(record)
             self.record = record
 
         def run(
@@ -314,8 +315,10 @@ def test_live_turn_reuses_shared_session_snapshot_after_initial_read(
             prompt: str,
             *,
             user_message: Message | None = None,
+            append_user_message: bool = True,
             on_event=None,
             stop_requested=None,
+            **_kwargs,
         ) -> AgentResult:
             del stop_requested
             if on_event is not None:
@@ -362,6 +365,7 @@ def test_live_turn_reuses_shared_session_snapshot_after_initial_read(
             auth_token=TOKEN,
             session_directory=tmp_path / "sessions",
             agent_factory=Agent,
+            indexed_runtime_seed=False,
         )
     )
     store = app.state.session_service.store
@@ -410,7 +414,7 @@ def test_descending_cold_message_page_uses_tail_without_topology_scan(
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
     store.save("large", _messages(800, payload=2048), root=tmp_path)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(service.message_index, "warm_async", lambda _session_id: None)
 
     def fail(*_args, **_kwargs):
@@ -475,7 +479,7 @@ def test_descending_tail_page_follows_selected_branch(
     )
     store._write_session_record(record)
     store._update_index(record)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(service.message_index, "warm_async", lambda _session_id: None)
 
     page = service.messages("branch", limit=20, order="desc", cursor=None)
@@ -511,7 +515,7 @@ def test_descending_tail_page_honors_metadata_only_leaf_with_stale_index(
     store._write_session_record(record)
     store._update_index(record)
     append_session_metadata(store._session_path("checkout"), {"leaf_id": middle.id})
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     monkeypatch.setattr(service.message_index, "warm_async", lambda _session_id: None)
 
     page = service.messages("checkout", limit=20, order="desc", cursor=None)
@@ -597,7 +601,9 @@ def test_runtime_active_path_borrows_messages_without_sharing_topology(
         HttpAppSettings(
             auth_token=TOKEN,
             session_directory=store.directory,
-            agent_factory=lambda _record: object(),
+            agent_factory=lambda _record: (_ for _ in ()).throw(
+                AssertionError("no agent needed")
+            ),
         )
     )
     snapshot = app.state.session_service.read_cache.get("large")

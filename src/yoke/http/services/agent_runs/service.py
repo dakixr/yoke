@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-import logging
 from threading import Lock, RLock
 from typing import Protocol
 
-from yoke.http.errors import ApiError
+from yoke.http.errors import session_not_found
 from yoke.http.models.agent_run import public_snapshot
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
@@ -219,7 +219,7 @@ class AgentRunService:
     def snapshots(self, session_id: str) -> list[dict[str, object]]:
         """Validate the requested session before touching its journal path."""
         if self.runtimes.store.index_entry(session_id) is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
+            raise session_not_found()
         self.reconcile()
         with self._lock:
             self._recover(session_id)

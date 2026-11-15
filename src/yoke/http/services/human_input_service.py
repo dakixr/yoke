@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC
-from datetime import datetime
 import secrets
-from threading import Event
-from threading import Lock
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from threading import Event, Lock
 from typing import Literal
 
-from yoke.http.errors import ApiError
-from yoke.http.models.human_input import PermissionRequestInfo
-from yoke.http.models.human_input import PermissionResolution
-from yoke.http.models.human_input import QuestionRequestInfo
-from yoke.http.models.human_input import QuestionResolution
+from yoke.http.errors import ApiError, session_not_found
+from yoke.http.models.human_input import (
+    PermissionRequestInfo,
+    PermissionResolution,
+    QuestionRequestInfo,
+    QuestionResolution,
+)
 from yoke.http.services.event_broker import EventService
 from yoke.session import SessionStore
 
@@ -272,5 +272,5 @@ class HumanInputService:
     def _require_session(self, session_id: str):  # noqa: ANN202
         record = self.store.summary_record(session_id)
         if record is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
+            raise session_not_found()
         return record

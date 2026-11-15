@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yoke.http.errors import ApiError
+from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.common import LocationInfo
-from yoke.http.models.tool import ToolInfo
-from yoke.http.models.tool import ToolListResponse
+from yoke.http.models.tool import ToolInfo, ToolListResponse
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
 from yoke.session import SessionStore
 from yoke.session.workspace import require_session_workspace
@@ -95,5 +94,5 @@ class ToolService:
     def _require_record(self, session_id: str):  # noqa: ANN202
         record = self.store.summary_record(session_id)
         if record is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
+            raise session_not_found()
         return record

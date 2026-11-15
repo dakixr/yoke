@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,D101,D102,D103,S101
-
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -12,10 +11,8 @@ from fastapi.testclient import TestClient
 
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import Message
-from yoke.http.app import HttpAppSettings
-from yoke.http.app import create_app
+from yoke.http.app import HttpAppSettings, create_app
 from yoke.session import SessionRecord
-
 
 TOKEN = "runtime-operation-secret"
 
@@ -59,7 +56,7 @@ def test_accepted_compaction_failure_is_waitable_and_drains_admitted_prompt(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.runtime as runtime_module
+    import yoke.http.services.session_runtime.operations as runtime_module
 
     compaction_started = Event()
     release_compaction = Event()
@@ -143,7 +140,7 @@ def test_request_bound_selection_failure_still_propagates(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.runtime as runtime_module
+    import yoke.http.services.session_runtime.operations as runtime_module
 
     def fail_selection(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError("selection failed")

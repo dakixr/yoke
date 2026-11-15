@@ -5,33 +5,33 @@ from __future__ import annotations
 import json
 from collections import OrderedDict
 from threading import Lock
-from typing import cast
-from typing import Literal
-from typing import Protocol
+from typing import Literal, Protocol, cast
 from weakref import WeakValueDictionary
 
-from yoke.agent.observability import ToolTraceEntry
-from yoke.agent.observability import ToolTraceStore
-from yoke.agent.observability.tool_transcript import entries_from_messages
-from yoke.agent.observability.tool_transcript import merge_trace_entries
+from yoke.agent.observability import ToolTraceEntry, ToolTraceStore
+from yoke.agent.observability.tool_transcript import (
+    entries_from_messages,
+    merge_trace_entries,
+)
 from yoke.agent.tool_result_projection import project_tool_result_content
-from yoke.http.errors import ApiError
-from yoke.http.models.tool_trace import ToolCallInfo
-from yoke.http.models.tool_trace import ToolCallListResponse
-from yoke.http.models.tool_trace import ToolCallResponse
-from yoke.http.models.tool_trace import ToolOutputChunk
-from yoke.http.models.tool_trace import ToolOutputCursor
-from yoke.http.models.tool_trace import ToolOutputResponse
-from yoke.http.models.tool_trace import ToolTraceArguments
-from yoke.http.models.tool_trace import ToolTraceContextInfo
-from yoke.http.models.tool_trace import ToolTraceOutputInfo
-from yoke.http.models.tool_trace import ToolTraceTime
+from yoke.http.errors import ApiError, session_not_found
+from yoke.http.models.tool_trace import (
+    ToolCallInfo,
+    ToolCallListResponse,
+    ToolCallResponse,
+    ToolOutputChunk,
+    ToolOutputCursor,
+    ToolOutputResponse,
+    ToolTraceArguments,
+    ToolTraceContextInfo,
+    ToolTraceOutputInfo,
+    ToolTraceTime,
+)
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
 from yoke.http.services.tool_trace.window import call_window
 from yoke.session import SessionStore
-
 
 MAX_PERSISTED_TRACE_CACHE_SESSIONS = 1
 
@@ -39,7 +39,8 @@ MAX_PERSISTED_TRACE_CACHE_SESSIONS = 1
 class ToolTraceRuntime(Protocol):
     """Runtime surface required by tool-trace projection."""
 
-    def tool_trace_store(self) -> ToolTraceStore: ...
+    @property
+    def tool_traces(self) -> ToolTraceStore: ...
 
     def latest_turn_id(self) -> int: ...
 
@@ -97,7 +98,7 @@ class ToolTraceService:
         )
         if current_turn and runtime is not None:
             # Chat polls this path. Keep its cost independent of saved history.
-            entries = runtime.tool_trace_store().snapshot()
+            entries = runtime.tool_traces.snapshot()
             live_ids = {entry.tool_call_id for entry in entries}
         else:
             entries, live_ids = self._entries(session_id)
@@ -118,7 +119,7 @@ class ToolTraceService:
     def call(self, session_id: str, call_id: str) -> ToolCallResponse:
         self._require_exists(session_id)
         runtime = self.registry.get_if_loaded(session_id)
-        live_store = runtime.tool_trace_store() if runtime is not None else None
+        live_store = runtime.tool_traces if runtime is not None else None
         live = live_store.get(call_id) if live_store is not None else None
         if live is not None:
             # Running detail is polled often. Its list row already carries the
@@ -166,7 +167,7 @@ class ToolTraceService:
         runtime = self.registry.get_if_loaded(session_id)
         if runtime is None:
             return _empty_output()
-        store = runtime.tool_trace_store()
+        store = runtime.tool_traces
         if store.get(call_id) is None:
             if self._persisted_entry(session_id, call_id) is not None:
                 return _empty_output()
@@ -189,7 +190,7 @@ class ToolTraceService:
     ) -> tuple[list[ToolTraceEntry], set[str]]:
         self._require_exists(session_id)
         runtime = self.registry.get_if_loaded(session_id)
-        live = runtime.tool_trace_store().snapshot() if runtime is not None else []
+        live = runtime.tool_traces.snapshot() if runtime is not None else []
         completed = self._persisted_entries(session_id)
         return merge_trace_entries(completed, live), {
             entry.tool_call_id for entry in live
@@ -262,7 +263,7 @@ class ToolTraceService:
         try:
             stat = path.stat()
         except OSError as exc:
-            raise ApiError(404, "session_not_found", "Session was not found.") from exc
+            raise session_not_found() from exc
         return stat.st_ino, stat.st_size, stat.st_mtime_ns
 
     def _project(
@@ -279,7 +280,7 @@ class ToolTraceService:
         if live:
             runtime = self.registry.get_if_loaded(session_id)
             if runtime is not None:
-                output_page = runtime.tool_trace_store().output_page(
+                output_page = runtime.tool_traces.output_page(
                     entry.tool_call_id,
                     after_seq=0,
                     limit=0,
@@ -348,7 +349,7 @@ class ToolTraceService:
 
     def _require_exists(self, session_id: str) -> None:
         if not self.store.exists(session_id):
-            raise ApiError(404, "session_not_found", "Session was not found.")
+            raise session_not_found()
 
 
 def _status(

@@ -10,13 +10,13 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.yoke.http.test_attachment_continuation import RecordingProvider, app_for
+from tests.yoke.http.test_client_session import configure
+from tests.yoke.http.test_runtime_lifetime_regressions import _auth, _create_session
 from yoke.http.services import thread_settlement as module
 from yoke.mcp.client import McpClientError
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp.http_client import StreamableHttpClient
-from tests.yoke.http.test_attachment_continuation import RecordingProvider, app_for
-from tests.yoke.http.test_client_session import configure
-from tests.yoke.http.test_runtime_lifetime_regressions import _auth, _create_session
 
 
 def server():
@@ -59,7 +59,7 @@ def test_settle_after_idle_disconnect_and_client_secret_cleanup(
         )
         runtime = app.state.runtime_registry.get_if_loaded("session-a")
         assert runtime.resources.client_session is None
-        assert runtime.resources._mcp_session_policy.injected_servers == ()
+        assert runtime.resources.mcp_session_policy().injected_servers == ()
         if not settled_before_close:
             assert archived(client) is None
             assert "session-a" in app.state.thread_settlement_service.bindings
@@ -81,7 +81,7 @@ def test_settle_after_idle_disconnect_and_client_secret_cleanup(
     "failure",
     [RuntimeError("offline"), McpClientError("MCP HTTP request failed: 403 Forbidden")],
 )
-def test_failed_read_never_settles(tmp_path, monkeypatch, failure):
+def test_failed_read_never_settles(tmp_path, monkeypatch, failure, caplog):
     def read(_):
         raise failure
 
@@ -94,6 +94,13 @@ def test_failed_read_never_settles(tmp_path, monkeypatch, failure):
         assert archived(client) is None
         retained = "session-a" in app.state.thread_settlement_service.bindings
         assert retained is not isinstance(failure, McpClientError)
+        assert "t3-code" in caplog.text
+        assert type(failure).__name__ in caplog.text
+        assert all(
+            record.levelname == "WARNING"
+            for record in caplog.records
+            if "settlement read failed" in record.message
+        )
 
 
 def test_old_owner_and_missing_t3_server_cannot_settle(tmp_path, monkeypatch):

@@ -1003,3 +1003,37 @@ worker drain. Existing background processes are not stopped by either action.
 Workspace relocation clears attached configuration; reattach at the new root.
 Plans and client configuration remain process-local and disappear on daemon
 restart. [ACP and T3 Code](acp.md) describes tool policy and client behavior.
+
+
+## Runtime ownership and read models
+
+Each loaded session has one asyncio gate for admission, interruption, idle
+mutations, and operation completion. `RuntimeStatus` owns the loop's current turn,
+operation, activity, and error state. Worker callbacks record thread-safe traces
+and usage measurements, then schedule status changes and public SSE publication
+on that loop. Retirement marks the generation before awaiting persistence, so a
+queued callback cannot publish for a retired turn.
+
+`TurnPersistence` serializes checkpoints, final results, and interruption with one
+threading lock. Blocking session storage, queue locks, skill loading, and idle
+mutations run on the registry's executor while the asyncio gate preserves their
+order. Cancellation keeps that gate until a submitted storage mutation finishes.
+`SessionRuntimeResources` owns agents, provider cleanup, process leases, and
+session-local configuration. Workspace relocation resets that owner after its
+old resources close.
+
+Tool registration and execution contexts carry an explicit `ToolSessionContext`
+for MCP policy and client configuration. A runtime fork retains that session
+context independently of provider identity. Provider objects carry no HTTP
+session attributes; tool definitions and provider messages keep their existing
+projection.
+
+The app constructs one message index and injects it into the session read model
+and runtimes. Message, context, tree, and navigation callers use that read model;
+it selects indexed reads and falls back to the signature-consistent snapshot.
+Navigation and labels use `SessionTree` intents for both persistence formats.
+`HttpAppSettings.indexed_runtime_seed` defaults to `True`, including with an
+injected agent factory. Factories use the `AgentRunner` typing contract and must
+return a `RuntimeAgent` with native session ownership. Test doubles implement
+that native interface too. Set `indexed_runtime_seed` to `False` explicitly when
+testing legacy snapshot startup.

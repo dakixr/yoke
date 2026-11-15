@@ -1,922 +1,107 @@
-"""Session repository adapter used by HTTP routes."""
+"""HTTP session application entry points and idle-gate policy."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Sequence
-from datetime import datetime
-from pathlib import Path
-from typing import Literal
+import asyncio
+from concurrent.futures import Future
 
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.agent.session_tree import SessionTree
 from yoke.http.errors import ApiError
-from yoke.http.models.common import CursorInfo
-from yoke.http.models.common import LocationInfo
-from yoke.http.models.session import MessageListResponse
-from yoke.http.models.session import MessageResponse
-from yoke.http.models.session import ContextResponse
-from yoke.http.models.session import SessionCreateRequest
-from yoke.http.models.session import SessionForkRequest
-from yoke.http.models.session import SessionInfo
-from yoke.http.models.session import SessionListResponse
-from yoke.http.models.session import SessionQueueSummary
-from yoke.http.models.session import SessionSelection
-from yoke.http.models.session import SessionTime
-from yoke.http.models.session import SessionTreeSummary
-from yoke.http.models.session import TreeData
-from yoke.http.models.session import TreeEntryPatchData
-from yoke.http.models.session import TreeEntryPatchResponse
-from yoke.http.models.session import TreeNavigateData
-from yoke.http.models.session import TreeNavigateRequest
-from yoke.http.models.session import TreeNavigateResponse
-from yoke.http.models.session import TreeNavigationAbandonedEntry
-from yoke.http.models.session import TreeNavigationPreviewData
-from yoke.http.models.session import TreeNavigationPreviewResponse
-from yoke.http.models.session import TreeResponse
-from yoke.http.services.cursor import decode_cursor
-from yoke.http.services.cursor import encode_cursor
-from yoke.http.services.cursor import query_fingerprint
-from yoke.http.services.event_broker import EventService
-from yoke.http.services.projectors import project_entry
-from yoke.http.services.projectors import is_public_chat_entry
-from yoke.http.services.projectors import public_chat_entries
-from yoke.http.services.projectors import project_tree
-from yoke.http.services.projectors import project_tree_entry
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_read_cache import SessionReadCache
-from yoke.http.services.session_read_cache import SessionReadSnapshot
-from yoke.http.services.session_views import project_indexed_context
-from yoke.http.services.session_views import project_saved_context
-from yoke.session import SessionRecord
-from yoke.cli.session.models import SessionIndexEntry
-from yoke.session import SessionStore
-from yoke.session import SessionTreeIndex
-from yoke.session import new_unique_session_id
-from yoke.session.queue import load_prompt_queue_snapshot
-from yoke.session.queue import load_prompt_queue_snapshots
-from yoke.session.queue import PersistedPromptQueue
-from yoke.session.workspace import (
-    inspect_workspace,
-    require_workspace,
-    WorkspaceUnavailable,
+from yoke.http.models.session import (
+    SessionForkRequest,
+    SessionInfo,
+    SessionPatchRequest,
 )
+from yoke.http.services.event_broker import EventService
+from yoke.http.services.runtime_registry import SessionRuntimeRegistry
+from yoke.http.services.session_catalog import SessionCatalog
+from yoke.http.services.session_forks import SessionForks
+from yoke.http.services.session_message_index import SessionMessageIndex
+from yoke.http.services.session_messages import SessionMessages
+from yoke.http.services.session_read_cache import SessionReadCache
+from yoke.http.services.session_read_model import SessionReadModel
+from yoke.http.services.session_tree_mutations import SessionTreeMutations
+from yoke.http.services.session_tree_reads import SessionTreeReads
+from yoke.session import SessionStore
+from yoke.session.workspace import workspace_lease
 
 
-SessionOrder = Literal[
-    "updatedDesc",
-    "updatedAsc",
-    "createdDesc",
-    "createdAsc",
-    "lastUserDesc",
-    "lastUserAsc",
-]
-MessageOrder = Literal["asc", "desc"]
-
-
-class SessionService:
-    """Thin application service over the existing session repository."""
+class SessionService(SessionCatalog):
+    """Compose catalog, transcript, and tree ownership for HTTP callers."""
 
     def __init__(
         self,
-        store: SessionStore | None = None,
+        store: SessionStore,
         events: EventService | None = None,
         read_cache: SessionReadCache | None = None,
+        *,
+        message_index: SessionMessageIndex,
     ) -> None:
-        self.store = store or SessionStore()
-        self.events = events
-        self.message_index = SessionMessageIndex(self.store)
-        self.read_cache = read_cache or SessionReadCache(self.store)
+        self.message_index = message_index
+        self.read_cache = read_cache or SessionReadCache(store)
+        read_model = SessionReadModel(store, message_index, self.read_cache)
+        super().__init__(store, events, read_model)
+        messages = SessionMessages(read_model, events)
+        trees = SessionTreeReads(read_model, events)
+        mutations = SessionTreeMutations(read_model, self)
+        self.messages = messages.messages
+        self.message = messages.message
+        self.context = messages.context
+        self.tree = trees.tree
+        self.navigation_preview = trees.navigation_preview
+        self.navigate_tree = mutations.navigate_tree
+        self.set_tree_label = mutations.set_tree_label
+        self.forks = SessionForks(store, message_index, read_model, self.publish)
 
     def close(self) -> None:
-        """Release background read-index workers."""
         self.message_index.close()
 
-    def list_sessions(
-        self,
-        *,
-        directory: str | None,
-        search: str | None,
-        pinned: bool | None,
-        archived: bool | None,
-        limit: int,
-        order: SessionOrder,
-        cursor: str | None,
-    ) -> SessionListResponse:
-        records = self.store.list_index_entries(root=directory, maintain=False)
-        if search:
-            needle = search.casefold()
-            records = [
-                record
-                for record in records
-                if needle in record.id.casefold()
-                or needle in (record.title or "").casefold()
-                or needle in (record.root or "").casefold()
-            ]
-        if pinned is not None:
-            records = [record for record in records if record.pinned is pinned]
-        if archived is not None:
-            records = [
-                record
-                for record in records
-                if (record.archived_at is not None) is archived
-            ]
-        records.sort(
-            key=lambda record: self._sort_key(record, order),
-            reverse=order.endswith("Desc"),
-        )
-
-        fingerprint = query_fingerprint((directory, search, pinned, archived, order))
-        start = self._cursor_start(records, cursor, fingerprint)
-        page = records[start : start + limit]
-        queue_snapshots = load_prompt_queue_snapshots(
-            self.store.directory,
-            (record.id for record in page),
-        )
-        next_cursor = None
-        if start + limit < len(records) and page:
-            next_cursor = encode_cursor(query=fingerprint, anchor_id=page[-1].id)
-        return SessionListResponse(
-            data=[
-                self.session_info_from_index(
-                    record,
-                    queue=self._queue_summary_from_snapshot(queue_snapshots[record.id]),
-                )
-                for record in page
-            ],
-            cursor=CursorInfo(previous=None, next=next_cursor),
-            total=len(records),
-        )
-
-    def get_session(self, session_id: str) -> SessionInfo:
-        if not self.store.exists(session_id):
-            raise ApiError(404, "session_not_found", "Session was not found.")
-        entry = self.store.index_entry(session_id)
-        if entry is not None:
-            return self.session_info_from_index(entry)
-        return self.session_info(self._require_record(session_id))
-
-    def create_session(self, request: SessionCreateRequest) -> SessionInfo:
-        session_id = request.id or new_unique_session_id(self.store.exists)
-        if self.store.exists(session_id):
-            try:
-                root = str(Path(request.location.directory).expanduser().resolve())
-            except (OSError, ValueError, RuntimeError) as exc:
-                raise WorkspaceUnavailable(request.location.directory) from exc
-            existing = self.store.summary_record(session_id)
-            if existing is None:
-                raise ApiError(404, "session_not_found", "Session was not found.")
-            if existing.root is not None and str(Path(existing.root).resolve()) != root:
-                raise ApiError(
-                    409,
-                    "session_identity_conflict",
-                    "Session id already exists at another location.",
-                    {"sessionID": session_id, "location": existing.root},
-                )
-            entry = self.store.index_entry(session_id)
-            return (
-                self.session_info_from_index(entry)
-                if entry is not None
-                else self.session_info(existing)
-            )
-        selection = request.selection
-        root = str(require_workspace(request.location.directory))
-        record = self.store.save(
-            session_id,
-            [],
-            root=root,
-            title=request.title,
-            provider_name=selection.provider if selection is not None else None,
-            model_id=selection.model if selection is not None else None,
-            reasoning_effort=(
-                selection.reasoning_effort if selection is not None else None
-            ),
-        )
-        self._publish(
-            record,
-            "session.created",
-            {"sessionID": record.id},
-        )
-        return self.session_info(record)
-
-    def patch_session(
-        self,
-        session_id: str,
-        *,
-        title_set: bool,
-        title: str | None,
-        pinned_set: bool,
-        pinned: bool | None,
-        archived_set: bool,
-        archived: bool | None,
-        before_mutation: Callable[[], None] | None = None,
-    ) -> SessionInfo:
-        if not title_set and not pinned_set and not archived_set:
-            raise ApiError(400, "empty_mutation", "At least one field is required.")
-        record = self.store.summary_record(session_id)
-        if record is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
-        if pinned_set and pinned is None:
-            raise ApiError(400, "invalid_pinned", "pinned cannot be null.")
-        if archived_set and archived is None:
-            raise ApiError(400, "invalid_archived", "archived cannot be null.")
-        if archived_set and archived:
-            queue = load_prompt_queue_snapshot(self.store.directory, session_id)
-            if queue.prompts:
-                raise ApiError(
-                    409,
-                    "session_has_pending_work",
-                    "Session has pending queued prompts. Remove, resume, or let them finish before settling.",
-                )
-
-        if before_mutation is not None:
-            before_mutation()
-        if title_set:
-            record = self.store.set_title(session_id, title, existing_record=record)
-        if pinned_set:
-            assert pinned is not None
-            record = self.store.set_pinned(session_id, pinned, existing_record=record)
-        if archived_set:
-            assert archived is not None
-            record = self.store.set_archived(
-                session_id, archived, existing_record=record
-            )
-        self._publish(
-            record,
-            "session.updated",
-            {
-                "sessionID": record.id,
-                "title": record.title,
-                "pinned": record.pinned,
-                "archivedAt": record.archived_at,
-            },
-        )
-        entry = self.store.index_entry(session_id)
-        return (
-            self.session_info_from_index(entry)
-            if entry is not None
-            else self.session_info(record)
-        )
-
     def fork_session(self, session_id: str, request: SessionForkRequest) -> SessionInfo:
-        from yoke.http.services.session_forks import fork_session
+        record = self.forks.fork(session_id, request)
+        return self.session_info(self.store.index_entry(record.id) or record)
 
-        return fork_session(self, session_id, request)
-
-    def messages(
+    async def patch(
         self,
+        runtimes: SessionRuntimeRegistry,
         session_id: str,
-        *,
-        limit: int,
-        order: MessageOrder,
-        cursor: str | None,
-    ) -> MessageListResponse:
-        snapshot_seq = (
-            self.events.journal.latest_sequence(session_id)
-            if self.events is not None
-            else 0
-        )
-        fingerprint = query_fingerprint((session_id, "active", order))
-        anchor = (
-            decode_cursor(cursor, expected_query=fingerprint)
-            if cursor is not None
-            else None
-        )
-        indexed_page = self.message_index.page(
-            session_id,
-            limit=limit,
-            order=order,
-            anchor_id=anchor,
-        )
-        if indexed_page is not None:
-            page = [project_entry(entry) for entry in indexed_page.entries]
-            next_cursor = (
-                encode_cursor(query=fingerprint, anchor_id=page[-1].id)
-                if indexed_page.has_more and page
-                else None
-            )
-            return MessageListResponse(
-                data=page,
-                cursor=CursorInfo(previous=None, next=next_cursor),
-                snapshot_seq=snapshot_seq,
-            )
-
-        snapshot = self._require_snapshot(session_id)
-        public_entries = public_chat_entries(snapshot.active_path_entries)
-        messages: Sequence[object] = (
-            tuple(reversed(public_entries)) if order == "desc" else public_entries
-        )
-        start = self._message_cursor_start(messages, cursor, fingerprint)
-        page_entries = messages[start : start + limit]
-        page = [project_entry(entry) for entry in page_entries]
-        next_cursor = (
-            encode_cursor(query=fingerprint, anchor_id=page[-1].id)
-            if start + limit < len(messages) and page
-            else None
-        )
-        return MessageListResponse(
-            data=page,
-            cursor=CursorInfo(previous=None, next=next_cursor),
-            snapshot_seq=snapshot_seq,
-        )
-
-    def message(self, session_id: str, message_id: str) -> MessageResponse:
-        indexed = self.message_index.entry(session_id, message_id)
-        if indexed is not None:
-            return MessageResponse(data=project_entry(indexed))
-        snapshot = self._require_snapshot(session_id)
-        entry = snapshot.entries_by_id.get(message_id)
-        if entry is not None and is_public_chat_entry(entry):
-            legacy_public_ids = {
-                item.id
-                for item in public_chat_entries(list(snapshot.entries_by_id.values()))
-            }
-            if entry.id not in legacy_public_ids:
-                raise ApiError(404, "message_not_found", "Message was not found.")
-            return MessageResponse(data=project_entry(entry))
-        raise ApiError(404, "message_not_found", "Message was not found.")
-
-    def context(
-        self,
-        session_id: str,
-        *,
-        include_system: bool,
-        include_tool_results: bool,
-        limit: int,
-        max_chars: int,
-    ) -> ContextResponse:
-        """Return a bounded recent model-visible conversation projection."""
-        indexed = self.message_index.context_window(
-            session_id,
-            limit=limit,
-            include_instructions=include_system,
-        )
-        if indexed is not None:
-            return project_indexed_context(
-                indexed,
-                include_system=include_system,
-                include_tool_results=include_tool_results,
-                max_chars=max_chars,
-            )
-
-        return project_saved_context(
-            self._require_snapshot(session_id).record,
-            include_system=include_system,
-            include_tool_results=include_tool_results,
-            limit=limit,
-            max_chars=max_chars,
-        )
-
-    def tree(
-        self,
-        session_id: str,
-        *,
-        limit: int,
-        cursor: str | None,
-    ) -> TreeResponse:
-        fingerprint = query_fingerprint((session_id, "tree"))
-        anchor = (
-            decode_cursor(cursor, expected_query=fingerprint)
-            if cursor is not None
-            else None
-        )
-        indexed = self.message_index.tree_page(
-            session_id,
-            limit=limit,
-            anchor_id=anchor,
-        )
-        if indexed is not None:
-            next_cursor = (
-                encode_cursor(
-                    query=fingerprint,
-                    anchor_id=indexed.entries[0].id,
-                )
-                if indexed.has_more and indexed.entries
-                else None
-            )
-            summary = self.store.summary_record(session_id)
-            return TreeResponse(
-                data=TreeData(
-                    revision=_revision_from_timestamp(
-                        summary.updated_at if summary is not None else None
-                    ),
-                    leaf_id=indexed.leaf_id,
-                    entries=[
-                        project_tree_entry(
-                            entry,
-                            leaf_id=indexed.leaf_id,
-                            active=entry.id in indexed.active_ids,
-                            child_count=indexed.child_counts.get(entry.id, 0),
-                        )
-                        for entry in indexed.entries
-                    ],
-                    total_entries=indexed.total_entries,
-                    cursor=CursorInfo(previous=None, next=next_cursor),
-                )
-            )
-
-        record = self._require_snapshot(session_id).record
-        all_entries = project_tree(record.conversation_entries, record.leaf_id)
-        end = len(all_entries)
-        if anchor is not None:
-            try:
-                end = next(
-                    index
-                    for index, entry in enumerate(all_entries)
-                    if entry.id == anchor
-                )
-            except StopIteration as exc:
-                raise ApiError(
-                    400, "invalid_cursor_anchor", "Cursor anchor no longer exists."
-                ) from exc
-        start = max(0, end - limit)
-        page = all_entries[start:end]
-        next_cursor = (
-            encode_cursor(query=fingerprint, anchor_id=page[0].id)
-            if start > 0 and page
-            else None
-        )
-        return TreeResponse(
-            data=TreeData(
-                revision=_revision_from_timestamp(record.updated_at),
-                leaf_id=record.leaf_id,
-                entries=page,
-                total_entries=len(all_entries),
-                cursor=CursorInfo(previous=None, next=next_cursor),
-            )
-        )
-
-    def navigation_preview(
-        self,
-        session_id: str,
-        *,
-        target_id: str,
-        include_abandoned: bool,
-    ) -> TreeNavigationPreviewResponse:
-        indexed = self.message_index.navigation_preview(
-            session_id,
-            target_id=target_id,
-            abandoned_limit=100 if include_abandoned else 0,
-        )
-        if indexed is not None:
-            editor_text = (
-                indexed.target.message.display_text_content() or ""
-                if indexed.target.kind == "user" and indexed.target.message is not None
-                else None
-            )
-            abandoned = [
-                TreeNavigationAbandonedEntry(
-                    id=entry.id,
-                    kind=entry.kind,
-                    preview=_entry_preview_text(entry),
-                )
-                for entry in indexed.abandoned
-            ]
-            return TreeNavigationPreviewResponse(
-                data=TreeNavigationPreviewData(
-                    target_id=target_id,
-                    current=indexed.current,
-                    editor_text=editor_text,
-                    abandoned=abandoned,
-                    abandoned_total=(
-                        indexed.abandoned_total if include_abandoned else 0
-                    ),
-                    abandoned_truncated=(
-                        indexed.abandoned_truncated if include_abandoned else False
-                    ),
-                )
-            )
-
-        record = self._require_snapshot(session_id).record
-        tree = SessionTree.restore(record.conversation_entries, record.leaf_id)
-        try:
-            target = tree.ref_from_persisted_id(target_id)
-            preview = tree.preview_navigation(
-                target,
-                include_abandoned=include_abandoned,
-            )
-        except ValueError as exc:
-            raise ApiError(404, "entry_not_found", "Tree entry was not found.") from exc
-        abandoned: list[TreeNavigationAbandonedEntry] = []
-        for item in preview.abandoned:
-            message = item.message.to_message() if item.message is not None else None
-            text = (
-                message.display_text_content()
-                if message is not None
-                else item.summary_text
-            )
-            abandoned.append(
-                TreeNavigationAbandonedEntry(
-                    id=item.ref._entry_key(),
-                    kind=item.kind,
-                    preview=_preview_text(text),
-                )
-            )
-        return TreeNavigationPreviewResponse(
-            data=TreeNavigationPreviewData(
-                target_id=target_id,
-                current=preview.current,
-                editor_text=preview.editor_text,
-                abandoned=abandoned,
-                abandoned_total=len(abandoned),
-                abandoned_truncated=False,
-            )
-        )
-
-    def navigate_tree(
-        self,
-        session_id: str,
-        request: TreeNavigateRequest,
-    ) -> TreeNavigateResponse:
-        summary = self.store.summary_record(session_id)
-        if summary is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
-        self._require_tree_revision(summary, request.expected_revision)
-        indexed_target = self.message_index.navigation_target(
-            session_id,
-            request.target_id,
-        )
-        if indexed_target is not None:
-            if indexed_target.id == summary.leaf_id:
-                return TreeNavigateResponse(
-                    data=TreeNavigateData(
-                        revision=_revision_from_timestamp(summary.updated_at),
-                        leaf_id=summary.leaf_id,
-                        editor_text=None,
-                        summary_added=False,
-                    )
-                )
-            editor_text = (
-                indexed_target.message.display_text_content() or ""
-                if indexed_target.kind == "user" and indexed_target.message is not None
-                else None
-            )
-            selected_leaf = (
-                indexed_target.parent_id
-                if editor_text is not None
-                else indexed_target.id
-            )
-            if selected_leaf is None:
-                raise ApiError(
-                    409,
-                    "tree_root_navigation_unsupported",
-                    "This legacy tree has no persisted parent before the selected user entry.",
-                )
-            normalized_summary = (request.branch_summary or "").strip()
-            appended: tuple[ConversationEntry, ...] = ()
-            final_leaf = selected_leaf
-            if normalized_summary:
-                branch_entry = ConversationEntry(
-                    kind="branch_summary",
-                    message=Message.user(
-                        "Branch summary from the path you left:\n\n"
-                        f"{normalized_summary}"
-                    ),
-                    metadata={
-                        "from_leaf_id": summary.leaf_id,
-                        "target_id": request.target_id,
-                        "summary": normalized_summary,
-                    },
-                    parent_id=selected_leaf,
-                )
-                appended = (branch_entry,)
-                final_leaf = branch_entry.id
-            updated = self.store.save_indexed_tree_navigation(
-                session_id,
-                existing_record=summary,
-                leaf_id=final_leaf,
-                appended_entries=appended,
-            )
-            revision = _revision_from_timestamp(updated.updated_at)
-            self._publish(
-                updated,
-                "session.tree.updated",
-                {
-                    "revision": revision,
-                    "leafID": updated.leaf_id,
-                    "targetID": request.target_id,
-                },
-            )
-            return TreeNavigateResponse(
-                data=TreeNavigateData(
-                    revision=revision,
-                    leaf_id=updated.leaf_id,
-                    editor_text=editor_text,
-                    summary_added=bool(appended),
-                )
-            )
-
-        record = self._require_record(session_id)
-        self._require_tree_revision(record, request.expected_revision)
-        tree = SessionTree.restore(record.conversation_entries, record.leaf_id)
-        try:
-            target = tree.ref_from_persisted_id(request.target_id)
-            outcome = tree.navigate(target, branch_summary=request.branch_summary)
-        except ValueError as exc:
-            raise ApiError(404, "entry_not_found", "Tree entry was not found.") from exc
-        exported = tree.export_for_persistence()
-        if exported.leaf_id is None:
-            raise ApiError(
-                409,
-                "tree_root_navigation_unsupported",
-                "This legacy tree has no persisted parent before the selected user entry.",
-            )
-        fallback_appended = list(exported.entries[len(record.conversation_entries) :])
-        index = SessionTreeIndex(record.conversation_entries, record.leaf_id)
-        updated = self.store.save_tree_delta(
-            session_id,
-            existing_record=record,
-            tree_index=index,
-            leaf_id=exported.leaf_id,
-            appended_entries=fallback_appended,
-        )
-        revision = _revision_from_timestamp(updated.updated_at)
-        self._publish(
-            updated,
-            "session.tree.updated",
-            {
-                "revision": revision,
-                "leafID": updated.leaf_id,
-                "targetID": request.target_id,
-            },
-        )
-        return TreeNavigateResponse(
-            data=TreeNavigateData(
-                revision=revision,
-                leaf_id=updated.leaf_id,
-                editor_text=outcome.editor_text,
-                summary_added=outcome.summary_appended,
-            )
-        )
-
-    def set_tree_label(
-        self,
-        session_id: str,
-        entry_id: str,
-        *,
-        expected_revision: int,
-        label: str | None,
-    ) -> TreeEntryPatchResponse:
-        summary = self.store.summary_record(session_id)
-        if summary is None:
-            raise ApiError(404, "session_not_found", "Session was not found.")
-        self._require_tree_revision(summary, expected_revision)
-        indexed_state = self.message_index.entry_tree_state(session_id, entry_id)
-        if indexed_state is not None:
-            entry, active, current, child_count = indexed_state
-            normalized = " ".join((label or "").split()).strip()
-            metadata = dict(entry.metadata)
-            if normalized:
-                metadata["label"] = normalized
-            else:
-                metadata.pop("label", None)
-            updated_entry = entry.model_copy(
-                update={"metadata": metadata},
-                deep=True,
-            )
-            updated = self.store.save_indexed_entry_metadata(
-                session_id,
-                updated_entry,
-                existing_record=summary,
-            )
-            revision = _revision_from_timestamp(updated.updated_at)
-            self._publish(
-                updated,
-                "session.tree.updated",
-                {"revision": revision, "entryID": entry_id},
-            )
-            return TreeEntryPatchResponse(
-                data=TreeEntryPatchData(
-                    revision=revision,
-                    entry=project_tree_entry(
-                        updated_entry,
-                        leaf_id=entry_id if current else summary.leaf_id,
-                        active=active,
-                        child_count=child_count,
-                    ),
-                )
-            )
-
-        record = self._require_record(session_id)
-        self._require_tree_revision(record, expected_revision)
-        tree = SessionTree.restore(record.conversation_entries, record.leaf_id)
-        try:
-            target = tree.ref_from_persisted_id(entry_id)
-            tree.set_label(target, label)
-            entry = tree.export_entry_for_persistence(entry_id)
-        except ValueError as exc:
-            raise ApiError(404, "entry_not_found", "Tree entry was not found.") from exc
-        index = SessionTreeIndex(record.conversation_entries, record.leaf_id)
-        updated = self.store.save_entry_metadata(
-            session_id,
-            entry,
-            existing_record=record,
-            tree_index=index,
-        )
-        revision = _revision_from_timestamp(updated.updated_at)
-        self._publish(
-            updated,
-            "session.tree.updated",
-            {"revision": revision, "entryID": entry_id},
-        )
-        projected_entry = next(
-            item
-            for item in project_tree(updated.conversation_entries, updated.leaf_id)
-            if item.id == entry_id
-        )
-        return TreeEntryPatchResponse(
-            data=TreeEntryPatchData(
-                revision=revision,
-                entry=projected_entry,
-            )
-        )
-
-    def session_info(self, record: SessionRecord) -> SessionInfo:
-        return SessionInfo(
-            id=record.id,
-            title=record.title,
-            pinned=record.pinned,
-            archived_at=record.archived_at,
-            location=LocationInfo(directory=record.root or ""),
-            workspace=inspect_workspace(record.root),
-            time=SessionTime(
-                created=record.created_at,
-                updated=record.updated_at,
-                last_user_message=record.last_user_message_at,
-            ),
-            selection=SessionSelection(
-                provider=record.provider_name,
-                model=record.model_id,
-                reasoning_effort=record.reasoning_effort,
-            ),
-            context_usage=(
-                dict(record.context_usage) if record.context_usage is not None else None
-            ),
-            tree=SessionTreeSummary(
-                leaf_id=record.leaf_id,
-                entry_count=len(record.conversation_entries),
-            ),
-            queue=self._queue_summary(record.id),
-        )
-
-    def session_info_from_index(
-        self,
-        entry: SessionIndexEntry,
-        *,
-        queue: SessionQueueSummary | None = None,
+        body: SessionPatchRequest,
     ) -> SessionInfo:
-        """Build a list-card projection without loading conversation history."""
-        return SessionInfo(
-            id=entry.id,
-            title=entry.title,
-            pinned=entry.pinned,
-            archived_at=entry.archived_at,
-            location=LocationInfo(directory=entry.root or ""),
-            workspace=inspect_workspace(entry.root),
-            time=SessionTime(
-                created=entry.created_at,
-                updated=entry.updated_at,
-                last_user_message=entry.last_user_message_at,
-            ),
-            selection=SessionSelection(
-                provider=entry.provider_name,
-                model=entry.model_id,
-                reasoning_effort=entry.reasoning_effort,
-            ),
-            context_usage=(
-                dict(entry.context_usage) if entry.context_usage is not None else None
-            ),
-            tree=SessionTreeSummary(
-                leaf_id=entry.leaf_id,
-                entry_count=entry.entry_count or 0,
-            ),
-            queue=queue if queue is not None else self._queue_summary(entry.id),
+        fields = body.model_fields_set
+        if not fields:
+            raise ApiError(400, "empty_mutation", "At least one field is required.")
+        # Validate existence before choosing a gate, without projecting a card.
+        await asyncio.get_running_loop().run_in_executor(
+            runtimes.executor, self.read_model.summary, session_id
         )
+        runtime = runtimes.get_or_start(session_id)
+        loop = asyncio.get_running_loop()
 
-    def _queue_summary(self, session_id: str) -> SessionQueueSummary:
-        return self._queue_summary_from_snapshot(
-            load_prompt_queue_snapshot(self.store.directory, session_id)
-        )
+        def cancel_title() -> None:
+            completion: Future[None] = Future()
 
-    @staticmethod
-    def _queue_summary_from_snapshot(
-        queue: PersistedPromptQueue,
-    ) -> SessionQueueSummary:
-        steering = sum(
-            item.kind == "steering" and not item.paused for item in queue.prompts
-        )
-        queued = sum(
-            item.kind == "queued" and not item.paused for item in queue.prompts
-        )
-        paused = sum(item.paused for item in queue.prompts)
-        return SessionQueueSummary(
-            total=len(queue.prompts),
-            steering=steering,
-            queued=queued,
-            paused=paused,
-            revision=queue.revision,
-        )
+            def cancel_on_loop() -> None:
+                try:
+                    runtimes.cancel_automatic_title(session_id)
+                    completion.set_result(None)
+                except BaseException as exc:
+                    completion.set_exception(exc)
 
-    def _require_record(self, session_id: str) -> SessionRecord:
-        if not self.store.exists(session_id):
-            raise ApiError(404, "session_not_found", "Session was not found.")
-        return self.store.load(session_id)
+            loop.call_soon_threadsafe(cancel_on_loop)
+            completion.result()
 
-    def _require_snapshot(self, session_id: str) -> SessionReadSnapshot:
-        if not self.store.exists(session_id):
-            raise ApiError(404, "session_not_found", "Session was not found.")
-        try:
-            return self.read_cache.get(session_id)
-        except FileNotFoundError as exc:
-            raise ApiError(404, "session_not_found", "Session was not found.") from exc
+        def mutate() -> SessionInfo:
+            with workspace_lease(self.store, session_id), runtime.persistence.lock:
+                return self.patch_session(
+                    session_id,
+                    title_set="title" in fields,
+                    title=body.title,
+                    pinned_set="pinned" in fields,
+                    pinned=body.pinned,
+                    archived_set="archived" in fields,
+                    archived=body.archived,
+                    before_mutation=cancel_title if "title" in fields else None,
+                )
 
-    def _publish(
-        self,
-        record: SessionRecord,
-        event_type: str,
-        data: dict[str, object],
-    ) -> None:
-        if self.events is None:
-            return
-        self.events.durable(
-            record.id,
-            event_type,
-            data,
-            location=record.root,
-        )
-
-    @staticmethod
-    def _require_tree_revision(record: SessionRecord, expected: int) -> None:
-        actual = _revision_from_timestamp(record.updated_at)
-        if actual != expected:
-            raise ApiError(
-                409,
-                "tree_revision_conflict",
-                f"Tree changed since revision {expected}.",
-                {"expectedRevision": expected, "actualRevision": actual},
-            )
-
-    @staticmethod
-    def _sort_key(
-        record: SessionRecord | SessionIndexEntry,
-        order: SessionOrder,
-    ) -> tuple[str, str]:
-        if order.startswith("created"):
-            value = record.created_at
-        elif order.startswith("lastUser"):
-            value = record.last_user_message_at or record.created_at
-        else:
-            value = record.updated_at or record.created_at
-        return value or "", record.id
-
-    @staticmethod
-    def _cursor_start(
-        records: Sequence[SessionRecord | SessionIndexEntry],
-        cursor: str | None,
-        fingerprint: str,
-    ) -> int:
-        if cursor is None:
-            return 0
-        anchor = decode_cursor(cursor, expected_query=fingerprint)
-        for index, record in enumerate(records):
-            if record.id == anchor:
-                return index + 1
-        raise ApiError(400, "invalid_cursor_anchor", "Cursor anchor no longer exists.")
-
-    @staticmethod
-    def _message_cursor_start(
-        messages: Sequence[object], cursor: str | None, fingerprint: str
-    ) -> int:
-        if cursor is None:
-            return 0
-        anchor = decode_cursor(cursor, expected_query=fingerprint)
-        for index, message in enumerate(messages):
-            if getattr(message, "id", None) == anchor:
-                return index + 1
-        raise ApiError(400, "invalid_cursor_anchor", "Cursor anchor no longer exists.")
-
-
-def _revision_from_timestamp(value: str | None) -> int:
-    if not value:
-        return 0
-    try:
-        return int(datetime.fromisoformat(value).timestamp() * 1_000_000)
-    except ValueError:
-        return 0
-
-
-def _preview_text(value: str | None, limit: int = 160) -> str | None:
-    if not value:
-        return None
-    normalized = " ".join(value.split())
-    if len(normalized) <= limit:
-        return normalized
-    return normalized[: limit - 3].rstrip() + "..."
-
-
-def _entry_preview_text(entry: ConversationEntry) -> str | None:
-    if entry.message is not None:
-        return _preview_text(entry.message.display_text_content())
-    summary = entry.metadata.get("summary")
-    return _preview_text(summary if isinstance(summary, str) else None)
+        if body.archived is True:
+            return await runtime.idle_mutation(mutate)
+        async with runtime.gate:
+            return await runtime.run_blocking(mutate)

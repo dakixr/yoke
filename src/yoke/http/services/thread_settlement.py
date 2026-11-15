@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from yoke.http.errors import ApiError
-from yoke.mcp.config import McpServerConfig
+from yoke.http.errors import ApiError, session_busy, session_not_found
 from yoke.mcp.client import McpClientError, StreamableHttpClient
+from yoke.mcp.config import McpServerConfig
 from yoke.session.workspace import workspace_lease
 
 if TYPE_CHECKING:
@@ -159,19 +159,15 @@ class ThreadSettlementService:
                         return
                     record = self.sessions.store.summary_record(session_id)
                     if record is None:
-                        raise ApiError(
-                            404, "session_not_found", "Session was not found."
-                        )
+                        raise session_not_found()
                     if (record.archived_at is not None) == settled:
                         if not settled:
                             binding.archived_by_sync = False
                         return
                     runtime = self.runtimes.get_if_loaded(session_id)
                     if settled and runtime is not None and runtime.workers.active_count:
-                        raise ApiError(
-                            409,
-                            "session_busy",
-                            "Native workers must drain before settlement.",
+                        raise session_busy(
+                            "Native workers must drain before settlement."
                         )
                     with workspace_lease(self.sessions.store, session_id):
                         self.sessions.patch_session(
@@ -185,7 +181,7 @@ class ThreadSettlementService:
                         )
                         binding.archived_by_sync = settled
 
-                await self.runtimes.idle_mutation(session_id, synchronize)
+                await self.runtimes.get_or_start(session_id).idle_mutation(synchronize)
             except ApiError as exc:
                 if exc.status_code == 404 and self.bindings.get(session_id) is binding:
                     self.bindings.pop(session_id, None)
@@ -197,9 +193,10 @@ class ThreadSettlementService:
                 ):
                     if self.bindings.get(session_id) is binding:
                         self.bindings.pop(session_id, None)
-                LOGGER.debug(
-                    "T3 settlement read failed for %s (%s)",
+                LOGGER.warning(
+                    "T3 settlement read failed for %s provider %s (%s)",
                     session_id,
+                    binding.server.name,
                     type(exc).__name__,
                 )
 

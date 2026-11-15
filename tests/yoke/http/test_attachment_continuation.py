@@ -12,17 +12,21 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from yoke.agent.loop import RuntimeAgent
-from yoke.agent.models import Message, MessageImageURLContentPart
-from yoke.agent.models import ToolCall, ToolFunction
-from yoke.agent.tools.read import ReadTool
-from yoke.http.app import HttpAppSettings, create_app
-from yoke.session import SessionStore
 from tests.yoke.http.test_runtime_lifetime_regressions import (
     TOKEN,
     _auth,
     _create_session,
 )
+from yoke.agent.loop import RuntimeAgent
+from yoke.agent.models import (
+    Message,
+    MessageImageURLContentPart,
+    ToolCall,
+    ToolFunction,
+)
+from yoke.agent.tools.read import ReadTool
+from yoke.http.app import HttpAppSettings, create_app
+from yoke.session import SessionStore
 
 
 class RecordingProvider:
@@ -48,9 +52,9 @@ def app_for(root: Path, provider: RecordingProvider, *, indexed: bool = True):
             session_directory=root / "sessions",
             agent_factory=lambda _record: RuntimeAgent(provider, []),
             max_active_sessions=1,
+            indexed_runtime_seed=indexed,
         )
     )
-    app.state.runtime_registry.indexed_runtime_seed = indexed
     return app
 
 
@@ -465,9 +469,9 @@ def test_queued_continuation_edit_and_prestart_interrupt(tmp_path: Path) -> None
 
         async def interrupt_before_worker() -> None:
             registry = app.state.runtime_registry
-            await registry.wake("session-a")
+            await registry.get_or_start("session-a").wake()
             runtime = registry.get_if_loaded("session-a")
-            assert not runtime._active.worker_started
+            assert not runtime.activity.active.worker_started
             await runtime.interrupt()
             assert await runtime.workers.drain(3) == 0
             registry.active_slots.release()

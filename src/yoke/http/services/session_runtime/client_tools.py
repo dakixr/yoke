@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
+from yoke.agent.tools import LocalTool
 from yoke.agent.tools.client import client_tools
 from yoke.agent.tools.context import (
+    RegisterTools,
     ToolRegistrationContext,
     ToolRegistrationResult,
     normalize_tool_registration,
@@ -14,22 +16,28 @@ from yoke.agent.tools.mcp import LazyMcpManager, register_mcp_tools
 
 
 def install_client_tools(agent: RuntimeAgent) -> None:
-    original = agent._tool_factory
-    if getattr(original, "_yoke_client_factory", False):
-        return
-    initial_tools = tuple(agent.tools.values())
+    agent.configure_session_tools(
+        wrap_factory=client_tool_factory, refresh=False, sync_context=False
+    )
+
+
+def client_tool_factory(
+    original: RegisterTools | None, initial_tools: tuple[LocalTool, ...]
+) -> RegisterTools:
+    if original is not None and getattr(original, "_yoke_client_factory", False):
+        return original
 
     def register(context: ToolRegistrationContext) -> ToolRegistrationResult:
         base = normalize_tool_registration(
             original(context) if original else initial_tools
         )
-        client = getattr(context.provider, "_yoke_client_session", None)
+        client = context.session.client_session
         if client is None:
             return base
         tools = list(base.tools)
         names = {tool.name for tool in tools}
         extras = list(client_tools(client))
-        policy = getattr(context.provider, "_yoke_mcp_session_policy", None)
+        policy = context.session.mcp_policy
         if policy is not None and policy.injected_servers:
             extras.extend(
                 register_mcp_tools(
@@ -56,4 +64,4 @@ def install_client_tools(agent: RuntimeAgent) -> None:
         return ToolRegistrationResult(tools=tools, system_messages=instructions)
 
     setattr(register, "_yoke_client_factory", True)
-    agent._tool_factory = register
+    return register

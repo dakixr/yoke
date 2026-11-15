@@ -1,31 +1,27 @@
 from __future__ import annotations
 
-# ruff: noqa: ANN001,D100,D103,S101
-
-from pathlib import Path
-
-from yoke.http.services.session_message_index import storage as index_storage
 import time
+
+# ruff: noqa: ANN001,D100,D103,S101
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from yoke.agent.models import Message
-from yoke.agent.models import ToolCall
-from yoke.agent.models import ToolFunction
-from yoke.agent.skills.models import ActiveSkill
-from yoke.agent.observability import ToolTraceStore
-from yoke.cli.session.store import SessionStore
-from yoke.http.app import HttpAppSettings
-from yoke.http.app import create_app
-from yoke.http.services.session_message_index import SessionMessageIndex
-from yoke.http.services.session_service import SessionService
-from yoke.http.services.session_read_cache import SessionReadCache
-from yoke.http.services.skill_service import SkillService
-from yoke.http.services.tool_trace_service import ToolTraceService
 from tests.yoke.http.performance_helpers import TOKEN
 from tests.yoke.http.performance_helpers import auth_headers as _auth
 from tests.yoke.http.performance_helpers import messages as _messages
 from tests.yoke.http.performance_helpers import projected_text as _projected_text
+from yoke.agent.models import Message, ToolCall, ToolFunction
+from yoke.agent.observability import ToolTraceStore
+from yoke.agent.skills.models import ActiveSkill
+from yoke.cli.session.store import SessionStore
+from yoke.http.app import HttpAppSettings, create_app
+from yoke.http.services.session_message_index import SessionMessageIndex
+from yoke.http.services.session_message_index import storage as index_storage
+from yoke.http.services.session_read_cache import SessionReadCache
+from yoke.http.services.session_service import SessionService
+from yoke.http.services.skill_service import SkillService
+from yoke.http.services.tool_trace_service import ToolTraceService
 
 
 def test_open_session_endpoints_do_not_deserialize_conversation_history(
@@ -95,7 +91,7 @@ def test_message_offset_index_survives_service_restart_without_source_rescan(
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
     store.save("large", _messages(800, payload=1024), root=tmp_path)
-    first = SessionService(store)
+    first = SessionService(store, message_index=SessionMessageIndex(store))
     page = first.messages("large", limit=100, order="desc", cursor=None)
     assert len(page.data) == 100
     sidecar = store.directory / "read-index" / "large.json"
@@ -105,7 +101,7 @@ def test_message_offset_index_survives_service_restart_without_source_rescan(
     assert sidecar.exists()
     first.close()
 
-    restarted = SessionService(store)
+    restarted = SessionService(store, message_index=SessionMessageIndex(store))
 
     def fail(*_args, **_kwargs):
         raise AssertionError("current sidecar should avoid a source topology rescan")
@@ -122,7 +118,7 @@ def test_message_offset_index_catches_up_append_without_full_record_load(
     store = SessionStore(tmp_path / "sessions")
     initial_messages = _messages(200, payload=1024)
     record = store.save("large", initial_messages, root=tmp_path)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     first = service.messages("large", limit=10, order="desc", cursor=None)
     assert len(first.data) == 10
 
@@ -142,7 +138,7 @@ def test_message_offset_index_keeps_leaf_across_unrelated_metadata(
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
     record = store.save("session", _messages(20, payload=256), root=tmp_path)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     initial = service.message_index._ensure("session")
     assert initial is not None
     assert initial.leaf_id == record.leaf_id
@@ -258,7 +254,8 @@ def test_live_tool_polling_does_not_load_large_persisted_session(
         def latest_turn_id(self) -> int:
             return 7
 
-        def tool_trace_store(self) -> ToolTraceStore:
+        @property
+        def tool_traces(self) -> ToolTraceStore:
             return traces
 
     class Registry:
@@ -301,7 +298,7 @@ def test_historical_tool_list_reads_only_tool_turns_from_topology_index(
         Message.assistant("done"),
     ]
     store.save("large", messages, root=tmp_path)
-    session_service = SessionService(store)
+    session_service = SessionService(store, message_index=SessionMessageIndex(store))
     assert session_service.message_index._ensure("large") is not None
 
     class Registry:
@@ -348,7 +345,7 @@ def test_historical_tool_trace_cache_reuses_and_invalidates(
         Message(role="tool", tool_call_id=first.id, content='{"ok":true}'),
     ]
     store.save("large", messages, root=tmp_path)
-    session_service = SessionService(store)
+    session_service = SessionService(store, message_index=SessionMessageIndex(store))
     assert session_service.message_index._ensure("large") is not None
 
     class Runtime:
@@ -358,7 +355,8 @@ def test_historical_tool_trace_cache_reuses_and_invalidates(
         def latest_turn_id(self) -> int:
             return 1
 
-        def tool_trace_store(self) -> ToolTraceStore:
+        @property
+        def tool_traces(self) -> ToolTraceStore:
             return self.traces
 
     class Registry:
@@ -447,7 +445,7 @@ def test_context_and_tree_inspectors_are_bounded_and_index_backed(
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
     store.save("large", _messages(800, payload=2048), root=tmp_path)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     assert service.message_index._ensure("large") is not None
 
     def fail(*_args, **_kwargs):

@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from yoke.agent.loop.resources import acquire_tool_resources, release_tool_resources
 from yoke.agent.loop.tool_core import index_tools
-from yoke.agent.loop.resources import acquire_tool_resources
-from yoke.agent.loop.resources import release_tool_resources
-from yoke.agent.models import AgentContext
-from yoke.agent.models import Message
-from yoke.agent.tools import LocalTool
-from yoke.agent.tools import ModelIdentity
-from yoke.agent.tools import RegisterTools
-from yoke.agent.tools import ToolRegistrationContext
-from yoke.agent.tools import ToolRuntimeContext
-from yoke.agent.tools import never_cancel
-from yoke.agent.tools.context import normalize_tool_registration
-from yoke.agent.tools.context import resolve_model_identity
+from yoke.agent.models import AgentContext, Message
+from yoke.agent.tools import (
+    LocalTool,
+    ModelIdentity,
+    RegisterTools,
+    ToolRegistrationContext,
+    ToolRuntimeContext,
+    never_cancel,
+)
+from yoke.agent.tools.context import (
+    ToolSessionContext,
+    normalize_tool_registration,
+    resolve_model_identity,
+)
 from yoke.ai.providers.base import Provider
 
 if TYPE_CHECKING:
@@ -31,6 +34,7 @@ if TYPE_CHECKING:
 class ToolRegistrationMixin:
     """Mixin for refreshing tools when provider/model identity changes."""
 
+    tool_session_context: ToolSessionContext
     provider: Provider
     tools: dict[str, LocalTool]
     _tool_factory: RegisterTools | None
@@ -43,6 +47,7 @@ class ToolRegistrationMixin:
     _session_enabled_tool_names: set[str] | None
     _seen_command_completion_events: set[str]
     command_process_manager: CommandProcessManager
+    _context: AgentContext | None
     context_manager: ContextManager
 
     def refresh_tools(self, *, force: bool = False) -> bool:
@@ -59,6 +64,7 @@ class ToolRegistrationMixin:
                         home=self._tool_home,
                         provider=self.provider,
                         model=model,
+                        session=self.tool_session_context,
                         cancel_requested=never_cancel,
                     )
                 )
@@ -77,6 +83,32 @@ class ToolRegistrationMixin:
             self._install_tools(list(self.tools.values()), model=model)
             self._install_tool_system_messages([])
         return True
+
+    def configure_session_tools(
+        self,
+        *,
+        session: ToolSessionContext | None = None,
+        refresh: bool = True,
+        filter_instructions: bool = False,
+        sync_context: bool = True,
+        wrap_factory: Callable[
+            [RegisterTools | None, tuple[LocalTool, ...]], RegisterTools
+        ]
+        | None = None,
+    ) -> None:
+        """Bind session configuration and refresh the owned registration/context."""
+        if session is not None:
+            self.tool_session_context = session
+        if wrap_factory is not None:
+            self._tool_factory = wrap_factory(
+                self._tool_factory, tuple(self.tools.values())
+            )
+        if refresh:
+            self.refresh_tools(force=True)
+        if filter_instructions:
+            self._install_session_filtered_tool_system_messages()
+        if sync_context and self._context is not None:
+            self._sync_context_instructions(self._context)
 
     def _filter_session_enabled_tools(
         self,
@@ -105,6 +137,7 @@ class ToolRegistrationMixin:
             home=self._tool_home,
             provider=self.provider,
             model=resolved_model,
+            session=self.tool_session_context,
             cancel_requested=never_cancel,
             command_process_manager=self.command_process_manager,
             seen_command_completion_events=self._seen_command_completion_events,

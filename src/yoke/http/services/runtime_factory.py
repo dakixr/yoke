@@ -2,26 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from collections.abc import Iterator
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
-from yoke.ai.providers.usage_context import UsageMetricContext
-from yoke.ai.providers.usage_context import usage_metric_context
+from yoke.agent.protocols import AgentRunner
+from yoke.ai.providers.usage_context import UsageMetricContext, usage_metric_context
 from yoke.cli.config import CLIArgs
 from yoke.cli.config.runtime import build_cli_agent_from_args
 from yoke.cli.runtime.session import apply_session_defaults_to_args
-from yoke.http.services.session_runtime import close_owned_agent
-from yoke.session import fallback_session_title
-from yoke.session import SessionRecord
+from yoke.http.services.session_runtime.ownership import close_owned_agent
+from yoke.session import SessionRecord, fallback_session_title
 from yoke.session.workspace import require_session_workspace
 
-
 # Every object returned by this factory is owned by its HTTP caller.
-type SessionAgentFactory = Callable[[SessionRecord], object]
+type SessionAgentFactory = Callable[[SessionRecord], AgentRunner]
 
 
 @contextmanager

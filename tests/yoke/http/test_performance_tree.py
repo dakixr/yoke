@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 # ruff: noqa: ANN001,D100,D103,S101
-
 from pathlib import Path
 
-from yoke.http.services.session_message_index import storage as index_storage
-
-
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
+from tests.yoke.http.performance_helpers import messages as _messages
+from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.session.models import SessionRecord
 from yoke.cli.session.store import SessionStore
-from yoke.http.models.session import SessionForkRequest
-from yoke.http.models.session import TreeNavigateRequest
+from yoke.http.models.session import SessionForkRequest, TreeNavigateRequest
+from yoke.http.services.session_message_index import SessionMessageIndex
+from yoke.http.services.session_message_index import storage as index_storage
 from yoke.http.services.session_service import SessionService
-from tests.yoke.http.performance_helpers import messages as _messages
 
 
 def test_tree_interactions_use_topology_index_without_loading_history(
@@ -75,7 +71,7 @@ def test_tree_interactions_use_topology_index_without_loading_history(
     )
     store._write_session_record(record)
     store._update_index(record)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     initial_tree = service.tree("branch", limit=20, cursor=None)
     original_load = store.load
 
@@ -137,7 +133,7 @@ def test_fork_clones_canonical_session_without_loading_history(
 ) -> None:
     store = SessionStore(tmp_path / "sessions")
     source = store.save("large", _messages(600, payload=2048), root=tmp_path)
-    service = SessionService(store)
+    service = SessionService(store, message_index=SessionMessageIndex(store))
     assert service.message_index._ensure("large") is not None
     target_id = source.conversation_entries[200].id
     original_load = store.load

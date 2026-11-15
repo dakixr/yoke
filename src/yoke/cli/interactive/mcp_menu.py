@@ -8,32 +8,36 @@ from pathlib import Path
 from typing import cast
 
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.cli.render.base import Console
-from yoke.cli.runtime.selector.ui import select_list_item_interactive
-from yoke.cli.runtime.selector.ui import select_table_item_interactive
-from yoke.cli.interactive.mcp_menu_helpers import McpServerAction
-from yoke.cli.interactive.mcp_menu_helpers import McpToolRow
-from yoke.cli.interactive.mcp_menu_helpers import _find_server
-from yoke.cli.interactive.mcp_menu_helpers import _list_server_tools
-from yoke.cli.interactive.mcp_menu_helpers import _load_mcp_tool_rows
-from yoke.cli.interactive.mcp_menu_helpers import _refresh_mcp_tools
-from yoke.cli.interactive.mcp_menu_helpers import _scope_for_action
-from yoke.cli.interactive.mcp_menu_helpers import _select_mcp_scope
 from yoke.cli.interactive.mcp_menu_helpers import (
+    McpServerAction,
+    McpToolRow,
+    _find_server,
+    _list_server_tools,
+    _load_mcp_tool_rows,
+    _refresh_mcp_tools,
+    _scope_for_action,
+    _select_mcp_scope,
     _set_mcp_server_enabled,
+    _toggle_mcp_tool,
 )
-from yoke.cli.interactive.mcp_menu_helpers import _toggle_mcp_tool
 from yoke.cli.interactive.mcp_menu_render import (
     _render_server_action_row,
+    _render_server_row,
+    _render_tool_row,
+    _server_columns,
+    _tool_columns,
 )
-from yoke.cli.interactive.mcp_menu_render import _render_server_row
-from yoke.cli.interactive.mcp_menu_render import _render_tool_row
-from yoke.cli.interactive.mcp_menu_render import _server_columns
-from yoke.cli.interactive.mcp_menu_render import _tool_columns
-from yoke.mcp.config import McpServerConfig
-from yoke.mcp.config import McpSessionPolicy
-from yoke.mcp.config import load_mcp_config
-from yoke.mcp.config import server_supports_tool
+from yoke.cli.render.base import Console
+from yoke.cli.runtime.selector.ui import (
+    select_list_item_interactive,
+    select_table_item_interactive,
+)
+from yoke.mcp.config import (
+    McpServerConfig,
+    McpSessionPolicy,
+    load_mcp_config,
+    server_supports_tool,
+)
 
 
 def handle_mcp_menu(
@@ -111,11 +115,11 @@ def handle_mcp_menu(
 
 def ensure_mcp_session_policy(agent: RuntimeAgent) -> McpSessionPolicy:
     """Return the session MCP policy attached to this agent/provider."""
-    existing = getattr(agent.provider, "_yoke_mcp_session_policy", None)
+    existing = agent.tool_session_context.mcp_policy
     if isinstance(existing, McpSessionPolicy):
         return existing
     policy = McpSessionPolicy.empty()
-    object.__setattr__(agent.provider, "_yoke_mcp_session_policy", policy)
+    agent.tool_session_context.mcp_policy = policy
     return policy
 
 

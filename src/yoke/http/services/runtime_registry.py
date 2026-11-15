@@ -3,34 +3,31 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import logging
 from threading import Lock
-from typing import TYPE_CHECKING
-from typing import Literal
-from typing import TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
+from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.session import ActiveRuntimeInfo
-from yoke.http.errors import ApiError
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.pending_input_service import PendingInputService
-from yoke.http.services.runtime_factory import generate_http_session_title
+from yoke.http.services.runtime_factory import (
+    SessionAgentFactory,
+    generate_http_session_title,
+)
 from yoke.http.services.session_message_index import SessionMessageIndex
 from yoke.http.services.session_read_cache import SessionReadCache
-from yoke.session import SessionRecord
-from yoke.session import SessionStore
-from yoke.session.workspace import workspace_lease, require_session_workspace
+from yoke.session import SessionRecord, SessionStore
+from yoke.session.workspace import require_session_workspace, workspace_lease
 
 if TYPE_CHECKING:
-    from yoke.agent.provider_selection import ProviderSessionState
     from yoke.agent.skills.models import ActiveSkill
     from yoke.http.services.runtime import SessionRuntime
 
 
 T = TypeVar("T")
-type SessionAgentFactory = Callable[[SessionRecord], object]
 LOGGER = logging.getLogger(__name__)
 
 
@@ -80,6 +77,8 @@ class SessionRuntimeRegistry:
 
     def get_or_start(self, session_id: str) -> SessionRuntime:
         """Return one lazy runtime without starting model work."""
+        if not self.store.exists(session_id):
+            raise session_not_found()
         with self._lock:
             runtime = self._runtimes.get(session_id)
             if runtime is None:
@@ -109,9 +108,6 @@ class SessionRuntimeRegistry:
         """Return a shallow process-local runtime registry snapshot."""
         with self._lock:
             return list(self._runtimes.items())
-
-    async def wake(self, session_id: str) -> None:
-        await self.get_or_start(session_id).wake()
 
     def cancel_automatic_title(self, session_id: str) -> None:
         """Cancel automatic naming before an explicit title mutation."""
@@ -145,40 +141,13 @@ class SessionRuntimeRegistry:
                 result[session_id] = status
         return result
 
-    async def idle_mutation(self, session_id: str, mutation: Callable[[], T]) -> T:
-        """Serialize an idle-only domain mutation against prompt wake/steering."""
-        return await self.get_or_start(session_id).idle_mutation(mutation)
-
-    async def select_model(
-        self,
-        session_id: str,
-        *,
-        provider_name: str,
-        model_id: str,
-        reasoning_effort: str | None,
-    ) -> ProviderSessionState:
-        """Apply one provider/model selection through the session controller."""
-        return await self.get_or_start(session_id).select_model(
-            provider_name=provider_name,
-            model_id=model_id,
-            reasoning_effort=reasoning_effort,
-        )
-
-    async def compact(self, session_id: str) -> str:
-        """Schedule manual compaction for one session."""
-        return await self.get_or_start(session_id).compact()
-
     async def relocate(
         self, session_id: str, directory: str, *, expected_root: str | None = None
     ) -> SessionRecord:
         """Rebind an idle session and invalidate its root-dependent resources."""
-        from yoke.http.services.session_runtime.workspace import (
-            relocate_runtime_workspace,
-        )
-
         task = asyncio.create_task(
-            relocate_runtime_workspace(
-                self.get_or_start(session_id), directory, expected_root=expected_root
+            self.get_or_start(session_id).relocate_workspace(
+                directory, expected_root=expected_root
             ),
             name=f"yoke-http-relocate-{session_id}",
         )

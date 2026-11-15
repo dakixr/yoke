@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import os
 import subprocess
 import sys
-from threading import Event
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
 
 from yoke.agent.models import Message
-from yoke.http.services.session_runtime.workspace import pause_workspace_input
 from yoke.session.admissions import (
     AdmissionAttachment,
     AdmissionRecord,
@@ -24,8 +23,8 @@ from yoke.session.workspace import WorkspaceBusy, relocate_session_workspace
 from .test_workspace_recovery import (
     TestProvider,
     eventually_relocate,
-    req,
     relocate,
+    req,
     run_prompt,
 )
 from .test_workspace_recovery import harness as harness
@@ -73,14 +72,14 @@ def test_deletion_after_agent_preparation_pauses_input_before_provider_call(
 ):
     h = harness
     runtime = h.app.state.runtime_registry.get_or_start("saved")
-    original = runtime._prepare_turn_agent
+    original = runtime.turn_worker.prepare
 
     def prepare(*args, **kwargs):
         agent = original(*args, **kwargs)
         h.root.rmdir()
         return agent
 
-    monkeypatch.setattr(runtime, "_prepare_turn_agent", prepare)
+    monkeypatch.setattr(runtime.turn_worker, "prepare", prepare)
     admitted = req(
         h,
         "POST",
@@ -307,7 +306,7 @@ def test_workspace_requeue_recovers_after_each_interrupted_write(
         patch.setattr(pending.admissions, "save", save)
         patch.setattr(PromptQueueTransaction, "commit", commit)
         with pytest.raises(OSError, match="disk full"):
-            pause_workspace_input(runtime, admission)
+            runtime.inputs.pause(admission)
     # Original promoted identity remains recoverable until the queue is durable.
     assert pending.admissions.load("saved").records["blocked"].state == "promoted"
     queue = req(h, "GET", "/session/saved/queue")
@@ -365,17 +364,17 @@ def test_cancelled_relocation_request_does_not_cancel_the_owned_transaction(
     harness, monkeypatch
 ):
     h = harness
-    from yoke.http.services.session_runtime import workspace as module
+    from yoke.http.services.session_runtime import configuration as module
 
-    original = module._relocate_sync
+    original = module.relocate_session_workspace
     started, release = Event(), Event()
 
-    def blocked(*args):
+    def blocked(*args, **kwargs):
         started.set()
         assert release.wait(3)
-        return original(*args)
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(module, "_relocate_sync", blocked)
+    monkeypatch.setattr(module, "relocate_session_workspace", blocked)
     registry = h.app.state.runtime_registry
     caller = None
 

@@ -1,36 +1,35 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,D103,S101
-
 import json
 import os
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
-from yoke.agent.models import MessageImageURL
-from yoke.agent.models import MessageImageURLContentPart
-from yoke.agent.models import MessageTextContentPart
-from yoke.agent.models import ToolCall
-from yoke.agent.models import ToolFunction
+from yoke.agent.models import (
+    ConversationEntry,
+    Message,
+    MessageImageURL,
+    MessageImageURLContentPart,
+    MessageTextContentPart,
+    ToolCall,
+    ToolFunction,
+)
+from yoke.agent.provider_transition import ContextWindowTooSmallError
 from yoke.agent.session_tree import SessionTree
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.resolution import ProviderReadiness
-from yoke.agent.provider_transition import ContextWindowTooSmallError
-from yoke.http.app import HttpAppSettings
-from yoke.http.app import create_app
-from yoke.session.queue import PersistedPendingInput
-from yoke.session.queue import PersistedPromptQueue
-from yoke.session.queue import write_prompt_queue_snapshot
-
+from yoke.http.app import HttpAppSettings, create_app
+from yoke.session.queue import (
+    PersistedPendingInput,
+    PersistedPromptQueue,
+    write_prompt_queue_snapshot,
+)
 
 TOKEN = "test-secret"
 
@@ -240,7 +239,7 @@ def test_session_list_batches_queue_sidecar_loading(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.session_service as session_service_module
+    import yoke.http.services.session_catalog as session_service_module
 
     client = _client(tmp_path)
     root = tmp_path / "repo"
@@ -373,7 +372,9 @@ def test_model_selection_context_failure_is_structured(
         )
 
     registry = getattr(client.app, "state").runtime_registry
-    monkeypatch.setattr(registry, "select_model", reject_selection)
+    monkeypatch.setattr(
+        registry.get_or_start("context-switch"), "select_model", reject_selection
+    )
 
     response = client.post(
         "/api/v1/session/context-switch/selection",
@@ -1577,7 +1578,7 @@ def test_tool_trace_http_redacts_secrets_and_uses_output_sequence_cursor(
     assert created.status_code == 200
     state = getattr(client.app, "state")
     runtime = state.runtime_registry.get_or_start("session-a")
-    traces = runtime.tool_trace_store()
+    traces = runtime.tool_traces
     traces.record_event(
         "tool_execution_start",
         {

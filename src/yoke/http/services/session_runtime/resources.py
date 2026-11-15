@@ -3,31 +3,32 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from concurrent.futures import Future
-from concurrent.futures import Executor
 import logging
+from collections.abc import Callable
+from concurrent.futures import Executor, Future
 from threading import Lock
+from typing import TYPE_CHECKING
 
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.session.workspace import promote_session_turn as promote_runtime_fork
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tools.command_process_manager import CommandProcessManager
-from yoke.mcp.config import McpSessionPolicy
 from yoke.http.services.client_session import ClientSession
-from yoke.http.services.session_runtime.configuration import bind_client, set_mcp_policy
-from yoke.http.services.session_runtime.owned_cleanup import retire_owned_resource
 from yoke.http.services.session_runtime.cleanup import AgentCleanup as _AgentCleanup
 from yoke.http.services.session_runtime.cleanup import RetiredProvider
-from yoke.http.services.session_runtime.workspace import ProcessWorkspaceLease
-from yoke.http.services.session_runtime.workspace import synchronize_resource_workspace
-from yoke.session import SessionRecord
-from yoke.session import SessionStore
+from yoke.http.services.session_runtime.owned_cleanup import retire_owned_resource
+from yoke.http.services.session_runtime.processes import ResourceProcesses
+from yoke.http.services.session_runtime.resource_configuration import (
+    ResourceConfiguration,
+)
+from yoke.mcp.config import McpSessionPolicy
+from yoke.session import SessionRecord, SessionStore
+from yoke.session.workspace import promote_session_turn as promote_runtime_fork
 from yoke.session.workspace import require_session_workspace
 
+if TYPE_CHECKING:
+    from yoke.http.services.runtime_factory import SessionAgentFactory
 
 LOGGER = logging.getLogger(__name__)
-type SessionAgentFactory = Callable[[SessionRecord], object]
 
 
 class SessionRuntimeResources:
@@ -48,14 +49,11 @@ class SessionRuntimeResources:
         self.on_process_change = on_process_change
         self.store = store
         self._primary_root: str | None = None
-        self._process_lease: ProcessWorkspaceLease | None = None
+        self.processes = ResourceProcesses(store, session_id, on_process_change)
         self.lock = Lock()
         self._primary_agent: RuntimeAgent | None = None
-        self._process_unsubscribe: Callable[[], None] | None = None
-        self._session_enabled_tool_names: set[str] | None = None
-        self._mcp_session_policy = McpSessionPolicy.empty()
-        self.client_session: ClientSession | None = None
-        self._turn_agents: dict[int, object] = {}
+        self.configuration = ResourceConfiguration()
+        self._turn_agents: dict[int, RuntimeAgent] = {}
         self._providers: dict[int, object] = {}
         self._claimed_providers: set[int] = set()
         self._cleanups: dict[int, _AgentCleanup] = {}
@@ -68,7 +66,6 @@ class SessionRuntimeResources:
         return self._primary_agent
 
     def has_primary(self) -> bool:
-        """Return whether this owner has built a primary runtime agent."""
         with self.lock:
             return self._primary_agent is not None
 
@@ -79,36 +76,31 @@ class SessionRuntimeResources:
         load_state: bool,
         active_entries: list[ConversationEntry] | None = None,
         load_active_entries: Callable[[], list[ConversationEntry]] | None = None,
-    ) -> object:
+    ) -> RuntimeAgent:
         """Build the owned primary and optionally load its active path."""
         if self.store is not None:
             require_session_workspace(record)
-        synchronize_resource_workspace(self, record)
+        self.synchronize_workspace(record)
         with self.lock:
             if self._closing:
                 raise RuntimeError("HTTP runtime resources are closing.")
             if self._primary_agent is None:
                 candidate = self.agent_factory(record)
                 if not isinstance(candidate, RuntimeAgent):
-                    return candidate
+                    raise TypeError(
+                        "HTTP session factories must return a RuntimeAgent."
+                    )
                 self._primary_agent = candidate
                 self._primary_root = record.root
                 self._providers[id(candidate.provider)] = candidate.provider
-                bind_client(self, candidate)
+                self.configuration.bind(candidate)
                 candidate.refresh_tools(force=True)
-                manager = candidate.command_process_manager
-                if self.store is not None:
-                    self._process_lease = ProcessWorkspaceLease(
-                        self.store, self.session_id, manager
-                    )
-                    self._process_lease.changed()
-                self._process_unsubscribe = manager.subscribe(self._process_changed)
-                if self._session_enabled_tool_names is not None:
+                self.processes.attach(candidate.command_process_manager)
+                if self.configuration.enabled_tools is not None:
                     candidate.set_session_enabled_tools(
-                        self._session_enabled_tool_names
+                        self.configuration.enabled_tools
                     )
             primary = self._primary_agent
-            assert primary is not None
             if load_state:
                 if active_entries is None:
                     if load_active_entries is None:
@@ -122,12 +114,6 @@ class SessionRuntimeResources:
                     active_skills=record.active_skills,
                 )
             return primary
-
-    def _process_changed(self) -> None:
-        watch = self._process_lease
-        if watch is not None:
-            watch.changed()
-        self.on_process_change()
 
     def has_live_work(self) -> bool:
         """Include retired turns and background processes, not only UI activity."""
@@ -145,10 +131,6 @@ class SessionRuntimeResources:
         """Own a replacement provider even if later metadata persistence fails."""
         with self.lock:
             self._providers[id(provider)] = provider
-            object.__setattr__(
-                provider, "_yoke_mcp_session_policy", self._mcp_session_policy
-            )
-            object.__setattr__(provider, "_yoke_client_session", self.client_session)
 
     def retire_provider(self, provider: object) -> None:
         """Close replaced providers only after their remaining agents retire."""
@@ -162,22 +144,16 @@ class SessionRuntimeResources:
         *,
         active_entries: list[ConversationEntry] | None,
         load_active_entries: Callable[[], list[ConversationEntry]],
-    ) -> object:
+    ) -> RuntimeAgent:
         """Create an isolated turn fork with the established runtime projection."""
-        primary_or_candidate = self.ensure_primary(record, load_state=False)
-        if not isinstance(primary_or_candidate, RuntimeAgent):
-            with self.lock:
-                if self._closing:
-                    raise RuntimeError("HTTP runtime resources are closing.")
-                self._turn_agents[id(primary_or_candidate)] = primary_or_candidate
-            return primary_or_candidate
+        self.ensure_primary(record, load_state=False)
         with self.lock:
             primary = self._primary_agent
             if primary is None or self._closing:
                 raise RuntimeError("HTTP runtime resources are closing.")
             turn_agent = primary.fork(isolate_provider=True, include_state=False)
             if self.client_session is not None:
-                bind_client(self, turn_agent)
+                self.configuration.bind(turn_agent)
                 turn_agent.refresh_tools(force=True)
             self._turn_agents[id(turn_agent)] = turn_agent
             self._providers[id(turn_agent.provider)] = turn_agent.provider
@@ -210,21 +186,12 @@ class SessionRuntimeResources:
             return primary.command_process_manager if primary is not None else None
 
     def session_enabled_tool_names(self) -> set[str] | None:
-        """Return a defensive copy of the process-local tool allowlist."""
         with self.lock:
-            return (
-                set(self._session_enabled_tool_names)
-                if self._session_enabled_tool_names is not None
-                else None
-            )
+            return self.configuration.enabled_snapshot()
 
     def mcp_session_policy(self) -> McpSessionPolicy:
-        """Return a defensive copy of the process-local MCP policy."""
         with self.lock:
-            return McpSessionPolicy(
-                servers=dict(self._mcp_session_policy.servers),
-                injected_servers=self._mcp_session_policy.injected_servers,
-            )
+            return self.configuration.policy_snapshot()
 
     def set_mcp_policy(
         self,
@@ -237,15 +204,16 @@ class SessionRuntimeResources:
         update_disabled_tools: bool,
     ) -> None:
         """Update MCP policy and refresh the primary agent if loaded."""
-        set_mcp_policy(
-            self,
-            server_name,
-            enabled=enabled,
-            enabled_tools=enabled_tools,
-            disabled_tools=disabled_tools,
-            update_enabled_tools=update_enabled_tools,
-            update_disabled_tools=update_disabled_tools,
-        )
+        with self.lock:
+            self.configuration.set_mcp_policy(
+                self._primary_agent,
+                server_name,
+                enabled=enabled,
+                enabled_tools=enabled_tools,
+                disabled_tools=disabled_tools,
+                update_enabled_tools=update_enabled_tools,
+                update_disabled_tools=update_disabled_tools,
+            )
 
     def set_tools(
         self,
@@ -257,26 +225,16 @@ class SessionRuntimeResources:
     ) -> set[str]:
         """Update the tool allowlist and refresh the primary agent if loaded."""
         with self.lock:
-            base = (
-                set(self._session_enabled_tool_names)
-                if self._session_enabled_tool_names is not None
-                else set(default_enabled_names)
+            return self.configuration.set_tools(
+                self._primary_agent,
+                discovered_names=discovered_names,
+                default_enabled_names=default_enabled_names,
+                enabled=enabled,
+                disabled=disabled,
             )
-            next_enabled = (base | enabled) - disabled
-            self._session_enabled_tool_names = set(next_enabled)
-            primary = self._primary_agent
-            if primary is not None:
-                hidden_names = set(primary.tools) - discovered_names
-                primary.set_session_enabled_tools(next_enabled | hidden_names)
-                primary._install_session_filtered_tool_system_messages()
-                if primary._context is not None:
-                    primary._sync_context_instructions(primary._context)
-            return set(next_enabled)
 
     async def reap(self, turn_agent: object | None) -> None:
         """Join the single daemon cleanup for one completed turn agent."""
-        if turn_agent is None:
-            return
         completion = self.retire(turn_agent)
         if completion is not None:
             await asyncio.shield(asyncio.wrap_future(completion))
@@ -302,8 +260,7 @@ class SessionRuntimeResources:
             if first:
                 self._closing = True
                 self._close_completion = Future()
-                unsubscribe = self._process_unsubscribe
-                self._process_unsubscribe = None
+                unsubscribe = self.processes.unsubscribe
             else:
                 unsubscribe = None
             completion = self._close_completion
@@ -329,7 +286,7 @@ class SessionRuntimeResources:
         cleanup.completion = retire_owned_resource(cleanup.attempt)
         return cleanup
 
-    def _remove_terminal_agent(self, agent: object) -> object | None:
+    def remove_terminal_agent(self, agent: object) -> object | None:
         provider = getattr(agent, "provider", None)
         with self.lock:
             if self._primary_agent is agent:
@@ -350,12 +307,12 @@ class SessionRuntimeResources:
             agents.append(self._primary_agent)
         return any(getattr(agent, "provider", None) is provider for agent in agents)
 
-    def _remove_terminal_provider(self, provider: object) -> None:
+    def remove_terminal_provider(self, provider: object) -> None:
         with self.lock:
             self._providers.pop(id(provider), None)
             self._claimed_providers.discard(id(provider))
 
-    def _finish_cleanup(self, cleanup: _AgentCleanup) -> None:
+    def finish_cleanup(self, cleanup: _AgentCleanup) -> None:
         with self.lock:
             if self._cleanups.get(id(cleanup.agent)) is cleanup:
                 self._cleanups.pop(id(cleanup.agent))
@@ -373,8 +330,46 @@ class SessionRuntimeResources:
         ):
             return
         self._closed = True
-        if self._process_lease is not None:
-            self._process_lease.close()
-            self._process_lease = None
+        self.processes.close()
         if not completion.done():
             completion.set_result(None)
+
+    def synchronize_workspace(self, record: SessionRecord | None = None) -> None:
+        """Retire stale configuration, including policy set before agent startup."""
+        if record is None:
+            if self.store is None:
+                return
+            record = self.store.summary_record(self.session_id)
+            if record is None:
+                return
+        with self.lock:
+            if self._primary_root is None:
+                self._primary_root = record.root
+            if self._primary_root == record.root:
+                return
+            old = self._primary_agent
+            self.processes.close()
+            self._primary_agent = None
+            self._primary_root = record.root
+            self.configuration = ResourceConfiguration()
+            if old is not None:
+                self._submit_cleanup_locked(old)
+
+    @property
+    def client_session(self) -> ClientSession | None:
+        return self.configuration.client
+
+    def configure_client(self, client: ClientSession | None) -> None:
+        with self.lock:
+            self.configuration.configure_client(self._primary_agent, client)
+
+    async def reset_workspace(self, record: SessionRecord) -> None:
+        """Reuse this resource owner after committed relocation and cleanup."""
+        try:
+            await self.close()
+        finally:
+            with self.lock:
+                self._closing = self._closed = False
+                self._close_completion = None
+                self.configuration = ResourceConfiguration()
+                self._primary_root = record.root

@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from fastapi import Depends
-from fastapi import Query
-from fastapi import Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from yoke.http.auth import require_auth
-from yoke.http.models.prompt import PromptAdmissionRequest
-from yoke.http.models.prompt import PromptInput
-from yoke.http.models.skill import SessionSkillResponse
-from yoke.http.models.skill import SkillActivateData
-from yoke.http.models.skill import SkillActivateRequest
-from yoke.http.models.skill import SkillActivateResponse
-from yoke.http.models.skill import SkillInfo
-from yoke.http.models.skill import SkillListResponse
+from yoke.http.models.prompt import PromptAdmissionRequest, PromptInput
+from yoke.http.models.skill import (
+    SessionSkillResponse,
+    SkillActivateData,
+    SkillActivateRequest,
+    SkillActivateResponse,
+    SkillInfo,
+    SkillListResponse,
+)
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.runtime_registry import SessionRuntimeRegistry
 from yoke.http.services.skill_service import SkillService
-
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -71,7 +68,7 @@ async def activate_session_skill(
             ),
         )
         input_id = receipt.id
-        await runtimes.wake(session_id)
+        await runtimes.get_or_start(session_id).wake()
     return SkillActivateResponse(
         data=SkillActivateData(
             activated=SkillInfo(

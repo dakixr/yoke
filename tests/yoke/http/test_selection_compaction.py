@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-# ruff: noqa: D100,D101,D102,D103,S101
+import time
 
+# ruff: noqa: D100,D101,D102,D103,S101
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event
-from threading import RLock
-import time
-from typing import Any
-from typing import cast
+from threading import Event, RLock
+from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -16,12 +14,12 @@ from fastapi.testclient import TestClient
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import Message
 from yoke.ai.providers.base import ProviderModelInfo
-from yoke.ai.providers.usage_context import current_usage_metric_context
-from yoke.ai.providers.usage_context import UsageMetricContext
-from yoke.http.app import HttpAppSettings
-from yoke.http.app import create_app
+from yoke.ai.providers.usage_context import (
+    UsageMetricContext,
+    current_usage_metric_context,
+)
+from yoke.http.app import HttpAppSettings, create_app
 from yoke.session import SessionRecord
-
 
 TOKEN = "selection-secret"
 
@@ -149,7 +147,7 @@ def test_selection_switches_runtime_and_persists_metadata(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.runtime as runtime_module
+    import yoke.http.services.session_runtime.operations as runtime_module
 
     observed: UsageMetricContext | None = None
     original_switch = runtime_module.switch_agent_provider_model
@@ -251,7 +249,7 @@ def test_manual_compaction_propagates_http_session_usage_attribution(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import yoke.http.services.runtime as runtime_module
+    import yoke.http.services.session_runtime.operations as runtime_module
 
     observed: UsageMetricContext | None = None
 

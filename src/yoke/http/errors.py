@@ -6,13 +6,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import Request
-from fastapi import status
+from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from yoke.http.models.common import ErrorBody
-from yoke.http.models.common import ErrorEnvelope
+from yoke.http.models.common import ErrorBody, ErrorEnvelope
 from yoke.session.workspace import WorkspaceError
 
 
@@ -24,6 +22,16 @@ class ApiError(Exception):
     code: str
     message: str
     details: dict[str, Any] | None = None
+
+
+def session_not_found() -> ApiError:
+    """Return the common missing-session response."""
+    return ApiError(404, "session_not_found", "Session was not found.")
+
+
+def session_busy(message: str = "Session must be idle for this operation.") -> ApiError:
+    """Return the common idle-gate conflict response."""
+    return ApiError(409, "session_busy", message)
 
 
 def request_id(request: Request) -> str:

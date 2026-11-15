@@ -3,25 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from concurrent.futures import Executor
 from contextlib import suppress
-import logging
 from threading import Lock
 
 from yoke.agent.models import Message
 from yoke.http.services.event_broker import EventService
-from yoke.http.services.runtime_factory import SessionAgentFactory
-from yoke.http.services.runtime_factory import generate_http_session_title
+from yoke.http.services.runtime_factory import (
+    SessionAgentFactory,
+    generate_http_session_title,
+)
 from yoke.http.services.runtime_persistence import input_is_persisted
 from yoke.http.services.session_read_cache import SessionReadCache
-from yoke.session import SessionRecord
-from yoke.session import SessionStore
-from yoke.session import fallback_session_title
-from yoke.session.admissions import AdmissionRecord
 from yoke.http.services.session_runtime.workspace import uses_workspace
+from yoke.session import SessionRecord, SessionStore, fallback_session_title
+from yoke.session.admissions import AdmissionRecord
 from yoke.session.workspace import workspace_lease
-
 
 LOGGER = logging.getLogger(__name__)
 type UserMessageFactory = Callable[[SessionRecord, AdmissionRecord], Message]
@@ -93,6 +92,11 @@ class SessionTitleAutomation:
             LOGGER.warning("Automatic session title generation failed: %s", exc)
 
         title = generated or fallback_session_title(admission.prompt)
+        await asyncio.get_running_loop().run_in_executor(
+            self.executor, self._save_title, title
+        )
+
+    def _save_title(self, title: str) -> None:
         with workspace_lease(self.store, self.session_id), self.persistence_lock:
             current = self.store.summary_record(self.session_id)
             if current is None or current.title:

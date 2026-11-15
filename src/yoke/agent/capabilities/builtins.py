@@ -2,42 +2,42 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
-import shutil
 
-from yoke.agent.capabilities.base import BaseCapability
-from yoke.agent.capabilities.base import CapabilityRegistration
+from yoke.agent.capabilities.base import BaseCapability, CapabilityRegistration
 from yoke.agent.models import Message
-from yoke.agent.tools import ApplyPatchTool
-from yoke.agent.tools import AttachImageTool
-from yoke.agent.tools import EditTool
-from yoke.agent.tools import ExtractFileContextTool
-from yoke.agent.tools import FdTool
-from yoke.agent.tools import FindTool
-from yoke.agent.tools import GrepTool
-from yoke.agent.tools import ImageGenerationTool
-from yoke.agent.tools import ExecCommandTool
-from yoke.agent.tools import LocalTool
-from yoke.agent.tools import PythonExecTool
-from yoke.agent.tools import ReadTool
-from yoke.agent.tools import RipgrepTool
-from yoke.agent.tools import LsTool
-from yoke.agent.tools import ToolRegistrationContext
-from yoke.agent.tools import WebFetchTool
-from yoke.agent.tools import WebResearchTool
-from yoke.agent.tools import WebSearchTool
-from yoke.agent.tools import WorkspaceTool
-from yoke.agent.tools import ProcessInputTool
-from yoke.agent.tools import ProcessReadTool
-from yoke.agent.tools import ProcessCancelTool
-from yoke.agent.tools import WriteTool
+from yoke.agent.tools import (
+    ApplyPatchTool,
+    AttachImageTool,
+    EditTool,
+    ExecCommandTool,
+    ExtractFileContextTool,
+    FdTool,
+    FindTool,
+    GrepTool,
+    ImageGenerationTool,
+    LocalTool,
+    LsTool,
+    ProcessCancelTool,
+    ProcessInputTool,
+    ProcessReadTool,
+    PythonExecTool,
+    ReadTool,
+    RipgrepTool,
+    ToolRegistrationContext,
+    WebFetchTool,
+    WebResearchTool,
+    WebSearchTool,
+    WorkspaceTool,
+    WriteTool,
+)
 from yoke.agent.tools.apply_patch.instructions import (
     APPLY_PATCH_INSTRUCTIONS,
 )
-from yoke.agent.tools.mcp import LazyMcpManager
-from yoke.agent.tools.mcp import register_mcp_tools
 from yoke.agent.tools.image_generation import provider_supports_image_generation
+from yoke.agent.tools.mcp import LazyMcpManager, register_mcp_tools
 
 
 @dataclass(slots=True, frozen=True)
@@ -141,7 +141,7 @@ class McpCapability(BaseCapability):
         context: ToolRegistrationContext,
     ) -> Iterable[LocalTool]:
         """Expose only the low-context MCP inspect/call tools."""
-        policy = getattr(context.provider, "_yoke_mcp_session_policy", None)
+        policy = context.session.mcp_policy
         manager = LazyMcpManager(
             root=context.root,
             home=context.home,
