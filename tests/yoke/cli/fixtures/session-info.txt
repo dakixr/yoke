@@ -1,0 +1,14 @@
+note Session info:
+Session id: oracle-session
+Title: Oracle fixture
+Pinned: no
+Root: <ROOT>
+Database: <STORE>/yoke.db
+Provider: oracle
+Model: oracle-model
+Messages: 2
+Conversation entries: 2
+Created: <CREATED>
+Updated: <UPDATED>
+Reasoning effort: unknown
+Context window: 100000 tokens

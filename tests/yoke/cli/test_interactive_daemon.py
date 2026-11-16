@@ -115,6 +115,17 @@ def test_daemon_info_matches_every_in_process_line(interactive_daemon, monkeypat
         cast_session(d.backend),
         backend=SessionBackend.wrap(d.backend),
     )
+    from pathlib import Path
+
+    frozen = (
+        (Path(__file__).parent / "fixtures" / "session-info.txt")
+        .read_text()
+        .replace("<ROOT>", str(d.world.root))
+        .replace("<STORE>", str(d.world.directory))
+        .replace("<CREATED>", record.created_at)
+        .replace("<UPDATED>", record.updated_at)
+    )
+    assert expected.getvalue() == frozen
     assert actual.getvalue() == expected.getvalue()
     assert f"Database: {d.world.directory / 'yoke.db'}" in actual.getvalue()
     assert "Conversation entries: 0" not in actual.getvalue()
