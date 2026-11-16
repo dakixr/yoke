@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import base64
+from PIL import Image
 from pathlib import Path
 from queue import Queue
 from threading import Event, Lock, Thread
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -28,46 +27,44 @@ from yoke.cli.interactive.prompt.loop import (
 )
 from yoke.cli.interactive.tree_selector import TreeSelectorResult
 from yoke.cli.render import InteractiveRenderer, build_console
-from yoke.cli.runtime import create_active_session, run_cli
-from yoke.cli.runtime.base import ActiveSessionRef
-from yoke.cli.runtime.lifetime import close_cli_owned_agent, register_cli_owned_agent
-from yoke.cli.runtime.session import save_active_session
-from yoke.cli.runtime.title import (
-    start_session_title_generation,
-    wait_for_session_title,
+from yoke.cli.backend.startup import run_daemon_cli as run_cli
+from yoke.agent.loop import RuntimeAgent
+from tests.yoke.daemon.support import eventually
+from .terminal_daemon_support import (
+    ReplyProvider,
+    session_for,
+    terminal as terminal,
+    terminal_daemon,
 )
+from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.session import SessionStore
 
-from .support import CaptureStream, FakeAgent, ImageAwareAgent, active_session_for
+from .support import CaptureStream
 
 
-def test_cli_runs_headless_prompt(capsys) -> None:
-    exit_code = run_cli(CLIArgs(prompt="hello world", headless=True), agent=FakeAgent())
-
+def test_cli_runs_headless_prompt(capsys, terminal) -> None:
+    exit_code = run_cli(CLIArgs(prompt="hello world", headless=True))
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == "synthetic response"
 
 
 def test_headless_cli_generates_title_without_blocking_user_turn(
-    tmp_path: Path,
-    monkeypatch,
+    tmp_path, monkeypatch, terminal
 ) -> None:
-    title_started = Event()
-    response_written = Event()
-    user_turn_started = Event()
-    title_messages: list[str] = []
+    title_started, response_written, user_turn_started = Event(), Event(), Event()
+    title_messages = []
 
-    def generate(_agent, messages) -> str:
+    def generate(_factory, _record, messages):
         title_messages.extend(message.plain_text_content or "" for message in messages)
         title_started.set()
-        assert response_written.wait(timeout=2)
+        assert response_written.wait(timeout=5)
         return "Generated Background Title"
 
-    class ConcurrentAgent(FakeAgent):
-        def run(self, *args, **kwargs):
-            assert title_started.wait(timeout=2)
+    class ConcurrentProvider(ReplyProvider):
+        def complete(self, messages, tools):
+            assert title_started.wait(timeout=5)
             user_turn_started.set()
-            return super().run(*args, **kwargs)
+            return super().complete(messages, tools)
 
     class SignalingOutput(CaptureStream):
         def write(self, text: str) -> int:
@@ -76,31 +73,30 @@ def test_headless_cli_generates_title_without_blocking_user_turn(
                 response_written.set()
             return written
 
-    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", generate)
-    agent = ConcurrentAgent()
-
+    terminal.factory = lambda record: RuntimeAgent(
+        ConcurrentProvider(), [], tool_root=Path(record.root)
+    )
+    monkeypatch.setattr("yoke.http.runtime.title.generate_http_session_title", generate)
     output = SignalingOutput()
     exit_code = run_cli(
-        CLIArgs(
-            prompt="Reply with exactly OK.",
-            headless=True,
-            root=str(tmp_path),
-        ),
-        agent=agent,
+        CLIArgs(prompt="Reply with exactly OK.", headless=True, root=str(tmp_path)),
         stdout=output,
         stderr=CaptureStream(),
     )
-
     assert exit_code == 0
     assert user_turn_started.is_set()
     assert title_messages == ["Reply with exactly OK."]
-    records = SessionStore().list(root=tmp_path)
-    assert records[0].title == "Generated Background Title"
+    eventually(
+        lambda: (
+            SessionStore().list(root=tmp_path)[0].title == "Generated Background Title"
+        )
+    )
 
 
 def test_seeded_interactive_cli_does_not_wait_for_title_generation(
     tmp_path: Path,
     monkeypatch,
+    terminal,
 ) -> None:
     def fail(*_args, **_kwargs) -> None:
         pytest.fail("interactive startup must leave title generation to the turn loop")
@@ -112,12 +108,11 @@ def test_seeded_interactive_cli_does_not_wait_for_title_generation(
         observed["title"] = active_session.title
         return 0
 
-    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", fail)
+    monkeypatch.setattr("yoke.session.title.generate_session_title", fail)
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", fake_interactive)
 
     exit_code = run_cli(
         CLIArgs(prompt="start useful work", root=str(tmp_path)),
-        agent=FakeAgent(),
         stdout=CaptureStream(),
         stderr=CaptureStream(),
     )
@@ -134,251 +129,189 @@ def test_seeded_interactive_cli_does_not_wait_for_title_generation(
 
 
 def test_basic_interactive_turn_generates_title_without_blocking_turn(
-    tmp_path: Path,
-    monkeypatch,
+    tmp_path, monkeypatch, terminal
 ) -> None:
-    title_started = Event()
-    release_title = Event()
+    title_started, release_title = Event(), Event()
 
-    def generate(*_args, **_kwargs) -> str:
+    def generate(*_args, **_kwargs):
         title_started.set()
-        assert release_title.wait(timeout=2)
+        assert release_title.wait(timeout=5)
         return "Generated Interactive Title"
 
-    class ConcurrentAgent(FakeAgent):
-        def run(self, *args, **kwargs):
-            assert title_started.wait(timeout=2)
+    class ConcurrentProvider(ReplyProvider):
+        def complete(self, messages, tools):
+            assert title_started.wait(timeout=5)
             release_title.set()
-            return super().run(*args, **kwargs)
+            return super().complete(messages, tools)
 
-    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", generate)
-    active_session = create_active_session(
-        CLIArgs(root=str(tmp_path)),
-        root=tmp_path,
+    terminal.factory = lambda record: RuntimeAgent(
+        ConcurrentProvider(), [], tool_root=Path(record.root)
     )
-    save_active_session(active_session, [])
-    result_queue: Queue = Queue()
+    monkeypatch.setattr("yoke.http.runtime.title.generate_http_session_title", generate)
+    backend = terminal.backend("basic-title", root=tmp_path)
+    result_queue = Queue()
     thread = _start_basic_turn(
         "normal interactive prompt",
         state=BasicCliState(messages=[], pending_prompts=[]),
-        active_session=active_session,
-        agent=ConcurrentAgent(),
+        active_session=session_for(backend),
+        agent=backend,
         stderr=CaptureStream(),
         renderer=InteractiveRenderer(CaptureStream()),
         result_queue=result_queue,
     )
-
-    thread.join(timeout=2)
+    thread.join(timeout=5)
     assert not thread.is_alive()
     assert isinstance(result_queue.get_nowait(), TurnSuccess)
-    wait_for_session_title(active_session)
-    assert SessionStore().load(active_session.id).title == "Generated Interactive Title"
+    eventually(
+        lambda: (
+            SessionStore().load("basic-title").title == "Generated Interactive Title"
+        )
+    )
 
 
-def test_session_title_worker_is_deduplicated(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    started = Event()
-    release = Event()
-    calls = 0
+def test_session_title_worker_is_deduplicated(tmp_path, monkeypatch, terminal) -> None:
+    started, release = Event(), Event()
+    calls = []
 
-    def generate(*_args, **_kwargs) -> str:
-        nonlocal calls
-        calls += 1
+    def generate(*_args, **_kwargs):
+        calls.append("title")
         started.set()
-        assert release.wait(timeout=2)
+        assert release.wait(timeout=5)
         return "One Generated Title"
 
-    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", generate)
-    active_session = create_active_session(
-        CLIArgs(root=str(tmp_path)),
-        root=tmp_path,
+    monkeypatch.setattr("yoke.http.runtime.title.generate_http_session_title", generate)
+    backend = terminal.backend("deduplicated-title", root=tmp_path)
+    first = backend.submit(
+        "first prompt",
+        [],
+        entries=[],
+        stop_event=Event(),
+        user_message=None,
+        checkpoint=lambda *_: None,
     )
-    save_active_session(active_session, [])
-    agent = FakeAgent()
-
-    first = start_session_title_generation(active_session, agent, "first prompt")
-    assert started.wait(timeout=2)
-    second = start_session_title_generation(active_session, agent, "second prompt")
-
-    assert first is second
-    assert calls == 1
-    release.set()
-    wait_for_session_title(active_session)
-    assert SessionStore().load(active_session.id).title == "One Generated Title"
+    try:
+        assert started.wait(timeout=5)
+        list(first)
+        assert isinstance(first.result(), TurnSuccess)
+        second = backend.submit(
+            "second prompt",
+            [],
+            entries=[],
+            stop_event=Event(),
+            user_message=None,
+            checkpoint=lambda *_: None,
+        )
+        list(second)
+        assert isinstance(second.result(), TurnSuccess)
+        assert calls == ["title"]
+    finally:
+        release.set()
+    eventually(
+        lambda: SessionStore().load("deduplicated-title").title == "One Generated Title"
+    )
 
 
 def test_prompt_state_adopts_provider_effort_after_model_command(
-    tmp_path: Path,
-    monkeypatch,
+    tmp_path, monkeypatch, terminal
 ) -> None:
-    agent = FakeAgent(
-        provider=SimpleNamespace(
-            config=SimpleNamespace(reasoning_effort="medium"),
-        )
+    backend = terminal.backend("effort", root=tmp_path)
+    terminal.store.set_selection(
+        "effort",
+        provider_name=None,
+        model_id=None,
+        reasoning_effort="medium",
+        context_window_tokens=None,
     )
-    active_session = active_session_for(tmp_path)
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        thinking_effort="medium",
-    )
+    backend.refresh_session()
+    active_session = session_for(backend)
+    state = PromptCliState(messages=[], pending_prompts=[], thinking_effort="medium")
 
     def switch_model(*_args, **_kwargs):
-        agent.provider.config.reasoning_effort = "thinking"
+        terminal.store.set_selection(
+            "effort",
+            provider_name=None,
+            model_id=None,
+            reasoning_effort="thinking",
+            context_window_tokens=None,
+        )
+        backend.refresh_session()
         return True, [], active_session
 
     monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.loop.handle_slash_command",
-        switch_model,
+        "yoke.cli.interactive.prompt.loop.handle_slash_command", switch_model
     )
-
     process_prompt_toolkit_prompt(
         "/model",
         state=state,
-        agent=agent,
+        agent=backend,
         active_session_ref=ActiveSessionRef(active_session),
         scrollback_console=build_console(CaptureStream()),
         state_lock=Lock(),
-        update_status=lambda _message: None,
+        update_status=lambda _: None,
         invalidate_prompt=lambda: None,
         request_exit=lambda: None,
         start_turn=lambda *_args, **_kwargs: Thread(),
         steer_active_turn=lambda *_args, **_kwargs: False,
         format_context_usage_text=format_context_usage_text,
     )
-
     assert state.thinking_effort == "thinking"
 
 
-def test_headless_cli_propagates_session_usage_attribution(
-    tmp_path: Path,
-) -> None:
-    from yoke.ai.providers.usage_context import (
-        current_usage_metric_context,
+def test_headless_cli_propagates_session_usage_attribution(tmp_path, terminal) -> None:
+    from yoke.ai.providers.usage_context import current_usage_metric_context
+
+    contexts = []
+
+    class AttributionProvider(ReplyProvider):
+        def complete(self, messages, tools):
+            context = current_usage_metric_context()
+            if context.call_kind != "session_title":
+                contexts.append(context)
+            return super().complete(messages, tools)
+
+    terminal.factory = lambda record: RuntimeAgent(
+        AttributionProvider(), [], tool_root=Path(record.root)
     )
-
-    class AttributionAgent(FakeAgent):
-        observed_context = None
-
-        def run(self, *args, **kwargs):
-            self.observed_context = current_usage_metric_context()
-            return super().run(*args, **kwargs)
-
-    agent = AttributionAgent()
-
     exit_code = run_cli(
-        CLIArgs(
-            prompt="CLI attribution title",
-            headless=True,
-            root=str(tmp_path),
-        ),
-        agent=agent,
+        CLIArgs(prompt="CLI attribution title", headless=True, root=str(tmp_path)),
         stdout=CaptureStream(),
         stderr=CaptureStream(),
     )
-
     assert exit_code == 0
-    assert agent.observed_context is not None
-    assert agent.observed_context.surface == "cli"
-    session_id = agent.observed_context.session_id
-    assert session_id is not None
-    assert session_id.startswith("20")
-    assert agent.observed_context.session_title == "CLI attribution title"
+    assert len(contexts) == 1
+    context = contexts[0]
+    assert context.surface == "http"
+    assert context.session_id is not None
+    assert context.session_id.startswith("20")
+    assert context.session_title == "CLI attribution title"
 
 
-def test_cli_closes_runtime_it_constructs(tmp_path: Path, monkeypatch) -> None:
-    class CloseTrackingAgent(FakeAgent):
-        closed = False
+def test_cli_closes_runtime_it_constructs(tmp_path, monkeypatch) -> None:
+    agents = []
 
-        def close(self) -> None:
-            self.closed = True
+    def factory(record):
+        agent = RuntimeAgent(ReplyProvider(), [], tool_root=Path(record.root))
+        agents.append(agent)
+        return agent
 
-    agent = CloseTrackingAgent()
-    monkeypatch.setattr(
-        "yoke.cli.runtime.startup.build_cli_agent_from_args",
-        lambda _args, *, recover_model: SimpleNamespace(
-            agent=agent,
-            tool_report=None,
-            startup_warning=None,
-        ),
-    )
-
-    exit_code = run_cli(
-        CLIArgs(prompt="hello", headless=True, root=str(tmp_path)),
-        stdout=CaptureStream(),
-        stderr=CaptureStream(),
-    )
-
-    assert exit_code == 0
-    assert agent.closed is True
+    with terminal_daemon(monkeypatch, factory):
+        exit_code = run_cli(
+            CLIArgs(prompt="hello", headless=True, root=str(tmp_path)),
+            stdout=CaptureStream(),
+            stderr=CaptureStream(),
+        )
+        assert exit_code == 0
+    assert agents
+    assert all(agent.closed for agent in agents)
 
 
-def test_close_cli_owned_agent_preserves_entrypoint_error() -> None:
-    class FailingCloseAgent:
-        closed = False
-
-        def close(self) -> None:
-            self.closed = True
-            raise RuntimeError("close failed")
-
-    agent = FailingCloseAgent()
-
-    @close_cli_owned_agent
-    def entrypoint() -> None:
-        register_cli_owned_agent(agent)
-        raise ValueError("original failure")
-
-    with pytest.raises(ValueError, match="original failure"):
-        entrypoint()
-    assert agent.closed is True
-
-
-def test_close_cli_owned_agent_tolerates_close_failure() -> None:
-    class FailingCloseAgent:
-        closed = False
-
-        def close(self) -> None:
-            self.closed = True
-            raise RuntimeError("close failed")
-
-    agent = FailingCloseAgent()
-
-    @close_cli_owned_agent
-    def entrypoint() -> str:
-        register_cli_owned_agent(agent)
-        return "ok"
-
-    assert entrypoint() == "ok"
-    assert agent.closed is True
-
-
-def test_close_cli_owned_agent_leaves_caller_owned_agent() -> None:
-    class CloseTrackingAgent:
-        closed = False
-
-        def close(self) -> None:
-            self.closed = True
-
-    agent = CloseTrackingAgent()
-
-    @close_cli_owned_agent
-    def entrypoint(agent: object | None = None) -> str:
-        return "ok"
-
-    assert entrypoint(agent=agent) == "ok"
-    assert agent.closed is False
-
-
-def test_cli_reads_headless_prompt_from_stdin(monkeypatch) -> None:
+def test_cli_reads_headless_prompt_from_stdin(monkeypatch, terminal) -> None:
     stdout = CaptureStream()
     stderr = CaptureStream()
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
     exit_code = run_cli(
         CLIArgs(headless=True),
-        agent=FakeAgent(),
         input_func=lambda _="": "prompt from stdin\n",
         stdout=stdout,
         stderr=stderr,
@@ -389,22 +322,32 @@ def test_cli_reads_headless_prompt_from_stdin(monkeypatch) -> None:
     assert stderr.getvalue() == ""
 
 
-def test_cli_headless_accepts_image_attachments(tmp_path: Path, monkeypatch) -> None:
+def test_cli_headless_accepts_image_attachments(
+    tmp_path: Path, monkeypatch, terminal
+) -> None:
     session_dir = tmp_path / "sessions"
     image_path = tmp_path / "tiny.png"
-    image_path.write_bytes(
-        base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0mQAAAAASUVORK5CYII="
-        )
+    Image.new("RGB", (1, 1), color="red").save(image_path)
+    seen_user_messages = []
+
+    class ImageProvider(ReplyProvider):
+        supports_image_inputs = True
+        max_images_per_message = None
+
+        def complete(self, messages, tools):
+            seen_user_messages.append(messages[-1])
+            return Message.assistant("image response")
+
+    terminal.factory = lambda record: RuntimeAgent(
+        ImageProvider(), [], tool_root=Path(record.root)
     )
-    agent = ImageAwareAgent()
     title_messages: list[Message] = []
 
-    def generate(_agent, messages) -> str:
+    def generate(_factory, _record, messages) -> str:
         title_messages.extend(message.model_copy(deep=True) for message in messages)
         return "Describe Tiny Image"
 
-    monkeypatch.setattr("yoke.cli.runtime.title.generate_session_title", generate)
+    monkeypatch.setattr("yoke.http.runtime.title.generate_http_session_title", generate)
 
     exit_code = run_cli(
         CLIArgs(
@@ -414,13 +357,12 @@ def test_cli_headless_accepts_image_attachments(tmp_path: Path, monkeypatch) -> 
             session="image-demo",
             root=str(tmp_path),
         ),
-        agent=agent,
     )
 
     assert exit_code == 0
-    assert len(agent.seen_user_messages) == 1
-    assert agent.seen_user_messages[0].text_content() == "describe [tiny.png] please"
-    content = agent.seen_user_messages[0].content
+    assert len(seen_user_messages) == 1
+    assert seen_user_messages[0].text_content() == "describe [tiny.png] please"
+    content = seen_user_messages[0].content
     assert isinstance(content, list)
     text_part = content[0]
     image_part = content[1]
@@ -442,19 +384,22 @@ def test_cli_headless_accepts_image_attachments(tmp_path: Path, monkeypatch) -> 
     assert isinstance(stored_image_part, MessageImageURLContentPart)
     assert stored_image_part.image_url.url.startswith("data:image/png;base64,")
     assert stored_image_part.label == "[Image #1]"
-    assert stored.title == "Describe Tiny Image"
+    eventually(
+        lambda: (
+            SessionStore(session_dir).load("image-demo").title == "Describe Tiny Image"
+        )
+    )
     assert len(title_messages) == 1
     assert title_messages[0].has_image_inputs()
 
 
-def test_cli_requires_prompt_in_headless_mode(monkeypatch) -> None:
+def test_cli_requires_prompt_in_headless_mode(monkeypatch, terminal) -> None:
     stdout = CaptureStream()
     stderr = CaptureStream()
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     exit_code = run_cli(
         CLIArgs(headless=True),
-        agent=FakeAgent(),
         stdout=stdout,
         stderr=stderr,
     )
@@ -470,24 +415,25 @@ def test_cli_requires_prompt_in_headless_mode(monkeypatch) -> None:
 def test_tree_navigation_reprints_history_after_state_update(
     tmp_path: Path,
     monkeypatch,
+    terminal,
 ) -> None:
-    active_session = active_session_for(tmp_path)
     messages = [
         Message.user("first"),
         Message.assistant("answer"),
         Message.user("second"),
         Message.assistant("second answer"),
     ]
-    active_session.store.save(
-        active_session.id,
+    terminal.store.save(
+        "tree-navigation",
         messages,
         conversation_entries=conversation_entries_from_messages(messages),
         root=tmp_path,
     )
-    active_session.record = active_session.store.load(active_session.id)
-    assistant_entry = active_session.record.conversation_entries[1]
+    backend = terminal.backend("tree-navigation", root=tmp_path)
+    active_session = session_for(backend)
+    assistant_entry = terminal.store.load(active_session.id).conversation_entries[1]
     state = PromptCliState(
-        messages=list(active_session.record.messages),
+        messages=backend.messages(),
         pending_prompts=[],
     )
     active_session_ref = ActiveSessionRef(active_session)
@@ -513,8 +459,8 @@ def test_tree_navigation_reprints_history_after_state_update(
 
     updated_session = process_prompt_toolkit_prompt(
         "/tree",
+        agent=backend,
         state=state,
-        agent=FakeAgent(),
         active_session_ref=active_session_ref,
         scrollback_console=console,
         state_lock=Lock(),
