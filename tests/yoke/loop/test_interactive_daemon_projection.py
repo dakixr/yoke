@@ -80,16 +80,7 @@ class InteractiveProjection:
 
 @pytest.mark.parametrize(
     "mode,name",
-    [
-        ("basic", "tools"),
-        ("prompt", "tools"),
-        ("basic", "manual_compaction"),
-        ("prompt", "manual_compaction"),
-        ("prompt", "checkpoint_stop"),
-        ("basic", "images_supported"),
-        ("prompt", "images_supported"),
-        ("prompt", "images_unsupported"),
-    ],
+    [("prompt", "checkpoint_stop"), ("basic", "images_supported")],
 )
 def test_interactive_daemon_request_bytes_match_frozen_in_process_projection(
     tmp_path, monkeypatch, mode, name

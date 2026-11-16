@@ -99,8 +99,7 @@ def cmyk_tiff() -> bytes:
     return output.getvalue()
 
 
-@pytest.mark.parametrize("indexed", [False, True])
-@pytest.mark.parametrize("promoted", [False, True])
+@pytest.mark.parametrize("indexed,promoted", [(False, True), (True, False)])
 def test_continuation_queue_restart_identity_and_normal_default(
     tmp_path: Path, indexed: bool, promoted: bool
 ) -> None:

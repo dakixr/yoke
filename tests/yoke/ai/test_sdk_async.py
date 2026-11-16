@@ -176,14 +176,12 @@ def test_prompt_async_timeout_requests_cooperative_stop(tmp_path: Path) -> None:
         CancellableProvider.closed.clear()
         agent = Agent(provider=CancellableProvider(), config=config(tmp_path))
         try:
-            await agent.prompt_async("wait", timeout=0.01)
+            await agent.prompt_async("wait", timeout=0.5)
         except TimeoutError:
             pass
         else:
             raise AssertionError("Expected timeout")
-        async with asyncio.timeout(0.2):
-            while not CancellableProvider.stopped.is_set():
-                await asyncio.sleep(0.001)
+        assert await asyncio.to_thread(CancellableProvider.stopped.wait, 5)
         await agent.aclose()
 
     asyncio.run(scenario())
@@ -216,8 +214,7 @@ def test_prompt_async_task_cancellation_does_not_drain_hung_sync_work(
         provider = BlockingProvider()
         agent = Agent(provider=provider, config=config(tmp_path))
         prompt = asyncio.create_task(agent.prompt_async("wait"))
-        while not provider.started.is_set():
-            await asyncio.sleep(0)
+        assert await asyncio.to_thread(provider.started.wait, 2)
 
         prompt.cancel()
         try:
@@ -324,29 +321,55 @@ def test_aclose_fences_queued_async_prompt(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_aclose_finishes_cleanup_when_cancelled(tmp_path: Path) -> None:
+def test_aclose_finishes_cleanup_when_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         ConcurrentProvider.reset()
+        entered, release, close_started = (
+            threading.Event(),
+            threading.Event(),
+            threading.Event(),
+        )
+        provider = ConcurrentProvider("done", delay=0)
+        complete = provider.complete
+
+        def blocked_complete(messages, tools):
+            entered.set()
+            assert release.wait(5), "test did not release prompt"
+            return complete(messages, tools)
+
+        monkeypatch.setattr(provider, "complete", blocked_complete)
         agent = Agent(
-            provider=ConcurrentProvider("done", delay=0.08),
+            provider=provider,
             config=config(tmp_path),
         )
-        prompt = asyncio.create_task(agent.prompt_async("active"))
-        await asyncio.sleep(0.005)
-        closing = asyncio.create_task(agent.aclose())
-        while not agent._closing:
-            await asyncio.sleep(0)
-        closing.cancel()
-        try:
-            await closing
-        except asyncio.CancelledError:
-            pass
-        else:
-            raise AssertionError("Expected close cancellation")
+        close = agent.close
 
-        assert agent.closed
-        assert (await prompt).output == "done"
-        assert ConcurrentProvider.closed == 1
+        def started_close():
+            close_started.set()
+            close()
+
+        monkeypatch.setattr(agent, "close", started_close)
+        prompt = asyncio.create_task(agent.prompt_async("active"))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            closing = asyncio.create_task(agent.aclose())
+            assert await asyncio.to_thread(close_started.wait, 2)
+            closing.cancel()
+            release.set()
+            try:
+                await closing
+            except asyncio.CancelledError:
+                pass
+            else:
+                raise AssertionError("Expected close cancellation")
+
+            assert agent.closed
+            assert (await prompt).output == "done"
+            assert ConcurrentProvider.closed == 1
+        finally:
+            release.set()
 
     asyncio.run(scenario())
 
@@ -671,7 +694,7 @@ def test_run_many_marks_timeouts_and_closes_agents(tmp_path: Path) -> None:
             agent_factory=lambda task: Agent(
                 provider=CancellableProvider(), config=config(tmp_path)
             ),
-            timeout=0.01,
+            timeout=0.5,
         )
         assert result.items[0].status == "timed_out"
         assert isinstance(result.items[0].error, TimeoutError)

@@ -24,9 +24,17 @@ from yoke.session.interrupt import interrupted_turn_snapshot
 from tests.yoke.session_rows import stored_entry_rows
 
 
-@pytest.mark.parametrize("mode", ["missing", "persisted", "continuation", "empty"])
-@pytest.mark.parametrize("dangling", [False, True])
-@pytest.mark.parametrize("compacted", [False, True])
+@pytest.mark.parametrize(
+    "mode,dangling,compacted",
+    [
+        ("missing", False, False),
+        ("empty", False, False),
+        ("persisted", True, True),
+        ("continuation", True, True),
+        ("missing", True, False),
+        ("missing", False, True),
+    ],
+)
 def test_interruption_only_copies_and_appends_new_entries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

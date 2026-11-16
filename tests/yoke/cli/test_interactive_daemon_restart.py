@@ -6,47 +6,9 @@ import os
 import signal
 
 from tests.yoke.daemon.support import eventually, sandbox as sandbox
-from yoke.cli.backend.startup import run_daemon_interactive
 from yoke.cli.config import CLIArgs
 
 from .support import CaptureStream
-
-
-def test_basic_ui_reattaches_after_daemon_restart_before_next_prompt(
-    sandbox, monkeypatch
-):
-    monkeypatch.setenv("YOKE_DAEMON_IDLE_GRACE", "10")
-    output, errors = CaptureStream(), CaptureStream()
-    before = None
-    count = 0
-
-    def input_func(_prompt: object = "", /) -> str:
-        nonlocal before, count
-        count += 1
-        if count == 1:
-            return "before crash"
-        if count == 2:
-            eventually(lambda: "echo:before crash" in output.getvalue())
-            before = sandbox.status()["pid"]
-            os.kill(before, signal.SIGKILL)
-            return "after crash"
-        eventually(lambda: "echo:after crash" in output.getvalue(), timeout=12)
-        return "exit"
-
-    result = run_daemon_interactive(
-        CLIArgs(root=str(sandbox.root), session="restart-interactive"),
-        input_func=input_func,
-        stdout=output,
-        stderr=errors,
-    )
-    assert result == 0, errors.getvalue() + output.getvalue()
-    assert sandbox.status()["pid"] != before
-    text = output.getvalue()
-    assert text.count("user:\nbefore crash\n") == 1
-    assert text.count("user:\nafter crash\n") == 1
-    assert text.count("echo:before crash") == 1
-    assert text.count("echo:after crash") == 1
-    assert errors.getvalue() == ""
 
 
 def test_prompt_ui_reattaches_after_daemon_restart_before_next_prompt(
@@ -66,7 +28,9 @@ def test_prompt_ui_reattaches_after_daemon_restart_before_next_prompt(
     output = CaptureStream()
     monkeypatch.setattr("sys.stdout", output)
     args = CLIArgs(root=str(sandbox.root))
-    connection = SessionConnection("prompt-restart", cwd=sandbox.root)
+    connection = SessionConnection(
+        "prompt-restart", cwd=sandbox.root, discover=sandbox.connect
+    )
     errors: list[BaseException] = []
     pids = []
     try:

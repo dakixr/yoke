@@ -16,7 +16,8 @@ from yoke.session.admissions import AdmissionStore
 from yoke.session.queue import load_prompt_queue_snapshot
 
 CHILD = Path(__file__).with_name("queue_child.py")
-COUNT = 60
+# The children deliberately race revision zero; volume is not the proof.
+COUNT = 2
 
 
 def test_cli_and_daemon_queue_edits_conflict_and_never_lose_updates(

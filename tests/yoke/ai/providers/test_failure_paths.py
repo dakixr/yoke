@@ -283,6 +283,7 @@ class StalledServer:
         self.stopped = threading.Event()
         self.port = int(self.listener.getsockname()[1])
         self.accepted = 0
+        self._accepted_changed = threading.Condition()
         self.connections: list[socket.socket] = []
         self.thread = threading.Thread(target=self._serve, daemon=True)
 
@@ -294,8 +295,15 @@ class StalledServer:
                 continue
             except OSError:
                 return
-            self.accepted += 1
-            self.connections.append(connection)
+            with self._accepted_changed:
+                self.accepted += 1
+                self.connections.append(connection)
+                self._accepted_changed.notify_all()
+
+    def wait_for_attempts(self, count: int) -> int:
+        with self._accepted_changed:
+            self._accepted_changed.wait_for(lambda: self.accepted >= count, timeout=2)
+            return self.accepted
 
     def __enter__(self) -> StalledServer:
         self.thread.start()
@@ -345,7 +353,7 @@ def test_stall_before_response_bytes_follows_read_timeout_policy(
     with (
         StalledServer() as server,
         httpx.Client(
-            transport=ToLocal(server.port), timeout=httpx.Timeout(0.25)
+            transport=ToLocal(server.port), timeout=httpx.Timeout(0.02)
         ) as client,
     ):
         provider = build(
@@ -354,13 +362,13 @@ def test_stall_before_response_bytes_follows_read_timeout_policy(
             client=client,
             sleep=sleeps.append,
             max_retries=2,
-            timeout=0.25,
+            timeout=0.02,
         )
         started = time.monotonic()
         with pytest.raises(ProviderError) as raised:
             complete(provider)
         elapsed = time.monotonic() - started
-        accepted = server.accepted
+        accepted = server.wait_for_attempts(STALL_ATTEMPTS[kind])
 
     assert not isinstance(raised.value, ProviderCancelledError)
     assert accepted == STALL_ATTEMPTS[kind]
@@ -368,7 +376,7 @@ def test_stall_before_response_bytes_follows_read_timeout_policy(
     assert (
         "time" in str(raised.value).lower() or "interrupt" in str(raised.value).lower()
     )
-    # Each attempt waits one read timeout, not the 900s production default.
+    # Each attempt waits the injected read timeout, not the 900s default.
     assert elapsed < 0.25 * STALL_ATTEMPTS[kind] + 2.0
 
 

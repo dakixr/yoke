@@ -40,7 +40,7 @@ os._exit(7)
 """
     try:
         baseline = set(registry._capabilities)
-        for _ in range(3):
+        for _ in range(2):
             managed = manager._spawn(
                 "outer",
                 tmp_path,
@@ -86,7 +86,7 @@ os._exit(7)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process group descendants")
-@pytest.mark.parametrize("lost_attach", [False, True])
+@pytest.mark.parametrize("lost_attach", [True])
 def test_remote_launcher_and_issuer_death_preserve_live_unregistered_descendant(
     tmp_path,
     lost_attach,

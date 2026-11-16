@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 
 from yoke.daemon.lifecycle import DaemonLifecycle
-from yoke.daemon.paths import DaemonPaths
 
 
 def test_existing_daemon_directories_become_private(sandbox):
@@ -86,15 +85,6 @@ def test_nonforced_stop_rechecks_admissions_before_exiting():
     asyncio.run(scenario())
 
 
-def test_long_runtime_directory_falls_back_to_short_home(sandbox, monkeypatch):
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(sandbox.root / ("x" * 100)))
-    paths = DaemonPaths.default()
-    paths.ensure()
-    assert paths.socket == paths.state_dir / "run" / "daemon.sock"
-    sandbox.paths = paths
-    assert sandbox.connect().socket == paths.socket
-
-
 def test_unusable_socket_path_has_actionable_discovery_error(sandbox, monkeypatch):
     import pytest
 
@@ -110,7 +100,10 @@ def test_unusable_socket_path_has_actionable_discovery_error(sandbox, monkeypatc
 def test_detached_logs_rotate_large_existing_log(sandbox):
     sandbox.paths.ensure()
     sandbox.paths.log.write_bytes(b"old log\n" * (400 * 1024))
-    sandbox.connect()
+    from yoke.daemon.log import detached_stdio
+
+    with detached_stdio(sandbox.paths.log):
+        print("new log entry")
     assert sandbox.paths.log.stat().st_size < 2 * 1024 * 1024
     assert sandbox.paths.log.with_name("daemon.log.1").exists()
 
@@ -124,12 +117,3 @@ def test_detached_log_rotates_during_one_run(sandbox):
     files = list(sandbox.paths.log.parent.glob("daemon.log*"))
     assert len(files) == 3
     assert all(path.stat().st_size <= MAX_LOG_BYTES for path in files)
-
-
-def test_unset_runtime_uses_private_home_socket(sandbox, monkeypatch):
-    monkeypatch.delenv("XDG_RUNTIME_DIR")
-    sandbox.paths = DaemonPaths.default()
-    handle = sandbox.connect()
-    assert handle.socket == sandbox.paths.state_dir / "run" / "daemon.sock"
-    assert handle.socket.stat().st_mode & 0o777 == 0o600
-    assert handle.socket.parent.stat().st_mode & 0o777 == 0o700

@@ -27,6 +27,21 @@ def test_prompt_injection_still_converts_bare_prompt() -> None:
     assert _inject_prompt_flag(["fix the tests"]) == ["--prompt", "fix the tests"]
 
 
+def test_resume_short_prompt_alias_uses_headless_entrypoint(monkeypatch):
+    calls = []
+
+    def resume(args, **kwargs):
+        calls.append((args, kwargs))
+        return 0
+
+    monkeypatch.setattr("yoke.cli.backend.startup.run_daemon_headless", resume)
+    result = CliRunner().invoke(app, ["resume", "saved", "-p", "again"])
+    assert result.exit_code == 0, result.output
+    args, options = calls[0]
+    assert args.headless and args.prompt == "again"
+    assert options["resume_id"] == "saved"
+
+
 def test_acp_discovers_daemon_without_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("yoke.acp.runner.run_acp_with_daemon", lambda: 0)
     result = CliRunner().invoke(

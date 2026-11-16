@@ -308,7 +308,7 @@ class Daemon:
         return response.json()["data"]
 
     def wait(self, expected_error: str | None = None) -> None:
-        status = self.request(f"/session/{self.session_id}/wait?timeoutMs=5000")
+        status = self.request(f"/session/{self.session_id}/wait?timeoutMs=15000")
         if expected_error:
             assert status["state"] == "error", status
             assert status["lastError"] == expected_error

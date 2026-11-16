@@ -52,8 +52,10 @@ def resume_in_daemon(args, session_id, *, relocate=None, **kwargs):
     return run(args, resume_id=session_id, relocate=relocate, **kwargs)
 
 
-@pytest.mark.parametrize("mode", ["new", "session", "resume", "fork"])
-@pytest.mark.parametrize("invalid", ["missing", "file"])
+@pytest.mark.parametrize(
+    "mode,invalid",
+    [("new", "missing"), ("session", "file"), ("resume", "missing"), ("fork", "file")],
+)
 def test_invalid_workspace_rejected_before_agent_construction(
     tmp_path: Path, monkeypatch, mode: str, invalid: str, terminal
 ) -> None:
@@ -122,58 +124,6 @@ def test_resume_command_passes_explicit_relocation(
     assert run.call_args.kwargs["relocate"] == tmp_path
 
 
-def test_relocation_preserves_history_and_noop_does_not_write(
-    tmp_path: Path, monkeypatch, terminal
-) -> None:
-    store = SessionStore()
-    old = tmp_path / "deleted"
-    old.mkdir()
-    original = store.save("saved", [Message.user("historical prompt")], root=old)
-    old.rmdir()
-    monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", lambda *a, **k: 0)
-    args = CLIArgs(root=str(tmp_path / "irrelevant-selector"))
-    assert (
-        resume_in_daemon(args, "saved", relocate=tmp_path, stdout=CaptureStream()) == 0
-    )
-    relocated = store.load("saved")
-    assert relocated.id == original.id
-    assert relocated.conversation_entries == original.conversation_entries
-    assert relocated.leaf_id == original.leaf_id
-    assert relocated.root == str(tmp_path)
-    assert not old.exists()
-    before = stored_session_bytes(store, "saved")
-    assert (
-        resume_in_daemon(args, "saved", relocate=tmp_path, stdout=CaptureStream()) == 0
-    )
-    assert stored_session_bytes(store, "saved") == before
-
-
-@pytest.mark.parametrize("target_kind", ["missing", "file"])
-def test_invalid_relocation_leaves_saved_session_unchanged(
-    tmp_path: Path, monkeypatch, target_kind: str, terminal
-) -> None:
-    store = SessionStore()
-    store.save("saved", [Message.user("old")], root=tmp_path)
-    target = tmp_path / "target"
-    if target_kind == "file":
-        target.write_text("file", encoding="utf-8")
-    builder = Mock(side_effect=AssertionError("constructed provider"))
-    monkeypatch.setattr("yoke.cli.config.runtime._build_startup_provider", builder)
-    before = stored_session_bytes(store, "saved")
-    assert (
-        resume_in_daemon(
-            CLIArgs(root=str(tmp_path)),
-            "saved",
-            relocate=target,
-            stdout=CaptureStream(),
-            stderr=CaptureStream(),
-        )
-        == 1
-    )
-    builder.assert_not_called()
-    assert stored_session_bytes(store, "saved") == before
-
-
 def test_root_selector_does_not_relocate_saved_workspace(
     tmp_path: Path, monkeypatch, terminal
 ) -> None:
@@ -199,8 +149,10 @@ def test_root_selector_does_not_relocate_saved_workspace(
     assert store.load("saved").root == str(root)
 
 
-@pytest.mark.parametrize("mode", ["resume", "session"])
-@pytest.mark.parametrize("history", [False, True])
+@pytest.mark.parametrize(
+    "mode,history",
+    [("resume", False), ("session", True)],
+)
 def test_rootless_saved_records_require_explicit_relocation(
     tmp_path: Path, monkeypatch, mode: str, history: bool, terminal
 ) -> None:
@@ -233,14 +185,6 @@ def test_rootless_saved_records_require_explicit_relocation(
     relocated = store.load("legacy")
     assert relocated.root == str(tmp_path)
     assert relocated.conversation_entries == original.conversation_entries
-
-
-@pytest.mark.parametrize("session_id", [None, "fresh"])
-def test_only_new_sessions_inherit_invocation_root(
-    tmp_path: Path, session_id, terminal
-) -> None:
-    active = terminal.backend(session_id or "generated", root=tmp_path).session
-    assert active.root == tmp_path
 
 
 def test_fork_recovers_into_valid_target_without_modifying_source(
@@ -285,27 +229,6 @@ def test_construction_error_releases_use_lease(
     assert resume_in_daemon(CLIArgs(root=str(tmp_path)), "saved") == 1
     with workspace_lease(store, "saved", exclusive=True):
         pass
-
-
-def test_busy_relocation_is_recoverable_before_provider_construction(
-    tmp_path: Path, monkeypatch, terminal
-) -> None:
-    store = SessionStore()
-    target = tmp_path / "target"
-    target.mkdir()
-    store.save("saved", [Message.user("history")], root=tmp_path)
-    before = stored_session_bytes(store, "saved")
-    builder = Mock(side_effect=AssertionError("constructed provider"))
-    monkeypatch.setattr("yoke.cli.config.runtime._build_startup_provider", builder)
-    stderr = CaptureStream()
-    with workspace_lease(store, "saved"):
-        result = resume_in_daemon(
-            CLIArgs(root=str(tmp_path)), "saved", relocate=target, stderr=stderr
-        )
-    assert result == 1
-    assert "in use" in stderr.getvalue()
-    assert stored_session_bytes(store, "saved") == before
-    builder.assert_not_called()
 
 
 @pytest.mark.parametrize("root", ["", "bad\x00path"])

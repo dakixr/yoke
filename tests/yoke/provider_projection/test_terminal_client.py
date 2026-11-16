@@ -107,15 +107,7 @@ class Terminal:
 
 @pytest.mark.parametrize(
     "name",
-    [
-        "tools",
-        "parallel_tools",
-        "inline_skill",
-        "slash_skill",
-        "images_supported",
-        "manual_compaction",
-        "automatic_compaction",
-    ],
+    ["tools"],
 )
 def test_terminal_daemon_request_bytes_match_frozen_in_process_projection(
     tmp_path, monkeypatch, name

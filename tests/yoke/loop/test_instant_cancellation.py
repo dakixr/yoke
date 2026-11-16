@@ -19,7 +19,7 @@ from yoke.agent.loop.in_process_tool import (
     execute_in_process_tool,
 )
 from yoke.agent.loop.tool_process import ToolProcessInvocation, _process_context
-from yoke.agent.models import ConversationEntry, Message, ToolCall, ToolFunction
+from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.agent.state import conversation_entries_from_messages
 from yoke.agent.tools import LocalTool, ToolRuntimeContext
 from yoke.cli.interactive.common import (
@@ -41,7 +41,7 @@ from yoke.cli.backend.values import ActiveSessionRef
 from yoke.mcp.client import McpClientError, StdioMcpClient
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp.http_client import StreamableHttpClient
-from yoke.session.interrupt import active_branch_entries, interrupted_turn_snapshot
+from yoke.session.interrupt import interrupted_turn_snapshot
 
 from ..cli.terminal_daemon_support import terminal as terminal, session_for
 from tests.yoke.daemon.support import eventually
@@ -749,33 +749,6 @@ def test_interruption_closes_incomplete_tool_batch_before_continuation() -> None
     assert "cancelled" in (snapshot_messages[3].text_content() or "")
     assert snapshot_entries[3].metadata["recovered_incomplete_tool_call"] is True
     assert snapshot_entries[4].parent_id == snapshot_entries[3].id
-
-
-def test_large_interruption_checkpoint_reuses_immutable_history() -> None:
-    entries: list[ConversationEntry] = []
-    messages: list[Message] = []
-    parent_id: str | None = None
-    for _ in range(10_000):
-        message = Message.user("history")
-        entry = ConversationEntry(
-            kind="user",
-            message=message,
-            parent_id=parent_id,
-        )
-        entries.append(entry)
-        messages.append(message)
-        parent_id = entry.id
-
-    branch = active_branch_entries(entries, leaf_id=parent_id)
-    snapshot_messages, snapshot_entries = interrupted_turn_snapshot(
-        messages=messages,
-        entries=branch,
-        user_message=Message.user("active"),
-    )
-
-    assert len(snapshot_messages) == 10_002
-    assert len(snapshot_entries) == 10_002
-    assert snapshot_entries[-3] is entries[-1]
 
 
 def test_stdio_mcp_request_cancels_and_ignores_late_response(

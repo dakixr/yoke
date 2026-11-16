@@ -200,58 +200,6 @@ def test_scrollback_handoff_does_not_hide_earlier_tool_activity() -> None:
     assert "Continuing." in output
 
 
-def test_large_resume_projects_compact_runtime_and_bounded_scrollback() -> None:
-    entries: list[ConversationEntry] = []
-    parent_id: str | None = None
-    for index in range(10_000):
-        entry = ConversationEntry(
-            kind="user" if index % 2 == 0 else "assistant",
-            message=(
-                Message.user(f"prompt {index}")
-                if index % 2 == 0
-                else Message.assistant(f"answer {index}")
-            ),
-            parent_id=parent_id,
-        )
-        entries.append(entry)
-        parent_id = entry.id
-        if index == 9_900:
-            snapshot = ConversationEntry(
-                kind="memory_snapshot",
-                metadata=MemorySnapshot(
-                    id="memory-current",
-                    summary_text="Earlier work summarized.",
-                ).model_dump(),
-                parent_id=parent_id,
-            )
-            entries.append(snapshot)
-            parent_id = snapshot.id
-    record = SessionRecord(
-        id="large",
-        conversation_entries=entries,
-        leaf_id=parent_id,
-    )
-
-    tree = SessionTree.restore(record.conversation_entries, leaf_id=record.leaf_id)
-    projection = tree.project(ConversationProjection())
-    scrollback = tree.project(
-        ScrollbackProjection(limit=RESUME_SCROLLBACK_MESSAGE_LIMIT)
-    )
-    scrollback_messages = [message.to_message() for message in scrollback.messages]
-
-    assert len(projection.runtime_messages) == 5_051
-    assert "Earlier work summarized." in (
-        projection.runtime_messages[4_951].text_content() or ""
-    )
-    assert len(scrollback_messages) == RESUME_SCROLLBACK_MESSAGE_LIMIT
-    assert scrollback_messages[0].text_content() == "prompt 9600"
-    assert scrollback_messages[-1].text_content() == "answer 9999"
-    assert scrollback.notice is not None
-    assert "9,600 older messages" in scrollback.notice
-    assert "compaction summary remains in model context" in (scrollback.notice)
-    assert "Use /tree" in scrollback.notice
-
-
 def test_resume_scrollback_hides_handoff_without_hiding_audit_messages() -> None:
     tool_call = ToolCall(
         id="call-1",

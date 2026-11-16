@@ -17,7 +17,7 @@ from yoke.cli.interactive.turn_stream import render_turn_events
 from yoke.cli.render import InteractiveRenderer
 
 from .terminal_daemon_support import terminal as terminal
-from .test_turn_projection import RecordingProvider
+from .support import RecordingProvider
 from yoke.agent.loop.agent import RuntimeAgent
 
 

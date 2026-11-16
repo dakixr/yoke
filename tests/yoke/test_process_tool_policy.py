@@ -153,7 +153,7 @@ def test_output_condition_returns_for_any_process_without_waiting_for_exit(
 ):
     quiet = launch(manager, tmp_path, "import time; time.sleep(60)")
     prompt = launch(
-        manager, tmp_path, "import time; print('answer?', flush=True); time.sleep(60)"
+        manager, tmp_path, "import os,time; os.write(1, b'answer?\\n'); time.sleep(60)"
     )
     result = invoke(
         ProcessReadTool,
@@ -161,7 +161,7 @@ def test_output_condition_returns_for_any_process_without_waiting_for_exit(
         tmp_path,
         sessions=[continuation(quiet), continuation(prompt)],
         until="output_or_completion",
-        wait_ms=2000,
+        wait_ms=10000,
     )
     assert result["reason"] == "output"
     assert all(item["running"] for item in result["items"])
@@ -182,7 +182,7 @@ def test_interactive_input_returns_only_output_after_supplied_cursor(manager, tm
     started = launch(
         manager,
         tmp_path,
-        "print('name?', flush=True)\nname=input()\nprint('hello '+name, flush=True)",
+        "import os; os.write(1, b'name?\\n')\nname=input()\nprint('hello '+name, flush=True)",
     )
     prompt = read(
         manager, tmp_path, started, until="output_or_completion", wait_ms=2000
@@ -299,7 +299,7 @@ def test_python_timeout_survives_later_reads(manager, tmp_path):
 
 def test_process_cancel_is_repeatable_and_preserves_history(manager, tmp_path):
     started = launch(
-        manager, tmp_path, "import time; print('retained', flush=True); time.sleep(60)"
+        manager, tmp_path, "import os,time; os.write(1, b'retained\\n'); time.sleep(60)"
     )
     prompt = read(
         manager, tmp_path, started, until="output_or_completion", wait_ms=2000

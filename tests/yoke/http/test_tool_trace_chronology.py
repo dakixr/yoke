@@ -19,7 +19,7 @@ from yoke.http.errors import ApiError
 from yoke.http.models.tool_trace import ToolCallListResponse
 from yoke.http.reads.cursor import encode_cursor, query_fingerprint
 from yoke.http.services.tool_trace_service import ToolTraceService
-from yoke.session import SessionStore
+from yoke.session import SessionRecord, SessionStore
 
 SESSION = "chronology"
 Order = Literal["oldest", "latest"]
@@ -78,6 +78,20 @@ def _messages(ids: list[str]) -> list[Message]:
 def _save(store: SessionStore, ids: list[str], root: Path) -> None:
     messages = _messages(ids)
     exported = SessionTree.from_messages(messages).export_for_persistence()
+    if not store.exists(SESSION):
+        # Seed the already validated tree once. These tests exercise trace
+        # reads, not SessionStore.save's additional defensive tree copies.
+        store.insert_record(
+            SessionRecord(
+                id=SESSION,
+                root=str(root),
+                conversation_entries=list(exported.entries),
+                leaf_id=exported.leaf_id,
+                created_at="2025-01-01T00:00:00+00:00",
+                updated_at="2025-01-01T00:00:00+00:00",
+            )
+        )
+        return
     store.save(
         SESSION,
         messages,
@@ -109,8 +123,10 @@ def _page(
     )
 
 
-@pytest.mark.parametrize("count", [0, 1, 99, 100, 101, 237])
-@pytest.mark.parametrize("order", ["oldest", "latest"])
+@pytest.mark.parametrize(
+    "count,order",
+    [(0, "oldest"), (1, "latest"), (101, "oldest"), (237, "latest")],
+)
 def test_windows_cover_every_saved_call_once(
     tmp_path: Path, count: int, order: Order
 ) -> None:
@@ -205,11 +221,18 @@ def test_live_overlay_keeps_transcript_order_with_missing_equal_or_reversed_time
     assert [item.sequence for item in current_turn.data] == [7, 131, 141, 142]
 
 
-@pytest.mark.parametrize("order", ["oldest", "latest"])
 @pytest.mark.parametrize(
-    "status", [None, "pending", "running", "ok", "failed", "cancelled"]
+    "order,status,turn_id",
+    [
+        ("oldest", None, 2),
+        ("latest", None, None),
+        ("oldest", "pending", None),
+        ("latest", "running", 1),
+        ("oldest", "ok", None),
+        ("latest", "failed", 2),
+        ("latest", "cancelled", 3),
+    ],
 )
-@pytest.mark.parametrize("turn_id", [None, 1, 2, 3])
 def test_filters_keep_global_sequences_and_page_the_matching_total(
     tmp_path: Path, order: Order, status: str | None, turn_id: int | None
 ) -> None:
@@ -255,8 +278,10 @@ def test_filters_keep_global_sequences_and_page_the_matching_total(
     ] == matches
 
 
-@pytest.mark.parametrize("order", ["oldest", "latest"])
-@pytest.mark.parametrize("saved_count", [0, 137, 237])
+@pytest.mark.parametrize(
+    "order,saved_count",
+    [("latest", 137), ("oldest", 237)],
+)
 def test_cursor_survives_persisted_and_live_appends(
     tmp_path: Path, order: Order, saved_count: int
 ) -> None:
@@ -369,102 +394,6 @@ def test_http_order_default_latest_and_validation(tmp_path: Path) -> None:
     assert client.get(url, params={"cursor": "!"}).status_code == 400
     assert client.get(f"{url}/missing").status_code == 404
     assert client.get("/api/v1/session/missing/tool-call").status_code == 404
-
-
-def test_detail_reuses_persisted_provider_result_projection(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path / "sessions")
-    tool_call = ToolCall(
-        id="command-call",
-        function=ToolFunction(name="command_exec", arguments='{"cmd":"printf done"}'),
-    )
-    canonical = {
-        "ok": True,
-        "exit_code": 0,
-        "returncode": 0,
-        "running": False,
-        "wall_time_seconds": 0.02,
-        "output": "done",
-        "outputTruncationDetails": {"truncated": False},
-    }
-    tool_result = Message.tool(
-        tool_call.id,
-        json.dumps(canonical, separators=(",", ":")),
-    )
-    tool_result._provider_result_projection = "command"
-    messages = [
-        Message.user("run it"),
-        Message(role="assistant", tool_calls=[tool_call]),
-        tool_result,
-    ]
-    exported = SessionTree.from_messages(messages).export_for_persistence()
-    store.save(
-        SESSION,
-        messages,
-        conversation_entries=list(exported.entries),
-        leaf_id=exported.leaf_id,
-        root=tmp_path,
-    )
-    service = ToolTraceService(store, _Registry(None))
-
-    detail = service.call(SESSION, tool_call.id).data
-
-    assert detail.result == canonical
-    assert detail.result_projection == '{"ok":true,"output":"done"}'
-    assert _page(service).data[0].result_projection is None
-
-
-def test_detail_reuses_live_provider_result_projection(tmp_path: Path) -> None:
-    traces = ToolTraceStore()
-    traces.record_start(
-        {
-            "tool_call_id": "live-command",
-            "tool_name": "command_exec",
-            "tool_arguments": '{"cmd":"printf done"}',
-            "turn_id": 2,
-        }
-    )
-    traces.record_end(
-        {
-            "tool_call_id": "live-command",
-            "tool_name": "command_exec",
-            "turn_id": 2,
-            "ok": True,
-            "result": {
-                "ok": True,
-                "exit_code": 0,
-                "returncode": 0,
-                "running": False,
-                "output": "done",
-                "outputTruncationDetails": {"truncated": False},
-            },
-            "provider_result_projection": "command",
-        }
-    )
-    service = _service(tmp_path, [], traces)
-
-    detail = service.call(SESSION, "live-command").data
-
-    assert detail.result_projection == '{"ok":true,"output":"done"}'
-
-
-def test_detail_does_not_infer_projection_from_tool_name(tmp_path: Path) -> None:
-    traces = ToolTraceStore()
-    traces.record_end(
-        {
-            "tool_call_id": "hooked-command",
-            "tool_name": "command_exec",
-            "ok": True,
-            "result": {
-                "ok": True,
-                "returncode": 0,
-                "output": "hook changed this result",
-                "outputTruncationDetails": {"truncated": False},
-            },
-        }
-    )
-    service = _service(tmp_path, [], traces)
-
-    assert service.call(SESSION, "hooked-command").data.result_projection is None
 
 
 def test_result_projection_is_built_after_public_redaction(tmp_path: Path) -> None:

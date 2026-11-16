@@ -47,10 +47,10 @@ from .terminal_daemon_support import ReplyProvider, session_for, terminal as ter
 
 @pytest.mark.parametrize("command", commands.SLASH_COMMANDS, ids=lambda item: item.name)
 def test_registry_dispatch_usage_completion_and_lifecycle_agree(
-    tmp_path, monkeypatch, command, terminal
+    tmp_path, monkeypatch, command
 ):
-    backend = terminal.backend("contracts", root=tmp_path)
-    session = session_for(backend)
+    backend = Mock()
+    session = Mock(root=tmp_path, id="contracts")
     output = io.StringIO()
     handler = Mock(return_value=(True, [], session))
     entry = replace(command, handler=handler)
@@ -104,10 +104,10 @@ def test_registry_dispatch_usage_completion_and_lifecycle_agree(
 
 
 def test_help_aliases_unknown_commands_and_explicit_basic_capabilities(
-    tmp_path, terminal
+    tmp_path,
 ):
-    backend = terminal.backend("contracts", root=tmp_path)
-    session = session_for(backend)
+    backend = Mock()
+    session = Mock(root=tmp_path, id="contracts")
     output = io.StringIO()
     host = CommandCallbacks(basic_mode=True)
     for command in ("/help", "?", "/tree", "/pin argument"):
@@ -139,16 +139,16 @@ def test_help_aliases_unknown_commands_and_explicit_basic_capabilities(
     assert "Usage: /pin" in text
 
 
-def test_compaction_dispatch_uses_host_capability(tmp_path, monkeypatch, terminal):
+def test_compaction_dispatch_uses_host_capability(tmp_path, monkeypatch):
     output = io.StringIO()
     start = Mock(return_value=True)
     sync_compact = Mock(side_effect=AssertionError("must use host compaction"))
-    backend = terminal.backend("compaction", root=tmp_path)
+    backend = Mock()
     monkeypatch.setattr(backend, "compact", sync_compact)
     commands.handle_slash_command(
         "/compact",
         agent=backend,
-        active_session=session_for(backend),
+        active_session=Mock(root=tmp_path, id="compaction"),
         messages=[],
         console=build_console(output),
         host=CommandCallbacks(start_compaction=start),

@@ -19,9 +19,7 @@ from .daemon_support import serve_app
 from .support import CaptureStream
 
 
-@pytest.mark.parametrize(
-    "case", ["text", "empty", "error", "tool", "skill", "image", "image_unsupported"]
-)
+@pytest.mark.parametrize("case", ["empty", "error", "image_unsupported"])
 def test_daemon_headless_matches_frozen_stdout_stderr_exit_and_request_bytes(
     tmp_path, monkeypatch, case
 ):

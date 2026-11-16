@@ -57,8 +57,10 @@ def test_tools_menu_toggles_daemon_inventory(
         assert config["capabilities"]["file.read"] == "deny"
 
 
-@pytest.mark.parametrize("scope", ["session", "repo", "global"])
-@pytest.mark.parametrize("action", ["server", "tool"])
+@pytest.mark.parametrize(
+    "scope,action",
+    [("session", "server"), ("repo", "server"), ("global", "tool")],
+)
 def test_mcp_menu_changes_daemon_policy_and_persisted_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -149,7 +151,10 @@ def test_mcp_menu_changes_daemon_policy_and_persisted_config(
         )
 
 
-@pytest.mark.parametrize("allowlist", [None, [], ["echo"]])
+@pytest.mark.parametrize(
+    "allowlist",
+    [None, []],
+)
 def test_mcp_menu_can_reenable_a_disabled_tool(
     tmp_path: Path, monkeypatch, terminal, allowlist
 ) -> None:

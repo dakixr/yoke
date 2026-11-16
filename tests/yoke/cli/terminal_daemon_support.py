@@ -8,6 +8,7 @@ from pathlib import Path
 from functools import partial
 
 import pytest
+from fastapi import FastAPI
 
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import Message
@@ -17,6 +18,7 @@ from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.config.runtime import BuiltCLIAgent
 from yoke.daemon.lifecycle import DaemonLifecycle
+from yoke.daemon.client import DaemonHandle
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.session import SessionRecord, SessionStore
 
@@ -50,15 +52,8 @@ class TerminalDaemon:
         self.stack = stack
         self.factory = factory
         self.store = SessionStore()
-        self.app = create_app(
-            HttpAppSettings(
-                auth_token=None,
-                daemon=DaemonLifecycle(idle_exit=False),
-                session_directory=self.store.directory,
-                agent_factory=lambda record: self.factory(record),
-            )
-        )
-        self.handle = stack.enter_context(serve_app(self.app))
+        self._app: FastAPI | None = None
+        self._handle: DaemonHandle | None = None
         monkeypatch.setattr(
             "yoke.cli.backend.startup.SessionConnection",
             partial(SessionConnection, discover=lambda: self.handle),
@@ -72,6 +67,25 @@ class TerminalDaemon:
         monkeypatch.setattr(
             "yoke.http.services.session_startup.build_cli_agent_from_args", startup
         )
+
+    @property
+    def app(self) -> FastAPI:
+        if self._app is None:
+            self._app = create_app(
+                HttpAppSettings(
+                    auth_token=None,
+                    daemon=DaemonLifecycle(idle_exit=False),
+                    session_directory=self.store.directory,
+                    agent_factory=lambda record: self.factory(record),
+                )
+            )
+        return self._app
+
+    @property
+    def handle(self) -> DaemonHandle:
+        if self._handle is None:
+            self._handle = self.stack.enter_context(serve_app(self.app))
+        return self._handle
 
     def backend(self, session_id: str, *, root: Path) -> DaemonSessionBackend:
         connection = SessionConnection(

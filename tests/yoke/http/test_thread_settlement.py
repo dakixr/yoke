@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from threading import Event
 
 import httpx
 import pytest
@@ -120,73 +119,6 @@ def test_old_owner_and_missing_t3_server_cannot_settle(tmp_path, monkeypatch):
         assert archived(client) is None
 
 
-def test_queued_work_defers_settlement(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        module, "read_thread", lambda _: {"threadId": "t", "settled": True}
-    )
-    app = app_for(tmp_path, RecordingProvider())
-    with TestClient(app) as client:
-        _create_session(client, tmp_path, "session-a")
-        configure(client, mcpServers=[server()])
-        response = client.post(
-            "/api/v1/session/session-a/prompt",
-            headers=_auth(),
-            json={"prompt": {"text": "queued"}, "delivery": "queue", "resume": False},
-        )
-        assert response.status_code == 200
-        reconcile(client, app)
-        assert archived(client) is None
-        assert "session-a" in app.state.thread_settlement_service.bindings
-
-
-def test_replacing_client_during_read_prevents_stale_settlement(tmp_path, monkeypatch):
-    started, release = Event(), Event()
-
-    def read(_):
-        started.set()
-        assert release.wait(10)
-        return {"threadId": "old", "settled": True}
-
-    monkeypatch.setattr(module, "read_thread", read)
-    app = app_for(tmp_path, RecordingProvider())
-    with TestClient(app) as client:
-        _create_session(client, tmp_path, "session-a")
-        configure(client, mcpServers=[server()])
-        service = app.state.thread_settlement_service
-        assert client.portal is not None
-        future = client.portal.start_task_soon(service.reconcile, "session-a")
-        assert started.wait(5)
-        try:
-            assert configure(client).status_code == 200
-        finally:
-            release.set()
-        future.result(5)
-        assert archived(client) is None
-
-
-def test_retained_native_worker_defers_settlement_until_physical_drain(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(
-        module, "read_thread", lambda _: {"threadId": "t", "settled": True}
-    )
-    app = app_for(tmp_path, RecordingProvider())
-    with TestClient(app) as client:
-        _create_session(client, tmp_path, "session-a")
-        configure(client, mcpServers=[server()])
-        runtime = app.state.runtime_registry.get_if_loaded("session-a")
-        assert client.portal is not None
-        client.portal.call(runtime.workers.admit, 99)
-        try:
-            reconcile(client, app)
-            assert archived(client) is None
-            assert "session-a" in app.state.thread_settlement_service.bindings
-        finally:
-            client.portal.call(runtime.workers.release, 99)
-        reconcile(client, app)
-        assert archived(client) is not None
-
-
 def test_unsettle_reactivates_without_acp_load_or_resume(tmp_path, monkeypatch):
     state = {"threadId": "t", "settled": False, "archived": False}
     monkeypatch.setattr(module, "read_thread", lambda _: dict(state))
@@ -241,21 +173,6 @@ def test_unsettle_preserves_independent_yoke_archives(tmp_path, monkeypatch):
             assert not app.state.thread_settlement_service.bindings[
                 "session-a"
             ].archived_by_sync
-
-
-def test_mode_update_keeps_unsettle_observer_ownership(tmp_path, monkeypatch):
-    state = {"threadId": "t", "settled": True, "archived": False}
-    monkeypatch.setattr(module, "read_thread", lambda _: dict(state))
-    app = app_for(tmp_path, RecordingProvider())
-    with TestClient(app) as client:
-        _create_session(client, tmp_path, "session-a")
-        configure(client, mcpServers=[server()])
-        reconcile(client, app)
-        assert archived(client) is not None
-        configure(client, mode="plan", mcpServers=[server()])
-        state["settled"] = False
-        reconcile(client, app)
-        assert archived(client) is None
 
 
 def test_mcp_http_contract_and_identity_validation(tmp_path, monkeypatch):

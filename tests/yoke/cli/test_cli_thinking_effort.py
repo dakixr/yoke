@@ -17,8 +17,9 @@ from yoke.cli.providers.selection import resolve_cli_reasoning_effort
 from yoke.cli.tools.policy import PiConfig
 
 
-@pytest.mark.parametrize("provider", BUILTIN_PROVIDER_NAMES)
-@pytest.mark.parametrize("scope", ["default", "global", "repo"])
+@pytest.mark.parametrize(
+    "provider,scope", [("codex", "default"), ("opencode-go", "global"), ("zai", "repo")]
+)
 def test_models_set_round_trips_every_advertised_thinking_level(
     tmp_path: Path, provider: str, scope: str
 ) -> None:

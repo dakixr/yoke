@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import ast
-import json
-import os
 from pathlib import Path
 import re
 import runpy
@@ -217,87 +215,6 @@ def test_small_examples_are_import_safe(name: str, tmp_path: Path) -> None:
     assert not (tmp_path / ".agents_local").exists()
 
 
-def test_copied_durable_example_survives_actual_process_restart_and_file_tools(
-    tmp_path: Path,
-) -> None:
-    script = tmp_path / "durable.py"
-    script.write_text(example_source("continue_role"))
-    (tmp_path / "spec.txt").write_text("first disk version")
-    # Inject only the provider. The example, SDK, persistence, and spawned read tool are real.
-    provider_code = """
-import json
-from yoke.agent.models import Message, ToolCall, ToolFunction
-
-class Provider:
-    supports_image_inputs = False
-    max_images_per_message = None
-
-    def complete(self, messages, tools):
-        last_user = max(i for i, message in enumerate(messages) if message.role == "user")
-        results = [message for message in messages[last_user:] if message.role == "tool"]
-        if not results:
-            return Message(role="assistant", content="Reading current files.", tool_calls=[
-                ToolCall(id="read-spec", function=ToolFunction(name="read", arguments='{"path":"spec.txt"}'))
-            ])
-        return Message.assistant(json.dumps({
-            "users": [message.text_content() for message in messages if message.role == "user"],
-            "tool": results[-1].text_content(),
-        }))
-
-    def close(self):
-        pass
-
-def build(*args, **kwargs):
-    return Provider()
-"""
-    (tmp_path / "fake_provider.py").write_text(provider_code)
-    state = tmp_path / ".agents_local" / "reviewer.json"
-    env = {
-        **os.environ,
-        "PYTHONPATH": os.pathsep.join(
-            [str(tmp_path), str(PATTERNS.parents[5]), os.environ.get("PYTHONPATH", "")]
-        ),
-    }
-
-    def invoke(prompt: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import sys, runpy, yoke.ai, fake_provider; yoke.ai.build_builtin_provider = fake_provider.build; sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')",
-                str(script),
-                str(tmp_path),
-                "test:model",
-                str(state),
-                prompt,
-            ],
-            cwd=tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-    first = invoke("Keep empty records")
-    assert first.returncode == 0, first.stderr
-    assert "first disk version" in first.stdout
-    (tmp_path / "spec.txt").write_text("changed disk version")
-    second = invoke("Review the new file against our earlier decision")
-    assert second.returncode == 0, second.stderr
-    assert "Resuming" in second.stdout
-    answer_line = next(
-        line for line in second.stdout.splitlines() if line.startswith('{"users"')
-    )
-    answer = json.loads(answer_line)
-    assert answer["users"] == [
-        "Keep empty records",
-        "Review the new file against our earlier decision",
-    ]
-    assert "changed disk version" in answer["tool"]
-    assert "first disk version" not in answer["tool"]
-    assert list(state.parent.iterdir()) == [state]
-
-
 @pytest.mark.parametrize(
     "name,args,usage",
     [
@@ -307,15 +224,26 @@ def build(*args, **kwargs):
     ],
 )
 def test_small_examples_have_concise_cli_usage(
-    name: str, args: list[str], usage: str, tmp_path: Path
+    name: str,
+    args: list[str],
+    usage: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     path = tmp_path / "example.py"
     path.write_text(example_source(name))
-    completed = subprocess.run(
-        [sys.executable, str(path), *args],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
+    monkeypatch.setattr(sys, "argv", [str(path), *args])
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exited:
+        runpy.run_path(str(path), run_name="__main__")
+    code = exited.value.code
+    if isinstance(code, str):
+        print(code, file=sys.stderr)
+        code = 1
+    captured = capsys.readouterr()
+    completed: subprocess.CompletedProcess[str] = subprocess.CompletedProcess(
+        sys.argv, code or 0, captured.out, captured.err
     )
     assert completed.returncode != 0
     assert usage in completed.stderr

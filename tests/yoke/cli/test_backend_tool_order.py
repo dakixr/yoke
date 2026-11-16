@@ -10,7 +10,7 @@ from yoke.cli.render import build_console
 
 from .test_tools_menu import HiddenSkillTool, VisibleTool, daemon_tool_backend
 from .terminal_daemon_support import terminal as terminal
-from .test_turn_projection import RecordingProvider
+from .support import RecordingProvider
 
 
 class AlphaTool(VisibleTool):

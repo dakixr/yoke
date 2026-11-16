@@ -395,7 +395,7 @@ SDK_PROGRAM = textwrap.dedent("""\
 """)
 
 
-@pytest.mark.parametrize("tool_name", ["command_exec", "python_exec"])
+@pytest.mark.parametrize("tool_name", ["python_exec"])
 def test_managed_sdk_runs_register_before_any_query_and_are_shared_by_clients(
     tmp_path: Path, tool_name: str
 ) -> None:

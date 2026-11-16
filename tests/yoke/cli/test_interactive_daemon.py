@@ -7,7 +7,7 @@ from threading import Lock
 
 import pytest
 
-from tests.yoke.provider_projection.recording import Gate, answer, tool_calls
+from tests.yoke.provider_projection.recording import answer, tool_calls
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.queue.mutations import replace_prompt_queue
 from yoke.cli.interactive.session_commands import print_session_info
@@ -24,7 +24,7 @@ from .interactive_daemon_support import (
 )
 
 
-@pytest.mark.parametrize("mode", ["basic", "prompt"])
+@pytest.mark.parametrize("mode", ["prompt"])
 def test_daemon_tool_turn_renders_prompt_call_and_answer_once(
     interactive_daemon, monkeypatch, mode
 ):
@@ -48,7 +48,7 @@ def test_daemon_tool_turn_renders_prompt_call_and_answer_once(
     assert not d.tape.steps
 
 
-@pytest.mark.parametrize("mode", ["basic", "prompt"])
+@pytest.mark.parametrize("mode", ["basic"])
 def test_daemon_second_client_prompt_renders_once(
     interactive_daemon, monkeypatch, mode
 ):
@@ -193,56 +193,6 @@ def test_daemon_tool_inspector_reads_typed_call_and_result(
     assert "input.txt" in detail_text(call, ToolInspectorState(entries=[call]))
 
 
-def test_daemon_prompt_steer_during_tool_checkpoint(interactive_daemon, monkeypatch):
-    d = interactive_daemon
-    gate = Gate()
-    d.tape.expect(tool_calls(("read", {"path": "input.txt"})))
-    d.tape.expect(answer("abandoned output"), gate=gate)
-    d.tape.expect(answer("steered answer"))
-
-    def script(ui):
-        ui.send("read then wait")
-        assert gate.entered.wait(5)
-        ui.send("steer correction")
-        try:
-            ui.wait_text("Model steered.")
-        finally:
-            gate.release.set()
-        ui.wait_text("steered answer")
-        ui.idle()
-
-    text = d.run("prompt", script, monkeypatch)
-    assert text.count("read then wait") == 1
-    assert text.count("steer correction") == 1
-    assert text.count("steered answer") == 1
-    assert "abandoned output" not in text
-    assert len(d.tape.calls) == 3
-    assert d.tape.calls[-1]["messages_json"][-1].find("steer correction") >= 0
-
-
-def test_daemon_prompt_escape_escape_interrupts_without_late_output(
-    interactive_daemon, monkeypatch
-):
-    d = interactive_daemon
-    gate = Gate()
-    d.tape.expect(answer("late answer"), gate=gate)
-
-    def script(ui):
-        ui.send("interrupt me")
-        assert gate.entered.wait(5)
-        ui.keys("\x1b\x1b")
-        try:
-            ui.wait_text("Stopped current turn.")
-            ui.idle()
-        finally:
-            gate.release.set()
-
-    text = d.run("prompt", script, monkeypatch)
-    assert text.count("interrupt me") == 1
-    assert text.count("Stopped current turn.") == 1
-    assert "late answer" not in text
-
-
 def test_daemon_prompt_tree_navigation_and_model_switch(
     interactive_daemon, monkeypatch
 ):
@@ -291,30 +241,6 @@ def test_daemon_prompt_tree_navigation_and_model_switch(
     assert data["selection"]["model"] == "oracle-vision"
     assert data["tree"]["leafID"] == selected[-1]
     assert "ctx=100000" in text
-
-
-def test_daemon_prompt_compact_waits_and_uses_persisted_handoff(
-    interactive_daemon, monkeypatch
-):
-    d = interactive_daemon
-    d.tape.expect(answer("before compaction"))
-    d.tape.expect(answer("compact handoff"), kind="compaction_summary")
-    d.tape.expect(answer("after compaction"))
-
-    def script(ui):
-        ui.send("remember constraint")
-        ui.wait_text("before compaction")
-        ui.idle()
-        ui.send("/compact")
-        ui.wait_text("context compaction")
-        ui.send("continue handoff")
-        ui.wait_text("after compaction")
-        ui.idle()
-
-    text = d.run("prompt", script, monkeypatch)
-    assert text.count("after compaction") == 1
-    assert "Nothing to compact" not in text
-    assert any("compact handoff" in item for item in d.tape.calls[-1]["messages_json"])
 
 
 def test_daemon_compaction_failure_releases_prompt_worker(

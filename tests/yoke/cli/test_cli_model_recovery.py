@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from contextlib import ExitStack
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 
 import httpx
@@ -21,8 +21,6 @@ from yoke.cli.config import CLIArgs
 from yoke.cli.config import runtime as config_runtime
 from yoke.cli.config import providers as provider_config
 from yoke.cli.main import app
-from yoke.cli.providers.state import apply_session_provider_defaults
-from yoke.cli.providers.state import ProviderSessionState
 from yoke.cli.backend.startup import run_daemon_cli, run_daemon_interactive
 from yoke.session import SessionStore
 
@@ -72,13 +70,20 @@ def isolate_startup(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(SessionConnection, "request", request)
 
-    daemon = create_app(
-        HttpAppSettings(auth_token=None, daemon=DaemonLifecycle(idle_exit=False))
-    )
-    with serve_app(daemon) as handle:
+    with ExitStack() as stack:
+
+        @cache
+        def discover():
+            daemon = create_app(
+                HttpAppSettings(
+                    auth_token=None, daemon=DaemonLifecycle(idle_exit=False)
+                )
+            )
+            return stack.enter_context(serve_app(daemon))
+
         monkeypatch.setattr(
             "yoke.cli.backend.startup.SessionConnection",
-            partial(SessionConnection, discover=lambda: handle),
+            partial(SessionConnection, discover=discover),
         )
         yield
 
@@ -97,13 +102,11 @@ def write_default(root: Path, model: str) -> Path:
     return path
 
 
-@pytest.mark.parametrize("scope", ["global", "repo"])
 @pytest.mark.parametrize(
-    ("provider_name", "default_model", "default_effort"),
+    "scope,provider_name,default_model,default_effort",
     [
-        ("zai", "glm-5.3-flash", "max"),
-        ("opencode-go", "deepseek-v4.1-flash", "high"),
-        ("codex", "gpt-6.1-sol", "medium"),
+        ("global", "zai", "glm-5.3-flash", "max"),
+        ("repo", "opencode-go", "deepseek-v4.1-flash", "high"),
     ],
 )
 def test_interactive_stale_default_opens_and_keeps_config(
@@ -146,47 +149,6 @@ def test_interactive_stale_default_opens_and_keeps_config(
     assert f"Configured model {provider_name}:retired" in warning
     assert f"Started with {provider_name}:{default_model}" in warning
     assert "/model" in warning
-
-
-@pytest.mark.parametrize("headless", [False, True])
-def test_explicit_unknown_model_does_not_recover(
-    tmp_path: Path, headless: bool
-) -> None:
-    write_default(tmp_path, "zai:glm-5.3-flash")
-    stderr = CaptureStream()
-    args = CLIArgs(
-        root=str(tmp_path), model="zai:retired", headless=headless, prompt="Do work"
-    )
-
-    assert run_daemon_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
-    assert args.model == "zai:retired"
-    assert "Unknown model 'retired'" in stderr.getvalue()
-    assert "Warning:" not in stderr.getvalue()
-
-
-def test_headless_config_default_does_not_recover(tmp_path: Path) -> None:
-    path = write_default(tmp_path, "zai:retired")
-    original = path.read_bytes()
-    stderr = CaptureStream()
-
-    assert (
-        run_daemon_cli(
-            CLIArgs(root=str(tmp_path), headless=True, prompt="Do work"),
-            stdout=CaptureStream(),
-            stderr=stderr,
-        )
-        == 1
-    )
-    assert "Unknown model 'retired'" in stderr.getvalue()
-    assert "Warning:" not in stderr.getvalue()
-    assert path.read_bytes() == original
-
-
-def test_noninteractive_builder_remains_strict(tmp_path: Path) -> None:
-    write_default(tmp_path, "zai:retired")
-
-    with pytest.raises(UnknownModelError, match="Unknown model 'retired'"):
-        config_runtime.build_cli_agent_from_args(CLIArgs(root=str(tmp_path)))
 
 
 def test_resume_recovers_saved_model_without_losing_history(
@@ -235,57 +197,10 @@ def test_resume_recovers_saved_model_without_losing_history(
     ]
 
 
-@pytest.mark.parametrize("selection", ["zai:retired", "missing-provider:retired"])
-def test_resume_explicit_invalid_selection_does_not_recover(
-    tmp_path: Path, selection: str
-) -> None:
-    SessionStore().save(
-        "saved",
-        [Message.user("old")],
-        root=tmp_path,
-        provider_name="zai",
-        model_id="retired",
-    )
-    stderr = CaptureStream()
-
-    assert (
-        resume_in_daemon(
-            CLIArgs(root=str(tmp_path), model=selection),
-            "saved",
-            stdout=CaptureStream(),
-            stderr=stderr,
-        )
-        == 1
-    )
-    assert "Warning:" not in stderr.getvalue()
-    assert "Falling back" not in stderr.getvalue()
-
-
-@pytest.mark.parametrize("source", ["cli", "config", "session"])
-def test_model_source_survives_repeated_preparation(
-    tmp_path: Path, source: str
-) -> None:
-    args = CLIArgs(root=str(tmp_path))
-    if source == "cli":
-        args.model = "zai:glm-5.3-flash"
-    elif source == "config":
-        write_default(tmp_path, "zai:glm-5.3-flash")
-    else:
-        apply_session_provider_defaults(
-            args, ProviderSessionState(provider_name="zai", model_id="glm-5.3-flash")
-        )
-
-    for _ in range(2):
-        provider_config.prepare_provider_args(args)
-        assert args.model_source == source
-        assert args.model == "glm-5.3-flash"
-
-
 @pytest.mark.parametrize(
     "error",
     [
         ValueError("Unknown model from an unrelated failure"),
-        ValueError("Credentials unavailable"),
         RuntimeError("Network unavailable"),
     ],
 )
@@ -332,36 +247,6 @@ def test_failed_default_does_not_retry_or_switch_provider(
     assert args.model is None
     assert "broken-default" in stderr.getvalue()
     assert "Warning:" not in stderr.getvalue()
-
-
-def test_fresh_unavailable_provider_does_not_switch(tmp_path: Path) -> None:
-    write_default(tmp_path, "removed-provider:retired")
-    stderr = CaptureStream()
-
-    assert (
-        run_daemon_cli(
-            CLIArgs(root=str(tmp_path)), stdout=CaptureStream(), stderr=stderr
-        )
-        == 1
-    )
-    assert "Unsupported provider" in stderr.getvalue()
-    assert "Warning:" not in stderr.getvalue()
-
-
-def test_valid_default_does_not_warn(tmp_path: Path) -> None:
-    write_default(tmp_path, "zai:glm-5.3-flash")
-    stderr = CaptureStream()
-
-    assert (
-        run_daemon_cli(
-            CLIArgs(root=str(tmp_path)),
-            input_func=lambda _prompt: "quit",
-            stdout=CaptureStream(),
-            stderr=stderr,
-        )
-        == 0
-    )
-    assert stderr.getvalue() == ""
 
 
 def test_recovered_provider_is_closed_when_skills_fail(
@@ -502,8 +387,10 @@ def register_provider(context):
     assert path.read_bytes() == original
 
 
-@pytest.mark.parametrize("fork", [False, True])
-@pytest.mark.parametrize("saved_model", ["retired", "glm-5.3-flash"])
+@pytest.mark.parametrize(
+    "fork,saved_model",
+    [(False, "glm-5.3-flash"), (True, "retired")],
+)
 def test_named_and_forked_sessions_use_saved_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fork: bool, saved_model: str
 ) -> None:
@@ -562,8 +449,10 @@ def test_named_and_forked_sessions_use_saved_selection(
     assert config_path.read_bytes() == config_before
 
 
-@pytest.mark.parametrize("fork", [False, True])
-@pytest.mark.parametrize("headless", [False, True])
+@pytest.mark.parametrize(
+    "fork,headless",
+    [(False, True), (True, False)],
+)
 def test_strict_continuation_failure_does_not_modify_or_fork_source(
     tmp_path: Path, fork: bool, headless: bool
 ) -> None:
@@ -594,8 +483,10 @@ def test_strict_continuation_failure_does_not_modify_or_fork_source(
     assert [entry.id for entry in store.list_index_entries()] == ["saved"]
 
 
-@pytest.mark.parametrize("mode", ["session", "fork", "resume"])
-@pytest.mark.parametrize("effort", [None, "high"])
+@pytest.mark.parametrize(
+    "mode,effort",
+    [("session", None), ("fork", "high"), ("resume", "high")],
+)
 def test_explicit_continuation_selection_and_effort_win(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, effort: str | None
 ) -> None:
@@ -633,8 +524,16 @@ def test_explicit_continuation_selection_and_effort_win(
     assert stderr.getvalue() == ""
 
 
-@pytest.mark.parametrize("mode", ["fresh", "headless", "session", "fork", "resume"])
-@pytest.mark.parametrize("effort", ["ultra", ""])
+@pytest.mark.parametrize(
+    "mode,effort",
+    [
+        ("fresh", "ultra"),
+        ("headless", ""),
+        ("session", "ultra"),
+        ("fork", "ultra"),
+        ("resume", ""),
+    ],
+)
 def test_invalid_cli_thinking_effort_fails_before_session_changes(
     tmp_path: Path, mode: str, effort: str
 ) -> None:

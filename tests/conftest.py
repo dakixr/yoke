@@ -3,12 +3,99 @@ from __future__ import annotations
 import os
 import pwd
 import signal
+import ssl
 import time
 from collections.abc import Iterator
+from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import httpx
+import httpx2
+
+from yoke.agent_runs.server import Server
+from tests.yoke.tool_fixture import local_file_tools as local_file_tools
+from tests.yoke.http_schema_fixture import (
+    http_field_adapters as http_field_adapters,
+    http_dependency_graphs as http_dependency_graphs,
+    reuse_http_dependency_graphs as reuse_http_dependency_graphs,
+    reuse_http_validation_schemas as reuse_http_validation_schemas,
+)
+from tests.yoke.scheduling import (
+    pytest_collection_modifyitems as pytest_collection_modifyitems,
+)
+from tests.yoke.schema_fixture import (
+    empty_schema as empty_schema,
+    fresh_database_from_schema as fresh_database_from_schema,
+)
+
+
+class FixtureRunServer(Server):
+    """Use a short idle accept tick while preserving peer/auth/frame handling."""
+
+    def _serve(self) -> None:
+        self.socket.settimeout(0.005)
+        super()._serve()
+
+
+@pytest.fixture(autouse=True)
+def fast_run_listener(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("yoke.agent_runs.registry.Server", FixtureRunServer)
+
+
+@pytest.fixture(scope="session")
+def transport_certificates() -> dict[tuple[object, bool, bool, bool], ssl.SSLContext]:
+    return {}
+
+
+@pytest.fixture(autouse=True)
+def reuse_transport_certificate_setup(
+    monkeypatch: pytest.MonkeyPatch,
+    transport_certificates: dict[tuple[object, bool, bool, bool], ssl.SSLContext],
+) -> None:
+    """Share the default CA bundle, never clients or application state.
+
+    HTTPX constructs a TLS context even for plain HTTP and Unix sockets. CLI
+    fixtures create many short-lived clients; loading the same CA bundle for
+    each request costs more than the actual request. Pools, sockets, clients
+    and application state remain independent. Explicit TLS settings and
+    environment-provided certificates still take the normal constructor path.
+    """
+    contexts = transport_certificates
+
+    def reuse(initializer, create_context):
+        @wraps(initializer)
+        def initialize(transport, *args, **kwargs):
+            if (
+                not args
+                and kwargs.get("verify", True) is True
+                and kwargs.get("cert") is None
+                and not os.environ.get("SSL_CERT_FILE")
+                and not os.environ.get("SSL_CERT_DIR")
+            ):
+                # HTTP core sets ALPN on connect. Keep contexts separate when
+                # transports advertise different protocol configurations.
+                key = (
+                    create_context,
+                    kwargs.get("trust_env", True),
+                    kwargs.get("http1", True),
+                    kwargs.get("http2", False),
+                )
+                if key not in contexts:
+                    contexts[key] = create_context(trust_env=key[1])
+                kwargs["verify"] = contexts[key]
+            initializer(transport, *args, **kwargs)
+
+        return initialize
+
+    for library in (httpx, httpx2):
+        for transport in (library.HTTPTransport, library.AsyncHTTPTransport):
+            monkeypatch.setattr(
+                transport,
+                "__init__",
+                reuse(transport.__init__, library.create_ssl_context),
+            )
 
 
 @pytest.fixture(autouse=True)

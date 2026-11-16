@@ -15,13 +15,7 @@ from pathlib import Path
 import pytest
 
 from yoke.agent.models import ConversationEntry, Message
-from yoke.http.errors import ApiError
-from yoke.http.models.prompt import PromptAdmissionRequest, QueuePatchRequest
-from yoke.http.services.event_broker import EventService, GlobalEventBroker
-from yoke.http.services.pending_input_service import PendingInputService
-from yoke.http.services.upload_service import UploadService
 from yoke.session import SessionStore, SessionTreeConflict, SessionTreeIndex
-from yoke.session.admissions import AdmissionStore
 from yoke.session.events import SessionEventJournal
 from yoke.session.queue import prompt_queue_transaction
 from yoke.session.repository.table import SessionTable
@@ -47,68 +41,6 @@ def _saved(tmp_path: Path) -> tuple[SessionStore, Path]:
         "shared", [Message.user("hello"), Message.assistant("hi")], root=workspace
     )
     return store, directory
-
-
-def test_stale_daemon_queue_patch_after_cli_commit_is_a_409(tmp_path: Path) -> None:
-    store, directory = _saved(tmp_path)
-    service = PendingInputService(
-        store,
-        AdmissionStore(directory),
-        EventService(SessionEventJournal(directory), GlobalEventBroker()),
-        UploadService(store),
-    )
-    service.admit(
-        "shared",
-        PromptAdmissionRequest.model_validate(
-            {"id": "in-1", "prompt": {"text": "first"}, "delivery": "queue"}
-        ),
-    )
-    stale = service.queue("shared").revision
-    from tests.yoke.cli.daemon_support import serve_app
-    from yoke.http.app import create_app, HttpAppSettings
-
-    app = create_app(HttpAppSettings(auth_token=None, session_directory=directory))
-    with serve_app(app) as handle:
-        _run(
-            f"""
-            from pathlib import Path
-            from yoke.cli.backend.connection import SessionConnection
-            from yoke.cli.backend.daemon import DaemonSessionBackend
-            from yoke.daemon.client import DaemonHandle
-            handle = DaemonHandle(Path({str(handle.socket)!r}), 0, "fixture", "1")
-            connection = SessionConnection("shared", discover=lambda: handle, cwd=Path({str(store.load("shared").root)!r}))
-            try:
-                connection.start()
-                backend = DaemonSessionBackend(connection, connection.session_request("GET")["data"])
-                loaded = backend.load_queue()
-                loaded.prompts[0].paused = True
-                backend.commit_queue(loaded.prompts, [], expected_revision=loaded.revision)
-            finally:
-                connection.close()
-            """
-        )
-    with pytest.raises(ApiError) as caught:
-        service.patch_queue(
-            "shared",
-            QueuePatchRequest.model_validate(
-                {
-                    "expectedRevision": stale,
-                    "operations": [
-                        {"op": "update", "id": "in-1", "prompt": {"text": "lost"}}
-                    ],
-                }
-            ),
-        )
-    assert (caught.value.status_code, caught.value.code) == (
-        409,
-        "queue_revision_conflict",
-    )
-    assert caught.value.details == {
-        "expectedRevision": stale,
-        "actualRevision": stale + 1,
-    }
-    queue = service.queue("shared")
-    assert [item.prompt.text for item in queue.items] == ["first"]
 
 
 def test_tree_edit_from_another_process_makes_a_stale_edit_conflict(

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import runpy
 import sys
 from types import SimpleNamespace
 
@@ -350,21 +351,32 @@ def test_copied_examples_support_direct_and_multiprocessing_entrypoints(
     tmp_path: Path,
     filename: str,
     mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert support.__file__ is not None
     scripts = Path(support.__file__).parent
     copied = tmp_path / "scripts"
     shutil.copytree(scripts, copied, ignore=shutil.ignore_patterns("__pycache__"))
     script = copied / filename
-    command = [sys.executable, str(script), "--help"]
-    if mode == "spawn-import":
-        # This is how multiprocessing prepares a script's child interpreter.
-        command = [
-            sys.executable,
-            "-c",
-            (f"import runpy; runpy.run_path({str(script)!r}, run_name='__mp_main__')"),
-        ]
-    completed = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(copied))
+    monkeypatch.setattr(sys, "argv", [str(script), "--help"])
+    if mode == "help":
+        with pytest.raises(SystemExit) as exited:
+            runpy.run_path(str(script), run_name="__main__")
+        code = exited.value.code
+        if isinstance(code, str):
+            print(code, file=sys.stderr)
+            code = 1
+        code = code or 0
+    else:
+        runpy.run_path(str(script), run_name="__mp_main__")
+        code = 0
+    captured = capsys.readouterr()
+    completed: subprocess.CompletedProcess[str] = subprocess.CompletedProcess(
+        sys.argv, code, captured.out, captured.err
+    )
     assert completed.returncode == 0, completed.stderr
     assert not (tmp_path / ".agents_local").exists()
 

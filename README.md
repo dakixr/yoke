@@ -75,6 +75,10 @@ print(result.output)
 
 ## Development
 
+Pytest runs all tests in four isolated workers by default. Use
+`uv run pytest -n 0 tests/path.py::test_name` to debug one test serially.
+See [the test guide](tests/README.md) for fixture and coverage conventions.
+
 ```sh
 uv run pytest
 uv run ruff check .

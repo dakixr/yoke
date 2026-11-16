@@ -108,7 +108,7 @@ class ProcessMonitorTests(unittest.IsolatedAsyncioTestCase):
         self.messages.put_nowait(payload)
 
     async def next(self) -> dict[str, Any]:
-        return await asyncio.wait_for(self.messages.get(), 1)
+        return await asyncio.wait_for(self.messages.get(), 3)
 
     async def test_lost_exit_invalidation_is_reconciled_without_reexecuting(
         self,
@@ -272,7 +272,18 @@ class ProcessMonitorTests(unittest.IsolatedAsyncioTestCase):
         assert self.native.events_queue is not None
         while not self.native.snapshots.empty():
             self.native.snapshots.get_nowait()
-        for _ in range(500):
+        processed = asyncio.Event()
+        received = 0
+
+        async def receipt(event: dict[str, object] | None) -> None:
+            nonlocal received
+            if event is not None and event.get("type") == "session.message.updated":
+                received += 1
+                if received == 5:
+                    processed.set()
+
+        await self.native.event_hub.subscribe(receipt)
+        for _ in range(5):
             self.native.events_queue.put_nowait(
                 {
                     "type": "session.message.updated",
@@ -280,8 +291,8 @@ class ProcessMonitorTests(unittest.IsolatedAsyncioTestCase):
                     "data": {},
                 }
             )
-        for _ in range(50):
-            await asyncio.sleep(0)
+        await asyncio.wait_for(processed.wait(), 3)
+        await self.native.event_hub.unsubscribe(receipt)
         # Chat traffic is ignored; only process invalidations read a snapshot.
         self.assertTrue(self.native.snapshots.empty())
         self.native.items[0] = process(status="exited", code=0)

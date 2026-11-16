@@ -24,6 +24,11 @@ structured observability, and automatic usage accounting.
 - [Runtime implementation](runtime.md): ownership, request sequencing and
   differential guards for changes to the agent loop.
 
+For development, `uv run pytest` runs the complete Python suite in isolated
+workers. Use `uv run pytest -n 0 path/to/test.py` for serial debugging. Test
+fixtures keep HOME, runtime directories and databases separate from user state;
+storage tests retain real migration and crash-recovery checks.
+
 ### Providers and models
 
 Yoke ships three provider families:

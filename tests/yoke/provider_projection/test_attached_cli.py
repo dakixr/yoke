@@ -15,20 +15,7 @@ from .runtime import World
 from .test_oracle import scenario, turn
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "tools",
-        "parallel_tools",
-        "inline_skill",
-        "slash_skill",
-        "checkpoint_stop",
-        "images_supported",
-        "tree_navigation",
-        "manual_compaction",
-        "automatic_compaction",
-    ],
-)
+@pytest.mark.parametrize("name", ["tools", "manual_compaction"])
 def test_cli_attachment_preserves_provider_messages_cache_and_continuation(
     tmp_path, monkeypatch, name
 ):

@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from threading import Event, Lock, Thread
 
+from tests.yoke.fixture_server import FixtureServer
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -227,7 +228,8 @@ class LiveServer:
         self.socket.bind(("127.0.0.1", 0))
         self.socket.listen(128)
         self.port = int(self.socket.getsockname()[1])
-        self.server = uvicorn.Server(
+        self.app = app
+        self.server = FixtureServer(
             uvicorn.Config(app, log_level="warning", access_log=False)
         )
         self.thread = Thread(
@@ -236,17 +238,19 @@ class LiveServer:
 
     def __enter__(self) -> LiveServer:
         self.thread.start()
-        deadline = time.monotonic() + 10
-        while not self.server.started:
-            assert self.thread.is_alive() and time.monotonic() < deadline
-            time.sleep(0.01)
+        assert self.server.ready.wait(5) and self.thread.is_alive()
+        if self.server.error is not None:
+            raise self.server.error
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        self.server.should_exit = True
+        self.app.state.event_broker.close()
+        self.server.stop()
         self.thread.join(10)
         self.socket.close()
         assert not self.thread.is_alive()
+        if self.server.error is not None:
+            raise self.server.error
 
 
 class RawSseReader:

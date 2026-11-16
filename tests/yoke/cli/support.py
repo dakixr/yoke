@@ -8,7 +8,7 @@ from typing import Any
 
 from yoke.agent.context import ContextManager
 from yoke.agent.loop import AgentResult
-from yoke.agent.models import Message
+from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.cli.bootstrap.types import ToolLoadReport
 from tests.yoke.session_support import StoredSession
 from yoke.session import SessionStore
@@ -93,3 +93,35 @@ def active_session_for(root: Path):
     store = SessionStore()
     record = store.load(new_session_id())
     return StoredSession(record.id, root, store, record)
+
+
+@dataclass
+class RecordingProvider:
+    supports_image_inputs = True
+    max_images_per_message = None
+    requests: list[tuple[list[str], list[dict[str, object]]]] = field(
+        default_factory=list
+    )
+    use_tool: bool = False
+    step: int = 0
+
+    def fork_for_turn(self):
+        return RecordingProvider(requests=self.requests, use_tool=self.use_tool)
+
+    def complete(self, messages, tools):
+        self.requests.append(
+            ([message.model_dump_json() for message in messages], tools)
+        )
+        self.step += 1
+        if self.use_tool and self.step == 1:
+            return Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="projection-call",
+                        function=ToolFunction(name="projection_echo", arguments="{}"),
+                    )
+                ],
+            )
+        return Message.assistant("projection complete")

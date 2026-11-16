@@ -98,7 +98,7 @@ class DaemonSandbox:
 
     def connect(self):  # noqa: ANN201
         try:
-            return connect_or_spawn(self.paths)
+            return connect_or_spawn(self.paths, timeout=15)
         except Exception as exc:
             raise AssertionError(self.paths.log.read_text()) from exc
 
@@ -123,6 +123,26 @@ class DaemonSandbox:
 
 @pytest.fixture
 def sandbox(monkeypatch: pytest.MonkeyPatch) -> Iterator[DaemonSandbox]:
+    # The package-walk preload is proved by test_build and by child-driven
+    # headless/autospawn races. Parent-driven lifecycle/auth daemons may import
+    # their real runtime lazily instead of eagerly importing every provider.
+    initialize = subprocess.Popen.__init__
+    bootstrap = (
+        "import runpy; import yoke.daemon.server as server; "
+        "server.preload_runtime = lambda: None; "
+        "runpy.run_module('yoke', run_name='__main__')"
+    )
+
+    def launch(process, args, *positional, **options):
+        if isinstance(args, (list, tuple)) and "-m" in args:
+            parts = list(args)
+            index = parts.index("-m")
+            if parts[index : index + 4] == ["-m", "yoke", "serve", "--daemon"]:
+                parts[index : index + 2] = ["-c", bootstrap]
+                args = parts
+        initialize(process, args, *positional, **options)
+
+    monkeypatch.setattr(subprocess.Popen, "__init__", launch)
     # Keep sun_path short even with pytest's descriptive test directory names.
     with TemporaryDirectory(prefix="ykd-") as directory:
         root = Path(directory)

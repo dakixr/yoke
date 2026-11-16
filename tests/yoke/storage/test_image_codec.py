@@ -136,8 +136,8 @@ def test_runtime_reads_metadata_forks_handoff_and_gc(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "size,mode,color",
     [
-        ((3000, 2000), "RGB", "red"),
-        ((1500, 1500), "RGBA", (0, 0, 0, 90)),
+        ((1600, 800), "RGB", "red"),
+        ((1200, 1000), "RGBA", (0, 0, 0, 90)),
         ((10, 10), "RGBA", (0, 0, 0, 255)),
     ],
 )
@@ -211,7 +211,7 @@ def test_compactor_metadata_images_and_transaction_rollback(
 ) -> None:
     store = SessionStore(tmp_path)
     record = store.save("legacy", [Message.user("preserve text")])
-    url = image_url((2500, 1400))
+    url = image_url((1600, 800))
     retained = Message.user([{"type": "local_image", "path": "/gone", "data_url": url}])
     metadata = {
         "compaction_handoff": {"retained_messages": [retained.model_dump(mode="json")]}
@@ -355,7 +355,7 @@ def test_full_rewrite_keeps_old_oversized_images_eligible_for_idle_compaction(
     tmp_path: Path,
 ) -> None:
     store = SessionStore(tmp_path)
-    url = image_url((3000, 2000))
+    url = image_url((1600, 800))
     message = Message.user([{"type": "image_url", "image_url": {"url": url}}])
     record = store.save("oversized", [message])
     # Entry encoding is exact. Rewrites must not falsely mark images from

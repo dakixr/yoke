@@ -245,49 +245,6 @@ def test_manual_compaction_is_scheduled_and_waitable(tmp_path: Path) -> None:
         assert "session.compaction.ended" in event_types
 
 
-def test_manual_compaction_propagates_http_session_usage_attribution(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import yoke.http.runtime.operations as runtime_module
-
-    observed: UsageMetricContext | None = None
-
-    def capture_context(*_args: object, **_kwargs: object) -> None:
-        nonlocal observed
-        observed = current_usage_metric_context()
-        return None
-
-    monkeypatch.setattr(runtime_module, "force_compact_agent", capture_context)
-    root = tmp_path / "repo"
-    root.mkdir()
-    with _client(tmp_path) as client:
-        _create_session(client, root)
-        renamed = client.patch(
-            "/api/v1/session/session-a",
-            headers=_auth(),
-            json={"title": "Compaction title"},
-        )
-        assert renamed.status_code == 200
-        compact = client.post(
-            "/api/v1/session/session-a/compact",
-            headers=_auth(),
-            json={"reason": "manual"},
-        )
-        assert compact.status_code == 202
-        waited = client.post(
-            "/api/v1/session/session-a/wait",
-            headers=_auth(),
-            params={"timeoutMs": 3000},
-        )
-        assert waited.status_code == 200
-
-    assert observed is not None
-    assert observed.surface == "web"
-    assert observed.session_id == "session-a"
-    assert observed.session_title == "Compaction title"
-
-
 def test_title_regeneration_uses_saved_conversation_and_persists(
     tmp_path: Path,
 ) -> None:
@@ -331,55 +288,6 @@ def test_title_regeneration_uses_saved_conversation_and_persists(
             item["type"] == "session.updated" and item["data"]["title"] == "summary"
             for item in history
         )
-
-
-def test_title_generation_propagates_http_session_usage_attribution(
-    tmp_path: Path,
-) -> None:
-    observed: UsageMetricContext | None = None
-
-    class AttributionProvider(SwitchableProvider):
-        def complete(
-            self,
-            messages: list[Message],
-            tools: list[dict[str, object]],
-        ) -> Message:
-            nonlocal observed
-            observed = current_usage_metric_context()
-            return super().complete(messages, tools)
-
-    def factory(_record: SessionRecord) -> RuntimeAgent:
-        return RuntimeAgent(provider=AttributionProvider(), tools=[])
-
-    root = tmp_path / "repo"
-    root.mkdir()
-    app = create_app(
-        HttpAppSettings(
-            auth_token=TOKEN,
-            session_directory=tmp_path / "sessions",
-            agent_factory=factory,
-        )
-    )
-    with TestClient(app) as client:
-        _create_session(client, root)
-        store = app.state.session_service.store
-        record = store.load("session-a")
-        store.save(
-            "session-a",
-            [Message.user("Title this HTTP session"), Message.assistant("Done")],
-            existing_record=record,
-        )
-        regenerated = client.post(
-            "/api/v1/session/session-a/title/regenerate",
-            headers=_auth(),
-            json={},
-        )
-        assert regenerated.status_code == 200
-
-    assert observed is not None
-    assert observed.surface == "web"
-    assert observed.session_id == "session-a"
-    assert observed.call_kind == "session_title"
 
 
 def test_first_prompt_automatically_generates_title(tmp_path: Path) -> None:

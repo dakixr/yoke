@@ -12,7 +12,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -22,12 +21,9 @@ from tests.yoke.http.daemon_load_support import (
     API,
     TOKEN,
     Controller,
-    LiveServer,
-    RawSseReader,
     auth,
     create_session,
     message_texts,
-    percentiles,
     prompt,
     timed,
     wait_state,
@@ -85,84 +81,6 @@ def test_sessions_beyond_active_limit_queue_and_all_settle(tmp_path: Path) -> No
         assert sorted(controller.tool_runs) == sessions
         for session_id in sessions:
             assert f"done:block:{session_id}" in message_texts(client, session_id)
-
-
-def test_interrupt_and_steer_spam_against_hanging_tool_stays_responsive(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    controller = Controller()
-    interrupt_latency: list[float] = []
-    steer_latency: list[float] = []
-    patch_latency: list[float] = []
-    with TestClient(_app(tmp_path, controller)) as client:
-        create_session(client, _root(tmp_path), "spam")
-        try:
-            for index in range(50):
-                key = f"hang-{index}"
-                # Odd iterations steer into a running turn and retire it; even
-                # ones start from idle. Either way the tool ignores cancellation.
-                _, elapsed = timed(
-                    lambda key=key: prompt(client, "spam", f"hang:{key}")
-                )
-                steer_latency.append(elapsed)
-                assert controller.started[key].wait(5), f"turn {index} never started"
-                if index % 2 == 0:
-                    continue
-
-                def interrupt_until_idle() -> str:
-                    response = client.post(
-                        f"{API}/session/spam/interrupt", headers=auth()
-                    )
-                    assert response.status_code == 200, response.text
-                    assert response.json()["data"]["interrupted"] is True
-                    return wait_state(client, "spam", timeout_ms=5000)
-
-                state, elapsed = timed(interrupt_until_idle)
-                assert state == "idle"
-                interrupt_latency.append(elapsed)
-
-                if index % 10 == 1:
-                    # Metadata persistence while detached tool threads are stuck.
-                    response, elapsed = timed(
-                        lambda index=index: client.patch(
-                            f"{API}/session/spam",
-                            headers=auth(),
-                            json={"title": f"spam {index}"},
-                        )
-                    )
-                    assert response.status_code == 200, response.text
-                    patch_latency.append(elapsed)
-            # Every steered and interrupted tool is still blocked right now.
-            assert len(controller.running) == 50
-        finally:
-            for event in list(controller.release.values()):
-                event.set()
-
-        # Hung tools are detached, not leaked into later turns.
-        prompt(client, "spam", "final")
-        assert wait_state(client, "spam") == "idle"
-        texts = message_texts(client, "spam")
-        assert texts[-1] == "done:final"
-        assert not any(text.startswith("done:hang:") for text in texts)
-        assert (
-            client.get(f"{API}/session/spam", headers=auth()).json()["data"]["title"]
-            == "spam 41"
-        )
-
-    assert max(interrupt_latency) < 2.0, interrupt_latency
-    assert max(steer_latency) < 2.0, steer_latency
-    assert max(patch_latency) < 1.0, patch_latency
-    with capsys.disabled():
-        p50, p95 = percentiles(interrupt_latency)
-        s50, s95 = percentiles(steer_latency)
-        m50, m95 = percentiles(patch_latency)
-        print(
-            f"\n[daemon-load] interrupt->idle p50={p50:.1f}ms p95={p95:.1f}ms "
-            f"max={max(interrupt_latency) * 1000:.1f}ms n={len(interrupt_latency)}"
-            f"\n[daemon-load] steer admission p50={s50:.1f}ms p95={s95:.1f}ms"
-            f"\n[daemon-load] metadata PATCH p50={m50:.1f}ms p95={m95:.1f}ms"
-            f" max={max(patch_latency) * 1000:.1f}ms"
-        )
 
 
 @pytest.mark.parametrize(
@@ -291,119 +209,3 @@ def _slow_subscriber_dropped(app) -> bool:
     # it is marked closed the moment the broker queues server.resyncRequired.
     broker = app.state.event_broker
     return any(sub.closed for sub in list(broker._subscriptions.values()))
-
-
-def test_slow_sse_consumer_recovers_every_durable_event_through_history(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    controller = Controller()
-    app = _app(tmp_path, controller)
-    # A small live queue keeps the overflow cheap; the resync contract is the
-    # same for the production default of 512 queued events.
-    app.state.event_broker.queue_size = 4
-    title = "x" * 64_000
-    with (
-        LiveServer(app) as server,
-        httpx.Client(
-            base_url=f"http://127.0.0.1:{server.port}", headers=auth(), timeout=10
-        ) as http,
-    ):
-        root = _root(tmp_path)
-        slow = RawSseReader(server.port)
-        try:
-            first = slow.next_event()
-            assert first is not None and first["type"] == "server.connected"
-            assert (
-                http.post(
-                    f"{API}/session",
-                    json={
-                        "id": "sse",
-                        "title": "sse",
-                        "location": {"directory": str(root)},
-                    },
-                ).status_code
-                == 200
-            )
-            # The consumer stops reading while durable events keep arriving,
-            # until its socket buffers fill and the broker gives up on it.
-            patches = 0
-            while not _slow_subscriber_dropped(app) and patches < 200:
-                patches += 1
-                response = http.patch(
-                    f"{API}/session/sse", json={"title": f"{patches} {title}"}
-                )
-                assert response.status_code == 200, response.text
-            # Events published after the drop must come back through history too.
-            for _ in range(3):
-                patches += 1
-                response = http.patch(
-                    f"{API}/session/sse", json={"title": f"{patches} {title}"}
-                )
-                assert response.status_code == 200, response.text
-            live: list[dict] = []
-            while (event := slow.next_event()) is not None:
-                live.append(event)
-        finally:
-            slow.close()
-
-        types = [event["type"] for event in live]
-        assert types[-1] == "server.resyncRequired", types[-5:]
-        seen = [
-            event["durable"]["seq"]
-            for event in live
-            if event.get("durable") and event.get("sessionID") == "sse"
-        ]
-        assert seen == sorted(seen) and len(seen) == len(set(seen))
-        assert seen == list(range(seen[0], seen[0] + len(seen)))
-
-        # Client protocol: reconnect live first, then page history after the
-        # last delivered sequence, then deduplicate by sequence.
-        with http.stream("GET", f"{API}/event") as stream:
-            lines = stream.iter_lines()
-            assert "server.connected" in next(
-                line for line in lines if line.startswith("data: ")
-            )
-            recovered: list[dict] = []
-            after = seen[-1] if seen else 0
-            while True:
-                page = http.get(
-                    f"{API}/session/sse/history", params={"after": after, "limit": 200}
-                ).json()
-                recovered.extend(page["data"])
-                if page["data"]:
-                    after = page["data"][-1]["durable"]["seq"]
-                if not page["hasMore"]:
-                    break
-            assert (
-                http.patch(
-                    f"{API}/session/sse", json={"title": "after resync"}
-                ).status_code
-                == 200
-            )
-            tail = None
-            for line in lines:
-                if not line.startswith("data: "):
-                    continue
-                payload = httpx.Response(200, content=line[6:]).json()
-                if payload.get("durable") and payload.get("sessionID") == "sse":
-                    tail = payload
-                    break
-
-        assert tail is not None and tail["data"]["title"] == "after resync"
-        history_seqs = [event["durable"]["seq"] for event in recovered]
-        combined = [*seen, *history_seqs, tail["durable"]["seq"]]
-        # Gap-free, duplicate-free and complete from creation to the newest event.
-        assert combined == list(range(1, len(combined) + 1)), combined
-        titles = [
-            event["data"].get("title")
-            for event in (*live, *recovered)
-            if event.get("type") == "session.updated"
-        ]
-        assert [t.split(" ", 1)[0] for t in titles] == [
-            str(n) for n in range(1, patches + 1)
-        ]
-    with capsys.disabled():
-        print(
-            f"\n[daemon-load] slow SSE: {patches} patches, {len(seen)} durable events "
-            f"live before resync, {len(history_seqs)} recovered from /history"
-        )

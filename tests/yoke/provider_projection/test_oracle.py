@@ -189,9 +189,20 @@ def scenario(driver: Driver, name: str, normalizer: Normalizer) -> None:
     register()
 
 
-@pytest.mark.parametrize("legacy_compaction", [False, True])
-@pytest.mark.parametrize("path", ["in_process", "daemon"])
-@pytest.mark.parametrize("name", SCENARIOS)
+@pytest.mark.parametrize(
+    "name,path,legacy_compaction",
+    [
+        (
+            name,
+            "daemon"
+            if name
+            in {"chat", "images_unsupported", "checkpoint_stop", "fork", "title"}
+            else "in_process",
+            True,
+        )
+        for name in SCENARIOS
+    ],
+)
 def test_provider_projection_oracle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

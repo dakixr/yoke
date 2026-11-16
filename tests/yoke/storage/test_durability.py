@@ -1,17 +1,15 @@
-"""kill -9 a writer at random points; every acknowledged write must survive."""
+"""Kill a writer after each commit kind; every acknowledged write must survive."""
 
 from __future__ import annotations
 
 # ruff: noqa: S101,S311,S603
 
 import os
-import random
 import signal
 import sqlite3
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 from yoke.session import SessionStore
@@ -19,7 +17,8 @@ from yoke.session.events import SessionEventJournal
 from yoke.session.queue import load_prompt_queue_snapshot
 
 CHILD = Path(__file__).with_name("writer_child.py")
-ITERATIONS = 20
+KILL_AFTER = ("entry", "title", "queue", "event")
+ITERATIONS = len(KILL_AFTER)
 
 
 def _run_and_kill(directory: Path, session_id: str, iteration: int) -> list[str]:
@@ -36,16 +35,19 @@ def _run_and_kill(directory: Path, session_id: str, iteration: int) -> list[str]
 
     def read() -> None:
         assert child.stdout is not None
+        acknowledgements = 0
         for line in child.stdout:
             if line.endswith("\n"):
                 lines.append(line.strip())
-                ready.set()
+                if line.startswith(KILL_AFTER[iteration - 1] + " "):
+                    acknowledgements += 1
+                    if acknowledgements >= 2:
+                        ready.set()
 
     reader = threading.Thread(target=read)
     reader.start()
     try:
         assert ready.wait(60), child.stderr.read() if child.stderr else ""
-        time.sleep(random.uniform(0.05, 0.6))
     finally:
         child.send_signal(signal.SIGKILL)
         child.wait(30)
@@ -56,7 +58,6 @@ def _run_and_kill(directory: Path, session_id: str, iteration: int) -> list[str]
 
 
 def test_kill_nine_preserves_every_acknowledged_write(tmp_path: Path) -> None:
-    random.seed(os.getpid())
     directory = tmp_path / "sessions"
     directory.mkdir()
     session_id = "durable"

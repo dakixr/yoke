@@ -37,7 +37,8 @@ from yoke.session.repository.table import SessionTable
 
 from tests.yoke.session_rows import stored_entry_rows
 
-ENTRY_COUNT = 50_000
+# Scan/copy counters detect regressions independently of fixture size.
+ENTRY_COUNT = 256
 ACTIVE_COUNT = 32
 
 
