@@ -21,20 +21,24 @@ from yoke.cli.interactive.queue.mutations import attach_pending_image
 from yoke.cli.interactive.queue.mutations import consume_pending_images
 from yoke.cli.interactive.queue.mutations import next_pending_prompt_index
 from yoke.cli.interactive.queue.mutations import remove_pending_image
-from yoke.cli.backend.queue import clear_prompt_queue
-from yoke.cli.backend.queue import load_prompt_queue
-from yoke.cli.backend.queue import load_prompt_queue_state
-from yoke.cli.backend.queue import persist_prompt_queue
-from yoke.cli.backend.queue import PromptQueueRevisionConflict
+from .daemon_queue_support import clear_prompt_queue
+from .daemon_queue_support import load_prompt_queue
+from .daemon_queue_support import load_prompt_queue_state
+from .daemon_queue_support import persist_prompt_queue
+from .daemon_queue_support import PromptQueueRevisionConflict
 from yoke.session.queue import load_prompt_queue_snapshot
 from yoke.session.queue import load_prompt_queue_snapshots
 from yoke.session.queue import PersistedPendingInput
 from yoke.session.queue import PersistedPromptQueue
-from yoke.session.queue import prompt_queue_transaction
 from yoke.session.queue import write_prompt_queue_snapshot
 
-from .support import FakeAgent
-from .support import active_session_for
+from .daemon_queue_support import (
+    active_session_for as active_session_for,
+    terminal as terminal,
+    store_for,
+    remote,
+    wake,
+)
 
 
 def _state_from_disk(active_session) -> PromptCliState:
@@ -49,15 +53,23 @@ def _state_from_disk(active_session) -> PromptCliState:
 
 
 def _replace_disk_prompts(active_session, prompts: list[PersistedPendingInput]) -> None:
-    with prompt_queue_transaction(
-        active_session.store.directory,
-        active_session.id,
-    ) as transaction:
-        snapshot = transaction.snapshot.model_copy(deep=True)
-        snapshot.prompts = prompts
-        snapshot.revision += 1
-        transaction.snapshot = snapshot
-        transaction.commit()
+    loaded = load_prompt_queue_state(active_session)
+    persist_prompt_queue(
+        active_session,
+        [
+            PendingPrompt(
+                item.prompt,
+                id=item.id,
+                paused=item.paused,
+                kind=item.kind,
+                continuation=item.continuation,
+                attachments=item.attachments,
+            )
+            for item in prompts
+        ],
+        loaded.pending_images,
+        expected_revision=loaded.revision,
+    )
 
 
 def test_batch_queue_load_reads_each_session_from_one_snapshot(
@@ -80,7 +92,9 @@ def test_batch_queue_load_reads_each_session_from_one_snapshot(
     assert snapshots["queued"].revision == 7
 
 
-def test_consumed_prompt_is_removed_from_persisted_queue(tmp_path) -> None:
+def test_consumed_prompt_is_removed_from_persisted_queue(
+    active_session_for, tmp_path
+) -> None:
     active_session = active_session_for(tmp_path)
     state = PromptCliState(
         messages=[],
@@ -91,38 +105,68 @@ def test_consumed_prompt_is_removed_from_persisted_queue(tmp_path) -> None:
     )
     persist_prompt_queue(active_session, state.pending_prompts)
 
+    # Only the daemon promotes inputs. Hold the second item for the next pass.
+    backend = remote(active_session).backend
+    loaded = backend.load_queue()
+    backend.connection.session_request(
+        "PATCH",
+        "/queue",
+        json={
+            "expectedRevision": loaded.revision,
+            "operations": [
+                {"op": "setPaused", "id": loaded.prompts[1].id, "paused": True}
+            ],
+            "resume": False,
+        },
+    )
+    wake(active_session)
     next_prompt, _should_finish = finish_prompt_turn(
         state=state,
         state_lock=Lock(),
         active_session=active_session,
         request_context_usage=lambda _prompt: None,
     )
-
     restored_prompts, _restored_images = load_prompt_queue(active_session)
-    assert next_prompt is not None
-    assert next_prompt.prompt == "consumed"
+    assert next_prompt is None
     assert [prompt.prompt for prompt in state.pending_prompts] == ["still queued"]
     assert [prompt.prompt for prompt in restored_prompts] == ["still queued"]
-
+    assert [m.text_content() for m in backend.messages() if m.role == "user"] == [
+        "consumed"
+    ]
+    loaded = backend.load_queue()
+    backend.connection.session_request(
+        "PATCH",
+        "/queue",
+        json={
+            "expectedRevision": loaded.revision,
+            "operations": [
+                {"op": "setPaused", "id": loaded.prompts[0].id, "paused": False}
+            ],
+        },
+    )
+    backend.connection.session_request("POST", "/wait", params={"timeoutMs": 5000})
     final_prompt, _should_finish = finish_prompt_turn(
         state=state,
         state_lock=Lock(),
         active_session=active_session,
         request_context_usage=lambda _prompt: None,
     )
-
     restored_prompts, _restored_images = load_prompt_queue(active_session)
-    assert final_prompt is not None
-    assert final_prompt.prompt == "still queued"
+    assert final_prompt is None
     assert restored_prompts == []
+    assert [m.text_content() for m in backend.messages() if m.role == "user"] == [
+        "consumed",
+        "still queued",
+    ]
 
 
 def test_unchanged_prompt_queue_is_not_rewritten(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    active_session_for, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     active_session = active_session_for(tmp_path)
     prompts = [PendingPrompt("still queued")]
     persist_prompt_queue(active_session, prompts)
+    before = load_prompt_queue_state(active_session).revision
     writes = {"count": 0}
     original_write_text = Path.write_text
 
@@ -147,13 +191,16 @@ def test_unchanged_prompt_queue_is_not_rewritten(
     persist_prompt_queue(active_session, prompts)
 
     assert writes["count"] == 0
+    assert load_prompt_queue_state(active_session).revision == before
 
 
-def test_clearing_prompt_queue_preserves_monotonic_revision(tmp_path: Path) -> None:
+def test_clearing_prompt_queue_preserves_monotonic_revision(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     persist_prompt_queue(active_session, [PendingPrompt("first")])
     before = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert before.revision == 1
@@ -161,7 +208,7 @@ def test_clearing_prompt_queue_preserves_monotonic_revision(tmp_path: Path) -> N
     clear_prompt_queue(active_session)
 
     cleared = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert cleared.revision == 2
@@ -169,7 +216,7 @@ def test_clearing_prompt_queue_preserves_monotonic_revision(tmp_path: Path) -> N
 
     persist_prompt_queue(active_session, [PendingPrompt("second")])
     restored = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert restored.revision == 3
@@ -177,6 +224,7 @@ def test_clearing_prompt_queue_preserves_monotonic_revision(tmp_path: Path) -> N
 
 
 def test_stale_cli_snapshot_does_not_overwrite_newer_disk_edit(
+    active_session_for,
     tmp_path: Path,
 ) -> None:
     active_session = active_session_for(tmp_path)
@@ -185,7 +233,7 @@ def test_stale_cli_snapshot_does_not_overwrite_newer_disk_edit(
     loaded = load_prompt_queue_state(active_session)
     edited = (
         load_prompt_queue_snapshot(
-            active_session.store.directory,
+            store_for(active_session).directory,
             active_session.id,
         )
         .prompts[0]
@@ -202,7 +250,7 @@ def test_stale_cli_snapshot_does_not_overwrite_newer_disk_edit(
         )
 
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert raised.value.expected_revision == 1
@@ -211,7 +259,9 @@ def test_stale_cli_snapshot_does_not_overwrite_newer_disk_edit(
     assert [item.prompt for item in current.prompts] == ["edited"]
 
 
-def test_stale_cli_clear_preserves_new_admission(tmp_path: Path) -> None:
+def test_stale_cli_clear_preserves_new_admission(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     loaded = load_prompt_queue_state(active_session)
     persist_prompt_queue(
@@ -223,14 +273,16 @@ def test_stale_cli_clear_preserves_new_admission(tmp_path: Path) -> None:
         clear_prompt_queue(active_session, expected_revision=loaded.revision)
 
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert current.revision == 1
     assert [item.prompt for item in current.prompts] == ["admitted after CLI read"]
 
 
-def test_cli_append_reapplies_only_new_item_after_disk_edit(tmp_path: Path) -> None:
+def test_cli_append_reapplies_only_new_item_after_disk_edit(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     persist_prompt_queue(
         active_session,
@@ -240,7 +292,7 @@ def test_cli_append_reapplies_only_new_item_after_disk_edit(tmp_path: Path) -> N
     state.worker = Thread()
     edited = (
         load_prompt_queue_snapshot(
-            active_session.store.directory,
+            store_for(active_session).directory,
             active_session.id,
         )
         .prompts[0]
@@ -260,7 +312,7 @@ def test_cli_append_reapplies_only_new_item_after_disk_edit(tmp_path: Path) -> N
     )
 
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert current.revision == 3
@@ -281,6 +333,7 @@ def test_cli_append_reapplies_only_new_item_after_disk_edit(tmp_path: Path) -> N
     ],
 )
 def test_finish_turn_dequeues_only_authoritative_item(
+    active_session_for,
     tmp_path: Path,
     disk_prompt: str | None,
     paused: bool,
@@ -293,7 +346,7 @@ def test_finish_turn_dequeues_only_authoritative_item(
     )
     state = _state_from_disk(active_session)
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     prompts = []
@@ -305,6 +358,8 @@ def test_finish_turn_dequeues_only_authoritative_item(
         ]
     _replace_disk_prompts(active_session, prompts)
 
+    if expected_started is not None:
+        wake(active_session)
     next_prompt, should_finish = finish_prompt_turn(
         state=state,
         state_lock=Lock(),
@@ -313,9 +368,14 @@ def test_finish_turn_dequeues_only_authoritative_item(
     )
 
     assert should_finish is False
-    assert (next_prompt.prompt if next_prompt is not None else None) == expected_started
+    assert next_prompt is None
+    assert [
+        m.text_content()
+        for m in remote(active_session).backend.messages()
+        if m.role == "user"
+    ] == ([expected_started] if expected_started else [])
     disk = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     if expected_started is None:
@@ -328,7 +388,9 @@ def test_finish_turn_dequeues_only_authoritative_item(
         assert disk.prompts == []
 
 
-def test_persisting_queue_does_not_move_paused_items(tmp_path: Path) -> None:
+def test_persisting_queue_does_not_move_paused_items(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     prompts = [
         PendingPrompt("active A", id="a"),
@@ -339,13 +401,14 @@ def test_persisting_queue_does_not_move_paused_items(tmp_path: Path) -> None:
     persist_prompt_queue(active_session, prompts)
 
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert [item.id for item in current.prompts] == ["a", "b", "c"]
 
 
 def test_cli_leaves_http_owned_continuations_and_attachments_for_native_runtime(
+    active_session_for,
     tmp_path: Path,
 ) -> None:
     active_session = active_session_for(tmp_path)
@@ -378,7 +441,7 @@ def test_cli_leaves_http_owned_continuations_and_attachments_for_native_runtime(
         ],
     )
     write_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
         snapshot,
     )
@@ -386,18 +449,22 @@ def test_cli_leaves_http_owned_continuations_and_attachments_for_native_runtime(
     loaded = load_prompt_queue_state(active_session)
 
     assert loaded.prompts[0].continuation is True
-    assert loaded.prompts[1].attachments == snapshot.prompts[1].attachments
+    assert loaded.prompts[1].attachments == [
+        {"type": "file", **snapshot.prompts[1].attachments[0]}
+    ]
     assert next_pending_prompt_index(loaded.prompts) == 2
     persist_prompt_queue(active_session, loaded.prompts)
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert current.prompts[0].continuation is True
     assert current.prompts[1].attachments == snapshot.prompts[1].attachments
 
 
-def test_image_only_update_preserves_newer_prompt_edit(tmp_path: Path) -> None:
+def test_image_only_update_preserves_newer_prompt_edit(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     persist_prompt_queue(
         active_session,
@@ -406,7 +473,7 @@ def test_image_only_update_preserves_newer_prompt_edit(tmp_path: Path) -> None:
     state = _state_from_disk(active_session)
     edited = (
         load_prompt_queue_snapshot(
-            active_session.store.directory,
+            store_for(active_session).directory,
             active_session.id,
         )
         .prompts[0]
@@ -423,7 +490,7 @@ def test_image_only_update_preserves_newer_prompt_edit(tmp_path: Path) -> None:
     )
 
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert [item.prompt for item in current.prompts] == ["edited"]
@@ -431,7 +498,9 @@ def test_image_only_update_preserves_newer_prompt_edit(tmp_path: Path) -> None:
     assert current.revision == 3
 
 
-def test_pending_image_attach_and_removal_survive_reload(tmp_path: Path) -> None:
+def test_pending_image_attach_and_removal_survive_reload(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     state = _state_from_disk(active_session)
     image = ImageAttachment(path=tmp_path / "queued.png")
@@ -459,7 +528,9 @@ def test_pending_image_attach_and_removal_survive_reload(tmp_path: Path) -> None
     assert restored.revision == 2
 
 
-def test_consuming_pending_images_clears_persisted_state(tmp_path: Path) -> None:
+def test_consuming_pending_images_clears_persisted_state(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     state = _state_from_disk(active_session)
     image = ImageAttachment(path=tmp_path / "submitted.png")
@@ -484,7 +555,7 @@ def test_consuming_pending_images_clears_persisted_state(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("action", ["consume", "remove"])
 def test_stale_empty_image_action_refreshes_authoritative_images(
-    tmp_path: Path, action: str
+    active_session_for, tmp_path: Path, action: str
 ) -> None:
     active_session = active_session_for(tmp_path)
     stale_state = _state_from_disk(active_session)
@@ -517,7 +588,9 @@ def test_stale_empty_image_action_refreshes_authoritative_images(
     assert restored.revision == 2
 
 
-def test_append_identity_conflict_preserves_authoritative_item(tmp_path: Path) -> None:
+def test_append_identity_conflict_preserves_authoritative_item(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     state = _state_from_disk(active_session)
     persist_prompt_queue(
@@ -534,7 +607,7 @@ def test_append_identity_conflict_preserves_authoritative_item(tmp_path: Path) -
 
     assert appended is False
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert current.revision == 1
@@ -543,6 +616,7 @@ def test_append_identity_conflict_preserves_authoritative_item(tmp_path: Path) -
 
 
 def test_cli_appends_serialize_revision_and_state_updates(
+    active_session_for,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -613,7 +687,7 @@ def test_cli_appends_serialize_revision_and_state_updates(
     assert not second.is_alive()
     assert expected_revisions == [0, 1]
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert current.revision == 2
@@ -622,7 +696,9 @@ def test_cli_appends_serialize_revision_and_state_updates(
     assert state.queue_revision == 2
 
 
-def test_exit_does_not_overwrite_newer_prompt_edit(tmp_path: Path) -> None:
+def test_exit_does_not_overwrite_newer_prompt_edit(
+    active_session_for, tmp_path: Path
+) -> None:
     active_session = active_session_for(tmp_path)
     persist_prompt_queue(
         active_session,
@@ -631,7 +707,7 @@ def test_exit_does_not_overwrite_newer_prompt_edit(tmp_path: Path) -> None:
     state = _state_from_disk(active_session)
     edited = (
         load_prompt_queue_snapshot(
-            active_session.store.directory,
+            store_for(active_session).directory,
             active_session.id,
         )
         .prompts[0]
@@ -643,11 +719,11 @@ def test_exit_does_not_overwrite_newer_prompt_edit(tmp_path: Path) -> None:
         state=state,
         state_lock=Lock(),
         active_session=active_session,
-        agent=FakeAgent(),
+        agent=remote(active_session).backend,
     )
 
     current = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        store_for(active_session).directory,
         active_session.id,
     )
     assert current.revision == 2

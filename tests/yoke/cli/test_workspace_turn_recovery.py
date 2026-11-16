@@ -1,78 +1,50 @@
-"""Deletion races between prompt ownership transfer and model execution."""
+"""Deletion races retain daemon input identity and durable image references."""
 
 # ruff: noqa: ANN001, ANN002, ANN003, D103, S101
 
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Event, Lock, Thread
+from threading import Lock, Thread
 from unittest.mock import Mock
 
 import pytest
 
+from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
-from yoke.agent.state import conversation_entries_from_messages
-from yoke.cli.backend import turns as turn_runner
+from yoke.cli.backend.daemon.images import upload_message_images
+from yoke.cli.backend.daemon.turn import DaemonSubmittedTurn
 from yoke.cli.interactive.common import PendingPrompt, PromptCliState, TurnFailure
 from yoke.cli.interactive.prompt import turns
 from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
-from yoke.cli.interactive.queue.mutations import append_prompt, dequeue_prompt
-from yoke.cli.backend.queue import load_prompt_queue_state
 from yoke.cli.runtime.base import ActiveSessionRef
-from yoke.session.queue import load_prompt_queue_snapshot
-from yoke.session.workspace import WorkspaceUnavailable, require_workspace
+from yoke.session.workspace import require_workspace
 
-from .support import FakeAgent, active_session_for
+from .terminal_daemon_support import ReplyProvider, session_for, terminal as terminal
 from .test_queue_action_atomicity import _attach, _tiny_png
 
 
-def _state() -> PromptCliState:
-    return PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        active_turn_id=1,
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
-    )
-
-
-def _run_and_finish(active, state, lock, agent, prompt, user_message):
-    outcomes = []
-    turns.run_prompt_turn(
-        turn_id=state.active_turn_id,
-        prompt=prompt,
-        state=state,
-        state_lock=lock,
-        agent=agent,
-        active_session=active,
-        stop_event=Event(),
-        user_message=user_message,
-        handle_outcome=lambda _id, outcome: outcomes.append(outcome),
-        turn_renderer_factory=Mock(),
-    )
-    assert len(outcomes) == 1
-    outcome = outcomes[0]
+def _finish(backend, state, turn):
+    list(turn)
+    outcome = turn.result()
     assert isinstance(outcome, TurnFailure)
-    assert isinstance(outcome.error, WorkspaceUnavailable)
-    assert (
-        turns.handle_prompt_turn_outcome(
-            turn_id=state.active_turn_id,
-            outcome=outcome,
-            state=state,
-            state_lock=lock,
-            agent=agent,
-            active_session=active,
-            renderer=Mock(),
-            scrollback=Mock(),
-        )
-        is False
+    assert "--relocate" in str(outcome.error)
+    assert not turns.handle_prompt_turn_outcome(
+        turn_id=state.active_turn_id,
+        outcome=outcome,
+        state=state,
+        state_lock=Lock(),
+        agent=backend,
+        active_session=session_for(backend),
+        renderer=Mock(),
+        scrollback=Mock(),
     )
     next_prompt, finish = turns.finish_prompt_turn(
         state=state,
-        state_lock=lock,
-        active_session=active,
-        request_context_usage=lambda _text: None,
+        state_lock=Lock(),
+        active_session=session_for(backend),
+        request_context_usage=lambda _: None,
     )
     assert next_prompt is None
     assert not finish
@@ -80,16 +52,44 @@ def _run_and_finish(active, state, lock, agent, prompt, user_message):
     return outcome
 
 
+def _replay(backend, item):
+    stream, unsubscribe = backend.events.subscribe()
+    turn = DaemonSubmittedTurn(backend.connection, item.id, stream, unsubscribe)
+    backend.connection.session_request(
+        "POST",
+        "/prompt",
+        json={
+            "id": item.id,
+            "clientID": backend.connection.owner,
+            "delivery": "steer" if item.kind == "steering" else "queue",
+            "prompt": {
+                "text": item.prompt,
+                "attachments": item.attachments,
+                "continuation": item.continuation,
+            },
+        },
+    )
+    return turn
+
+
 @pytest.mark.parametrize("kind", ["queued", "steering"])
 def test_dequeue_delete_run_outcome_finish_restores_exact_paused_item(
-    tmp_path: Path, kind
+    tmp_path: Path, monkeypatch, terminal, kind
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
-    state, lock, agent = _state(), Lock(), FakeAgent()
-    first = PendingPrompt("earlier", paused=True)
+    calls = []
+
+    class Provider(ReplyProvider):
+        def complete(self, messages, tools):
+            calls.append(messages)
+            return super().complete(messages, tools)
+
+    terminal.factory = lambda _: RuntimeAgent(Provider(), [], tool_root=root)
+    terminal.store.save("recover", [], root=root, title="Fixture")
+    backend = terminal.backend("recover", root=root)
     image = _tiny_png(tmp_path / "image.png")
+    original_bytes = image.path.read_bytes()
     from yoke.cli.image_input import build_user_message
 
     selected = PendingPrompt(
@@ -97,132 +97,201 @@ def test_dequeue_delete_run_outcome_finish_restores_exact_paused_item(
         kind=kind,
         user_message=build_user_message("describe it", image_paths=[image.path]),
     )
-    later = PendingPrompt("later", paused=True)
-    for item in [first, selected, later]:
-        assert append_prompt(
-            state=state, state_lock=lock, active_session=active, prompt=item
-        )
-    pending = dequeue_prompt(state=state, state_lock=lock, active_session=active)
-    assert pending is not None
-    assert pending == selected
-    assert load_prompt_queue_state(active).prompts == [first, later]
-    # Deletion is deliberately after durable removal, not before dequeue.
-    root.rmdir()
-    image.path.unlink()
-    outcome = _run_and_finish(
-        active, state, lock, agent, pending.prompt, pending.user_message
+    first, later = (
+        PendingPrompt("earlier", paused=True),
+        PendingPrompt("later", paused=True),
     )
-    assert outcome.rejected_prompt is not None
-    assert outcome.rejected_prompt[0] is pending
-    assert outcome.rejected_prompt[1] == 1
-    expected = selected.copy_for_queue()
-    expected.paused = True
-    assert load_prompt_queue_state(active).prompts == [first, expected, later]
-    persisted = load_prompt_queue_snapshot(active.store.directory, active.id)
-    assert persisted.prompts[1].attachments == []
-    assert persisted.prompts[1].user_message == selected.user_message
-    assert active.store.load(active.id).messages == []
-    assert agent.seen_history_lengths == []
+    backend.commit_queue([first, selected, later], [], expected_revision=0)
+    selected_remote = backend.load_queue().prompts[1]
+    runtime = terminal.app.state.runtime_registry.get_if_loaded("recover")
+    original = runtime.execution.prepare
+
+    def prepare(*args, **kwargs):
+        # The daemon has promoted this exact identity before preparation begins.
+        assert [p.id for p in backend.load_queue().prompts] == [first.id, later.id]
+        root.rmdir()
+        image.path.unlink()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runtime.execution, "prepare", prepare)
+    outcome = _finish(
+        backend,
+        PromptCliState(messages=[], pending_prompts=[], active_turn_id=1),
+        _replay(backend, selected_remote),
+    )
+    assert outcome.agent is None
+    restored = backend.load_queue().prompts
+    assert [(p.id, p.prompt, p.kind, p.paused) for p in restored] == [
+        (first.id, first.prompt, first.kind, True),
+        (selected.id, selected.prompt, kind, True),
+        (later.id, later.prompt, later.kind, True),
+    ]
+    assert restored[1].created_at == selected_remote.created_at
+    attachment = restored[1].attachments[0]
+    assert attachment["imageProjection"] == "cli"
+    path = terminal.app.state.upload_service.resolve(
+        attachment["uri"],
+        session_id="recover",
+        name=attachment["name"],
+        mime=attachment["mime"],
+    )
+    assert path.read_bytes() == original_bytes
+    assert terminal.store.load("recover").messages == []
+    assert calls == []
     root.mkdir()
-    assert dequeue_prompt(state=state, state_lock=lock, active_session=active) is None
+    from .daemon_queue_support import wake
+
+    wake(session_for(backend))
+    assert [p.id for p in backend.load_queue().prompts] == [
+        first.id,
+        selected.id,
+        later.id,
+    ]
+    assert calls == []
 
 
 @pytest.mark.parametrize("with_image", [False, True])
 def test_direct_submission_deleted_after_start_retains_durable_text_and_images(
-    tmp_path: Path, with_image: bool
+    tmp_path: Path, monkeypatch, terminal, with_image: bool
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
-    state, lock, agent = _state(), Lock(), FakeAgent()
+    calls = []
+
+    class Provider(ReplyProvider):
+        def complete(self, messages, tools):
+            calls.append(messages)
+            return super().complete(messages, tools)
+
+    terminal.factory = lambda _: RuntimeAgent(Provider(), [], tool_root=root)
+    terminal.store.save("recover", [], root=root, title="Fixture")
+    backend = terminal.backend("recover", root=root)
+    active = session_for(backend)
+    state = PromptCliState(messages=[], pending_prompts=[], active_turn_id=1)
     image = _tiny_png(tmp_path / "image.png")
+    original_bytes = image.path.read_bytes()
     if with_image:
         _attach(active, state, image)
     submitted = []
 
     def start(prompt, *, user_message):
-        submitted.append((prompt, user_message))
+        submitted.append(user_message)
+        backend.connection.session_request(
+            "POST",
+            "/prompt",
+            json={
+                "id": "direct",
+                "clientID": backend.connection.owner,
+                "resume": False,
+                "delivery": "queue",
+                "prompt": {
+                    "text": prompt,
+                    "attachments": upload_message_images(
+                        backend.connection, user_message
+                    ),
+                },
+            },
+        )
         return Thread()
 
     submit_prompt_toolkit_prompt(
         "my draft",
         action="queue",
         state=state,
-        state_lock=lock,
+        state_lock=Lock(),
         active_session=active,
         start_turn=start,
         steer_active_turn=Mock(),
         invalidate_prompt=lambda: None,
     )
     assert state.pending_images == []
-    assert load_prompt_queue_state(active).pending_images == []
-    root.rmdir()
-    image.path.unlink()
-    prompt, message = submitted[0]
-    _run_and_finish(active, state, lock, agent, prompt, message)
-    restored = load_prompt_queue_state(active).prompts
+    assert backend.load_queue().pending_images == []
+    assert len(submitted) == 1
+    runtime = terminal.app.state.runtime_registry.get_if_loaded("recover")
+    original = runtime.execution.prepare
+
+    def prepare(*args, **kwargs):
+        root.rmdir()
+        image.path.unlink()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runtime.execution, "prepare", prepare)
+    _finish(backend, state, _replay(backend, backend.load_queue().prompts[0]))
+    restored = backend.load_queue().prompts
     assert len(restored) == 1
-    assert restored[0].paused
-    assert restored[0].prompt == "my draft"
-    assert restored[0].user_message == message
-    assert restored[0].user_message is not None
-    assert restored[0].user_message.has_image_inputs() is with_image
-    assert not agent.seen_history_lengths
+    assert (restored[0].id, restored[0].paused, restored[0].prompt) == (
+        "direct",
+        True,
+        "my draft",
+    )
+    assert bool(restored[0].attachments) is with_image
+    assert submitted[0].has_image_inputs() is with_image
+    if with_image:
+        attachment = restored[0].attachments[0]
+        path = terminal.app.state.upload_service.resolve(
+            attachment["uri"],
+            session_id="recover",
+            name=attachment["name"],
+            mime=attachment["mime"],
+        )
+        assert path.read_bytes() == original_bytes
+    assert calls == []
 
 
 @pytest.mark.parametrize("checkpoint", [False, True])
 def test_workspace_error_after_execution_does_not_restore_duplicate(
-    tmp_path: Path, monkeypatch, checkpoint: bool
+    tmp_path: Path, monkeypatch, terminal, checkpoint: bool
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
-    state, lock, agent = _state(), Lock(), FakeAgent()
+    terminal.store.save("recover", [], root=root, title="Fixture")
+    backend = terminal.backend("recover", root=root)
     pending = PendingPrompt(
         "already executed", user_message=Message.user("already executed")
     )
-    append_prompt(state=state, state_lock=lock, active_session=active, prompt=pending)
-    assert (
-        dequeue_prompt(state=state, state_lock=lock, active_session=active) == pending
-    )
-    state.active_user_message = pending.user_message
+    backend.commit_queue([pending], [], expected_revision=0)
+    executed = []
+    original_run = RuntimeAgent.run
 
-    def execute(*args, **kwargs):
-        result = agent.run(pending.prompt, [])
+    def run(self, *args, **kwargs):
+        assert self.messages == []
+        result = original_run(self, *args, **kwargs)
+        executed.append(result)
         if checkpoint:
             kwargs["after_tool_result_appended"](
-                result.messages, conversation_entries_from_messages(result.messages)
+                self.context_for_messages(result.messages)
             )
         root.rmdir()
-        require_workspace(root, session_id=active.id)
+        require_workspace(root, session_id="recover")
 
-    monkeypatch.setattr(turn_runner, "execute_turn", execute)
-    monkeypatch.setattr(turn_runner, "start_session_title_generation", Mock())
-    outcome = _run_and_finish(
-        active, state, lock, agent, pending.prompt, pending.user_message
+    monkeypatch.setattr(RuntimeAgent, "run", run)
+    state = PromptCliState(
+        messages=[],
+        pending_prompts=[],
+        active_turn_id=1,
+        active_user_message=pending.user_message,
     )
+    outcome = _finish(backend, state, _replay(backend, backend.load_queue().prompts[0]))
     assert outcome.rejected_prompt is None
-    assert load_prompt_queue_state(active).prompts == []
+    assert backend.load_queue().prompts == []
     assert state.next_editor_text is None
-    assert agent.seen_history_lengths == [0]
+    assert len(executed) == 1
     if checkpoint:
         assert [
-            message
-            for message in active.store.load(active.id).messages
-            if message.role == "user"
+            m for m in terminal.store.load("recover").messages if m.role == "user"
         ] == [pending.user_message]
 
 
 def test_control_transfers_queue_identity_before_worker_starts(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, terminal
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
-    state, lock, agent = _state(), Lock(), FakeAgent()
+    backend = terminal.backend("recover", root=root)
+    active = session_for(backend)
+    state = PromptCliState(messages=[], pending_prompts=[])
     pending = PendingPrompt("queued", kind="steering", id="original")
-    append_prompt(state=state, state_lock=lock, active_session=active, prompt=pending)
-    selected = dequeue_prompt(state=state, state_lock=lock, active_session=active)
+    backend.commit_queue([pending], [], expected_revision=0)
     targets = []
 
     def thread(*, target, **kwargs):
@@ -232,8 +301,8 @@ def test_control_transfers_queue_identity_before_worker_starts(
     monkeypatch.setattr("yoke.cli.interactive.prompt.control.Thread", thread)
     control = create_prompt_toolkit_control(
         state=state,
-        state_lock=lock,
-        agent=agent,
+        state_lock=Lock(),
+        agent=backend,
         active_session_ref=ActiveSessionRef(active),
         renderer=Mock(),
         scrollback=Mock(),
@@ -241,12 +310,26 @@ def test_control_transfers_queue_identity_before_worker_starts(
         invalidate_prompt=Mock(),
         update_status=Mock(),
     )
+    # The daemon queue is authoritative even if a stale UI callback still holds it.
+    from yoke.cli.interactive.queue.mutations import dequeue_prompt
+
+    selected = dequeue_prompt(state=state, state_lock=Lock(), active_session=active)
+    assert selected is None
     control.start_pending_prompt(selected, False)
     assert state.starting_prompt is None
-    root.rmdir()
-    targets[0]()
-    restored = load_prompt_queue_state(active).prompts
+    runtime = terminal.app.state.runtime_registry.get_if_loaded("recover")
+    original = runtime.execution.prepare
+
+    def prepare(*args, **kwargs):
+        root.rmdir()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runtime.execution, "prepare", prepare)
+    _finish(backend, state, _replay(backend, backend.load_queue().prompts[0]))
+    assert targets == []
+    restored = backend.load_queue().prompts
     assert len(restored) == 1
     assert restored[0].id == "original"
     assert restored[0].kind == "steering"
     assert restored[0].paused
+    assert terminal.store.load("recover").messages == []

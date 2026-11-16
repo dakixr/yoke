@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Lock
 from unittest.mock import Mock
@@ -13,20 +12,18 @@ import pytest
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
-from yoke.agent.state import conversation_entries_from_messages
 from yoke.agent.tools import ReadTool, ToolRegistrationContext, ToolRegistrationResult
 from yoke.cli.interactive.common import PromptCliState, TurnFailure
 from yoke.cli.interactive.prompt import turns
-from yoke.cli.runtime import turn_agent as runtime
-from yoke.session.workspace import WorkspaceBusy, WorkspaceUnavailable, workspace_lease
+from yoke.session.workspace import WorkspaceBusy, workspace_lease
 
-from .support import active_session_for
 from .terminal_daemon_support import terminal as terminal
 
 
 class ClosingProvider:
     def __init__(self) -> None:
         self.closed = 0
+        self.is_turn = False
         self.forks: list[ClosingProvider] = []
         self.before_fork = lambda: None
         self.before_close = lambda: None
@@ -37,63 +34,99 @@ class ClosingProvider:
     def fork_for_turn(self) -> ClosingProvider:
         self.before_fork()
         fork = ClosingProvider()
+        fork.is_turn = True
         fork.before_close = self.before_close
         self.forks.append(fork)
         return fork
 
     def close(self) -> None:
-        self.before_close()
+        if self.is_turn:
+            self.before_close()
         self.closed += 1
 
 
-def _assert_busy(active) -> None:
+def _assert_busy(store, session_id) -> None:
     with pytest.raises(WorkspaceBusy):
-        with workspace_lease(active.store, active.id, exclusive=True):
+        with workspace_lease(store, session_id, exclusive=True):
             pass
 
 
-def test_late_raw_fork_binding_error_is_workspace_unavailable(tmp_path: Path) -> None:
+def test_late_raw_fork_binding_error_is_workspace_unavailable(
+    tmp_path: Path, terminal
+) -> None:
+    from tests.yoke.daemon.support import eventually
+
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
     provider = ClosingProvider()
 
     def tools(context: ToolRegistrationContext) -> ToolRegistrationResult:
         return ToolRegistrationResult(tools=[ReadTool.bind(root=context.root)])
 
-    primary = RuntimeAgent(provider, [], tool_root=root, tool_factory=tools)
+    primaries = []
+
+    def factory(_record):
+        primary = RuntimeAgent(provider, [], tool_root=root, tool_factory=tools)
+        primaries.append(primary)
+        return primary
+
+    terminal.factory = factory
+    terminal.store.save("cleanup", [], root=root, title="Fixture")
+    backend = terminal.backend("cleanup", root=root)
     provider.before_fork = root.rmdir
-    provider.before_close = lambda: _assert_busy(active)
-    try:
-        with pytest.raises(WorkspaceUnavailable) as error:
-            runtime.prepare_turn_agent(
-                primary, messages=[], entries=[], active_session=active
-            )
-        assert error.value.details["status"] == "missing"
-        assert "--relocate" in str(error.value)
-        assert provider.forks[0].closed == 1
-        assert provider.closed == 0
-        assert not primary.closed
-        with workspace_lease(active.store, active.id, exclusive=True):
-            pass
-    finally:
-        primary.close()
+    provider.before_close = lambda: _assert_busy(terminal.store, "cleanup")
+    turn = backend.submit(
+        "hello",
+        [],
+        entries=[],
+        stop_event=Event(),
+        user_message=None,
+        checkpoint=lambda *_: None,
+    )
+    list(turn)
+    outcome = turn.result()
+    assert isinstance(outcome, TurnFailure)
+    assert (
+        backend.connection.session_request("GET")["data"]["workspace"]["status"]
+        == "missing"
+    )
+    assert "--relocate" in str(outcome.error)
+    eventually(lambda: len(provider.forks) == 1 and provider.forks[0].closed == 1)
+    assert provider.closed == 0
+    assert not primaries[0].closed
+    assert backend.load_queue().prompts[0].paused
+    with workspace_lease(terminal.store, "cleanup", exclusive=True):
+        pass
 
 
 @pytest.mark.parametrize("owned_entries", [False, True])
 @pytest.mark.parametrize("delete_root", [False, True])
 def test_failed_load_retires_unreturned_fork_without_releasing_lease_early(
-    tmp_path: Path, monkeypatch, owned_entries: bool, delete_root: bool
+    tmp_path: Path, monkeypatch, terminal, owned_entries: bool, delete_root: bool
 ) -> None:
+    from tests.yoke.daemon.support import eventually
+
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
     provider = ClosingProvider()
-    provider.before_close = lambda: _assert_busy(active)
-    primary = RuntimeAgent(provider, [], tool_root=root)
+    provider.before_close = lambda: _assert_busy(terminal.store, "cleanup")
+    terminal.factory = lambda _record: RuntimeAgent(provider, [], tool_root=root)
+    terminal.store.save(
+        "cleanup", [Message.user("history")], root=root, title="Fixture"
+    )
+    backend = terminal.backend("cleanup", root=root)
+    runtime = terminal.app.state.runtime_registry.get_if_loaded("cleanup")
+    original_prepare = runtime.execution.prepare
+
+    def prepare(record, **kwargs):
+        if not owned_entries:
+            kwargs["active_entries"] = None
+        return original_prepare(record, **kwargs)
+
+    monkeypatch.setattr(runtime.execution, "prepare", prepare)
     waiting, release, finished = Event(), Event(), Event()
     forks = []
-    real_take = runtime.take_turn_workspace
+    original_close = RuntimeAgent.close
 
     def fail_load(self, *args, **kwargs):
         forks.append(self)
@@ -101,52 +134,49 @@ def test_failed_load_retires_unreturned_fork_without_releasing_lease_early(
             root.rmdir()
         raise ValueError("state loading failed")
 
-    def wait(_tools):
-        waiting.set()
-        assert release.wait(timeout=3)
+    def close(self):
+        if self in forks:
+            waiting.set()
+            assert release.wait(timeout=5)
+        original_close(self)
+        if self in forks:
+            finished.set()
 
-    @contextmanager
-    def take(agent):
-        with real_take(agent):
-            yield
-        finished.set()
-
-    monkeypatch.setattr(
-        RuntimeAgent,
-        "load_owned_conversation" if owned_entries else "load_conversation",
-        fail_load,
-    )
-    monkeypatch.setattr(runtime, "wait_for_in_process_tools", wait)
-    monkeypatch.setattr(runtime, "take_turn_workspace", take)
-    entries = (
-        conversation_entries_from_messages([Message.user("history")])
-        if owned_entries
-        else []
+    monkeypatch.setattr(RuntimeAgent, "load_owned_conversation", fail_load)
+    monkeypatch.setattr(RuntimeAgent, "close", close)
+    turn = backend.submit(
+        "hello",
+        [],
+        entries=[],
+        stop_event=Event(),
+        user_message=None,
+        checkpoint=lambda *_: None,
     )
     try:
-        with pytest.raises(ValueError) as error:
-            runtime.prepare_turn_agent(
-                primary, messages=[], entries=entries, active_session=active
-            )
-        if delete_root:
-            assert isinstance(error.value, WorkspaceUnavailable)
-            assert error.value.details["status"] == "missing"
-        else:
-            assert type(error.value) is ValueError
-            assert str(error.value) == "state loading failed"
-        assert waiting.wait(timeout=1)
+        assert waiting.wait(timeout=3)
         assert len(forks) == 1
         assert not forks[0].closed
         assert provider.forks[0].closed == 0
-        _assert_busy(active)
+        _assert_busy(terminal.store, "cleanup")
     finally:
         release.set()
         assert finished.wait(timeout=3)
-        primary.close()
+    list(turn)
+    outcome = turn.result()
+    assert isinstance(outcome, TurnFailure)
+    if delete_root:
+        assert (
+            backend.connection.session_request("GET")["data"]["workspace"]["status"]
+            == "missing"
+        )
+        assert "--relocate" in str(outcome.error)
+    else:
+        assert str(outcome.error) == "state loading failed"
+    eventually(lambda: provider.forks[0].closed == 1)
     assert forks[0].closed
-    assert provider.forks[0].closed == 1
     assert provider.closed == 0
-    with workspace_lease(active.store, active.id, exclusive=True):
+    backend.connection.session_request("POST", "/drain", params={"timeoutMs": 5000})
+    with workspace_lease(terminal.store, "cleanup", exclusive=True):
         pass
 
 
