@@ -139,6 +139,9 @@ class SessionRuntime:
             finalizer=self.finalizer,
             message_index=message_index,
             indexed_runtime_seed=indexed_runtime_seed,
+            activate_queued_skill=lambda name: self.operations.activate_queued_skill(
+                name
+            ),
         )
         self.operations = SessionOperations(
             session_id,

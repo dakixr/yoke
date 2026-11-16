@@ -32,6 +32,7 @@ class AdmissionRecord(BaseModel):
     prompt: str
     attachments: list[AdmissionAttachment] = Field(default_factory=list)
     continuation: bool = False
+    skill: str | None = Field(default=None, exclude_if=lambda value: value is None)
     delivery: Literal["steer", "queue"]
     fingerprint: str
     time_created: str

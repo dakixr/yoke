@@ -132,6 +132,7 @@ class PendingInputService:
                 session_id=session_id,
                 prompt=request.prompt.text,
                 continuation=request.prompt.continuation,
+                skill=request.prompt.skill,
                 attachments=[
                     AdmissionAttachment(
                         uri=item.uri,
@@ -152,6 +153,7 @@ class PendingInputService:
                     id=input_id,
                     prompt=request.prompt.text,
                     continuation=request.prompt.continuation,
+                    skill=request.prompt.skill,
                     attachments=[
                         item.model_dump(exclude={"type"})
                         for item in request.prompt.attachments

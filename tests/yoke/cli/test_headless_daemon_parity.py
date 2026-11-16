@@ -237,3 +237,47 @@ def test_cli_image_projection_survives_queue_edit_and_delivery_change(
             assert not tape.steps
         finally:
             connection.close()
+
+
+def test_headless_literal_skill_command_remains_provider_text(tmp_path, monkeypatch):
+    directory = tmp_path / "sessions"
+    monkeypatch.setenv("YOKE_DB_PATH", str(directory / "yoke.db"))
+    tape = Tape()
+    world = World(tmp_path / "workspace", directory, "chat", tape)
+    tape.expect(answer("Literal command accepted."))
+    app = create_app(
+        HttpAppSettings(
+            auth_token=None, session_directory=directory, agent_factory=world.agent
+        )
+    )
+    with serve_app(app) as handle:
+        connection = SessionConnection(
+            "literal-command", discover=lambda: handle, cwd=world.root
+        )
+        try:
+            connection.request(
+                "POST",
+                "session",
+                json={
+                    "id": connection.session_id,
+                    "title": "Literal fixture",
+                    "location": {"directory": str(world.root)},
+                },
+            )
+            stdout, stderr = CaptureStream(), CaptureStream()
+            assert (
+                run_headless_prompt(
+                    connection, "/skill example", stdout=stdout, stderr=stderr
+                )
+                == 0
+            )
+            assert stdout.getvalue() == "Literal command accepted.\n"
+            assert stderr.getvalue() == ""
+            assert len(tape.calls) == 1
+            assert (
+                json.loads(tape.calls[0]["messages_json"][-1])["content"]
+                == "/skill example"
+            )
+            assert not tape.steps
+        finally:
+            connection.close()

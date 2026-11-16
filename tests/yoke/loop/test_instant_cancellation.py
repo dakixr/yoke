@@ -5,16 +5,15 @@ import io
 import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
 
 import yoke.agent.loop.in_process_tool as in_process_tool_module
 import yoke.agent.loop.tool_process as tool_process_module
-from yoke.agent.loop import AgentResult, RuntimeAgent
+from yoke.agent.loop import RuntimeAgent
 from yoke.agent.loop.in_process_tool import (
     InProcessToolShutdownError,
     execute_in_process_tool,
@@ -44,7 +43,8 @@ from yoke.mcp.config import McpServerConfig
 from yoke.mcp.http_client import StreamableHttpClient
 from yoke.session.interrupt import active_branch_entries, interrupted_turn_snapshot
 
-from ..cli.support import active_session_for
+from ..cli.terminal_daemon_support import terminal as terminal, session_for
+from tests.yoke.daemon.support import eventually
 
 
 class _DiscardScrollback:
@@ -91,531 +91,324 @@ def _renderer(
     )
 
 
-def test_queued_skill_waits_for_its_fifo_position(tmp_path, monkeypatch) -> None:
-    @dataclass
-    class QueueAgent:
-        supports_message_history = True
-        supports_user_message = False
-        first_started: threading.Event = field(default_factory=threading.Event)
-        release_first: threading.Event = field(default_factory=threading.Event)
-        prompts: list[str] = field(default_factory=list)
-
-        def run(
-            self,
-            prompt: str,
-            messages: list[Message] | None = None,
-            **_kwargs: Any,
-        ) -> AgentResult:
-            self.prompts.append(prompt)
-            if prompt == "first":
-                self.first_started.set()
-                self.release_first.wait(timeout=5)
-            conversation = [*list(messages or []), Message.user(prompt)]
-            conversation.append(Message.assistant(f"done: {prompt}"))
-            return AgentResult(
-                output=f"done: {prompt}",
-                messages=conversation,
-                iterations=1,
-            )
-
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
-    )
-    agent = QueueAgent()
-    active_session = active_session_for(tmp_path)
-    active_session_ref = ActiveSessionRef(active_session)
-    state_lock = threading.Lock()
-    console = build_console(io.StringIO())
-    control = create_prompt_toolkit_control(
-        state=state,
-        agent=agent,
-        active_session_ref=active_session_ref,
-        renderer=_renderer(),
-        state_lock=state_lock,
-        request_context_usage=lambda _prompt: None,
-        invalidate_prompt=lambda: None,
-        update_status=lambda _status: None,
-        scrollback=_DiscardScrollback(),
-    )
-    activations: list[str] = []
-
-    def activate_skill(command: str, **kwargs: Any) -> tuple[bool, list[Message], Any]:
-        activations.append(command)
-        return True, kwargs["messages"], kwargs["active_session"]
-
-    monkeypatch.setattr(
-        "yoke.cli.interactive.prompt.control.handle_slash_command",
-        activate_skill,
-    )
-    worker = control.start_turn("first", None)
-    assert agent.first_started.wait(timeout=5)
-    state.pending_prompts.append(PendingPrompt("before"))
-    state.submit_action = "queue"
-
-    process_prompt_toolkit_prompt(
-        "/skill example",
-        state=state,
-        agent=agent,
-        active_session_ref=active_session_ref,
-        scrollback_console=console,
-        state_lock=state_lock,
-        update_status=lambda _status: None,
-        invalidate_prompt=lambda: None,
-        request_exit=lambda: None,
-        start_turn=control.start_turn,
-        steer_active_turn=control.steer_active_turn,
-        format_context_usage_text=format_context_usage_text,
-    )
-    state.pending_prompts.append(PendingPrompt("after"))
-
-    assert activations == []
-    assert [item.prompt for item in state.pending_prompts] == [
-        "before",
-        "/skill example",
-        "after",
-    ]
-
-    agent.release_first.set()
-    worker.join(timeout=5)
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        with state_lock:
-            done = (
-                state.worker is None
-                and not state.pending_prompts
-                and len(agent.prompts) == 3
-            )
-        if done:
-            break
-        time.sleep(0.01)
-
-    assert activations == ["/skill example"]
-    assert agent.prompts == ["first", "before", "after"]
-    assert state.pending_prompts == []
-
-
-def test_steering_starts_replacement_before_retired_turn_finishes(
-    tmp_path,
-) -> None:
-    @dataclass
-    class NonCooperativeAgent:
-        supports_message_history = True
-        supports_user_message = False
-        first_started: threading.Event = field(default_factory=threading.Event)
-        release_first: threading.Event = field(default_factory=threading.Event)
-        second_started: threading.Event = field(default_factory=threading.Event)
-        release_second: threading.Event = field(default_factory=threading.Event)
-
-        def run(
-            self,
-            prompt: str,
-            messages: list[Message] | None = None,
-            *,
-            on_event: Any = None,
-            stop_requested: Any = None,
-        ) -> AgentResult:
-            del on_event, stop_requested
-            conversation = list(messages or [])
-            conversation.append(Message.user(prompt))
-            if prompt == "first":
-                self.first_started.set()
-                self.release_first.wait(timeout=5)
-                output = "stale result"
-            else:
-                self.second_started.set()
-                self.release_second.wait(timeout=5)
-                output = "accepted result"
-            conversation.append(Message.assistant(output))
-            return AgentResult(
-                output=output,
-                messages=conversation,
-                iterations=1,
-            )
-
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
-    )
-    agent = NonCooperativeAgent()
-    active_session = active_session_for(tmp_path)
-    active_session.title = "Cancellation test"
-    control = create_prompt_toolkit_control(
-        state=state,
-        agent=agent,
-        active_session_ref=ActiveSessionRef(active_session),
-        renderer=_renderer(),
-        state_lock=threading.Lock(),
-        request_context_usage=lambda _prompt: None,
-        invalidate_prompt=lambda: None,
-        update_status=lambda _status: None,
-        scrollback=_DiscardScrollback(),
-    )
-
-    retired_worker = control.start_turn("first", None)
-    assert agent.first_started.wait(timeout=5)
-    original_start = state.turn_start_time
-    state.turn_tool_count = 3
-    assert control.steer_active_turn("second", None) is True
-    assert agent.second_started.wait(timeout=5)
-    assert not agent.release_first.is_set()
-    assert state.turn_start_time == original_start
-    assert state.turn_tool_count == 3
-
-    agent.release_second.set()
-    active_worker = state.worker
-    assert active_worker is not None
-    active_worker.join(timeout=10)
-    agent.release_first.set()
-    retired_worker.join(timeout=10)
-
-    assert [message.text_content() for message in state.messages] == [
-        "first",
-        "The previous turn was interrupted by the user before completion. "
-        "Continue from the current state and follow the user's next "
-        "instruction.",
-        "second",
-        "accepted result",
-    ]
-
-
-def test_instant_stop_emits_total_turn_summary(tmp_path) -> None:
-    @dataclass
-    class BlockingAgent:
-        supports_message_history = True
-        supports_user_message = False
-        started: threading.Event = field(default_factory=threading.Event)
-        release: threading.Event = field(default_factory=threading.Event)
-
-        def run(
-            self,
-            prompt: str,
-            messages: list[Message] | None = None,
-            *,
-            on_event: Any = None,
-            stop_requested: Any = None,
-        ) -> AgentResult:
-            del prompt, messages, on_event, stop_requested
-            self.started.set()
-            self.release.wait(timeout=5)
-            return AgentResult(output="late", messages=[], iterations=1)
-
-    summaries: list[dict[str, object]] = []
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
-    )
-    agent = BlockingAgent()
-    control = create_prompt_toolkit_control(
-        state=state,
-        agent=agent,
-        active_session_ref=ActiveSessionRef(active_session_for(tmp_path)),
-        renderer=_renderer(emit_turn_summary=summaries.append),
-        state_lock=threading.Lock(),
-        request_context_usage=lambda _prompt: None,
-        invalidate_prompt=lambda: None,
-        update_status=lambda _status: None,
-        scrollback=_DiscardScrollback(),
-    )
-
-    worker = control.start_turn("first", None)
-    assert agent.started.wait(timeout=5)
-    state.turn_start_time = time.monotonic() - 5
-    state.turn_tool_count = 2
-
-    assert control.stop_active_turn() is True
-    assert len(summaries) == 1
-    assert summaries[0]["tool_count"] == 2
-
-    agent.release.set()
-    worker.join(timeout=5)
-
-
-def test_steering_continues_from_latest_tool_result_checkpoint(
-    tmp_path, monkeypatch
-) -> None:
-    class UnusedAgent:
-        supports_message_history = False
-        supports_user_message = False
-
-        def run(
-            self,
-            prompt: str,
-            *,
-            on_event: Any = None,
-            stop_requested: Any = None,
-        ) -> AgentResult:
-            del prompt, on_event, stop_requested
-            raise AssertionError("execute_turn is replaced in this test")
-
-    checkpointed = threading.Event()
-    release_first = threading.Event()
-    second_started = threading.Event()
-    release_second = threading.Event()
-    replacement_messages: list[Message] = []
-
-    def fake_execute_turn(
-        _agent,
-        prompt,
-        messages,
-        *,
-        after_tool_result_appended=None,
-        **_kwargs: Any,
-    ) -> AgentResult:
-        if prompt == "first":
-            checkpoint_messages = [
-                *messages,
-                Message.user("first"),
-                Message(
-                    role="assistant",
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="call-1",
-                            function=ToolFunction(
-                                name="probe",
-                                arguments="{}",
-                            ),
-                        )
-                    ],
-                ),
-                Message.tool(
-                    tool_call_id="call-1",
-                    content='{"ok": true}',
-                ),
-            ]
-            checkpoint_entries = conversation_entries_from_messages(checkpoint_messages)
-            assert after_tool_result_appended is not None
-            after_tool_result_appended(
-                checkpoint_messages,
-                checkpoint_entries,
-            )
-            checkpointed.set()
-            release_first.wait(timeout=5)
-            return AgentResult(
-                output="stale",
-                messages=[*checkpoint_messages, Message.assistant("stale")],
-                conversation_entries=checkpoint_entries,
-                iterations=1,
-            )
-        replacement_messages.extend(messages)
-        second_started.set()
-        release_second.wait(timeout=5)
-        completed_messages = [
-            *messages,
-            Message.user(prompt),
-            Message.assistant("accepted"),
+def test_queued_skill_waits_for_its_fifo_position(tmp_path, monkeypatch, terminal):
+    started, release = threading.Event(), threading.Event()
+    provider = ScriptProvider(
+        [
+            blocked_answer(started, release, "done: first"),
+            Message.assistant("done: before"),
+            Message.assistant("done: after"),
         ]
-        return AgentResult(
-            output="accepted",
-            messages=completed_messages,
-            conversation_entries=conversation_entries_from_messages(completed_messages),
-            iterations=1,
-        )
+    )
+    state = PromptCliState(messages=[], pending_prompts=[])
+    backend, control = daemon_control(terminal, tmp_path, provider, state)
+    skill_root = tmp_path / ".yoke" / "skills" / "example"
+    skill_root.mkdir(parents=True)
+    (skill_root / "SKILL.md").write_text(
+        "---\nname: example\ndescription: FIFO skill\n---\nApply the example constraint.\n"
+    )
+    activations = []
+    from yoke.http.runtime.operations import SessionOperations
 
-    monkeypatch.setattr(
-        "yoke.cli.backend.turns.execute_turn",
-        fake_execute_turn,
-    )
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
-    )
-    active_session = active_session_for(tmp_path)
-    active_session.title = "Checkpoint steering test"
+    activate = SessionOperations.activate_queued_skill
+
+    def activation(self, name):
+        activations.append(f"/skill {name}")
+        assert len(provider.calls) == 2
+        return activate(self, name)
+
+    monkeypatch.setattr(SessionOperations, "activate_queued_skill", activation)
+    lock = threading.Lock()
+    from yoke.cli.interactive.queue.mutations import append_prompt
+
+    active = session_for(backend)
+    ref = ActiveSessionRef(active)
+    try:
+        worker = control.start_turn("first", None)
+        assert started.wait(5)
+        assert append_prompt(
+            state=state,
+            state_lock=lock,
+            active_session=active,
+            prompt=PendingPrompt("before"),
+        )
+        state.submit_action = "queue"
+        process_prompt_toolkit_prompt(
+            "/skill example",
+            state=state,
+            agent=backend,
+            active_session_ref=ref,
+            scrollback_console=build_console(io.StringIO()),
+            state_lock=lock,
+            update_status=lambda _text: None,
+            invalidate_prompt=lambda: None,
+            request_exit=lambda: None,
+            start_turn=control.start_turn,
+            steer_active_turn=control.steer_active_turn,
+            format_context_usage_text=format_context_usage_text,
+        )
+        assert append_prompt(
+            state=state,
+            state_lock=lock,
+            active_session=active,
+            prompt=PendingPrompt("after"),
+        )
+        assert activations == []
+        assert [item.prompt for item in state.pending_prompts] == [
+            "before",
+            "/skill example",
+            "after",
+        ]
+        release.set()
+        worker.join(5)
+        assert (
+            backend.connection.session_request(
+                "POST", "/wait", params={"timeoutMs": 5000}
+            )["data"]["state"]
+            == "idle"
+        )
+        assert activations == ["/skill example"]
+        assert [call[-1].text_content() for call in provider.calls] == [
+            "first",
+            "before",
+            "after",
+        ]
+        assert backend.load_queue().prompts == []
+        assert "Apply the example constraint." in repr(provider.calls[-1])
+    finally:
+        release.set()
+
+
+class ScriptProvider:
+    supports_image_inputs = False
+    max_images_per_message = None
+
+    def __init__(self, steps):
+        self.steps = list(steps)
+        self.calls = []
+        self.lock = threading.Lock()
+
+    def fork_for_turn(self):
+        return self
+
+    def complete(self, messages, tools):
+        del tools
+        with self.lock:
+            self.calls.append(list(messages))
+            step = self.steps.pop(0)
+        return step(messages) if callable(step) else step
+
+
+class ProbeTool(LocalTool):
+    name = "probe"
+    description = "Return checkpoint work."
+    execute_in_process = True
+
+    def execute(self) -> dict[str, object]:
+        result = self._context["result"]
+        assert isinstance(result, dict)
+        return cast(dict[str, object], result)
+
+
+def daemon_control(
+    terminal,
+    tmp_path,
+    provider,
+    state,
+    *,
+    renderer=None,
+    tools=(),
+    retire_tool_traces=None,
+):
+    terminal.factory = lambda _record: RuntimeAgent(provider, tools, tool_root=tmp_path)
+    backend = terminal.backend("cancellation", root=tmp_path)
+    backend.title("Cancellation fixture", [])
     control = create_prompt_toolkit_control(
         state=state,
-        agent=UnusedAgent(),
-        active_session_ref=ActiveSessionRef(active_session),
-        renderer=_renderer(),
+        agent=backend,
+        active_session_ref=ActiveSessionRef(session_for(backend)),
+        renderer=renderer or _renderer(),
         state_lock=threading.Lock(),
         request_context_usage=lambda _prompt: None,
         invalidate_prompt=lambda: None,
         update_status=lambda _status: None,
         scrollback=_DiscardScrollback(),
+        retire_tool_traces=retire_tool_traces,
     )
+    return backend, control
 
-    retired_worker = control.start_turn("first", None)
-    assert checkpointed.wait(timeout=5)
-    persisted = active_session.store.load(active_session.id)
-    assert any(
-        entry.message is not None and entry.message.role == "tool"
-        for entry in persisted.conversation_entries
+
+def blocked_answer(started, release, output):
+    def complete(_messages):
+        started.set()
+        assert release.wait(5)
+        return Message.assistant(output)
+
+    return complete
+
+
+def test_steering_starts_replacement_before_retired_turn_finishes(tmp_path, terminal):
+    first_started, release_first = threading.Event(), threading.Event()
+    second_started, release_second = threading.Event(), threading.Event()
+    provider = ScriptProvider(
+        [
+            blocked_answer(first_started, release_first, "stale result"),
+            blocked_answer(second_started, release_second, "accepted result"),
+        ]
     )
+    state = PromptCliState(messages=[], pending_prompts=[])
+    backend, control = daemon_control(terminal, tmp_path, provider, state)
+    try:
+        retired_worker = control.start_turn("first", None)
+        assert first_started.wait(5)
+        original_start = state.turn_start_time
+        state.turn_tool_count = 3
+        assert control.steer_active_turn("second", None)
+        assert second_started.wait(5)
+        assert not release_first.is_set()
+        assert state.turn_start_time == original_start
+        assert state.turn_tool_count == 3
+        active_worker = state.worker
+        assert active_worker is not None
+        release_second.set()
+        active_worker.join(5)
+        assert not active_worker.is_alive()
+        release_first.set()
+        retired_worker.join(5)
+        expected = [
+            "first",
+            "The previous turn was interrupted by the user before completion. Continue from the current state and follow the user's next instruction.",
+            "second",
+            "accepted result",
+        ]
+        assert [message.text_content() for message in state.messages] == expected
+        assert [message.text_content() for message in backend.messages()] == expected
+    finally:
+        release_first.set()
+        release_second.set()
 
-    assert control.steer_active_turn("second", None) is True
-    assert second_started.wait(timeout=5)
-    assert [message.role for message in replacement_messages] == [
-        "user",
-        "assistant",
-        "tool",
-        "assistant",
-    ]
-    assert (
-        sum(
-            message.role == "user" and message.plain_text_content == "first"
-            for message in replacement_messages
-        )
-        == 1
+
+def test_instant_stop_emits_total_turn_summary(tmp_path, terminal):
+    started, release = threading.Event(), threading.Event()
+    summaries = []
+    provider = ScriptProvider([blocked_answer(started, release, "late")])
+    state = PromptCliState(messages=[], pending_prompts=[])
+    backend, control = daemon_control(
+        terminal,
+        tmp_path,
+        provider,
+        state,
+        renderer=_renderer(emit_turn_summary=summaries.append),
     )
-    interruption_notice = replacement_messages[-1].plain_text_content
-    assert interruption_notice is not None
-    assert interruption_notice.startswith("The previous turn was interrupted")
-
-    release_second.set()
-    active_worker = state.worker
-    assert active_worker is not None
-    active_worker.join(timeout=5)
-    release_first.set()
-    retired_worker.join(timeout=5)
-    persisted_after_steer = active_session.store.load(active_session.id)
-    persisted_text = [
-        entry.message.text_content()
-        for entry in persisted_after_steer.conversation_entries
-        if entry.message is not None
-    ]
-    assert '{"ok": true}' in persisted_text
-    assert "accepted" in persisted_text
-    assert "stale" not in persisted_text
+    try:
+        worker = control.start_turn("first", None)
+        assert started.wait(5)
+        state.turn_start_time = time.monotonic() - 5
+        state.turn_tool_count = 2
+        assert control.stop_active_turn()
+        assert len(summaries) == 1
+        assert summaries[0]["tool_count"] == 2
+        release.set()
+        worker.join(5)
+        assert "late" not in [message.text_content() for message in backend.messages()]
+    finally:
+        release.set()
 
 
-def test_stop_and_immediate_continue_retain_completed_tool_work(
-    tmp_path, monkeypatch
-) -> None:
-    class UnusedAgent:
-        supports_message_history = False
-        supports_user_message = False
-
-        def run(self, prompt: str, **_kwargs: Any) -> AgentResult:
-            del prompt
-            raise AssertionError("execute_turn is replaced in this test")
-
-    checkpointed = threading.Event()
-    release_first = threading.Event()
-    second_started = threading.Event()
-    replacement_messages: list[Message] = []
-    replacement_entries: list[ConversationEntry] = []
-
-    def fake_execute_turn(
-        _agent,
-        prompt,
-        messages,
-        *,
-        conversation_entries=None,
-        after_tool_result_appended=None,
-        **_kwargs: Any,
-    ) -> AgentResult:
-        if prompt == "first":
-            checkpoint_messages = [
-                *messages,
-                Message.user("first"),
-                Message(
-                    role="assistant",
-                    tool_calls=[
-                        ToolCall(
-                            id="call-1",
-                            function=ToolFunction(name="probe", arguments="{}"),
-                        )
-                    ],
-                ),
-                Message.tool("call-1", '{"valuable": true}'),
-            ]
-            checkpoint_entries = conversation_entries_from_messages(checkpoint_messages)
-            assert after_tool_result_appended is not None
-            after_tool_result_appended(
-                checkpoint_messages,
-                checkpoint_entries,
-            )
-            checkpointed.set()
-            release_first.wait(timeout=5)
-            return AgentResult(
-                output="stale",
-                messages=[*checkpoint_messages, Message.assistant("stale")],
-                conversation_entries=checkpoint_entries,
-                iterations=1,
-            )
-        replacement_messages.extend(messages)
-        replacement_entries.extend(conversation_entries or [])
-        second_started.set()
-        return AgentResult(
-            output="continued",
-            messages=[
-                *messages,
-                Message.user(prompt),
-                Message.assistant("continued"),
-            ],
-            conversation_entries=conversation_entries_from_messages(
-                [
-                    *messages,
-                    Message.user(prompt),
-                    Message.assistant("continued"),
-                ]
+@pytest.mark.parametrize("stop_first", [False, True])
+def test_checkpoint_survives_steer_or_stop_and_immediate_continue(
+    tmp_path, terminal, stop_first
+):
+    checkpointed, release_first = threading.Event(), threading.Event()
+    second_started, release_second = threading.Event(), threading.Event()
+    result = {"valuable": True} if stop_first else {"ok": True}
+    output = "continued" if stop_first else "accepted"
+    provider = ScriptProvider(
+        [
+            Message(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1", function=ToolFunction(name="probe", arguments="{}")
+                    )
+                ],
             ),
-            iterations=1,
+            blocked_answer(checkpointed, release_first, "stale"),
+            blocked_answer(second_started, release_second, output),
+        ]
+    )
+    state = PromptCliState(messages=[], pending_prompts=[])
+    backend, control = daemon_control(
+        terminal, tmp_path, provider, state, tools=[ProbeTool.bind(result=result)]
+    )
+    try:
+        retired_worker = control.start_turn("first", None)
+        assert checkpointed.wait(5)
+        persisted = terminal.store.load(backend.session.id)
+        assert any(
+            entry.message is not None and entry.message.role == "tool"
+            for entry in persisted.conversation_entries
         )
+        if stop_first:
+            assert control.stop_active_turn()
+            active_worker = control.start_turn("continue", None)
+        else:
+            assert control.steer_active_turn("second", None)
+            active_worker = state.worker
+            assert active_worker is not None
+        assert second_started.wait(5)
+        # The request is the daemon's persisted checkpoint plus its next input.
+        replacement_messages = provider.calls[-1][:-1]
+        assert [message.role for message in replacement_messages] == [
+            "user",
+            "assistant",
+            "tool",
+            "assistant",
+        ]
+        assert (
+            sum(
+                message.role == "user" and message.text_content() == "first"
+                for message in replacement_messages
+            )
+            == 1
+        )
+        assert (
+            replacement_messages[-1]
+            .text_content()
+            .startswith("The previous turn was interrupted")
+        )
+        import json
 
-    monkeypatch.setattr(
-        "yoke.cli.backend.turns.execute_turn",
-        fake_execute_turn,
-    )
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
-    )
-    active_session = active_session_for(tmp_path)
-    control = create_prompt_toolkit_control(
-        state=state,
-        agent=UnusedAgent(),
-        active_session_ref=ActiveSessionRef(active_session),
-        renderer=_renderer(),
-        state_lock=threading.Lock(),
-        request_context_usage=lambda _prompt: None,
-        invalidate_prompt=lambda: None,
-        update_status=lambda _status: None,
-        scrollback=_DiscardScrollback(),
-    )
-
-    retired_worker = control.start_turn("first", None)
-    assert checkpointed.wait(timeout=5)
-    assert control.stop_active_turn() is True
-    active_worker = control.start_turn("continue", None)
-    assert second_started.wait(timeout=5)
-
-    assert any(
-        message.role == "tool" and "valuable" in (message.content or "")
-        for message in replacement_messages
-    )
-    assert any(
-        entry.message is not None
-        and entry.message.role == "tool"
-        and "valuable" in (entry.message.content or "")
-        for entry in replacement_entries
-    )
-    assert replacement_messages[-1].plain_text_content is not None
-    assert replacement_messages[-1].plain_text_content.startswith(
-        "The previous turn was interrupted"
-    )
-    persisted = active_session.store.load(active_session.id)
-    assert any(
-        entry.message is not None
-        and entry.message.role == "tool"
-        and "valuable" in (entry.message.content or "")
-        for entry in persisted.conversation_entries
-    )
-
-    active_worker.join(timeout=5)
-    release_first.set()
-    retired_worker.join(timeout=5)
+        assert json.loads(replacement_messages[2].text_content()) == result
+        before_completion = terminal.store.load(backend.session.id)
+        assert any(
+            entry.message is not None
+            and entry.message.role == "tool"
+            and json.loads(entry.message.text_content()) == result
+            for entry in before_completion.conversation_entries
+        )
+        release_second.set()
+        active_worker.join(5)
+        assert not active_worker.is_alive()
+        release_first.set()
+        retired_worker.join(5)
+        persisted_after = terminal.store.load(backend.session.id)
+        persisted_text = [
+            entry.message.text_content()
+            for entry in persisted_after.conversation_entries
+            if entry.message is not None
+        ]
+        assert output in persisted_text
+        assert "stale" not in persisted_text
+        assert any(
+            entry.message is not None
+            and entry.message.role == "tool"
+            and json.loads(entry.message.text_content()) == result
+            for entry in persisted_after.conversation_entries
+        )
+    finally:
+        release_first.set()
+        release_second.set()
 
 
 def test_tool_processes_use_spawn_context() -> None:
@@ -641,99 +434,86 @@ def test_tool_process_start_failure_releases_resources(monkeypatch) -> None:
     assert invocation not in list(tool_process_module._ACTIVE_INVOCATIONS)
 
 
-def test_turn_cancellation_retires_live_tool_traces(tmp_path) -> None:
-    @dataclass
-    class ToolEventAgent:
-        supports_message_history = True
-        supports_user_message = False
-        started: threading.Event = field(default_factory=threading.Event)
-        release: threading.Event = field(default_factory=threading.Event)
+def test_turn_cancellation_retires_live_tool_traces(tmp_path, terminal):
+    started, release = threading.Event(), threading.Event()
 
-        def run(
-            self,
-            prompt: str,
-            messages: list[Message] | None = None,
-            *,
-            on_event: Any = None,
-            stop_requested: Any = None,
-        ) -> AgentResult:
-            del stop_requested
-            on_event(
-                "tool_execution_start",
-                {
-                    "tool_call_id": "call-cancelled",
-                    "tool_name": "web_research",
-                    "tool_arguments": '{"question":"Spain"}',
-                },
-            )
-            self.started.set()
-            self.release.wait(timeout=5)
-            on_event(
-                "tool_execution_end",
-                {
-                    "tool_call_id": "call-cancelled",
-                    "tool_name": "web_research",
-                    "ok": True,
-                    "result": {"ok": True},
-                },
-            )
-            conversation = list(messages or [])
-            conversation.extend([Message.user(prompt), Message.assistant("late")])
-            return AgentResult(output="late", messages=conversation, iterations=1)
+    class BlockingTool(LocalTool):
+        name = "web_research"
+        description = "Wait for physical completion."
+        execute_in_process = True
 
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
+        question: str
+
+        def execute(self) -> dict[str, object]:
+            assert self.question == "Spain"
+            started.set()
+            assert release.wait(5)
+            return {"ok": True}
+
+    provider = ScriptProvider(
+        [
+            Message(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        id="call-cancelled",
+                        function=ToolFunction(
+                            name="web_research", arguments='{"question":"Spain"}'
+                        ),
+                    )
+                ],
+            )
+        ]
     )
-    agent = ToolEventAgent()
+    state = PromptCliState(messages=[], pending_prompts=[])
     store = ToolTraceStore()
     trace_ready = threading.Event()
     unsubscribe = store.subscribe(trace_ready.set)
     renderer = _renderer()
     renderer._record_tool_event = store.record_event
-    control = create_prompt_toolkit_control(
-        state=state,
-        agent=agent,
-        active_session_ref=ActiveSessionRef(active_session_for(tmp_path)),
+    backend, control = daemon_control(
+        terminal,
+        tmp_path,
+        provider,
+        state,
         renderer=renderer,
-        state_lock=threading.Lock(),
-        request_context_usage=lambda _prompt: None,
-        invalidate_prompt=lambda: None,
-        update_status=lambda _status: None,
-        scrollback=_DiscardScrollback(),
+        tools=[BlockingTool.bind()],
         retire_tool_traces=store.retire_turn,
     )
-
-    worker = control.start_turn("search", None)
-    assert agent.started.wait(timeout=5)
-    # Producer callbacks enqueue events; the renderer consumes them on a
-    # separate thread. Retire a trace only after it has actually become live.
-    assert trace_ready.wait(timeout=5)
-    assert store.snapshot()[0].status == "running"
-    assert control.stop_active_turn() is True
-    cancelled = store.snapshot()[0]
-    assert cancelled.status == "cancelled"
-    assert cancelled.result == {
-        "ok": False,
-        "cancelled": True,
-        "error": "Tool execution cancelled with its turn.",
-    }
-
-    agent.release.set()
-    worker.join(timeout=5)
-    assert store.snapshot()[0].status == "cancelled"
-    store.record_event(
-        "tool_execution_start",
-        {
-            "turn_id": 1,
-            "tool_call_id": "call-late",
-            "tool_name": "late_tool",
-        },
-    )
-    assert [entry.tool_call_id for entry in store.snapshot()] == ["call-cancelled"]
-    unsubscribe()
+    try:
+        worker = control.start_turn("search", None)
+        assert started.wait(5), (
+            [(entry.status, entry.result) for entry in store.snapshot()],
+            backend.connection.session_request(
+                "POST", "/wait", params={"timeoutMs": 1}
+            ),
+        )
+        assert trace_ready.wait(5)
+        assert store.snapshot()[0].status == "running"
+        assert control.stop_active_turn()
+        cancelled = store.snapshot()[0]
+        assert cancelled.status == "cancelled"
+        assert cancelled.result == {
+            "ok": False,
+            "cancelled": True,
+            "error": "Tool execution cancelled with its turn.",
+        }
+        release.set()
+        worker.join(5)
+        assert store.snapshot()[0].status == "cancelled"
+        store.record_event(
+            "tool_execution_start",
+            {"turn_id": 1, "tool_call_id": "call-late", "tool_name": "late_tool"},
+        )
+        assert [entry.tool_call_id for entry in store.snapshot()] == ["call-cancelled"]
+        eventually(
+            lambda: (
+                backend.tool_inspection().call("call-cancelled").status == "cancelled"
+            )
+        )
+    finally:
+        release.set()
+        unsubscribe()
 
 
 def test_non_cooperative_in_process_tool_detaches_during_cancellation() -> None:

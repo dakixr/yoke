@@ -78,8 +78,12 @@ class DaemonPromptQueue:
             if item.id not in desired
         ]
         for index, item in enumerate(prompts):
+            from yoke.cli.interactive.skill_commands import parse_skill_command
+
+            command = parse_skill_command(item.prompt)
             payload = PromptInput(
                 text=item.prompt,
+                skill=command[0] if command is not None and not command[1] else None,
                 attachments=[
                     PromptAttachment.model_validate(value) for value in item.attachments
                 ],

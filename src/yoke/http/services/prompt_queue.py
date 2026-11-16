@@ -64,6 +64,7 @@ def prompt_from_admission(record: AdmissionRecord) -> PromptInput:
     return PromptInput(
         text=record.prompt,
         continuation=record.continuation,
+        skill=record.skill,
         attachments=[
             PromptAttachment(
                 uri=item.uri,
@@ -85,6 +86,7 @@ def queue_data(queue: PersistedPromptQueue) -> QueueData:
                 prompt=PromptInput(
                     text=item.prompt,
                     continuation=item.continuation,
+                    skill=item.skill,
                     attachments=[
                         PromptAttachment.model_validate(value)
                         for value in item.attachments
@@ -118,6 +120,8 @@ def apply_operation(items, admissions, operation) -> None:  # noqa: ANN001
         item.prompt = operation.prompt.text
         item.continuation = operation.prompt.continuation
         admission.continuation = operation.prompt.continuation
+        item.skill = operation.prompt.skill
+        admission.skill = operation.prompt.skill
         item.attachments = [
             attachment.model_dump(exclude={"type"})
             for attachment in operation.prompt.attachments

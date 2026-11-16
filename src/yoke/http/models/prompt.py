@@ -24,6 +24,7 @@ class PromptInput(ApiModel):
     text: str = ""
     attachments: list[PromptAttachment] = Field(default_factory=list)
     continuation: bool = Field(default=False, strict=True)
+    skill: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class PromptAdmissionRequest(ApiModel):

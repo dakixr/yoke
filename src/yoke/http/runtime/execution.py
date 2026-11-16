@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from concurrent.futures import Executor, Future
+from collections.abc import Callable
 from threading import Lock
 
 from yoke.agent.activity import activity_status_for_event
@@ -92,6 +93,7 @@ class TurnExecutor:
         finalizer: TurnFinalizer,
         message_index: SessionMessageIndex | None,
         indexed_runtime_seed: bool,
+        activate_queued_skill: Callable[[str], None] | None = None,
     ) -> None:
         self.session_id = session_id
         self.store = store
@@ -105,6 +107,7 @@ class TurnExecutor:
         self.executor = executor
         self.active_slots = active_slots
         self.finalizer = finalizer
+        self.activate_queued_skill = activate_queued_skill
         self.message_index = message_index
         self.indexed_runtime_seed = indexed_runtime_seed
 
@@ -207,6 +210,13 @@ class TurnExecutor:
     ) -> TurnOutcome:
         turn_agent: RuntimeAgent | None = None
         try:
+            if self._activate_queued_skill(execution):
+                return TurnOutcome(
+                    agent=None,
+                    result=AgentResult(
+                        output="", messages=[], conversation_entries=[], iterations=0
+                    ),
+                )
             indexed = (
                 indexed_runtime_start(
                     self.store,
@@ -318,6 +328,14 @@ class TurnExecutor:
                 error=exc,
                 partial_entries=list(partial) if partial is not None else None,
             )
+
+    def _activate_queued_skill(self, execution: TurnExecution) -> bool:
+        skill = execution.admission.skill
+        if skill is None or self.activate_queued_skill is None:
+            return False
+        require_runtime_workspace(self)
+        self.activate_queued_skill(skill)
+        return True
 
     @uses_workspace
     def prepare(

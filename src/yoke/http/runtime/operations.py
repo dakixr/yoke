@@ -421,6 +421,10 @@ class SessionOperations:
 
         await self.idle_mutation(apply)
 
+    def activate_queued_skill(self, skill_name: str) -> None:
+        """Apply a CLI skill command at its admitted FIFO position."""
+        self._activate_skill_sync(skill_name)
+
     def _activate_skill_sync(self, skill_name: str) -> ActiveSkill:
         """Activate one skill and append the same tree marker used by the CLI."""
         record = self.persistence.record()

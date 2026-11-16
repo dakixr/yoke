@@ -23,6 +23,7 @@ class PersistedPendingInput(BaseModel):
     prompt: str
     attachments: list[dict[str, str]] = Field(default_factory=list)
     continuation: bool = False
+    skill: str | None = Field(default=None, exclude_if=lambda value: value is None)
     kind: Literal["queued", "steering"] = "queued"
     created_at: str
     paused: bool = False
