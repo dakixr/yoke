@@ -16,6 +16,10 @@ def isolate_yoke_local_state(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # Ambient DB overrides would make unrelated tests share one database. Tests
+    # exercising YOKE_DB_PATH set their own override after this fixture.
+    monkeypatch.delenv("YOKE_DB_PATH", raising=False)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("YOKE_PROVIDER_LOGS_DIR", str(tmp_path / "provider-logs"))
 

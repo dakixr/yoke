@@ -22,6 +22,22 @@ _SENSITIVE_PARTS = (
 def redact_public_value(value: object, *, key: str = "") -> object:
     """Return a JSON-compatible value with secret-looking fields removed."""
     normalized = key.casefold().replace("-", "_")
+    if (
+        normalized
+        in {
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "reasoning_tokens",
+            "cached_input_tokens",
+            "cached_output_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+        }
+        and isinstance(value, int | float)
+        and not isinstance(value, bool)
+    ):
+        return value
     if normalized and any(part in normalized for part in _SENSITIVE_PARTS):
         return "<redacted>"
     if isinstance(value, Mapping):

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from pathlib import Path
 
 from yoke.ai.providers.credentials import provider_environment
+from yoke.environment import environment_values
 
 
 def resolved_home(home: Path | str | None) -> Path:
@@ -22,7 +22,7 @@ def resolved_env(
     """Return an explicit or credential-enriched provider environment."""
     if env is not None:
         return env
-    return provider_environment(home=home, env=os.environ)
+    return provider_environment(home=home, env=environment_values())
 
 
 def credential_issue(

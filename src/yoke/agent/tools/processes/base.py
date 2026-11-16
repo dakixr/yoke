@@ -9,6 +9,8 @@ from typing import Any, ClassVar, Literal, cast
 from pydantic import ConfigDict, Field
 
 from yoke.agent.tools.base import LocalTool, WorkspaceTool
+from yoke.agent.tools.context import ToolRuntimeContext
+from yoke.session.workspace import require_workspace
 from yoke.agent.tools.command_process import (
     CommandProcessManager,
     command_completion_event_id,
@@ -124,6 +126,13 @@ class ManagedExecutionTool(ManagedCommandTool, WorkspaceTool):
         if isinstance(configured, int) and not isinstance(configured, bool):
             return max(0, configured)
         return DEFAULT_EXEC_WAIT_MS
+
+    def execution_cwd(self) -> Path:
+        """Use the admitting client's cwd for commands and Python execution."""
+        context = self._context.get("runtime_context")
+        if isinstance(context, ToolRuntimeContext) and context.session.cwd is not None:
+            return require_workspace(context.session.cwd)
+        return self._require_live_root()
 
     def _start(
         self,

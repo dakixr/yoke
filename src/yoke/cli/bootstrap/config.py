@@ -8,6 +8,7 @@ from typing import ClassVar
 
 from yoke.agent.models import Message
 from yoke.agent.tools import ToolRegistrationContext
+from yoke.agent.tools.context import ToolSessionContext
 from yoke.agent.tools import never_cancel
 from yoke.agent.tools.context import resolve_model_identity
 from yoke.agent.instructions import build_system_messages
@@ -37,6 +38,7 @@ def resolve_agent_config(
     cancel_requested: Callable[[], bool] | None = None,
     include_workspace_config: bool = True,
     provider: Provider | None = None,
+    session: ToolSessionContext | None = None,
 ) -> ResolvedAgentConfig:
     """Resolve system messages and enabled tools for the active root."""
     resolved_root = root.resolve()
@@ -48,6 +50,7 @@ def resolve_agent_config(
         provider=resolved_provider,
         model=resolve_model_identity(resolved_provider),
         cancel_requested=cancel_requested or never_cancel,
+        session=session or ToolSessionContext(),
     )
     discovered_group = load_tools(
         root=resolved_root,

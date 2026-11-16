@@ -88,7 +88,13 @@ class RuntimeAgent:
         self.provider = provider
         self._closed = False
         self._tool_factory = tool_factory
-        self.tool_session_context = tool_session_context or ToolSessionContext()
+        from yoke.environment import current_environment
+
+        environment = current_environment()
+        self.tool_session_context = tool_session_context or ToolSessionContext(
+            environment=dict(environment.values) if environment is not None else None,
+            cwd=environment.cwd if environment is not None else None,
+        )
         self._tool_root = (
             tool_root or bound_tool_path(tools, "root") or Path.cwd()
         ).resolve()
@@ -115,7 +121,10 @@ class RuntimeAgent:
         self._context: AgentContext | None = None
         self._context_owned_for_run = False
         self.command_process_manager = (
-            command_process_manager or CommandProcessManager()
+            command_process_manager
+            or CommandProcessManager(
+                base_environment=self.tool_session_context.environment
+            )
         ).acquire()
         self.command_notices = CommandCompletionNotices(self.command_process_manager)
         try:

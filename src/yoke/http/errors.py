@@ -98,5 +98,10 @@ async def validation_error_handler(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code="validation_error",
         message="Request validation failed.",
-        details={"errors": exc.errors()},
+        details={
+            "errors": [
+                {"loc": error["loc"], "type": error["type"], "msg": error["msg"]}
+                for error in exc.errors()
+            ]
+        },
     )

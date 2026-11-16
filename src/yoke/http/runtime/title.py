@@ -10,6 +10,7 @@ from contextlib import suppress
 from threading import Lock
 
 from yoke.agent.models import Message
+from yoke.environment import ExecutionEnvironment, execution_environment
 from yoke.http.reads.cache import SessionReadCache
 from yoke.http.runtime.entry_persistence import input_is_persisted
 from yoke.http.runtime.factory import (
@@ -51,7 +52,11 @@ class SessionTitleAutomation:
         self.user_message_factory = user_message_factory
         self._task: asyncio.Task[None] | None = None
 
-    def start(self, admission: AdmissionRecord) -> None:
+    def start(
+        self,
+        admission: AdmissionRecord,
+        environment: ExecutionEnvironment | None = None,
+    ) -> None:
         """Start title generation when this session is still unnamed."""
         current_task = self._task
         if current_task is not None and not current_task.done():
@@ -60,7 +65,7 @@ class SessionTitleAutomation:
         if summary is None or summary.title:
             return
         self._task = asyncio.create_task(
-            self._generate(admission),
+            self._generate(admission, environment),
             name=f"yoke-http-title-{self.session_id}",
         )
 
@@ -79,14 +84,19 @@ class SessionTitleAutomation:
         with suppress(asyncio.CancelledError):
             await asyncio.shield(task)
 
-    async def _generate(self, admission: AdmissionRecord) -> None:
+    async def _generate(
+        self,
+        admission: AdmissionRecord,
+        environment: ExecutionEnvironment | None = None,
+    ) -> None:
         generated: str | None = None
         try:
             loop = asyncio.get_running_loop()
             generated = await loop.run_in_executor(
                 self.executor,
-                self._generate_sync,
+                self._generate_in_environment,
                 admission,
+                environment,
             )
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Automatic session title generation failed: %s", exc)
@@ -103,7 +113,7 @@ class SessionTitleAutomation:
                 return
             record = self.store.set_title(
                 self.session_id,
-                title,
+                self.events.privacy.text(title),
                 existing_record=current,
             )
         self.events.durable(
@@ -117,6 +127,12 @@ class SessionTitleAutomation:
             },
             location=record.root,
         )
+
+    def _generate_in_environment(
+        self, admission: AdmissionRecord, environment: ExecutionEnvironment | None
+    ) -> str | None:
+        with execution_environment(environment), self.events.privacy.scope():
+            return self._generate_sync(admission)
 
     @uses_workspace
     def _generate_sync(self, admission: AdmissionRecord) -> str | None:

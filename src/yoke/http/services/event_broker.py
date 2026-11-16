@@ -14,6 +14,7 @@ from yoke.http.models.event import DurableEventInfo
 from yoke.http.models.event import PublicEvent
 from yoke.session.events import SessionEvent
 from yoke.session.events import SessionEventJournal
+from yoke.http.services.privacy import SessionPrivacy
 
 
 @dataclass(slots=True)
@@ -23,6 +24,7 @@ class EventSubscription:
     id: str
     loop: asyncio.AbstractEventLoop
     queue: asyncio.Queue[PublicEvent | None]
+    session_id: str | None = None
     closed: bool = False
 
 
@@ -34,13 +36,14 @@ class GlobalEventBroker:
         self._lock = Lock()
         self._subscriptions: dict[str, EventSubscription] = {}
 
-    def subscribe(self) -> EventSubscription:
+    def subscribe(self, session_id: str | None = None) -> EventSubscription:
         """Create a bounded subscription on the current asyncio loop."""
         loop = asyncio.get_running_loop()
         subscription = EventSubscription(
             id=f"sub_{secrets.token_hex(8)}",
             loop=loop,
             queue=asyncio.Queue(maxsize=self.queue_size),
+            session_id=session_id,
         )
         with self._lock:
             self._subscriptions[subscription.id] = subscription
@@ -76,7 +79,11 @@ class GlobalEventBroker:
         with self._lock:
             subscriptions = list(self._subscriptions.values())
         for subscription in subscriptions:
-            if subscription.closed:
+            if subscription.closed or (
+                subscription.session_id is not None
+                and event.session_id != subscription.session_id
+                and event.type not in {"server.resyncRequired", "server.stopping"}
+            ):
                 continue
             subscription.loop.call_soon_threadsafe(
                 self._offer,
@@ -121,6 +128,7 @@ class EventService:
     """Combine durable journal append with live broker publication."""
 
     def __init__(self, journal: SessionEventJournal, broker: GlobalEventBroker) -> None:
+        self.privacy = SessionPrivacy()
         self.journal = journal
         self.broker = broker
 
@@ -135,7 +143,7 @@ class EventService:
         event = self.journal.append(
             session_id,
             event_type,
-            data,
+            self.privacy.data(data or {}),
             location=location,
         )
         public = public_event_from_session_event(event)
@@ -154,7 +162,7 @@ class EventService:
     ) -> PublicEvent:
         event = live_event(
             event_type,
-            data,
+            self.privacy.data(data),
             session_id=session_id,
             location=location,
         )

@@ -50,12 +50,12 @@ class SessionRuntimeRegistry:
         read_cache: SessionReadCache | None = None,
         message_index: SessionMessageIndex | None = None,
         indexed_runtime_seed: bool = False,
-        max_active_sessions: int = 4,
+        max_active_sessions: int = 16,
         max_worker_threads: int | None = None,
     ) -> None:
         if max_active_sessions < 1:
             raise ValueError("max_active_sessions must be positive.")
-        workers = max_worker_threads or max(8, max_active_sessions * 4)
+        workers = max_worker_threads or max(8, max_active_sessions + 4)
         if workers < max_active_sessions:
             raise ValueError("max_worker_threads cannot be below max_active_sessions.")
         self.store = store
@@ -200,13 +200,15 @@ class SessionRuntimeRegistry:
         if not record.messages:
             return _TitleGenerationResult(status="empty")
         require_session_workspace(record)
-        return _TitleGenerationResult(
-            status="generated",
-            title=generate_http_session_title(
-                self.agent_factory,
+        with self.events.privacy.scope():
+            title = generate_http_session_title(
+                self.get_or_start(session_id).resources.build_agent,
                 record,
                 record.messages,
-            ),
+            )
+        return _TitleGenerationResult(
+            status="generated",
+            title=self.events.privacy.text(title) if title is not None else None,
         )
 
     async def activate_skill(self, session_id: str, skill_name: str) -> ActiveSkill:

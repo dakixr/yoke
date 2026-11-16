@@ -15,9 +15,10 @@ from yoke.http.models.process import ProcessOutputInfo
 from yoke.http.models.process import ProcessOutputResponse
 from yoke.http.models.process import ProcessResponse
 from yoke.http.runtime.registry import SessionRuntimeRegistry
+from yoke.agent.tools.command_process import CommandProcessManager
 
 if TYPE_CHECKING:
-    from yoke.agent.tools.command_process import CommandProcessManager
+    from yoke.http.runtime.runtime import SessionRuntime
     from yoke.agent.tools.command_process import CommandProcessSnapshot
 
 
@@ -38,13 +39,11 @@ class ProcessService:
         for owner_session_id, runtime in self.registry.loaded_runtimes():
             if session_id is not None and owner_session_id != session_id:
                 continue
-            manager = runtime.process_manager()
-            if manager is None:
-                continue
-            for snapshot in manager.snapshots():
-                if status is not None and snapshot.status != status:
-                    continue
-                processes.append(_process_info(owner_session_id, snapshot))
+            for manager in _runtime_managers(runtime):
+                for snapshot in manager.snapshots():
+                    if status is not None and snapshot.status != status:
+                        continue
+                    processes.append(_process_info(owner_session_id, snapshot))
         processes.sort(key=lambda item: item.started_at, reverse=True)
         return ProcessListResponse(data=processes[:limit])
 
@@ -111,12 +110,10 @@ class ProcessService:
         process_id: str,
     ) -> tuple[str, CommandProcessManager, CommandProcessSnapshot]:
         for session_id, runtime in self.registry.loaded_runtimes():
-            manager = runtime.process_manager()
-            if manager is None:
-                continue
-            for snapshot in manager.snapshots():
-                if _process_id(session_id, snapshot) == process_id:
-                    return session_id, manager, snapshot
+            for manager in _runtime_managers(runtime):
+                for snapshot in manager.snapshots():
+                    if _process_id(session_id, snapshot) == process_id:
+                        return session_id, manager, snapshot
         raise ApiError(404, "process_not_found", "Process was not found.")
 
 
@@ -146,3 +143,20 @@ def _process_info(session_id: str, snapshot: CommandProcessSnapshot) -> ProcessI
             latest_seq=snapshot.latest_output_seq,
         ),
     )
+
+
+def _runtime_managers(runtime: SessionRuntime) -> list[CommandProcessManager]:
+    """Keep the original single-manager injection seam for embedded runtimes."""
+    multiple = getattr(runtime, "process_managers", None)
+    if callable(multiple):
+        managers = multiple()
+        if not isinstance(managers, list):
+            raise TypeError("process_managers must return a list of process managers")
+        result: list[CommandProcessManager] = []
+        for manager in managers:
+            if not isinstance(manager, CommandProcessManager):
+                raise TypeError("process_managers returned an invalid manager")
+            result.append(manager)
+        return result
+    manager = runtime.process_manager()
+    return [manager] if manager is not None else []

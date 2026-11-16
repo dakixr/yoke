@@ -79,6 +79,7 @@ class SessionRuntime:
             executor=executor,
             on_process_change=self.on_process_change,
             store=store,
+            privacy=events.privacy,
         )
         self.tool_traces = ToolTraceStore()
         self.workers = WorkerTracker()
@@ -86,14 +87,14 @@ class SessionRuntime:
             session_id, events, index_entry.root if index_entry is not None else None
         )
         self.persistence = TurnPersistence(
-            session_id, store, pending_inputs, read_cache
+            session_id, store, pending_inputs, read_cache, events.privacy
         )
         self.automatic_title = SessionTitleAutomation(
             session_id,
             store=store,
             events=events,
             read_cache=read_cache,
-            agent_factory=agent_factory,
+            agent_factory=self.resources.build_agent,
             executor=executor,
             persistence_lock=self.persistence.lock,
             user_message_factory=self.persistence.user_message,
@@ -289,6 +290,15 @@ class SessionRuntime:
         finally:
             await self.resources.close()
 
+    def agent_run_registry(self):
+        """Expose one observation scope across all clients' process managers."""
+        self.resources.agent_runs.refresh()
+        return self.resources.agent_runs
+
+    def process_managers(self) -> list[CommandProcessManager]:
+        """Return every client manager through the runtime's public seam."""
+        return self.resources.process_managers()
+
     def process_manager(self) -> CommandProcessManager | None:
         """Return the live command manager when this runtime has built an agent."""
         return self.resources.process_manager()
@@ -341,11 +351,18 @@ class SessionRuntime:
             retired_event=Event(),
             cold_start=cold_start,
             automatic_title=automatic_title,
+            client=self.resources.configuration.clients.for_input(admission.id),
         )
         self.activity.active = execution
         self.activity.state = "running"
         self.activity.last_error = None
-        self.activity.activity = "Loading session" if cold_start else "Thinking"
+        self.activity.activity = (
+            "Waiting for a slot"
+            if self.active_slots.locked()
+            else "Loading session"
+            if cold_start
+            else "Thinking"
+        )
         self.activity.tool_call_ids = {execution.turn_id: set()}
         self.activity.publish_activity(execution)
         self.execution.launch(execution)

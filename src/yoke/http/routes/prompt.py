@@ -61,11 +61,16 @@ async def admit_prompt(
     session_id: str,
     body: PromptAdmissionRequest,
 ) -> PromptAdmissionResponse:
+    runtime = _registry(request).get_or_start(session_id)
     receipt = await asyncio.get_running_loop().run_in_executor(
-        _registry(request).storage_executor, _pending(request).admit, session_id, body
+        _registry(request).storage_executor,
+        runtime.resources.configuration.clients.admit,
+        _pending(request),
+        session_id,
+        body,
     )
     if body.resume:
-        await _registry(request).get_or_start(session_id).wake()
+        await runtime.wake()
     return PromptAdmissionResponse(data=receipt)
 
 

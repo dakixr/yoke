@@ -48,7 +48,7 @@ class PythonExecTool(ManagedExecutionTool):
             payload = self._start(
                 argv=[python_executable, "-u", "-c", self.code],
                 command=f"{python_executable} -u -c <code>",
-                cwd=self._require_live_root(),
+                cwd=self.execution_cwd(),
                 env=env,
                 timeout_seconds=self.timeout,
             )
@@ -65,5 +65,5 @@ class PythonExecTool(ManagedExecutionTool):
     def _python_executable(self) -> str:
         """Return the interpreter selected for this tool call."""
         if self.python_executable is None:
-            return current_python_executable()
+            return current_python_executable(self._manager().base_environment())
         return str(Path(self.python_executable).expanduser().resolve(strict=False))

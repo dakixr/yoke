@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from yoke.http.models.client_session import ClientSessionRequest
 from yoke.http.models.common import ApiModel
 from yoke.http.models.common import CursorInfo
 from yoke.http.models.common import LocationInfo
@@ -96,11 +97,26 @@ class SessionCreateSelection(ApiModel):
     reasoning_effort: str | None = None
 
 
+class SessionStartupReport(ApiModel):
+    warnings: list[str] = Field(default_factory=list)
+    tool_report: dict[str, object] = Field(default_factory=dict)
+    active_skills: list[str] = Field(default_factory=list)
+    model_source: str | None = None
+
+
+class SessionCreateResponse(SessionResponse):
+    startup: SessionStartupReport | None = None
+
+
 class SessionCreateRequest(ApiModel):
     id: str | None = None
     location: LocationInfo
     title: str | None = None
     selection: SessionCreateSelection | None = None
+    startup: bool = False
+    headless: bool = False
+    skills: list[str] = Field(default_factory=list)
+    client: ClientSessionRequest | None = Field(default=None, repr=False)
 
 
 class SessionPatchRequest(ApiModel):

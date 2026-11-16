@@ -112,7 +112,7 @@ class ExecCommandTool(ManagedExecutionTool):
 
     def _resolve_workdir(self) -> Path:
         if self.workdir is None:
-            return self._require_live_root()
+            return self.execution_cwd()
         cwd = self._resolve_path(self.workdir)
         if not cwd.is_dir():
             raise NotADirectoryError(str(cwd))

@@ -1,0 +1,11 @@
+Removed paths: []
+Added paths: []
+Changed schema: ClientMcpServer added: ['envVars'] removed: []
+Changed schema: ClientSessionRequest added: ['cwd', 'env', 'kind'] removed: []
+Changed schema: PromptAdmissionRequest added: ['clientID'] removed: []
+Changed schema: SessionCreateRequest added: ['client', 'headless', 'skills', 'startup'] removed: []
+New schema: SessionCreateResponse fields: data, startup
+New schema: SessionStartupReport fields: activeSkills, modelSource, toolReport, warnings
+Changed operation: GET /api/v1/event
+Changed operation: POST /api/v1/session
+Changed operation: GET /api/v1/session/{session_id}/client

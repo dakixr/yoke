@@ -14,6 +14,7 @@ from yoke.agent.models import ConversationEntry
 from yoke.http.runtime.context_usage import RuntimeContextUsageState
 from yoke.http.runtime.start import RuntimeAppendPersistence
 from yoke.session.admissions import AdmissionRecord
+from yoke.http.services.client_session import ClientSession
 
 
 @dataclass(slots=True)
@@ -36,6 +37,7 @@ class TurnExecution:
     retired_event: Event
     cold_start: bool
     automatic_title: bool
+    client: ClientSession | None = field(default=None, repr=False)
     _tool_count: int = 0
     counter_lock: Lock = field(default_factory=Lock, repr=False)
     append_persistence: RuntimeAppendPersistence | None = None

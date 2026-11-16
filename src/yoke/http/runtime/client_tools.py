@@ -32,7 +32,7 @@ def client_tool_factory(
             original(context) if original else initial_tools
         )
         client = context.session.client_session
-        if client is None:
+        if client is None or client.config.kind != "acp":
             return base
         tools = list(base.tools)
         names = {tool.name for tool in tools}
@@ -42,7 +42,10 @@ def client_tool_factory(
             extras.extend(
                 register_mcp_tools(
                     LazyMcpManager(
-                        root=context.root, home=context.home, session_policy=policy
+                        root=context.root,
+                        home=context.home,
+                        session_policy=policy,
+                        base_environment=context.session.environment,
                     )
                 )
             )

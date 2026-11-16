@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -25,6 +26,7 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 @router.get("/event", operation_id="streamEvents")
 async def stream_events(
     request: Request,
+    session_id: Annotated[str | None, Query(alias="sessionID")] = None,
     client: str | None = Query(
         default=None,
         min_length=1,
@@ -34,7 +36,9 @@ async def stream_events(
 ) -> StreamingResponse:
     broker: GlobalEventBroker = request.app.state.event_broker
     lifecycle: DaemonLifecycle | None = getattr(request.app.state, "daemon", None)
-    subscription = broker.subscribe()
+    if session_id is not None:
+        request.app.state.session_service.get_session(session_id)
+    subscription = broker.subscribe(session_id)
     connected = live_event(
         "server.connected",
         {"serverInstanceID": request.app.state.server_instance_id},

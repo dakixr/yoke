@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -55,7 +57,9 @@ class LazyMcpManager:
         root: Path,
         home: Path,
         session_policy: McpSessionPolicy | None = None,
+        base_environment: Mapping[str, str] | None = None,
     ) -> None:
+        self.base_environment = base_environment
         self.root = root.resolve()
         self.home = home.resolve()
         self.session_policy = session_policy
@@ -122,6 +126,7 @@ class LazyMcpManager:
                     root=self.root,
                     home=self.home,
                     session_policy=self.session_policy,
+                    base_environment=self.base_environment,
                 )
                 self._inner = manager
             return manager

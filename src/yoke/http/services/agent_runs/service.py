@@ -66,8 +66,12 @@ class AgentRunService:
             loaded = self.runtimes.loaded_runtimes()
             current = {}
             for session_id, runtime in loaded:
-                manager = runtime.process_manager()
-                registry = getattr(manager, "agent_runs", None)
+                view = getattr(runtime, "agent_run_registry", None)
+                registry = (
+                    view()
+                    if callable(view)
+                    else getattr(runtime.process_manager(), "agent_runs", None)
+                )
                 if registry is not None:
                     current[session_id] = registry
             with self._lock:
