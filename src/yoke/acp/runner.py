@@ -27,21 +27,21 @@ async def _run(native: NativeClient, *, lease_client: str | None) -> None:
                 loop.add_signal_handler(sig, task.cancel)
             except (NotImplementedError, RuntimeError):
                 pass
-    lease: asyncio.Task[None] | None = None
     if lease_client is not None:
         from yoke.daemon.lease import hold_lease
 
         lease = asyncio.create_task(hold_lease(lease_client))
+    else:
+        lease = asyncio.create_task(native.hold_lease())
     try:
         await run_agent(agent, use_unstable_protocol=True)
     finally:
         try:
             await agent.close()
         finally:
-            if lease is not None:
-                lease.cancel()
-                with suppress(asyncio.CancelledError):
-                    await lease
+            lease.cancel()
+            with suppress(asyncio.CancelledError):
+                await lease
 
 
 def _serve(

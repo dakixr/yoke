@@ -596,12 +596,14 @@ session ID. It does not move project files, create a new conversation, or erase
 the original transcript and branches. Relocating to the current valid directory
 is an idempotent no-op. Invalid destinations leave the saved session unchanged.
 
-Relocation requires exclusive access across CLI and HTTP processes. Stop active
-turns, operations and live child processes, then remove pending queue items,
-including paused work, before relocating. Work already using a session holds a
-shared workspace lease so another process cannot move its workspace underneath
-it. A missing directory must not consume a pending prompt merely because it
-became unavailable between admission and execution.
+The daemon serializes relocation with active turns, operations and live child
+processes. Stop that work, then remove pending queue items, including paused
+work, before relocating. Execution holds shared workspace leases in daemon
+memory through physical worker and resource cleanup. Relocation takes an
+exclusive lease. Clients request relocation through the daemon; leases create
+no `sessions/workspaces/*.lock` files. A missing directory must not consume a
+pending prompt merely because it became unavailable between admission and
+execution.
 
 If a directory disappears after a prompt has left the queue but before execution,
 the CLI saves that input paused in `/queue`, including its original identity and
@@ -648,9 +650,10 @@ saved root, provider, model, and reasoning effort before automated continuation.
 Sessions are stored in the SQLite database `~/.yoke/yoke.db` and auto-expire
 after 30 days unless pinned. Set `YOKE_DB_PATH` to use another database file;
 `YOKE_SESSION_DIR` relocates both the database (as `yoke.db` inside it) and the
-remaining session files (workspace leases and disposable attachment files under
-`~/.yoke/sessions/` by default). Settings and credentials stay files. The CLI
-and the HTTP daemon share the database through WAL, so both can write at once:
+remaining disposable attachment files under `~/.yoke/sessions/` by default.
+Workspace leases live in daemon memory. Settings and credentials stay files.
+The CLI and the HTTP daemon share the database through WAL, so both can write
+at once:
 each write is one `BEGIN IMMEDIATE` transaction, and a process waits up to 5
 seconds for another process's transaction. The stored agent state uses
 structured conversation entries so memory snapshots, typed compaction handoffs,

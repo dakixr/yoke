@@ -2,7 +2,7 @@
 
 A saved session owns its history, not the directory named in its metadata.
 Filesystem checks belong at execution boundaries, never in SessionStore.load.
-Execution leases exclude relocation across both CLI and HTTP processes.
+Execution leases in daemon memory exclude relocation during owned work.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import os
 from pathlib import Path
 import stat
 from typing import TYPE_CHECKING, Literal
+from threading import Lock
 
-from yoke._file_io import file_lock
 from yoke.session.repository.models import SessionRecord
 from yoke.session.repository.paths import validate_session_id
 from yoke.session.repository.utils import timestamp
@@ -203,32 +203,51 @@ def promote_session_turn(primary: RuntimeAgent, forked: RuntimeAgent) -> None:
             raise
 
 
+class WorkspaceLeases:
+    """Nonblocking shared/exclusive ownership for daemon workspace bindings.
+
+    Threads may release leases acquired by another thread after worker cleanup.
+    Keys include the database so independent embedded applications stay isolated.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._owners: dict[tuple[Path, str], tuple[int, bool]] = {}
+
+    @contextmanager
+    def acquire(
+        self, database: Path, session_id: str, *, exclusive: bool
+    ) -> Iterator[None]:
+        key = (database.resolve(), session_id)
+        with self._lock:
+            readers, writer = self._owners.get(key, (0, False))
+            if writer or (exclusive and readers):
+                raise WorkspaceBusy(session_id)
+            self._owners[key] = (readers + (not exclusive), exclusive)
+        try:
+            yield
+        finally:
+            with self._lock:
+                readers, writer = self._owners[key]
+                if exclusive or readers == 1:
+                    del self._owners[key]
+                else:
+                    self._owners[key] = (readers - 1, writer)
+
+
+_workspace_leases = WorkspaceLeases()
+
+
 @contextmanager
 def workspace_lease(
     store: SessionStore, session_id: str, *, exclusive: bool = False
 ) -> Iterator[None]:
-    """Prevent relocation while work uses a binding; never wait on another owner.
-
-    Acquire before loading session metadata and retain through final persistence
-    and resource cleanup. A retired worker must retain its lease until it really
-    stops, not merely until a client receives an interruption acknowledgement.
-    """
-    validate_session_id(session_id)  # Validate before constructing a lock path.
-    directory = store.directory / "workspaces"
-    directory.mkdir(parents=True, exist_ok=True)
-    lock = file_lock(
-        directory / f"{session_id}.lock", shared=not exclusive, blocking=False
-    )
-    try:
-        lock.__enter__()
-    except OSError as exc:
-        if exc.errno in {errno.EACCES, errno.EAGAIN}:
-            raise WorkspaceBusy(session_id) from exc
-        raise
-    try:
+    """Retain a daemon binding through persistence and physical resource cleanup."""
+    validate_session_id(session_id)
+    with _workspace_leases.acquire(
+        store.database_path, session_id, exclusive=exclusive
+    ):
         yield
-    finally:
-        lock.__exit__(None, None, None)
 
 
 def relocate_session_workspace(

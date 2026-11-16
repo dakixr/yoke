@@ -180,6 +180,18 @@ context limit from the session response and refreshes counts and timestamps.
 Compaction waits for settlement; interactive relocation uses the existing daemon
 route. `resume ID -p "text"` accepts the same short prompt form as the main command.
 
+Stage 4 lease cleanup is implemented. Workspace ownership uses shared and
+exclusive leases in daemon memory, retained through physical worker and process
+cleanup. No execution or relocation creates `sessions/workspaces/*.lock`. ACP
+holds a daemon lifetime lease on both discovered and explicit-URL connections;
+`acp/ownership.py` and its per-session flock are deleted. A subprocess relocation
+regression now calls the daemon API instead of opening a second local runtime.
+
+Stage 4 is not complete. The CLI's injected in-process execution path and its
+behavioral test ports remain outstanding. The runtime modules listed under
+"Deletable once SQLite is in" have not been removed. Provider projection goldens
+remain unchanged.
+
 ## Phase 1 implementation notes
 
 Choices made where the design was silent, and deliberate deviations.

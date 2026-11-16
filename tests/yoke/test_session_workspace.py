@@ -168,29 +168,37 @@ def test_nested_execution_leases_exclude_relocation_and_release_on_errors(tmp_pa
 
 def test_another_process_cannot_relocate_under_an_execution_lease(tmp_path):
     store, _, _, new = saved(tmp_path)
+    from tests.yoke.cli.daemon_support import serve_app
+    from yoke.http.app import HttpAppSettings, create_app
+
     code = """
-from pathlib import Path
+import httpx
 import sys
-from yoke.session import SessionStore
-from yoke.session.workspace import WorkspaceBusy, relocate_session_workspace
-try:
-    relocate_session_workspace(SessionStore(Path(sys.argv[1])), 'saved', sys.argv[2])
-except WorkspaceBusy:
-    print('busy')
-else:
-    print('moved')
+with httpx.Client(transport=httpx.HTTPTransport(uds=sys.argv[1]), base_url='http://fixture/api/v1/', trust_env=False) as http:
+    response = http.post('/session/saved/relocate', json={'directory': sys.argv[2]})
+    if response.status_code == 409:
+        assert response.json()['error']['code'] == 'session_workspace_busy'
+        print('busy')
+    else:
+        response.raise_for_status()
+        print('moved')
 """
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
-    argv = [sys.executable, "-c", code, str(store.directory), str(new)]
-    with workspace_lease(store, "saved"):
+    app = create_app(
+        HttpAppSettings(auth_token=None, session_directory=store.directory)
+    )
+    with serve_app(app) as handle:
+        argv = [sys.executable, "-c", code, str(handle.socket), str(new)]
+        with workspace_lease(store, "saved"):
+            result = subprocess.run(
+                argv, env=env, text=True, capture_output=True, check=True, timeout=10
+            )
+        assert result.stdout.strip() == "busy"
         result = subprocess.run(
             argv, env=env, text=True, capture_output=True, check=True, timeout=10
         )
-    assert result.stdout.strip() == "busy"
-    result = subprocess.run(
-        argv, env=env, text=True, capture_output=True, check=True, timeout=10
-    )
-    assert result.stdout.strip() == "moved"
+        assert result.stdout.strip() == "moved"
+    assert not (store.directory / "workspaces").exists()
 
 
 @pytest.mark.parametrize("kind", ["queued", "paused", "images", "promoted"])
@@ -236,3 +244,40 @@ def test_invalid_session_id_cannot_escape_workspace_lock_directory(tmp_path):
         with workspace_lease(store, "../outside"):
             pytest.fail("invalid id acquired a lease")
     assert not (tmp_path / "outside.lock").exists()
+
+
+def test_workspace_lease_can_transfer_to_cleanup_thread_without_files(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store, _, _, new = saved(tmp_path)
+    lease = workspace_lease(store, "saved")
+    lease.__enter__()
+    try:
+        with pytest.raises(WorkspaceBusy):
+            relocate_session_workspace(store, "saved", new)
+    finally:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(lease.__exit__, None, None, None).result(timeout=2)
+    assert relocate_session_workspace(store, "saved", new).root == str(new)
+    assert not (store.directory / "workspaces").exists()
+
+
+def test_workspace_lease_keys_include_database_and_session(tmp_path):
+    first = SessionStore(tmp_path / "first")
+    second = SessionStore(tmp_path / "second")
+    with workspace_lease(first, "same"):
+        with workspace_lease(second, "same", exclusive=True):
+            pass
+        with workspace_lease(first, "other", exclusive=True):
+            pass
+        with pytest.raises(WorkspaceBusy):
+            with workspace_lease(first, "same", exclusive=True):
+                pytest.fail("relocation acquired a leased workspace")
+    with workspace_lease(first, "same", exclusive=True):
+        with pytest.raises(WorkspaceBusy):
+            with workspace_lease(first, "same"):
+                pytest.fail("execution entered during relocation")
+    with workspace_lease(first, "same"):
+        pass
+    assert not (first.directory / "workspaces").exists()
+    assert not (second.directory / "workspaces").exists()
