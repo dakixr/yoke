@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
-from threading import Event
 
 import pytest
 
@@ -15,16 +13,11 @@ from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.agent.session_tree import SessionTree
 from yoke.agent.skills.models import ActiveSkill
-from yoke.agent.state import conversation_entries_from_messages
+from yoke.agent.state import conversation_entries_from_messages, active_branch_entries
 from yoke.agent.tools import LocalTool
-from yoke.cli.backend import turns as turn_runner
-from yoke.cli.backend import SessionBackend
-from yoke.cli.interactive.turn_stream import render_turn_events
-from yoke.cli.interactive.common import TurnSuccess
-from yoke.cli.render import InteractiveRenderer
-from yoke.cli.runtime import ActiveSession, execute_turn
-from yoke.cli.runtime.turn_agent import prepare_turn_agent
-from yoke.cli.runtime.workspaces import take_turn_workspace
+from yoke.cli.runtime import ActiveSession
+from .terminal_daemon_support import terminal as terminal
+from yoke.session import SessionStore
 
 from .support import active_session_for
 
@@ -73,11 +66,8 @@ class RecordingProvider:
     "scenario", ["history", "tools_checkpoint", "skills", "images", "branch"]
 )
 def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
-    tmp_path, monkeypatch, scenario
+    tmp_path, monkeypatch, scenario, terminal
 ):
-    monkeypatch.setattr(
-        turn_runner, "start_session_title_generation", lambda *_args, **_kwargs: None
-    )
     session = active_session_for(tmp_path)
     history = [Message.user("previous input"), Message.assistant("previous answer")]
     entries = conversation_entries_from_messages(history)
@@ -123,11 +113,29 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
         if scenario == "skills"
         else []
     )
-    providers = [
-        RecordingProvider(use_tool=scenario == "tools_checkpoint") for _ in range(2)
-    ]
-    agents = [
-        RuntimeAgent(
+    provider = RecordingProvider(use_tool=scenario == "tools_checkpoint")
+    checkpoints = []
+    from yoke.http.runtime.execution import TurnExecutor
+
+    checkpoint = TurnExecutor.checkpoint
+
+    def record_checkpoint(self, execution, context):
+        checkpoint(self, execution, context)
+        record = SessionStore().load(session.id)
+        checkpoints.append(
+            [
+                entry.message.model_dump_json()
+                for entry in active_branch_entries(
+                    record.conversation_entries, leaf_id=record.leaf_id
+                )
+                if entry.message is not None
+            ]
+        )
+
+    monkeypatch.setattr(TurnExecutor, "checkpoint", record_checkpoint)
+
+    def factory(_record):
+        return RuntimeAgent(
             provider,
             [EchoTool.bind()] if scenario == "tools_checkpoint" else [],
             context_manager=ContextManager(
@@ -137,71 +145,63 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
             tool_root=tmp_path,
             tool_execution="sequential",
         )
-        for provider in providers
+
+    terminal.factory = factory
+    # Continue a saved CLI input, including legacy image bytes. Upload validation
+    # is covered by the headless parity image cases.
+    tree = SessionTree.restore(entries, entries[-1].id)
+    if scenario == "images":
+        tree.append_message(user_message)
+    exported = tree.export_for_persistence()
+    SessionStore().save(
+        session.id,
+        [],
+        root=tmp_path,
+        title="Projection fixture",
+        conversation_entries=list(exported.entries),
+        leaf_id=exported.leaf_id,
+        active_skills=active_skills,
+    )
+    backend = terminal.backend(session.id, root=tmp_path)
+    backend.connection.session_request(
+        "POST",
+        "/prompt",
+        json={
+            "prompt": {
+                "text": "" if scenario == "images" else "current input",
+                "continuation": scenario == "images",
+            }
+        },
+    )
+    status = backend.connection.session_request(
+        "POST", "/wait", params={"timeoutMs": 5000}
+    )["data"]
+    assert status["state"] == "idle", status
+    expected = json.loads(
+        (
+            Path(__file__).parent / "fixtures" / "turn_projection" / f"{scenario}.json"
+        ).read_text()
+    )
+    assert json.loads(json.dumps(provider.requests)) == expected["requests"]
+    record = SessionStore().load(session.id)
+    instruction = provider.requests[0][0][0]
+    stored_messages = [
+        instruction,
+        *[
+            entry.message.model_dump_json()
+            for entry in active_branch_entries(
+                record.conversation_entries, leaf_id=record.leaf_id
+            )
+            if entry.message is not None
+        ],
     ]
-    checkpoint_payloads = [[], []]
-    prepared = None
-    outcome = None
-    try:
-        # The established prompt worker prepared an isolated runtime then called
-        # execute_turn with exactly these messages, entries and user blocks.
-        prepared = prepare_turn_agent(
-            agents[0], messages=history, entries=entries, active_session=session
-        )
-        legacy = execute_turn(
-            prepared,
-            "current input",
-            list(history),
-            indicator=InteractiveRenderer(io.StringIO()),
-            stop_requested=lambda: False,
-            user_message=user_message,
-            conversation_entries=entries,
-            after_tool_result_appended=lambda messages, _entries: checkpoint_payloads[
-                0
-            ].append([message.model_dump_json() for message in messages]),
-        )
-        submitted = SessionBackend(agents[1], session).submit(
-            "current input",
-            list(history),
-            entries=entries,
-            stop_event=Event(),
-            user_message=user_message,
-            checkpoint=lambda _agent, messages, _entries: checkpoint_payloads[1].append(
-                [message.model_dump_json() for message in messages]
-            ),
-        )
-        render_turn_events(submitted, InteractiveRenderer(io.StringIO()))
-        outcome = submitted.result()
-        assert isinstance(outcome, TurnSuccess)
-        expected = json.loads(
-            (
-                Path(__file__).parent
-                / "fixtures"
-                / "turn_projection"
-                / f"{scenario}.json"
-            ).read_text()
-        )
-        assert json.loads(json.dumps(providers[0].requests)) == expected["requests"]
-        assert [message.model_dump_json() for message in legacy.messages] == expected[
-            "messages"
-        ]
-        assert checkpoint_payloads[0] == expected["checkpoints"]
-        assert providers[0].requests == providers[1].requests
-        assert [message.model_dump_json() for message in legacy.messages] == [
-            message.model_dump_json() for message in outcome.result.messages
-        ]
-        assert checkpoint_payloads[0] == checkpoint_payloads[1]
-        if scenario == "branch":
-            serialized = repr(providers[1].requests)
-            assert "inactive branch must stay hidden" not in serialized
-            assert "selected branch summary" in serialized
-        if scenario == "tools_checkpoint":
-            assert checkpoint_payloads[0]
-    finally:
-        turn_agents = [prepared, outcome.agent if outcome is not None else None]
-        for agent in turn_agents:
-            if isinstance(agent, RuntimeAgent):
-                with take_turn_workspace(agent):
-                    agent.close()
-        for agent in agents:
-            agent.close()
+    checkpoints = [[instruction, *messages] for messages in checkpoints]
+    assert stored_messages == expected["messages"]
+    assert checkpoints == expected["checkpoints"]
+    assert backend.messages()[-1].text_content() == "projection complete"
+    if scenario == "branch":
+        serialized = repr(provider.requests)
+        assert "inactive branch must stay hidden" not in serialized
+        assert "selected branch summary" in serialized
+    if scenario == "tools_checkpoint":
+        assert checkpoints
