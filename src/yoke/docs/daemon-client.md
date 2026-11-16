@@ -47,6 +47,11 @@ clients should use `full-access` mode and keep local terminal interaction local.
 MCP server injection supports `envVars` to explicitly inherit names from the
 client environment, plus the existing explicit `env` values.
 
+A `client` block on `POST /session` attaches that configuration at creation and
+records the client's `kind` as the session origin (`web` when omitted). ACP
+sends its full configuration there, so a new ACP session is recorded as `acp`
+and never runs under the default `full-access` mode.
+
 Attachments coexist by owner. Replacing an owner creates a new configuration
 snapshot; admitted turns keep their original snapshot. `GET .../client?owner=`
 selects an owner; the response includes attached `owners`. Omitting the owner

@@ -118,6 +118,11 @@ def test_standard_lifecycle_config_commands_and_notification_recovery(
                 assert initialized.auth_methods == []
                 session_id = created.session_id
                 assert created.modes.current_mode_id == "approval-required"
+                store = app.state.session_service.store
+                with store.database.read() as db:
+                    assert db.execute(
+                        "SELECT origin FROM sessions WHERE id = ?", (session_id,)
+                    ).fetchone() == ("acp",)
                 command_update = next(
                     update
                     for update in connection.updates

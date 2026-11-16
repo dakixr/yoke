@@ -74,6 +74,21 @@ class SessionLifecycle:
             raise RequestError(-32602, "MCP server names must be unique")
         return servers
 
+    def client_config(
+        self,
+        session_id: str | None,
+        mcp_servers: list[Any] | None,
+        additional_directories: list[str] | None,
+    ) -> dict[str, Any]:
+        mode = self.configs.get(session_id or "", {}).get("mode", "approval-required")
+        return {
+            "owner": self.owner,
+            "kind": "acp",
+            "mode": mode,
+            "mcpServers": self.servers(mcp_servers),
+            "additionalDirectories": additional_directories or [],
+        }
+
     async def configure(
         self,
         session_id: str,
@@ -87,13 +102,7 @@ class SessionLifecycle:
                     "Upgrade the Yoke daemon to support client MCP servers and additional directories"
                 )
             return
-        servers = self.servers(mcp_servers)
-        config = {
-            "owner": self.owner,
-            "mode": self.configs.get(session_id, {}).get("mode", "approval-required"),
-            "mcpServers": servers,
-            "additionalDirectories": additional_directories or [],
-        }
+        config = self.client_config(session_id, mcp_servers, additional_directories)
         await self.agent.native.data(
             "PUT", self.agent.native.path(session_id, "/client"), json=config
         )
@@ -116,20 +125,26 @@ class SessionLifecycle:
         self.servers(mcp_servers)
         catalog, default = await agent.discover(cwd)
         provider, model = default.split(":", 1)
-        data = await agent.native.data(
-            "POST",
-            "session",
-            json={
-                "location": {"directory": cwd},
-                "selection": {
-                    "provider": provider,
-                    "model": model,
-                    "reasoningEffort": catalog[default]["defaultReasoningEffort"],
-                },
+        body: dict[str, Any] = {
+            "location": {"directory": cwd},
+            "selection": {
+                "provider": provider,
+                "model": model,
+                "reasoningEffort": catalog[default]["defaultReasoningEffort"],
             },
-        )
+        }
+        config = None
+        if self.enabled:
+            # Attach at creation so the session records an ACP origin and never
+            # runs under the daemon's default client mode.
+            config = self.client_config(None, mcp_servers, additional_directories)
+            body["client"] = config
+        data = await agent.native.data("POST", "session", json=body)
         session_id = data["id"]
-        await self.configure(session_id, cwd, mcp_servers, additional_directories)
+        if config is None:
+            await self.configure(session_id, cwd, mcp_servers, additional_directories)
+        else:
+            self.configs[session_id] = config
         agent.remember(session_id, data, catalog, default)
         await self.activate(session_id)
         return s.NewSessionResponse.model_validate(
