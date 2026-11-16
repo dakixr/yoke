@@ -17,6 +17,7 @@ from yoke.http.models.session import SessionCreateRequest, SessionStartupReport
 from yoke.http.runtime.ownership import close_owned_agent
 from yoke.http.services.privacy import SessionPrivacy
 from yoke.session import SessionStore
+from yoke.session.workspace import require_session_workspace
 
 
 class SessionStartup:
@@ -40,6 +41,7 @@ class SessionStartup:
             reasoning_effort=selection.reasoning_effort if selection else None,
         )
         record = self.store.load(session_id)
+        args.root = str(require_session_workspace(record))
         apply_session_defaults_to_args(args, record)
         existing_names = {skill.name for skill in record.active_skills}
         args.skills = tuple(name for name in args.skills if name not in existing_names)

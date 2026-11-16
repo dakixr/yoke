@@ -15,13 +15,13 @@ from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
 from yoke.agent.state import conversation_entries_from_messages
 from yoke.agent.tools import ReadTool, ToolRegistrationContext, ToolRegistrationResult
-from yoke.cli.backend import turns as turn_runner
 from yoke.cli.interactive.common import PromptCliState, TurnFailure
 from yoke.cli.interactive.prompt import turns
 from yoke.cli.runtime import turn_agent as runtime
 from yoke.session.workspace import WorkspaceBusy, WorkspaceUnavailable, workspace_lease
 
 from .support import active_session_for
+from .terminal_daemon_support import terminal as terminal
 
 
 class ClosingProvider:
@@ -151,69 +151,67 @@ def test_failed_load_retires_unreturned_fork_without_releasing_lease_early(
 
 
 def test_rejection_after_preparation_does_not_promote_unexecuted_fork(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, terminal
 ) -> None:
+    from tests.yoke.daemon.support import eventually
+    from .terminal_daemon_support import session_for
+
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
     provider = ClosingProvider()
-    primary = RuntimeAgent(provider, [], tool_root=root)
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        active_turn_id=1,
-        abandoned_turn_ids=set(),
-        steered_turn_ids=set(),
+    terminal.factory = lambda _record: RuntimeAgent(provider, [], tool_root=root)
+    terminal.store.save("cleanup", [], root=root, title="Named fixture")
+    backend = terminal.backend("cleanup", root=root)
+    active = session_for(backend)
+    runtime = terminal.app.state.runtime_registry.get_if_loaded(active.id)
+    assert runtime is not None
+    original = runtime.execution.prepare
+
+    def prepare(*args, **kwargs):
+        agent = original(*args, **kwargs)
+        root.rmdir()
+        return agent
+
+    monkeypatch.setattr(runtime.execution, "prepare", prepare)
+    promote = Mock(side_effect=AssertionError("promoted unexecuted fork"))
+    monkeypatch.setattr(runtime.resources, "promote", promote)
+    state = PromptCliState(messages=[], pending_prompts=[], active_turn_id=1)
+    lock, outcomes = Lock(), []
+    turns.run_prompt_turn(
+        turn_id=1,
+        prompt="hello",
+        state=state,
+        state_lock=lock,
+        agent=backend,
+        active_session=active,
+        stop_event=Event(),
+        user_message=Message.user("hello"),
+        handle_outcome=lambda _id, result: outcomes.append(result),
+        turn_renderer_factory=Mock(),
     )
-    lock, outcomes, retired = Lock(), [], []
-    monkeypatch.setattr(
-        turn_runner, "start_session_title_generation", lambda *a, **k: root.rmdir()
-    )
-    monkeypatch.setattr(
-        "yoke.session.workspace.promote_session_turn",
-        Mock(side_effect=AssertionError("promoted unexecuted fork")),
-    )
-    monkeypatch.setattr(
-        "yoke.cli.runtime.turn_agent.retire_turn_agent",
-        lambda agent, **kwargs: retired.append(agent),
-    )
-    try:
-        turns.run_prompt_turn(
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert isinstance(outcome, TurnFailure)
+    assert "--relocate" in str(outcome.error)
+    assert outcome.agent is None
+    promote.assert_not_called()
+    assert (
+        turns.handle_prompt_turn_outcome(
             turn_id=1,
-            prompt="hello",
+            outcome=outcome,
             state=state,
             state_lock=lock,
-            agent=primary,
+            agent=backend,
             active_session=active,
-            stop_event=Event(),
-            user_message=Message.user("hello"),
-            handle_outcome=lambda _id, result: outcomes.append(result),
-            turn_renderer_factory=Mock(),
+            renderer=Mock(),
+            scrollback=Mock(),
         )
-        outcome = outcomes[0]
-        assert isinstance(outcome, TurnFailure)
-        assert isinstance(outcome.error, WorkspaceUnavailable)
-        assert outcome.agent is not primary
-        assert outcome.rejected_prompt is not None
-        assert (
-            turns.handle_prompt_turn_outcome(
-                turn_id=1,
-                outcome=outcome,
-                state=state,
-                state_lock=lock,
-                agent=primary,
-                active_session=active,
-                renderer=Mock(),
-                scrollback=Mock(),
-            )
-            is False
-        )
-        assert retired == [outcome.agent]
-        assert state.pending_prompts[0].prompt == "hello"
-        assert state.pending_prompts[0].paused
-    finally:
-        for agent in retired:
-            with runtime.take_turn_workspace(agent):
-                agent.close()
-                agent.provider.close()
-        primary.close()
+        is False
+    )
+    queued = backend.load_queue().prompts
+    assert len(queued) == 1
+    assert queued[0].prompt == "hello"
+    assert queued[0].paused
+    assert terminal.store.load(active.id).messages == []
+    eventually(lambda: len(provider.forks) == 1 and provider.forks[0].closed == 1)
+    assert provider.closed == 0

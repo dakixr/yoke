@@ -231,3 +231,8 @@ Startup retains saved history and avoids rewriting an unchanged selection and
 skill snapshot. An interactive session whose saved provider was removed reports
 the existing recovery warning and resolves an available provider. Explicit
 selections and headless startup remain strict.
+
+A workspace rejection can pause an input without settling it. The terminal turn
+reader ends that attempt on `session.runtime.failed` and displays its actionable
+error; the daemon retains the paused input. For settled failures the reader waits
+for that error event, which follows `session.prompt.settled`.

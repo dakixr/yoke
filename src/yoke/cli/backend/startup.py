@@ -20,6 +20,7 @@ from yoke.cli.render import OutputStream, build_console, print_error
 from yoke.cli.runtime import ActiveSession
 from yoke.daemon.client import DaemonIncompatible, DaemonUnavailable
 from yoke.session.repository.utils import new_session_id
+from yoke.session.workspace import require_workspace
 
 
 def create_session(
@@ -87,6 +88,8 @@ def run_daemon_headless(
     error_console = build_console(error)
     connection = None
     try:
+        if relocate is not None and resume_id is None and args.session is None:
+            raise ValueError("--relocate requires an explicit session ID.")
         prompt = args.prompt
         if not prompt:
             if sys.stdin.isatty():
@@ -102,7 +105,11 @@ def run_daemon_headless(
             resume_id or args.session or new_session_id(),
             warning=lambda text: print_error(error_console, f"Warning: {text}"),
         )
-        root = Path(args.root).expanduser().resolve()
+        root = (
+            require_workspace(args.root)
+            if not (resume_id or args.session)
+            else Path(args.root).expanduser().resolve()
+        )
         if resume_id and relocate is not None:
             connection.session_request(
                 "POST", "/relocate", json={"directory": str(Path(relocate).resolve())}
@@ -173,7 +180,13 @@ def run_daemon_interactive(
     error_console = build_console(error)
     connection: SessionConnection | None = None
     try:
-        root = Path(args.root).expanduser().resolve()
+        if relocate is not None and resume_id is None and args.session is None:
+            raise ValueError("--relocate requires an explicit session ID.")
+        root = (
+            require_workspace(args.root)
+            if not (resume_id or args.session or picker)
+            else Path(args.root).expanduser().resolve()
+        )
         session_id = resume_id or args.session or new_session_id()
         connection = SessionConnection(
             session_id,
@@ -203,7 +216,16 @@ def run_daemon_interactive(
                 "POST", "/relocate", json={"directory": str(Path(relocate).resolve())}
             )
         validate_selection(connection, args, root)
-        if resume_id or args.session:
+        if args.fork_session_id:
+            existing = connection.request(
+                "POST",
+                f"session/{args.fork_session_id}/fork",
+                json={
+                    "id": connection.session_id,
+                    "location": {"directory": str(root)},
+                },
+            )["data"]
+        elif resume_id or args.session:
             try:
                 existing = connection.session_request("GET")["data"]
                 root = Path(existing["location"]["directory"])
@@ -213,10 +235,12 @@ def run_daemon_interactive(
                 existing = None
         else:
             existing = None
+        connection.set_cwd(root)
         with connection.startup_lease():
             validate_selection(connection, args, root)
             created = create_session(connection, args, root=root)
             connection.start()
+        args.root = str(root)
         data = created.get("data", {})
         backend = DaemonSessionBackend(connection, data)
         messages = backend.messages()
@@ -255,18 +279,11 @@ def run_daemon_interactive(
 
 def run_daemon_cli(
     args: CLIArgs,
-    agent: object | None = None,
     *,
     input_func: Callable[..., str] = input,
     stdout: OutputStream | None = None,
     stderr: OutputStream | None = None,
 ) -> int:
-    """Public Python CLI entry point; injection retains the explicit test adapter."""
-    if agent is not None:
-        from yoke.cli.runtime import run_cli as run_in_process
-
-        return run_in_process(
-            args, agent, input_func=input_func, stdout=stdout, stderr=stderr
-        )
+    """Run the public Python CLI entry point through the daemon."""
     run = run_daemon_headless if args.headless else run_daemon_interactive
     return run(args, input_func=input_func, stdout=stdout, stderr=stderr)

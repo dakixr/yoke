@@ -18,7 +18,7 @@ from yoke.agent.loop import AgentStoppedError
 from yoke.agent.models import Message
 from yoke.cli.config.resources import close_quietly
 from yoke.cli.interactive import commands
-from yoke.cli.backend import turns as turn_runner
+from yoke.agent.loop import RuntimeAgent
 from yoke.cli.interactive.basic import _start_basic_turn
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.common import (
@@ -42,14 +42,15 @@ from yoke.cli.render import InteractiveRenderer, build_console
 from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.session.workspace import WorkspaceConflict
 
-from .support import FakeAgent, active_session_for
+from .terminal_daemon_support import ReplyProvider, session_for, terminal as terminal
 
 
 @pytest.mark.parametrize("command", commands.SLASH_COMMANDS, ids=lambda item: item.name)
 def test_registry_dispatch_usage_completion_and_lifecycle_agree(
-    tmp_path, monkeypatch, command
+    tmp_path, monkeypatch, command, terminal
 ):
-    session = active_session_for(tmp_path)
+    backend = terminal.backend("contracts", root=tmp_path)
+    session = session_for(backend)
     output = io.StringIO()
     handler = Mock(return_value=(True, [], session))
     entry = replace(command, handler=handler)
@@ -64,7 +65,7 @@ def test_registry_dispatch_usage_completion_and_lifecycle_agree(
         args = " example" if entry.min_args else ""
         assert commands.handle_slash_command(
             name + args,
-            agent=FakeAgent(),
+            agent=backend,
             active_session=session,
             messages=[],
             console=build_console(output),
@@ -74,7 +75,7 @@ def test_registry_dispatch_usage_completion_and_lifecycle_agree(
         handler.reset_mock()
         handled = commands.handle_slash_command(
             entry.name + " unexpected",
-            agent=FakeAgent(),
+            agent=backend,
             active_session=session,
             messages=[],
             console=build_console(output),
@@ -89,7 +90,7 @@ def test_registry_dispatch_usage_completion_and_lifecycle_agree(
         handler.reset_mock()
         commands.handle_slash_command(
             entry.name,
-            agent=FakeAgent(),
+            agent=backend,
             active_session=session,
             messages=[],
             console=build_console(output),
@@ -102,14 +103,17 @@ def test_registry_dispatch_usage_completion_and_lifecycle_agree(
     assert entry.name in {item.text for item in completions}
 
 
-def test_help_aliases_unknown_commands_and_explicit_basic_capabilities(tmp_path):
-    session = active_session_for(tmp_path)
+def test_help_aliases_unknown_commands_and_explicit_basic_capabilities(
+    tmp_path, terminal
+):
+    backend = terminal.backend("contracts", root=tmp_path)
+    session = session_for(backend)
     output = io.StringIO()
     host = CommandCallbacks(basic_mode=True)
     for command in ("/help", "?", "/tree", "/pin argument"):
         assert commands.handle_slash_command(
             command,
-            agent=FakeAgent(),
+            agent=backend,
             active_session=session,
             messages=[],
             console=build_console(output),
@@ -124,7 +128,7 @@ def test_help_aliases_unknown_commands_and_explicit_basic_capabilities(tmp_path)
     assert "Basic mode shortcuts:" in text
     assert commands.handle_slash_command(
         "/unknown",
-        agent=FakeAgent(),
+        agent=backend,
         active_session=session,
         messages=[],
         console=build_console(output),
@@ -135,15 +139,16 @@ def test_help_aliases_unknown_commands_and_explicit_basic_capabilities(tmp_path)
     assert "Usage: /pin" in text
 
 
-def test_compaction_dispatch_uses_host_capability(tmp_path, monkeypatch):
+def test_compaction_dispatch_uses_host_capability(tmp_path, monkeypatch, terminal):
     output = io.StringIO()
     start = Mock(return_value=True)
     sync_compact = Mock(side_effect=AssertionError("must use host compaction"))
-    monkeypatch.setattr("yoke.cli.backend.session.force_compact_history", sync_compact)
+    backend = terminal.backend("compaction", root=tmp_path)
+    monkeypatch.setattr(backend, "compact", sync_compact)
     commands.handle_slash_command(
         "/compact",
-        agent=FakeAgent(),
-        active_session=active_session_for(tmp_path),
+        agent=backend,
+        active_session=session_for(backend),
         messages=[],
         console=build_console(output),
         host=CommandCallbacks(start_compaction=start),
@@ -224,18 +229,34 @@ def test_seed_session_retains_original_text_and_image_blocks(state_type):
     "error", [AgentStoppedError("stopped"), WorkspaceConflict("session", "root")]
 )
 def test_both_frontends_share_preparation_and_stopped_workspace_outcomes(
-    tmp_path, monkeypatch, basic, error
+    tmp_path, monkeypatch, basic, error, terminal
 ):
-    session = active_session_for(tmp_path)
-    agent = FakeAgent()
-    prepared = FakeAgent()
-    prepare = Mock(return_value=prepared)
-    execute = Mock(side_effect=error)
-    monkeypatch.setattr(turn_runner, "prepare_turn_agent", prepare)
-    monkeypatch.setattr(turn_runner, "execute_turn", execute)
-    monkeypatch.setattr(
-        turn_runner, "start_session_title_generation", lambda *_args, **_kwargs: None
+    backend = terminal.backend("contracts", root=tmp_path)
+    session = session_for(backend)
+    terminal.store.set_title(session.id, "Named fixture")
+    prepared, executed = [], []
+    fork, run = RuntimeAgent.fork, RuntimeAgent.run
+
+    class OutcomeProvider(ReplyProvider):
+        def complete(self, messages, tools):
+            del messages, tools
+            raise error
+
+    terminal.factory = lambda _record: RuntimeAgent(
+        OutcomeProvider(), [], tool_root=tmp_path
     )
+
+    def prepare(self, **kwargs):
+        isolated = fork(self, **kwargs)
+        prepared.append(isolated)
+        return isolated
+
+    def execute(self, *args, **kwargs):
+        executed.append(self)
+        return run(self, *args, **kwargs)
+
+    monkeypatch.setattr(RuntimeAgent, "fork", prepare)
+    monkeypatch.setattr(RuntimeAgent, "run", execute)
     outcomes: Queue[TurnSuccess | TurnFailure | TurnStopped] = Queue()
     renderer = InteractiveRenderer(io.StringIO())
     if basic:
@@ -243,7 +264,7 @@ def test_both_frontends_share_preparation_and_stopped_workspace_outcomes(
             "test",
             state=BasicCliState([], []),
             active_session=session,
-            agent=agent,
+            agent=backend,
             stderr=io.StringIO(),
             renderer=renderer,
             result_queue=outcomes,
@@ -256,7 +277,7 @@ def test_both_frontends_share_preparation_and_stopped_workspace_outcomes(
             prompt="test",
             state=PromptCliState([], []),
             state_lock=Lock(),
-            agent=agent,
+            agent=backend,
             active_session=session,
             stop_event=Event(),
             user_message=None,
@@ -267,9 +288,9 @@ def test_both_frontends_share_preparation_and_stopped_workspace_outcomes(
     assert isinstance(
         outcome, TurnStopped if isinstance(error, AgentStoppedError) else TurnFailure
     )
-    assert outcome.agent is prepared
-    prepare.assert_called_once()
-    assert execute.call_args.args[0] is prepared
+    assert outcome.agent is None
+    assert len(prepared) == 1
+    assert executed == prepared
 
 
 def test_input_and_worker_queues_wake_the_same_waiter():
@@ -302,9 +323,10 @@ def test_close_quietly_supports_dynamic_adapters_and_preserves_required_failures
         close_quietly(resource, suppress_errors=False)
 
 
-def test_host_compaction_does_not_overwrite_a_fast_worker_result(tmp_path):
+def test_host_compaction_does_not_overwrite_a_fast_worker_result(tmp_path, terminal):
     state = PromptCliState([], [])
-    session = active_session_for(tmp_path)
+    backend = terminal.backend("contracts", root=tmp_path)
+    session = session_for(backend)
     compacted = [Message.assistant("compacted conversation")]
 
     def compact():
@@ -314,7 +336,7 @@ def test_host_compaction_does_not_overwrite_a_fast_worker_result(tmp_path):
     process_prompt_toolkit_prompt(
         "/compact",
         state=state,
-        agent=FakeAgent(),
+        agent=backend,
         active_session_ref=ActiveSessionRef(session),
         scrollback_console=build_console(io.StringIO()),
         state_lock=Lock(),

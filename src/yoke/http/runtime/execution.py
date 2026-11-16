@@ -8,6 +8,8 @@ from concurrent.futures import Executor, Future
 from threading import Lock
 
 from yoke.agent.activity import activity_status_for_event
+from yoke.agent.loop import AgentResult, AgentStoppedError
+from yoke.agent.state import capture_agent_state
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import AgentContext, ConversationEntry
 from yoke.agent.observability import ToolTraceStore
@@ -295,6 +297,18 @@ class TurnExecutor:
                     ),
                 )
             return TurnOutcome(agent=turn_agent, result=result)
+        except AgentStoppedError:
+            state = capture_agent_state(turn_agent)
+            return TurnOutcome(
+                agent=turn_agent,
+                result=AgentResult(
+                    output="",
+                    messages=state.messages,
+                    conversation_entries=state.conversation_entries,
+                    iterations=0,
+                    status="stopped",
+                ),
+            )
         except BaseException as exc:  # worker boundary must report every failure
             partial = getattr(exc, "partial_conversation_entries", None)
             if partial is None and turn_agent is not None:

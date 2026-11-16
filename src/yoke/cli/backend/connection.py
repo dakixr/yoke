@@ -63,6 +63,10 @@ class SessionConnection:
         self._task: asyncio.Task[None] | None = None
         self._worker: Thread | None = None
 
+    def set_cwd(self, directory: Path) -> None:
+        """Use the resolved workspace for startup and later reattachments."""
+        self._cwd = directory.resolve()
+
     def client_config(self) -> dict[str, Any]:
         """Take a fresh private environment snapshot, including after restart."""
         return {
