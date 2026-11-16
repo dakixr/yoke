@@ -27,8 +27,8 @@ The local listener is `$XDG_RUNTIME_DIR/yoke/daemon.sock`, falling back to
 exceeds the Unix socket length limit. If the home fallback is also too long,
 startup reports the path error; set a shorter `XDG_RUNTIME_DIR`. Daemon state and
 run directories are set to mode 0700, including existing directories.
-The socket accepts only the kernel-reported `SO_PEERCRED` uid
-of the daemon user, with no bearer token. The browser listener is
+The socket accepts only the kernel-reported peer uid of the daemon user
+(`SO_PEERCRED` on Linux, `getpeereid` on macOS), with no bearer token. The browser listener is
 `127.0.0.1:8770`, authenticated with a bearer token. If the port is occupied,
 the daemon reports it and continues socket-only. `--port` or `YOKE_DAEMON_PORT`
 overrides that port; zero requests an ephemeral port. `~/.yoke/daemon.json`,
