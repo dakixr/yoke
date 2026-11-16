@@ -26,7 +26,7 @@ from yoke.session.events import SessionEventJournal
 from yoke.session.queue import prompt_queue_transaction
 from yoke.session.repository.table import SessionTable
 from yoke.storage import SchemaTooNewError, open_database
-from yoke.storage.database import Database
+from yoke.storage.database import Database, schema_version
 
 
 def _run(code: str) -> None:
@@ -185,7 +185,7 @@ def test_concurrent_first_open_migrates_once(tmp_path: Path) -> None:
     ]
     assert [child.wait(60) for child in children] == [0, 0, 0, 0]
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == schema_version()
     assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
     connection.close()

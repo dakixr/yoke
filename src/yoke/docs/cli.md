@@ -681,11 +681,12 @@ yoke db backup ~/yoke-backup.db         # consistent copy via VACUUM INTO
 The importer reads each file with the previous JSONL loader (including newer
 titles and pins kept in that directory's `index.json`), inserts it in one
 transaction, reads it back and compares every entry with the loaded record. A
-mismatch is deleted again and reported. Reruns skip sessions already in the
-database, so an interrupted import resumes where it stopped. Imported sessions
-keep their original timestamps, so sessions idle for more than 30 days are
-removed by the next retention pass unless pinned. Durable HTTP event journals
-and pending queues are not imported.
+mismatch rolls back the import transaction and is reported. Reruns skip sessions
+already in the database, so an interrupted import resumes where it stopped. Imported sessions
+keep their original timestamps. The database marks an imported session as held
+until its next conversation save or tree edit, so an old import survives the
+first retention pass. After it is used, normal 30-day retention applies unless
+pinned. Durable HTTP event journals and pending queues are not imported.
 Metadata-only changes, including `/model`, write only the changed session
 columns and update the loaded record in memory. They do not rebuild or reload the
 conversation. Interactive shutdown also trusts the latest accepted turn

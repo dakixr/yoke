@@ -68,7 +68,7 @@ def import_legacy_session(
         # Insert and verify in one write transaction. A mismatch rolls the
         # insert back; deleting afterwards could destroy a turn another
         # process appended between the insert and the check.
-        with store.database.write():
+        with store.database.write() as connection:
             if not store.insert_record(record):
                 return ImportResult(
                     session_id, "skipped", "Already in the database.", count
@@ -76,6 +76,9 @@ def import_legacy_session(
             problem = verify_imported_session(store, record)
             if problem is not None:
                 raise _ImportMismatch(problem)
+            connection.execute(
+                "UPDATE sessions SET import_hold = 1 WHERE id = ?", (session_id,)
+            )
     except _ImportMismatch as mismatch:
         return ImportResult(session_id, "mismatch", str(mismatch), count)
     except Exception as exc:  # noqa: BLE001 - report and continue with the batch

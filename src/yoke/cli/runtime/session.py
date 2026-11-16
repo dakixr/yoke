@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -267,7 +268,7 @@ def persist_session_state(
             state,
             agent=agent,
         )
-    except OSError as exc:
+    except (OSError, sqlite3.Error) as exc:
         print(
             f"Warning: failed to persist yoke session {active_session.id}: {exc}",
             file=sys.stderr,

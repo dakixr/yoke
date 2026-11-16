@@ -26,6 +26,7 @@ from yoke.session.queue import (
     PersistedPromptQueue,
     load_prompt_queue_snapshot,
     load_prompt_queue_snapshots,
+    prompt_queue_transaction,
 )
 from yoke.session.workspace import (
     WorkspaceUnavailable,
@@ -42,6 +43,15 @@ SessionOrder = Literal[
     "lastUserAsc",
 ]
 MessageOrder = Literal["asc", "desc"]
+
+
+def _require_no_queued_prompts(queue: PersistedPromptQueue) -> None:
+    if queue.prompts:
+        raise ApiError(
+            409,
+            "session_has_pending_work",
+            "Session has pending queued prompts. Remove, resume, or let them finish before settling.",
+        )
 
 
 class SessionCatalog:
@@ -174,37 +184,42 @@ class SessionCatalog:
             raise ApiError(400, "invalid_pinned", "pinned cannot be null.")
         if archived_set and archived is None:
             raise ApiError(400, "invalid_archived", "archived cannot be null.")
+        # Reject an already-busy session before cancelling title generation.
+        # This precheck cannot authorize archiving; recheck under the write lock.
         if archived_set and archived:
-            queue = load_prompt_queue_snapshot(self.store.directory, session_id)
-            if queue.prompts:
-                raise ApiError(
-                    409,
-                    "session_has_pending_work",
-                    "Session has pending queued prompts. Remove, resume, or let them finish before settling.",
-                )
-
+            _require_no_queued_prompts(
+                load_prompt_queue_snapshot(self.store.directory, session_id)
+            )
         if before_mutation is not None:
             before_mutation()
-        if title_set:
-            record = self.store.set_title(session_id, title, existing_record=record)
-        if pinned_set:
-            assert pinned is not None
-            record = self.store.set_pinned(session_id, pinned, existing_record=record)
-        if archived_set:
-            assert archived is not None
-            record = self.store.set_archived(
-                session_id, archived, existing_record=record
+        with prompt_queue_transaction(self.store.directory, session_id) as transaction:
+            record = self.store.summary_record(session_id)
+            if record is None:
+                raise session_not_found()
+            if archived_set and archived:
+                _require_no_queued_prompts(transaction.snapshot)
+            if title_set:
+                record = self.store.set_title(session_id, title, existing_record=record)
+            if pinned_set:
+                assert pinned is not None
+                record = self.store.set_pinned(
+                    session_id, pinned, existing_record=record
+                )
+            if archived_set:
+                assert archived is not None
+                record = self.store.set_archived(
+                    session_id, archived, existing_record=record
+                )
+            self.publish(
+                record,
+                "session.updated",
+                {
+                    "sessionID": record.id,
+                    "title": record.title,
+                    "pinned": record.pinned,
+                    "archivedAt": record.archived_at,
+                },
             )
-        self.publish(
-            record,
-            "session.updated",
-            {
-                "sessionID": record.id,
-                "title": record.title,
-                "pinned": record.pinned,
-                "archivedAt": record.archived_at,
-            },
-        )
         entry = self.store.index_entry(session_id)
         return (
             self.session_info(entry) if entry is not None else self.session_info(record)

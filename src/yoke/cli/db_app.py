@@ -17,8 +17,13 @@ db_app = typer.Typer(
 
 def _store():  # noqa: ANN202
     from yoke.session import SessionStore
+    from yoke.storage.database import DatabaseError
 
-    return SessionStore()
+    try:
+        return SessionStore()
+    except DatabaseError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
 
 @db_app.command("info")

@@ -286,7 +286,9 @@ class UploadService:
     def _delete(self, upload_id: str) -> None:
         with self.store.database.write() as connection:
             connection.execute("DELETE FROM uploads WHERE id = ?", (upload_id,))
-        shutil.rmtree(self.directory / upload_id, ignore_errors=True)
+            self.store.database.after_commit(
+                lambda: shutil.rmtree(self.directory / upload_id, ignore_errors=True)
+            )
 
     @staticmethod
     def _info(record: StoredUpload) -> UploadInfo:

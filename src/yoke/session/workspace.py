@@ -250,39 +250,41 @@ def relocate_session_workspace(
     target = str(require_workspace(directory))
     with workspace_lease(store, session_id, exclusive=True):
         with prompt_queue_transaction(store.directory, session_id) as transaction:
-            record = store.load(session_id)
-            if record.created_at is None:
+            record = store.summary_record(session_id)
+            if record is None or record.created_at is None:
                 raise ValueError(f"Session not found: {session_id}")
             # Retrying a completed relocation is a no-op, even with the original
             # expected root. This does not permit changing to a third directory.
-            if record.root == target:
-                return record
-            if expected_root is not None and record.root != expected_root:
-                raise WorkspaceConflict(session_id, record.root)
-            queue = transaction.snapshot
-            admission_store = AdmissionStore(store.directory)
-            reconcile_workspace_inputs(
-                admission_store, session_id, transaction, orphaned=True
-            )
-            admissions = admission_store.load(session_id)
-            if (
-                queue.prompts
-                or queue.pending_images
-                or any(
-                    item.state == "promoted" and not item.settled
-                    for item in admissions.records.values()
+            if record.root != target:
+                if expected_root is not None and record.root != expected_root:
+                    raise WorkspaceConflict(session_id, record.root)
+                queue = transaction.snapshot
+                admission_store = AdmissionStore(store.directory)
+                reconcile_workspace_inputs(
+                    admission_store, session_id, transaction, orphaned=True
                 )
-            ):
-                raise WorkspaceBusy(
-                    session_id,
-                    "Session has pending work. Remove or finish queued inputs before relocating.",
-                )
-            # Recheck after obtaining both locks, not only before waiting on I/O.
-            require_workspace(target)
-            changes: dict[str, object] = {
-                "root": target,
-                "updated_at": timestamp(),
-                "context_usage": None,
-                "skill_dirs": [],
-            }
-            return store.update_metadata(record.model_copy(update=changes), changes)
+                admissions = admission_store.load(session_id)
+                if (
+                    queue.prompts
+                    or queue.pending_images
+                    or any(
+                        item.state == "promoted" and not item.settled
+                        for item in admissions.records.values()
+                    )
+                ):
+                    raise WorkspaceBusy(
+                        session_id,
+                        "Session has pending work. Remove or finish queued inputs before relocating.",
+                    )
+                # Recheck after obtaining both locks, not only before waiting on I/O.
+                require_workspace(target)
+                changes: dict[str, object] = {
+                    "root": target,
+                    "updated_at": timestamp(),
+                    "context_usage": None,
+                    "skill_dirs": [],
+                }
+                store.update_metadata(record.model_copy(update=changes), changes)
+        # Preserve the full-record return contract without decoding history
+        # while holding the database's cross-process writer lock.
+        return store.load(session_id)
