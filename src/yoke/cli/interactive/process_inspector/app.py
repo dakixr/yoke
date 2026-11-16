@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
+from yoke.cli.interactive.process_inspector.state import (
+    ProcessInspectorState as ProcessInspectorState,
+)
+
 from contextlib import suppress
-from dataclasses import dataclass
-from dataclasses import field
 import threading
 import time
-from typing import Literal
 
-from yoke.agent.tools.command_process import (
-    CommandProcessManager,
-)
+from yoke.cli.backend.inspection import ProcessInspection
 from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
 )
 from yoke.cli.interactive.process_inspector.render import detail_text
-from yoke.cli.interactive.process_inspector.render import DetailOutputCache
 from yoke.cli.interactive.process_inspector.render import move_selection
 from yoke.cli.interactive.process_inspector.render import page_step
 from yoke.cli.interactive.process_inspector.render import (
@@ -38,7 +36,7 @@ class ProcessSnapshotCache:
 
     def __init__(
         self,
-        manager: CommandProcessManager,
+        manager: ProcessInspection,
         *,
         refresh_interval: float = PROCESS_SNAPSHOT_REFRESH_INTERVAL,
     ) -> None:
@@ -68,26 +66,7 @@ class ProcessSnapshotCache:
         return self._processes
 
 
-@dataclass(slots=True)
-class ProcessInspectorState:
-    """Mutable UI state for the process inspector."""
-
-    processes: list[CommandProcessSnapshot]
-    selected_index: int = 0
-    list_scroll: int = 0
-    detail_scroll: int = 0
-    wrap: bool = True
-    notice: str = ""
-    active_pane: Literal["sidebar", "detail"] = "sidebar"
-    detail_output_cache: DetailOutputCache = field(default_factory=DetailOutputCache)
-
-    def __post_init__(self) -> None:
-        """Start with the newest retained process selected."""
-        if self.processes:
-            self.selected_index = len(self.processes) - 1
-
-
-def open_live_process_inspector(manager: CommandProcessManager) -> None:
+def open_live_process_inspector(manager: ProcessInspection) -> None:
     """Open a fullscreen alternate-buffer view of command processes."""
     from prompt_toolkit.application import Application
     from prompt_toolkit.formatted_text import HTML
@@ -198,7 +177,7 @@ def _register_keys(  # noqa: C901
     @key_bindings.add("g")
     def _home(event) -> None:
         if state.active_pane == "sidebar":
-            state.selected_index = 0
+            state.cursor.index = 0
         state.detail_scroll = 0
         event.app.invalidate()
 
@@ -206,7 +185,7 @@ def _register_keys(  # noqa: C901
     @key_bindings.add("G")
     def _end(event) -> None:
         if state.active_pane == "sidebar":
-            state.selected_index = max(0, len(current_processes()) - 1)
+            state.cursor.index = max(0, len(current_processes()) - 1)
             state.detail_scroll = 0
         else:
             state.detail_scroll = 10**9
@@ -241,20 +220,7 @@ def _refresh_processes(
     processes: list[CommandProcessSnapshot],
 ) -> None:
     """Refresh snapshots while preserving the selected session ID."""
-    selected = selected_process(state, state.processes)
-    selected_id = selected.session_id if selected is not None else None
-    was_at_tail = bool(state.processes) and state.selected_index >= (
-        len(state.processes) - 1
+    state.cursor.refresh(
+        state.processes, processes, key=lambda process: process.session_id
     )
     state.processes = processes
-    if not processes:
-        state.selected_index = 0
-        return
-    if was_at_tail:
-        state.selected_index = len(processes) - 1
-        return
-    for index, process in enumerate(processes):
-        if process.session_id == selected_id:
-            state.selected_index = index
-            return
-    state.selected_index = min(state.selected_index, len(processes) - 1)

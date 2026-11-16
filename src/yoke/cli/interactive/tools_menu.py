@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from yoke.agent.loop.agent import RuntimeAgent
+from yoke.cli.backend import SessionBackend
 from yoke.cli.bootstrap.types import LoadedTool, ToolLoadReport
 from yoke.cli.render.base import Console
 from yoke.cli.runtime.selector.multiselect import (
@@ -68,12 +68,14 @@ def handle_tools_menu(
     """Open the fullscreen tools menu and apply selected changes."""
     from yoke.cli.render import print_scrollback_notice
 
-    if not isinstance(agent, RuntimeAgent):
+    backend = SessionBackend.wrap(agent)
+    if not backend.runtime_available:
         print_scrollback_notice(
             console, "/tools is only available for RuntimeAgent sessions."
         )
         return
-    report = getattr(agent, "tool_report", None)
+    inventory = backend.tools()
+    report = inventory.report()
     if not isinstance(report, ToolLoadReport):
         print_scrollback_notice(console, "No tool inventory is available.")
         return
@@ -83,7 +85,7 @@ def handle_tools_menu(
         print_scrollback_notice(console, "No tools are available.")
         return
 
-    active_names = set(agent.tools)
+    active_names = inventory.active_names()
     visible_names = {name for row in rows for name in row.tool_names}
     active_visible_names = active_names & visible_names
     selected_indexes = {
@@ -116,11 +118,11 @@ def handle_tools_menu(
         print_scrollback_notice(console, "Tool changes cancelled.")
         return
 
-    _apply_session_tool_changes(
-        agent=agent,
-        report=report,
-        rows=rows,
-        active_names=selected_visible_names,
+    inventory.select(
+        selected_visible_names,
+        visible_names,
+        report,
+        ordered_names=[loaded.tool.name for row in rows for loaded in row.loaded_tools],
     )
     if scope.id != "session":
         config_path = _tool_scope_config_path(scope=scope, root=root)
@@ -187,30 +189,6 @@ def _render_tool_scope_row(
     marker = ">" if is_selected else " "
     text = f"{marker} {scope.label} - {scope.description}"
     return text[:width]
-
-
-def _apply_session_tool_changes(
-    *,
-    agent: RuntimeAgent,
-    report: ToolLoadReport,
-    rows: list[ToolMenuRow],
-    active_names: set[str],
-) -> None:
-    visible_tool_names = {name for row in rows for name in row.tool_names}
-    selected_tools = [
-        loaded.tool
-        for row in rows
-        if row.tool_names & active_names
-        for loaded in row.loaded_tools
-        if loaded.tool.name in active_names
-    ]
-    hidden_runtime_tools = [
-        tool for name, tool in agent.tools.items() if name not in visible_tool_names
-    ]
-    selected_tools.extend(hidden_runtime_tools)
-    agent.apply_tool_selection(
-        selected_tools, report=_tool_report_with_active_names(report, active_names)
-    )
 
 
 def _tool_scope_config_path(
@@ -308,28 +286,6 @@ def _render_tool_row(
             row.source.ljust(columns.widths[2]),
             location.ljust(columns.widths[3]),
         )
-    )
-
-
-def _tool_report_with_active_names(
-    report: ToolLoadReport,
-    active_names: set[str],
-) -> ToolLoadReport:
-    return ToolLoadReport(
-        discovered_tools=list(report.discovered_tools),
-        active_tools=[
-            entry
-            for entry in report.discovered_tools
-            if entry.tool.name in active_names
-        ],
-        denied_tools=[
-            entry
-            for entry in report.discovered_tools
-            if entry.tool.name not in active_names
-        ],
-        config_path=report.config_path,
-        unmatched_tool_names=report.unmatched_tool_names,
-        unmatched_capability_ids=report.unmatched_capability_ids,
     )
 
 

@@ -40,7 +40,7 @@ from yoke.cli.interactive.turn_renderer import (
     make_turn_scoped_renderer_factory,
 )
 from yoke.cli.render import build_console
-from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime.base import ActiveSessionRef
 
 
@@ -59,7 +59,7 @@ class PromptToolkitControl:
 def create_prompt_toolkit_control(  # noqa: C901
     *,
     state: PromptCliState,
-    agent: AgentRunner,
+    agent: object,
     active_session_ref: ActiveSessionRef,
     renderer: PromptToolkitLiveRenderer,
     state_lock: Lock,

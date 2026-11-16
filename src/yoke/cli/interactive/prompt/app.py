@@ -8,7 +8,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, cast
 
 from yoke.agent.models import Message
-from yoke.cli.config import CLIArgs, format_provider_model_status
+from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import ImageAttachment, resolve_image_path
 from yoke.cli.interactive.common import (
     PromptCliState,
@@ -55,7 +55,8 @@ from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.path_display import format_root_label
 from yoke.cli.render import OutputStream, build_console
-from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend import SessionBackend
 from yoke.cli.runtime.base import ActiveSessionRef
 
 if TYPE_CHECKING:
@@ -66,7 +67,7 @@ if TYPE_CHECKING:
 
 def run_prompt_toolkit_cli(  # noqa: C901
     args: CLIArgs,
-    agent: AgentRunner,
+    agent: object,
     session_messages: list[Message],
     *,
     active_session: ActiveSession,
@@ -82,9 +83,9 @@ def run_prompt_toolkit_cli(  # noqa: C901
     from prompt_toolkit import PromptSession
     from prompt_toolkit.key_binding import KeyBindings
 
+    agent = SessionBackend.wrap(agent, active_session)
     restored_queue = load_prompt_queue_state(active_session)
-    provider_config = getattr(getattr(agent, "provider", None), "config", None)
-    provider_effort = getattr(provider_config, "reasoning_effort", None)
+    provider_effort, _levels = agent.thinking()
     state = PromptCliState(
         messages=list(session_messages),
         pending_prompts=restored_queue.prompts,
@@ -99,7 +100,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
     )
 
     def refresh_provider_model_text() -> str | None:
-        return format_provider_model_status(agent)
+        return agent.provider_label()
 
     def refresh_session_title_text() -> str | None:
         return session_ref.value.title
@@ -286,18 +287,9 @@ def run_prompt_toolkit_cli(  # noqa: C901
     )
 
     def cycle_thinking_effort() -> str:
-        provider = getattr(agent, "provider", None)
-        config = getattr(provider, "config", None)
-        current = getattr(config, "reasoning_effort", None)
-        current_model_info = getattr(provider, "current_model_info", None)
-        model_info = current_model_info() if callable(current_model_info) else None
-        thinking_levels = getattr(model_info, "thinking_levels", ())
-        next_effort = cycle_prompt_thinking_effort(
-            current,
-            tuple(thinking_levels),
-        )
-        if config is not None and hasattr(config, "reasoning_effort"):
-            config.reasoning_effort = next_effort
+        current, thinking_levels = agent.thinking()
+        next_effort = cycle_prompt_thinking_effort(current, thinking_levels)
+        agent.set_thinking(next_effort)
         invalidate_prompt()
         return next_effort
 
@@ -329,7 +321,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
         agent=agent,
         prompt_session=prompt_session,
         completer=SlashCommandCompleter(
-            skill_provider=lambda: getattr(agent, "available_skills", ()),
+            skill_provider=agent.available_skills,
         ),
         key_bindings=key_bindings,
         state_lock=state_lock,

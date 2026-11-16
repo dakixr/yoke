@@ -9,13 +9,8 @@ from yoke.cli.interactive.common import PendingPrompt, PromptCliState
 from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 from yoke.cli.render import format_compaction_note
-from yoke.cli.runtime import (
-    ActiveSession,
-    AgentRunner,
-    force_compact_history,
-    persist_session_state,
-    session_usage_metric_context,
-)
+from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend import SessionBackend
 from yoke.cli.runtime.base import ActiveSessionRef
 
 
@@ -23,7 +18,7 @@ def start_prompt_compaction(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    agent: AgentRunner,
+    agent: object,
     active_session_ref: ActiveSessionRef,
     scrollback: ScrollbackSink,
     request_context_usage: Callable[[str], None],
@@ -38,12 +33,10 @@ def start_prompt_compaction(
     conversation_entries_snapshot = current_session.active_entries()
 
     def run_compaction() -> None:
-        with session_usage_metric_context(current_session, ""):
-            compacted = force_compact_history(
-                agent,
-                message_snapshot,
-                conversation_entries=conversation_entries_snapshot,
-            )
+        compacted = SessionBackend.wrap(agent, current_session).compact(
+            message_snapshot,
+            conversation_entries=conversation_entries_snapshot,
+        )
         if compacted is None:
             scrollback.emit("notice", "Nothing to compact right now.")
         else:
@@ -77,7 +70,7 @@ def _persist_prompt_compaction(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    agent: AgentRunner,
+    agent: object,
     active_session: ActiveSession,
     scrollback: ScrollbackSink,
 ) -> None:
@@ -91,9 +84,7 @@ def _persist_prompt_compaction(
     ) = compacted
     with state_lock:
         state.messages = updated_messages
-    persist_session_state(
-        active_session,
-        agent,
+    SessionBackend.wrap(agent, active_session).persist(
         updated_messages,
         conversation_entries=conversation_entries,
     )

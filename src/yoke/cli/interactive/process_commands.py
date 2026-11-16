@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from yoke.agent.tools.command_process import (
-    CommandProcessManager,
-)
+from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.inspection import ProcessInspection
 from yoke.cli.render.base import Console
 
 
-def command_process_manager(agent: object) -> CommandProcessManager | None:
-    """Return the live runtime's process manager when supported."""
-    manager = getattr(agent, "command_process_manager", None)
-    return manager if isinstance(manager, CommandProcessManager) else None
+def command_process_manager(agent: object) -> ProcessInspection | None:
+    """Return the session's process inspection boundary when available."""
+    inspection = SessionBackend.wrap(agent).processes()
+    return inspection if inspection.available else None
 
 
 def print_process_table(console: Console, agent: object) -> None:

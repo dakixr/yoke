@@ -7,14 +7,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from yoke.agent.loop.agent import RuntimeAgent
+from yoke.cli.backend import SessionBackend
 from yoke.cli.interactive.mcp_menu_helpers import (
     McpServerAction,
     McpToolRow,
     _find_server,
-    _list_server_tools,
     _load_mcp_tool_rows,
-    _refresh_mcp_tools,
     _scope_for_action,
     _select_mcp_scope,
     _set_mcp_server_enabled,
@@ -34,8 +32,6 @@ from yoke.cli.runtime.selector.ui import (
 )
 from yoke.mcp.config import (
     McpServerConfig,
-    McpSessionPolicy,
-    load_mcp_config,
     server_supports_tool,
 )
 
@@ -50,19 +46,16 @@ def handle_mcp_menu(
     """Open the interactive MCP server/tool menu."""
     from yoke.cli.render import print_scrollback_notice
 
-    if not isinstance(agent, RuntimeAgent):
+    backend = SessionBackend.wrap(agent)
+    if not backend.runtime_available:
         print_scrollback_notice(
             console, "/mcp is only available for RuntimeAgent sessions."
         )
         return
-    session_policy = ensure_mcp_session_policy(agent)
+    inventory = backend.mcp(root)
     selected_server = initial_server
     while True:
-        config = load_mcp_config(
-            root=root,
-            home=Path.home(),
-            session_policy=session_policy,
-        )
+        config = inventory.config()
         if not config.servers:
             print_scrollback_notice(
                 console,
@@ -88,11 +81,10 @@ def handle_mcp_menu(
             continue
         if action.id == "tools":
             _handle_mcp_tool_menu(
-                agent=agent,
+                agent=backend,
                 console=console,
                 root=root,
                 server=server,
-                session_policy=session_policy,
             )
             continue
         scope = _scope_for_action(action.id, root=root)
@@ -104,23 +96,13 @@ def handle_mcp_menu(
             scope=scope,
             server=server,
             enabled=new_enabled,
-            session_policy=session_policy,
+            inventory=inventory,
         )
-        _refresh_mcp_tools(agent)
+        inventory.refresh()
         print_scrollback_notice(
             console,
             f"MCP server {server.name} {'enabled' if new_enabled else 'disabled'} for {scope.label.lower()}.",
         )
-
-
-def ensure_mcp_session_policy(agent: RuntimeAgent) -> McpSessionPolicy:
-    """Return the session MCP policy attached to this agent/provider."""
-    existing = agent.tool_session_context.mcp_policy
-    if isinstance(existing, McpSessionPolicy):
-        return existing
-    policy = McpSessionPolicy.empty()
-    agent.tool_session_context.mcp_policy = policy
-    return policy
 
 
 def _select_mcp_server(
@@ -179,11 +161,10 @@ def _select_mcp_server_action(
 
 def _handle_mcp_tool_menu(
     *,
-    agent: RuntimeAgent,
+    agent: SessionBackend,
     console: Console,
     root: Path,
     server: McpServerConfig,
-    session_policy: McpSessionPolicy,
 ) -> None:
     from yoke.cli.render import print_scrollback_notice
 
@@ -193,7 +174,8 @@ def _handle_mcp_tool_menu(
             f"MCP server {server.name} is disabled. Enable it before drilling into tools.",
         )
         return
-    rows_or_error = _load_mcp_tool_rows(root=root, server=server)
+    inventory = agent.mcp(root)
+    rows_or_error = _load_mcp_tool_rows(inventory=inventory, server=server)
     if isinstance(rows_or_error, str):
         print_scrollback_notice(console, rows_or_error)
         return
@@ -220,14 +202,10 @@ def _handle_mcp_tool_menu(
             scope=scope,
             server=server,
             tool_name=row.name,
-            session_policy=session_policy,
+            inventory=inventory,
         )
-        _refresh_mcp_tools(agent)
-        config = load_mcp_config(
-            root=root,
-            home=Path.home(),
-            session_policy=session_policy,
-        )
+        inventory.refresh()
+        config = inventory.config()
         refreshed = _find_server(config.servers, server.name)
         if refreshed is not None:
             server = refreshed
@@ -237,7 +215,7 @@ def _handle_mcp_tool_menu(
                     description=tool.description,
                     enabled=server_supports_tool(server, tool.name),
                 )
-                for tool in _list_server_tools(root=root, server=server)
+                for tool in inventory.list_tools(server)
             ]
         print_scrollback_notice(
             console,

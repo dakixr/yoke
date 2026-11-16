@@ -23,7 +23,6 @@ from yoke.cli.render import build_console
 from yoke.cli.render import print_agent_output
 from yoke.cli.render import print_error
 from yoke.cli.runtime.base import ActiveSession
-from yoke.cli.runtime.base import AgentRunner
 from yoke.cli.runtime.base import execute_turn
 from yoke.cli.runtime.lifetime import close_cli_owned_agent
 from yoke.cli.runtime.session import create_active_session
@@ -96,7 +95,7 @@ def resolve_cli_mode(
 @close_cli_owned_agent
 def run_cli(
     args: CLIArgs,
-    agent: AgentRunner | None = None,
+    agent: object | None = None,
     *,
     input_func=input,
     stdout: OutputStream | None = None,
@@ -188,7 +187,7 @@ def run_resume_cli(
     *,
     all_sessions: bool = False,
     relocate: Path | str | None = None,
-    agent: AgentRunner | None = None,
+    agent: object | None = None,
     input_func=input,
     stdout: OutputStream | None = None,
     stderr: OutputStream | None = None,
@@ -289,7 +288,7 @@ def run_resume_cli(
 
 def _run_headless_mode(
     *,
-    active_agent: AgentRunner,
+    active_agent: object,
     active_session: ActiveSession,
     session_messages: list[Message],
     prompt: str | None,

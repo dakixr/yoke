@@ -196,6 +196,26 @@ class RuntimeAgent:
         return self._context is not None
 
     @property
+    def conversation_marker(self) -> tuple[int, str | None, str | None] | None:
+        """Identify owned context, leaf and checkpoint without copying messages.
+
+        Presentation adapters can detect compaction or context replacement
+        during model selection without inspecting this runtime's private state.
+        """
+        from yoke.agent.conversation import project_conversation
+
+        context = self._context
+        if context is None:
+            return None
+        log = context.conversation_log
+        checkpoint = project_conversation(log.entries, leaf_id=log.leaf_id).checkpoint
+        return (
+            id(context),
+            log.leaf_id,
+            checkpoint.id if checkpoint is not None else None,
+        )
+
+    @property
     def messages(self) -> list[Message]:
         """Return the current transcript messages."""
         if self._context is None:

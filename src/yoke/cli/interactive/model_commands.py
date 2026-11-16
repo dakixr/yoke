@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import sqlite3
 
 from yoke.agent.models import Message
-from yoke.agent.state import capture_agent_state
+from yoke.cli.backend import SessionBackend
 from yoke.cli.config import CLIArgs
 from yoke.cli.providers.catalog import ProviderModelChoice
-from yoke.cli.providers.catalog import list_all_provider_model_choices
-from yoke.cli.providers.state import switch_agent_provider_model
 from yoke.cli.render.base import Console
 from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime.session import save_active_session_metadata
 from yoke.cli.runtime.selector.format import fit_selector_cell
 from yoke.cli.runtime.selector.ui import SelectorTableColumns
 from yoke.cli.runtime.selector.ui import select_table_item_interactive
@@ -47,6 +42,7 @@ def handle_switch_model(
         console,
         args=args,
         active_session=active_session,
+        backend=SessionBackend.wrap(agent, active_session),
     )
     if selected is None:
         return messages
@@ -73,39 +69,22 @@ def _switch_model(
 ) -> list[Message]:
     from yoke.cli.render import print_scrollback_notice
 
-    context_before_switch = _context_marker(agent)
     try:
-        provider_state = switch_agent_provider_model(
-            agent,
+        provider_state, updated_messages, metadata_error = SessionBackend.wrap(
+            agent, active_session
+        ).switch_model(
+            qualified_model_id,
+            reasoning_effort,
             args=args,
-            qualified_model_id=qualified_model_id,
-            reasoning_effort=reasoning_effort,
+            messages=messages,
         )
     except ValueError as exc:
         print_scrollback_notice(console, str(exc))
         return messages
-    if _context_marker(agent) == context_before_switch:
-        try:
-            save_active_session_metadata(active_session, provider_state)
-        except (OSError, sqlite3.Error) as exc:
-            print_scrollback_notice(
-                console,
-                f"Model switched, but session metadata was not saved: {exc}",
-            )
-        updated_messages = messages
-    else:
-        state = capture_agent_state(agent)
-        runtime_messages = getattr(agent, "messages", None)
-        updated_messages = (
-            [message.model_copy(deep=True) for message in runtime_messages]
-            if isinstance(runtime_messages, list)
-            else state.messages
-        )
-        persist_session_state(
-            active_session,
-            agent,
-            updated_messages,
-            conversation_entries=state.conversation_entries,
+    if metadata_error is not None:
+        print_scrollback_notice(
+            console,
+            f"Model switched, but session metadata was not saved: {metadata_error}",
         )
     context_suffix = (
         f", ctx={provider_state.context_window_tokens}"
@@ -126,33 +105,16 @@ def _switch_model(
     return updated_messages
 
 
-def _context_marker(agent: object) -> tuple[int, str | None, str | None] | None:
-    context = getattr(agent, "_context", None)
-    if context is None:
-        return None
-    log = getattr(context, "conversation_log", None)
-    from yoke.agent.conversation import project_conversation
-
-    snapshot = project_conversation(
-        getattr(log, "entries", ()),
-        leaf_id=getattr(log, "leaf_id", None),
-    ).checkpoint
-    return (
-        id(context),
-        getattr(log, "leaf_id", None),
-        getattr(snapshot, "id", None),
-    )
-
-
 def _select_provider_model(
     console: Console,
     *,
     args: CLIArgs,
     active_session: ActiveSession,
+    backend: SessionBackend,
 ) -> ProviderModelChoice | None:
     from yoke.cli.render import print_scrollback_notice
 
-    choices = list_all_provider_model_choices(args=args)
+    choices = backend.models(args)
     if not choices:
         print_scrollback_notice(console, "No models advertised by providers.")
         return None

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.backend import SessionBackend
+
 from collections.abc import Callable
 from threading import Lock
 from threading import Thread
@@ -13,7 +15,6 @@ from yoke.cli.interactive.queue.mutations import consume_pending_images
 from yoke.cli.interactive.queue.mutations import observe_prompt_submission
 from yoke.cli.interactive.queue.mutations import queue_prompt_submission
 from yoke.cli.runtime import ActiveSession
-from yoke.session.workspace import require_workspace
 
 
 def submit_prompt_toolkit_prompt(
@@ -29,7 +30,7 @@ def submit_prompt_toolkit_prompt(
 ) -> None:
     """Submit a normal prompt without reprocessing slash commands."""
     try:
-        require_workspace(active_session.root, session_id=active_session.id)
+        SessionBackend.require_workspace(active_session)
         pending_images, _ = observe_prompt_submission(
             state=state,
             state_lock=state_lock,

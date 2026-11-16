@@ -6,32 +6,25 @@ from __future__ import annotations
 from yoke.agent.models import Message
 from yoke.cli.render import print_scrollback_notice
 from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime import AgentRunner
-from yoke.cli.runtime import persist_session_state
+from yoke.cli.backend import SessionBackend
 
 
 def handle_pin_session(
     active_session: ActiveSession,
-    agent: AgentRunner,
+    agent: object,
     messages: list[Message],
 ) -> str:
     """Toggle the active session pin state and return a status message."""
-    if active_session.record.created_at is None:
-        persist_session_state(active_session, agent, messages)
-    pinned = not active_session.record.pinned
-    active_session.record = active_session.store.set_pinned(
-        active_session.id,
-        pinned,
-        existing_record=active_session.record,
-    )
-    active_session.title = active_session.record.title
-    state = "pinned" if active_session.record.pinned else "unpinned"
+    pinned = SessionBackend.wrap(agent, active_session).pin(messages)
+    state = "pinned" if pinned else "unpinned"
     return f"Session {state}: {active_session.id}"
 
 
 def print_session_info(
     console,
     active_session: ActiveSession,
+    *,
+    backend: SessionBackend,
 ) -> None:
     """Print active session metadata in scrollback."""
     record = active_session.record
@@ -41,7 +34,7 @@ def print_session_info(
         f"Title: {record.title or 'Untitled session'}",
         f"Pinned: {_yes_no(record.pinned)}",
         f"Root: {active_session.root}",
-        f"Database: {active_session.store.database_path}",
+        f"Database: {backend.database_path()}",
         f"Provider: {record.provider_name or 'unknown'}",
         f"Model: {record.model_id or 'unknown'}",
         f"Messages: {len(active_session.messages())}",

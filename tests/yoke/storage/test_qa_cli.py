@@ -63,9 +63,7 @@ def test_model_switch_warns_on_sqlite_failure(
     def fail(*_args: object, **_kwargs: object) -> None:
         raise sqlite3.OperationalError(message)
 
-    monkeypatch.setattr(
-        "yoke.cli.interactive.model_commands.save_active_session_metadata", fail
-    )
+    monkeypatch.setattr("yoke.cli.runtime.session.save_active_session_metadata", fail)
     assert (
         _switch_model(
             "demo:gpt-b",

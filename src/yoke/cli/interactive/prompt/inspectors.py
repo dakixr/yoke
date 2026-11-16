@@ -14,12 +14,10 @@ from yoke.cli.interactive.process_inspector import (
     open_live_process_inspector,
 )
 from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
-from yoke.cli.interactive.tool_inspector import ToolTraceEntry
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
-from yoke.cli.interactive.tool_inspector import entries_from_messages
 from yoke.cli.interactive.tool_inspector import open_live_tool_inspector
-from yoke.cli.interactive.tool_inspector import merge_trace_entries
-from yoke.cli.runtime import AgentRunner
+from yoke.cli.backend.inspection import ToolInspection
+
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
@@ -27,7 +25,7 @@ if TYPE_CHECKING:
 
 def create_inspector_launchers(
     *,
-    agent: AgentRunner,
+    agent: object,
     prompt_session: PromptSession,
     state: PromptCliState,
     state_lock: Lock,
@@ -48,29 +46,17 @@ def create_inspector_launchers(
         )
 
     def show_tool_inspector() -> None:
-        completed_signature: tuple[int, int | None] | None = None
-        completed_entries: list[ToolTraceEntry] = []
-
-        def current_entries() -> list[ToolTraceEntry]:
-            nonlocal completed_entries, completed_signature
+        def message_snapshot():
             with state_lock:
-                signature = (id(state.messages), len(state.messages))
-                message_snapshot = list(state.messages)
-            if signature != completed_signature:
-                completed_entries = entries_from_messages(message_snapshot)
-                completed_signature = signature
-            return merge_trace_entries(completed_entries, trace_store.snapshot())
+                return state.messages
 
-        def current_revision() -> tuple[int, int, int]:
-            with state_lock:
-                message_revision = (id(state.messages), len(state.messages))
-            return (trace_store.version(), *message_revision)
+        inspection = ToolInspection(message_snapshot, trace_store)
 
         schedule(
             lambda: open_live_tool_inspector(
-                current_entries,
+                inspection.snapshots,
                 trace_store=trace_store,
-                revision_provider=current_revision,
+                revision_provider=inspection.revision,
             )
         )
 

@@ -17,7 +17,8 @@ from prompt_toolkit.key_binding.key_bindings import _parse_key
 from yoke.agent.loop import AgentStoppedError
 from yoke.agent.models import Message
 from yoke.cli.config.resources import close_quietly
-from yoke.cli.interactive import commands, turn_runner
+from yoke.cli.interactive import commands
+from yoke.cli.backend import turns as turn_runner
 from yoke.cli.interactive.basic import _start_basic_turn
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.common import (
@@ -138,9 +139,7 @@ def test_compaction_dispatch_uses_host_capability(tmp_path, monkeypatch):
     output = io.StringIO()
     start = Mock(return_value=True)
     sync_compact = Mock(side_effect=AssertionError("must use host compaction"))
-    monkeypatch.setattr(
-        "yoke.cli.interactive.slash_commands.force_compact_history", sync_compact
-    )
+    monkeypatch.setattr("yoke.cli.backend.session.force_compact_history", sync_compact)
     commands.handle_slash_command(
         "/compact",
         agent=FakeAgent(),

@@ -497,11 +497,11 @@ state = capture_agent_state(agent)
 # Store `state.model_dump(mode="json")` in your application's storage layer.
 ```
 
-Custom runner objects used with CLI runtime helpers should implement
-`run(prompt, *, on_event=None, stop_requested=None)`. Set
-`supports_message_history = True` to receive `messages` as the second argument,
-or `supports_user_message = True` to receive explicit multimodal
-`user_message=...` payloads.
+The CLI production runtime is `RuntimeAgent`. The former `AgentRunner` protocol
+has been removed; its old import is a compatibility alias to `RuntimeAgent`.
+Interactive front ends use the [CLI session backend](cli-backend.md). Existing
+injected test doubles retain their explicit message/history call adapters while
+the in-process CLI implementation is being retired.
 
 Providers may implement `complete_with_cancel(messages, tools, *,
 cancel_requested)` for native request cancellation and `fork_for_turn()` for

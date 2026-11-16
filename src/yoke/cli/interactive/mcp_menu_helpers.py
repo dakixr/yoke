@@ -7,17 +7,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from yoke.agent.loop.agent import RuntimeAgent
+from yoke.cli.backend.catalog import McpInventory
 from yoke.cli.runtime.selector.ui import select_list_item_interactive
 from yoke.mcp.config import MCP_CONFIG_RELATIVE_PATH
 from yoke.mcp.config import GLOBAL_MCP_CONFIG_RELATIVE_PATH
 from yoke.mcp.config import McpServerConfig
-from yoke.mcp.config import McpSessionPolicy
-from yoke.mcp.config import McpSessionServerPolicy
 from yoke.mcp.config import server_supports_tool
 from yoke.mcp.editing import set_persisted_mcp_server_enabled
 from yoke.mcp.editing import toggle_persisted_mcp_tool
-from yoke.mcp.manager import McpManager
 
 
 @dataclass(slots=True, frozen=True)
@@ -50,7 +47,7 @@ class McpToolRow:
 
 def _load_mcp_tool_rows(
     *,
-    root: Path,
+    inventory: McpInventory,
     server: McpServerConfig,
 ) -> list[McpToolRow] | str:
     if server.transport not in {"stdio", "streamable-http", "http"}:
@@ -62,18 +59,10 @@ def _load_mcp_tool_rows(
                 description=tool.description,
                 enabled=server_supports_tool(server, tool.name),
             )
-            for tool in _list_server_tools(root=root, server=server)
+            for tool in inventory.list_tools(server)
         ]
     except Exception as exc:
         return f"MCP error while listing {server.name}: {exc}"
-
-
-def _list_server_tools(*, root: Path, server: McpServerConfig):
-    manager = McpManager.from_paths(root=root, home=Path.home())
-    try:
-        return manager.list_configured_tools(server)
-    finally:
-        manager.close()
 
 
 def _select_mcp_scope(*, root: Path) -> McpMenuScope | None:
@@ -145,15 +134,10 @@ def _set_mcp_server_enabled(
     scope: McpMenuScope,
     server: McpServerConfig,
     enabled: bool,
-    session_policy: McpSessionPolicy,
+    inventory: McpInventory,
 ) -> None:
     if scope.id == "session":
-        existing = session_policy.servers.get(server.name)
-        session_policy.servers[server.name] = McpSessionServerPolicy(
-            enabled=enabled,
-            enabled_tools=(existing.enabled_tools if existing else None),
-            disabled_tools=(existing.disabled_tools if existing else None),
-        )
+        inventory.set_enabled(server, enabled)
         return
     if scope.path is None:
         return
@@ -172,14 +156,10 @@ def _toggle_mcp_tool(
     scope: McpMenuScope,
     server: McpServerConfig,
     tool_name: str,
-    session_policy: McpSessionPolicy,
+    inventory: McpInventory,
 ) -> None:
     if scope.id == "session":
-        _toggle_session_mcp_tool(
-            session_policy=session_policy,
-            server=server,
-            tool_name=tool_name,
-        )
+        inventory.toggle_tool(server, tool_name)
         return
     if scope.path is None:
         return
@@ -192,38 +172,6 @@ def _toggle_mcp_tool(
     )
 
 
-def _toggle_session_mcp_tool(
-    *,
-    session_policy: McpSessionPolicy,
-    server: McpServerConfig,
-    tool_name: str,
-) -> None:
-    existing = session_policy.servers.get(server.name)
-    currently_enabled = server_supports_tool(server, tool_name)
-    enabled_tools = (
-        list(server.enabled_tools) if server.enabled_tools is not None else None
-    )
-    disabled_tools = list(server.disabled_tools)
-    if currently_enabled:
-        if enabled_tools is not None:
-            _remove_value(enabled_tools, tool_name)
-        elif tool_name not in disabled_tools:
-            disabled_tools.append(tool_name)
-    else:
-        _remove_value(disabled_tools, tool_name)
-        if enabled_tools is not None and tool_name not in enabled_tools:
-            enabled_tools.append(tool_name)
-    session_policy.servers[server.name] = McpSessionServerPolicy(
-        enabled=existing.enabled if existing else None,
-        enabled_tools=tuple(enabled_tools) if enabled_tools is not None else None,
-        disabled_tools=tuple(disabled_tools),
-    )
-
-
-def _remove_value(values: list[str], value: str) -> None:
-    values[:] = [item for item in values if item != value]
-
-
 def _find_server(
     servers: tuple[McpServerConfig, ...],
     name: str,
@@ -232,15 +180,3 @@ def _find_server(
         if server.name == name:
             return server
     return None
-
-
-def _refresh_mcp_tools(agent: RuntimeAgent) -> None:
-    old_non_mcp_names = {
-        name for name in agent.tools if name not in {"mcp_inspect", "mcp_call"}
-    }
-    agent.refresh_tools(force=True)
-    agent.tools = {
-        name: tool
-        for name, tool in agent.tools.items()
-        if name in {"mcp_inspect", "mcp_call"} or name in old_non_mcp_names
-    }

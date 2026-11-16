@@ -58,13 +58,13 @@ def test_navigation_to_ansi_tool_output_does_not_break_html() -> None:
     ]
     state = ToolInspectorState(entries)
     visible = sidebar_items(entries)
-    state.selected_index = 0
+    state.cursor.index = 0
 
     HTML(render_view_html(state, visible)).__pt_formatted_text__()
     move_selection(state, visible, 1)
     formatted = HTML(render_view_html(state, visible)).__pt_formatted_text__()
 
-    assert state.selected_index == 1
+    assert state.cursor.index == 1
     assert any("␀␛[31mboom␛[0m�" in item[1] for item in formatted)
     assert any("<ansired>unterminated" in item[1] for item in formatted)
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Literal
-from typing import Protocol
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from yoke.cli.interactive.tool_inspector.state import ToolInspectorState
 
 from yoke.cli.interactive.tool_inspector.styles import fit
 from yoke.cli.interactive.tool_inspector.styles import pane_label
@@ -12,16 +14,6 @@ from yoke.cli.interactive.tool_inspector.trace import ToolTraceEntry
 
 
 type ToolInspectorItem = ToolTraceEntry | ToolTraceContext
-
-
-class ChromeState(Protocol):
-    """Inspector state needed to render surrounding chrome."""
-
-    detail_scroll: int
-    search: str
-    searching: bool
-    notice: str
-    active_pane: Literal["sidebar", "detail"]
 
 
 def title(columns: int) -> str:
@@ -35,7 +27,7 @@ def title(columns: int) -> str:
 
 
 def pane_header(
-    state: ChromeState,
+    state: ToolInspectorState,
     list_width: int,
     detail_width: int,
     *,
@@ -58,7 +50,7 @@ def pane_header(
 
 
 def footer_text(
-    state: ChromeState,
+    state: ToolInspectorState,
     visible: list[ToolInspectorItem],
     detail_line_count: int,
     body_rows: int,

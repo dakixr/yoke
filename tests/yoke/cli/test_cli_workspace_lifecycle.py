@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.backend import SessionBackend
+
 import asyncio
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,7 +31,6 @@ from yoke.cli.interactive.common import (
     TurnStopped,
     TurnSuccess,
 )
-from yoke.cli.interactive.prompt import turns
 from yoke.cli.interactive.prompt.lifecycle import PersistentPromptLifecycle, _Submission
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.prompt.turns import run_prompt_turn
@@ -191,7 +192,7 @@ def test_deleted_workspace_reports_turn_failure_without_executing(
     root.rmdir()
     agent = FakeAgent()
     prepare = Mock(side_effect=AssertionError("forked provider before validation"))
-    monkeypatch.setattr("yoke.cli.interactive.turn_runner.prepare_turn_agent", prepare)
+    monkeypatch.setattr("yoke.cli.backend.turns.prepare_turn_agent", prepare)
     results: Queue[TurnSuccess | TurnStopped | TurnFailure] = Queue()
     if mode == "basic":
         thread = _start_basic_turn(
@@ -347,7 +348,7 @@ def test_retired_turn_keeps_lease_until_detached_cleanup(
         fork = turn_runtime.prepare_turn_agent(
             primary, messages=[], entries=[], active_session=active
         )
-        turns.retire_turn_agent(fork, primary_agent=primary)
+        SessionBackend.wrap(primary).retire_turn(fork)
 
     try:
         invocation()

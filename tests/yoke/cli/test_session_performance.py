@@ -15,9 +15,7 @@ from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.prompt.cancellation import (
-    interrupted_turn_snapshot,
-)
+from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.cli.interactive.prompt.loop import persist_prompt_exit_state
 from yoke.cli.runtime.turn_agent import prepare_turn_agent
 from yoke.cli.runtime import ActiveSession

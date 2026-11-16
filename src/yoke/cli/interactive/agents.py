@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import unicodedata
-from typing import Protocol, cast
 
 from rich.table import Table
 from rich.text import Text
@@ -14,21 +13,16 @@ from yoke.cli.render import print_scrollback_notice
 from yoke.cli.render.base import Console
 
 
-class _Registry(Protocol):
-    def snapshots(self) -> list[dict[str, object]]: ...
-
-
 def print_agent_table(console: Console, agent: object) -> None:
     """Show each SDK instance's latest run without reading process output."""
     manager = command_process_manager(agent)
-    registry = getattr(manager, "agent_runs", None)
-    if registry is None:
+    if manager is None:
         print_scrollback_notice(
             console, "Agent tracking is unavailable for this agent."
         )
         return
     latest: dict[str, dict[str, object]] = {}
-    for run in cast(_Registry, registry).snapshots():
+    for run in manager.agent_runs():
         agent_id = run.get("agentId")
         if not isinstance(agent_id, str):
             continue

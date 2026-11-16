@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.list_cursor import ListCursor
+
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -15,11 +17,11 @@ from yoke.cli.runtime.selector.ui import selector_terminal_size
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )
-from yoke.cli.runtime.tree import TreeFilterMode
-from yoke.cli.runtime.tree import TreeNode
-from yoke.cli.runtime.tree import TreeRow
-from yoke.cli.runtime.tree import default_folded_tree_ids
-from yoke.cli.runtime.tree import flatten_tree_rows
+from yoke.cli.runtime.tree_view import TreeFilterMode
+from yoke.cli.runtime.tree_view import TreeNode
+from yoke.cli.runtime.tree_view import TreeRow
+from yoke.cli.runtime.tree_view import default_folded_tree_ids
+from yoke.cli.runtime.tree_view import flatten_tree_rows
 
 FILTER_MODES: tuple[TreeFilterMode, ...] = (
     "default",
@@ -66,15 +68,14 @@ def select_tree_entry_interactive(  # noqa: C901
     from prompt_toolkit.layout.containers import Window
     from prompt_toolkit.layout.controls import FormattedTextControl
 
-    selected_index = 0
-    scroll_offset = 0
+    cursor = ListCursor()
     search = ""
     filter_mode: TreeFilterMode = "default"
     folded_ids = default_folded_tree_ids(roots)
     rows: list[TreeRow] = []
 
     def rebuild_rows() -> None:
-        nonlocal rows, selected_index
+        nonlocal rows
         rows = flatten_tree_rows(
             list(roots),
             current_leaf_id=current_leaf_id,
@@ -83,29 +84,22 @@ def select_tree_entry_interactive(  # noqa: C901
             folded_ids=set() if search else folded_ids,
         )
         if not rows:
-            selected_index = 0
+            cursor.index = 0
             return
         wanted_id = initial_selected_id or current_leaf_id
-        if wanted_id and selected_index == 0:
+        if wanted_id and cursor.index == 0:
             for index, row in enumerate(rows):
                 if row.entry.id == wanted_id:
-                    selected_index = index
+                    cursor.index = index
                     break
-        selected_index = max(0, min(selected_index, len(rows) - 1))
+        cursor.select(cursor.index, len(rows))
 
     rebuild_rows()
 
     def formatted_rows() -> StyleAndTextTuples:
-        nonlocal scroll_offset
         terminal_columns, terminal_rows = selector_terminal_size()
         body_rows = max(4, terminal_rows - 5)
-        scroll_offset = _normalize_scroll(
-            selected_index,
-            scroll_offset,
-            len(rows),
-            body_rows,
-        )
-        visible = rows[scroll_offset : scroll_offset + body_rows]
+        visible = rows[cursor.viewport(len(rows), body_rows)]
         title = "Session Tree"
         subtitle = (
             f"filter={filter_mode} search={search or '∅'}  "
@@ -128,9 +122,9 @@ def select_tree_entry_interactive(  # noqa: C901
         append_line(title)
         append_line(subtitle)
         append_line("")
-        for index, row in enumerate(visible, start=scroll_offset):
+        for index, row in enumerate(visible, start=cursor.scroll):
             line = _format_row(row, terminal_columns)
-            if index == selected_index:
+            if index == cursor.index:
                 append_line(
                     line_fragments=_reverse_fragments(
                         line,
@@ -142,7 +136,7 @@ def select_tree_entry_interactive(  # noqa: C901
         if not visible:
             append_line("No matching entries")
         append_line("")
-        footer = f"{scroll_offset + len(visible)}/{len(rows)} entries"
+        footer = f"{cursor.scroll + len(visible)}/{len(rows)} entries"
         fragments.append(("", footer))
         return fragments
 
@@ -152,42 +146,36 @@ def select_tree_entry_interactive(  # noqa: C901
     @key_bindings.add("down")
     @key_bindings.add("j")
     def _down(event) -> None:
-        nonlocal selected_index
         if rows:
-            selected_index = min(selected_index + 1, len(rows) - 1)
+            cursor.move(1, len(rows))
         event.app.invalidate()
 
     @key_bindings.add("up")
     @key_bindings.add("k")
     def _up(event) -> None:
-        nonlocal selected_index
-        selected_index = max(selected_index - 1, 0)
+        cursor.move(-1, len(rows))
         event.app.invalidate()
 
     @key_bindings.add("pagedown")
     def _page_down(event) -> None:
-        nonlocal selected_index
         if rows:
-            selected_index = min(selected_index + selector_page_step(), len(rows) - 1)
+            cursor.move(selector_page_step(), len(rows))
         event.app.invalidate()
 
     @key_bindings.add("pageup")
     def _page_up(event) -> None:
-        nonlocal selected_index
-        selected_index = max(selected_index - selector_page_step(), 0)
+        cursor.move(-selector_page_step(), len(rows))
         event.app.invalidate()
 
     @key_bindings.add("home")
     def _home(event) -> None:
-        nonlocal selected_index
-        selected_index = 0
+        cursor.index = 0
         event.app.invalidate()
 
     @key_bindings.add("end")
     def _end(event) -> None:
-        nonlocal selected_index
         if rows:
-            selected_index = len(rows) - 1
+            cursor.end(len(rows))
         event.app.invalidate()
 
     @key_bindings.add("enter")
@@ -196,7 +184,7 @@ def select_tree_entry_interactive(  # noqa: C901
             event.app.exit(
                 result=TreeSelectorResult(
                     "select",
-                    rows[selected_index].entry.id,
+                    rows[cursor.index].entry.id,
                 )
             )
 
@@ -206,14 +194,14 @@ def select_tree_entry_interactive(  # noqa: C901
             event.app.exit(
                 result=TreeSelectorResult(
                     "label",
-                    rows[selected_index].entry.id,
+                    rows[cursor.index].entry.id,
                 )
             )
 
     @key_bindings.add(" ")
     def _fold(event) -> None:
         if rows:
-            entry_id = rows[selected_index].entry.id
+            entry_id = rows[cursor.index].entry.id
             if entry_id in folded_ids:
                 folded_ids.remove(entry_id)
             else:
@@ -223,19 +211,19 @@ def select_tree_entry_interactive(  # noqa: C901
 
     @key_bindings.add("f")
     def _filter(event) -> None:
-        nonlocal filter_mode, selected_index
+        nonlocal filter_mode
         index = FILTER_MODES.index(filter_mode)
         filter_mode = FILTER_MODES[(index + 1) % len(FILTER_MODES)]
-        selected_index = 0
+        cursor.index = 0
         rebuild_rows()
         event.app.invalidate()
 
     @key_bindings.add("backspace")
     @key_bindings.add("c-h")
     def _backspace(event) -> None:
-        nonlocal search, selected_index
+        nonlocal search
         search = search[:-1]
-        selected_index = 0
+        cursor.index = 0
         rebuild_rows()
         event.app.invalidate()
 
@@ -246,11 +234,11 @@ def select_tree_entry_interactive(  # noqa: C901
 
     @key_bindings.add(Keys.Any)
     def _search(event) -> None:
-        nonlocal search, selected_index
+        nonlocal search
         data = event.data
         if data and data.isprintable():
             search += data
-            selected_index = 0
+            cursor.index = 0
             rebuild_rows()
             event.app.invalidate()
 
@@ -358,18 +346,3 @@ def _entry_text(entry: ConversationEntry) -> str:
 
 def _single_line_preview(text: str) -> str:
     return " ".join(text.split())
-
-
-def _normalize_scroll(
-    selected_index: int,
-    scroll_offset: int,
-    item_count: int,
-    body_rows: int,
-) -> int:
-    if item_count <= body_rows:
-        return 0
-    if selected_index < scroll_offset:
-        return selected_index
-    if selected_index >= scroll_offset + body_rows:
-        return selected_index - body_rows + 1
-    return max(0, min(scroll_offset, item_count - body_rows))

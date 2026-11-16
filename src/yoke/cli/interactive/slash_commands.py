@@ -17,23 +17,14 @@ from yoke.cli.interactive.skill_commands import handle_skill_load
 from yoke.cli.interactive.tools_menu import handle_tools_menu
 from yoke.cli.interactive.tree_command import _handle_tree_command
 from yoke.cli.render import format_compaction_note, print_scrollback_notice
-from yoke.cli.runtime import (
-    ActiveSession,
-    create_active_session,
-    force_compact_history,
-    fork_active_session,
-    generate_session_title,
-    persist_session_state,
-    session_usage_metric_context,
-)
-from yoke.session.repository import fallback_session_title
+from yoke.cli.runtime import ActiveSession
 
 
 def agents(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     print_agent_table(console, agent)
@@ -42,7 +33,7 @@ def agents(
 
 def ps(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     if not ctx.host.inspect_processes():
@@ -103,7 +94,7 @@ def skill(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     handle_skill_load(
@@ -121,7 +112,7 @@ def model(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     updated_messages = handle_switch_model(
@@ -149,7 +140,7 @@ def tools(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     handle_tools_menu(
@@ -162,7 +153,7 @@ def tools(
 
 def mcp(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     raw_server = command.strip()[len("/mcp") :].strip() or None
@@ -179,14 +170,13 @@ def title(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     raw_title = command.strip()[len("/title") :].strip()
     if not raw_title:
         return True, messages, active_session
-    active_session.title = fallback_session_title(raw_title)
-    persist_session_state(active_session, agent, messages)
+    agent.title(raw_title, messages)
     print_scrollback_notice(
         console,
         f"Updated session title: {active_session.title}",
@@ -198,16 +188,13 @@ def regenerate_title(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
-    with session_usage_metric_context(active_session, ""):
-        generated_title = generate_session_title(agent, messages)
+    generated_title = agent.regenerate_title(messages)
     if generated_title is None:
         print_scrollback_notice(console, "Could not regenerate session title.")
         return True, messages, active_session
-    active_session.title = generated_title
-    persist_session_state(active_session, agent, messages)
     print_scrollback_notice(
         console,
         f"Updated session title: {active_session.title}",
@@ -217,7 +204,7 @@ def regenerate_title(
 
 def pin(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     print_scrollback_notice(
@@ -233,7 +220,7 @@ def info(
     active_session = ctx.active_session
     console = ctx.console
     messages = ctx.messages
-    print_session_info(console, active_session)
+    print_session_info(console, active_session, backend=ctx.backend)
     return True, messages, active_session
 
 
@@ -241,10 +228,10 @@ def fork(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
-    forked_session = fork_active_session(active_session, agent, messages)
+    forked_session = agent.fork(messages)
     print_scrollback_notice(
         console,
         f"Forked session {active_session.id} -> {forked_session.id}",
@@ -256,7 +243,7 @@ def tree(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     if not ctx.host.supports_tree:
@@ -264,13 +251,12 @@ def tree(
             console, "/tree is only available in the prompt-toolkit TUI."
         )
         return True, messages, active_session
-    with session_usage_metric_context(active_session, ""):
-        result = _handle_tree_command(
-            active_session,
-            agent,
-            console,
-            host=ctx.host,
-        )
+    result = _handle_tree_command(
+        active_session,
+        agent,
+        console,
+        host=ctx.host,
+    )
     if result is None:
         return True, messages, active_session
     return True, result[0], result[1]
@@ -280,18 +266,16 @@ def compact(
     ctx: CommandContext, command: str
 ) -> tuple[bool, list[Message], ActiveSession]:
     active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
     messages = ctx.messages
     if ctx.host.start_compaction():
         return True, messages, active_session
     print_scrollback_notice(console, COMPACTION_IN_PROGRESS_NOTICE)
-    with session_usage_metric_context(active_session, ""):
-        compacted = force_compact_history(
-            agent,
-            messages,
-            conversation_entries=active_session.active_entries(),
-        )
+    compacted = agent.compact(
+        messages,
+        conversation_entries=active_session.active_entries(),
+    )
     if compacted is None:
         print_scrollback_notice(console, "Nothing to compact right now.")
         return True, messages, active_session
@@ -303,9 +287,7 @@ def compact(
         compaction_payload,
         usage_payload,
     ) = compacted
-    persist_session_state(
-        active_session,
-        agent,
+    agent.persist(
         updated_messages,
         conversation_entries=conversation_entries,
     )
@@ -318,22 +300,9 @@ def compact(
 
 
 def new(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSession]:
-    active_session = ctx.active_session
-    agent = ctx.agent
+    agent = ctx.backend
     console = ctx.console
-    new_session = create_active_session(
-        CLIArgs(root=str(active_session.root)),
-        root=active_session.root,
-    )
-    reset_agent = getattr(agent, "reset", None)
-    if callable(reset_agent):
-        reset_agent()
-    persist_session_state(
-        new_session,
-        agent,
-        [],
-        conversation_entries=[],
-    )
+    new_session = agent.new()
     print_scrollback_notice(
         console,
         f"Started new session {new_session.id}",

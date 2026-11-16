@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from yoke.cli.interactive.tool_inspector.state import (
+    ToolInspectorState as ToolInspectorState,
+)
+
 from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import suppress
-from dataclasses import dataclass
-from dataclasses import field
 from typing import Literal
 from yoke.cli.interactive.tool_inspector.trace import ToolTraceEntry
 from yoke.cli.interactive.tool_inspector.trace import ToolTraceContext
@@ -23,32 +25,6 @@ from yoke.cli.interactive.tool_inspector.render import ToolInspectorItem
 from yoke.cli.runtime.terminal_output_gate import (
     suppress_terminal_output_for_fullscreen,
 )
-
-
-@dataclass(slots=True)
-class ToolInspectorState:
-    """Mutable UI state for the tool inspector."""
-
-    entries: list[ToolTraceEntry]
-    selected_index: int = 0
-    list_scroll: int = 0
-    detail_scroll: int = 0
-    search: str = ""
-    searching: bool = False
-    raw: bool = False
-    wrap: bool = True
-    notice: str = ""
-    active_pane: Literal["sidebar", "detail"] = "sidebar"
-    data_revision: int = 0
-    source_revision: object | None = None
-    detail_cache_key: tuple[object, ...] | None = field(default=None, repr=False)
-    detail_cache_lines: list[str] = field(default_factory=list, repr=False)
-
-    def __post_init__(self) -> None:
-        """Start on the newest sidebar item by default."""
-        items = sidebar_items(self.entries)
-        if items:
-            self.selected_index = len(items) - 1
 
 
 def open_tool_inspector(entries: Sequence[ToolTraceEntry]) -> None:
@@ -227,7 +203,7 @@ def _register_navigation_keys(key_bindings, state, visible_entries) -> None:  # 
     @key_bindings.add("g")
     def _home(event) -> None:
         if state.active_pane == "sidebar":
-            state.selected_index = 0
+            state.cursor.index = 0
             state.detail_scroll = 0
         else:
             state.detail_scroll = 0
@@ -237,7 +213,7 @@ def _register_navigation_keys(key_bindings, state, visible_entries) -> None:  # 
     @key_bindings.add("G")
     def _end(event) -> None:
         if state.active_pane == "sidebar":
-            state.selected_index = max(0, len(visible_entries()) - 1)
+            state.cursor.index = max(0, len(visible_entries()) - 1)
             state.detail_scroll = 0
         else:
             state.detail_scroll = 10**9
@@ -275,7 +251,7 @@ def _register_search_keys(key_bindings, state, any_key) -> None:
     @key_bindings.add("backspace", filter=is_searching)
     def _search_backspace(event) -> None:
         state.search = state.search[:-1]
-        state.selected_index = 0
+        state.cursor.index = 0
         state.detail_scroll = 0
         event.app.invalidate()
 
@@ -288,7 +264,7 @@ def _register_search_keys(key_bindings, state, any_key) -> None:
     @key_bindings.add(any_key, filter=is_searching)
     def _search_text(event) -> None:
         state.search += event.key_sequence[0].data
-        state.selected_index = 0
+        state.cursor.index = 0
         state.detail_scroll = 0
         event.app.invalidate()
 
@@ -338,8 +314,6 @@ def _refresh_entries(
     if next_revision is not None and next_revision == state.source_revision:
         return
     current_items = sidebar_items(state.entries)
-    current_key = _item_key(selected_entry(state, current_items))
-    was_at_tail = bool(current_items) and state.selected_index >= len(current_items) - 1
     next_entries = list(entries_provider())
     state.source_revision = next_revision
     if next_revision is None and next_entries == state.entries:
@@ -349,20 +323,7 @@ def _refresh_entries(
     state.detail_cache_key = None
     state.detail_cache_lines.clear()
     next_items = sidebar_items(state.entries)
-    if not next_items:
-        state.selected_index = 0
-        return
-    if was_at_tail:
-        state.selected_index = len(next_items) - 1
-        return
-    if current_key is None:
-        state.selected_index = min(state.selected_index, len(next_items) - 1)
-        return
-    for index, item in enumerate(next_items):
-        if _item_key(item) == current_key:
-            state.selected_index = index
-            return
-    state.selected_index = min(state.selected_index, len(next_items) - 1)
+    state.cursor.refresh(current_items, next_items, key=_item_key)
 
 
 def _item_key(item: ToolInspectorItem | None) -> tuple[str, str] | None:

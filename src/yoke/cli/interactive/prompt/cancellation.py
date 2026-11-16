@@ -7,8 +7,8 @@ from threading import Event, Lock
 
 from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.runtime import ActiveSession, AgentRunner, persist_session_state
-from yoke.session.interrupt import interrupted_turn_snapshot
+from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend import SessionBackend
 
 
 def retire_active_turn(
@@ -21,10 +21,10 @@ def retire_active_turn(
 ) -> tuple[list[Message], list[ConversationEntry]]:
     """Fence an active turn and return its synthetic continuation state."""
     abandoned_turn_ids, _ = (state.abandoned_turn_ids, state.steered_turn_ids)
-    stop_event.set()
+    SessionBackend.interrupt(stop_event)
     abandoned_turn_ids.add(state.active_turn_id)
     retire_tool_traces(state.active_turn_id)
-    messages, entries = interrupted_turn_snapshot(
+    messages, entries = SessionBackend.interrupt_snapshot(
         messages=state.messages,
         entries=active_session.active_entry_refs(),
         user_message=state.active_user_message,
@@ -44,7 +44,7 @@ def persist_stopped_turn_if_idle(
     state_lock: Lock,
     retired_turn_id: int,
     active_session: ActiveSession,
-    agent: AgentRunner,
+    agent: object,
     messages: list[Message],
     entries: list[ConversationEntry],
 ) -> None:
@@ -53,9 +53,7 @@ def persist_stopped_turn_if_idle(
         with state_lock:
             if state.active_turn_id != retired_turn_id or state.worker is not None:
                 return
-        persist_session_state(
-            active_session,
-            agent,
+        SessionBackend.wrap(agent, active_session).persist(
             messages,
             conversation_entries=entries,
         )

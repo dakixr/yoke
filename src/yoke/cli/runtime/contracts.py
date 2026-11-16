@@ -1,59 +1,29 @@
-"""Optional runtime capabilities supported by CLI adapters."""
+"""Legacy call-shape adapters for explicitly injected CLI test doubles.
+
+Production execution always uses RuntimeAgent. There is no custom-runner
+protocol. These adapters keep existing injected front-end tests independent of
+provider construction while the CLI's in-process implementation is retired.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
+from typing import cast
 
-from yoke.agent.loop import AgentEventHandler, AgentResult
-from yoke.agent.models import Message
-
-
-@runtime_checkable
-class UserMessageRunner(Protocol):
-    """Runner opting into explicit user message delivery."""
-
-    supports_user_message: bool
-
-    def run(
-        self,
-        prompt: str,
-        *,
-        user_message: Message,
-        on_event: AgentEventHandler | None = None,
-        stop_requested: Callable[[], bool] | None = None,
-    ) -> AgentResult: ...
+from yoke.agent.loop import AgentResult
 
 
-@runtime_checkable
-class HistoryRunner(Protocol):
-    """Runner opting into transcript history delivery."""
-
-    supports_message_history: bool
-
-    def run(
-        self,
-        prompt: str,
-        messages: list[Message],
-        *,
-        on_event: AgentEventHandler | None = None,
-        stop_requested: Callable[[], bool] | None = None,
-    ) -> AgentResult: ...
+def user_message_runner(agent: object) -> Callable[..., AgentResult] | None:
+    """Return an explicitly opted-in multimodal test-double call."""
+    run = getattr(agent, "run", None)
+    if callable(run) and getattr(agent, "supports_user_message", False):
+        return cast(Callable[..., AgentResult], run)
+    return None
 
 
-def user_message_runner(agent: object) -> UserMessageRunner | None:
-    """Resolve the explicit-message adapter only when the runner opts in."""
-    return (
-        agent
-        if isinstance(agent, UserMessageRunner) and agent.supports_user_message
-        else None
-    )
-
-
-def history_runner(agent: object) -> HistoryRunner | None:
-    """Resolve the transcript adapter only when the runner opts in."""
-    return (
-        agent
-        if isinstance(agent, HistoryRunner) and agent.supports_message_history
-        else None
-    )
+def history_runner(agent: object) -> Callable[..., AgentResult] | None:
+    """Return an explicitly opted-in transcript test-double call."""
+    run = getattr(agent, "run", None)
+    if callable(run) and getattr(agent, "supports_message_history", False):
+        return cast(Callable[..., AgentResult], run)
+    return None

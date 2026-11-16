@@ -13,7 +13,6 @@ from yoke.agent.compaction import TokenEstimate
 from yoke.agent.loop import AgentResult
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import AgentContext, ConversationEntry, Message
-from yoke.agent.protocols import AgentRunner
 from yoke.agent.skills.models import ActiveSkill, SkillSpec
 from yoke.cli.bootstrap.types import ToolLoadReport
 from yoke.cli.render import OutputStream, StatusIndicator
@@ -94,7 +93,7 @@ class ActiveSessionRef:
 
 
 def execute_turn(
-    agent: AgentRunner,
+    agent: object,
     prompt: str,
     messages: list[Message],
     *,
@@ -147,7 +146,7 @@ def execute_turn(
                 ),
             )
         if user_message is not None and user_runner is not None:
-            return user_runner.run(
+            return user_runner(
                 prompt,
                 user_message=user_message,
                 on_event=active_indicator.handle_event,
@@ -161,13 +160,14 @@ def execute_turn(
             )
         history_adapter = history_runner(agent)
         if history_adapter is not None:
-            return history_adapter.run(
+            return history_adapter(
                 prompt,
                 messages,
                 on_event=active_indicator.handle_event,
                 stop_requested=stop_requested,
             )
-        return agent.run(
+        run = getattr(agent, "run")
+        return run(
             prompt,
             on_event=active_indicator.handle_event,
             stop_requested=stop_requested,

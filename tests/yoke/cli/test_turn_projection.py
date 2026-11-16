@@ -15,7 +15,9 @@ from yoke.agent.session_tree import SessionTree
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.state import conversation_entries_from_messages
 from yoke.agent.tools import LocalTool
-from yoke.cli.interactive import turn_runner
+from yoke.cli.backend import turns as turn_runner
+from yoke.cli.backend import SessionBackend
+from yoke.cli.interactive.turn_stream import render_turn_events
 from yoke.cli.interactive.common import TurnSuccess
 from yoke.cli.render import InteractiveRenderer
 from yoke.cli.runtime import ActiveSession, execute_turn
@@ -156,17 +158,18 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
                 0
             ].append([message.model_dump_json() for message in messages]),
         )
-        outcome = turn_runner.TurnRunner(agents[1], session).run(
+        submitted = SessionBackend(agents[1], session).submit(
             "current input",
             list(history),
             entries=entries,
             stop_event=Event(),
             user_message=user_message,
-            indicator=InteractiveRenderer(io.StringIO()),
             checkpoint=lambda _agent, messages, _entries: checkpoint_payloads[1].append(
                 [message.model_dump_json() for message in messages]
             ),
         )
+        render_turn_events(submitted, InteractiveRenderer(io.StringIO()))
+        outcome = submitted.result()
         assert isinstance(outcome, TurnSuccess)
         assert providers[0].requests == providers[1].requests
         assert [message.model_dump_json() for message in legacy.messages] == [

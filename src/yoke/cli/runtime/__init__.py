@@ -1,7 +1,7 @@
 """Public runtime exports for yoke CLI."""
 
 from yoke.cli.runtime.base import ActiveSession as ActiveSession
-from yoke.agent.protocols import AgentRunner as AgentRunner
+from yoke.agent.loop.agent import RuntimeAgent as RuntimeAgent
 from yoke.cli.runtime.base import EventRenderer as EventRenderer
 from yoke.cli.runtime.base import ToolReportAgent as ToolReportAgent
 from yoke.cli.runtime.base import (

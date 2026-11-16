@@ -9,7 +9,7 @@ from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.loop.in_process_tool import wait_for_in_process_tools
 from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.config.resources import close_quietly
-from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime.workspaces import retain_turn_workspace, take_turn_workspace
 from yoke.session.workspace import (
     WorkspaceConflict,
@@ -20,12 +20,12 @@ from yoke.session.workspace import (
 
 
 def prepare_turn_agent(
-    agent: AgentRunner,
+    agent: object,
     *,
     messages: list[Message],
     entries: list[ConversationEntry],
     active_session: ActiveSession | None = None,
-) -> AgentRunner:
+) -> object:
     """Fork mutable state, retaining ownership even if loading it fails."""
     if not isinstance(agent, RuntimeAgent):
         return agent
@@ -71,9 +71,9 @@ def prepare_turn_agent(
 
 
 def retire_turn_agent(
-    turn_agent: AgentRunner | None,
+    turn_agent: object | None,
     *,
-    primary_agent: AgentRunner,
+    primary_agent: object,
 ) -> None:
     """Release an isolated turn runtime away from the control path."""
     if not isinstance(turn_agent, RuntimeAgent) or turn_agent is primary_agent:

@@ -141,8 +141,8 @@ def _format_table_selector_rows(
         return "\n".join(escape(line) for line in lines)
     view = build_table_selector_view(
         current_items,
-        selected_index=state.selected_index,
-        scroll_offset=state.scroll_offset,
+        selected_index=state.cursor.index,
+        scroll_offset=state.cursor.scroll,
         terminal_columns=terminal_columns,
         terminal_rows=terminal_rows,
         title=title,
@@ -151,7 +151,7 @@ def _format_table_selector_rows(
         render_row=render_row,
         footer=current_footer,
     )
-    state.scroll_offset = view.scroll_offset
+    state.cursor.scroll = view.scroll_offset
     return _format_selector_view_lines(view)
 
 
