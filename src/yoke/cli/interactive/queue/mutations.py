@@ -190,6 +190,14 @@ def dequeue_prompt_with_position(
     steering_only: bool = False,
 ) -> DequeuedPrompt | None:
     """Remove the next authoritative item and retain its position for recovery."""
+    from yoke.cli.backend.daemon.presentation import DaemonActiveSession
+
+    if isinstance(active_session, DaemonActiveSession):
+        # The daemon promotes its durable queue. A UI snapshot may still contain
+        # the just-finished input; dequeuing it here admits a second turn.
+        with state_lock:
+            queue_reload(state, active_session)
+        return None
     with state_lock:
         queue_ensure_session(state, active_session)
         while True:

@@ -29,9 +29,11 @@ worker, after admission has succeeded. Accepted and retired outcomes go through
 backend methods so the UI does not inspect runtime forks.
 
 The former in-process implementation remains in `cli/runtime` for differential
-tests until the final cleanup; production bootstrap no longer imports it.
-Front-end scheduling, logical interruption fences and queue presentation remain
-in the interactive package. Their persistence and runtime operations cross the
+tests until the final cleanup; production command dispatch does not call its execution entry points. Pure
+selector, rendering and compatibility types still live in `cli/runtime`.
+Logical interruption fences and queue presentation remain in the interactive
+package. The daemon alone promotes its queue; a terminal never dequeues a
+daemon snapshot into another admission. Their persistence and runtime operations cross the
 backend boundary; daemon admission owns those operations. The old
 `interactive/turn_runner.py` is now an import shim, and queue persistence retains
 only UI snapshot-installation helpers plus compatibility imports.
@@ -77,12 +79,30 @@ until the session event stream is ready.
 | `persist`, `sync_skills`, `checkpoint_skills`, `promote_turn`, `retire_turn` | Internal daemon work during prompt admission/execution; clients read messages and events |
 | `require_workspace`, `submission_context` | Admission validation and local executor ownership; removed from the client when daemon admission owns this |
 
-Two existing UI reads do not map directly to an existing HTTP response.
-`context_usage` estimates the editor draft; `GET /session/{id}/context` exports
-context, while context-update events carry usage without a draft estimate.
-`database_path` supplies the storage path shown by `/info`; the HTTP session DTO
-does not expose it. Phase 5 must supply these values or retain local draft
-estimation. The preparatory adapter does not invent HTTP routes for them.
+`/info` refreshes `GET /session/{id}` before rendering. Its response includes
+read-only `databasePath` and `contextWindowTokens`; `tree.entryCount` supplies the
+full conversation-entry count, and `time` supplies current saved timestamps.
+`context_usage` reads the saved usage snapshot, rather than treating the
+`/context` conversation export as token accounting. Editor draft estimation is
+not performed in the terminal.
+
+A session observer renders daemon-owned queued inputs and other clients' turns.
+Local input IDs are registered before admission and excluded from that observer;
+the submitting worker renders their live events and input-specific final answer.
+Durable sequence deduplication and settled input IDs prevent replay on reconnect.
+The queue, session metadata, submitted turn, tree and inspector adapters own
+separate typed response conversions within the `backend/daemon` package.
+Its public facade exports the session backend and metadata view. HTTP response
+models are validated at each
+of those boundaries.
+
+Compaction waits for the daemon operation to settle before replacing UI history.
+Interactive and headless relocation use `POST /session/{id}/relocate`. No
+production terminal command calls `runtime.cli.run_cli` or `run_resume_cli`;
+those Python compatibility functions remain for injected and differential tests.
+The public `yoke.cli.run_cli` export also selects the daemon by default. Only
+explicit agent injection selects the compatibility adapter; the SDK remains an
+in-process library as specified by the design.
 
 The process inspector currently displays snapshot output tails, corresponding
 to the output fields on `GET /process`; the API also supports output pagination,

@@ -69,7 +69,7 @@ class SessionBackend:
 
         if isinstance(agent, DaemonSessionBackend):
             if isinstance(session, DaemonActiveSession):
-                agent._session = session
+                agent.select_session(session)
             return cast(SessionBackend, agent)
         if isinstance(agent, cls):
             if session is not None:
@@ -288,8 +288,14 @@ class SessionBackend:
         session.title = session.record.title
         return session.record.pinned
 
+    def refresh_session(self) -> None:
+        """In-process metadata is updated by persistence itself."""
+
+    def conversation_entry_count(self) -> int:
+        return len(self.session.record.conversation_entries)
+
     def database_path(self) -> Path:
-        """Local storage location for /info; the HTTP session DTO omits this."""
+        """Local storage location for the in-process /info oracle."""
         return self.session.store.database_path
 
     def title(self, title: str, messages: list[Message]) -> None:

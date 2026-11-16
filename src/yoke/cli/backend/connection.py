@@ -9,7 +9,7 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Event, Thread
+from threading import Condition, Event, Thread
 from typing import Any
 from uuid import uuid4
 
@@ -54,6 +54,8 @@ class SessionConnection:
         self._handle = discover()
         self._warned: set[str] = set()
         self._report_warning()
+        self._state = Condition()
+        self._generation = 0
         self._seq = 0
         self._ready = Event()
         self._closed = Event()
@@ -73,8 +75,16 @@ class SessionConnection:
 
     def request(self, method: str, route: str, **kwargs: Any) -> dict[str, Any]:
         """Perform one request. In particular, do not replay ambiguous writes."""
-        with unix_client(self._handle.socket, timeout=310) as client:
-            response = client.request(method, route, **kwargs)
+        generation = self.generation
+        try:
+            with unix_client(self._handle.socket, timeout=310) as client:
+                response = client.request(method, route, **kwargs)
+        except httpx.TransportError:
+            if method != "GET" or self._worker is None:
+                raise
+            self.wait_for_recovery(generation)
+            with unix_client(self._handle.socket, timeout=310) as client:
+                response = client.request(method, route, **kwargs)
         if response.is_error:
             raise DaemonRequestError(response)
         return response.json()
@@ -105,6 +115,20 @@ class SessionConnection:
         if not self._ready.wait(timeout):
             self.close()
             raise TimeoutError("Could not attach to Yoke daemon events.")
+
+    @property
+    def generation(self) -> int:
+        with self._state:
+            return self._generation
+
+    def wait_for_recovery(self, after: int, *, timeout: float = 10) -> None:
+        """Wait for reattachment after an uncertain request without racing SSE."""
+        with self._state:
+            recovered = self._state.wait_for(
+                lambda: self._generation > after or self._closed.is_set(), timeout
+            )
+            if not recovered or self._closed.is_set():
+                raise TimeoutError("Could not reattach to Yoke daemon.")
 
     def close(self) -> None:
         """Release only this client's attachment and stream lease."""
@@ -197,7 +221,10 @@ class SessionConnection:
                         "server.resyncRequired",
                     }:
                         await self._resync(http)
-                        self._ready.set()
+                        with self._state:
+                            self._generation += 1
+                            self._ready.set()
+                            self._state.notify_all()
                     else:
                         self._publish(envelope)
 

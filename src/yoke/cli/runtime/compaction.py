@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from yoke.agent.compaction import CompactionPreparation
 from yoke.agent.compaction import CompactionResult
@@ -12,8 +13,17 @@ from yoke.agent.compaction import estimate_agent_context_usage
 from yoke.agent.compaction import force_compact_agent
 
 
+@dataclass(slots=True)
+class CompactionSnapshot:
+    """A daemon compaction has already persisted; only presentation needs updating."""
+
+    messages: list[Message]
+    payload: dict[str, object]
+
+
 type CompactedHistory = (
-    tuple[
+    CompactionSnapshot
+    | tuple[
         list[Message],
         CompactionPreparation,
         CompactionResult,

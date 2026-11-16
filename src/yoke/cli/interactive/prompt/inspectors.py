@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Lock
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.process_commands import (
@@ -17,6 +17,7 @@ from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.interactive.tool_inspector import open_live_tool_inspector
 from yoke.cli.backend.inspection import ToolInspection
+from yoke.cli.backend.daemon import DaemonSessionBackend
 
 
 if TYPE_CHECKING:
@@ -50,15 +51,10 @@ def create_inspector_launchers(
             with state_lock:
                 return state.messages
 
-        remote_factory = getattr(agent, "tool_inspection", None)
-        remote = remote_factory() if callable(remote_factory) else None
-        inspection = cast(
-            Any,
-            (
-                remote
-                if remote is not None
-                else ToolInspection(message_snapshot, trace_store)
-            ),
+        inspection = (
+            agent.tool_inspection()
+            if isinstance(agent, DaemonSessionBackend)
+            else ToolInspection(message_snapshot, trace_store)
         )
 
         schedule(

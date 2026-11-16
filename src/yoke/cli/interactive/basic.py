@@ -7,6 +7,7 @@ from threading import Event, Thread
 
 from yoke.cli.backend import SessionBackend
 from yoke.cli.interactive.turn_stream import render_turn_events
+from yoke.cli.interactive.session_observer import SessionObserver
 from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.command_host import CommandCallbacks
@@ -61,58 +62,66 @@ def run_basic_interactive_cli(
     start_basic_input_reader(input_func, input_queue)
     if stdout_console.is_terminal:
         renderer.print_intro()
-    _seed_basic_session_if_needed(
-        state=state,
-        replay_session=replay_session,
-        replay_messages=replay_messages,
-        replay_notice=replay_notice,
-        console=stdout_console,
-        active_session=active_session,
-        agent=agent,
-        stderr=stderr,
+    with SessionObserver(
+        agent,
         renderer=renderer,
-        result_queue=result_queue,
-    )
-    while True:
-        state.wakeup.clear()
-        try:
-            outcome = result_queue.get_nowait()
-        except Empty:
-            outcome = None
-        if outcome is not None:
-            _handle_basic_outcome(
-                outcome,
-                state=state,
-                active_session=active_session,
-                agent=agent,
-                console=stdout_console,
-                stderr=stderr,
-                renderer=renderer,
-                result_queue=result_queue,
-            )
-        try:
-            active_session = _drain_basic_input_queue(
-                state=state,
-                input_queue=input_queue,
-                active_session=active_session,
-                agent=agent,
-                console=stdout_console,
-                stderr=stderr,
-                renderer=renderer,
-                result_queue=result_queue,
-            )
-        except Empty:
-            pass
-        if (
-            state.shutdown_requested
-            and state.worker is None
-            and not state.pending_prompts
-        ):
-            if state.input_closed:
-                stdout_console.print()
-            return 0
-        if input_queue.empty() and result_queue.empty():
-            state.wakeup.wait()
+        user=lambda text: print_user_prompt(stdout_console, text),
+        output=renderer.print_agent_output,
+        notice=lambda text: print_scrollback_notice(stdout_console, text),
+        messages=lambda messages: setattr(state, "messages", messages),
+    ):
+        _seed_basic_session_if_needed(
+            state=state,
+            replay_session=replay_session,
+            replay_messages=replay_messages,
+            replay_notice=replay_notice,
+            console=stdout_console,
+            active_session=active_session,
+            agent=agent,
+            stderr=stderr,
+            renderer=renderer,
+            result_queue=result_queue,
+        )
+        while True:
+            state.wakeup.clear()
+            try:
+                outcome = result_queue.get_nowait()
+            except Empty:
+                outcome = None
+            if outcome is not None:
+                _handle_basic_outcome(
+                    outcome,
+                    state=state,
+                    active_session=active_session,
+                    agent=agent,
+                    console=stdout_console,
+                    stderr=stderr,
+                    renderer=renderer,
+                    result_queue=result_queue,
+                )
+            try:
+                active_session = _drain_basic_input_queue(
+                    state=state,
+                    input_queue=input_queue,
+                    active_session=active_session,
+                    agent=agent,
+                    console=stdout_console,
+                    stderr=stderr,
+                    renderer=renderer,
+                    result_queue=result_queue,
+                )
+            except Empty:
+                pass
+            if (
+                state.shutdown_requested
+                and state.worker is None
+                and not state.pending_prompts
+            ):
+                if state.input_closed:
+                    stdout_console.print()
+                return 0
+            if input_queue.empty() and result_queue.empty():
+                state.wakeup.wait()
 
 
 def _request_basic_exit(

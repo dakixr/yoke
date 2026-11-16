@@ -11,12 +11,13 @@ import httpx
 from rich.text import Text
 
 from yoke.agent.models import Message
-from yoke.cli.backend.connection import SessionConnection
+from yoke.cli.backend.connection import DaemonRequestError, SessionConnection
 from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.backend.headless import run_headless_prompt
 from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import resolve_image_path
 from yoke.cli.render import OutputStream, build_console, print_error
+from yoke.cli.runtime import ActiveSession
 from yoke.daemon.client import DaemonIncompatible, DaemonUnavailable
 from yoke.session.repository.utils import new_session_id
 
@@ -164,6 +165,7 @@ def run_daemon_interactive(
     stderr: OutputStream | None = None,
     resume_id: str | None = None,
     picker: bool = False,
+    relocate: Path | str | None = None,
 ) -> int:
     """Run basic or prompt-toolkit mode entirely through the daemon."""
     output = stdout or sys.stdout
@@ -196,12 +198,18 @@ def run_daemon_interactive(
             except (ValueError, IndexError, KeyError) as exc:
                 raise ValueError("Invalid session selection.") from exc
             connection.session_id = session_id
+        if relocate is not None:
+            connection.session_request(
+                "POST", "/relocate", json={"directory": str(Path(relocate).resolve())}
+            )
         validate_selection(connection, args, root)
         if resume_id or args.session:
             try:
                 existing = connection.session_request("GET")["data"]
                 root = Path(existing["location"]["directory"])
-            except httpx.HTTPError:
+            except DaemonRequestError as exc:
+                if resume_id is not None or exc.status != 404:
+                    raise
                 existing = None
         else:
             existing = None
@@ -224,7 +232,7 @@ def run_daemon_interactive(
             args,
             backend,
             messages,
-            active_session=cast(Any, backend.session),
+            active_session=cast(ActiveSession, backend.session),
             input_func=input_func,
             stdout=output,
             stderr=error,
@@ -241,3 +249,22 @@ def run_daemon_interactive(
     finally:
         if connection is not None:
             connection.close()
+
+
+def run_daemon_cli(
+    args: CLIArgs,
+    agent: object | None = None,
+    *,
+    input_func: Callable[..., str] = input,
+    stdout: OutputStream | None = None,
+    stderr: OutputStream | None = None,
+) -> int:
+    """Public Python CLI entry point; injection retains the explicit test adapter."""
+    if agent is not None:
+        from yoke.cli.runtime import run_cli as run_in_process
+
+        return run_in_process(
+            args, agent, input_func=input_func, stdout=stdout, stderr=stderr
+        )
+    run = run_daemon_headless if args.headless else run_daemon_interactive
+    return run(args, input_func=input_func, stdout=stdout, stderr=stderr)

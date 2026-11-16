@@ -3482,6 +3482,28 @@
             ],
             "title": "Contextusage"
           },
+          "contextWindowTokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contextwindowtokens"
+          },
+          "databasePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Databasepath"
+          },
           "id": {
             "title": "Id",
             "type": "string"
