@@ -100,12 +100,12 @@ def register_commands(app: typer.Typer) -> None:
             click.echo("Error: --fork cannot be used with --session.", err=True)
             raise typer.Exit(1)
         if headless:
-            from yoke.cli.backend.startup import run_daemon_headless as run_cli
+            from yoke.cli.backend.startup import run_daemon_headless as run_terminal
         else:
-            from yoke.cli.backend.startup import run_daemon_interactive as run_cli
+            from yoke.cli.backend.startup import run_daemon_interactive as run_terminal
 
         raise typer.Exit(
-            run_cli(
+            run_terminal(
                 build_cli_args(
                     prompt=prompt,
                     headless=headless,

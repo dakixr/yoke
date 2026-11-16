@@ -16,7 +16,7 @@ from yoke.agent.skills.paths import default_skill_dirs
 from yoke.agent.tools import ToolRegistrationContext, ToolRegistrationResult
 from yoke.agent.tools.context import ToolSessionContext
 from yoke.environment import current_environment
-from yoke.ai.providers.base import Provider, ProviderError
+from yoke.ai.providers.base import Provider
 from yoke.ai.providers.model_selection import current_model_id_from_config
 from yoke.ai.providers.resolution import UnknownModelError
 from yoke.cli.bootstrap.config import ToolDiscoveryProvider, resolve_agent_config
@@ -44,8 +44,6 @@ DEFAULT_SYSTEM_PROMPT = (
     .replace("{global_yoke_dir}", str(Path.home() / ".yoke"))
 )
 
-RUN_ERRORS = (ProviderError,)
-
 
 @dataclass(slots=True)
 class CLIArgs:
@@ -71,11 +69,6 @@ class BuiltCLIAgent:
     agent: RuntimeAgent
     tool_report: ToolLoadReport
     startup_warning: str | None = None
-
-
-def build_agent_from_args(args: CLIArgs) -> RuntimeAgent:
-    """build_agent_from_args."""
-    return build_cli_agent_from_args(args).agent
 
 
 def build_cli_agent_from_args(
@@ -308,25 +301,3 @@ def _resolve_cli_agent_config(
         tool_report=resolved.tool_report,
         tool_system_messages=list(resolved.tool_system_messages or []),
     )
-
-
-def format_provider_model_status(agent: object) -> str | None:
-    """Return the qualified model name: provider:model:effort."""
-    provider = getattr(agent, "provider", None)
-    if provider is None:
-        return None
-    provider_name = getattr(provider, "provider_name", None)
-    if not isinstance(provider_name, str) or not provider_name.strip():
-        provider_name = provider.__class__.__name__
-    else:
-        provider_name = provider_name.strip()
-    config = getattr(provider, "config", None)
-    model = getattr(config, "model", None)
-    reasoning_effort = getattr(config, "reasoning_effort", None)
-    if not isinstance(model, str) or not model.strip():
-        base = provider_name
-    else:
-        base = f"{provider_name}:{model.strip()}"
-    if isinstance(reasoning_effort, str) and reasoning_effort.strip():
-        return f"{base}:{reasoning_effort.strip()}"
-    return base

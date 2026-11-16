@@ -12,7 +12,7 @@ from yoke.agent.models import Message
 from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.backend.events import BackendEvent, agent_event
 from yoke.cli.backend.headless import input_output
-from yoke.cli.runtime.base import EventRenderer
+from yoke.cli.backend.values import EventRenderer
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class SessionObserver:
 
     def __init__(
         self,
-        backend: object,
+        backend: DaemonSessionBackend,
         *,
         renderer: EventRenderer,
         user: Callable[[str], None],
@@ -36,7 +36,7 @@ class SessionObserver:
         notice: Callable[[str], None],
         messages: Callable[[list[Message]], None],
     ) -> None:
-        self.backend = backend if isinstance(backend, DaemonSessionBackend) else None
+        self.backend = backend
         self.renderer = renderer
         self.user = user
         self.output = output
@@ -49,14 +49,13 @@ class SessionObserver:
         self._unsubscribe: Callable[[], None] = lambda: None
 
     def __enter__(self) -> SessionObserver:
-        if self.backend is not None:
-            stream, self._unsubscribe = self.backend.events.subscribe()
-            self._worker = Thread(
-                target=lambda: self._observe(stream),
-                daemon=True,
-                name="yoke-session-observer",
-            )
-            self._worker.start()
+        stream, self._unsubscribe = self.backend.events.subscribe()
+        self._worker = Thread(
+            target=lambda: self._observe(stream),
+            daemon=True,
+            name="yoke-session-observer",
+        )
+        self._worker.start()
         return self
 
     def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
@@ -66,7 +65,6 @@ class SessionObserver:
 
     def _observe(self, events: Iterable[BackendEvent]) -> None:
         backend = self.backend
-        assert backend is not None
         for event in events:
             try:
                 payload = event["payload"]

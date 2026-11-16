@@ -6,7 +6,6 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from functools import partial
-from typing import cast
 
 import pytest
 
@@ -123,6 +122,4 @@ def terminal(
 
 
 def session_for(backend: DaemonSessionBackend):
-    from yoke.cli.runtime import ActiveSession
-
-    return cast(ActiveSession, backend.session)
+    return backend.session

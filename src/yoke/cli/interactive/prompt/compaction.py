@@ -11,16 +11,15 @@ from yoke.cli.interactive.common import PendingPrompt, PromptCliState
 from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
 from yoke.cli.render import format_compaction_note
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.backend import SessionBackend
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.daemon import DaemonSessionBackend
+from yoke.cli.backend.values import ActiveSessionRef
 
 
 def start_prompt_compaction(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    agent: object,
+    agent: DaemonSessionBackend,
     active_session_ref: ActiveSessionRef,
     scrollback: ScrollbackSink,
     request_context_usage: Callable[[str], None],
@@ -36,21 +35,16 @@ def start_prompt_compaction(
 
     def run_compaction() -> None:
         try:
-            compacted = SessionBackend.wrap(agent, current_session).compact(
+            compacted = agent.compact(
                 message_snapshot,
                 conversation_entries=conversation_entries_snapshot,
             )
             if compacted is None:
                 scrollback.emit("notice", "Nothing to compact right now.")
             else:
-                _persist_prompt_compaction(
-                    compacted,
-                    state=state,
-                    state_lock=state_lock,
-                    agent=agent,
-                    active_session=active_session_ref.value,
-                    scrollback=scrollback,
-                )
+                with state_lock:
+                    state.messages = compacted.messages
+                scrollback.emit("notice", format_compaction_note(compacted.payload))
         except (ValueError, OSError, httpx.HTTPError) as exc:
             scrollback.emit("error", f"Compaction failed: {exc}")
         pending, should_finish = finish_prompt_turn(
@@ -68,36 +62,3 @@ def start_prompt_compaction(
     update_status("Compacting conversation...")
     thread.start()
     return thread
-
-
-def _persist_prompt_compaction(
-    compacted,
-    *,
-    state: PromptCliState,
-    state_lock: Lock,
-    agent: object,
-    active_session: ActiveSession,
-    scrollback: ScrollbackSink,
-) -> None:
-    from yoke.cli.backend.values import CompactionSnapshot
-
-    if isinstance(compacted, CompactionSnapshot):
-        with state_lock:
-            state.messages = compacted.messages
-        scrollback.emit("notice", format_compaction_note(compacted.payload))
-        return
-    (
-        updated_messages,
-        _preparation,
-        _result,
-        conversation_entries,
-        compaction_payload,
-        _usage_payload,
-    ) = compacted
-    with state_lock:
-        state.messages = updated_messages
-    SessionBackend.wrap(agent, active_session).persist(
-        updated_messages,
-        conversation_entries=conversation_entries,
-    )
-    scrollback.emit("notice", format_compaction_note(compaction_payload))

@@ -50,15 +50,15 @@ from yoke.cli.interactive.queue.mutations import attach_pending_image
 from yoke.cli.interactive.queue.mutations import (
     remove_pending_image as persist_remove_pending_image,
 )
-from yoke.cli.backend.queue import load_prompt_queue_state
+from yoke.cli.backend.daemon.queue import load_prompt_queue_state
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.path_display import format_root_label
 from yoke.cli.render import OutputStream, build_console
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonActiveSession
+from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.interactive.session_observer import SessionObserver
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.values import ActiveSessionRef
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
@@ -68,10 +68,10 @@ if TYPE_CHECKING:
 
 def run_prompt_toolkit_cli(  # noqa: C901
     args: CLIArgs,
-    agent: object,
+    agent: DaemonSessionBackend,
     session_messages: list[Message],
     *,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     pt_input: Input | None = None,
     pt_output: Output | None = None,
     on_app_created: Callable[[object], None] | None = None,
@@ -84,7 +84,6 @@ def run_prompt_toolkit_cli(  # noqa: C901
     from prompt_toolkit import PromptSession
     from prompt_toolkit.key_binding import KeyBindings
 
-    agent = SessionBackend.wrap(agent, active_session)
     restored_queue = load_prompt_queue_state(active_session)
     provider_effort, _levels = agent.thinking()
     state = PromptCliState(

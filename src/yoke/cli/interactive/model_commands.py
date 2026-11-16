@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from yoke.agent.models import Message
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.config import CLIArgs
 from yoke.cli.providers.catalog import ProviderModelChoice
 from yoke.cli.render.base import Console
-from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend.daemon import DaemonActiveSession
 from yoke.cli.runtime.selector.format import fit_selector_cell
 from yoke.cli.runtime.selector.ui import SelectorTableColumns
 from yoke.cli.runtime.selector.ui import select_table_item_interactive
@@ -24,8 +24,8 @@ class _ModelSelectorRow:
 def handle_switch_model(
     command: str,
     *,
-    agent: object,
-    active_session: ActiveSession,
+    agent: DaemonSessionBackend,
+    active_session: DaemonActiveSession,
     messages: list[Message],
     console: Console,
     args: CLIArgs,
@@ -42,7 +42,7 @@ def handle_switch_model(
         console,
         args=args,
         active_session=active_session,
-        backend=SessionBackend.wrap(agent, active_session),
+        backend=agent,
     )
     if selected is None:
         return messages
@@ -61,8 +61,8 @@ def _switch_model(
     qualified_model_id: str,
     reasoning_effort: str | None,
     *,
-    agent: object,
-    active_session: ActiveSession,
+    agent: DaemonSessionBackend,
+    active_session: DaemonActiveSession,
     messages: list[Message],
     console: Console,
     args: CLIArgs,
@@ -70,9 +70,7 @@ def _switch_model(
     from yoke.cli.render import print_scrollback_notice
 
     try:
-        provider_state, updated_messages, metadata_error = SessionBackend.wrap(
-            agent, active_session
-        ).switch_model(
+        provider_state, updated_messages, metadata_error = agent.switch_model(
             qualified_model_id,
             reasoning_effort,
             args=args,
@@ -109,8 +107,8 @@ def _select_provider_model(
     console: Console,
     *,
     args: CLIArgs,
-    active_session: ActiveSession,
-    backend: SessionBackend,
+    active_session: DaemonActiveSession,
+    backend: DaemonSessionBackend,
 ) -> ProviderModelChoice | None:
     from yoke.cli.render import print_scrollback_notice
 

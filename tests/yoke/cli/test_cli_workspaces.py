@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 from yoke.agent.models import Message
 from yoke.cli.main import app
 from yoke.cli.backend.startup import (
-    run_daemon_cli as run_cli,
+    run_daemon_cli,
     run_daemon_headless,
     run_daemon_interactive,
 )
@@ -47,7 +47,7 @@ def terminal(tmp_path, monkeypatch):
         yield daemon
 
 
-def run_resume_cli(args, session_id, *, relocate=None, **kwargs):
+def resume_in_daemon(args, session_id, *, relocate=None, **kwargs):
     run = run_daemon_headless if args.headless else run_daemon_interactive
     return run(args, resume_id=session_id, relocate=relocate, **kwargs)
 
@@ -72,14 +72,14 @@ def test_invalid_workspace_rejected_before_agent_construction(
     if mode == "resume":
         # A valid selector root is never a fallback for a saved missing root.
         args.root = str(tmp_path)
-        code = run_resume_cli(args, "saved", stdout=CaptureStream(), stderr=stderr)
+        code = resume_in_daemon(args, "saved", stdout=CaptureStream(), stderr=stderr)
     else:
         if mode == "session":
             args.session = "saved"
             args.root = str(tmp_path)
         elif mode == "fork":
             args.fork_session_id = "saved"
-        code = run_cli(args, stdout=CaptureStream(), stderr=stderr)
+        code = run_daemon_cli(args, stdout=CaptureStream(), stderr=stderr)
     assert code == 1
     builder.assert_not_called()
     assert stored_session_bytes(store, "saved") == before
@@ -98,7 +98,7 @@ def test_relocation_requires_explicit_id_before_selecting_or_building(
     monkeypatch.setattr("builtins.input", select)
     stderr = CaptureStream()
     assert (
-        run_resume_cli(
+        resume_in_daemon(
             CLIArgs(root=str(tmp_path)),
             None,
             relocate=tmp_path,
@@ -132,7 +132,9 @@ def test_relocation_preserves_history_and_noop_does_not_write(
     old.rmdir()
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", lambda *a, **k: 0)
     args = CLIArgs(root=str(tmp_path / "irrelevant-selector"))
-    assert run_resume_cli(args, "saved", relocate=tmp_path, stdout=CaptureStream()) == 0
+    assert (
+        resume_in_daemon(args, "saved", relocate=tmp_path, stdout=CaptureStream()) == 0
+    )
     relocated = store.load("saved")
     assert relocated.id == original.id
     assert relocated.conversation_entries == original.conversation_entries
@@ -140,7 +142,9 @@ def test_relocation_preserves_history_and_noop_does_not_write(
     assert relocated.root == str(tmp_path)
     assert not old.exists()
     before = stored_session_bytes(store, "saved")
-    assert run_resume_cli(args, "saved", relocate=tmp_path, stdout=CaptureStream()) == 0
+    assert (
+        resume_in_daemon(args, "saved", relocate=tmp_path, stdout=CaptureStream()) == 0
+    )
     assert stored_session_bytes(store, "saved") == before
 
 
@@ -157,7 +161,7 @@ def test_invalid_relocation_leaves_saved_session_unchanged(
     monkeypatch.setattr("yoke.cli.config.runtime._build_startup_provider", builder)
     before = stored_session_bytes(store, "saved")
     assert (
-        run_resume_cli(
+        resume_in_daemon(
             CLIArgs(root=str(tmp_path)),
             "saved",
             relocate=target,
@@ -185,7 +189,7 @@ def test_root_selector_does_not_relocate_saved_workspace(
 
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", interactive)
     assert (
-        run_resume_cli(
+        resume_in_daemon(
             CLIArgs(root=str(tmp_path)),
             "saved",
             stdout=CaptureStream(),
@@ -213,10 +217,10 @@ def test_rootless_saved_records_require_explicit_relocation(
     args = CLIArgs(root=str(tmp_path))
     stderr = CaptureStream()
     if mode == "resume":
-        assert run_resume_cli(args, "legacy", stderr=stderr) == 1
+        assert resume_in_daemon(args, "legacy", stderr=stderr) == 1
     else:
         args.session = "legacy"
-        assert run_cli(args, stderr=stderr) == 1
+        assert run_daemon_cli(args, stderr=stderr) == 1
     builder.assert_not_called()
     assert "--relocate" in stderr.getvalue()
     assert stored_session_bytes(store, "legacy") == before
@@ -225,7 +229,7 @@ def test_rootless_saved_records_require_explicit_relocation(
         "_build_startup_provider",
         lambda *_args, **_kwargs: (ReplyProvider(), None),
     )
-    assert run_resume_cli(args, "legacy", relocate=tmp_path) == 0
+    assert resume_in_daemon(args, "legacy", relocate=tmp_path) == 0
     relocated = store.load("legacy")
     assert relocated.root == str(tmp_path)
     assert relocated.conversation_entries == original.conversation_entries
@@ -261,7 +265,7 @@ def test_fork_recovers_into_valid_target_without_modifying_source(
         return 0
 
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", interactive)
-    assert run_cli(CLIArgs(root=str(tmp_path), fork_session_id="source")) == 0
+    assert run_daemon_cli(CLIArgs(root=str(tmp_path), fork_session_id="source")) == 0
     assert len(seen) == 1
     assert stored_session_bytes(store, "source") == before
     assert not old.exists()
@@ -278,7 +282,7 @@ def test_construction_error_releases_use_lease(
         "yoke.cli.config.runtime._build_startup_provider",
         Mock(side_effect=ValueError("broken configuration")),
     )
-    assert run_resume_cli(CLIArgs(root=str(tmp_path)), "saved") == 1
+    assert resume_in_daemon(CLIArgs(root=str(tmp_path)), "saved") == 1
     with workspace_lease(store, "saved", exclusive=True):
         pass
 
@@ -295,7 +299,7 @@ def test_busy_relocation_is_recoverable_before_provider_construction(
     monkeypatch.setattr("yoke.cli.config.runtime._build_startup_provider", builder)
     stderr = CaptureStream()
     with workspace_lease(store, "saved"):
-        result = run_resume_cli(
+        result = resume_in_daemon(
             CLIArgs(root=str(tmp_path)), "saved", relocate=target, stderr=stderr
         )
     assert result == 1
@@ -311,7 +315,7 @@ def test_invalid_fresh_path_is_not_a_cwd_fallback(root: str, terminal) -> None:
     terminal.stack.callback(monkeypatch.undo)
     monkeypatch.setattr("yoke.cli.config.runtime._build_startup_provider", provider)
     assert (
-        run_cli(
+        run_daemon_cli(
             CLIArgs(root=root, headless=True, prompt="hello"),
             stdout=CaptureStream(),
             stderr=CaptureStream(),

@@ -39,7 +39,7 @@ from yoke.cli.interactive.prompt.loop import process_prompt_toolkit_prompt
 from yoke.cli.interactive.prompt.turns import run_prompt_turn
 from yoke.cli.interactive.seeding import seed_session
 from yoke.cli.render import InteractiveRenderer, build_console
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.values import ActiveSessionRef
 from yoke.session.workspace import WorkspaceConflict
 
 from .terminal_daemon_support import ReplyProvider, session_for, terminal as terminal
@@ -275,11 +275,7 @@ def test_both_frontends_share_preparation_and_stopped_workspace_outcomes(
         run_prompt_turn(
             turn_id=1,
             prompt="test",
-            state=PromptCliState([], []),
-            state_lock=Lock(),
             agent=backend,
-            active_session=session,
-            stop_event=Event(),
             user_message=None,
             handle_outcome=lambda _id, outcome: outcomes.put(outcome),
             turn_renderer_factory=lambda _id: renderer,
@@ -288,7 +284,7 @@ def test_both_frontends_share_preparation_and_stopped_workspace_outcomes(
     assert isinstance(
         outcome, TurnStopped if isinstance(error, AgentStoppedError) else TurnFailure
     )
-    assert outcome.agent is None
+    assert not hasattr(outcome, "agent")
     assert len(prepared) == 1
     assert executed == prepared
 

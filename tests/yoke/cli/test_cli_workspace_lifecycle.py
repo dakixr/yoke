@@ -32,10 +32,10 @@ from yoke.cli.interactive.common import (
 from yoke.cli.interactive.prompt.lifecycle import PersistentPromptLifecycle, _Submission
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.prompt.turns import run_prompt_turn
-from yoke.cli.interactive.queue.mutations import append_prompt, dequeue_prompt
+from yoke.cli.interactive.queue.mutations import queue_prompt_submission, dequeue_prompt
 from .daemon_queue_support import load_prompt_queue_state
 from yoke.cli.render import InteractiveRenderer, build_console
-from yoke.cli.backend.startup import run_daemon_cli as run_cli, run_daemon_interactive
+from yoke.cli.backend.startup import run_daemon_cli, run_daemon_interactive
 from yoke.session import SessionStore
 from yoke.session.workspace import WorkspaceBusy, WorkspaceUnavailable, workspace_lease
 
@@ -175,14 +175,7 @@ def test_owned_agent_and_provider_close_before_lease_release(
 
     monkeypatch.setattr(RuntimeAgent, "close", close_agent)
     backend = terminal.backend("saved", root=tmp_path)
-    turn = backend.submit(
-        "hello",
-        [],
-        entries=[],
-        stop_event=Event(),
-        user_message=None,
-        checkpoint=lambda *_: None,
-    )
+    turn = backend.submit("hello", user_message=None)
     assert entered.wait(timeout=3)
     if not fail:
         backend.interrupt()
@@ -214,7 +207,7 @@ def test_headless_rechecks_workspace_after_agent_construction(
 
     terminal.factory = factory
     assert (
-        run_cli(
+        run_daemon_cli(
             CLIArgs(root=str(root), prompt="hello", headless=True),
             stdout=CaptureStream(),
             stderr=CaptureStream(),
@@ -258,11 +251,7 @@ def test_deleted_workspace_reports_turn_failure_without_executing(
         run_prompt_turn(
             turn_id=1,
             prompt="hello",
-            state=PromptCliState(messages=[], pending_prompts=[]),
-            state_lock=Lock(),
             agent=agent,
-            active_session=active,
-            stop_event=Event(),
             user_message=None,
             handle_outcome=lambda turn_id, outcome: results.put(outcome),
             turn_renderer_factory=Mock(),
@@ -286,8 +275,12 @@ def test_missing_workspace_keeps_queue_and_restores_submitted_text(
     state = PromptCliState(messages=[], pending_prompts=[])
     lock = Lock()
     queued = PendingPrompt("queued work")
-    assert append_prompt(
-        state=state, state_lock=lock, active_session=active, prompt=queued
+    assert queue_prompt_submission(
+        consumed_images=[],
+        state=state,
+        state_lock=lock,
+        active_session=active,
+        prompt=queued,
     )
     before = load_prompt_queue_state(active)
     root.rmdir()
@@ -371,16 +364,7 @@ def test_prompt_submission_executor_retains_new_session_lease(
         if _prompt == "/new":
             backend.new()
         backend.title("Fixture", [])
-        turns.append(
-            backend.submit(
-                "hello",
-                [],
-                entries=[],
-                stop_event=Event(),
-                user_message=None,
-                checkpoint=lambda *_: None,
-            )
-        )
+        turns.append(backend.submit("hello", user_message=None))
         assert entered.wait(timeout=3)
         with pytest.raises(WorkspaceBusy):
             with workspace_lease(terminal.store, backend.session.id, exclusive=True):
@@ -428,14 +412,7 @@ def test_retired_turn_keeps_lease_until_detached_cleanup(
     terminal.factory = lambda _: RuntimeAgent(provider, [], tool_root=tmp_path)
     terminal.store.save("saved", [], root=tmp_path, title="Fixture")
     backend = terminal.backend("saved", root=tmp_path)
-    turn = backend.submit(
-        "hello",
-        [],
-        entries=[],
-        stop_event=Event(),
-        user_message=None,
-        checkpoint=lambda *_: None,
-    )
+    turn = backend.submit("hello", user_message=None)
     try:
         assert waiting.wait(timeout=3)
         with pytest.raises(WorkspaceBusy):

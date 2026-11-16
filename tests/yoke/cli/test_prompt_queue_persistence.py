@@ -16,7 +16,7 @@ from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.prompt.loop import persist_prompt_exit_state
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
-from yoke.cli.interactive.queue.mutations import append_prompt
+from yoke.cli.interactive.queue.mutations import queue_prompt_submission
 from yoke.cli.interactive.queue.mutations import attach_pending_image
 from yoke.cli.interactive.queue.mutations import consume_pending_images
 from yoke.cli.interactive.queue.mutations import next_pending_prompt_index
@@ -598,7 +598,8 @@ def test_append_identity_conflict_preserves_authoritative_item(
         [PendingPrompt("authoritative", id="duplicate")],
     )
 
-    appended = append_prompt(
+    appended = queue_prompt_submission(
+        consumed_images=[],
         state=state,
         state_lock=Lock(),
         active_session=active_session,
@@ -654,8 +655,9 @@ def test_cli_appends_serialize_revision_and_state_updates(
     monkeypatch.setattr(mutations, "commit_prompt_queue", controlled_commit)
     state_lock = TrackingLock()
     first = Thread(
-        target=append_prompt,
+        target=queue_prompt_submission,
         kwargs={
+            "consumed_images": [],
             "state": state,
             "state_lock": state_lock,
             "active_session": active_session,
@@ -664,8 +666,9 @@ def test_cli_appends_serialize_revision_and_state_updates(
         name="first-append",
     )
     second = Thread(
-        target=append_prompt,
+        target=queue_prompt_submission,
         kwargs={
+            "consumed_images": [],
             "state": state,
             "state_lock": state_lock,
             "active_session": active_session,

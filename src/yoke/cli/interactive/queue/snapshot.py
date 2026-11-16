@@ -3,25 +3,27 @@
 from __future__ import annotations
 
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.backend.queue import load_prompt_queue_state
+from yoke.cli.backend.daemon import DaemonActiveSession
+from yoke.cli.backend.daemon.queue import load_prompt_queue_state
 from yoke.cli.backend.values import LoadedPromptQueue
 
 
-def queue_ensure_session(state: PromptCliState, active_session: ActiveSession) -> None:
+def queue_ensure_session(
+    state: PromptCliState, active_session: DaemonActiveSession
+) -> None:
     if state.queue_session_id is None:
         state.queue_session_id = active_session.id
     elif state.queue_session_id != active_session.id:
         queue_reload(state, active_session)
 
 
-def queue_reload(state: PromptCliState, active_session: ActiveSession) -> None:
+def queue_reload(state: PromptCliState, active_session: DaemonActiveSession) -> None:
     queue_install_loaded(state, active_session, load_prompt_queue_state(active_session))
 
 
 def queue_refresh_if_changed(
     state: PromptCliState,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
 ) -> None:
     loaded = load_prompt_queue_state(active_session)
     if loaded.revision != state.queue_revision:
@@ -30,7 +32,7 @@ def queue_refresh_if_changed(
 
 def queue_install_loaded(
     state: PromptCliState,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     loaded: LoadedPromptQueue,
 ) -> None:
     state.pending_prompts = loaded.prompts

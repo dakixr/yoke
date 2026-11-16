@@ -2,7 +2,6 @@
 
 import json
 from itertools import takewhile
-from threading import Event
 
 import pytest
 
@@ -62,14 +61,7 @@ def test_streamed_turn_fans_out_to_session_subscribers(tmp_path, terminal):
     terminal.store.save("events", [], root=tmp_path, title="Named fixture")
     backend = terminal.backend("events", root=tmp_path)
     stream, unsubscribe = backend.events.subscribe()
-    submitted = backend.submit(
-        "hello",
-        [],
-        entries=[],
-        stop_event=Event(),
-        user_message=None,
-        checkpoint=lambda *_args: None,
-    )
+    submitted = backend.submit("hello", user_message=None)
     events = list(submitted)
     outcome = submitted.result()
     try:
@@ -96,7 +88,6 @@ def test_streamed_turn_fans_out_to_session_subscribers(tmp_path, terminal):
         render_turn_events(events, InteractiveRenderer(io.StringIO()))
     finally:
         unsubscribe()
-        backend.retire_turn(outcome.agent)
 
 
 def test_closed_stream_does_not_accept_more_events():

@@ -160,11 +160,10 @@ discovery until the filtered event lease opens. Status rendering stays local;
 warnings use the existing terminal formatter and the final answer is selected
 by input identity. Existing headless startup does not print a discovery summary,
 so this stage retains that behavior. The startup report remains available for
-interactive use. Interactive and injected in-process test entry points have not
-been removed yet.
+interactive use. Stage 3 subsequently moved interactive entry points to the daemon.
 
 Image uploads accept an optional `imageProjection: "cli"` on each attachment.
-The in-process CLI starts image labels at one for each prompt and leaves
+The established CLI projection starts image labels at one for each prompt and leaves
 `attachment_name` unset, while existing daemon attachments use cumulative labels
 and retain filenames. Recording this choice on the admission preserves both
 contracts, including queue edits and restart. Existing provider projection
@@ -187,16 +186,25 @@ holds a daemon lifetime lease on both discovered and explicit-URL connections;
 `acp/ownership.py` and its per-session flock are deleted. A subprocess relocation
 regression now calls the daemon API instead of opening a second local runtime.
 
-Stage 4 cleanup remains incomplete. Saved-selection defaults and shared terminal
-result values have moved out of the CLI execution modules. Session, prompt,
-resume, command-contract, workspace, queue-isolation and queue-manager tests now
-exercise the daemon, wholly or in part. The public `yoke.cli.run_cli` export no
-longer accepts an injected agent. The unused interactive turn shim is deleted;
-queue snapshot presentation lives separately from backend persistence operations.
-Compatibility `cli/runtime/cli.py`, its executor and the local `SessionBackend`
-still have unported test callers and remain pending deletion. The runtime modules listed under
-"Deletable once SQLite is in" have not been removed. Provider projection goldens
-remain unchanged.
+### Phase 5 complete in 3.29.0
+
+All terminal entry points now run through the daemon, as required by the owner
+choice of one runtime path. Deleted `cli/runtime/{contracts,turn_agent,lifetime,
+workspaces,cli,startup,base,session,metadata,title,compaction,tree,stats,resume}.py`, the
+local turn executor, and `cli/backend/{session,turns,queue,catalog,inspection}.py`.
+The unused `cli/runtime/selector/session.py` picker and its package re-exports
+are also removed. SDK projection tests now use SessionTree projection APIs
+directly. The earlier ports already deleted `interactive/turn_runner.py` and
+`interactive/queue/persistence.py`. Shared presentation values live in
+`cli/backend/values.py`; the UI depends directly on daemon backend types.
+
+Removed the invocation-only lifetime tests after checking their named daemon
+coverage. Remaining command tests use in-test Unix daemon listeners. SDK and
+storage reference tests use SDK/storage APIs and test-owned record fixtures;
+provider goldens and frozen fixtures are unchanged. Removed local checkpoint,
+promotion, retirement, queue-dequeue and compaction fallback branches. Terminal
+selectors, output gating and pure tree-view rendering
+remain. The SDK `RuntimeAgent` library and `http/runtime` remain.
 
 ## Phase 1 implementation notes
 

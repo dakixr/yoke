@@ -27,10 +27,6 @@ class DaemonInspection:
     def __init__(self, connection: SessionConnection) -> None:
         self.connection = connection
 
-    @property
-    def available(self) -> bool:
-        return True
-
     def snapshots(self) -> list[CommandProcessSnapshot]:
         data = ProcessListResponse.model_validate(
             self.connection.request(

@@ -75,14 +75,7 @@ def test_late_raw_fork_binding_error_is_workspace_unavailable(
     backend = terminal.backend("cleanup", root=root)
     provider.before_fork = root.rmdir
     provider.before_close = lambda: _assert_busy(terminal.store, "cleanup")
-    turn = backend.submit(
-        "hello",
-        [],
-        entries=[],
-        stop_event=Event(),
-        user_message=None,
-        checkpoint=lambda *_: None,
-    )
+    turn = backend.submit("hello", user_message=None)
     list(turn)
     outcome = turn.result()
     assert isinstance(outcome, TurnFailure)
@@ -144,14 +137,7 @@ def test_failed_load_retires_unreturned_fork_without_releasing_lease_early(
 
     monkeypatch.setattr(RuntimeAgent, "load_owned_conversation", fail_load)
     monkeypatch.setattr(RuntimeAgent, "close", close)
-    turn = backend.submit(
-        "hello",
-        [],
-        entries=[],
-        stop_event=Event(),
-        user_message=None,
-        checkpoint=lambda *_: None,
-    )
+    turn = backend.submit("hello", user_message=None)
     try:
         assert waiting.wait(timeout=3)
         assert len(forks) == 1
@@ -210,11 +196,7 @@ def test_rejection_after_preparation_does_not_promote_unexecuted_fork(
     turns.run_prompt_turn(
         turn_id=1,
         prompt="hello",
-        state=state,
-        state_lock=lock,
         agent=backend,
-        active_session=active,
-        stop_event=Event(),
         user_message=Message.user("hello"),
         handle_outcome=lambda _id, result: outcomes.append(result),
         turn_renderer_factory=Mock(),
@@ -223,7 +205,7 @@ def test_rejection_after_preparation_does_not_promote_unexecuted_fork(
     outcome = outcomes[0]
     assert isinstance(outcome, TurnFailure)
     assert "--relocate" in str(outcome.error)
-    assert outcome.agent is None
+    assert not hasattr(outcome, "agent")
     promote.assert_not_called()
     assert (
         turns.handle_prompt_turn_outcome(

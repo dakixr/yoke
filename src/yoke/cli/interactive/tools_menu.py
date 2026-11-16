@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from yoke.cli.backend import SessionBackend
-from yoke.cli.bootstrap.types import ToolLoadReport
+from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.http.models.tool import ToolInfo
 from yoke.cli.render.base import Console
 from yoke.cli.runtime.selector.multiselect import (
@@ -62,20 +61,16 @@ class ToolMenuRow:
 
 def handle_tools_menu(
     *,
-    agent: object,
+    agent: DaemonSessionBackend,
     console: Console,
     root: Path | None = None,
 ) -> None:
     """Open the fullscreen tools menu and apply selected changes."""
     from yoke.cli.render import print_scrollback_notice
 
-    backend = SessionBackend.wrap(agent)
+    backend = agent
     inventory = backend.tools()
     report = inventory.report()
-    if report is None:
-        print_scrollback_notice(console, "No tool inventory is available.")
-        return
-
     rows = _tool_rows(report)
     if not rows:
         print_scrollback_notice(console, "No tools are available.")
@@ -125,8 +120,6 @@ def handle_tools_menu(
     inventory.select(
         selected_visible_names,
         visible_names,
-        report,
-        ordered_names=[tool.name for row in rows for tool in row.tools],
     )
     effective_names = selected_visible_names | (active_names - visible_names)
     print_scrollback_notice(
@@ -223,22 +216,7 @@ def _write_tool_policy_config(
     update_config_file(path, set_policies, migrate_legacy=True)
 
 
-def _tool_rows(report: ToolLoadReport | list[ToolInfo]) -> list[ToolMenuRow]:
-    tools = (
-        [
-            ToolInfo(
-                name=entry.tool.name,
-                description=entry.tool.description,
-                enabled=entry in report.active_tools,
-                source=entry.source_kind,
-                source_path=str(entry.source_path) if entry.source_path else None,
-                capability_id=entry.capability_id,
-            )
-            for entry in report.discovered_tools
-        ]
-        if isinstance(report, ToolLoadReport)
-        else report
-    )
+def _tool_rows(tools: list[ToolInfo]) -> list[ToolMenuRow]:
     by_key: dict[tuple[str, str], list[ToolInfo]] = {}
     for tool in tools:
         if tool.source == "default" and tool.capability_id:

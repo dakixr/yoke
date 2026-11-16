@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.backend.daemon import DaemonSessionBackend
+
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -9,7 +11,7 @@ from functools import partial
 from io import StringIO
 from threading import Event, Lock, Thread
 
-from yoke.agent.models import ConversationEntry, Message
+from yoke.agent.models import Message
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.interactive.common import (
@@ -21,7 +23,6 @@ from yoke.cli.interactive.common import (
     session_resume_notice,
 )
 from yoke.cli.interactive.prompt.cancellation import (
-    persist_stopped_turn_if_idle,
     retire_active_turn,
 )
 from yoke.cli.interactive.prompt.compaction import (
@@ -40,8 +41,8 @@ from yoke.cli.interactive.turn_renderer import (
     make_turn_scoped_renderer_factory,
 )
 from yoke.cli.render import build_console
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.daemon import DaemonActiveSession
+from yoke.cli.backend.values import ActiveSessionRef
 
 
 @dataclass(slots=True)
@@ -59,7 +60,7 @@ class PromptToolkitControl:
 def create_prompt_toolkit_control(  # noqa: C901
     *,
     state: PromptCliState,
-    agent: object,
+    agent: DaemonSessionBackend,
     active_session_ref: ActiveSessionRef,
     renderer: PromptToolkitLiveRenderer,
     state_lock: Lock,
@@ -96,35 +97,16 @@ def create_prompt_toolkit_control(  # noqa: C901
         prompt: str,
         user_message: Message | None = None,
         *,
-        message_snapshot: list[Message] | None = None,
-        conversation_entries_snapshot: list[ConversationEntry] | None = None,
         continuation: bool = False,
     ) -> Thread:
         stop_event = Event()
         active_user_message = user_message or Message.user(prompt)
-        with state_lock:
-            turn_messages = list(
-                state.messages if message_snapshot is None else message_snapshot
-            )
-            turn_entries = (
-                conversation_entries_snapshot
-                if conversation_entries_snapshot is not None
-                else state.continuation_entries
-            )
-            state.continuation_entries = None
-        if turn_entries is None:
-            turn_entries = active_session_ref.value.active_entries()
         with active_session_ref.value.save_lock:
             with state_lock:
                 state.active_turn_id += 1
                 turn_id = state.active_turn_id
                 state.active_stop_request = stop_event
                 state.active_user_message = active_user_message
-                starting_prompt = state.starting_prompt or (
-                    PendingPrompt(prompt, user_message=active_user_message),
-                    0,
-                )
-                state.starting_prompt = None
                 if not continuation or state.turn_start_time is None:
                     state.turn_start_time = time.monotonic()
                     state.turn_tool_count = 0
@@ -136,17 +118,10 @@ def create_prompt_toolkit_control(  # noqa: C901
             run_prompt_turn(
                 turn_id=turn_id,
                 prompt=prompt,
-                state=state,
-                state_lock=state_lock,
                 agent=agent,
-                active_session=active_session_ref.value,
-                stop_event=stop_event,
                 user_message=active_user_message,
                 handle_outcome=handle_outcome,
                 turn_renderer_factory=turn_renderer_factory,
-                message_snapshot=turn_messages,
-                conversation_entries_snapshot=turn_entries,
-                starting_prompt=starting_prompt,
             )
 
         thread = Thread(target=run_turn, daemon=True)
@@ -237,12 +212,11 @@ def create_prompt_toolkit_control(  # noqa: C901
             current_worker = state.worker
             if current_worker is None or stop_event is None or stop_event.is_set():
                 return False
-            retired_turn_id = state.active_turn_id
             turn_start = state.turn_start_time
             turn_tools = state.turn_tool_count
             turn_in_tok = state.turn_input_tokens
             turn_out_tok = state.turn_output_tokens
-            messages, entries = retire_active_turn(
+            retire_active_turn(
                 state=state,
                 active_session=active_session_ref.value,
                 stop_event=stop_event,
@@ -250,20 +224,6 @@ def create_prompt_toolkit_control(  # noqa: C901
                 retire_tool_traces=retire_traces,
             )
 
-        Thread(
-            target=persist_stopped_turn_if_idle,
-            kwargs={
-                "state": state,
-                "state_lock": state_lock,
-                "retired_turn_id": retired_turn_id,
-                "active_session": active_session_ref.value,
-                "agent": agent,
-                "messages": messages,
-                "entries": entries,
-            },
-            daemon=True,
-            name="yoke-stop-checkpoint",
-        ).start()
         scrollback.emit(
             "notice",
             "Stopped current turn. Send a correction to continue from here.",
@@ -285,7 +245,7 @@ def create_prompt_toolkit_control(  # noqa: C901
             current_worker = state.worker
             if current_worker is None or stop_event is None or stop_event.is_set():
                 return False
-            messages, entries = retire_active_turn(
+            retire_active_turn(
                 state=state,
                 active_session=active_session_ref.value,
                 stop_event=stop_event,
@@ -295,8 +255,6 @@ def create_prompt_toolkit_control(  # noqa: C901
         start_turn(
             prompt,
             user_message,
-            message_snapshot=messages,
-            conversation_entries_snapshot=entries,
             continuation=True,
         )
         scrollback.emit("notice", "Model steered.")
@@ -327,7 +285,7 @@ def _emit_prompt_exit_notice(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     scrollback: ScrollbackSink,
 ) -> None:
     with state_lock:

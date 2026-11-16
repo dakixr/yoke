@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.session.workspace import require_workspace
+
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -16,8 +18,8 @@ from yoke.cli.interactive.command_host import (
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.render import print_scrollback_notice
 from yoke.cli.render.base import Console
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonActiveSession
+from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.session.workspace import WorkspaceUnavailable
 
 
@@ -27,7 +29,9 @@ class Command:
 
     name: str
     description: str
-    handler: Callable[[CommandContext, str], tuple[bool, list[Message], ActiveSession]]
+    handler: Callable[
+        [CommandContext, str], tuple[bool, list[Message], DaemonActiveSession]
+    ]
     aliases: tuple[str, ...] = ()
     usage: str | None = None
     takes_args: bool = False
@@ -46,7 +50,7 @@ class Command:
 
 def show_help(
     ctx: CommandContext, _command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     lines = [
         f"{item.usage_text}{' (' + ', '.join(item.aliases) + ')' if item.aliases else ''}  {item.description}"
         for item in SLASH_COMMANDS
@@ -189,14 +193,14 @@ def find_command(text: str) -> Command | None:
 def handle_slash_command(
     command: str,
     *,
-    agent: object,
-    active_session: ActiveSession,
+    agent: DaemonSessionBackend,
+    active_session: DaemonActiveSession,
     messages: list[Message],
     console: Console,
     pending_images: list[ImageAttachment] | None = None,
     pending_prompts: list[PendingPrompt] | None = None,
     host: CommandHost | None = None,
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     """Validate and dispatch one registered command."""
     item = find_command(command)
     if item is None:
@@ -204,7 +208,7 @@ def handle_slash_command(
         return False, messages, active_session
     host = host or CommandCallbacks()
     ctx = CommandContext(
-        SessionBackend.wrap(agent, active_session),
+        agent,
         active_session,
         messages,
         console,
@@ -225,7 +229,7 @@ def handle_slash_command(
         return True, messages, active_session
     if item.changes_session:
         try:
-            SessionBackend.require_workspace(active_session)
+            require_workspace(active_session.root, session_id=active_session.id)
         except WorkspaceUnavailable as exc:
             print_scrollback_notice(console, str(exc))
             return True, messages, active_session

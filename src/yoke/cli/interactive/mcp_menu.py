@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.interactive.mcp_menu_helpers import (
     McpServerAction,
     McpToolRow,
@@ -38,7 +38,7 @@ from yoke.mcp.config import (
 
 def handle_mcp_menu(
     *,
-    agent: object,
+    agent: DaemonSessionBackend,
     console: Console,
     root: Path,
     initial_server: str | None = None,
@@ -46,7 +46,7 @@ def handle_mcp_menu(
     """Open the interactive MCP server/tool menu."""
     from yoke.cli.render import print_scrollback_notice
 
-    backend = SessionBackend.wrap(agent)
+    backend = agent
     inventory = backend.mcp(root)
     selected_server = initial_server
     while True:
@@ -156,7 +156,7 @@ def _select_mcp_server_action(
 
 def _handle_mcp_tool_menu(
     *,
-    agent: SessionBackend,
+    agent: DaemonSessionBackend,
     console: Console,
     root: Path,
     server: McpServerConfig,

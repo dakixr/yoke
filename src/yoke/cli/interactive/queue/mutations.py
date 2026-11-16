@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from yoke.cli.backend import SessionBackend
 
-from dataclasses import dataclass
 from threading import Lock
 
 from yoke.cli.image_input import ImageAttachment
@@ -18,7 +16,7 @@ from yoke.cli.interactive.queue.images import (
 from yoke.cli.interactive.queue.images import (
     remove_pending_image as remove_pending_image,
 )
-from yoke.cli.backend.queue import (
+from yoke.cli.backend.daemon.queue import (
     PromptQueueRevisionConflict,
     commit_prompt_queue,
     load_prompt_queue_state,
@@ -29,9 +27,8 @@ from yoke.cli.interactive.queue.snapshot import (
     queue_refresh_if_changed,
     queue_reload,
 )
-from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend.daemon import DaemonActiveSession
 from yoke.session.queue import next_eligible_index, remove_occurrences
-from yoke.session.workspace import WorkspaceUnavailable
 
 QUEUE_MANAGER_CONFLICT_NOTICE = (
     "Queue changed while the manager was open. Reloaded the latest queue; "
@@ -39,19 +36,11 @@ QUEUE_MANAGER_CONFLICT_NOTICE = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class DequeuedPrompt:
-    """A durably removed prompt and its authoritative list position."""
-
-    prompt: PendingPrompt
-    index: int
-
-
 def replace_prompt_queue(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     prompts: list[PendingPrompt],
     expected_revision: int,
 ) -> bool:
@@ -77,28 +66,11 @@ def replace_prompt_queue(
         return True
 
 
-def append_prompt(
-    *,
-    state: PromptCliState,
-    state_lock: Lock,
-    active_session: ActiveSession,
-    prompt: PendingPrompt,
-) -> bool:
-    """Append one new item, rebasing only that append after a conflict."""
-    return queue_prompt_submission(
-        state=state,
-        state_lock=state_lock,
-        active_session=active_session,
-        prompt=prompt,
-        consumed_images=[],
-    )
-
-
 def queue_prompt_submission(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     prompt: PendingPrompt,
     consumed_images: list[ImageAttachment],
 ) -> bool:
@@ -157,7 +129,7 @@ def observe_prompt_submission(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
 ) -> tuple[list[ImageAttachment], bool]:
     """Return stable images and idleness after observing the current revision."""
     with state_lock:
@@ -171,124 +143,14 @@ def dequeue_prompt(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     steering_only: bool = False,
 ) -> PendingPrompt | None:
     """Remove and return the next eligible item from authoritative state."""
-    dequeued = dequeue_prompt_with_position(
-        state=state,
-        state_lock=state_lock,
-        active_session=active_session,
-        steering_only=steering_only,
-    )
-    return None if dequeued is None else dequeued.prompt
-
-
-def dequeue_prompt_with_position(
-    *,
-    state: PromptCliState,
-    state_lock: Lock,
-    active_session: ActiveSession,
-    steering_only: bool = False,
-) -> DequeuedPrompt | None:
-    """Remove the next authoritative item and retain its position for recovery."""
-    from yoke.cli.backend.daemon.presentation import DaemonActiveSession
-
-    if isinstance(active_session, DaemonActiveSession):
-        # The daemon promotes its durable queue. A UI snapshot may still contain
-        # the just-finished input; dequeuing it here admits a second turn.
-        with state_lock:
-            queue_reload(state, active_session)
-        return None
+    # Promotion belongs to the daemon. Refresh without removing an admission.
     with state_lock:
-        queue_ensure_session(state, active_session)
-        while True:
-            index = next_pending_prompt_index(
-                state.pending_prompts,
-                steering_only=steering_only,
-            )
-            if index is None:
-                loaded = load_prompt_queue_state(active_session)
-                if loaded.revision != state.queue_revision:
-                    queue_install_loaded(state, active_session, loaded)
-                    continue
-                return None
-            try:
-                SessionBackend.require_workspace(active_session)
-            except WorkspaceUnavailable as exc:
-                state.status_message = str(exc)
-                return None
-            selected = state.pending_prompts[index]
-            replacement = [
-                prompt
-                for candidate_index, prompt in enumerate(state.pending_prompts)
-                if candidate_index != index
-            ]
-            try:
-                revision = commit_prompt_queue(
-                    active_session,
-                    replacement,
-                    state.pending_images,
-                    expected_revision=state.queue_revision,
-                )
-            except PromptQueueRevisionConflict:
-                queue_reload(state, active_session)
-                continue
-            state.pending_prompts = replacement
-            state.queue_revision = revision
-            state.starting_prompt = (selected, index)
-            return DequeuedPrompt(selected, index)
-
-
-def restore_dequeued_prompt(
-    *,
-    state: PromptCliState,
-    state_lock: Lock,
-    active_session: ActiveSession,
-    dequeued: DequeuedPrompt,
-) -> None:
-    """Restore an unaccepted dequeued item at its authoritative position."""
-    with state_lock:
-        if (
-            state.starting_prompt is not None
-            and state.starting_prompt[0].id == dequeued.prompt.id
-        ):
-            state.starting_prompt = None
-        queue_ensure_session(state, active_session)
-        while True:
-            matching = next(
-                (
-                    item
-                    for item in state.pending_prompts
-                    if item.id == dequeued.prompt.id
-                ),
-                None,
-            )
-            if matching is not None:
-                if matching != dequeued.prompt:
-                    raise RuntimeError(
-                        f"Could not restore queue item {dequeued.prompt.id}: "
-                        "the ID is already in use."
-                    )
-                return
-            replacement = list(state.pending_prompts)
-            replacement.insert(
-                min(dequeued.index, len(replacement)),
-                dequeued.prompt.copy_for_queue(),
-            )
-            try:
-                revision = commit_prompt_queue(
-                    active_session,
-                    replacement,
-                    state.pending_images,
-                    expected_revision=state.queue_revision,
-                )
-            except PromptQueueRevisionConflict:
-                queue_reload(state, active_session)
-                continue
-            state.pending_prompts = replacement
-            state.queue_revision = revision
-            return
+        queue_reload(state, active_session)
+    return None
 
 
 def next_pending_prompt_index(

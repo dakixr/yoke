@@ -10,7 +10,7 @@ from contextlib import suppress
 import threading
 import time
 
-from yoke.cli.backend.inspection import ProcessInspection
+from yoke.cli.backend.daemon.inspection import DaemonInspection
 from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
 )
@@ -36,7 +36,7 @@ class ProcessSnapshotCache:
 
     def __init__(
         self,
-        manager: ProcessInspection,
+        manager: DaemonInspection,
         *,
         refresh_interval: float = PROCESS_SNAPSHOT_REFRESH_INTERVAL,
     ) -> None:
@@ -66,7 +66,7 @@ class ProcessSnapshotCache:
         return self._processes
 
 
-def open_live_process_inspector(manager: ProcessInspection) -> None:
+def open_live_process_inspector(manager: DaemonInspection) -> None:
     """Open a fullscreen alternate-buffer view of command processes."""
     from prompt_toolkit.application import Application
     from prompt_toolkit.formatted_text import HTML

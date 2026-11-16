@@ -37,7 +37,7 @@ from yoke.cli.interactive.prompt.scrollback import ScrollbackKind
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.render import build_console
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.values import ActiveSessionRef
 from yoke.mcp.client import McpClientError, StdioMcpClient
 from yoke.mcp.config import McpServerConfig
 from yoke.mcp.http_client import StreamableHttpClient
@@ -119,14 +119,15 @@ def test_queued_skill_waits_for_its_fifo_position(tmp_path, monkeypatch, termina
 
     monkeypatch.setattr(SessionOperations, "activate_queued_skill", activation)
     lock = threading.Lock()
-    from yoke.cli.interactive.queue.mutations import append_prompt
+    from yoke.cli.interactive.queue.mutations import queue_prompt_submission
 
     active = session_for(backend)
     ref = ActiveSessionRef(active)
     try:
         worker = control.start_turn("first", None)
         assert started.wait(5)
-        assert append_prompt(
+        assert queue_prompt_submission(
+            consumed_images=[],
             state=state,
             state_lock=lock,
             active_session=active,
@@ -147,7 +148,8 @@ def test_queued_skill_waits_for_its_fifo_position(tmp_path, monkeypatch, termina
             steer_active_turn=control.steer_active_turn,
             format_context_usage_text=format_context_usage_text,
         )
-        assert append_prompt(
+        assert queue_prompt_submission(
+            consumed_images=[],
             state=state,
             state_lock=lock,
             active_session=active,

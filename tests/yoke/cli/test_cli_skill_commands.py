@@ -13,10 +13,9 @@ from yoke.agent.skills.registry import SkillRegistry
 from yoke.ai.providers.base import Provider
 from yoke.cli.interactive.skill_commands import handle_skill_load
 from yoke.cli.render import build_console
-from yoke.cli.runtime import ActiveSession
-from yoke.session import SessionStore
 
 from .support import CaptureStream
+from .terminal_daemon_support import terminal as terminal
 
 
 class SkillCommandProvider(Provider):
@@ -29,6 +28,7 @@ class SkillCommandProvider(Provider):
 
 def test_skill_command_appends_skill_message_to_compacted_branch(
     tmp_path: Path,
+    terminal,
 ) -> None:
     instruction = ConversationEntry(
         kind="instruction",
@@ -53,7 +53,7 @@ def test_skill_command_appends_skill_message_to_compacted_branch(
         parent_id=assistant.id,
     )
     entries = [instruction, user, assistant, snapshot]
-    store = SessionStore(directory=tmp_path / "sessions")
+    store = terminal.store
     store.save(
         "skill-refresh",
         [entry.message for entry in entries if entry.message is not None],
@@ -62,12 +62,6 @@ def test_skill_command_appends_skill_message_to_compacted_branch(
         root=tmp_path,
     )
     record = store.load("skill-refresh")
-    active_session = ActiveSession(
-        id=record.id,
-        root=tmp_path,
-        store=store,
-        record=record,
-    )
     skill_path = tmp_path / "review" / "SKILL.md"
     skill_path.parent.mkdir()
     skill_path.write_text("# Review\n", encoding="utf-8")
@@ -90,10 +84,15 @@ def test_skill_command_appends_skill_message_to_compacted_branch(
         Message.system("stale derived instruction"),
     ]
 
+    terminal.factory = lambda _record: agent
+    backend = terminal.backend(record.id, root=tmp_path)
+    terminal.app.state.runtime_registry.get_or_start(
+        record.id
+    ).resources.ensure_primary(record, load_state=False)
     handle_skill_load(
         "/skill review",
-        agent,
-        active_session,
+        backend,
+        backend.session,
         stale_projection,
         build_console(CaptureStream()),
     )

@@ -12,42 +12,129 @@ from typing import Any, cast
 import pytest
 from typer.testing import CliRunner
 
-from tests.yoke.cli.support import active_session_for
 from tests.yoke.cli.test_cli_model_switching import SwitchableProvider
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import Message
-from yoke.agent.state import conversation_entries_from_messages
 from yoke.cli.config import CLIArgs
 from yoke.cli.db_app import db_app
 from yoke.cli.interactive.model_commands import _switch_model
 from yoke.cli.render import build_console
-from yoke.cli.runtime import persist_session_state
+from tests.yoke.cli.terminal_daemon_support import terminal as terminal
+
+
+def _daemon_turn_save_failure(tmp_path, monkeypatch, terminal, caplog, *, full):
+    from yoke.cli.backend.headless import run_headless_prompt
+    from yoke.http.runtime.persistence import TurnPersistence
+
+    prompt = "x" * 200_000 if full else "keep this unsaved turn"
+    terminal.factory = lambda _record: RuntimeAgent(
+        provider=SwitchableProvider(), tools=[]
+    )
+    terminal.store.save("disk-failure", [], root=tmp_path, title="Disk fixture")
+    backend = terminal.backend("disk-failure", root=tmp_path)
+    runtime = terminal.app.state.runtime_registry.get_or_start("disk-failure")
+    prepared = []
+    prepare = runtime.execution.prepare
+
+    def track(*args, **kwargs):
+        agent = prepare(*args, **kwargs)
+        prepared.append(agent)
+        return agent
+
+    monkeypatch.setattr(runtime.execution, "prepare", track)
+    persist = TurnPersistence.persist_turn_entries
+    failed = False
+
+    def fault(self, *args, **kwargs):
+        nonlocal failed
+        if failed:
+            return persist(self, *args, **kwargs)
+        failed = True
+        database = self.store.database
+        with database.write() as connection:
+            connection.execute("PRAGMA busy_timeout=0")
+        if full:
+            with database.write() as connection:
+                # Admission journals may leave reusable pages. Occupy them so
+                # the final transcript must allocate beyond the imposed limit.
+                free = connection.execute("PRAGMA freelist_count").fetchone()[0]
+                connection.execute("CREATE TABLE quota_guard (data BLOB)")
+                connection.execute(
+                    "INSERT INTO quota_guard VALUES (zeroblob(?))", ((free + 1) * 4096,)
+                )
+                pages = connection.execute("PRAGMA page_count").fetchone()[0]
+                connection.execute(f"PRAGMA max_page_count={pages}")
+            try:
+                return persist(self, *args, **kwargs)
+            finally:
+                with database.write() as connection:
+                    connection.execute("PRAGMA max_page_count=1073741823")
+                    connection.execute("DROP TABLE quota_guard")
+        with sqlite3.connect(database.path, isolation_level=None) as other:
+            other.execute("BEGIN IMMEDIATE")
+            try:
+                return persist(self, *args, **kwargs)
+            finally:
+                other.execute("ROLLBACK")
+
+    monkeypatch.setattr(TurnPersistence, "persist_turn_entries", fault)
+    output, errors = StringIO(), StringIO()
+    assert (
+        run_headless_prompt(backend.connection, prompt, stdout=output, stderr=errors)
+        == 1
+    )
+    assert failed
+    assert "Session finalization failed." in errors.getvalue()
+    assert ("database or disk is full" if full else "database is locked") in caplog.text
+    assert output.getvalue() == ""
+    assert prepared[0].messages == [Message.user(prompt), Message.assistant("done")]
+    assert terminal.store.load("disk-failure").messages == []
+    assert (
+        backend.connection.session_request("POST", "/wait", params={"timeoutMs": 5000})[
+            "data"
+        ]["state"]
+        == "error"
+    )
+    # Replaying the same admission recovers the unsaved input exactly once.
+    records = terminal.app.state.pending_input_service.admissions.load(
+        "disk-failure"
+    ).records
+    assert len(records) == 1
+    input_id = next(iter(records))
+    backend.connection.session_request(
+        "POST",
+        "/prompt",
+        json={
+            "id": input_id,
+            "clientID": backend.connection.owner,
+            "delivery": "queue",
+            "prompt": {"text": prompt, "attachments": []},
+        },
+    )
+    assert (
+        backend.connection.session_request("POST", "/wait", params={"timeoutMs": 5000})[
+            "data"
+        ]["state"]
+        == "idle"
+    )
+    assert terminal.store.load("disk-failure").messages == [
+        Message.user(prompt),
+        Message.assistant("done"),
+    ]
+    assert (
+        len(
+            terminal.app.state.pending_input_service.admissions.load(
+                "disk-failure"
+            ).records
+        )
+        == 1
+    )
 
 
 def test_turn_save_warns_on_sqlite_lock_and_keeps_memory(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    tmp_path, monkeypatch, terminal, caplog
 ) -> None:
-    active = active_session_for(tmp_path)
-    agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
-    messages = [Message.user("keep this unsaved turn")]
-    agent.load_conversation(
-        conversation_entries=conversation_entries_from_messages(messages)
-    )
-    database = active.store.database
-    with database.write() as connection:
-        connection.execute("PRAGMA busy_timeout=0")
-    with sqlite3.connect(database.path, isolation_level=None) as other:
-        other.execute("BEGIN IMMEDIATE")
-        try:
-            persist_session_state(active, agent, messages)
-        finally:
-            other.execute("ROLLBACK")
-    assert "failed to persist yoke session" in capsys.readouterr().err
-    assert agent.messages == messages
-    assert not active.store.exists(active.id)
-    persist_session_state(active, agent, messages)
-    assert active.store.load(active.id).messages == messages
+    _daemon_turn_save_failure(tmp_path, monkeypatch, terminal, caplog, full=False)
 
 
 @pytest.mark.parametrize("message", ["database or disk is full", "database is locked"])
@@ -55,21 +142,23 @@ def test_model_switch_warns_on_sqlite_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     message: str,
+    terminal,
 ) -> None:
     agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
-    active = active_session_for(tmp_path)
+    terminal.factory = lambda _record: agent
+    backend = terminal.backend("sqlite-metadata", root=tmp_path)
     output = StringIO()
 
     def fail(*_args: object, **_kwargs: object) -> None:
         raise sqlite3.OperationalError(message)
 
-    monkeypatch.setattr("yoke.cli.runtime.session.save_active_session_metadata", fail)
+    monkeypatch.setattr("yoke.session.SessionStore.set_selection", fail)
     assert (
         _switch_model(
             "demo:gpt-b",
             None,
-            agent=agent,
-            active_session=active,
+            agent=backend,
+            active_session=backend.session,
             messages=[],
             console=build_console(output),
             args=CLIArgs(root=str(tmp_path)),
@@ -81,28 +170,9 @@ def test_model_switch_warns_on_sqlite_failure(
 
 
 def test_turn_save_warns_on_sqlite_full_and_can_retry(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    tmp_path, monkeypatch, terminal, caplog
 ) -> None:
-    active = active_session_for(tmp_path)
-    agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
-    messages = [Message.user("x" * 200_000)]
-    agent.load_conversation(
-        conversation_entries=conversation_entries_from_messages(messages)
-    )
-    with active.store.database.write() as connection:
-        pages = connection.execute("PRAGMA page_count").fetchone()[0]
-        connection.execute(f"PRAGMA max_page_count={pages}")
-    try:
-        persist_session_state(active, agent, messages)
-        assert "database or disk is full" in capsys.readouterr().err
-        assert agent.messages == messages
-        assert not active.store.exists(active.id)
-    finally:
-        with active.store.database.write() as connection:
-            connection.execute("PRAGMA max_page_count=1073741823")
-    persist_session_state(active, agent, messages)
-    assert active.store.load(active.id).messages == messages
+    _daemon_turn_save_failure(tmp_path, monkeypatch, terminal, caplog, full=True)
 
 
 def test_db_info_newer_schema_is_a_clean_cli_error(

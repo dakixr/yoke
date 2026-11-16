@@ -14,10 +14,8 @@ from yoke.cli.backend.models import (
     TurnFailure as TurnFailure,
     TurnStopped as TurnStopped,
     TurnSuccess as TurnSuccess,
-    partial_conversation_entries_from_error as partial_conversation_entries_from_error,
-    partial_messages_from_error as partial_messages_from_error,
 )
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonSessionBackend
 
 COMPACTION_IN_PROGRESS_NOTICE = "Compacting conversation..."
 
@@ -68,8 +66,6 @@ class PromptCliState:
     turn_handoff_active: bool = False
     active_stop_request: Event | None = None
     active_user_message: Message | None = None
-    starting_prompt: tuple[PendingPrompt, int] | None = None
-    continuation_entries: list[ConversationEntry] | None = None
     active_turn_id: int = 0
     abandoned_turn_ids: set[int] = field(default_factory=set)
     steered_turn_ids: set[int] = field(default_factory=set)
@@ -142,14 +138,14 @@ def parse_context_usage_details(
 
 
 def estimate_context_usage_text(
-    agent: object,
+    agent: DaemonSessionBackend,
     prompt: str,
     messages: list[Message],
     *,
     conversation_entries: Sequence[ConversationEntry] | None = None,
 ) -> str | None:
     """Estimate remaining context budget as toolbar text."""
-    usage = SessionBackend.wrap(agent).context_usage(
+    usage = agent.context_usage(
         prompt,
         messages,
         conversation_entries=conversation_entries,

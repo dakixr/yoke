@@ -23,7 +23,7 @@ from yoke.cli.config import providers as provider_config
 from yoke.cli.main import app
 from yoke.cli.providers.state import apply_session_provider_defaults
 from yoke.cli.providers.state import ProviderSessionState
-from yoke.cli.backend.startup import run_daemon_cli as run_cli, run_daemon_interactive
+from yoke.cli.backend.startup import run_daemon_cli, run_daemon_interactive
 from yoke.session import SessionStore
 
 from tests.yoke.session_rows import stored_session_bytes
@@ -83,7 +83,7 @@ def isolate_startup(monkeypatch: pytest.MonkeyPatch):
         yield
 
 
-def run_resume_cli(args, session_id, **kwargs):
+def resume_in_daemon(args, session_id, **kwargs):
     return run_daemon_interactive(args, resume_id=session_id, **kwargs)
 
 
@@ -131,7 +131,7 @@ def test_interactive_stale_default_opens_and_keeps_config(
 
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", interactive)
     stderr = CaptureStream()
-    result = run_cli(
+    result = run_daemon_cli(
         CLIArgs(root=str(tmp_path), prompt="Keep my prompt"),
         stdout=CaptureStream(),
         stderr=stderr,
@@ -158,7 +158,7 @@ def test_explicit_unknown_model_does_not_recover(
         root=str(tmp_path), model="zai:retired", headless=headless, prompt="Do work"
     )
 
-    assert run_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
+    assert run_daemon_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
     assert args.model == "zai:retired"
     assert "Unknown model 'retired'" in stderr.getvalue()
     assert "Warning:" not in stderr.getvalue()
@@ -170,7 +170,7 @@ def test_headless_config_default_does_not_recover(tmp_path: Path) -> None:
     stderr = CaptureStream()
 
     assert (
-        run_cli(
+        run_daemon_cli(
             CLIArgs(root=str(tmp_path), headless=True, prompt="Do work"),
             stdout=CaptureStream(),
             stderr=stderr,
@@ -220,7 +220,7 @@ def test_resume_recovers_saved_model_without_losing_history(
     stderr = CaptureStream()
 
     assert (
-        run_resume_cli(
+        resume_in_daemon(
             CLIArgs(root=str(tmp_path)), "saved", stdout=CaptureStream(), stderr=stderr
         )
         == 0
@@ -249,7 +249,7 @@ def test_resume_explicit_invalid_selection_does_not_recover(
     stderr = CaptureStream()
 
     assert (
-        run_resume_cli(
+        resume_in_daemon(
             CLIArgs(root=str(tmp_path), model=selection),
             "saved",
             stdout=CaptureStream(),
@@ -303,7 +303,10 @@ def test_unrelated_provider_errors_do_not_trigger_recovery(
     stderr = CaptureStream()
 
     assert (
-        run_cli(CLIArgs(root=str(tmp_path)), stdout=CaptureStream(), stderr=stderr) == 1
+        run_daemon_cli(
+            CLIArgs(root=str(tmp_path)), stdout=CaptureStream(), stderr=stderr
+        )
+        == 1
     )
     assert attempts == ["glm-5.3-flash"]
     assert str(error) in " ".join(stderr.getvalue().split())
@@ -324,7 +327,7 @@ def test_failed_default_does_not_retry_or_switch_provider(
     stderr = CaptureStream()
     args = CLIArgs(root=str(tmp_path))
 
-    assert run_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
+    assert run_daemon_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
     assert attempts == [("zai", None, None)]
     assert args.model is None
     assert "broken-default" in stderr.getvalue()
@@ -336,7 +339,10 @@ def test_fresh_unavailable_provider_does_not_switch(tmp_path: Path) -> None:
     stderr = CaptureStream()
 
     assert (
-        run_cli(CLIArgs(root=str(tmp_path)), stdout=CaptureStream(), stderr=stderr) == 1
+        run_daemon_cli(
+            CLIArgs(root=str(tmp_path)), stdout=CaptureStream(), stderr=stderr
+        )
+        == 1
     )
     assert "Unsupported provider" in stderr.getvalue()
     assert "Warning:" not in stderr.getvalue()
@@ -347,7 +353,7 @@ def test_valid_default_does_not_warn(tmp_path: Path) -> None:
     stderr = CaptureStream()
 
     assert (
-        run_cli(
+        run_daemon_cli(
             CLIArgs(root=str(tmp_path)),
             input_func=lambda _prompt: "quit",
             stdout=CaptureStream(),
@@ -378,7 +384,10 @@ def test_recovered_provider_is_closed_when_skills_fail(
     stderr = CaptureStream()
 
     assert (
-        run_cli(CLIArgs(root=str(tmp_path)), stdout=CaptureStream(), stderr=stderr) == 1
+        run_daemon_cli(
+            CLIArgs(root=str(tmp_path)), stdout=CaptureStream(), stderr=stderr
+        )
+        == 1
     )
     assert len(built_providers) == 1
     assert built_providers[0]._client.is_closed
@@ -420,7 +429,7 @@ def register_provider(context):
     args = CLIArgs(root=str(tmp_path))
 
     assert (
-        run_cli(
+        run_daemon_cli(
             args,
             input_func=lambda _prompt: "quit",
             stdout=CaptureStream(),
@@ -474,7 +483,7 @@ def register_provider(context):
     )
     stderr = CaptureStream()
 
-    result = run_cli(
+    result = run_daemon_cli(
         args,
         input_func=lambda _prompt: "quit",
         stdout=CaptureStream(),
@@ -539,7 +548,7 @@ def test_named_and_forked_sessions_use_saved_selection(
         fork_session_id="saved" if fork else None,
     )
 
-    assert run_cli(args, stdout=CaptureStream(), stderr=stderr) == 0
+    assert run_daemon_cli(args, stdout=CaptureStream(), stderr=stderr) == 0
     assert len(opened) == 1
     assert (opened[0] != "saved") is fork
     warning = " ".join(stderr.getvalue().split())
@@ -577,7 +586,7 @@ def test_strict_continuation_failure_does_not_modify_or_fork_source(
     )
     stderr = CaptureStream()
 
-    assert run_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
+    assert run_daemon_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
 
     assert "Unknown model" in stderr.getvalue()
     assert "Warning:" not in stderr.getvalue()
@@ -616,9 +625,9 @@ def test_explicit_continuation_selection_and_effort_win(
     stderr = CaptureStream()
 
     result = (
-        run_resume_cli(args, "saved", stdout=CaptureStream(), stderr=stderr)
+        resume_in_daemon(args, "saved", stdout=CaptureStream(), stderr=stderr)
         if mode == "resume"
-        else run_cli(args, stdout=CaptureStream(), stderr=stderr)
+        else run_daemon_cli(args, stdout=CaptureStream(), stderr=stderr)
     )
     assert result == 0
     assert stderr.getvalue() == ""

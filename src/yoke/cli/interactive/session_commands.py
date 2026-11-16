@@ -5,26 +5,26 @@ from __future__ import annotations
 
 from yoke.agent.models import Message
 from yoke.cli.render import print_scrollback_notice
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonActiveSession
+from yoke.cli.backend.daemon import DaemonSessionBackend
 
 
 def handle_pin_session(
-    active_session: ActiveSession,
-    agent: object,
+    active_session: DaemonActiveSession,
+    agent: DaemonSessionBackend,
     messages: list[Message],
 ) -> str:
     """Toggle the active session pin state and return a status message."""
-    pinned = SessionBackend.wrap(agent, active_session).pin(messages)
+    pinned = agent.pin(messages)
     state = "pinned" if pinned else "unpinned"
     return f"Session {state}: {active_session.id}"
 
 
 def print_session_info(
     console,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     *,
-    backend: SessionBackend,
+    backend: DaemonSessionBackend,
 ) -> None:
     """Print active session metadata in scrollback."""
     backend.refresh_session()

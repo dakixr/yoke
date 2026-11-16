@@ -5,10 +5,10 @@ from __future__ import annotations
 from queue import Empty, Queue
 from threading import Event, Thread
 
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.interactive.turn_stream import render_turn_events
 from yoke.cli.interactive.session_observer import SessionObserver
-from yoke.agent.models import ConversationEntry, Message
+from yoke.agent.models import Message
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.commands import handle_slash_command
@@ -33,16 +33,14 @@ from yoke.cli.render import (
     print_scrollback_notice,
     print_user_prompt,
 )
-from yoke.cli.runtime import (
-    ActiveSession,
-)
+from yoke.cli.backend.daemon import DaemonActiveSession
 
 
 def run_basic_interactive_cli(
-    agent: object,
+    agent: DaemonSessionBackend,
     session_messages: list[Message],
     *,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     input_func: InputFunc,
     stdout: OutputStream,
     stderr: OutputStream,
@@ -51,7 +49,6 @@ def run_basic_interactive_cli(
     replay_notice: str | None = None,
 ) -> int:
     """Run the fallback interactive CLI without prompt-toolkit."""
-    agent = SessionBackend.wrap(agent, active_session)
     state = BasicCliState(messages=list(session_messages), pending_prompts=[])
     stdout_console = build_console(stdout)
     renderer = InteractiveRenderer(stdout)
@@ -125,11 +122,12 @@ def run_basic_interactive_cli(
 
 
 def _request_basic_exit(
-    state: BasicCliState, console, active_session: ActiveSession
+    state: BasicCliState, console, active_session: DaemonActiveSession
 ) -> None:
     state.shutdown_requested = True
     if state.active_stop_request is not None:
-        SessionBackend.interrupt(state.active_stop_request)
+        state.active_stop_request.set()
+        active_session.backend.interrupt()
     worker = state.worker
     if worker is not None:
 
@@ -153,43 +151,19 @@ def _start_basic_turn(
     prompt: str,
     *,
     state: BasicCliState,
-    active_session: ActiveSession,
-    agent: object,
+    active_session: DaemonActiveSession,
+    agent: DaemonSessionBackend,
     stderr: OutputStream,
     renderer: InteractiveRenderer,
     result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped],
     user_message: Message | None = None,
 ) -> Thread:
-    history = list(state.messages)
     stop_event = Event()
     state.active_stop_request = stop_event
-    backend = SessionBackend.wrap(agent, active_session)
-    backend.sync_skills()
-
-    def checkpoint_tool_result(
-        turn_agent: object,
-        messages: list[Message],
-        conversation_entries: list[ConversationEntry],
-    ) -> None:
-        if stop_event.is_set():
-            return
-        backend.checkpoint_skills(turn_agent)
-        state.messages = list(messages)
-        SessionBackend.wrap(agent, active_session).persist(
-            messages,
-            turn_agent=turn_agent,
-            conversation_entries=conversation_entries,
-        )
+    backend = agent
 
     def run_turn() -> None:
-        submitted = backend.submit(
-            prompt,
-            history,
-            entries=active_session.active_entries(),
-            stop_event=stop_event,
-            user_message=user_message,
-            checkpoint=checkpoint_tool_result,
-        )
+        submitted = backend.submit(prompt, user_message=user_message)
         render_turn_events(submitted, renderer)
         result_queue.put(submitted.result())
 
@@ -202,13 +176,13 @@ def _drain_basic_input_queue(
     *,
     state: BasicCliState,
     input_queue: Queue[str | None | InputInterrupted],
-    active_session: ActiveSession,
-    agent: object,
+    active_session: DaemonActiveSession,
+    agent: DaemonSessionBackend,
     console,
     stderr: OutputStream,
     renderer: InteractiveRenderer,
     result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped],
-) -> ActiveSession:
+) -> DaemonActiveSession:
     while True:
         try:
             prompt = input_queue.get_nowait()
@@ -277,8 +251,8 @@ def _handle_basic_outcome(
     outcome: TurnSuccess | TurnFailure | TurnStopped,
     *,
     state: BasicCliState,
-    active_session: ActiveSession,
-    agent: object,
+    active_session: DaemonActiveSession,
+    agent: DaemonSessionBackend,
     console,
     stderr: OutputStream,
     renderer: InteractiveRenderer,
@@ -286,48 +260,24 @@ def _handle_basic_outcome(
 ) -> None:
     state.worker = None
     state.active_stop_request = None
-    outcome_agent = outcome.agent or agent
-    backend = SessionBackend.wrap(agent, active_session)
-    outcome_agent = backend.promote_turn(outcome_agent)
     if isinstance(outcome, TurnFailure):
         if outcome.messages is not None:
             state.messages = outcome.messages
-            SessionBackend.wrap(agent, active_session).persist(
-                state.messages,
-                turn_agent=outcome_agent,
-                conversation_entries=outcome.conversation_entries,
-            )
         print_error(console, str(outcome.error))
     elif isinstance(outcome, TurnStopped):
         stopped_messages = (
             outcome.result.messages if outcome.result is not None else outcome.messages
         )
-        stopped_entries = (
-            outcome.result.conversation_entries
-            if outcome.result is not None
-            else outcome.conversation_entries
-        )
         if stopped_messages is not None:
             state.messages = stopped_messages
-            SessionBackend.wrap(agent, active_session).persist(
-                state.messages,
-                turn_agent=outcome_agent,
-                conversation_entries=stopped_entries,
-            )
         print_scrollback_notice(
             console,
             "Stopped current turn. Send a correction to continue from here.",
         )
     else:
         state.messages = outcome.result.messages
-        SessionBackend.wrap(agent, active_session).persist(
-            state.messages,
-            turn_agent=outcome_agent,
-            conversation_entries=outcome.result.conversation_entries,
-        )
         print_agent_output(console, outcome.result.output)
         print("\a", end="", flush=True)
-    SessionBackend.wrap(agent, active_session).retire_turn(outcome.agent)
     if not state.pending_prompts:
         return
     pending = state.pending_prompts.pop(0)
@@ -352,8 +302,8 @@ def _seed_basic_session_if_needed(
     replay_messages: list[Message] | None,
     replay_notice: str | None,
     console,
-    active_session: ActiveSession,
-    agent: object,
+    active_session: DaemonActiveSession,
+    agent: DaemonSessionBackend,
     stderr: OutputStream,
     renderer: InteractiveRenderer,
     result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped],

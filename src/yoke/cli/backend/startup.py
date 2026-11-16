@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 from rich.text import Text
@@ -17,7 +17,6 @@ from yoke.cli.backend.headless import run_headless_prompt
 from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import resolve_image_path
 from yoke.cli.render import OutputStream, build_console, print_error
-from yoke.cli.runtime import ActiveSession
 from yoke.daemon.client import DaemonIncompatible, DaemonUnavailable
 from yoke.session.repository.utils import new_session_id
 from yoke.session.workspace import require_workspace
@@ -283,7 +282,7 @@ def run_daemon_interactive(
             args,
             backend,
             messages,
-            active_session=cast(ActiveSession, backend.session),
+            active_session=backend.session,
             input_func=input_func,
             stdout=output,
             stderr=error,

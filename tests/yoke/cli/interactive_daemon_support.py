@@ -155,9 +155,7 @@ class InteractiveDaemon:
 
 
 def cast_session(backend: DaemonSessionBackend):
-    from yoke.cli.runtime import ActiveSession
-
-    return cast(ActiveSession, backend.session)
+    return backend.session
 
 
 @pytest.fixture

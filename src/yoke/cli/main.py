@@ -8,7 +8,6 @@ import click
 import typer
 
 from yoke.cli.main_core import _inject_prompt_flag
-from yoke.cli.main_core import _load_source_dotenv
 from yoke.cli.main_core import build_cli_args
 from yoke.cli.main_commands import register_commands
 
@@ -26,8 +25,6 @@ register_commands(app)
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     argv = _inject_prompt_flag(list(argv) if argv is not None else sys.argv[1:])
-    if argv[:1] != ["serve"]:
-        _load_source_dotenv()
     try:
         result = app(args=argv, prog_name="yoke", standalone_mode=False)
     except click.UsageError as exc:

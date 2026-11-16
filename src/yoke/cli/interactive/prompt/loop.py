@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.interactive.queue.snapshot import queue_reload
+
 from collections.abc import Callable, Mapping
 from threading import Lock, Thread
 
@@ -21,16 +23,14 @@ from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.queue.mutations import (
     QUEUE_MANAGER_CONFLICT_NOTICE,
     attach_pending_image,
-    dequeue_prompt_with_position,
     replace_prompt_queue,
-    restore_dequeued_prompt,
 )
-from yoke.cli.backend.queue import load_prompt_queue_state
+from yoke.cli.backend.daemon.queue import load_prompt_queue_state
 from yoke.cli.interactive.skill_commands import is_skill_command
 from yoke.cli.render import print_scrollback_notice, print_session_scrollback
-from yoke.cli.runtime import ActiveSession
-from yoke.cli.backend import SessionBackend
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.daemon import DaemonActiveSession
+from yoke.cli.backend.daemon import DaemonSessionBackend
+from yoke.cli.backend.values import ActiveSessionRef
 
 
 def update_status_context_usage(
@@ -51,20 +51,20 @@ def persist_prompt_exit_state(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
-    agent: object,
+    active_session: DaemonActiveSession,
+    agent: DaemonSessionBackend,
 ) -> None:
     """Persist prompt-toolkit state before leaving the interactive loop."""
     with state_lock:
         thinking_effort = state.thinking_effort
-    SessionBackend.wrap(agent, active_session).persist_metadata(thinking_effort)
+    agent.persist_metadata(thinking_effort)
 
 
 def process_prompt_toolkit_prompt(  # noqa: C901
     prompt: str,
     *,
     state: PromptCliState,
-    agent: object,
+    agent: DaemonSessionBackend,
     active_session_ref: ActiveSessionRef,
     scrollback_console,
     state_lock: Lock,
@@ -80,7 +80,7 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     request_context_usage: Callable[[str], None] | None = None,
     on_editor_text: Callable[[str], None] | None = None,
     submit_action: str | None = None,
-) -> ActiveSession:
+) -> DaemonActiveSession:
     """Process one submitted prompt-toolkit prompt."""
     active_session = active_session_ref.value
     with state_lock:
@@ -151,49 +151,11 @@ def process_prompt_toolkit_prompt(  # noqa: C901
             with state_lock:
                 state.messages = updated_messages
                 active_session_ref.value = updated_session
-                active_worker = (
-                    state.worker is not None and state.active_stop_request is not None
-                )
             invalidate_prompt()
             if manager_save_conflicted:
                 return updated_session
-            dequeued = dequeue_prompt_with_position(
-                state=state,
-                state_lock=state_lock,
-                active_session=updated_session,
-                steering_only=True,
-            )
-            if dequeued is None:
-                return updated_session
-            next_prompt = dequeued.prompt
-            try:
-                if active_worker:
-                    accepted = steer_active_turn(
-                        next_prompt.prompt,
-                        next_prompt.user_message,
-                    )
-                    if not accepted:
-                        restore_dequeued_prompt(
-                            state=state,
-                            state_lock=state_lock,
-                            active_session=updated_session,
-                            dequeued=dequeued,
-                        )
-                elif start_pending_prompt is None:
-                    start_turn(
-                        next_prompt.prompt,
-                        next_prompt.user_message,
-                    )
-                else:
-                    start_pending_prompt(next_prompt, False)
-            except Exception:
-                restore_dequeued_prompt(
-                    state=state,
-                    state_lock=state_lock,
-                    active_session=updated_session,
-                    dequeued=dequeued,
-                )
-                raise
+            with state_lock:
+                queue_reload(state, updated_session)
             return updated_session
 
     command_deferred = False
@@ -256,9 +218,7 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     if command_deferred:
         return active_session_ref.value
     if handled:
-        provider_effort, _levels = SessionBackend.wrap(
-            agent, updated_session
-        ).thinking()
+        provider_effort, _levels = agent.thinking()
         switched_queue = (
             load_prompt_queue_state(updated_session)
             if updated_session.id != active_session.id
@@ -302,7 +262,7 @@ def run_prompt_toolkit_event_loop(
     *,
     state: PromptCliState,
     active_session_ref: ActiveSessionRef,
-    agent: object,
+    agent: DaemonSessionBackend,
     prompt_session,
     completer,
     key_bindings,

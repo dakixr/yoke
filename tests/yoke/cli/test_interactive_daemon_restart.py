@@ -53,7 +53,6 @@ def test_prompt_ui_reattaches_after_daemon_restart_before_next_prompt(
     sandbox, monkeypatch
 ):
     from threading import Thread
-    from typing import cast
 
     from prompt_toolkit.input.defaults import create_pipe_input
     from prompt_toolkit.output import DummyOutput
@@ -62,7 +61,6 @@ def test_prompt_ui_reattaches_after_daemon_restart_before_next_prompt(
     from yoke.cli.backend.daemon import DaemonSessionBackend
     from yoke.cli.backend.startup import create_session
     from yoke.cli.interactive.prompt.app import run_prompt_toolkit_cli
-    from yoke.cli.runtime import ActiveSession
 
     monkeypatch.setenv("YOKE_DAEMON_IDLE_GRACE", "10")
     output = CaptureStream()
@@ -99,7 +97,7 @@ def test_prompt_ui_reattaches_after_daemon_restart_before_next_prompt(
                 args,
                 backend,
                 [],
-                active_session=cast(ActiveSession, backend.session),
+                active_session=backend.session,
                 pt_input=pipe,
                 pt_output=DummyOutput(),
             )

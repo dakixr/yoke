@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from yoke.agent.models import ConversationEntry
-from yoke.agent.session_tree import SessionTree
-from yoke.cli.runtime.base import ActiveSession
 
 TreeFilterMode = Literal[
     "default",
@@ -65,13 +63,6 @@ class TreeRow:
     has_children: bool
     folded: bool
     branch_index: int = 0
-
-
-def get_session_tree(active_session: ActiveSession) -> list[TreeNode]:
-    """Build the persisted session tree."""
-    source = active_session.record.conversation_entries
-    active_ids = {entry.id for entry in active_session.tree_index.active_entry_refs()}
-    return build_tree_nodes(source, active_ids)
 
 
 def build_tree_nodes(
@@ -259,27 +250,6 @@ def default_folded_tree_ids(roots: Iterable[TreeNode]) -> set[str]:
             continue
         stack.extend(node.children)
     return folded
-
-
-def set_entry_label(
-    active_session: ActiveSession,
-    entry_id: str,
-    label: str | None,
-) -> None:
-    """Persist a selector label on an entry's metadata."""
-    tree = SessionTree.borrow_validated(
-        active_session.record.conversation_entries,
-        active_session.record.leaf_id,
-    )
-    tree.set_label(tree.ref_from_persisted_id(entry_id), label)
-    entry = tree.export_entry_for_persistence(entry_id)
-    with active_session.save_lock:
-        active_session.record = active_session.store.save_entry_metadata(
-            active_session.id,
-            entry,
-            existing_record=active_session.record,
-            tree_index=active_session.tree_index,
-        )
 
 
 def _node_matches(

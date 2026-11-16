@@ -6,7 +6,6 @@ import logging
 
 import httpx
 
-from collections.abc import Sequence
 from pathlib import Path
 
 from yoke.cli.backend.connection import DaemonRequestError, SessionConnection
@@ -38,11 +37,7 @@ class DaemonToolInventory:
         self,
         active_names: set[str],
         visible_names: set[str],
-        report: list[ToolInfo],
-        *,
-        ordered_names: Sequence[str],
     ) -> None:
-        del report, ordered_names
         self.connection.session_request(
             "PATCH",
             "/tool",

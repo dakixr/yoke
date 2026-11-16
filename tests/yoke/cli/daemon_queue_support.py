@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import cast
 
 import pytest
 
@@ -12,7 +11,6 @@ from yoke.cli.backend.values import (
     PromptQueueRevisionConflict as PromptQueueRevisionConflict,
 )
 from yoke.cli.image_input import ImageAttachment
-from yoke.cli.runtime import ActiveSession
 from yoke.session import SessionStore
 
 from .terminal_daemon_support import TerminalDaemon, session_for, terminal as terminal
@@ -23,25 +21,25 @@ def active_session_for(terminal: TerminalDaemon):
     return lambda root: session_for(terminal.backend("saved", root=root))
 
 
-def remote(active: ActiveSession) -> DaemonActiveSession:
-    return cast(DaemonActiveSession, cast(object, active))
+def remote(active: DaemonActiveSession) -> DaemonActiveSession:
+    return active
 
 
-def store_for(active: ActiveSession) -> SessionStore:
+def store_for(active: DaemonActiveSession) -> SessionStore:
     return SessionStore(database_path=remote(active).database_path)
 
 
-def load_prompt_queue_state(active: ActiveSession):
+def load_prompt_queue_state(active: DaemonActiveSession):
     return remote(active).backend.load_queue()
 
 
-def load_prompt_queue(active: ActiveSession):
+def load_prompt_queue(active: DaemonActiveSession):
     loaded = load_prompt_queue_state(active)
     return loaded.prompts, loaded.pending_images
 
 
 def commit_prompt_queue(
-    active: ActiveSession,
+    active: DaemonActiveSession,
     prompts: list[PendingPrompt],
     pending_images: list[ImageAttachment] | None = None,
     *,
@@ -53,7 +51,7 @@ def commit_prompt_queue(
 
 
 def persist_prompt_queue(
-    active: ActiveSession,
+    active: DaemonActiveSession,
     prompts: list[PendingPrompt],
     pending_images: list[ImageAttachment] | None = None,
     *,
@@ -65,12 +63,12 @@ def persist_prompt_queue(
 
 
 def clear_prompt_queue(
-    active: ActiveSession, *, expected_revision: int | None = None
+    active: DaemonActiveSession, *, expected_revision: int | None = None
 ) -> None:
     commit_prompt_queue(active, [], [], expected_revision=expected_revision)
 
 
-def wake(active: ActiveSession) -> None:
+def wake(active: DaemonActiveSession) -> None:
     backend = remote(active).backend
     loaded = backend.load_queue()
     if loaded.prompts:

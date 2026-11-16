@@ -208,7 +208,7 @@ same turn twice, so the local dequeue path is disabled for daemon sessions.
 
 `GET /session/{id}` includes read-only `databasePath` and
 `contextWindowTokens`. `/info` refreshes that response and uses `tree.entryCount`
-and `time.created`/`time.updated`, matching the in-process metadata display.
+and `time.created`/`time.updated`, preserving the terminal metadata display.
 Tool and process inspectors convert validated response DTOs into their existing
 terminal display values. Manual compaction waits for `/wait` before updating UI
 history. Both resume modes use the existing `/relocate` route.
@@ -283,3 +283,12 @@ The terminal moves its event stream and owner attachment on `/new` and `/fork`,
 resetting the durable sequence cursor for the newly selected session. A blocked
 promoted input records its queue position and returns paused at that position,
 so earlier paused items keep their order.
+
+## Phase 5 completion
+
+All terminal entry points use the daemon. The basic and prompt-toolkit UIs accept
+`DaemonSessionBackend` and `DaemonActiveSession` directly. The local CLI executor,
+backend, invocation ownership decorators, workspace ContextVars and local queue
+persistence are removed. Terminal cancellation keeps its display fence and sends
+an interrupt request; the daemon persists the continuation and retires workers.
+The SDK still supports `RuntimeAgent` as a library without a daemon.

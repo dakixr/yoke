@@ -247,12 +247,15 @@ def test_busy_compatible_skew_warns_then_restarts_without_interrupt(
             ]
             == "idle"
         )
+    sandbox.wait_stopped()
+    assert sandbox.connect().build_id == "test-b"
+    # Restart may begin immediately after wait reports idle. Read the saved
+    # answer through the replacement daemon rather than racing its shutdown.
+    with unix_client(sandbox.paths.socket) as http:
         messages = http.get("session/proof/message", params={"order": "asc"}).json()[
             "data"
         ]
         assert messages[-1]["content"][0]["text"] == "echo:slow"
-    sandbox.wait_stopped()
-    assert sandbox.connect().build_id == "test-b"
 
 
 def test_busy_incompatible_skew_refuses_without_interrupt(sandbox, monkeypatch):

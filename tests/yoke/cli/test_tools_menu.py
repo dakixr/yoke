@@ -12,7 +12,9 @@ import pytest
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
 from yoke.agent.tools import LocalTool
-from yoke.cli.bootstrap.types import LoadedTool, ToolLoadReport
+from yoke.cli.bootstrap.types import LoadedTool, ToolLoadReport, ResolvedAgentConfig
+from yoke.agent.tools.context import ToolRegistrationResult
+from .terminal_daemon_support import terminal as terminal
 from yoke.cli.interactive import tools_menu
 from yoke.cli.interactive.tools_menu import ToolChangeScope
 from yoke.cli.render import build_console
@@ -84,8 +86,41 @@ def tool_report_with_active_names(
     )
 
 
+def daemon_tool_backend(terminal, monkeypatch, root, agent):
+    """Expose the fixture inventory through real daemon catalog and tool routes."""
+    report = agent.tool_report
+    assert report is not None
+    hidden = [
+        tool
+        for name, tool in agent.tools.items()
+        if name not in {entry.tool.name for entry in report.discovered_tools}
+    ]
+    all_tools = [
+        entry.tool
+        for entry in sorted(report.discovered_tools, key=lambda entry: entry.tool.name)
+    ] + hidden
+    enabled = set(agent.tools)
+    agent.configure_session_tools(
+        wrap_factory=lambda _factory, _tools: (
+            lambda _context: ToolRegistrationResult(tools=all_tools)
+        )
+    )
+    agent.set_session_enabled_tools(enabled)
+    monkeypatch.setattr(
+        "yoke.cli.bootstrap.config.resolve_agent_config",
+        lambda **_kwargs: ResolvedAgentConfig([], all_tools, report),
+    )
+    terminal.factory = lambda _record: agent
+    terminal.store.save("menu", [], root=root, title="Menu fixture")
+    backend = terminal.backend("menu", root=root)
+    terminal.app.state.runtime_registry.get_or_start("menu").resources.ensure_primary(
+        terminal.store.load("menu"), load_state=False
+    )
+    return backend
+
+
 def test_global_tool_change_preserves_hidden_runtime_tools(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, terminal
 ) -> None:
     config_path = tmp_path / ".yoke" / "config.json"
     config_path.parent.mkdir(parents=True)
@@ -117,9 +152,10 @@ def test_global_tool_change_preserves_hidden_runtime_tools(
         lambda _console, message: notices.append(message),
     )
 
+    backend = daemon_tool_backend(terminal, monkeypatch, tmp_path, agent)
     try:
         tools_menu.handle_tools_menu(
-            agent=agent,
+            agent=backend,
             console=build_console(io.StringIO()),
             root=tmp_path,
         )
@@ -135,7 +171,7 @@ def test_global_tool_change_preserves_hidden_runtime_tools(
 
 
 def test_unchanged_visible_selection_ignores_hidden_runtime_tools(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, terminal
 ) -> None:
     notices: list[str] = []
     agent = RuntimeAgent(
@@ -160,9 +196,10 @@ def test_unchanged_visible_selection_ignores_hidden_runtime_tools(
         lambda _console, message: notices.append(message),
     )
 
+    backend = daemon_tool_backend(terminal, monkeypatch, tmp_path, agent)
     try:
         tools_menu.handle_tools_menu(
-            agent=agent,
+            agent=backend,
             console=build_console(io.StringIO()),
             root=tmp_path,
         )

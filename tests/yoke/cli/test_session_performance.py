@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from yoke.agent.context import ContextManager
+from yoke.agent.session_tree import SessionTree
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -21,14 +22,14 @@ from .terminal_daemon_support import terminal as terminal, session_for
 from .test_cli_model_switching import SwitchableProvider
 from yoke.cli.backend.headless import run_headless_prompt
 from io import StringIO
-from yoke.cli.runtime import ActiveSession
+from tests.yoke.session_support import StoredSession
 from yoke.cli.runtime import tree_view
-from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime.session import save_active_session
-from yoke.cli.runtime.tree import flatten_tree_rows
-from yoke.cli.runtime.tree import get_session_tree
-from yoke.cli.runtime.tree import default_folded_tree_ids
-from yoke.cli.runtime.tree import set_entry_label
+from tests.yoke.session_support import persist_session_state
+from tests.yoke.session_support import save_active_session
+from yoke.cli.runtime.tree_view import flatten_tree_rows
+from yoke.cli.runtime.tree_view import build_tree_nodes
+from yoke.cli.runtime.tree_view import default_folded_tree_ids
+
 from yoke.session.repository import SessionRecord
 from yoke.session import SessionStore
 from yoke.session.legacy.jsonl import decode_session_record
@@ -126,7 +127,7 @@ def test_retained_index_scans_once_and_copies_only_the_active_path(
 ) -> None:
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
-    active = ActiveSession(
+    active = StoredSession(
         record.id,
         tmp_path,
         SessionStore(tmp_path),
@@ -152,7 +153,7 @@ def test_interruption_snapshot_reuses_active_history(
 ) -> None:
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
-    active = ActiveSession(
+    active = StoredSession(
         record.id,
         tmp_path,
         SessionStore(tmp_path),
@@ -183,7 +184,7 @@ def test_interruption_checkpoint_copies_only_the_synthetic_suffix(
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
     store.insert_record(record)
-    active = ActiveSession(record.id, tmp_path, store, record)
+    active = StoredSession(record.id, tmp_path, store, record)
     messages, snapshot = interrupted_turn_snapshot(
         messages=[],
         entries=active.active_entry_refs(),
@@ -257,7 +258,7 @@ def test_runtime_append_copies_only_the_new_entry(
 ) -> None:
     entries, leaf_id = large_tree
     record, _ = _record_with_counted_entries(entries, leaf_id)
-    active = ActiveSession(
+    active = StoredSession(
         record.id,
         tmp_path,
         SessionStore(tmp_path),
@@ -287,7 +288,7 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
     store.insert_record(record)
-    active = ActiveSession(record.id, tmp_path, store, record)
+    active = StoredSession(record.id, tmp_path, store, record)
     incoming = active.active_entries()
     appended = ConversationEntry(
         id="appended-entry",
@@ -433,7 +434,7 @@ def test_unchanged_transcript_persistence_uses_retained_active_path(
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
     store.insert_record(record)
-    active = ActiveSession(record.id, tmp_path, store, record)
+    active = StoredSession(record.id, tmp_path, store, record)
     messages = active.messages()
     agent = RuntimeAgent(provider=NoopProvider(), tools=[])
     scans_before = counted.scans
@@ -462,7 +463,7 @@ def test_tree_selector_build_and_filter_are_single_pass(
 ) -> None:
     entries, leaf_id = large_tree
     record, counted = _record_with_counted_entries(entries, leaf_id)
-    active = ActiveSession(
+    active = StoredSession(
         record.id,
         tmp_path,
         SessionStore(tmp_path),
@@ -481,7 +482,10 @@ def test_tree_selector_build_and_filter_are_single_pass(
 
     monkeypatch.setattr(tree_view, "_filter_matches", counted_filter)
 
-    roots = get_session_tree(active)
+    roots = build_tree_nodes(
+        active.record.conversation_entries,
+        {entry.id for entry in active.tree_index.active_entry_refs()},
+    )
     folded = default_folded_tree_ids(roots)
     rows = flatten_tree_rows(
         roots,
@@ -539,7 +543,7 @@ def test_tree_label_writes_one_indexed_entry_update(
     record, counted = _record_with_counted_entries(entries, leaf_id)
     store = SessionStore(tmp_path / "sessions")
     store.insert_record(record)
-    active = ActiveSession(record.id, tmp_path, store, record)
+    active = StoredSession(record.id, tmp_path, store, record)
     rows_before = stored_entry_rows(store, record.id)
     scans_before = counted.scans
     copies = _count_entry_copies(monkeypatch)
@@ -549,7 +553,14 @@ def test_tree_label_writes_one_indexed_entry_update(
 
     monkeypatch.setattr(SessionTable, "write_record", fail_rewrite)
 
-    set_entry_label(active, leaf_id, "checkpoint")
+    tree = SessionTree.borrow_validated(
+        active.record.conversation_entries, active.record.leaf_id
+    )
+    tree.set_label(tree.ref_from_persisted_id(leaf_id), "checkpoint")
+    entry = tree.export_entry_for_persistence(leaf_id)
+    active.record = store.save_entry_metadata(
+        active.id, entry, existing_record=active.record, tree_index=active.tree_index
+    )
 
     assert counted.scans == scans_before + 2
     assert copies["count"] == 2

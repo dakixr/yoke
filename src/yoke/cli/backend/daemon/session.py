@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
-from threading import Event, Lock
-from typing import Literal, cast
+from threading import Lock
+from typing import Literal
 from uuid import uuid4
 
 import httpx
@@ -24,14 +24,12 @@ from yoke.cli.backend.daemon.presentation import DaemonActiveSession
 from yoke.cli.backend.daemon.turn import DaemonSubmittedTurn, transcript
 from yoke.cli.backend.models import PendingPrompt
 from yoke.cli.backend.values import LoadedPromptQueue
-from yoke.cli.backend.values import Checkpoint
 from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.providers.catalog import ProviderModelChoice
 from yoke.cli.backend.values import CompactionSnapshot
 from yoke.cli.runtime.tree_view import TreeNode
 from yoke.cli.backend.values import TreeNavigationResult
-from yoke.cli.runtime import ActiveSession
 from yoke.http.models.session import (
     SessionInfo,
     SessionCreateResponse,
@@ -140,19 +138,12 @@ class DaemonSessionBackend:
     def submit(
         self,
         prompt: str,
-        messages: list[Message],
         *,
-        entries: list[ConversationEntry],
-        stop_event: Event,
         user_message: Message | None,
-        checkpoint: Checkpoint,
-        starting_prompt: tuple[PendingPrompt, int] | None = None,
         delivery: Literal["queue", "steer"] = "queue",
     ) -> DaemonSubmittedTurn:
-        del messages, entries, checkpoint, starting_prompt
         from yoke.cli.backend.daemon.images import upload_message_images
 
-        setattr(stop_event, "daemon_backend", self)
         input_id = f"inp_{uuid4().hex}"
         # Register before admission: the SSE echo may arrive before POST returns.
         with self._input_lock:
@@ -182,8 +173,7 @@ class DaemonSessionBackend:
             return DaemonSubmittedTurn.failed(self.connection, input_id, exc)
         return DaemonSubmittedTurn(self.connection, input_id, stream, unsubscribe)
 
-    def interrupt(self, stop_event: Event | None = None) -> None:
-        del stop_event
+    def interrupt(self) -> None:
         self.connection.session_request("POST", "/interrupt")
 
     def persist_metadata(self, reasoning_effort: str | None) -> None:
@@ -192,31 +182,6 @@ class DaemonSessionBackend:
             and reasoning_effort != self.session.record.reasoning_effort
         ):
             self.set_thinking(reasoning_effort)
-
-    @staticmethod
-    def submission_context[T](callback: Callable[[], T]) -> Callable[[], T]:
-        return callback
-
-    def persist(
-        self,
-        messages: list[Message],
-        *,
-        conversation_entries: Sequence[ConversationEntry] | None = None,
-        turn_agent: object | None = None,
-    ) -> None:
-        del messages, conversation_entries, turn_agent
-
-    def sync_skills(self) -> None:
-        return None
-
-    def checkpoint_skills(self, turn_agent: object) -> None:
-        del turn_agent
-
-    def promote_turn(self, turn_agent: object) -> object:
-        return turn_agent
-
-    def retire_turn(self, turn_agent: object | None) -> None:
-        del turn_agent
 
     def compact(
         self,
@@ -313,7 +278,7 @@ class DaemonSessionBackend:
         self.refresh_session()
         return TreeNavigationResult(
             messages=self.messages(),
-            active_session=cast(ActiveSession, self.session),
+            active_session=self.session,
             editor_text=result.editor_text,
             summary_created=result.summary_added,
         )

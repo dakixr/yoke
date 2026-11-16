@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from yoke.cli.backend.daemon import DaemonActiveSession
+
 from yoke.cli.backend.connection import DaemonRequestError, SessionConnection
 from yoke.cli.backend.models import PendingPrompt
 from yoke.cli.backend.daemon.images import upload_message_images
@@ -179,3 +184,51 @@ class DaemonPromptQueue:
 
     def clear(self, *, expected_revision: int | None) -> None:
         self.commit([], [], expected_revision=expected_revision)
+
+
+def load_prompt_queue_state(active_session: DaemonActiveSession) -> LoadedPromptQueue:
+    return active_session.backend.load_queue()
+
+
+def load_prompt_queue(
+    active_session: DaemonActiveSession,
+) -> tuple[list[PendingPrompt], list[ImageAttachment]]:
+    """Read queued prompts and image drafts from the daemon."""
+    loaded = load_prompt_queue_state(active_session)
+    return loaded.prompts, loaded.pending_images
+
+
+def persist_prompt_queue(
+    active_session: DaemonActiveSession,
+    prompts: list[PendingPrompt],
+    pending_images: list[ImageAttachment] | None = None,
+    *,
+    expected_revision: int | None = None,
+) -> None:
+    """Persist queued prompts and pending attachments for crash-safe resume."""
+    commit_prompt_queue(
+        active_session,
+        prompts,
+        pending_images,
+        expected_revision=expected_revision,
+    )
+
+
+def commit_prompt_queue(
+    active_session: DaemonActiveSession,
+    prompts: list[PendingPrompt],
+    pending_images: list[ImageAttachment] | None = None,
+    *,
+    expected_revision: int | None = None,
+) -> int:
+    return active_session.backend.commit_queue(
+        prompts, pending_images or [], expected_revision=expected_revision
+    )
+
+
+def clear_prompt_queue(
+    active_session: DaemonActiveSession,
+    *,
+    expected_revision: int | None = None,
+) -> None:
+    active_session.backend.clear_queue(expected_revision=expected_revision)

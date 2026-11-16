@@ -2,30 +2,22 @@
 
 from __future__ import annotations
 
-from yoke.cli.backend import SessionBackend
-from yoke.cli.backend.inspection import ProcessInspection
+from yoke.cli.backend.daemon import DaemonSessionBackend
+from yoke.cli.backend.daemon.inspection import DaemonInspection
 from yoke.cli.render.base import Console
 
 
-def command_process_manager(agent: object) -> ProcessInspection | None:
+def command_process_manager(agent: DaemonSessionBackend) -> DaemonInspection:
     """Return the session's process inspection boundary when available."""
-    inspection = SessionBackend.wrap(agent).processes()
-    return inspection if inspection.available else None
+    return agent.processes()
 
 
-def print_process_table(console: Console, agent: object) -> None:
+def print_process_table(console: Console, agent: DaemonSessionBackend) -> None:
     """Print the basic-CLI fallback view of live command processes."""
     from rich.table import Table
     from rich.text import Text
 
     manager = command_process_manager(agent)
-    if manager is None:
-        from yoke.cli.render import print_scrollback_notice
-
-        print_scrollback_notice(
-            console, "Process inspection is unavailable for this agent."
-        )
-        return
     processes = manager.snapshots()
     if not processes:
         from yoke.cli.render import print_scrollback_notice

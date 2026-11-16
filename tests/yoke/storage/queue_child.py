@@ -18,14 +18,20 @@ from pathlib import Path
 
 def wait_for(start: Path) -> None:
     print("ready", flush=True)
+    wait_for_path(start)
+
+
+def wait_for_path(path: Path) -> None:
     deadline = time.monotonic() + 30
-    while not start.exists():
+    while not path.exists():
         if time.monotonic() > deadline:
-            raise TimeoutError("start signal never arrived")
+            raise TimeoutError(f"signal never arrived: {path.name}")
         time.sleep(0.001)
 
 
-def run_cli(directory: Path, session_id: str, count: int, start: Path) -> dict:
+def run_terminal_writer(
+    directory: Path, session_id: str, count: int, start: Path
+) -> dict:
     from contextlib import closing
     from tests.yoke.cli.daemon_support import serve_app
     from yoke.cli.backend.connection import SessionConnection
@@ -52,8 +58,16 @@ def run_cli(directory: Path, session_id: str, count: int, start: Path) -> dict:
         conflicts = 0
         wait_for(start)
         for index in range(count):
+            if index == 0:
+                wait_for_path(start.with_name("daemon-admitted"))
+            first_attempt = True
             while True:
                 loaded = backend.load_queue()
+                if index == 0 and first_attempt:
+                    # Force one shared revision, rather than relying on timing.
+                    start.with_name("cli-read").touch()
+                    wait_for_path(start.with_name("daemon-read"))
+                    first_attempt = False
                 prompts = [
                     *loaded.prompts,
                     PendingPrompt(prompt=f"cli {index}", id=f"cli-{index}"),
@@ -101,8 +115,15 @@ def run_daemon(directory: Path, session_id: str, count: int, start: Path) -> dic
                 }
             ),
         )
+        if index == 0:
+            start.with_name("daemon-admitted").touch()
+        first_attempt = True
         while True:
             revision = service.queue(session_id).revision
+            if index == 0 and first_attempt:
+                start.with_name("daemon-read").touch()
+                wait_for_path(start.with_name("cli-read"))
+                first_attempt = False
             try:
                 service.patch_queue(
                     session_id,
@@ -135,7 +156,7 @@ def run_daemon(directory: Path, session_id: str, count: int, start: Path) -> dic
 
 def main() -> None:
     role, directory, session_id, count, start = sys.argv[1:6]
-    runner = run_cli if role == "cli" else run_daemon
+    runner = run_terminal_writer if role == "cli" else run_daemon
     summary = runner(Path(directory), session_id, int(count), Path(start))
     print(json.dumps(summary), flush=True)
 

@@ -13,6 +13,8 @@ from prompt_toolkit.document import Document
 from rich.console import Console
 
 from yoke.agent.models import Message
+from yoke.http.errors import ApiError
+from yoke.cli.backend.connection import DaemonRequestError
 from yoke.cli.interactive.basic import run_basic_interactive_cli
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.commands import SLASH_COMMANDS, handle_slash_command
@@ -21,11 +23,10 @@ from yoke.cli.interactive.common import (
 )
 from yoke.cli.interactive.completion import SlashCommandCompleter
 from yoke.cli.interactive.prompt.loop import process_prompt_toolkit_prompt
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.values import ActiveSessionRef
 
 from .support import CaptureStream
 from .terminal_daemon_support import terminal as terminal, session_for
-from types import SimpleNamespace
 
 
 class Registry:
@@ -187,24 +188,39 @@ def test_agents_rejects_arguments_without_reading(
     assert registry.reads == 0
 
 
-def test_agents_empty_and_unavailable_are_distinct(tmp_path: Path, tracked) -> None:
+def test_agents_empty_and_unavailable_are_distinct(
+    tmp_path: Path, tracked, terminal, monkeypatch
+) -> None:
     agent, registry = tracked
-    for available, expected in (
-        (True, "No SDK agent runs yet."),
-        (False, "Agent tracking is unavailable"),
-    ):
-        if not available:
-            agent.processes = lambda: SimpleNamespace(available=False)
-        runner = agent
-        stream = CaptureStream()
-        handled, _, _ = handle_slash_command(
+    stream = CaptureStream()
+    handled, _, _ = handle_slash_command(
+        "/agents",
+        agent=agent,
+        active_session=session_for(agent),
+        messages=[],
+        console=Console(file=stream),
+    )
+    assert handled and "No SDK agent runs yet." in stream.getvalue()
+
+    def unavailable(_session_id):
+        raise ApiError(
+            503, "agent_tracking_unavailable", "Agent tracking is unavailable"
+        )
+
+    monkeypatch.setattr(terminal.app.state.agent_run_service, "snapshots", unavailable)
+    stream = CaptureStream()
+    with pytest.raises(
+        DaemonRequestError, match="Agent tracking is unavailable"
+    ) as error:
+        handle_slash_command(
             "/agents",
-            agent=runner,
+            agent=agent,
             active_session=session_for(agent),
             messages=[],
             console=Console(file=stream),
         )
-        assert handled and expected in stream.getvalue()
+    assert error.value.status == 503
+    assert "No SDK agent runs yet." not in stream.getvalue()
     assert registry.reads == 1
 
 

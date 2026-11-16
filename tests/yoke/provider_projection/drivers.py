@@ -1,33 +1,34 @@
-"""Drive the existing CLI helpers and HTTP routes without loop internals."""
+"""Drive the SDK reference and HTTP routes without loop internals."""
 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from io import StringIO
 from threading import Event
 from typing import Any
 
 from fastapi.testclient import TestClient
-from rich.console import Console
 
 from yoke.agent.loop import AgentStoppedError
 from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.multimodal import build_image_user_message
-from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import build_user_message
-from yoke.cli.interactive.skill_commands import handle_skill_load
-from yoke.cli.runtime.compaction import force_compact_history
-from yoke.cli.runtime.resume import project_resumed_session
-from yoke.cli.runtime.session import (
-    bind_agent_provider_session,
-    create_active_session,
-    fork_active_session,
+from yoke.agent.compaction import force_compact_agent
+from tests.yoke.session_support import (
+    StoredSession,
     persist_session_state,
     save_active_session,
 )
-from yoke.cli.runtime.title import session_usage_metric_context
-from yoke.cli.runtime.tree import navigate_session_tree
+from yoke.agent.session_tree import (
+    SessionTree,
+    ConversationProjection,
+    parse_memory_message,
+)
+from yoke.agent.skills import activate_skills
+from yoke.ai.providers.usage_context import usage_metric_context
+from yoke.session.repository import fallback_session_title
+from yoke.session.repository.utils import new_unique_session_id
+from yoke.ai.providers.base import complete_with_cancel
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.session import SessionStore
 from yoke.session.title import generate_session_title
@@ -38,26 +39,39 @@ from .runtime import World
 
 
 class InProcess:
-    """Use CLI session construction, execution, persistence, resume and commands."""
+    """Use the SDK library and test-owned SessionStore records."""
 
     def __init__(
         self, world: World, session_id: str = "oracle-session", *, fresh: bool = True
     ):
         self.world = world
         self.session_id = session_id
-        # SessionStore() uses YOKE_SESSION_DIR, just as create_active_session does.
-        self.active = create_active_session(
-            CLIArgs(session=session_id, root=str(world.root)),
-            root=world.root,
-        )
+        store = SessionStore(world.directory)
+        record = store.load(session_id)
+        if fresh:
+            record = store.save(session_id, [], root=world.root)
+        self.active = StoredSession(session_id, world.root, store, record)
         self.agent = world.agent(self.active.record)
-        bind_agent_provider_session(self.agent, session_id)
         if fresh:
             self.active.title = "Oracle fixture"
             save_active_session(self.active, [], agent=self.agent)
-        projection = project_resumed_session(self.active.record)
+        active = self.active.active_entries()
+        source = (
+            self.active.record.conversation_entries
+            if any(
+                entry.message is not None
+                and entry.message.role == "user"
+                and parse_memory_message(entry.message.plain_text_content or "")
+                is not None
+                for entry in active
+            )
+            else active
+        )
+        projection = SessionTree.restore(source, self.active.record.leaf_id).project(
+            ConversationProjection()
+        )
         self.agent.load_conversation(
-            conversation_entries=projection.active_entries,
+            conversation_entries=projection.runtime_entries,
             active_skills=self.active.record.active_skills,
         )
 
@@ -83,7 +97,11 @@ class InProcess:
 
         def run() -> None:
             try:
-                with session_usage_metric_context(self.active, text):
+                with usage_metric_context(
+                    surface="cli",
+                    session_id=self.session_id,
+                    session_title=self.active.title or fallback_session_title(text),
+                ):
                     result = self.agent.run(
                         text,
                         user_message=(
@@ -134,8 +152,12 @@ class InProcess:
                 future.result(timeout=5)
 
     def compact(self) -> None:
-        with session_usage_metric_context(self.active, ""):
-            result = force_compact_history(
+        with usage_metric_context(
+            surface="cli",
+            session_id=self.session_id,
+            session_title=self.active.title or fallback_session_title(""),
+        ):
+            result = force_compact_agent(
                 self.agent,
                 self.active.messages(),
                 conversation_entries=self.active.active_entries(),
@@ -144,26 +166,96 @@ class InProcess:
         self.persist()
 
     def activate(self) -> None:
-        handle_skill_load(
-            "/skill oracle",
-            self.agent,
-            self.active,
-            self.active.messages(),
-            Console(file=StringIO()),
+        assert self.agent.skill_registry is not None
+        activation = activate_skills(
+            registry=self.agent.skill_registry,
+            active_skills=self.agent.active_skills,
+            names=["oracle"],
         )
+        tree = SessionTree.restore(
+            self.agent.conversation_entries, self.active.record.leaf_id
+        )
+        tree.append_active_skills(activation.activated_skills)
+        exported = tree.export_for_persistence()
+        self.agent.load_conversation(
+            conversation_entries=exported.entries,
+            active_skills=activation.active_skills,
+        )
+        self.persist()
 
     def navigate(self, target: str, *, summarize: bool = False) -> None:
-        with session_usage_metric_context(self.active, ""):
-            navigate_session_tree(self.active, self.agent, target, summarize=summarize)
+        tree = SessionTree.restore(
+            self.active.record.conversation_entries, self.active.record.leaf_id
+        )
+        ref = tree.ref_from_persisted_id(target)
+        preview = tree.preview_navigation(ref, include_abandoned=summarize)
+        summary = None
+        if summarize and preview.abandoned:
+            rendered = "\n\n".join(
+                ""
+                if entry.kind == "tool_result"
+                else f"[{entry.kind}/{entry.message.role}] {entry.message.text_content() or ''}"
+                if entry.message
+                else f"[{entry.kind}] {entry.summary_text}"
+                if entry.summary_text is not None
+                else f"[{entry.kind}]"
+                for entry in preview.abandoned
+            )
+            with usage_metric_context(
+                surface="cli",
+                session_id=self.session_id,
+                session_title=self.active.title,
+                call_kind="branch_summary",
+            ):
+                response = complete_with_cancel(
+                    self.agent.provider,
+                    [
+                        Message.system(
+                            "Summarize the following abandoned conversation branch so it can be "
+                            "used as compact context on a new branch. Preserve concrete decisions, "
+                            "files touched, errors, commands, and unresolved next steps."
+                        ),
+                        Message.user(rendered),
+                    ],
+                    [],
+                )
+            summary = (response.plain_text_content or "").strip() or None
+        tree.navigate(ref, branch_summary=summary)
+        exported = tree.export_for_persistence()
+        save_active_session(
+            self.active,
+            [],
+            conversation_entries=list(exported.entries),
+            leaf_id=exported.leaf_id,
+            agent=self.agent,
+        )
+        projection = tree.project(ConversationProjection())
+        self.agent.load_conversation(
+            conversation_entries=projection.runtime_entries,
+            active_skills=self.active.record.active_skills,
+        )
 
     def fork(self) -> None:
-        self.active = fork_active_session(
-            self.active, self.agent, self.active.messages()
+        self.persist()
+        record = self.active.store.fork(
+            self.active.id,
+            root=self.active.root,
+            new_session_id_value=new_unique_session_id(self.active.store.exists),
         )
-        self.session_id = self.active.id
+        self.active = StoredSession(
+            record.id, self.active.root, self.active.store, record, record.title
+        )
+        self.session_id = record.id
+        bind = getattr(self.agent.provider, "set_session_id", None)
+        assert callable(bind)
+        bind(record.id)
 
     def title(self) -> None:
-        with session_usage_metric_context(self.active, ""):
+        with usage_metric_context(
+            surface="cli",
+            session_id=self.session_id,
+            session_title=self.active.title or fallback_session_title(""),
+        ):
             assert (
                 generate_session_title(self.agent, self.agent.messages)
                 == "Oracle title"

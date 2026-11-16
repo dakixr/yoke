@@ -16,7 +16,6 @@ from yoke.cli.interactive.process_inspector import (
 from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.interactive.tool_inspector import open_live_tool_inspector
-from yoke.cli.backend.inspection import ToolInspection
 from yoke.cli.backend.daemon import DaemonSessionBackend
 
 
@@ -26,7 +25,7 @@ if TYPE_CHECKING:
 
 def create_inspector_launchers(
     *,
-    agent: object,
+    agent: DaemonSessionBackend,
     prompt_session: PromptSession,
     state: PromptCliState,
     state_lock: Lock,
@@ -47,15 +46,7 @@ def create_inspector_launchers(
         )
 
     def show_tool_inspector() -> None:
-        def message_snapshot():
-            with state_lock:
-                return state.messages
-
-        inspection = (
-            agent.tool_inspection()
-            if isinstance(agent, DaemonSessionBackend)
-            else ToolInspection(message_snapshot, trace_store)
-        )
+        inspection = agent.tool_inspection()
 
         schedule(
             lambda: open_live_tool_inspector(
@@ -67,12 +58,6 @@ def create_inspector_launchers(
 
     def show_process_inspector() -> None:
         manager = command_process_manager(agent)
-        if manager is None:
-            scrollback.emit(
-                "notice",
-                "Process inspection is unavailable for this agent.",
-            )
-            return
         schedule(lambda: open_live_process_inspector(manager))
 
     return show_tool_inspector, show_process_inspector

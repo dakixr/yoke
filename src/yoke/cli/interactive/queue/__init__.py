@@ -6,10 +6,12 @@ from yoke.cli.interactive.queue.manager import (
 from yoke.cli.interactive.queue.manager import (
     open_queue_manager as open_queue_manager,
 )
-from yoke.cli.backend.queue import (
+from yoke.cli.backend.daemon.queue import (
     PromptQueueRevisionConflict as PromptQueueRevisionConflict,
 )
-from yoke.cli.backend.queue import clear_prompt_queue as clear_prompt_queue
-from yoke.cli.backend.queue import load_prompt_queue as load_prompt_queue
-from yoke.cli.backend.queue import load_prompt_queue_state as load_prompt_queue_state
-from yoke.cli.backend.queue import persist_prompt_queue as persist_prompt_queue
+from yoke.cli.backend.daemon.queue import clear_prompt_queue as clear_prompt_queue
+from yoke.cli.backend.daemon.queue import load_prompt_queue as load_prompt_queue
+from yoke.cli.backend.daemon.queue import (
+    load_prompt_queue_state as load_prompt_queue_state,
+)
+from yoke.cli.backend.daemon.queue import persist_prompt_queue as persist_prompt_queue

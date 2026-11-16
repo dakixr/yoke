@@ -27,7 +27,7 @@ from yoke.cli.interactive.prompt.loop import (
 )
 from yoke.cli.interactive.tree_selector import TreeSelectorResult
 from yoke.cli.render import InteractiveRenderer, build_console
-from yoke.cli.backend.startup import run_daemon_cli as run_cli
+from yoke.cli.backend.startup import run_daemon_cli
 from yoke.agent.loop import RuntimeAgent
 from tests.yoke.daemon.support import eventually
 from .terminal_daemon_support import (
@@ -36,14 +36,14 @@ from .terminal_daemon_support import (
     terminal as terminal,
     terminal_daemon,
 )
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.values import ActiveSessionRef
 from yoke.session import SessionStore
 
 from .support import CaptureStream
 
 
 def test_cli_runs_headless_prompt(capsys, terminal) -> None:
-    exit_code = run_cli(CLIArgs(prompt="hello world", headless=True))
+    exit_code = run_daemon_cli(CLIArgs(prompt="hello world", headless=True))
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == "synthetic response"
 
@@ -78,7 +78,7 @@ def test_headless_cli_generates_title_without_blocking_user_turn(
     )
     monkeypatch.setattr("yoke.http.runtime.title.generate_http_session_title", generate)
     output = SignalingOutput()
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(prompt="Reply with exactly OK.", headless=True, root=str(tmp_path)),
         stdout=output,
         stderr=CaptureStream(),
@@ -111,7 +111,7 @@ def test_seeded_interactive_cli_does_not_wait_for_title_generation(
     monkeypatch.setattr("yoke.session.title.generate_session_title", fail)
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", fake_interactive)
 
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(prompt="start useful work", root=str(tmp_path)),
         stdout=CaptureStream(),
         stderr=CaptureStream(),
@@ -181,26 +181,12 @@ def test_session_title_worker_is_deduplicated(tmp_path, monkeypatch, terminal) -
 
     monkeypatch.setattr("yoke.http.runtime.title.generate_http_session_title", generate)
     backend = terminal.backend("deduplicated-title", root=tmp_path)
-    first = backend.submit(
-        "first prompt",
-        [],
-        entries=[],
-        stop_event=Event(),
-        user_message=None,
-        checkpoint=lambda *_: None,
-    )
+    first = backend.submit("first prompt", user_message=None)
     try:
         assert started.wait(timeout=5)
         list(first)
         assert isinstance(first.result(), TurnSuccess)
-        second = backend.submit(
-            "second prompt",
-            [],
-            entries=[],
-            stop_event=Event(),
-            user_message=None,
-            checkpoint=lambda *_: None,
-        )
+        second = backend.submit("second prompt", user_message=None)
         list(second)
         assert isinstance(second.result(), TurnSuccess)
         assert calls == ["title"]
@@ -272,7 +258,7 @@ def test_headless_cli_propagates_session_usage_attribution(tmp_path, terminal) -
     terminal.factory = lambda record: RuntimeAgent(
         AttributionProvider(), [], tool_root=Path(record.root)
     )
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(prompt="CLI attribution title", headless=True, root=str(tmp_path)),
         stdout=CaptureStream(),
         stderr=CaptureStream(),
@@ -295,7 +281,7 @@ def test_cli_closes_runtime_it_constructs(tmp_path, monkeypatch) -> None:
         return agent
 
     with terminal_daemon(monkeypatch, factory):
-        exit_code = run_cli(
+        exit_code = run_daemon_cli(
             CLIArgs(prompt="hello", headless=True, root=str(tmp_path)),
             stdout=CaptureStream(),
             stderr=CaptureStream(),
@@ -310,7 +296,7 @@ def test_cli_reads_headless_prompt_from_stdin(monkeypatch, terminal) -> None:
     stderr = CaptureStream()
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(headless=True),
         input_func=lambda _="": "prompt from stdin\n",
         stdout=stdout,
@@ -349,7 +335,7 @@ def test_cli_headless_accepts_image_attachments(
 
     monkeypatch.setattr("yoke.http.runtime.title.generate_http_session_title", generate)
 
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(
             prompt="describe [tiny.png] please",
             headless=True,
@@ -398,7 +384,7 @@ def test_cli_requires_prompt_in_headless_mode(monkeypatch, terminal) -> None:
     stderr = CaptureStream()
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(headless=True),
         stdout=stdout,
         stderr=stderr,

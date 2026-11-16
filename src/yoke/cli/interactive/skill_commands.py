@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from yoke.agent.models import Message
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.render.base import Console
-from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend.daemon import DaemonActiveSession
 
 
 def is_skill_command(command: str) -> bool:
@@ -18,8 +18,8 @@ def is_skill_command(command: str) -> bool:
 
 def handle_skill_load(
     command: str,
-    agent: object,
-    active_session: ActiveSession,
+    agent: DaemonSessionBackend,
+    active_session: DaemonActiveSession,
     messages: list[Message],
     console: Console,
     *,
@@ -33,9 +33,7 @@ def handle_skill_load(
     if not skill_name:
         print_scrollback_notice(console, "Usage: /skill <name> [prompt]")
         return
-    notice = SessionBackend.wrap(agent, active_session).activate_skill(
-        skill_name, messages
-    )
+    notice = agent.activate_skill(skill_name, messages)
     if notice is not None:
         print_scrollback_notice(console, notice)
         return

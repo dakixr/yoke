@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from yoke.cli.backend import SessionBackend
+from yoke.session.workspace import require_workspace
+
 
 from collections.abc import Callable
 from threading import Lock
@@ -14,7 +15,7 @@ from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.queue.mutations import consume_pending_images
 from yoke.cli.interactive.queue.mutations import observe_prompt_submission
 from yoke.cli.interactive.queue.mutations import queue_prompt_submission
-from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend.daemon import DaemonActiveSession
 
 
 def submit_prompt_toolkit_prompt(
@@ -22,7 +23,7 @@ def submit_prompt_toolkit_prompt(
     *,
     action: str,
     state: PromptCliState,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     state_lock: Lock,
     invalidate_prompt: Callable[[], None],
     start_turn: Callable[..., Thread],
@@ -30,7 +31,7 @@ def submit_prompt_toolkit_prompt(
 ) -> None:
     """Submit a normal prompt without reprocessing slash commands."""
     try:
-        SessionBackend.require_workspace(active_session)
+        require_workspace(active_session.root, session_id=active_session.id)
         pending_images, _ = observe_prompt_submission(
             state=state,
             state_lock=state_lock,
@@ -105,7 +106,7 @@ def _queue_or_restore(
     pending_images: list[ImageAttachment],
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
 ) -> None:
     try:
         queued = queue_prompt_submission(

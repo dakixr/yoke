@@ -19,7 +19,7 @@ from yoke.cli.interactive.queue import manager
 from yoke.cli.interactive.queue.mutations import attach_pending_image
 from .daemon_queue_support import load_prompt_queue_state, persist_prompt_queue
 from yoke.cli.render import build_console
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.values import ActiveSessionRef
 from yoke.session.queue import load_prompt_queue_snapshot
 
 from .support import CaptureStream

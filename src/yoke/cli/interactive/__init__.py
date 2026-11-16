@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.backend.daemon import DaemonSessionBackend
+
 from yoke.agent.models import Message
 from yoke.cli.config import CLIArgs
 from yoke.cli.interactive.basic import run_basic_interactive_cli
@@ -22,15 +24,15 @@ from yoke.cli.interactive.renderer import (
 )
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
-from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend.daemon import DaemonActiveSession
 
 
 def run_interactive_cli(
     args: CLIArgs,
-    agent: object,
+    agent: DaemonSessionBackend,
     session_messages: list[Message],
     *,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     input_func: InputFunc,
     stdout: OutputStream,
     stderr: OutputStream,

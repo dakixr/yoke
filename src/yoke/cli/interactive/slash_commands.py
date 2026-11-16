@@ -17,12 +17,12 @@ from yoke.cli.interactive.skill_commands import handle_skill_load
 from yoke.cli.interactive.tools_menu import handle_tools_menu
 from yoke.cli.interactive.tree_command import _handle_tree_command
 from yoke.cli.render import format_compaction_note, print_scrollback_notice
-from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend.daemon import DaemonActiveSession
 
 
 def agents(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -31,7 +31,9 @@ def agents(
     return True, messages, active_session
 
 
-def ps(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSession]:
+def ps(
+    ctx: CommandContext, command: str
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -43,7 +45,7 @@ def ps(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSe
 
 def image(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     console = ctx.console
     messages = ctx.messages
@@ -67,7 +69,7 @@ def image(
 
 def queue(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     console = ctx.console
     messages = ctx.messages
@@ -92,7 +94,7 @@ def queue(
 
 def skill(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -110,7 +112,7 @@ def skill(
 
 def model(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -138,7 +140,7 @@ def model(
 
 def tools(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -151,7 +153,9 @@ def tools(
     return True, messages, active_session
 
 
-def mcp(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSession]:
+def mcp(
+    ctx: CommandContext, command: str
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -168,7 +172,7 @@ def mcp(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveS
 
 def title(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -186,7 +190,7 @@ def title(
 
 def regenerate_title(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -202,7 +206,9 @@ def regenerate_title(
     return True, messages, active_session
 
 
-def pin(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSession]:
+def pin(
+    ctx: CommandContext, command: str
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -216,7 +222,7 @@ def pin(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveS
 
 def info(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     console = ctx.console
     messages = ctx.messages
@@ -226,7 +232,7 @@ def info(
 
 def fork(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -241,7 +247,7 @@ def fork(
 
 def tree(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -264,7 +270,7 @@ def tree(
 
 def compact(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     active_session = ctx.active_session
     agent = ctx.backend
     console = ctx.console
@@ -279,32 +285,13 @@ def compact(
     if compacted is None:
         print_scrollback_notice(console, "Nothing to compact right now.")
         return True, messages, active_session
-    from yoke.cli.backend.values import CompactionSnapshot
-
-    if isinstance(compacted, CompactionSnapshot):
-        print_scrollback_notice(console, format_compaction_note(compacted.payload))
-        return True, compacted.messages, active_session
-    (
-        updated_messages,
-        _preparation,
-        _result,
-        conversation_entries,
-        compaction_payload,
-        usage_payload,
-    ) = compacted
-    agent.persist(
-        updated_messages,
-        conversation_entries=conversation_entries,
-    )
-    print_scrollback_notice(
-        console,
-        format_compaction_note(compaction_payload),
-    )
-    ctx.host.update_context_usage(usage_payload)
-    return True, updated_messages, active_session
+    print_scrollback_notice(console, format_compaction_note(compacted.payload))
+    return True, compacted.messages, active_session
 
 
-def new(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveSession]:
+def new(
+    ctx: CommandContext, command: str
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     agent = ctx.backend
     console = ctx.console
     new_session = agent.new()
@@ -318,7 +305,7 @@ def new(ctx: CommandContext, command: str) -> tuple[bool, list[Message], ActiveS
 
 def shortcuts(
     ctx: CommandContext, command: str
-) -> tuple[bool, list[Message], ActiveSession]:
+) -> tuple[bool, list[Message], DaemonActiveSession]:
     from yoke.cli.interactive.prompt.keys import shortcut_notice
 
     print_scrollback_notice(ctx.console, shortcut_notice(basic=ctx.host.basic_mode))

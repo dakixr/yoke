@@ -18,7 +18,7 @@ from yoke.cli.interactive.common import PendingPrompt, PromptCliState, TurnFailu
 from yoke.cli.interactive.prompt import turns
 from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.values import ActiveSessionRef
 from yoke.session.workspace import require_workspace
 
 from .terminal_daemon_support import ReplyProvider, session_for, terminal as terminal
@@ -119,7 +119,7 @@ def test_dequeue_delete_run_outcome_finish_restores_exact_paused_item(
         PromptCliState(messages=[], pending_prompts=[], active_turn_id=1),
         _replay(backend, selected_remote),
     )
-    assert outcome.agent is None
+    assert not hasattr(outcome, "agent")
     restored = backend.load_queue().prompts
     assert [(p.id, p.prompt, p.kind, p.paused) for p in restored] == [
         (first.id, first.prompt, first.kind, True),
@@ -272,7 +272,7 @@ def test_workspace_error_after_execution_does_not_restore_duplicate(
         active_user_message=pending.user_message,
     )
     outcome = _finish(backend, state, _replay(backend, backend.load_queue().prompts[0]))
-    assert outcome.rejected_prompt is None
+    assert not hasattr(outcome, "rejected_prompt")
     assert backend.load_queue().prompts == []
     assert state.next_editor_text is None
     assert len(executed) == 1
@@ -316,7 +316,7 @@ def test_control_transfers_queue_identity_before_worker_starts(
     selected = dequeue_prompt(state=state, state_lock=Lock(), active_session=active)
     assert selected is None
     control.start_pending_prompt(selected, False)
-    assert state.starting_prompt is None
+    assert not hasattr(state, "starting_prompt")
     runtime = terminal.app.state.runtime_registry.get_if_loaded("recover")
     original = runtime.execution.prepare
 

@@ -8,7 +8,8 @@ from yoke.cli.interactive import tools_menu
 from yoke.cli.interactive.tools_menu import ToolChangeScope
 from yoke.cli.render import build_console
 
-from .test_tools_menu import HiddenSkillTool, VisibleTool
+from .test_tools_menu import HiddenSkillTool, VisibleTool, daemon_tool_backend
+from .terminal_daemon_support import terminal as terminal
 from .test_turn_projection import RecordingProvider
 
 
@@ -20,7 +21,9 @@ class ZetaTool(VisibleTool):
     name = "zeta"
 
 
-def test_menu_backend_preserves_provider_tool_order_and_hidden_tools(monkeypatch):
+def test_menu_backend_preserves_provider_tool_order_and_hidden_tools(
+    tmp_path, monkeypatch, terminal
+):
     # Discovery order differs from menu row order. Keeping discovery order here
     # would silently change the provider request and its cache prefix.
     discovered = [
@@ -41,9 +44,10 @@ def test_menu_backend_preserves_provider_tool_order_and_hidden_tools(monkeypatch
         "_select_tool_change_scope",
         lambda **_kw: ToolChangeScope("session", "This session", "temporary"),
     )
+    backend = daemon_tool_backend(terminal, monkeypatch, tmp_path, runtime)
     try:
         tools_menu.handle_tools_menu(
-            agent=runtime, console=build_console(io.StringIO())
+            agent=backend, console=build_console(io.StringIO())
         )
         assert list(runtime.tools) == ["alpha", "zeta", "skill"]
         runtime.run("Compare the selected tools.")

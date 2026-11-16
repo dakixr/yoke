@@ -10,8 +10,9 @@ from yoke.agent.context import ContextManager
 from yoke.agent.loop import AgentResult
 from yoke.agent.models import Message
 from yoke.cli.bootstrap.types import ToolLoadReport
-from yoke.cli.config import CLIArgs
-from yoke.cli.runtime import create_active_session
+from tests.yoke.session_support import StoredSession
+from yoke.session import SessionStore
+from yoke.session.repository import new_session_id
 
 
 @dataclass
@@ -89,4 +90,6 @@ class CaptureStream(io.StringIO):
 
 
 def active_session_for(root: Path):
-    return create_active_session(CLIArgs(root=str(root)), root=root)
+    store = SessionStore()
+    record = store.load(new_session_id())
+    return StoredSession(record.id, root, store, record)

@@ -65,8 +65,8 @@ Headless invocation uses the per-user daemon with no local runtime fallback.
 and `yoke resume ID --headless --prompt "prompt"` run a turn on an existing session. The first invocation starts the
 daemon. The client sends its environment and cwd on attachment, holds an event
 lease through the turn, and detaches on exit. Interactive entry points attach to the same daemon and
-render its filtered session event stream. The local runtime remains available
-only to compatibility and differential tests. Both interactive and headless
+render its filtered session event stream. The local CLI runtime and its injected
+agent entry points have been removed. Both interactive and headless
 `resume --relocate` call the daemon workspace relocation route.
 
 `yoke serve` runs the process-wide HTTP session runtime. `--session-dir` (or

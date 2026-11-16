@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.backend.daemon import DaemonSessionBackend
+
 import unicodedata
 
 from rich.table import Table
@@ -13,14 +15,9 @@ from yoke.cli.render import print_scrollback_notice
 from yoke.cli.render.base import Console
 
 
-def print_agent_table(console: Console, agent: object) -> None:
+def print_agent_table(console: Console, agent: DaemonSessionBackend) -> None:
     """Show each SDK instance's latest run without reading process output."""
     manager = command_process_manager(agent)
-    if manager is None:
-        print_scrollback_notice(
-            console, "Agent tracking is unavailable for this agent."
-        )
-        return
     latest: dict[str, dict[str, object]] = {}
     for run in manager.agent_runs():
         agent_id = run.get("agentId")

@@ -7,13 +7,16 @@ from threading import Lock
 
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.backend.queue import PromptQueueRevisionConflict, commit_prompt_queue
+from yoke.cli.backend.daemon.queue import (
+    PromptQueueRevisionConflict,
+    commit_prompt_queue,
+)
 from yoke.cli.interactive.queue.snapshot import (
     queue_ensure_session,
     queue_refresh_if_changed,
     queue_reload,
 )
-from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend.daemon import DaemonActiveSession
 from yoke.session.queue import remove_occurrences
 
 
@@ -21,7 +24,7 @@ def attach_pending_image(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     attachment: ImageAttachment,
 ) -> None:
     """Persist one image append without replacing stale prompt values."""
@@ -39,7 +42,7 @@ def remove_pending_image(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     index: int = -1,
 ) -> ImageAttachment | None:
     """Persist removal of the selected image while preserving queue items."""
@@ -79,7 +82,7 @@ def consume_pending_images(
     *,
     state: PromptCliState,
     state_lock: Lock,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     images: list[ImageAttachment] | None = None,
 ) -> list[ImageAttachment]:
     """Persist consumption of one submission's stable image snapshot."""
@@ -102,7 +105,7 @@ def consume_pending_images(
 
 def _persist_images(
     state: PromptCliState,
-    active_session: ActiveSession,
+    active_session: DaemonActiveSession,
     images: list[ImageAttachment],
 ) -> bool:
     try:

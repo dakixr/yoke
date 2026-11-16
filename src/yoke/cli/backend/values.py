@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
-from yoke.agent.models import ConversationEntry, Message
+from yoke.agent.models import Message
 from yoke.cli.backend.models import PendingPrompt
 from yoke.cli.image_input import ImageAttachment
 
 if TYPE_CHECKING:
-    from yoke.cli.runtime.base import ActiveSession
-
-
-type Checkpoint = Callable[[object, list[Message], list[ConversationEntry]], None]
+    from yoke.cli.backend.daemon import DaemonActiveSession
 
 
 @dataclass(slots=True)
@@ -51,6 +47,27 @@ class TreeNavigationResult:
     """Result of moving the active session leaf."""
 
     messages: list[Message]
-    active_session: ActiveSession
+    active_session: DaemonActiveSession
     editor_text: str | None = None
     summary_created: bool = False
+
+
+@dataclass(slots=True)
+class ActiveSessionRef:
+    """Mutable daemon session selection shared by terminal callbacks."""
+
+    value: DaemonActiveSession
+
+
+class EventRenderer(Protocol):
+    """Protocol for runtime event renderers."""
+
+    def __enter__(self) -> EventRenderer:
+        """Enter the renderer context."""
+        ...
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
+        """Exit the renderer context."""
+
+    def handle_event(self, event: str, payload: dict[str, object]) -> None:
+        """Handle a runtime event."""

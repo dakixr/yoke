@@ -17,7 +17,7 @@ from yoke.ai.providers.base import Provider
 from yoke.cli.config import CLIArgs
 from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.render import build_console
-from yoke.cli.backend.startup import run_daemon_cli as run_cli
+from yoke.cli.backend.startup import run_daemon_cli
 from yoke.session import SessionStore
 from yoke.session.legacy.importer import import_legacy_sessions
 from yoke.session.repository.models import SessionRecord
@@ -186,7 +186,7 @@ def test_cli_session_json_keeps_transcript_after_compaction(
 
     terminal.stack.callback(agent.close)
     terminal.factory = lambda _record: agent.fork(include_state=False)
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(
             prompt="follow-up",
             headless=True,
@@ -268,7 +268,7 @@ def test_regenerate_title_uses_conversation_and_persists_title(
 def test_cli_auto_persists_unnamed_session_globally(
     tmp_path: Path, capsys, terminal
 ) -> None:
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(prompt="persist this", headless=True, root=str(tmp_path)),
     )
 
@@ -536,7 +536,7 @@ def test_cli_fork_starts_from_source_session(
         model_id="gpt-6.1-sol",
     )
 
-    exit_code = run_cli(
+    exit_code = run_daemon_cli(
         CLIArgs(
             prompt="next",
             headless=True,

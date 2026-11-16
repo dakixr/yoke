@@ -13,9 +13,9 @@ from yoke.cli.interactive.common import (
 )
 from yoke.cli.interactive.prompt.loop import process_prompt_toolkit_prompt
 from yoke.cli.interactive.queue import manager
-from yoke.cli.backend.queue import load_prompt_queue_state, persist_prompt_queue
+from yoke.cli.backend.daemon.queue import load_prompt_queue_state, persist_prompt_queue
 from yoke.cli.render import build_console
-from yoke.cli.runtime.base import ActiveSessionRef
+from yoke.cli.backend.values import ActiveSessionRef
 from yoke.cli.runtime.terminal_output_gate import (
     is_fullscreen_output_suppressed,
 )

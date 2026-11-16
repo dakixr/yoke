@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.completion.menu import COMPLETION_MENU_STYLE
 from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
-from yoke.cli.backend import SessionBackend
 
 if TYPE_CHECKING:
     from prompt_toolkit import PromptSession
@@ -136,11 +135,8 @@ class PersistentPromptLifecycle:
                 self._config.prompt_session.app.invalidate()
 
     async def _process_submission(self, submission: _Submission) -> None:
-        callback = SessionBackend.submission_context(
-            lambda: self._config.process_submission(
-                submission.prompt, submission.action
-            )
-        )
+        def callback():
+            return self._config.process_submission(submission.prompt, submission.action)
 
         if _requires_terminal_control(submission.prompt):
             from prompt_toolkit.application.run_in_terminal import run_in_terminal

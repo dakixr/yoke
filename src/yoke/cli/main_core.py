@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -115,11 +114,6 @@ def dotenv_values(source_root: Path) -> dict[str, str]:
             continue
         values[env_key] = _strip_matching_quotes(value.strip())
     return values
-
-
-def _load_source_dotenv(source_root: Path = SOURCE_ROOT) -> None:
-    """Keep legacy in-process CLI dotenv behavior."""
-    os.environ.update(dotenv_values(source_root))
 
 
 def _inject_prompt_flag(argv: list[str]) -> list[str]:

@@ -12,22 +12,22 @@ from yoke.cli.interactive.tree_selector import (
 )
 from yoke.cli.render import print_session_scrollback
 from yoke.cli.render.base import Console
-from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend.daemon import DaemonActiveSession
 from yoke.cli.runtime.selector.ui import select_list_item_interactive
-from yoke.cli.backend import SessionBackend
+from yoke.cli.backend.daemon import DaemonSessionBackend
 
 
 def _handle_tree_command(
-    active_session: ActiveSession,
-    agent: object,
+    active_session: DaemonActiveSession,
+    agent: DaemonSessionBackend,
     console: Console,
     *,
     host: CommandHost,
     initial_selected_id: str | None = None,
-) -> tuple[list[Message], ActiveSession] | None:
+) -> tuple[list[Message], DaemonActiveSession] | None:
     from yoke.cli.render import print_scrollback_notice
 
-    backend = SessionBackend.wrap(agent, active_session)
+    backend = agent
     roots = backend.tree()
     if not roots:
         print_scrollback_notice(console, "No session entries yet.")

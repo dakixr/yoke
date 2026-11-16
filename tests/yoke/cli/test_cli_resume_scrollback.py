@@ -22,9 +22,16 @@ from yoke.cli.bootstrap.types import ToolLoadReport
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
-from yoke.cli.runtime.resume import RESUME_SCROLLBACK_MESSAGE_LIMIT
-from yoke.cli.runtime.resume import project_resumed_session
+from yoke.agent.session_tree import (
+    SessionTree,
+    ConversationProjection,
+    ScrollbackProjection,
+)
+from yoke.session.repository import SessionTreeIndex
+
 from yoke.session.repository import SessionRecord
+
+RESUME_SCROLLBACK_MESSAGE_LIMIT = 400
 
 
 def test_resume_by_id_continues_saved_session(tmp_path: Path, terminal) -> None:
@@ -225,21 +232,24 @@ def test_large_resume_projects_compact_runtime_and_bounded_scrollback() -> None:
         leaf_id=parent_id,
     )
 
-    projection = project_resumed_session(record)
+    tree = SessionTree.restore(record.conversation_entries, leaf_id=record.leaf_id)
+    projection = tree.project(ConversationProjection())
+    scrollback = tree.project(
+        ScrollbackProjection(limit=RESUME_SCROLLBACK_MESSAGE_LIMIT)
+    )
+    scrollback_messages = [message.to_message() for message in scrollback.messages]
 
     assert len(projection.runtime_messages) == 5_051
     assert "Earlier work summarized." in (
         projection.runtime_messages[4_951].text_content() or ""
     )
-    assert len(projection.scrollback_messages) == RESUME_SCROLLBACK_MESSAGE_LIMIT
-    assert projection.scrollback_messages[0].text_content() == "prompt 9600"
-    assert projection.scrollback_messages[-1].text_content() == "answer 9999"
-    assert projection.scrollback_notice is not None
-    assert "9,600 older messages" in projection.scrollback_notice
-    assert "compaction summary remains in model context" in (
-        projection.scrollback_notice
-    )
-    assert "Use /tree" in projection.scrollback_notice
+    assert len(scrollback_messages) == RESUME_SCROLLBACK_MESSAGE_LIMIT
+    assert scrollback_messages[0].text_content() == "prompt 9600"
+    assert scrollback_messages[-1].text_content() == "answer 9999"
+    assert scrollback.notice is not None
+    assert "9,600 older messages" in scrollback.notice
+    assert "compaction summary remains in model context" in (scrollback.notice)
+    assert "Use /tree" in scrollback.notice
 
 
 def test_resume_scrollback_hides_handoff_without_hiding_audit_messages() -> None:
@@ -296,9 +306,14 @@ def test_resume_scrollback_hides_handoff_without_hiding_audit_messages() -> None
         leaf_id=continuation.id,
     )
 
-    projection = project_resumed_session(record)
+    tree = SessionTree.restore(record.conversation_entries, leaf_id=record.leaf_id)
+    projection = tree.project(ConversationProjection())
+    scrollback = tree.project(
+        ScrollbackProjection(limit=RESUME_SCROLLBACK_MESSAGE_LIMIT)
+    )
+    scrollback_messages = [message.to_message() for message in scrollback.messages]
 
-    assert projection.scrollback_messages == [*messages, continuation.message]
+    assert scrollback_messages == [*messages, continuation.message]
     assert any(
         "Internal handoff." in (message.text_content() or "")
         for message in projection.runtime_messages
@@ -349,14 +364,19 @@ def test_resume_scrollback_reconnects_detached_compaction_handoff() -> None:
         leaf_id=continuation.id,
     )
 
-    projection = project_resumed_session(record)
+    tree = SessionTree.restore(record.conversation_entries, leaf_id=record.leaf_id)
+    projection = tree.project(ConversationProjection())
+    scrollback = tree.project(
+        ScrollbackProjection(limit=RESUME_SCROLLBACK_MESSAGE_LIMIT)
+    )
+    scrollback_messages = [message.to_message() for message in scrollback.messages]
 
-    assert projection.scrollback_messages == [
+    assert scrollback_messages == [
         historical_user.message,
         historical_agent.message,
         continuation.message,
     ]
-    assert projection.runtime_messages == [
+    assert list(projection.runtime_messages) == [
         persisted_handoff.message,
         continuation.message,
     ]
@@ -381,9 +401,17 @@ def test_resume_recovers_checkpoint_bypassed_by_active_leaf() -> None:
         leaf_id=tail.id,
     )
 
-    projection = project_resumed_session(record)
+    active = SessionTreeIndex(
+        record.conversation_entries, record.leaf_id
+    ).active_entries()
+    tree = SessionTree.restore(active, leaf_id=record.leaf_id)
+    projection = tree.project(ConversationProjection())
+    scrollback = tree.project(
+        ScrollbackProjection(limit=RESUME_SCROLLBACK_MESSAGE_LIMIT)
+    )
+    [message.to_message() for message in scrollback.messages]
 
-    assert [entry.kind for entry in projection.active_entries] == [
+    assert [entry.kind for entry in projection.runtime_entries] == [
         "user",
         "user",
     ]

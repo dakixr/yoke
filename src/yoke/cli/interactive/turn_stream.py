@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from contextlib import ExitStack
 
 from yoke.cli.backend.events import BackendEvent, agent_event
-from yoke.cli.runtime.base import EventRenderer
+from yoke.cli.backend.values import EventRenderer
 
 
 def render_turn_events(events: Iterable[BackendEvent], renderer: EventRenderer) -> None:

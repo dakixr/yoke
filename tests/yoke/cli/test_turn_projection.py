@@ -15,7 +15,7 @@ from yoke.agent.session_tree import SessionTree
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.state import conversation_entries_from_messages, active_branch_entries
 from yoke.agent.tools import LocalTool
-from yoke.cli.runtime import ActiveSession
+from tests.yoke.session_support import StoredSession
 from .terminal_daemon_support import terminal as terminal
 from yoke.session import SessionStore
 
@@ -65,7 +65,7 @@ class RecordingProvider:
 @pytest.mark.parametrize(
     "scenario", ["history", "tools_checkpoint", "skills", "images", "branch"]
 )
-def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
+def test_daemon_prompt_preserves_legacy_prompt_provider_projection(
     tmp_path, monkeypatch, scenario, terminal
 ):
     session = active_session_for(tmp_path)
@@ -87,7 +87,7 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
             conversation_entries=list(exported.entries),
             leaf_id=exported.leaf_id,
         )
-        session = ActiveSession(session.id, tmp_path, session.store, record)
+        session = StoredSession(session.id, tmp_path, session.store, record)
         entries = session.active_entries()
         history = session.messages()
     user_message = Message.user("current input")
