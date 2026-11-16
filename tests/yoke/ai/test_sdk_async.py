@@ -84,6 +84,7 @@ class ConcurrentProvider:
 class CancellableProvider:
     supports_image_inputs: ClassVar[bool] = False
     max_images_per_message: ClassVar[int | None] = None
+    entered = threading.Event()
     stopped = threading.Event()
     closed = threading.Event()
 
@@ -100,6 +101,7 @@ class CancellableProvider:
         cancel_requested: Callable[[], bool],
     ) -> Message:
         del messages, tools
+        self.entered.set()
         while not cancel_requested():
             time.sleep(0.002)
         self.stopped.set()
@@ -683,6 +685,7 @@ def test_run_many_cancellation_stops_and_closes_active_agent(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
+        CancellableProvider.entered.clear()
         CancellableProvider.stopped.clear()
         CancellableProvider.closed.clear()
         batch = asyncio.create_task(
@@ -693,7 +696,10 @@ def test_run_many_cancellation_stops_and_closes_active_agent(
                 ),
             )
         )
-        await asyncio.sleep(0.01)
+        # Cancel only once the provider is active; a fixed sleep raced cold imports.
+        async with asyncio.timeout(5):
+            while not CancellableProvider.entered.is_set():
+                await asyncio.sleep(0.001)
         batch.cancel()
         try:
             await batch
