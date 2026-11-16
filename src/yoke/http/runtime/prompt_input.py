@@ -61,6 +61,7 @@ def user_message(
     admission: AdmissionRecord,
 ) -> Message:
     images = []
+    image_attachments = []
     files = []
     for attachment in admission.attachments:
         path = service.uploads.resolve(
@@ -71,6 +72,7 @@ def user_message(
         )
         if attachment.mime.startswith("image/"):
             images.append(path)
+            image_attachments.append(attachment)
         else:
             files.append(
                 {"name": attachment.name, "mime": attachment.mime, "path": str(path)}
@@ -80,7 +82,10 @@ def user_message(
         image_paths=images,
         # Plain text and file-only inputs do not consume image labels. Avoid
         # rebuilding the entire transcript just to compute an unused index.
-        start_index=next_image_label_index(record.messages) if images else 1,
+        start_index=next_image_label_index(record.messages)
+        if images
+        and not all(item.image_projection == "cli" for item in image_attachments)
+        else 1,
         embed_local_images=True,
     )
     if isinstance(message.content, list):
@@ -89,8 +94,11 @@ def user_message(
             for part in message.content
             if isinstance(part, MessageImageURLContentPart)
         ]
-        for part, path in zip(image_parts, images, strict=True):
-            part.attachment_name = path.name
+        for part, path, attachment in zip(
+            image_parts, images, image_attachments, strict=True
+        ):
+            if attachment.image_projection != "cli":
+                part.attachment_name = path.name
     if files:
         # File contents are deliberately not injected. Native read/extract tools
         # can open these daemon-owned paths when relevant to the task.
@@ -116,7 +124,10 @@ def validate_execution_images(admission: AdmissionRecord, provider: object) -> N
     from yoke.agent.multimodal import provider_supports_image_inputs
 
     if (
-        any(item.mime.startswith("image/") for item in admission.attachments)
+        any(
+            item.mime.startswith("image/") and item.image_projection != "cli"
+            for item in admission.attachments
+        )
         and provider_supports_image_inputs(provider) is False
     ):
         raise ValueError("Selected model does not support image inputs")

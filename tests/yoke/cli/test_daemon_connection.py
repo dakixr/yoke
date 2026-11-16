@@ -1,6 +1,7 @@
 """Transport recovery exercises real HTTP/SSE over an isolated Unix socket."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 
 from tests.yoke.daemon.support import sandbox as sandbox
 
@@ -27,7 +28,8 @@ def test_session_stream_recovers_history_without_duplicate_durable_events(
         stream, unsubscribe = connection.events.subscribe()
         try:
             connection.start()
-            with ThreadPoolExecutor(max_workers=1) as pool:
+            with ThreadPoolExecutor(max_workers=1) as pool, ExitStack() as cleanup:
+                cleanup.callback(unsubscribe)
                 iterator = iter(stream)
 
                 def until(kind):

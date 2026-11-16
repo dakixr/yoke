@@ -6,6 +6,8 @@ import asyncio
 import json
 import os
 from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any
@@ -82,8 +84,21 @@ class SessionConnection:
     ) -> dict[str, Any]:
         return self.request(method, f"session/{self.session_id}{suffix}", **kwargs)
 
+    @contextmanager
+    def startup_lease(self) -> Iterator[None]:
+        """Cover configuration discovery before the session stream can open."""
+        with unix_client(self._handle.socket, timeout=310) as client:
+            with client.stream(
+                "GET", "daemon/lease", params={"client": self.owner}
+            ) as response:
+                response.raise_for_status()
+                next(response.iter_lines())
+                yield
+
     def start(self, *, timeout: float = 10) -> None:
         """Attach and wait until the stream owns its lease and recovery is done."""
+        if self._closed.is_set():
+            raise RuntimeError("Session connection is closed.")
         if self._worker is None:
             self._worker = Thread(target=self._run, daemon=True, name="yoke-cli-events")
             self._worker.start()
@@ -138,6 +153,7 @@ class SessionConnection:
                         self.events.publish(
                             "client.disconnected", {"message": str(exc)}
                         )
+                self._ready.clear()
                 if not self._closed.is_set():
                     await asyncio.sleep(0.1)
         except asyncio.CancelledError:
@@ -145,12 +161,17 @@ class SessionConnection:
         finally:
             # Do not discover or spawn a daemon just to detach on exit.
             try:
-                await asyncio.to_thread(
-                    self.session_request,
-                    "DELETE",
-                    "/client",
-                    params={"owner": self.owner},
-                )
+                transport = httpx.AsyncHTTPTransport(uds=str(self._handle.socket))
+                async with httpx.AsyncClient(
+                    transport=transport,
+                    base_url="http://yoke/api/v1/",
+                    timeout=2,
+                    trust_env=False,
+                ) as http:
+                    await http.delete(
+                        f"session/{self.session_id}/client",
+                        params={"owner": self.owner},
+                    )
             except (httpx.HTTPError, OSError, ValueError):
                 pass
             self.events.close()

@@ -1,7 +1,8 @@
 # Daemon client contract
 
-The in-process CLI remains in place until Phase 5. The HTTP API supports headless,
-basic and prompt-toolkit clients through the contracts below. Paths have the
+Headless command entry points use this contract. Interactive modes still use
+the in-process adapter pending Phase 5's next stage. The HTTP API supports
+headless, basic and prompt-toolkit clients. Paths have the
 `/api/v1` prefix.
 
 ## Startup and attachment
@@ -167,3 +168,10 @@ transcript before announcing `client.resynced`. Durable sequence numbers prevent
 duplicate replay. A dropped stream repeats discovery, build-skew checks and
 attachment with a new copy of the terminal environment. Ambiguous HTTP writes
 are never retried automatically; admission retries must reuse their input ID.
+
+CLI image attachments set `imageProjection: "cli"`. This preserves the existing
+terminal provider message bytes: labels start at one per submitted prompt and
+the image's `attachment_name` remains unset. Omitted projection keeps the web
+and ACP behavior. The flag is durable, survives queue edits and recovery, and
+does not supply arbitrary provider messages. Unsupported CLI images follow the
+existing runtime image projection instead of the web admission rejection.

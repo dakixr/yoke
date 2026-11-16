@@ -65,7 +65,12 @@ def prompt_from_admission(record: AdmissionRecord) -> PromptInput:
         text=record.prompt,
         continuation=record.continuation,
         attachments=[
-            PromptAttachment(uri=item.uri, name=item.name, mime=item.mime)
+            PromptAttachment(
+                uri=item.uri,
+                name=item.name,
+                mime=item.mime,
+                image_projection=item.image_projection,
+            )
             for item in record.attachments
         ],
     )
@@ -114,13 +119,16 @@ def apply_operation(items, admissions, operation) -> None:  # noqa: ANN001
         item.continuation = operation.prompt.continuation
         admission.continuation = operation.prompt.continuation
         item.attachments = [
-            {"uri": attachment.uri, "name": attachment.name, "mime": attachment.mime}
+            attachment.model_dump(exclude={"type"})
             for attachment in operation.prompt.attachments
         ]
         admission.prompt = operation.prompt.text
         admission.attachments = [
             AdmissionAttachment(
-                uri=attachment.uri, name=attachment.name, mime=attachment.mime
+                uri=attachment.uri,
+                name=attachment.name,
+                mime=attachment.mime,
+                image_projection=attachment.image_projection,
             )
             for attachment in operation.prompt.attachments
         ]
