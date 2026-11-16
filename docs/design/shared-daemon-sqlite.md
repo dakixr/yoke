@@ -187,8 +187,14 @@ holds a daemon lifetime lease on both discovered and explicit-URL connections;
 `acp/ownership.py` and its per-session flock are deleted. A subprocess relocation
 regression now calls the daemon API instead of opening a second local runtime.
 
-Stage 4 is not complete. The CLI's injected in-process execution path and its
-behavioral test ports remain outstanding. The runtime modules listed under
+Stage 4 cleanup remains incomplete. Saved-selection defaults and shared terminal
+result values have moved out of the CLI execution modules. Session, prompt,
+resume, command-contract, workspace, queue-isolation and queue-manager tests now
+exercise the daemon, wholly or in part. The public `yoke.cli.run_cli` export no
+longer accepts an injected agent. The unused interactive turn shim is deleted;
+queue snapshot presentation lives separately from backend persistence operations.
+Compatibility `cli/runtime/cli.py`, its executor and the local `SessionBackend`
+still have unported test callers and remain pending deletion. The runtime modules listed under
 "Deletable once SQLite is in" have not been removed. Provider projection goldens
 remain unchanged.
 

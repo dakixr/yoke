@@ -1203,3 +1203,8 @@ inputs, and owns compaction and workspace relocation. The terminal renders each
 local input once and observes inputs admitted by other clients. `/info` refreshes
 the daemon metadata, including its real database path, entry count, timestamps
 and context window.
+
+The public Python `yoke.cli.run_cli(args, ...)` entry point also connects to the
+daemon and accepts no agent injection. Resume replays saved history, uses the
+saved workspace rather than the chooser filter, and requires explicit
+relocation for records with no workspace.
