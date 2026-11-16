@@ -1,6 +1,6 @@
 """Explicit, memory-only execution environments for daemon-owned work.
 
-The in-process CLI leaves this scope unset and keeps its process environment.
+Work outside a daemon client scope leaves this unset and keeps the process environment.
 """
 
 from __future__ import annotations
