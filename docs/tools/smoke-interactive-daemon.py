@@ -26,6 +26,8 @@ from tempfile import TemporaryDirectory
 
 import httpx
 
+from yoke._version import __version__
+
 ANSI = re.compile(r"\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]")
 
 
@@ -123,7 +125,7 @@ class PtySession:
         return self.request(method, f"session/{self.session_id}{suffix}", **kwargs)
 
     def start(self) -> None:
-        self.until(lambda: b"Version 3.27.2" in self.raw)
+        self.until(lambda: f"Version {__version__}".encode() in self.raw)
         self.pids.append(self.request("GET", "daemon")["pid"])
         self.send("/info")
         self.until(lambda: "Session info:" in self.text())

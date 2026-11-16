@@ -14,9 +14,10 @@ five seconds for startup; daemon output goes to `~/.yoke/run/daemon.log`.
 `yoke daemon status`, `restart`, and `stop` inspect or control it.
 
 An explicit `--url` or `YOKE_ACP_URL` selects an existing HTTP server instead.
-That mode requires `--token` or `YOKE_ACP_TOKEN` and does not auto-spawn a daemon
-or acquire a local daemon lease. Existing launchers with both environment
-variables continue using their configured server.
+That mode requires `--token` or `YOKE_ACP_TOKEN`. It holds a daemon lease
+over the same authenticated HTTP connection settings as session requests. It
+does not discover or spawn a local daemon. Existing launchers with both
+environment variables continue using their configured server.
 
 Provider credentials and settings must be available to the daemon. An
 auto-spawned daemon inherits the first client's environment. Later clients do
@@ -31,10 +32,9 @@ its work drains. An incompatible busy daemon refuses attachment without
 interrupting its turns. ACP reconnects its lease after a restart; individual
 session requests are not retried because they might already be admitted.
 
-The existing per-session ACP ownership lock remains during this phase. It
-prevents two ACP peers from replacing each other's client tool configuration.
-It is separate from the daemon lease and can be removed when the session API
-supports multiple independent clients.
+ACP no longer creates per-session ownership files. Each peer serializes its
+own operations; independent daemon client attachments coexist by owner. The
+daemon handles admission, queue revisions, interruption and workspace leases.
 
 In T3's provider settings, add an ACP provider using a local command. Use
 `yoke acp` if T3 already inherits the required environment. Otherwise point it

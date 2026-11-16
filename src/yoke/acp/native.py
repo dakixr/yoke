@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import Awaitable
 from collections.abc import Callable
 from typing import Any
@@ -57,6 +58,27 @@ class NativeClient:
         self.process_monitor = ProcessMonitor(self)
         self.agent_monitor = AgentMonitor(self)
         self.event_hub = NativeEventHub(self)
+
+    async def hold_lease(self) -> None:
+        """Hold the contacted daemon alive, including for explicit HTTP URLs."""
+        while True:
+            try:
+                async with self.http.stream(
+                    "GET",
+                    "daemon/lease",
+                    params={"client": "acp", "pid": str(os.getpid())},
+                    timeout=httpx.Timeout(10.0, read=None),
+                ) as stream:
+                    stream.raise_for_status()
+                    async for line in stream.aiter_lines():
+                        if (
+                            line.startswith("data: ")
+                            and json.loads(line[6:]).get("reason") == "stop"
+                        ):
+                            return
+            except (httpx.HTTPError, ValueError):
+                pass
+            await asyncio.sleep(0.5)
 
     @staticmethod
     def path(session_id: str, suffix: str = "") -> str:

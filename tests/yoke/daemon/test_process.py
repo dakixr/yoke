@@ -272,13 +272,27 @@ def test_busy_incompatible_skew_refuses_without_interrupt(sandbox, monkeypatch):
         )
 
 
-def test_acp_without_url_runs_initialize_new_and_prompt(sandbox):
+@pytest.mark.parametrize(
+    "explicit_url", [False, True], ids=["discovered", "explicit-url"]
+)
+def test_acp_runs_initialize_new_and_prompt_with_daemon_lease(
+    sandbox, monkeypatch, explicit_url
+):
+    arguments = []
+    if explicit_url:
+        monkeypatch.setenv("YOKE_DAEMON_IDLE_GRACE", "2")
+        sandbox.connect()
+        info = read_info(sandbox.paths)
+        assert info is not None and info.port is not None
+        arguments = ["--url", f"http://127.0.0.1:{info.port}", "--token", info.token]
+
     async def scenario():
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
             "yoke",
             "acp",
+            *arguments,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

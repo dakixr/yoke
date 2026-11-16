@@ -13,7 +13,6 @@ from yoke._version import __version__
 from yoke.acp.catalog import discover
 from yoke.acp.native import NativeClient
 from yoke.acp.native import fail
-from yoke.acp.ownership import session_owner
 from yoke.acp.turns import prompt as run_prompt
 from yoke.acp.sessions import SessionLifecycle, MODES
 from yoke.acp.notifications import SessionNotifications
@@ -202,13 +201,12 @@ class YokeAcpAgent:
 
     @asynccontextmanager
     async def exclusive(self, session_id: str):  # noqa: ANN202
-        """Serialize operations within this peer and across local peers."""
+        """Serialize operations within this peer; daemon admission owns shared work."""
         if session_id in self.busy:
             raise fail("Session already has an in-flight operation")
         self.busy.add(session_id)
         try:
-            with session_owner(str(self.native.http.base_url), session_id):
-                yield
+            yield
         finally:
             self.busy.remove(session_id)
 

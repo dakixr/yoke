@@ -214,3 +214,12 @@ history. Both resume modes use the existing `/relocate` route.
 The event reader counts completed reattachments. After an uncertain admission,
 the terminal can wait for a newer attachment before replaying the same input ID;
 other mutations are never replayed automatically.
+
+## Workspace ownership
+
+The daemon owns shared execution leases and exclusive relocation leases in
+memory, keyed by database and session ID. Admission, provider operations, title
+work and background command cleanup retain their leases until physical work
+stops. Clients use the relocation route; no workspace lock files are created.
+ACP holds a daemon lifetime lease over either the discovered socket or its
+explicit authenticated HTTP URL. Its former local ownership flock is gone.
