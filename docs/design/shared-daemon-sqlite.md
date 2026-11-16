@@ -139,6 +139,21 @@ Each phase ships on its own and leaves the app working.
 
 Metrics recorded per phase: cold and warm attach time, time to first assistant event, resume time and RSS on the largest session, DB, WAL and freelist size, writer commit p99, SSE resync count.
 
+## Phase 5 implementation notes
+
+Stage 1 adds `cli/backend/connection.py`, a Unix HTTP client and reconnecting
+session event reader built on existing discovery and build-skew policy. The
+reader subscribes before history recovery, deduplicates durable sequences, reads
+the active transcript on every resync, and reattaches with fresh environment
+values after restart. Mutations do not receive implicit retries. Closing joins
+in-flight discovery before releasing the attachment, preventing a late spawn
+after client cleanup. Entry points have not switched to this transport yet.
+
+Transport tests use an application served on a temporary Unix socket and a
+separate temporary-home daemon for crash recovery. A session-end process guard
+identifies test daemons by a unique inherited run marker and fails if one
+survives cleanup. Other test runs and the production service are excluded.
+
 ## Phase 1 implementation notes
 
 Choices made where the design was silent, and deliberate deviations.

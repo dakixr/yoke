@@ -159,3 +159,11 @@ An interrupted daemon loses private attachment/admission ownership. Recovered
 work uses a newly attached client's environment or the daemon fallback. Clients
 must reattach after restart; credentials are deliberately not recoverable from
 SQLite. Phase 5 implements this reconnection behavior and terminal rendering.
+
+The CLI's `SessionConnection` implements transport recovery. Each reader owns
+its attachment and filtered SSE lease. After connecting or receiving
+`server.resyncRequired`, it reads all newer history pages and the active
+transcript before announcing `client.resynced`. Durable sequence numbers prevent
+duplicate replay. A dropped stream repeats discovery, build-skew checks and
+attachment with a new copy of the terminal environment. Ambiguous HTTP writes
+are never retried automatically; admission retries must reuse their input ID.

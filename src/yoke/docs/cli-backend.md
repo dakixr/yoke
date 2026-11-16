@@ -39,6 +39,14 @@ only UI snapshot-installation helpers plus compatibility imports.
 
 ## Route mapping
 
+`backend/connection.py` now supplies HTTP over the discovered Unix socket and
+an owned, filtered SSE subscription. It opens the live subscription before
+reading durable history and transcript pages, deduplicates durable events by
+sequence, and publishes `client.resynced` with the recovered transcript. Stream
+loss repeats discovery and attachment with a fresh environment snapshot.
+`close()` cancels the reader, detaches only its owner, and closes subscriptions.
+Terminal entry points still use the in-process adapter until the next stage.
+
 `{id}` means the backend's selected session ID.
 
 | Backend operation | HTTP equivalent |

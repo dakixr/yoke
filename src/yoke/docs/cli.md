@@ -60,6 +60,10 @@ emoji aliases are not interpreted as Rich formatting.
 
 ### HTTP and ACP serving
 
+The Phase 5 client transport uses the per-user Unix socket, with filtered
+session events and automatic reattachment after a daemon restart. Terminal
+entry points remain in process during this first implementation stage.
+
 `yoke serve` runs the process-wide HTTP session runtime. `--session-dir` (or
 `YOKE_HTTP_SESSION_DIR`) selects a dedicated session store. `--hide-token`
 suppresses the startup token line for service managers that inject

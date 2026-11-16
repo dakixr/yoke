@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import os
 import pwd
+import signal
+import time
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -20,6 +23,7 @@ def isolate_yoke_local_state(
     # exercising YOKE_DB_PATH set their own override after this fixture.
     monkeypatch.delenv("YOKE_DB_PATH", raising=False)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("YOKE_DAEMON_PORT", "0")
     monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("YOKE_PROVIDER_LOGS_DIR", str(tmp_path / "provider-logs"))
 
@@ -34,3 +38,49 @@ def forbid_real_database_writes() -> Iterator[None]:
         pytest.fail(
             f"A test created the real database {real}; isolate HOME/YOKE_DB_PATH."
         )
+
+
+def _daemon_processes() -> set[int]:
+    found: set[int] = set()
+    for process in Path("/proc").iterdir():
+        if not process.name.isdecimal():
+            continue
+        try:
+            arguments = (process / "cmdline").read_bytes().split(b"\0")
+            if b"serve" in arguments and b"--daemon" in arguments:
+                found.add(int(process.name))
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+    return found
+
+
+@pytest.fixture(autouse=True, scope="session")
+def forbid_surviving_test_daemons() -> Iterator[None]:
+    """Detect detached test processes too, without touching pre-existing daemons."""
+    before = _daemon_processes()
+    marker = uuid4().hex
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("YOKE_TEST_RUN_ID", marker)
+        yield
+    survivors = []
+    for pid in _daemon_processes() - before:
+        try:
+            environment = dict(
+                item.split(b"=", 1)
+                for item in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+                if b"=" in item
+            )
+            if environment.get(b"YOKE_TEST_RUN_ID") == marker.encode():
+                # Releasing the lifetime lock precedes interpreter teardown.
+                # Allow a stopped daemon to finish exiting before failing.
+                deadline = time.monotonic() + 5
+                command = Path(f"/proc/{pid}/cmdline")
+                while command.read_bytes() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                if command.read_bytes():
+                    survivors.append(pid)
+                    os.kill(pid, signal.SIGKILL)
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+    if survivors:
+        pytest.fail(f"Test-spawned yoke serve --daemon survived: {survivors}")

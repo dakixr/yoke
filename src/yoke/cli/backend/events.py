@@ -66,6 +66,13 @@ class EventSubscriptions:
             for stream in self._streams:
                 stream.publish(event, payload)
 
+    def close(self) -> None:
+        """Close every subscription when its session connection closes."""
+        with self._lock:
+            for stream in self._streams:
+                stream.close()
+            self._streams.clear()
+
 
 # These names match the daemon publisher, including the Phase 4 CLI events.
 PUBLIC_AGENT_EVENTS = {
@@ -83,6 +90,7 @@ PUBLIC_AGENT_EVENTS = {
     "assistant_message": "session.message.updated",
     "tool_execution_start": "session.tool.started",
     "tool_execution_end": "session.tool.ended",
+    "tool_execution_output_delta": "session.tool.delta",
     "compaction_start": "session.compaction.started",
     "compaction_progress": "session.compaction.delta",
     "compaction_end": "session.compaction.ended",
