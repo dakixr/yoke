@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from yoke.cli.backend.values import Checkpoint as Checkpoint
 from dataclasses import dataclass
 from threading import Event, Thread
 from collections.abc import Iterator
@@ -41,7 +41,6 @@ from yoke.session.workspace import (
 )
 
 type TurnOutcome = TurnSuccess | TurnFailure | TurnStopped
-type Checkpoint = Callable[[object, list[Message], list[ConversationEntry]], None]
 
 
 @dataclass(slots=True)

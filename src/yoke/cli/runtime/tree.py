@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from yoke.cli.backend.values import TreeNavigationResult as TreeNavigationResult
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
@@ -29,16 +29,6 @@ from yoke.cli.runtime.tree_view import (
 from yoke.cli.runtime.tree_view import (
     set_entry_label as set_entry_label,
 )
-
-
-@dataclass(slots=True)
-class TreeNavigationResult:
-    """Result of moving the active session leaf."""
-
-    messages: list[Message]
-    active_session: ActiveSession
-    editor_text: str | None = None
-    summary_created: bool = False
 
 
 def navigate_session_tree(

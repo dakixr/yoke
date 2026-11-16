@@ -13,6 +13,7 @@ from yoke.agent.provider_selection import set_agent_model as set_agent_model
 from yoke.agent.provider_selection import (
     switch_agent_provider_model as _switch_agent_provider_model,
 )
+from yoke.session.repository import SessionRecord
 from yoke.cli.config import CLIArgs
 from yoke.cli.providers.catalog import parse_provider_model_identifier
 
@@ -52,4 +53,20 @@ def switch_agent_provider_model(
         model_id=model_id,
         reasoning_effort=reasoning_effort,
         session_id=args.session,
+    )
+
+
+def apply_session_defaults_to_args(
+    args: CLIArgs,
+    record: SessionRecord,
+) -> None:
+    """Apply persisted provider/model defaults from a session record."""
+    apply_session_provider_defaults(
+        args,
+        provider_session_state_from_values(
+            provider_name=record.provider_name,
+            model_id=record.model_id,
+            reasoning_effort=record.reasoning_effort,
+            context_window_tokens=record.context_window_tokens,
+        ),
     )

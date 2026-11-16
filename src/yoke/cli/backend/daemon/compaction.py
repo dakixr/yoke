@@ -2,7 +2,7 @@
 
 from yoke.cli.backend.connection import SessionConnection
 from yoke.cli.backend.daemon.turn import transcript
-from yoke.cli.runtime.compaction import CompactionSnapshot
+from yoke.cli.backend.values import CompactionSnapshot
 from yoke.http.models.session import WaitResponse
 
 

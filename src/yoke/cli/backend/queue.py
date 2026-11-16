@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.backend.models import PendingPrompt
+from yoke.cli.backend.values import (
+    LoadedPromptQueue as LoadedPromptQueue,
+    PromptQueueRevisionConflict as PromptQueueRevisionConflict,
+)
 
 if TYPE_CHECKING:
     from yoke.cli.runtime import ActiveSession
@@ -17,27 +20,6 @@ from yoke.session.queue import (
     load_prompt_queue_snapshot,
     prompt_queue_transaction,
 )
-
-
-@dataclass(slots=True)
-class LoadedPromptQueue:
-    """CLI queue values and the revision read with those values."""
-
-    prompts: list[PendingPrompt]
-    pending_images: list[ImageAttachment]
-    revision: int
-
-
-class PromptQueueRevisionConflict(RuntimeError):
-    """A full queue replacement was based on an obsolete revision."""
-
-    def __init__(self, *, expected_revision: int, actual_revision: int) -> None:
-        self.expected_revision = expected_revision
-        self.actual_revision = actual_revision
-        super().__init__(
-            "Prompt queue changed "
-            f"(expected revision {expected_revision}, found {actual_revision})"
-        )
 
 
 def load_prompt_queue_state(active_session: ActiveSession) -> LoadedPromptQueue:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from yoke.cli.backend.connection import DaemonRequestError, SessionConnection
 from yoke.cli.backend.models import PendingPrompt
-from yoke.cli.backend.queue import LoadedPromptQueue, PromptQueueRevisionConflict
+from yoke.cli.backend.values import LoadedPromptQueue, PromptQueueRevisionConflict
 from yoke.cli.image_input import ImageAttachment
 from yoke.http.models.prompt import (
     PromptAttachment,

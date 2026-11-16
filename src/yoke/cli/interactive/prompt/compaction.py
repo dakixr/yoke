@@ -79,7 +79,7 @@ def _persist_prompt_compaction(
     active_session: ActiveSession,
     scrollback: ScrollbackSink,
 ) -> None:
-    from yoke.cli.runtime.compaction import CompactionSnapshot
+    from yoke.cli.backend.values import CompactionSnapshot
 
     if isinstance(compacted, CompactionSnapshot):
         with state_lock:

@@ -1,6 +1,8 @@
 # Daemon client contract
 
-CLI command entry points use this contract. Basic and prompt-toolkit interactive
+CLI command entry points use this contract. Daemon startup and runtime creation
+share the saved-selection adapter in `cli/providers/state.py`; neither imports
+CLI execution helpers. Basic and prompt-toolkit interactive
 clients use the same daemon attachment and event stream as headless clients. The
 HTTP API supports headless, basic and prompt-toolkit clients. Paths have the
 `/api/v1` prefix.
@@ -145,7 +147,7 @@ Project `.env` loading reads into a copy. Explicit client values win over projec
 values. It does not inject `YOKE_HEADLESS`: that flag disables the CLI status
 renderer and belongs to the client that chooses headless mode. An explicit
 client value is preserved for tools and child Yoke processes. Dotenv loading
-does not mutate `os.environ`; the in-process CLI keeps its existing behavior.
+does not mutate `os.environ`.
 Provider plugins and repository tools that directly inspect `os.environ` still
 see the daemon process, as described in the approved design.
 

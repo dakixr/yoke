@@ -15,7 +15,9 @@ from yoke.agent.state import capture_agent_state
 from yoke.agent.state import conversation_entries_from_messages
 from yoke.agent.state import transcript_messages_from_entries
 from yoke.cli.config import CLIArgs
-from yoke.cli.providers.state import apply_session_provider_defaults
+from yoke.cli.providers.state import (
+    apply_session_defaults_to_args as apply_session_defaults_to_args,
+)
 from yoke.cli.providers.state import capture_provider_session_state
 from yoke.cli.providers.state import ProviderSessionState
 from yoke.cli.providers.state import provider_session_state_from_values
@@ -312,22 +314,6 @@ def _state_with_borrowed_conversation(
     state = capture_agent_state(agent, conversation_entries=[])
     state.conversation_entries = conversation_entries
     return state
-
-
-def apply_session_defaults_to_args(
-    args: CLIArgs,
-    record: SessionRecord,
-) -> None:
-    """Apply persisted provider/model defaults from a session record."""
-    apply_session_provider_defaults(
-        args,
-        provider_session_state_from_values(
-            provider_name=record.provider_name,
-            model_id=record.model_id,
-            reasoning_effort=record.reasoning_effort,
-            context_window_tokens=record.context_window_tokens,
-        ),
-    )
 
 
 def select_session_id(

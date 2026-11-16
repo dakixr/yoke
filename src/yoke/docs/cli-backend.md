@@ -145,3 +145,9 @@ selector and both inspectors now use `ListCursor`. The helper owns clamping,
 movement, viewport resizing and identity preservation during refresh. Inspectors
 use owned display-state dataclasses instead of attribute-list render/mouse/chrome
 protocols. Keyboard bindings and the shortcuts table are unchanged.
+
+Shared terminal result values (`CompactionSnapshot`, `TreeNavigationResult`,
+`LoadedPromptQueue`, queue revision conflicts and checkpoint callbacks) live in
+`cli/backend/values.py`. Daemon adapters import these without loading the local
+turn executor. HTTP startup reads saved selection defaults through
+`cli/providers/state.py`.

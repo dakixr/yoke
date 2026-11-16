@@ -7,7 +7,7 @@ from pathlib import Path
 
 from yoke.agent.provider_selection import capture_provider_session_state
 from yoke.cli.config import CLIArgs
-from yoke.cli.runtime.session import apply_session_defaults_to_args
+from yoke.cli.providers.state import apply_session_defaults_to_args
 from yoke.cli.config.runtime import (
     build_cli_agent_from_args,
     format_tool_discovery_message,
