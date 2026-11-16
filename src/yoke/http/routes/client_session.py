@@ -13,12 +13,24 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 
 
 @router.get("/session/{session_id}/client", operation_id="getSessionClient")
-async def status(request: Request, session_id: str) -> dict[str, object]:
+async def status(
+    request: Request, session_id: str, owner: str | None = None
+) -> dict[str, object]:
     request.app.state.session_service.get_session(session_id)
     runtime = request.app.state.runtime_registry.get_if_loaded(session_id)
-    client = runtime.resources.client_session if runtime is not None else None
+    client = (
+        runtime.resources.configuration.clients.select(owner)
+        if runtime is not None
+        else None
+    )
     return {
-        "data": {"mode": client.config.mode, "plan": client.latest_plan}
+        "data": {
+            "mode": client.config.mode,
+            "plan": client.latest_plan,
+            "owners": runtime.resources.configuration.clients.owners()
+            if runtime is not None
+            else [],
+        }
         if client
         else None
     }

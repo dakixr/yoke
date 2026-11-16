@@ -73,8 +73,9 @@ The CLI equivalents are `yoke daemon status`, `restart [--when-idle]`, and
 none exists. Build mismatch while idle requests a restart and reattaches.
 While busy, compatible clients attach with one warning and schedule an idle
 restart; incompatible clients refuse. Another client's turn is never interrupted
-by skew handling. Provider credentials come from the daemon's startup environment
-and saved settings until per-client environment support arrives.
+by skew handling. Provider credentials resolve from the admitting client's environment and saved
+credentials. See [the daemon client contract](daemon-client.md) for attachment,
+startup reports, session-filtered SSE, renderer events and environment isolation.
 
 ACP reports native HTTP failures with the failure category, operation, and
 elapsed time, for example `Native HTTP read timeout during POST session/wait

@@ -53,7 +53,30 @@ class ClientSession:
         self.human_input = human_input
         self.events = events
         self.root = root
+        from yoke.environment import project_environment
+        import os
+
+        self.environment = project_environment(
+            root,
+            os.environ if config.env is None else config.env,
+            cwd=Path(config.cwd) if config.cwd is not None else root,
+        )
         self.latest_plan: dict[str, object] | None = None
+
+    def environment_fallback(self) -> ClientSession:
+        """Retain the last environment without a detached client's approval policy."""
+        return ClientSession(
+            self.session_id,
+            ClientSessionRequest(
+                owner=self.config.owner,
+                kind="web",
+                env=dict(self.environment.values),
+                cwd=str(self.environment.cwd) if self.environment.cwd else None,
+            ),
+            self.human_input,
+            self.events,
+            self.root,
+        )
 
     def before_tool(
         self,

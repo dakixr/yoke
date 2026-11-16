@@ -593,6 +593,13 @@
             "title": "Env",
             "type": "object"
           },
+          "envVars": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Envvars",
+            "type": "array"
+          },
           "headers": {
             "additionalProperties": {
               "type": "string"
@@ -643,6 +650,41 @@
             "maxItems": 32,
             "title": "Additionaldirectories",
             "type": "array"
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwd"
+          },
+          "env": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env"
+          },
+          "kind": {
+            "default": "acp",
+            "enum": [
+              "cli",
+              "web",
+              "acp"
+            ],
+            "title": "Kind",
+            "type": "string"
           },
           "mcpServers": {
             "items": {
@@ -2429,6 +2471,19 @@
       "PromptAdmissionRequest": {
         "additionalProperties": false,
         "properties": {
+          "clientID": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clientid"
+          },
           "delivery": {
             "default": "steer",
             "enum": [
@@ -3207,6 +3262,21 @@
       "SessionCreateRequest": {
         "additionalProperties": false,
         "properties": {
+          "client": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientSessionRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "headless": {
+            "default": false,
+            "title": "Headless",
+            "type": "boolean"
+          },
           "id": {
             "anyOf": [
               {
@@ -3231,6 +3301,18 @@
               }
             ]
           },
+          "skills": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "startup": {
+            "default": false,
+            "title": "Startup",
+            "type": "boolean"
+          },
           "title": {
             "anyOf": [
               {
@@ -3247,6 +3329,29 @@
           "location"
         ],
         "title": "SessionCreateRequest",
+        "type": "object"
+      },
+      "SessionCreateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionInfo"
+          },
+          "startup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionStartupReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SessionCreateResponse",
         "type": "object"
       },
       "SessionCreateSelection": {
@@ -3693,6 +3798,43 @@
           "data"
         ],
         "title": "SessionSkillResponse",
+        "type": "object"
+      },
+      "SessionStartupReport": {
+        "additionalProperties": false,
+        "properties": {
+          "activeSkills": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Activeskills",
+            "type": "array"
+          },
+          "modelSource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelsource"
+          },
+          "toolReport": {
+            "additionalProperties": true,
+            "title": "Toolreport",
+            "type": "object"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "title": "SessionStartupReport",
         "type": "object"
       },
       "SessionTime": {
@@ -5291,6 +5433,22 @@
         "operationId": "streamEvents",
         "parameters": [
           {
+            "in": "query",
+            "name": "sessionID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sessionid"
+            }
+          },
+          {
             "description": "Name this client; under `yoke serve --daemon` the stream is a lease.",
             "in": "query",
             "name": "client",
@@ -6281,7 +6439,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SessionResponse"
+                  "$ref": "#/components/schemas/SessionCreateResponse"
                 }
               }
             },
@@ -6464,6 +6622,22 @@
             "schema": {
               "title": "Session Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner"
             }
           }
         ],

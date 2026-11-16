@@ -78,7 +78,7 @@ class HttpAppSettings:
 
     auth_token: str | None
     session_directory: Path | None = None
-    max_active_sessions: int = 4
+    max_active_sessions: int = 16
     max_worker_threads: int | None = None
     agent_factory: SessionAgentFactory | None = None
     indexed_runtime_seed: bool = True
@@ -158,6 +158,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
                     session_service.close()
                 finally:
                     runtime_registry.shutdown_executor()
+                    events.privacy.close()
 
     app = FastAPI(
         title="Yoke HTTP API",

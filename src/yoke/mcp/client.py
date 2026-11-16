@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import json
 import queue
 import subprocess
@@ -27,8 +29,15 @@ if TYPE_CHECKING:
 class StdioMcpClient(McpSession):
     """JSON-RPC MCP client for stdio servers."""
 
-    def __init__(self, server: McpServerConfig, *, root: Path) -> None:
+    def __init__(
+        self,
+        server: McpServerConfig,
+        *,
+        root: Path,
+        base_environment: Mapping[str, str] | None = None,
+    ) -> None:
         super().__init__(server, root=root)
+        self.base_environment = base_environment
         self.server = server
         self.root = root.resolve()
         self._process: subprocess.Popen[str] | None = None
@@ -47,7 +56,7 @@ class StdioMcpClient(McpSession):
             return
         if self.server.command is None:
             raise McpClientError("Missing MCP stdio command")
-        env = server_environment(self.server)
+        env = server_environment(self.server, self.base_environment)
         self._process = subprocess.Popen(
             [self.server.command, *self.server.args],
             cwd=str(self.server.cwd or self.root),
@@ -274,10 +283,15 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(name)
 
 
-def create_mcp_client(server: McpServerConfig, *, root: Path) -> McpClient:
+def create_mcp_client(
+    server: McpServerConfig,
+    *,
+    root: Path,
+    base_environment: Mapping[str, str] | None = None,
+) -> McpClient:
     """Create the appropriate MCP client for the server's transport."""
     if server.transport == "stdio":
-        return StdioMcpClient(server, root=root)
+        return StdioMcpClient(server, root=root, base_environment=base_environment)
     if server.transport in {"streamable-http", "http"}:
         from yoke.mcp.http_client import StreamableHttpClient
 

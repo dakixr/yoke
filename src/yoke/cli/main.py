@@ -25,8 +25,9 @@ register_commands(app)
 
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
-    _load_source_dotenv()
     argv = _inject_prompt_flag(list(argv) if argv is not None else sys.argv[1:])
+    if argv[:1] != ["serve"]:
+        _load_source_dotenv()
     try:
         result = app(args=argv, prog_name="yoke", standalone_mode=False)
     except click.UsageError as exc:

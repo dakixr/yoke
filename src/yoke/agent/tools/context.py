@@ -54,6 +54,8 @@ class ToolSessionContext:
 
     mcp_policy: McpSessionPolicy | None = None
     client_session: ClientSession | None = None
+    environment: dict[str, str] | None = field(default=None, repr=False)
+    cwd: Path | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True, frozen=True)

@@ -119,13 +119,13 @@ def test_client_modes_gate_actual_file_writes(tmp_path, mode, reply, written):
             request = pending(client, "permission")
             assert request["toolCall"]["toolCallId"] == "call-1"
             assert not (tmp_path / "result.txt").exists()
-            assert configure(client).status_code == 409
+            assert configure(client).status_code == 200
             assert (
                 client.delete(
                     "/api/v1/session/session-a/client?owner=test-client",
                     headers=_auth(),
                 ).status_code
-                == 409
+                == 200
             )
             client.post(
                 f"/api/v1/session/session-a/permission/{request['id']}/reply",

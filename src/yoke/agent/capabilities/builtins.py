@@ -146,6 +146,7 @@ class McpCapability(BaseCapability):
             root=context.root,
             home=context.home,
             session_policy=policy if policy is not None else None,
+            base_environment=context.session.environment,
         )
         return register_mcp_tools(manager)
 

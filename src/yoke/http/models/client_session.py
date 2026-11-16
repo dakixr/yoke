@@ -19,6 +19,7 @@ class ClientMcpServer(ApiModel):
     command: str | None = None
     args: list[str] = Field(default_factory=list, max_length=128)
     env: dict[str, str] = Field(default_factory=dict, repr=False)
+    env_vars: list[str] = Field(default_factory=list)
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict, repr=False)
 
@@ -39,6 +40,7 @@ class ClientMcpServer(ApiModel):
             command=self.command,
             args=tuple(self.args),
             env=dict(self.env),
+            env_vars=tuple(self.env_vars),
             url=self.url,
             headers=dict(self.headers),
             cwd=root,
@@ -47,7 +49,20 @@ class ClientMcpServer(ApiModel):
 
 class ClientSessionRequest(ApiModel):
     owner: str = Field(min_length=1, max_length=128)
+    kind: Literal["cli", "web", "acp"] = "acp"
     mode: ClientMode = "full-access"
+    env: dict[str, str] | None = Field(default=None, repr=False)
+    cwd: str | None = Field(default=None, repr=False)
+
+    @field_validator("cwd")
+    @classmethod
+    def absolute_cwd(cls, value: str | None) -> str | None:
+        if value is not None and (
+            not Path(value).is_absolute() or not Path(value).is_dir()
+        ):
+            raise ValueError("cwd must be an existing absolute directory")
+        return value
+
     mcp_servers: list[ClientMcpServer] = Field(default_factory=list, max_length=64)
     additional_directories: list[str] = Field(default_factory=list, max_length=32)
 

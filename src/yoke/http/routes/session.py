@@ -18,6 +18,7 @@ from yoke.http.models.session import (
     SessionCompactionRequest,
     SessionCompactionResponse,
     SessionCreateRequest,
+    SessionCreateResponse,
     SessionForkRequest,
     SessionListResponse,
     SessionPatchRequest,
@@ -76,9 +77,46 @@ def list_sessions(
     )
 
 
-@router.post("/session", response_model=SessionResponse, operation_id="createSession")
-def create_session(request: Request, body: SessionCreateRequest) -> SessionResponse:
-    return SessionResponse(data=_service(request).create_session(body))
+@router.post(
+    "/session", response_model=SessionCreateResponse, operation_id="createSession"
+)
+async def create_session(
+    request: Request, body: SessionCreateRequest
+) -> SessionCreateResponse:
+    from yoke.http.runtime.persistence import run_blocking
+    from yoke.http.services.session_startup import SessionStartup
+
+    service = _service(request)
+    registry = _runtimes(request)
+    info = await run_blocking(registry.storage_executor, service.create_session, body)
+    report = None
+    if body.startup or body.skills:
+        try:
+            runtime = registry.get_or_start(info.id)
+            async with runtime.gate:
+                runtime.activity.require_idle()
+                report = await run_blocking(
+                    registry.executor,
+                    SessionStartup(
+                        service.store, request.app.state.event_service.privacy
+                    ).initialize,
+                    info.id,
+                    body,
+                )
+        except ValueError as exc:
+            raise ApiError(
+                400,
+                "session_startup_failed",
+                request.app.state.event_service.privacy.text(str(exc)),
+            ) from exc
+        info = await run_blocking(
+            registry.storage_executor, service.get_session, info.id
+        )
+    if body.client is not None:
+        await registry.get_or_start(info.id).operations.configure_client(
+            body.client, request.app.state.human_input_service
+        )
+    return SessionCreateResponse(data=info, startup=report)
 
 
 @router.get(

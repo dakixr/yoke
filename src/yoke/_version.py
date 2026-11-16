@@ -1,3 +1,3 @@
 """Version metadata for yoke."""
 
-__version__ = "3.25.3"
+__version__ = "3.26.0"

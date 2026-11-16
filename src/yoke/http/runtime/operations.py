@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from yoke.agent.compaction import force_compact_agent
+from yoke.environment import execution_environment
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.provider_selection import (
     ProviderSessionState,
@@ -22,7 +23,7 @@ from yoke.agent.session_tree import SessionTree
 from yoke.agent.skills import activate_skills, load_skill_registry
 from yoke.agent.skills.models import ActiveSkill
 from yoke.agent.skills.paths import default_skill_dirs
-from yoke.http.errors import ApiError, session_busy, session_not_found
+from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.client_session import ClientSessionRequest
 from yoke.http.runtime.admission import TurnAdmission
 from yoke.http.runtime.factory import http_session_usage_metric_context
@@ -188,7 +189,11 @@ class SessionOperations:
     ) -> ProviderSessionState:
         record, agent = self._primary()
         try:
-            with http_session_usage_metric_context(record):
+            with (
+                http_session_usage_metric_context(record),
+                self.events.privacy.scope(),
+                execution_environment(self.resources.environment(record)),
+            ):
                 state = switch_agent_provider_model(
                     agent,
                     provider_name=provider_name,
@@ -235,7 +240,10 @@ class SessionOperations:
     @uses_workspace
     def _compact_sync(self) -> dict[str, object]:
         record, agent = self._primary()
-        with http_session_usage_metric_context(record):
+        with (
+            http_session_usage_metric_context(record),
+            execution_environment(self.resources.environment(record)),
+        ):
             compacted = force_compact_agent(
                 agent,
                 agent.messages,
@@ -513,38 +521,27 @@ class SessionOperations:
         human_input: HumanInputService,
     ) -> dict[str, object]:
         def configure() -> dict[str, object]:
-            if self.workers.active_count:
-                raise session_busy(
-                    "Drain native workers before replacing client configuration."
-                )
             record = self.store.summary_record(self.session_id)
             if record is None:
                 raise session_not_found()
-            self.resources.configure_client(
-                ClientSession(
-                    self.session_id,
-                    config,
-                    human_input,
-                    self.events,
-                    Path(record.root or Path.cwd()),
-                )
+            client = ClientSession(
+                self.session_id,
+                config,
+                human_input,
+                self.events,
+                Path(record.root or Path.cwd()),
             )
+            self.events.privacy.register(client.environment.values)
+            self.resources.configure_client(client)
             return {
                 "mode": config.mode,
                 "additionalDirectories": config.additional_directories,
                 "mcpServers": [server.name for server in config.mcp_servers],
             }
 
-        return await self.idle_mutation(configure)
+        async with self.gate:
+            return await run_blocking(self.storage_executor, configure)
 
     async def detach_client(self, owner: str) -> None:
-        def detach() -> None:
-            if self.workers.active_count:
-                raise session_busy(
-                    "Drain native workers before detaching client configuration."
-                )
-            client = self.resources.client_session
-            if client is not None and client.config.owner == owner:
-                self.resources.configure_client(None)
-
-        await self.idle_mutation(detach)
+        async with self.gate:
+            self.resources.configuration.clients.detach(owner)

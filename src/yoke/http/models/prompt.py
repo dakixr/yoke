@@ -28,6 +28,7 @@ class PromptAdmissionRequest(ApiModel):
     prompt: PromptInput
     delivery: Literal["steer", "queue"] = "steer"
     resume: bool = True
+    client_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PromptAdmissionReceipt(ApiModel):

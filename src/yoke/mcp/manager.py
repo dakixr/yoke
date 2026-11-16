@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -34,7 +36,9 @@ class McpManager:
         *,
         root: Path,
         config_loader: Callable[[], McpConfig] | None = None,
+        base_environment: Mapping[str, str] | None = None,
     ) -> None:
+        self.base_environment = base_environment
         self.config = config
         self.root = root.resolve()
         self._config_loader = config_loader
@@ -51,6 +55,7 @@ class McpManager:
         root: Path,
         home: Path,
         session_policy: McpSessionPolicy | None = None,
+        base_environment: Mapping[str, str] | None = None,
     ) -> McpManager:
         """Create a manager from global and workspace config files."""
 
@@ -61,7 +66,9 @@ class McpManager:
                 session_policy=session_policy,
             )
 
-        return cls(load(), root=root, config_loader=load)
+        return cls(
+            load(), root=root, config_loader=load, base_environment=base_environment
+        )
 
     @property
     def servers(self) -> tuple[McpServerConfig, ...]:
@@ -343,7 +350,13 @@ class McpManager:
                 raise McpClientError("MCP manager is closed")
             client = self._clients.get(server.name)
             if client is None:
-                client = create_mcp_client(server, root=self.root)
+                client = (
+                    create_mcp_client(server, root=self.root)
+                    if self.base_environment is None
+                    else create_mcp_client(
+                        server, root=self.root, base_environment=self.base_environment
+                    )
+                )
                 self._clients[server.name] = client
             return client
 

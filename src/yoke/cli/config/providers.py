@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from yoke.environment import environment_values
 from yoke.ai.providers.base import ModelCatalogProvider, Provider, ProviderModelInfo
 from yoke.ai.providers.credentials import provider_environment
 from yoke.ai.providers.plugins import (
@@ -150,6 +150,7 @@ def _build_builtin_provider(provider_name: str, args: CLIArgs) -> Provider:
             reasoning_effort=args.reasoning_effort,
             session_id=args.session,
             home=Path.home(),
+            env=_provider_env(),
         )
     except UnknownModelError:
         raise
@@ -221,6 +222,7 @@ def _apply_model_reasoning_effort(args: CLIArgs) -> None:
         model=args.model,
         reasoning_effort=None,
         home=Path.home(),
+        env=_provider_env(),
     )
     if models is None:
         return
@@ -303,4 +305,4 @@ def _build_first_available_custom_provider(
 
 def _provider_env(*, home: Path | None = None) -> dict[str, str]:
     resolved_home = Path.home() if home is None else home
-    return provider_environment(home=resolved_home, env=os.environ)
+    return provider_environment(home=resolved_home, env=environment_values())

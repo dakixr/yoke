@@ -130,8 +130,9 @@ class ThreadSettlementService:
                 ),
             )
             return
-        # A new client without T3 credentials supersedes any old binding.
-        self.bindings.pop(session_id, None)
+        previous = self.bindings.get(session_id)
+        if previous is not None and previous.owner == config.owner:
+            self.bindings.pop(session_id, None)
 
     async def reconcile(self, session_id: str, owner: str | None = None) -> None:
         binding = self.bindings.get(session_id)
@@ -165,6 +166,13 @@ class ThreadSettlementService:
                             binding.archived_by_sync = False
                         return
                     runtime = self.runtimes.get_if_loaded(session_id)
+                    if (
+                        settled
+                        and runtime is not None
+                        and set(runtime.resources.configuration.clients.owners())
+                        - {binding.owner}
+                    ):
+                        return
                     if settled and runtime is not None and runtime.workers.active_count:
                         raise session_busy(
                             "Native workers must drain before settlement."

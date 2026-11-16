@@ -38,6 +38,7 @@ from yoke.http.runtime.workspace import (
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.redaction import redact_public_value
 from yoke.session import SessionRecord, SessionStore
+from yoke.http.services.client_session import ClientSession
 
 LOGGER = logging.getLogger(__name__)
 
@@ -138,8 +139,19 @@ class TurnExecutor:
             if execution.cold_start:
                 # Preserve the admission response's head start on cold session loads.
                 await asyncio.sleep(0.05)
+            if self.active_slots.locked() and self.activity.active is execution:
+                self.activity.activity = "Waiting for a slot"
+                self.activity.publish_activity(execution)
             await self.active_slots.acquire()
             execution.slot_acquired = True
+            if (
+                self.activity.active is execution
+                and self.activity.activity == "Waiting for a slot"
+            ):
+                self.activity.activity = (
+                    "Loading session" if execution.cold_start else "Thinking"
+                )
+                self.activity.publish_activity(execution)
             if execution.retired_event.is_set():
                 return
             worker = self.executor.submit(
@@ -175,6 +187,19 @@ class TurnExecutor:
                     await asyncio.shield(asyncio.wrap_future(completion))
 
     def execute(
+        self, execution: TurnExecution, loop: asyncio.AbstractEventLoop
+    ) -> TurnOutcome:
+        from yoke.environment import execution_environment
+
+        with (
+            self.events.privacy.scope(),
+            execution_environment(
+                execution.client.environment if execution.client else None
+            ),
+        ):
+            return self._execute(execution, loop)
+
+    def _execute(
         self,
         execution: TurnExecution,
         loop: asyncio.AbstractEventLoop,
@@ -217,12 +242,14 @@ class TurnExecutor:
                 loop.call_soon_threadsafe(
                     self.automatic_title.start,
                     execution.admission,
+                    execution.client.environment if execution.client else None,
                 )
             loop.call_soon_threadsafe(self.thinking, execution)
             turn_agent = self.prepare(
                 record,
                 active_entries=active_entries,
                 snapshot=snapshot,
+                client=execution.client,
             )
             validate_execution_images(execution.admission, turn_agent.provider)
             execution.context_usage.configure(
@@ -261,10 +288,10 @@ class TurnExecutor:
                     available_skills=turn_agent.available_skills,
                     after_tool_result_appended=checkpoint,
                     before_tool_call=(
-                        self.resources.client_session.before_tool(
+                        execution.client.before_tool(
                             turn_agent.before_tool_call, execution.stop_event.is_set
                         )
-                        if self.resources.client_session is not None
+                        if execution.client is not None
                         else turn_agent.before_tool_call
                     ),
                 )
@@ -286,6 +313,7 @@ class TurnExecutor:
         *,
         active_entries: list[ConversationEntry] | None,
         snapshot: SessionReadSnapshot | None,
+        client: ClientSession | None = None,
     ) -> RuntimeAgent:
         def load_active_entries() -> list[ConversationEntry]:
             assert snapshot is not None
@@ -295,6 +323,7 @@ class TurnExecutor:
             record,
             active_entries=active_entries,
             load_active_entries=load_active_entries,
+            client=client,
         )
 
     def checkpoint(
@@ -322,7 +351,7 @@ class TurnExecutor:
             execution.count_tool()
         if execution.retired_event.is_set():
             return
-        traced = dict(payload)
+        traced = self.events.privacy.data(payload)
         traced["turn_id"] = execution.turn_id
         self.tool_traces.record_event(event, traced)
         usage_update = execution.context_usage.capture(
@@ -387,11 +416,11 @@ class TurnExecutor:
         if execution.retired_event.is_set() or self.activity.active is not execution:
             return
         if event == "context_usage":
-            data = usage_update or {}
+            data = {**payload, **(usage_update or {})}
         else:
             redacted = redact_public_value(payload)
             data = dict(redacted) if isinstance(redacted, dict) else {"value": redacted}
-            data.pop("provider_result_projection", None)
+        data.pop("provider_result_projection", None)
         if event != "context_usage":
             data["turnID"] = execution.turn_id
             data["inputID"] = execution.admission.id
@@ -404,7 +433,19 @@ class TurnExecutor:
 
 
 _PUBLIC_AGENT_EVENTS = {
+    "model_start": "session.model.started",
+    "model_end": "session.model.ended",
+    "provider_retry": "session.provider.retry",
+    "provider_rate_limited": "session.provider.rate_limited",
+    "provider_recovered": "session.provider.recovered",
+    "notice": "session.notice",
+    "warning": "session.warning",
+    "error": "session.error",
+    "compaction_summary_start": "session.compaction.summary.started",
+    "compaction_summary_end": "session.compaction.summary.ended",
+    "context_compaction": "session.context.compacted",
     "assistant_message": "session.message.updated",
+    "tool_execution_output_delta": "session.tool.delta",
     "tool_execution_start": "session.tool.started",
     "tool_execution_end": "session.tool.ended",
     "compaction_start": "session.compaction.started",

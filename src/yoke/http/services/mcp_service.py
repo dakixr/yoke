@@ -59,10 +59,23 @@ class McpService:
             if include_tools and config.enabled_servers:
                 from yoke.mcp import McpManager
 
-                manager = McpManager.from_paths(
-                    root=root,
-                    home=self.home,
-                    session_policy=policy,
+                runtime = (
+                    self.runtimes.get_if_loaded(session_id) if session_id else None
+                )
+                client = (
+                    runtime.resources.client_session if runtime is not None else None
+                )
+                manager = (
+                    McpManager.from_paths(
+                        root=root, home=self.home, session_policy=policy
+                    )
+                    if client is None
+                    else McpManager.from_paths(
+                        root=root,
+                        home=self.home,
+                        session_policy=policy,
+                        base_environment=client.environment.values,
+                    )
                 )
                 try:
                     payload = manager.inspect(include_schemas=True)

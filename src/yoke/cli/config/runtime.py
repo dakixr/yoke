@@ -14,6 +14,8 @@ from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.skills import ActiveSkill, SkillRegistry, load_skill_registry
 from yoke.agent.skills.paths import default_skill_dirs
 from yoke.agent.tools import ToolRegistrationContext, ToolRegistrationResult
+from yoke.agent.tools.context import ToolSessionContext
+from yoke.environment import current_environment
 from yoke.ai.providers.base import Provider, ProviderError
 from yoke.ai.providers.model_selection import current_model_id_from_config
 from yoke.ai.providers.resolution import UnknownModelError
@@ -196,6 +198,7 @@ def _build_cli_agent(
                 skill_registry=skill_registry,
                 active_skills=active_skills,
                 provider=context.provider,
+                session=context.session,
             )
         report_holder[:] = [resolved.tool_report]
         if agent_holder:
@@ -275,13 +278,20 @@ def _resolve_cli_agent_config(
     skill_registry: SkillRegistry | None,
     active_skills: Sequence[ActiveSkill],
     provider: Provider,
+    session: ToolSessionContext | None = None,
 ) -> ResolvedAgentConfig:
+    environment = current_environment()
     resolved = resolve_agent_config(
         root=root,
         base_system_prompt=DEFAULT_SYSTEM_PROMPT,
         include_repo_tools=True,
         include_global_tools=True,
         provider=provider,
+        session=session
+        or ToolSessionContext(
+            environment=dict(environment.values) if environment is not None else None,
+            cwd=environment.cwd if environment is not None else None,
+        ),
     )
     if skill_registry is None:
         return resolved

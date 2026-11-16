@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import os
 
 from yoke.mcp.config import McpServerConfig
@@ -47,15 +49,16 @@ _BASE_NAMES = frozenset(
 )
 
 
-def server_environment(server: McpServerConfig) -> dict[str, str]:
+def server_environment(
+    server: McpServerConfig, base_environment: Mapping[str, str] | None = None
+) -> dict[str, str]:
     """Apply base inheritance, explicit inherited names, then explicit values."""
+    source = os.environ if base_environment is None else base_environment
     env = {
         key: value
-        for key, value in os.environ.items()
+        for key, value in source.items()
         if key.upper() in _BASE_NAMES or key.startswith("LC_")
     }
-    env.update(
-        {name: os.environ[name] for name in server.env_vars if name in os.environ}
-    )
+    env.update({name: source[name] for name in server.env_vars if name in source})
     env.update(server.env or {})
     return env

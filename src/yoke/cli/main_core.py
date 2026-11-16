@@ -94,11 +94,12 @@ def _strip_matching_quotes(value: str) -> str:
     return value
 
 
-def _load_source_dotenv(source_root: Path = SOURCE_ROOT) -> None:
-    """Load the source `.env` into the current process env."""
+def dotenv_values(source_root: Path) -> dict[str, str]:
+    """Read dotenv values without changing the process environment."""
+    values: dict[str, str] = {}
     dotenv_path = source_root / ".env"
     if not dotenv_path.is_file():
-        return
+        return values
 
     for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -112,7 +113,13 @@ def _load_source_dotenv(source_root: Path = SOURCE_ROOT) -> None:
         env_key = key.strip()
         if not env_key:
             continue
-        os.environ[env_key] = _strip_matching_quotes(value.strip())
+        values[env_key] = _strip_matching_quotes(value.strip())
+    return values
+
+
+def _load_source_dotenv(source_root: Path = SOURCE_ROOT) -> None:
+    """Keep legacy in-process CLI dotenv behavior."""
+    os.environ.update(dotenv_values(source_root))
 
 
 def _inject_prompt_flag(argv: list[str]) -> list[str]:

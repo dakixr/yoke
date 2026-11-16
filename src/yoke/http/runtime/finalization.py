@@ -229,7 +229,9 @@ class TurnFinalizer:
                 self.pending_inputs.settle(
                     self.session_id, execution.admission.id, outcome="failed"
                 )
-            error = str(outcome.error or "Agent execution failed.")
+            error = self.events.privacy.text(
+                str(outcome.error or "Agent execution failed.")
+            )
             self.events.durable(
                 self.session_id,
                 "session.runtime.failed",

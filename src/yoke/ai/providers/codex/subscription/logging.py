@@ -7,6 +7,7 @@ import os
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
+from yoke.environment import redact_observation
 
 
 def log_provider_event(
@@ -26,7 +27,11 @@ def log_provider_event(
             **sanitize_log_fields(fields),
         }
         with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+            handle.write(
+                json.dumps(
+                    redact_observation(payload), sort_keys=True, separators=(",", ":")
+                )
+            )
             handle.write("\n")
     except Exception:
         return

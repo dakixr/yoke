@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import shlex
 import stat
 import sys
 import tempfile
 from pathlib import Path
+from collections.abc import Mapping
 
 
 PYTHON_BIN_DIR_ENV = "YOKE_PYTHON_BIN_DIR"
 PYTHON_EXECUTABLE_ENV = "YOKE_PYTHON_EXECUTABLE"
 
 
-def current_python_executable() -> str:
+def current_python_executable(env: Mapping[str, str] | None = None) -> str:
     """Return the active shell Python, falling back to yoke's interpreter."""
-    if active_executable := active_env_python_executable():
+    if active_executable := active_env_python_executable(env):
         return active_executable
     executable = Path(sys.executable)
     if executable.is_absolute():
@@ -24,10 +26,11 @@ def current_python_executable() -> str:
     return str(executable.absolute())
 
 
-def active_env_python_executable() -> str | None:
+def active_env_python_executable(env: Mapping[str, str] | None = None) -> str | None:
     """Return Python from the parent shell's active virtual environment."""
+    source = os.environ if env is None else env
     for env_name in ("VIRTUAL_ENV", "CONDA_PREFIX"):
-        env_path = os.environ.get(env_name)
+        env_path = source.get(env_name)
         if not env_path:
             continue
         executable = python_executable_in_env(Path(env_path))
@@ -47,7 +50,7 @@ def prepare_python_env(
     env: dict[str, str], python_executable: str | None = None
 ) -> dict[str, str]:
     """Expose stable `python` and `python3` commands for child processes."""
-    resolved_python_executable = python_executable or current_python_executable()
+    resolved_python_executable = python_executable or current_python_executable(env)
     bin_dir = ensure_python_alias_bin(resolved_python_executable)
     path_key, path = get_path_entry(env)
     env[PYTHON_EXECUTABLE_ENV] = resolved_python_executable
@@ -89,7 +92,10 @@ def ensure_python_alias_bin(python_executable: str | None = None) -> Path:
     if os.name == "nt":
         return ensure_windows_python_alias_bin(executable)
 
-    bin_dir = Path(tempfile.gettempdir()) / f"yoke-python-bin-{os.getuid()}"
+    bin_dir = (
+        Path(tempfile.gettempdir())
+        / f"yoke-python-bin-{os.getuid()}-{hashlib.sha256(executable.encode()).hexdigest()[:16]}"
+    )
     bin_dir.mkdir(mode=0o700, exist_ok=True)
     for name in ("python", "python3"):
         shim = bin_dir / name
@@ -102,7 +108,9 @@ def ensure_python_alias_bin(python_executable: str | None = None) -> Path:
 
 def ensure_windows_python_alias_bin(python_executable: str) -> Path:
     """Create a temp bin dir with Windows command shims to yoke's Python."""
-    bin_dir = Path(tempfile.gettempdir()) / "yoke-python-bin"
+    bin_dir = Path(tempfile.gettempdir()) / (
+        "yoke-python-bin-" + hashlib.sha256(python_executable.encode()).hexdigest()[:16]
+    )
     bin_dir.mkdir(exist_ok=True)
     for name in ("python", "python3"):
         shim = bin_dir / f"{name}.cmd"

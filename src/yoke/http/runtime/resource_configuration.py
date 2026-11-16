@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.tools.context import ToolSessionContext
-from yoke.http.runtime.client_tools import install_client_tools
+from yoke.http.runtime.clients import SessionClients
 from yoke.http.services.client_session import ClientSession
 from yoke.mcp.config import McpSessionPolicy, McpSessionServerPolicy
 
@@ -13,12 +13,13 @@ class ResourceConfiguration:
     """Keep process-local settings when primary agents/providers are replaced."""
 
     def __init__(self) -> None:
+        self.clients = SessionClients()
         self.enabled_tools: set[str] | None = None
         self.session = ToolSessionContext(mcp_policy=McpSessionPolicy.empty())
 
     @property
     def client(self) -> ClientSession | None:
-        return self.session.client_session
+        return self.clients.select()
 
     @property
     def policy(self) -> McpSessionPolicy:
@@ -26,9 +27,7 @@ class ResourceConfiguration:
         return self.session.mcp_policy
 
     def bind(self, agent: RuntimeAgent) -> None:
-        agent.tool_session_context = self.session
-        if self.client is not None:
-            install_client_tools(agent)
+        agent.tool_session_context.mcp_policy = self.policy
 
     def set_mcp_policy(
         self,
@@ -73,7 +72,9 @@ class ResourceConfiguration:
             and previous.config.owner == client.config.owner
         ):
             client.latest_plan = previous.latest_plan
-        self.session.client_session = client
+        if client is not None:
+            self.clients.attach(client)
+        self.session.client_session = self.client
         self.policy.injected_servers = (
             tuple(server.config(client.root) for server in client.config.mcp_servers)
             if client is not None
@@ -109,7 +110,14 @@ class ResourceConfiguration:
         return set(self.enabled_tools) if self.enabled_tools is not None else None
 
     def policy_snapshot(self) -> McpSessionPolicy:
+        client = self.client
         return McpSessionPolicy(
             servers=dict(self.policy.servers),
-            injected_servers=self.policy.injected_servers,
+            injected_servers=(
+                tuple(
+                    server.config(client.root) for server in client.config.mcp_servers
+                )
+                if client is not None
+                else ()
+            ),
         )

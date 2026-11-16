@@ -120,6 +120,7 @@ class PendingInputService:
                 "session.prompt.admitted",
                 {
                     "inputID": input_id,
+                    "clientID": request.client_id,
                     "delivery": request.delivery,
                     "prompt": request.prompt.model_dump(mode="json", by_alias=True),
                 },
