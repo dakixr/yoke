@@ -224,8 +224,9 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
         "tree_navigation",
     ],
 )
+@pytest.mark.parametrize("same_model", [False, True])
 def test_indexed_model_selection_matches_full_snapshot_provider_projection(
-    tmp_path, monkeypatch, scenario_name
+    tmp_path, monkeypatch, scenario_name, same_model
 ):
     """Compare requests/cache scope with the established full-snapshot selection."""
     from fastapi import FastAPI
@@ -254,7 +255,10 @@ def test_indexed_model_selection_matches_full_snapshot_provider_projection(
                 runtime.operations.message_index = None
             driver.request(
                 f"/session/{driver.session_id}/selection",
-                {"provider": "oracle", "model": "oracle-vision"},
+                {
+                    "provider": "oracle",
+                    "model": "oracle-model" if same_model else "oracle-vision",
+                },
             )
             world.tape.expect(answer("Selected-model continuation."))
             driver.prompt("Continue with every accepted instruction and checkpoint.")

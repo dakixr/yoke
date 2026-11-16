@@ -192,23 +192,34 @@ class SessionOperations:
         model_id: str,
         reasoning_effort: str | None,
     ) -> ProviderSessionState:
-        indexed = indexed_runtime_start(
-            self.store, self.message_index, self.session_id, has_attachments=False
+        summary = self.store.summary_record(self.session_id)
+        same_model = summary is not None and (
+            summary.provider_name,
+            summary.model_id,
+        ) == (provider_name, model_id)
+        indexed = (
+            indexed_runtime_start(
+                self.store, self.message_index, self.session_id, has_attachments=False
+            )
+            if not same_model
+            else None
         )
-        if indexed is not None:
+        if same_model and self.message_index is not None:
+            assert summary is not None
+            record = summary
+            agent = self.resources.ensure_primary(record, load_state=False)
+        elif indexed is not None:
             record = indexed.record
             agent = self.resources.ensure_primary(
                 record, load_state=True, active_entries=indexed.entries
             )
+        elif summary is not None and summary.leaf_id is None:
+            record = summary
+            agent = self.resources.ensure_primary(
+                record, load_state=True, active_entries=[]
+            )
         else:
-            summary = self.store.summary_record(self.session_id)
-            if summary is not None and summary.leaf_id is None:
-                record = summary
-                agent = self.resources.ensure_primary(
-                    record, load_state=True, active_entries=[]
-                )
-            else:
-                record, agent = self._primary()
+            record, agent = self._primary()
         before = agent.conversation_marker
         try:
             with (

@@ -333,7 +333,7 @@ def test_clean_prompt_exit_does_not_capture_or_save_conversation(
     large_tree, tmp_path, monkeypatch, terminal
 ):
     entries, leaf_id = large_tree
-    record, _ = _record_with_counted_entries(entries, leaf_id)
+    record, counted = _record_with_counted_entries(entries, leaf_id)
     record.root = str(tmp_path)
     record.created_at = "2099-01-01T00:00:00+00:00"
     record.updated_at = record.created_at
@@ -360,12 +360,17 @@ def test_clean_prompt_exit_does_not_capture_or_save_conversation(
         pytest.fail("prompt exit saved the conversation tree")
 
     monkeypatch.setattr(SessionStore, "save", fail)
+    monkeypatch.setattr(SessionStore, "load", fail)
+    scans_before = counted.scans
+    copies = _count_entry_copies(monkeypatch)
     persist_prompt_exit_state(
         state=state,
         state_lock=Lock(),
         active_session=session_for(backend),
         agent=backend,
     )
+    assert counted.scans == scans_before
+    assert copies["count"] == 0
     assert stored_entry_rows(terminal.store, record.id) == rows_before
     assert events == []
 
@@ -374,7 +379,7 @@ def test_prompt_exit_writes_only_changed_reasoning_metadata(
     large_tree, tmp_path, monkeypatch, terminal
 ):
     entries, leaf_id = large_tree
-    record, _ = _record_with_counted_entries(entries, leaf_id)
+    record, counted = _record_with_counted_entries(entries, leaf_id)
     record.root = str(tmp_path)
     record.created_at = "2099-01-01T00:00:00+00:00"
     record.updated_at = record.created_at
@@ -401,12 +406,17 @@ def test_prompt_exit_writes_only_changed_reasoning_metadata(
         pytest.fail("prompt exit saved the conversation tree")
 
     monkeypatch.setattr(SessionStore, "save", fail)
+    monkeypatch.setattr(SessionStore, "load", fail)
+    scans_before = counted.scans
+    copies = _count_entry_copies(monkeypatch)
     persist_prompt_exit_state(
         state=state,
         state_lock=Lock(),
         active_session=session_for(backend),
         agent=backend,
     )
+    assert counted.scans == scans_before
+    assert copies["count"] == 0
     assert stored_entry_rows(terminal.store, record.id) == rows_before
     assert len(events) == 1
     assert events[0]["reasoning_effort"] == "medium"
