@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from yoke.cli.backend.catalog import tool_report_with_active_names
 
 import io
 import json
@@ -60,6 +59,28 @@ def _report(*, visible_active: bool) -> ToolLoadReport:
         discovered_tools=[loaded],
         active_tools=[loaded] if visible_active else [],
         denied_tools=[] if visible_active else [loaded],
+    )
+
+
+def tool_report_with_active_names(
+    report: ToolLoadReport, active_names: set[str]
+) -> ToolLoadReport:
+    """Frozen legacy menu algorithm, used only as the SDK projection reference."""
+    return ToolLoadReport(
+        discovered_tools=list(report.discovered_tools),
+        active_tools=[
+            entry
+            for entry in report.discovered_tools
+            if entry.tool.name in active_names
+        ],
+        denied_tools=[
+            entry
+            for entry in report.discovered_tools
+            if entry.tool.name not in active_names
+        ],
+        config_path=report.config_path,
+        unmatched_tool_names=report.unmatched_tool_names,
+        unmatched_capability_ids=report.unmatched_capability_ids,
     )
 
 

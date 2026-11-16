@@ -12,7 +12,6 @@ from typing import Any, Literal, cast
 
 from prompt_toolkit.formatted_text import HTML
 
-from yoke.cli.backend.daemon.inspection import DaemonInspection
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
@@ -95,7 +94,7 @@ def test_process_snapshot_cache_coalesces_output_notifications() -> None:
 
     manager = SnapshotManager()
     cache = ProcessSnapshotCache(
-        cast(DaemonInspection, manager),
+        cast(Any, manager),
         refresh_interval=60,
     )
     initial = cache.snapshots()
@@ -185,7 +184,7 @@ def test_live_process_inspector_throttles_redraws(monkeypatch) -> None:
 
     manager = SnapshotManager()
     monkeypatch.setattr(prompt_toolkit.application, "Application", FakeApplication)
-    open_live_process_inspector(cast(DaemonInspection, manager))
+    open_live_process_inspector(cast(Any, manager))
 
     assert (
         application_options["min_redraw_interval"]
