@@ -23,7 +23,7 @@ from yoke.http.reads.message_index import SessionMessageIndex
 from yoke.http.services.upload_service import UploadService
 from yoke.session import SessionStore
 from yoke.session.repository.rows import encode_entry
-from yoke.storage.database import Database, migrations
+from yoke.storage.database import Database, migrations, schema_version
 
 
 def test_v1_migration_preserves_raw_entry_bytes_and_mutable_metadata(
@@ -62,7 +62,9 @@ def test_v1_migration_preserves_raw_entry_bytes_and_mutable_metadata(
             )
     migrated = Database(path)
     with migrated.read() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            connection.execute("PRAGMA user_version").fetchone()[0] == schema_version()
+        )
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         rows = connection.execute(
             "SELECT blobs.data, message_sha256, metadata FROM entries JOIN blobs ON blobs.sha256 = message_sha256 ORDER BY seq"

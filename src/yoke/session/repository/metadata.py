@@ -41,7 +41,11 @@ def update_loaded_provider_state(
     changes["updated_at"] = now
     if record.created_at is None:
         changes["created_at"] = now
-    updated = store.update_metadata(record.model_copy(update=changes), changes)
+    replacement = record.model_copy(update=changes)
+    if record.created_at is None:
+        updated = store.update_metadata(replacement, changes, insert_if_missing=True)
+    else:
+        updated = store.update_metadata(replacement, changes)
     for key, value in changes.items():
         setattr(record, key, value)
     record.stamp_tree_revision(updated.tree_revision)

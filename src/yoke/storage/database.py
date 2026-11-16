@@ -256,6 +256,25 @@ class Database:
         callback()
 
     @contextmanager
+    def stream_read(self) -> Iterator[sqlite3.Connection]:
+        """Own a streaming snapshot independently of this thread's short reads.
+
+        A suspended iterator must not lend its snapshot to later tasks on the
+        same executor thread. Close or exhaust streams to release their WAL
+        snapshot. Inside a write, read that transaction's uncommitted rows.
+        """
+        self._check_process()
+        if self.in_write():
+            yield self._writer
+            return
+        connection = self._connect(query_only=True)
+        try:
+            connection.execute("BEGIN")
+            yield connection
+        finally:
+            connection.close()
+
+    @contextmanager
     def read(self) -> Iterator[sqlite3.Connection]:
         """Read one consistent committed snapshot (or this thread's open write)."""
         if self.in_write():

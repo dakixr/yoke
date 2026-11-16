@@ -270,15 +270,23 @@ class SessionStore:
         return True
 
     def update_metadata(
-        self, record: SessionRecord, fields: Iterable[str]
+        self,
+        record: SessionRecord,
+        fields: Iterable[str],
+        *,
+        insert_if_missing: bool = False,
     ) -> SessionRecord:
         """Persist selected metadata fields from ``record``.
 
-        Inserts the whole record when the session is not stored yet. Returns
-        ``record`` stamped with the stored tree revision.
+        A missing session raises ValueError unless creation is explicitly
+        requested. Returns ``record`` stamped with the stored tree revision.
         """
         validate_session_id(record.id)
-        tree_rev = self._table.update_metadata(record, fields)
+        tree_rev = self._table.update_metadata(
+            record, fields, insert_if_missing=insert_if_missing
+        )
+        if tree_rev is None:
+            raise ValueError(f"Session not found: {record.id}")
         record.stamp_tree_revision(tree_rev)
         return record
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sqlite3
 
 from yoke.agent.models import Message
 from yoke.agent.state import capture_agent_state
@@ -86,7 +87,7 @@ def _switch_model(
     if _context_marker(agent) == context_before_switch:
         try:
             save_active_session_metadata(active_session, provider_state)
-        except OSError as exc:
+        except (OSError, sqlite3.Error) as exc:
             print_scrollback_notice(
                 console,
                 f"Model switched, but session metadata was not saved: {exc}",

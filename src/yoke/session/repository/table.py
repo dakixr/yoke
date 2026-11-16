@@ -164,7 +164,7 @@ class SessionTable:
 
     def iter_entries(self, session_id: str) -> Generator[ConversationEntry]:
         """Decode stored entries one at a time from one read snapshot."""
-        with self.database.read() as connection:
+        with self.database.stream_read() as connection:
             for message, metadata in connection.execute(
                 "SELECT blobs.data, entries.metadata FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
                 "WHERE session_id = ? ORDER BY seq",
@@ -242,7 +242,7 @@ class SessionTable:
             fields = changed_fields(existing, record)
             tree_changed = tree_changed or "leaf_id" in fields
             updates.update(column_values(record, fields))
-            updates.update(entry_seq=state.entry_seq + count, rev=rev)
+            updates.update(entry_seq=state.entry_seq + count, rev=rev, import_hold=0)
             tree_rev = state.tree_rev + int(tree_changed)
             updates["tree_rev"] = tree_rev
             _update_session(connection, record.id, updates)
@@ -253,7 +253,7 @@ class SessionTable:
         record: SessionRecord,
         fields: Iterable[str],
         *,
-        insert_if_missing: bool = True,
+        insert_if_missing: bool = False,
     ) -> int | None:
         """Write selected metadata fields; insert the whole record if absent."""
         selected = list(fields)
@@ -299,6 +299,7 @@ class SessionTable:
                 message_bytes=state.message_bytes + size,
                 rev=rev,
                 tree_rev=state.tree_rev + 1,
+                import_hold=0,
             )
             _update_session(connection, record.id, updates)
             return state.tree_rev + 1
@@ -329,7 +330,7 @@ class SessionTable:
             if changed != 1:
                 raise ValueError("Entry is not in this session.")
             updates = column_values(record, fields)
-            updates.update(rev=rev, tree_rev=state.tree_rev + 1)
+            updates.update(rev=rev, tree_rev=state.tree_rev + 1, import_hold=0)
             _update_session(connection, record.id, updates)
             return state.tree_rev + 1
 
@@ -367,7 +368,8 @@ class SessionTable:
         # Recheck pins and activity in the same transaction that deletes rows.
         with self.database.write() as connection:
             rows = connection.execute(
-                "SELECT id, updated_at, created_at FROM sessions WHERE pinned = 0"
+                "SELECT id, updated_at, created_at FROM sessions "
+                "WHERE pinned = 0 AND import_hold = 0"
             ).fetchall()
             for session_id, updated_at, created_at in rows:
                 activity = parse_timestamp(updated_at) or parse_timestamp(created_at)

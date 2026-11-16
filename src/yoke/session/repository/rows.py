@@ -6,7 +6,7 @@ import json
 import hashlib
 import sqlite3
 from collections.abc import Iterable, Iterator
-from typing import Any
+from typing import Any, cast
 
 from pydantic_core import from_json
 
@@ -70,7 +70,7 @@ def decode_entry(message: bytes, metadata: str | None) -> ConversationEntry:
 def entry_row(session_id: str, seq: int, entry: ConversationEntry, rev: int) -> Row:
     """Return one entries row for insertion."""
     message = entry.message
-    return (
+    row = (
         session_id,
         seq,
         entry.id,
@@ -82,6 +82,7 @@ def entry_row(session_id: str, seq: int, entry: ConversationEntry, rev: int) -> 
         encode_entry(entry),
         rev,
     )
+    return cast(Row, sanitize_json_surrogates({"row": row})["row"])
 
 
 INSERT_ENTRY = (
@@ -123,7 +124,9 @@ def insert_entries(
 
 def column_values(record: SessionRecord, fields: Iterable[str]) -> dict[str, object]:
     """Return sessions column values for selected record fields."""
-    payload = record.model_dump(mode="json", include=set(fields))
+    payload = sanitize_json_surrogates(
+        record.model_dump(mode="json", include=set(fields))
+    )
     values: dict[str, object] = {}
     for field, value in payload.items():
         column = RECORD_COLUMNS[field]

@@ -148,7 +148,7 @@ Choices made where the design was silent, and deliberate deviations.
 - **busy_timeout is 30 s, not 5 s.** A fork or import of the largest real session (7,564 entries, 650 MB of entry bytes) holds the write lock for about 8 s. With 5 s a concurrent CLI write would fail with "database is locked". Out-of-line blobs (later phase) make forks O(rows).
 - **Schema additions.** `entries.message` holds the codec bytes of the whole `ConversationEntry` (the old JSONL `entry` object), so entries with no message still round-trip; `metadata` is NULL until an edit replaces it. Bookkeeping columns: `sessions.rev` (bumped by every write; read caches key on `(message_bytes, rev)`), `rewrite_rev` (an incremental read cannot span a full rewrite), `entry_seq` (sequence numbers are never reused), `entry_count`, `message_bytes`, and `entries.rev`. `queue_rev` and the CLI's pending image paths live in `session_queues`, because the CLI can persist a queue before its first save creates the session row. `inputs` keeps the existing `AdmissionRecord` and `PersistedPendingInput` payloads as JSON (`admission`, `pending`); the sketch's columns are derived from them after every write. Only `entries` has a foreign key; deleting a session deletes its events, inputs and queue explicitly.
 - **Compare-and-swap.** Queue edits keep the existing revision checks, now inside one cross-process transaction. Tree edits (`save_tree_delta`, `save_entry_metadata` and the indexed variants) compare the stored `tree_rev` with the revision the caller's record was read at and raise `SessionTreeConflict`; HTTP maps it to `409 tree_revision_conflict`. Turn saves are not compared (unchanged semantics), but every save writes only the metadata columns that changed, so a title or pin set by another process is never overwritten.
-- **Retention** (30 days, unpinned) still runs from `maintain_index`. Imported sessions keep their timestamps and are subject to it.
+- **Retention** (30 days, unpinned) still runs from `maintain_index`. Imported sessions keep their timestamps but carry a one-use hold, so an old import survives until its next conversation save or tree edit; normal retention then applies.
 - **Reads.** `http/reads` read JSONL files directly, so the minimum adaptation was made: the message index builds topology from `entries` (tail scanners and sidecars deleted), the read cache catches up with `read_delta`, and tool traces and handoffs use store signatures and topology. SQL pagination and deleting the read cache remain Phase 2.
 - **Importer.** `yoke db import-legacy` imports sessions only (not event journals, admissions or queues), honoring newer metadata in the legacy `index.json` exactly as the old loader did.
 - **Workspace leases** remain `flock` files until the daemon owns them.
@@ -243,3 +243,24 @@ Final checks: 2,277 tests passed and 4 skipped; `uv run ruff check .`,
 suite includes the provider projection oracle and the full HTTP suite. Provider
 projection fixtures, HTTP contract and context-equivalence tests, and the
 OpenAPI golden are unchanged. No version bump or push was made.
+
+### Storage QA follow-up
+
+- Schema v3 adds an internal `import_hold` flag. A verified legacy import sets
+  it in the import transaction. Retention ignores held rows. The next
+  conversation save or tree edit clears it; ordinary sessions retain the
+  existing 30-day policy. Displayed timestamps and pin state remain unchanged.
+- Streaming entry iterators own separate read connections, so an iterator
+  suspended on an executor thread cannot lend its old snapshot to subsequent
+  tasks. Close or exhaust an iterator to release its WAL snapshot. Nested short
+  reads still share one snapshot, and reads inside writes see uncommitted rows.
+- Session and entry TEXT columns use the same surrogate normalization as the
+  immutable JSON codec. Metadata edits require an existing session; only the
+  initial provider metadata save explicitly permits creation.
+- Catalog archive checks and metadata/events share the queue transaction.
+  Relocation reads metadata under that transaction and materializes its full
+  return value after releasing the database write lock. Upload file deletion
+  runs after commit, so a queue rollback preserves native attachment paths.
+- CLI turn and model saves catch SQLite errors alongside filesystem errors,
+  preserving warnings and in-memory state. Database administration commands
+  report unsupported schemas as clean CLI errors.
