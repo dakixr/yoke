@@ -17,6 +17,7 @@ import socket
 import sys
 import time
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 from types import FrameType
 
@@ -25,6 +26,7 @@ import uvicorn
 from yoke.daemon.build import build_id, protocol_version
 from yoke.daemon.instance import DaemonInfo, InstanceLock, remove_info, write_info
 from yoke.daemon.lifecycle import DEFAULT_GRACE_SECONDS, DaemonLifecycle
+from yoke.daemon.log import DETACHED_ENV, detached_stdio
 from yoke.daemon.paths import DEFAULT_PORT, DaemonPaths
 from yoke.daemon.peer import peer_checked
 
@@ -85,7 +87,12 @@ def run_daemon(
         return 0
     unix_sock: socket.socket | None = None
     tcp_sock: socket.socket | None = None
+    stdio = ExitStack()
     try:
+        # Only the lifetime lock holder rotates; startup racers keep their
+        # inherited stderr and cannot race the daemon's log renames.
+        if os.environ.get(DETACHED_ENV) == "1":
+            stdio.enter_context(detached_stdio(paths.log))
         preload_runtime()
         unix_sock = _bind_unix(paths.socket)
         tcp_sock = _bind_tcp(port)
@@ -134,6 +141,7 @@ def run_daemon(
         if unix_sock is not None:
             paths.socket.unlink(missing_ok=True)
         remove_info(paths, pid=os.getpid())
+        stdio.close()
         lock.release()
 
 
