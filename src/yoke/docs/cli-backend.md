@@ -157,3 +157,9 @@ only a filter. Rootless saved records require explicit relocation. Interactive
 `--fork` creates the copy through the daemon before attaching its terminal.
 A stopped runtime result stays a stopped terminal outcome, including when the
 runtime raises `AgentStoppedError` before returning a result.
+
+
+The tools and MCP menus accept daemon catalogs directly. They no longer test
+for an in-process runtime. Queue drafts, including pending image paths, persist
+through the daemon; one revision-checked PATCH installs new admissions and
+edits together. A terminal never removes a queue item to execute it locally.

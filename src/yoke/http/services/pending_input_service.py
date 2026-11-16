@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -57,6 +58,8 @@ class PendingInputService:
         self,
         session_id: str,
         request: PromptAdmissionRequest,
+        *,
+        publish_queue: bool = True,
     ) -> PromptAdmissionReceipt:
         """Durably admit one idempotent input before any model-visible promotion."""
         record = self._require_session(session_id)
@@ -160,16 +163,18 @@ class PendingInputService:
                     created_at=admission.time_created,
                 )
             )
-            queue.revision += 1
+            if publish_queue:
+                queue.revision += 1
             snapshot.records[input_id] = admission
             self.admissions.save(session_id, snapshot)
             transaction.commit()
-            self.events.durable(
-                session_id,
-                "session.queue.updated",
-                {"revision": queue.revision},
-                location=record.root,
-            )
+            if publish_queue:
+                self.events.durable(
+                    session_id,
+                    "session.queue.updated",
+                    {"revision": queue.revision},
+                    location=record.root,
+                )
             return _receipt(admission)
 
     def queue(self, session_id: str) -> QueueData:
@@ -189,7 +194,13 @@ class PendingInputService:
             )
             return _queue_data(transaction.snapshot)
 
-    def patch_queue(self, session_id: str, request: QueuePatchRequest) -> QueueData:
+    def patch_queue(
+        self,
+        session_id: str,
+        request: QueuePatchRequest,
+        *,
+        admit: Callable[[PromptAdmissionRequest], PromptAdmissionReceipt] | None = None,
+    ) -> QueueData:
         record = self._require_session(session_id)
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
             reconcile_workspace_inputs(self.admissions, session_id, transaction)
@@ -204,6 +215,17 @@ class PendingInputService:
                         "actualRevision": queue.revision,
                     },
                 )
+            for admission in request.admissions:
+                if admit is None:
+                    self.admit(session_id, admission, publish_queue=False)
+                else:
+                    admit(admission)
+            if request.admissions:
+                with prompt_queue_transaction(
+                    self.store.directory, session_id
+                ) as fresh:
+                    queue = fresh.snapshot
+                    transaction.snapshot = queue
             admissions = self.admissions.load(session_id)
             prompts = [item.model_copy(deep=True) for item in queue.prompts]
             prior_attachments = {
@@ -232,6 +254,8 @@ class PendingInputService:
                         mime=attachment["mime"],
                     )
             queue.prompts = prompts
+            if request.pending_images is not None:
+                queue.pending_images = list(request.pending_images)
             queue.revision += 1
             self.admissions.save(session_id, admissions)
             transaction.commit()

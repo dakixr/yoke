@@ -60,10 +60,6 @@ class DaemonSessionBackend:
     def select_session(self, session: DaemonActiveSession) -> None:
         self._session = session
 
-    @property
-    def runtime_available(self) -> bool:
-        return False
-
     def refresh_session(self) -> None:
         self.session.refresh()
 

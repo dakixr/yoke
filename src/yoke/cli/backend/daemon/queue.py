@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from yoke.cli.backend.connection import DaemonRequestError, SessionConnection
 from yoke.cli.backend.models import PendingPrompt
+from yoke.cli.backend.daemon.images import upload_message_images
+from pathlib import Path
 from yoke.cli.backend.values import LoadedPromptQueue, PromptQueueRevisionConflict
 from yoke.cli.image_input import ImageAttachment
 from yoke.http.models.prompt import (
     PromptAttachment,
+    PromptAdmissionRequest,
     PromptInput,
     QueueDeliveryOperation,
     QueueOperation,
@@ -30,7 +33,6 @@ class DaemonPromptQueue:
 
     def __init__(self, connection: SessionConnection) -> None:
         self.connection = connection
-        self._pending_images: list[ImageAttachment] = []
 
     def load(self) -> LoadedPromptQueue:
         data = QueueResponse.model_validate(
@@ -55,7 +57,11 @@ class DaemonPromptQueue:
             )
             for item in data.items
         ]
-        return LoadedPromptQueue(prompts, list(self._pending_images), data.revision)
+        return LoadedPromptQueue(
+            prompts,
+            [ImageAttachment(Path(path)) for path in data.pending_images],
+            data.revision,
+        )
 
     def commit(
         self,
@@ -70,6 +76,9 @@ class DaemonPromptQueue:
             raise PromptQueueRevisionConflict(
                 expected_revision=expected, actual_revision=loaded.revision
             )
+        if prompts == loaded.prompts and pending_images == loaded.pending_images:
+            return expected
+        admissions: list[PromptAdmissionRequest] = []
         existing = {item.id: item for item in loaded.prompts}
         desired = {item.id for item in prompts}
         operations: list[QueueOperation] = [
@@ -78,27 +87,27 @@ class DaemonPromptQueue:
             if item.id not in desired
         ]
         for index, item in enumerate(prompts):
+            attachments = item.attachments
+            if not attachments and item.user_message is not None:
+                attachments = upload_message_images(self.connection, item.user_message)
             payload = PromptInput(
                 text=item.prompt,
                 attachments=[
-                    PromptAttachment.model_validate(value) for value in item.attachments
+                    PromptAttachment.model_validate(value) for value in attachments
                 ],
                 continuation=item.continuation,
             )
             delivery = "steer" if item.kind == "steering" else "queue"
             if item.id not in existing:
-                self.connection.session_request(
-                    "POST",
-                    "/prompt",
-                    json={
-                        "id": item.id,
-                        "clientID": self.connection.owner,
-                        "delivery": delivery,
-                        "resume": False,
-                        "prompt": payload.model_dump(by_alias=True),
-                    },
+                admissions.append(
+                    PromptAdmissionRequest(
+                        id=item.id,
+                        client_id=self.connection.owner,
+                        delivery=delivery,
+                        resume=False,
+                        prompt=payload,
+                    )
                 )
-                expected += 1
             operations.append(
                 QueueMoveToStartOperation(op="moveToStart", id=item.id)
                 if index == 0
@@ -117,14 +126,20 @@ class DaemonPromptQueue:
                     ),
                 ]
             )
-        if operations:
+        if operations or pending_images != loaded.pending_images:
             try:
                 data = QueueResponse.model_validate(
                     self.connection.session_request(
                         "PATCH",
                         "/queue",
                         json=QueuePatchRequest(
-                            expected_revision=expected, operations=operations
+                            expected_revision=expected,
+                            operations=operations,
+                            admissions=admissions,
+                            pending_images=[
+                                str(image.path) for image in pending_images
+                            ],
+                            resume=False,
                         ).model_dump(by_alias=True),
                     )
                 ).data
@@ -136,7 +151,6 @@ class DaemonPromptQueue:
                     expected_revision=expected, actual_revision=actual
                 ) from exc
             expected = data.revision
-        self._pending_images = list(pending_images)
         return expected
 
     def clear(self, *, expected_revision: int | None) -> None:

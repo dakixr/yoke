@@ -84,10 +84,6 @@ class SessionBackend:
             raise ValueError("This operation needs an active session.")
         return self._session
 
-    @property
-    def runtime_available(self) -> bool:
-        return isinstance(self._agent, RuntimeAgent)
-
     def provider_label(self) -> str | None:
         """GET /session/{id}: formatted provider/model status."""
         return format_provider_model_status(self._agent)

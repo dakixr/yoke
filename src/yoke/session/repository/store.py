@@ -92,6 +92,7 @@ class SessionStore:
         active_skills: builtins.list[ActiveSkill] | None = None,
         skill_dirs: builtins.list[str] | None = None,
         root: Path | str | None = None,
+        origin: str | None = None,
         title: str | None = None,
         provider_name: str | None = None,
         model_id: str | None = None,
@@ -118,6 +119,7 @@ class SessionStore:
         record = existing.model_copy(
             update={
                 "id": session_id,
+                "origin": origin or existing.origin,
                 "conversation_entries": resolved.entries,
                 "leaf_id": resolved.leaf_id,
                 "active_skills": list(

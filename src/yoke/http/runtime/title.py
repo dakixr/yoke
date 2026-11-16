@@ -10,12 +10,14 @@ from contextlib import suppress
 from threading import Lock
 
 from yoke.agent.models import Message
+from yoke.ai.providers.usage_context import UsageSurface
 from yoke.environment import ExecutionEnvironment, execution_environment
 from yoke.http.reads.cache import SessionReadCache
 from yoke.http.runtime.entry_persistence import input_is_persisted
 from yoke.http.runtime.factory import (
     SessionAgentFactory,
     generate_http_session_title,
+    http_session_usage_metric_context,
 )
 from yoke.http.runtime.workspace import uses_workspace
 from yoke.http.services.event_broker import EventService
@@ -56,6 +58,7 @@ class SessionTitleAutomation:
         self,
         admission: AdmissionRecord,
         environment: ExecutionEnvironment | None = None,
+        surface: UsageSurface | None = None,
     ) -> None:
         """Start title generation when this session is still unnamed."""
         current_task = self._task
@@ -65,7 +68,7 @@ class SessionTitleAutomation:
         if summary is None or summary.title:
             return
         self._task = asyncio.create_task(
-            self._generate(admission, environment),
+            self._generate(admission, environment, surface),
             name=f"yoke-http-title-{self.session_id}",
         )
 
@@ -88,6 +91,7 @@ class SessionTitleAutomation:
         self,
         admission: AdmissionRecord,
         environment: ExecutionEnvironment | None = None,
+        surface: UsageSurface | None = None,
     ) -> None:
         generated: str | None = None
         try:
@@ -97,6 +101,7 @@ class SessionTitleAutomation:
                 self._generate_in_environment,
                 admission,
                 environment,
+                surface,
             )
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Automatic session title generation failed: %s", exc)
@@ -129,20 +134,24 @@ class SessionTitleAutomation:
         )
 
     def _generate_in_environment(
-        self, admission: AdmissionRecord, environment: ExecutionEnvironment | None
+        self,
+        admission: AdmissionRecord,
+        environment: ExecutionEnvironment | None,
+        surface: UsageSurface | None,
     ) -> str | None:
         with execution_environment(environment), self.events.privacy.scope():
-            return self._generate_sync(admission)
+            return self._generate_sync(admission, surface)
 
     @uses_workspace
-    def _generate_sync(self, admission: AdmissionRecord) -> str | None:
+    def _generate_sync(
+        self, admission: AdmissionRecord, surface: UsageSurface | None = None
+    ) -> str | None:
         snapshot = self.read_cache.get(self.session_id)
         record = snapshot.record
         messages = list(record.messages)
         if not input_is_persisted(record, admission.id):
             messages.append(self.user_message_factory(record, admission))
-        return generate_http_session_title(
-            self.agent_factory,
-            record,
-            messages,
-        )
+        with http_session_usage_metric_context(
+            record, admission.prompt, surface=surface
+        ):
+            return generate_http_session_title(self.agent_factory, record, messages)

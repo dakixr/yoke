@@ -5,7 +5,12 @@ from __future__ import annotations
 from threading import RLock
 
 from yoke.http.errors import ApiError
-from yoke.http.models.prompt import PromptAdmissionRequest, PromptAdmissionReceipt
+from yoke.http.models.prompt import (
+    PromptAdmissionRequest,
+    PromptAdmissionReceipt,
+    QueueData,
+    QueuePatchRequest,
+)
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.http.services.client_session import ClientSession
 
@@ -49,13 +54,33 @@ class SessionClients:
         pending: PendingInputService,
         session_id: str,
         request: PromptAdmissionRequest,
+        *,
+        publish_queue: bool = True,
     ) -> PromptAdmissionReceipt:
         """Publish durable admission and its private owner under one memory gate."""
         with self._lock:
             client = self.select(request.client_id) or self.fallback
-            receipt = pending.admit(session_id, request)
+            receipt = pending.admit(session_id, request, publish_queue=publish_queue)
             self._inputs.setdefault(receipt.id, client)
             return receipt
+
+    def patch_queue(
+        self, pending: PendingInputService, session_id: str, request: QueuePatchRequest
+    ) -> QueueData:
+        """Capture new inputs under the same memory gate as ordinary admission."""
+        with self._lock:
+            previous = dict(self._inputs)
+            try:
+                return pending.patch_queue(
+                    session_id,
+                    request,
+                    admit=lambda admission: self.admit(
+                        pending, session_id, admission, publish_queue=False
+                    ),
+                )
+            except BaseException:
+                self._inputs = previous
+                raise
 
     def for_input(self, input_id: str) -> ClientSession | None:
         with self._lock:

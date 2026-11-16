@@ -236,3 +236,26 @@ A workspace rejection can pause an input without settling it. The terminal turn
 reader ends that attempt on `session.runtime.failed` and displays its actionable
 error; the daemon retains the paused input. For settled failures the reader waits
 for that error event, which follows `session.prompt.settled`.
+
+
+## Terminal menus and accounting
+
+`/tools` reads `GET /tool?sessionID=...` and applies the visible selection with
+`PATCH /session/{id}/tool`. Capability grouping, source paths and hidden tools
+retain their terminal behavior. `/mcp` reads the session MCP catalog and changes
+session policy with `PATCH /session/{id}/mcp/{server}`. Repo and global config
+edits happen in the terminal process. `PATCH /session/{id}/mcp` then reloads
+persisted MCP configuration while retaining other session tool choices.
+
+Queue PATCH accepts `admissions`, optional `pendingImages` paths, and `resume`.
+The terminal uses `resume: false` to atomically install new dormant inputs,
+queue edits and image-draft consumption against one `expectedRevision`.
+An unsuccessful patch rolls back admissions, uploads' pins and events together.
+Pending image paths are draft metadata; submitted images use durable upload
+references. GET queue returns `pendingImages`, including after reconnect.
+
+Usage records identify the attachment captured when an input was admitted:
+`cli`, `web` or `acp`. Reattachment and later clients cannot change that input's
+accounting. Automatic title requests inherit the same attribution. Sessions
+created with a client store its kind in `sessions.origin`; creation without a
+client records `web`. Resuming a session preserves its original origin.

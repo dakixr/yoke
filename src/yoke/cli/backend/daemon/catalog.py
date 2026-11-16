@@ -85,6 +85,8 @@ class DaemonMcpInventory:
     def list_tools(self, server: McpServerConfig) -> tuple[McpToolInfo, ...]:
         for item in self.read().data:
             if item.name == server.name:
+                if item.error:
+                    raise ValueError(item.error)
                 return tuple(
                     McpToolInfo(
                         name=value.name,
@@ -127,7 +129,7 @@ class DaemonMcpInventory:
         )
 
     def refresh(self) -> None:
-        self.read()
+        self.connection.session_request("PATCH", "/mcp")
 
 
 class DaemonModelCatalog:

@@ -29,6 +29,7 @@ class SessionRecord(BaseModel):
 
     version: int = 5
     id: str
+    origin: str = "cli"
     conversation_entries: list[ConversationEntry] = Field(default_factory=list)
     leaf_id: str | None = None
     active_skills: list[ActiveSkill] = Field(default_factory=list)
@@ -81,6 +82,7 @@ class SessionIndexEntry(BaseModel):
     """Searchable session summary stored in the CLI session index."""
 
     id: str
+    origin: str = "cli"
     root: str | None = None
     title: str | None = None
     created_at: str | None = None
@@ -105,6 +107,7 @@ class SessionIndexEntry(BaseModel):
         """Convert the index entry into a partial session record."""
         record = SessionRecord(
             id=self.id,
+            origin=self.origin,
             root=self.root,
             title=self.title,
             created_at=self.created_at,

@@ -79,6 +79,7 @@ def prompt_from_admission(record: AdmissionRecord) -> PromptInput:
 def queue_data(queue: PersistedPromptQueue) -> QueueData:
     return QueueData(
         revision=queue.revision,
+        pending_images=list(queue.pending_images),
         items=[
             QueueItem(
                 id=item.id,

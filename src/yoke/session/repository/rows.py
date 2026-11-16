@@ -21,6 +21,7 @@ from yoke.session.repository.models import (
 # SessionRecord field -> sessions column. Every persisted record field is here.
 RECORD_COLUMNS: dict[str, str] = {
     "version": "version",
+    "origin": "origin",
     "leaf_id": "leaf_id",
     "active_skills": "active_skills",
     "skill_dirs": "skill_dirs",
