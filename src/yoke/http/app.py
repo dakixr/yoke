@@ -78,7 +78,7 @@ class HttpAppSettings:
 
     auth_token: str | None
     session_directory: Path | None = None
-    max_active_sessions: int = 16
+    max_active_sessions: int = 50
     max_worker_threads: int | None = None
     agent_factory: SessionAgentFactory | None = None
     indexed_runtime_seed: bool = True

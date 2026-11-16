@@ -50,7 +50,7 @@ class SessionRuntimeRegistry:
         read_cache: SessionReadCache | None = None,
         message_index: SessionMessageIndex | None = None,
         indexed_runtime_seed: bool = False,
-        max_active_sessions: int = 16,
+        max_active_sessions: int = 50,
         max_worker_threads: int | None = None,
     ) -> None:
         if max_active_sessions < 1:

@@ -76,10 +76,10 @@ complete `prompt` with text, continuation flag and attachments. Every client on
 the session receives the event. Use input IDs to avoid rendering a locally
 submitted prompt twice. Promotion and settlement retain their existing events.
 
-The default is 16 simultaneously executing sessions, with 20 worker threads and
-a separate four-thread storage pool. Most model calls wait on network I/O;
-16 supports several terminals and browser sessions without allowing unbounded
-physical execution on the four-core host. Excess turns wait on the existing
+The default is 50 simultaneously executing sessions, with 54 worker threads and
+a separate four-thread storage pool. Most model calls wait on network I/O, so
+50 lets many terminals, browser sessions and subagents run at once while still
+bounding physical execution. Excess turns wait on the existing
 FIFO semaphore. Admission succeeds, and `session.active.changed` plus
 `GET /session/active` expose `activity: "Waiting for a slot"` while `state` stays
 `running`. This preserves existing browser busy-state handling. Interrupt works
