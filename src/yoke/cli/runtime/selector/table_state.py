@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from typing import Protocol
 from typing import TypeVar
 
+from yoke.cli.list_cursor import ListCursor
+
 ItemT = TypeVar("ItemT")
 
 
@@ -37,8 +39,7 @@ class _TableSelectorState[ItemT]:
         self.action_key = action_key
         self.action_label = action_label
         self.on_action = on_action
-        self.selected_index = 0
-        self.scroll_offset = 0
+        self.cursor = ListCursor()
         self.query = ""
         self.search_mode = False
 
@@ -48,10 +49,7 @@ class _TableSelectorState[ItemT]:
         return [item for item in self.items if self.filter_item(item, self.query)]
 
     def normalize_selected_index(self, current_items: Sequence[ItemT]) -> None:
-        if not current_items:
-            self.selected_index = 0
-            return
-        self.selected_index = max(0, min(self.selected_index, len(current_items) - 1))
+        self.cursor.select(self.cursor.index, len(current_items))
 
     def visible_subtitle(self) -> str | None:
         status_parts: list[str] = []
@@ -75,50 +73,40 @@ class _TableSelectorState[ItemT]:
         return footer
 
     def move_down(self) -> None:
-        current_items = self.filtered_items()
-        self.selected_index = max(
-            0, min(self.selected_index + 1, len(current_items) - 1)
-        )
+        self.cursor.move(1, len(self.filtered_items()))
 
     def move_up(self) -> None:
-        self.selected_index = max(self.selected_index - 1, 0)
+        self.cursor.move(-1, len(self.filtered_items()))
 
     def page_down(self) -> None:
         from yoke.cli.runtime.selector.ui import selector_page_step
 
-        self.selected_index = max(
-            0,
-            min(
-                self.selected_index + selector_page_step(),
-                len(self.filtered_items()) - 1,
-            ),
-        )
+        self.cursor.move(selector_page_step(), len(self.filtered_items()))
 
     def page_up(self) -> None:
         from yoke.cli.runtime.selector.ui import selector_page_step
 
-        self.selected_index = max(self.selected_index - selector_page_step(), 0)
+        self.cursor.move(-selector_page_step(), len(self.filtered_items()))
 
     def move_home(self) -> None:
-        self.selected_index = 0
+        self.cursor.select(0, len(self.filtered_items()))
 
     def move_end(self) -> None:
-        self.selected_index = max(0, len(self.filtered_items()) - 1)
+        self.cursor.end(len(self.filtered_items()))
 
     def append_search_text(self, text: str) -> None:
         if not text or text.isspace():
             return
         self.query += text
-        self.selected_index = 0
-        self.scroll_offset = 0
+        self.cursor = ListCursor()
 
     def run_action(self) -> None:
         current_items = self.filtered_items()
         if current_items and self.on_action is not None:
-            self.on_action(current_items[self.selected_index])
+            self.on_action(current_items[self.cursor.index])
 
     def selected_item(self) -> ItemT | None:
         current_items = self.filtered_items()
         if not current_items:
             return None
-        return current_items[self.selected_index]
+        return current_items[self.cursor.index]

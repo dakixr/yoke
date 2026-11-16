@@ -11,7 +11,6 @@ from yoke.cli.config import CLIArgs
 from yoke.cli.config import build_cli_agent_from_args
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
-from yoke.cli.runtime.base import AgentRunner
 from yoke.cli.runtime.base import ToolReportAgent
 from yoke.cli.runtime.lifetime import register_cli_owned_agent
 from yoke.cli.runtime.session import apply_session_defaults_to_args
@@ -48,9 +47,9 @@ def apply_startup_session_defaults(args: CLIArgs) -> None:
 def resolve_runtime_agent(
     args: CLIArgs,
     *,
-    agent: AgentRunner | None,
+    agent: object | None,
     stderr: OutputStream | None = None,
-) -> tuple[AgentRunner, ToolLoadReport | None]:
+) -> tuple[object, ToolLoadReport | None]:
     """Build an owned CLI agent and report recovery before accepting input."""
     if agent is None:
         built = build_cli_agent_from_args(args, recover_model=True)

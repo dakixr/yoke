@@ -12,7 +12,7 @@ import pytest
 
 from yoke.agent.models import Message
 from yoke.agent.state import conversation_entries_from_messages
-from yoke.cli.interactive import turn_runner
+from yoke.cli.backend import turns as turn_runner
 from yoke.cli.interactive.common import PendingPrompt, PromptCliState, TurnFailure
 from yoke.cli.interactive.prompt import turns
 from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control

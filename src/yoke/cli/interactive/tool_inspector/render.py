@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import Sequence
-from typing import Literal
-from typing import Protocol
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from yoke.cli.interactive.tool_inspector.state import ToolInspectorState
 
 from yoke.cli.interactive.tool_inspector.chrome import footer_text
 from yoke.cli.interactive.tool_inspector.chrome import pane_header
@@ -34,33 +36,8 @@ from yoke.cli.runtime.terminal_output_gate import terminal_size
 type ToolInspectorItem = ToolTraceEntry | ToolTraceContext
 
 
-class ToolInspectorRenderState(Protocol):
-    """State attributes required by the tool inspector renderer."""
-
-    entries: list[ToolTraceEntry]
-    selected_index: int
-    list_scroll: int
-    detail_scroll: int
-    search: str
-    searching: bool
-    raw: bool
-    wrap: bool
-    notice: str
-    active_pane: Literal["sidebar", "detail"]
-    data_revision: int
-    detail_cache_key: tuple[object, ...] | None
-    detail_cache_lines: list[str]
-
-
-class SelectionState(Protocol):
-    """State attributes needed for selection changes."""
-
-    selected_index: int
-    detail_scroll: int
-
-
 def render_view_html(
-    state: ToolInspectorRenderState,
+    state: ToolInspectorState,
     visible: Sequence[ToolInspectorItem],
 ) -> str:
     """Render the complete inspector view as prompt-toolkit HTML."""
@@ -68,7 +45,7 @@ def render_view_html(
 
 
 def _render_view(
-    state: ToolInspectorRenderState,
+    state: ToolInspectorState,
     visible: Sequence[ToolInspectorItem],
     *,
     html: bool,
@@ -111,7 +88,7 @@ def _render_view(
 
 def detail_text(
     entry: ToolInspectorItem,
-    state: ToolInspectorRenderState,
+    state: ToolInspectorState,
 ) -> str:
     """Format one trace entry as detailed readable text."""
     if isinstance(entry, ToolTraceContext):
@@ -162,29 +139,26 @@ def detail_text(
 
 
 def move_selection(
-    state: SelectionState,
+    state: ToolInspectorState,
     visible: list[ToolInspectorItem],
     delta: int,
 ) -> None:
     """Move the selected row and reset detail scroll."""
     if not visible:
         return
-    state.selected_index = max(
-        0,
-        min(state.selected_index + delta, len(visible) - 1),
-    )
+    state.cursor.move(delta, len(visible))
     state.detail_scroll = 0
 
 
 def selected_entry(
-    state: SelectionState,
+    state: ToolInspectorState,
     visible: list[ToolInspectorItem],
 ) -> ToolInspectorItem | None:
     """Return the selected visible entry, if any."""
     if not visible:
         return None
-    state.selected_index = max(0, min(state.selected_index, len(visible) - 1))
-    return visible[state.selected_index]
+    state.cursor.select(state.cursor.index, len(visible))
+    return visible[state.cursor.index]
 
 
 def entry_text(entry: ToolInspectorItem) -> str:
@@ -225,7 +199,7 @@ def sidebar_items(entries: list[ToolTraceEntry]) -> list[ToolInspectorItem]:
 
 
 def _list_lines(
-    state: ToolInspectorRenderState,
+    state: ToolInspectorState,
     visible: list[ToolInspectorItem],
     width: int,
     row_count: int,
@@ -234,20 +208,15 @@ def _list_lines(
 ) -> list[str]:
     if not visible:
         return ["No tool calls yet."]
-    state.selected_index = max(0, min(state.selected_index, len(visible) - 1))
-    if state.selected_index < state.list_scroll:
-        state.list_scroll = state.selected_index
-    if state.selected_index >= state.list_scroll + row_count:
-        state.list_scroll = state.selected_index - row_count + 1
-    window = visible[state.list_scroll : state.list_scroll + row_count]
+    window = visible[state.cursor.viewport(len(visible), row_count)]
     return [
         _list_line(state, entry, index, width, html=html)
-        for index, entry in enumerate(window, start=state.list_scroll)
+        for index, entry in enumerate(window, start=state.cursor.scroll)
     ]
 
 
 def _list_line(
-    state: ToolInspectorRenderState,
+    state: ToolInspectorState,
     entry: ToolInspectorItem,
     index: int,
     width: int,
@@ -262,7 +231,7 @@ def _list_line(
             width,
             html=html,
         )
-    marker = ">" if index == state.selected_index else " "
+    marker = ">" if index == state.cursor.index else " "
     status = status_icon(entry.status)
     duration = format_duration(entry.duration_seconds)
     summary = _argument_summary(entry)
@@ -276,12 +245,12 @@ def _list_line(
 def _context_line(
     context: ToolTraceContext,
     index: int,
-    state: ToolInspectorRenderState,
+    state: ToolInspectorState,
     width: int,
     *,
     html: bool,
 ) -> str:
-    marker = ">" if index == state.selected_index else " "
+    marker = ">" if index == state.cursor.index else " "
     label = "usr" if context.role == "user" else "asst"
     text = fit(f"{marker} {label} {_compact_sidebar_text(context.text)}", width)
     if not html:
@@ -299,7 +268,7 @@ def _compact_sidebar_text(text: str) -> str:
 
 def _context_detail_text(
     context: ToolTraceContext,
-    state: ToolInspectorRenderState,
+    state: ToolInspectorState,
 ) -> str:
     payload = {"role": context.role, "content": context.text}
     if state.raw:
@@ -310,7 +279,7 @@ def _context_detail_text(
 
 def _detail_lines(
     entry: ToolInspectorItem | None,
-    state: ToolInspectorRenderState,
+    state: ToolInspectorState,
     width: int,
 ) -> list[str]:
     if entry is None:

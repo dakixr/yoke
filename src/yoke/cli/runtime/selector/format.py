@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from yoke.cli.list_cursor import ListCursor
+
 
 @dataclass(slots=True)
 class SelectorTableColumns:
@@ -100,10 +102,6 @@ def normalize_selector_scroll_offset(
     body_rows: int,
 ) -> int:
     """Keep the selected row inside the visible viewport."""
-    max_offset = max(0, item_count - body_rows)
-    scroll_offset = max(0, min(scroll_offset, max_offset))
-    if selected_index < scroll_offset:
-        return selected_index
-    if selected_index >= scroll_offset + body_rows:
-        return selected_index - body_rows + 1
-    return scroll_offset
+    cursor = ListCursor(selected_index, scroll_offset)
+    cursor.viewport(item_count, body_rows)
+    return cursor.scroll

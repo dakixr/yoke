@@ -11,15 +11,8 @@ from yoke.agent.models import Message
 from yoke.agent.compaction import estimate_agent_context_usage
 from yoke.agent.compaction import force_compact_agent
 
-from yoke.cli.runtime.base import AgentRunner
 
-
-def force_compact_history(
-    agent: AgentRunner,
-    messages: list[Message],
-    *,
-    conversation_entries: Sequence[ConversationEntry] | None = None,
-) -> (
+type CompactedHistory = (
     tuple[
         list[Message],
         CompactionPreparation,
@@ -29,7 +22,15 @@ def force_compact_history(
         dict[str, object],
     ]
     | None
-):
+)
+
+
+def force_compact_history(
+    agent: object,
+    messages: list[Message],
+    *,
+    conversation_entries: Sequence[ConversationEntry] | None = None,
+) -> CompactedHistory:
     """Force a compaction turn and return CLI display payloads."""
     compacted = force_compact_agent(
         agent,

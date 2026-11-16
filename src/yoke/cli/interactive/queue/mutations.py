@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.backend import SessionBackend
+
 from dataclasses import dataclass
 from threading import Lock
 
@@ -27,7 +29,7 @@ from yoke.cli.interactive.queue.persistence import (
 )
 from yoke.cli.runtime import ActiveSession
 from yoke.session.queue import next_eligible_index, remove_occurrences
-from yoke.session.workspace import WorkspaceUnavailable, require_workspace
+from yoke.session.workspace import WorkspaceUnavailable
 
 QUEUE_MANAGER_CONFLICT_NOTICE = (
     "Queue changed while the manager was open. Reloaded the latest queue; "
@@ -202,7 +204,7 @@ def dequeue_prompt_with_position(
                     continue
                 return None
             try:
-                require_workspace(active_session.root, session_id=active_session.id)
+                SessionBackend.require_workspace(active_session)
             except WorkspaceUnavailable as exc:
                 state.status_message = str(exc)
                 return None

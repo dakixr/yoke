@@ -1,0 +1,116 @@
+# CLI session backend
+
+The CLI still runs `RuntimeAgent` in process. The interactive UI uses
+`yoke.cli.backend.SessionBackend` for runtime operations, the queue functions in
+`yoke.cli.backend.queue` for durable queue snapshots and compare-and-swap edits,
+and the inspector query objects in `yoke.cli.backend.inspection`. The backend
+contains no terminal rendering. `CommandContext.backend` carries the boundary
+into slash commands; `CommandCallbacks` contains terminal capabilities only.
+
+`SessionBackend.wrap` adapts the existing agent injection entry points and reuses
+an existing backend while the selected session changes. Production construction
+uses `RuntimeAgent`. The `AgentRunner` protocol is gone. Its old import remains a
+compatibility alias to `RuntimeAgent` until the HTTP factory import migrates.
+`runtime/contracts.py` contains only opted-in call-shape adapters for existing
+injected test doubles, with no runner protocols.
+
+## Events and ownership
+
+`submit` returns a `SubmittedTurn`. The UI iterates dictionaries with `type` and
+`payload`, then reads the result. Public event names match the daemon publisher;
+`event_from_sse` extracts the same dictionaries from an SSE envelope's `type`
+and `data`. `agent_event` translates the public names into the existing renderer
+vocabulary. Model, provider recovery, warnings, errors, messages, compaction and
+tool events retain their payloads and order. A session subscription can observe
+the same stream independently and has an explicit unsubscribe callback.
+
+The in-process producer runs on its own worker. Rendering occurs in the UI's
+turn worker, after admission has succeeded. The backend still prepares isolated
+turn runtimes, retains workspace leases, invokes the existing `execute_turn`,
+and checkpoints tool results in the established order. Accepted and retired
+outcomes go through backend methods so the UI does not inspect runtime forks.
+The HTTP implementation will let the daemon own those lifecycle operations.
+
+Headless execution and runtime bootstrap remain in `cli/runtime` in this phase.
+Front-end scheduling, logical interruption fences and queue presentation remain
+in the interactive package. Their persistence and runtime operations cross the
+backend boundary; replacing them with daemon admission is Phase 5 work. The old
+`interactive/turn_runner.py` is now an import shim, and queue persistence retains
+only UI snapshot-installation helpers plus compatibility imports.
+
+## Route mapping
+
+`{id}` means the backend's selected session ID.
+
+| Backend operation | HTTP equivalent |
+| --- | --- |
+| `submit(prompt, ..., delivery="steer" or "queue")` | `POST /session/{id}/prompt`; `GET /event?sessionID={id}`; `POST /session/{id}/wait`; `GET /session/{id}/message` |
+| `events.subscribe`, `event_from_sse` | `GET /event?sessionID={id}` |
+| `interrupt`, `interrupt_snapshot` | `POST /session/{id}/interrupt`; daemon owns the continuation checkpoint |
+| `load_prompt_queue_state`, `commit_prompt_queue`, `clear_prompt_queue` | `GET` / `PATCH /session/{id}/queue`, preserving queue revisions |
+| `session`, `provider_label`, `thinking` | `GET /session/{id}` and `GET /model` |
+| `set_thinking`, `persist_metadata`, `switch_model` | `POST /session/{id}/selection` |
+| `compact` | `POST /session/{id}/compact` plus events |
+| `pin`, `title` | `PATCH /session/{id}` |
+| `regenerate_title` | `POST /session/{id}/title/regenerate` |
+| `fork`, `new` | `POST /session/{id}/fork`, `POST /session` |
+| `tree`, `navigate`, `label_entry` | `GET /session/{id}/tree`, `POST /session/{id}/tree/navigate`, `PATCH /session/{id}/tree/{entry_id}` |
+| `models` | `GET /model`, `GET /provider` |
+| `available_skills`, `activate_skill` | `GET /skill`, `POST /session/{id}/skill/{name}/activate` |
+| `tools().report`, `active_names`, `select` | `GET /tool?sessionID={id}`, `PATCH /session/{id}/tool` |
+| `mcp(root).config`, `list_tools` | `GET /session/{id}/mcp?includeTools=true` |
+| `mcp(root).set_enabled`, `toggle_tool`, `refresh` | `PATCH /session/{id}/mcp/{server_name}` |
+| `processes().snapshots`, `subscribe` | `GET /process?sessionID={id}`, `GET /event`; periodic polling is supported |
+| `processes().agent_runs` | `GET /agent-run?sessionID={id}` |
+| `ToolInspection.snapshots`, `call`, `output` | `GET /session/{id}/tool-call`, `GET /session/{id}/tool-call/{call_id}`, `GET /session/{id}/tool-call/{call_id}/output?afterSeq=` |
+| `persist`, `sync_skills`, `checkpoint_skills`, `promote_turn`, `retire_turn` | Internal daemon work during prompt admission/execution; clients read messages and events |
+| `require_workspace`, `submission_context` | Admission validation and local executor ownership; removed from the client when daemon admission owns this |
+
+Two existing UI reads do not map directly to an existing HTTP response.
+`context_usage` estimates the editor draft; `GET /session/{id}/context` exports
+context, while context-update events carry usage without a draft estimate.
+`database_path` supplies the storage path shown by `/info`; the HTTP session DTO
+does not expose it. Phase 5 must supply these values or retain local draft
+estimation. The preparatory adapter does not invent HTTP routes for them.
+
+The process inspector currently displays snapshot output tails, corresponding
+to the output fields on `GET /process`; the API also supports output pagination,
+stdin and signals. It has no interactive signal or stdin shortcuts to migrate.
+Tool output inspection is non-consuming. Persisted repo/global tool and MCP
+config edits remain client-side, followed by a backend refresh.
+
+## Runtime coupling inventory
+
+This inventory records the dependencies before the refactor at `2829e85`.
+Files in a group share the indicated dependency; rendering-only files are omitted.
+
+| Original callers | Original runtime dependency | Current owner |
+| --- | --- | --- |
+| `interactive/__init__.py`, `basic.py`, `common.py`, `command_host.py`, `commands.py`; `prompt/{app,control,loop,compaction,cancellation,inspectors,turns}.py`; `session_commands.py`; `turn_runner.py` | `AgentRunner` annotations/imports; some callers also checked `RuntimeAgent` | Backend boundary and shared prompt/outcome values; no interactive runtime type checks |
+| `interactive/turn_runner.py` | `prepare_turn_agent`, title generation, usage context, `execute_turn`, agent-state capture and workspace validation | `backend/turns.py` |
+| `interactive/basic.py`, `prompt/turns.py` | Skill copying, checkpoint/session saves, promoting runtime forks, retiring runtime resources | `SessionBackend` checkpoint/lifecycle operations |
+| `interactive/prompt/{app,loop}.py`, `common.py` | Provider/config introspection, effort edits, available skills and context estimates | `SessionBackend` metadata/skills/context operations |
+| `interactive/prompt/{cancellation,control}.py`, `basic.py` | Stop events, logical interrupt snapshot, background stop checkpoint | Backend interrupt/snapshot/persist operations; UI still owns logical turn fencing |
+| `interactive/slash_commands.py`, `session_commands.py` | Direct store pin writes, title/fork/new/compact operations, session save and database path | `SessionBackend` session operations |
+| `interactive/model_commands.py` | Provider switch, state capture, metadata save and private `_context`/log inspection | `SessionBackend.switch_model`; runtime-owned public `conversation_marker` avoids copying a large transcript |
+| `interactive/tree_command.py`, `tree_selector.py` | Tree read/navigation/label writes; tree projection values | Mutations/queries through backend; selector retains pure tree-view helpers |
+| `interactive/skill_commands.py` | Skill registry/activation, active-skill writes, `SessionTree` construction and runtime hydration | `SessionBackend.activate_skill` |
+| `interactive/tools_menu.py` | Tool report, live tool map, selection installation | `ToolInventory`; UI retains rows/scopes/config-file writes |
+| `interactive/mcp_menu.py`, `mcp_menu_helpers.py` | Tool-session MCP policy, `McpManager` discovery, refresh and live tool filtering | `McpInventory`; UI retains persisted config editing |
+| `interactive/process_commands.py`, `agents.py`, `prompt/inspectors.py`, `process_inspector/app.py` | `CommandProcessManager`, snapshots, subscriptions and agent-run registry | `ProcessInspection`; no manager is passed to an inspector |
+| `interactive/prompt/inspectors.py`, `prompt/app.py`, `tool_inspector/trace.py` | Transcript/live trace merging, trace revisions and subscriptions | `ToolInspection` query seam; trace DTOs and event recording remain presentation data |
+| `interactive/queue/{__init__,images,mutations,persistence}.py`, `prompt/{app,loop}.py` | Queue snapshot loading, transactions and CAS persistence through `ActiveSession.store` | `backend/queue.py`; compatibility imports and UI queue-state installation remain |
+| `interactive/{commands.py,prompt/submission.py,queue/mutations.py}` | Workspace validation before admission/session changes | Backend validation method; exception values remain UI-readable |
+| `interactive/prompt/lifecycle.py` | Workspace-owner `ContextVar` copied into command executor | Backend `submission_context` |
+| `cli/runtime/base.py`, `contracts.py` | Runner protocols, dispatch adapters and direct runtime execution | No runner protocols; native execution preserved, injected-test call adapters retained |
+| `cli/runtime/{cli,startup,session,resume,metadata,title,stats,compaction}.py` | Runtime construction, provider state, session store, save/hydration/title/compaction and usage | Existing in-process implementation, behind backend for interactive callers; headless/bootstrap remain here |
+| `cli/runtime/{turn_agent,lifetime,workspaces}.py` | Runtime fork/cleanup, process-manager lifetime, workspace leases and store reads | Existing implementation called by backend; Phase 5 deletes it |
+| `cli/runtime/{tree,tree_view}.py` | Session-tree projection, store navigation/metadata writes, branch-summary provider requests | Existing implementation called by backend; selector uses only pure view helpers |
+| `cli/runtime/selector/**`, `terminal_output_gate.py` | Terminal selection/output helpers, with duplicated cursor rules | Pure UI utilities; cursor rules now live in `cli/list_cursor.py` |
+
+`/agents` is a Rich table with no selection or scrolling state in this baseline.
+MCP and tools menus share the generic selectors. Their cursor rules, the tree
+selector and both inspectors now use `ListCursor`. The helper owns clamping,
+movement, viewport resizing and identity preservation during refresh. Inspectors
+use owned display-state dataclasses instead of attribute-list render/mouse/chrome
+protocols. Keyboard bindings and the shortcuts table are unchanged.

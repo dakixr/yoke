@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.list_cursor import ListCursor
+
 from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import suppress
@@ -56,16 +58,14 @@ def select_list_item_interactive(
     if not items:
         return None
 
-    selected_index = 0
-    scroll_offset = 0
+    cursor = ListCursor()
 
     def formatted_rows() -> HTML:
-        nonlocal scroll_offset
         terminal_columns, terminal_rows = selector_terminal_size()
         view = build_generic_selector_view(
             items,
-            selected_index=selected_index,
-            scroll_offset=scroll_offset,
+            selected_index=cursor.index,
+            scroll_offset=cursor.scroll,
             terminal_columns=terminal_columns,
             terminal_rows=terminal_rows,
             title=title,
@@ -73,7 +73,7 @@ def select_list_item_interactive(
             render_item=render_item,
             footer=footer,
         )
-        scroll_offset = view.scroll_offset
+        cursor.scroll = view.scroll_offset
         rendered_lines: list[str] = []
         for index, line in enumerate(view.lines):
             escaped_line = escape(line)
@@ -89,47 +89,38 @@ def select_list_item_interactive(
     @key_bindings.add("down")
     @key_bindings.add("j")
     def _move_down(event) -> None:
-        nonlocal selected_index
-        selected_index = min(selected_index + 1, len(items) - 1)
+        cursor.move(1, len(items))
         event.app.invalidate()
 
     @key_bindings.add("up")
     @key_bindings.add("k")
     def _move_up(event) -> None:
-        nonlocal selected_index
-        selected_index = max(selected_index - 1, 0)
+        cursor.move(-1, len(items))
         event.app.invalidate()
 
     @key_bindings.add("pagedown")
     def _page_down(event) -> None:
-        nonlocal selected_index
-        selected_index = min(
-            selected_index + selector_page_step(),
-            len(items) - 1,
-        )
+        cursor.move(selector_page_step(), len(items))
         event.app.invalidate()
 
     @key_bindings.add("pageup")
     def _page_up(event) -> None:
-        nonlocal selected_index
-        selected_index = max(selected_index - selector_page_step(), 0)
+        cursor.move(-selector_page_step(), len(items))
         event.app.invalidate()
 
     @key_bindings.add("home")
     def _move_home(event) -> None:
-        nonlocal selected_index
-        selected_index = 0
+        cursor.index = 0
         event.app.invalidate()
 
     @key_bindings.add("end")
     def _move_end(event) -> None:
-        nonlocal selected_index
-        selected_index = len(items) - 1
+        cursor.end(len(items))
         event.app.invalidate()
 
     @key_bindings.add("enter")
     def _accept(event) -> None:
-        event.app.exit(result=items[selected_index])
+        event.app.exit(result=items[cursor.index])
 
     @key_bindings.add("c-c")
     @key_bindings.add("escape")

@@ -16,7 +16,7 @@ from yoke.agent.session_tree import InvalidCurrentError
 from yoke.agent.skills.models import ActiveSkill
 from yoke.ai.providers.base import Provider
 from yoke.cli.config import CLIArgs
-from yoke.cli.interactive import session_commands
+from yoke.cli.backend import session as backend_session
 from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.render import build_console
 from yoke.cli.runtime import create_active_session, run_cli
@@ -376,8 +376,8 @@ def test_pin_slash_command_toggles_active_session(tmp_path: Path, monkeypatch) -
     )
     console_stream = CaptureStream()
     console = build_console(console_stream)
-    persist = Mock(wraps=session_commands.persist_session_state)
-    monkeypatch.setattr(session_commands, "persist_session_state", persist)
+    persist = Mock(wraps=backend_session.persist_session_state)
+    monkeypatch.setattr(backend_session, "persist_session_state", persist)
 
     handled, messages, updated_session = handle_slash_command(
         "/pin",
@@ -404,8 +404,8 @@ def test_pin_slash_command_persists_new_session(tmp_path: Path, monkeypatch) -> 
         CLIArgs(root=str(tmp_path)),
         root=tmp_path,
     )
-    persist = Mock(wraps=session_commands.persist_session_state)
-    monkeypatch.setattr(session_commands, "persist_session_state", persist)
+    persist = Mock(wraps=backend_session.persist_session_state)
+    monkeypatch.setattr(backend_session, "persist_session_state", persist)
 
     handled, _messages, updated_session = handle_slash_command(
         "/pin",

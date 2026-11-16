@@ -14,11 +14,7 @@ from yoke.cli.render import print_session_scrollback
 from yoke.cli.render.base import Console
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime.selector.ui import select_list_item_interactive
-from yoke.cli.runtime.tree import (
-    get_session_tree,
-    navigate_session_tree,
-    set_entry_label,
-)
+from yoke.cli.backend import SessionBackend
 
 
 def _handle_tree_command(
@@ -31,7 +27,8 @@ def _handle_tree_command(
 ) -> tuple[list[Message], ActiveSession] | None:
     from yoke.cli.render import print_scrollback_notice
 
-    roots = get_session_tree(active_session)
+    backend = SessionBackend.wrap(agent, active_session)
+    roots = backend.tree()
     if not roots:
         print_scrollback_notice(console, "No session entries yet.")
         return None
@@ -53,7 +50,7 @@ def _handle_tree_command(
                 host=host,
                 initial_selected_id=selection.entry_id,
             )
-        set_entry_label(active_session, selection.entry_id, label)
+        backend.label_entry(selection.entry_id, label)
         print_scrollback_notice(console, "Updated tree label.")
         return _handle_tree_command(
             active_session,
@@ -78,9 +75,7 @@ def _handle_tree_command(
         )
     summarize, custom_instructions = choice
     print_scrollback_notice(console, "Navigating session tree...")
-    result = navigate_session_tree(
-        active_session,
-        agent,
+    result = backend.navigate(
         selection.entry_id,
         summarize=summarize,
         custom_instructions=custom_instructions,

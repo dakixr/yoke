@@ -1182,3 +1182,9 @@ user paths, locale, terminal, shell, temporary-directory, XDG directories,
 proxy and CA-certificate variables, and Windows system paths). Other inherited variables are excluded by default. Add variable names to
 `env_vars` to copy their current values, or set explicit values in `env`; those
 explicit values win.
+
+## Interactive backend boundary
+
+The interactive runtime boundary and its planned HTTP mapping are documented in
+[CLI session backend](cli-backend.md). This is a preparatory refactor; the CLI
+still executes its runtime in process until the daemon-client cutover.

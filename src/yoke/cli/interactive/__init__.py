@@ -23,12 +23,11 @@ from yoke.cli.interactive.renderer import (
 from yoke.cli.render import OutputStream
 from yoke.cli.render import build_console
 from yoke.cli.runtime import ActiveSession
-from yoke.cli.runtime import AgentRunner
 
 
 def run_interactive_cli(
     args: CLIArgs,
-    agent: AgentRunner,
+    agent: object,
     session_messages: list[Message],
     *,
     active_session: ActiveSession,

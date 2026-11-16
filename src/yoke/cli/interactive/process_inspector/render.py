@@ -7,8 +7,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
-from typing import Literal
-from typing import Protocol
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from yoke.cli.interactive.process_inspector.state import ProcessInspectorState
 
 from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
@@ -20,18 +22,6 @@ from yoke.cli.interactive.tool_inspector.styles import escape_line
 from yoke.cli.interactive.tool_inspector.styles import fit
 from yoke.cli.interactive.tool_inspector.styles import fit_cell
 from yoke.cli.interactive.tool_inspector.styles import pane_label
-
-
-class ProcessInspectorRenderState(Protocol):
-    """State attributes required by the process inspector renderer."""
-
-    selected_index: int
-    list_scroll: int
-    detail_scroll: int
-    wrap: bool
-    notice: str
-    active_pane: Literal["sidebar", "detail"]
-    detail_output_cache: DetailOutputCache
 
 
 @dataclass(slots=True)
@@ -69,7 +59,7 @@ class DetailOutputCache:
 
 
 def render_view_html(
-    state: ProcessInspectorRenderState,
+    state: ProcessInspectorState,
     processes: Sequence[CommandProcessSnapshot],
 ) -> str:
     """Render the complete process inspector as prompt-toolkit HTML."""
@@ -119,26 +109,26 @@ def detail_text(process: CommandProcessSnapshot) -> str:
 
 
 def move_selection(
-    state: ProcessInspectorRenderState,
+    state: ProcessInspectorState,
     processes: list[CommandProcessSnapshot],
     delta: int,
 ) -> None:
     """Move process selection and reset detail scrolling."""
     if not processes:
         return
-    state.selected_index = max(0, min(state.selected_index + delta, len(processes) - 1))
+    state.cursor.move(delta, len(processes))
     state.detail_scroll = 0
 
 
 def selected_process(
-    state: ProcessInspectorRenderState,
+    state: ProcessInspectorState,
     processes: list[CommandProcessSnapshot],
 ) -> CommandProcessSnapshot | None:
     """Return the selected process snapshot, if any."""
     if not processes:
         return None
-    state.selected_index = max(0, min(state.selected_index, len(processes) - 1))
-    return processes[state.selected_index]
+    state.cursor.select(state.cursor.index, len(processes))
+    return processes[state.cursor.index]
 
 
 def page_step() -> int:
@@ -147,32 +137,27 @@ def page_step() -> int:
 
 
 def _list_lines(
-    state: ProcessInspectorRenderState,
+    state: ProcessInspectorState,
     processes: list[CommandProcessSnapshot],
     width: int,
     row_count: int,
 ) -> list[str]:
     if not processes:
         return ["No command processes yet."]
-    state.selected_index = max(0, min(state.selected_index, len(processes) - 1))
-    if state.selected_index < state.list_scroll:
-        state.list_scroll = state.selected_index
-    if state.selected_index >= state.list_scroll + row_count:
-        state.list_scroll = state.selected_index - row_count + 1
-    window = processes[state.list_scroll : state.list_scroll + row_count]
+    window = processes[state.cursor.viewport(len(processes), row_count)]
     return [
         _list_line(state, process, index, width)
-        for index, process in enumerate(window, start=state.list_scroll)
+        for index, process in enumerate(window, start=state.cursor.scroll)
     ]
 
 
 def _list_line(
-    state: ProcessInspectorRenderState,
+    state: ProcessInspectorState,
     process: CommandProcessSnapshot,
     index: int,
     width: int,
 ) -> str:
-    marker = ">" if index == state.selected_index else " "
+    marker = ">" if index == state.cursor.index else " "
     icon = {"running": "…", "exited": "✓", "failed": "✗"}[process.status]
     command = " ".join(process.command.split())
     text = fit(
@@ -275,7 +260,7 @@ def _title(columns: int) -> str:
 
 
 def _pane_header(
-    state: ProcessInspectorRenderState,
+    state: ProcessInspectorState,
     list_width: int,
     detail_width: int,
 ) -> str:
@@ -287,7 +272,7 @@ def _pane_header(
 
 
 def _footer(
-    state: ProcessInspectorRenderState,
+    state: ProcessInspectorState,
     processes: list[CommandProcessSnapshot],
     detail_line_count: int,
     body_rows: int,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from yoke.cli.interactive.prompt.turns import retire_turn_agent
+from yoke.cli.runtime.turn_agent import retire_turn_agent
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tools import AttachImageTool
 from yoke.agent.tools.command_process import (

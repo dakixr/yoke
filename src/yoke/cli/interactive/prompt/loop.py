@@ -28,9 +28,9 @@ from yoke.cli.interactive.queue.mutations import (
 from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
 from yoke.cli.interactive.skill_commands import is_skill_command
 from yoke.cli.render import print_scrollback_notice, print_session_scrollback
-from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend import SessionBackend
 from yoke.cli.runtime.base import ActiveSessionRef
-from yoke.cli.runtime.metadata import persist_active_session_metadata
 
 
 def update_status_context_usage(
@@ -52,23 +52,19 @@ def persist_prompt_exit_state(
     state: PromptCliState,
     state_lock: Lock,
     active_session: ActiveSession,
-    agent: AgentRunner,
+    agent: object,
 ) -> None:
     """Persist prompt-toolkit state before leaving the interactive loop."""
     with state_lock:
         thinking_effort = state.thinking_effort
-    persist_active_session_metadata(
-        active_session,
-        agent,
-        reasoning_effort=thinking_effort,
-    )
+    SessionBackend.wrap(agent, active_session).persist_metadata(thinking_effort)
 
 
 def process_prompt_toolkit_prompt(  # noqa: C901
     prompt: str,
     *,
     state: PromptCliState,
-    agent: AgentRunner,
+    agent: object,
     active_session_ref: ActiveSessionRef,
     scrollback_console,
     state_lock: Lock,
@@ -260,8 +256,9 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     if command_deferred:
         return active_session_ref.value
     if handled:
-        provider_config = getattr(getattr(agent, "provider", None), "config", None)
-        provider_effort = getattr(provider_config, "reasoning_effort", None)
+        provider_effort, _levels = SessionBackend.wrap(
+            agent, updated_session
+        ).thinking()
         switched_queue = (
             load_prompt_queue_state(updated_session)
             if updated_session.id != active_session.id
@@ -305,7 +302,7 @@ def run_prompt_toolkit_event_loop(
     *,
     state: PromptCliState,
     active_session_ref: ActiveSessionRef,
-    agent: AgentRunner,
+    agent: object,
     prompt_session,
     completer,
     key_bindings,

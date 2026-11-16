@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from yoke.cli.backend.catalog import tool_report_with_active_names
+
 import io
 import json
 from typing import ClassVar
@@ -238,16 +240,12 @@ def test_public_tool_selection_preserves_legacy_provider_messages(
         else:
             legacy.set_session_enabled_tools(enabled)
         assert legacy.tool_report is not None
-        legacy.tool_report = tools_menu._tool_report_with_active_names(
-            legacy.tool_report, enabled
-        )
+        legacy.tool_report = tool_report_with_active_names(legacy.tool_report, enabled)
         legacy._install_session_filtered_tool_system_messages()
         assert public.tool_report is not None
         public.apply_tool_selection(
             public_selection,
-            report=tools_menu._tool_report_with_active_names(
-                public.tool_report, enabled
-            ),
+            report=tool_report_with_active_names(public.tool_report, enabled),
         )
         assert [
             message.model_dump_json() for message in public.context_manager.instructions

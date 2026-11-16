@@ -420,7 +420,7 @@ def test_steering_continues_from_latest_tool_result_checkpoint(
         )
 
     monkeypatch.setattr(
-        "yoke.cli.interactive.turn_runner.execute_turn",
+        "yoke.cli.backend.turns.execute_turn",
         fake_execute_turn,
     )
     state = PromptCliState(
@@ -563,7 +563,7 @@ def test_stop_and_immediate_continue_retain_completed_tool_work(
         )
 
     monkeypatch.setattr(
-        "yoke.cli.interactive.turn_runner.execute_turn",
+        "yoke.cli.backend.turns.execute_turn",
         fake_execute_turn,
     )
     state = PromptCliState(

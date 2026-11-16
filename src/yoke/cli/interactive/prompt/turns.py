@@ -6,7 +6,8 @@ import time
 from collections.abc import Callable
 from threading import Event, Lock
 
-from yoke.agent.loop.agent import RuntimeAgent
+from yoke.cli.backend import SessionBackend
+from yoke.cli.interactive.turn_stream import render_turn_events
 from yoke.agent.models import ConversationEntry, Message
 from yoke.cli.interactive.common import (
     PendingPrompt,
@@ -25,15 +26,10 @@ from yoke.cli.interactive.queue.mutations import (
     next_pending_prompt_index as next_pending_prompt_index,
 )
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
-from yoke.cli.interactive.turn_runner import TurnRunner
 from yoke.cli.runtime import (
     ActiveSession,
-    AgentRunner,
     EventRenderer,
-    persist_session_state,
 )
-from yoke.cli.runtime.turn_agent import retire_turn_agent as retire_turn_agent
-from yoke.session.workspace import promote_session_turn as promote_runtime_fork
 
 
 def run_prompt_turn(
@@ -42,7 +38,7 @@ def run_prompt_turn(
     prompt: str,
     state: PromptCliState,
     state_lock: Lock,
-    agent: AgentRunner,
+    agent: object,
     active_session: ActiveSession,
     stop_event: Event,
     user_message: Message | None,
@@ -65,10 +61,10 @@ def run_prompt_turn(
     entries = conversation_entries_snapshot
     if entries is None:
         entries = active_session.active_entries()
-    runner = TurnRunner(agent, active_session)
+    backend = SessionBackend.wrap(agent, active_session)
 
     def checkpoint_tool_result(
-        turn_agent: AgentRunner,
+        turn_agent: object,
         checkpoint_messages: list[Message],
         checkpoint_entries: list[ConversationEntry],
     ) -> None:
@@ -76,34 +72,27 @@ def run_prompt_turn(
             with state_lock:
                 if turn_id != state.active_turn_id or stop_event.is_set():
                     return
-                if isinstance(agent, RuntimeAgent) and isinstance(
-                    turn_agent, RuntimeAgent
-                ):
-                    agent.active_skills = [
-                        skill.model_copy(deep=True)
-                        for skill in turn_agent.active_skills
-                    ]
+                backend.checkpoint_skills(turn_agent)
                 state.messages = list(checkpoint_messages)
                 # The checkpoint already contains the active user message.
                 state.active_user_message = None
-            persist_session_state(
-                active_session,
-                turn_agent,
+            SessionBackend.wrap(agent, active_session).persist(
                 checkpoint_messages,
+                turn_agent=turn_agent,
                 conversation_entries=checkpoint_entries,
             )
 
-    outcome = runner.run(
+    submitted = backend.submit(
         prompt,
         messages,
         entries=entries,
         stop_event=stop_event,
         user_message=user_message,
-        indicator=turn_renderer_factory(turn_id),
         checkpoint=checkpoint_tool_result,
         starting_prompt=starting_prompt,
     )
-    handle_outcome(turn_id, outcome)
+    render_turn_events(submitted, turn_renderer_factory(turn_id))
+    handle_outcome(turn_id, submitted.result())
 
 
 def handle_prompt_turn_outcome(
@@ -112,7 +101,7 @@ def handle_prompt_turn_outcome(
     outcome: TurnSuccess | TurnFailure | TurnStopped,
     state: PromptCliState,
     state_lock: Lock,
-    agent: AgentRunner,
+    agent: object,
     active_session: ActiveSession,
     renderer: PromptToolkitLiveRenderer,
     scrollback: ScrollbackSink,
@@ -126,7 +115,7 @@ def handle_prompt_turn_outcome(
         if turn_id != state.active_turn_id or turn_id in abandoned_turn_ids:
             abandoned_turn_ids.discard(turn_id)
             steered_turn_ids.discard(turn_id)
-            retire_turn_agent(outcome.agent, primary_agent=agent)
+            SessionBackend.wrap(agent, active_session).retire_turn(outcome.agent)
             return None
         was_steered = turn_id in steered_turn_ids
         steered_turn_ids.discard(turn_id)
@@ -140,14 +129,9 @@ def handle_prompt_turn_outcome(
         turn_out_tok = state.turn_output_tokens
     outcome_agent = outcome.agent or agent
     rejected = isinstance(outcome, TurnFailure) and outcome.rejected_prompt is not None
-    if (
-        not rejected
-        and isinstance(agent, RuntimeAgent)
-        and isinstance(outcome_agent, RuntimeAgent)
-    ):
-        if outcome_agent is not agent:
-            promote_runtime_fork(agent, outcome_agent)
-            outcome_agent = agent
+    backend = SessionBackend.wrap(agent, active_session)
+    if not rejected:
+        outcome_agent = backend.promote_turn(outcome_agent)
     if isinstance(outcome, TurnFailure):
         if outcome.rejected_prompt is not None:
             pending, index = outcome.rejected_prompt
@@ -163,10 +147,9 @@ def handle_prompt_turn_outcome(
         if outcome.messages is not None:
             with state_lock:
                 state.messages = outcome.messages
-            persist_session_state(
-                active_session,
-                outcome_agent,
+            SessionBackend.wrap(agent, active_session).persist(
                 outcome.messages,
+                turn_agent=outcome_agent,
                 conversation_entries=outcome.conversation_entries,
             )
         renderer.print_error(str(outcome.error))
@@ -177,7 +160,7 @@ def handle_prompt_turn_outcome(
             input_tokens=turn_in_tok,
             output_tokens=turn_out_tok,
         )
-        retire_turn_agent(outcome.agent, primary_agent=agent)
+        SessionBackend.wrap(agent, active_session).retire_turn(outcome.agent)
         return was_steered
     if isinstance(outcome, TurnStopped):
         stopped_messages = (
@@ -191,10 +174,9 @@ def handle_prompt_turn_outcome(
         if stopped_messages is not None:
             with state_lock:
                 state.messages = stopped_messages
-            persist_session_state(
-                active_session,
-                outcome_agent,
+            SessionBackend.wrap(agent, active_session).persist(
                 stopped_messages,
+                turn_agent=outcome_agent,
                 conversation_entries=stopped_entries,
             )
         scrollback.emit(
@@ -210,14 +192,13 @@ def handle_prompt_turn_outcome(
             input_tokens=turn_in_tok,
             output_tokens=turn_out_tok,
         )
-        retire_turn_agent(outcome.agent, primary_agent=agent)
+        SessionBackend.wrap(agent, active_session).retire_turn(outcome.agent)
         return was_steered
     with state_lock:
         state.messages = outcome.result.messages
-    persist_session_state(
-        active_session,
-        outcome_agent,
+    SessionBackend.wrap(agent, active_session).persist(
         outcome.result.messages,
+        turn_agent=outcome_agent,
         conversation_entries=outcome.result.conversation_entries,
     )
     renderer.print_agent_output(outcome.result.output)
@@ -229,7 +210,7 @@ def handle_prompt_turn_outcome(
         output_tokens=turn_out_tok,
     )
     scrollback.emit("bell")
-    retire_turn_agent(outcome.agent, primary_agent=agent)
+    SessionBackend.wrap(agent, active_session).retire_turn(outcome.agent)
     return was_steered
 
 

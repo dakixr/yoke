@@ -21,9 +21,7 @@ from yoke.agent.state import transcript_messages_from_entries
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.zai import ZAIProvider
 from yoke.cli.config import CLIArgs
-from yoke.cli.interactive.prompt.cancellation import (
-    interrupted_turn_snapshot,
-)
+from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.cli.interactive.model_commands import _switch_model
 from yoke.cli.providers.state import set_agent_model
 from yoke.cli.providers.state import switch_agent_provider_model
@@ -112,9 +110,9 @@ def test_model_switch_large_session_writes_only_metadata(
     def fail(*_args: object, **_kwargs: object) -> Never:
         raise AssertionError("full session path was used")
 
-    monkeypatch.setattr("yoke.cli.interactive.model_commands.capture_agent_state", fail)
+    monkeypatch.setattr("yoke.cli.backend.session.capture_agent_state", fail)
     monkeypatch.setattr(
-        "yoke.cli.interactive.model_commands.persist_session_state",
+        "yoke.cli.backend.session.persist_session_state",
         fail,
     )
     monkeypatch.setattr(SessionStore, "load", fail)
@@ -143,7 +141,7 @@ def test_model_switch_survives_metadata_write_failure(
     active_session = active_session_for(tmp_path)
     output = StringIO()
     monkeypatch.setattr(
-        "yoke.cli.interactive.model_commands.save_active_session_metadata",
+        "yoke.cli.runtime.session.save_active_session_metadata",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
     )
 
@@ -533,3 +531,33 @@ def test_model_switch_rolls_back_context_when_auto_compaction_fails() -> None:
     assert provider.current_model_id() == "gpt-a"
     assert agent.conversation_entries == original_entries
     assert agent.context_manager.compactor.model == "gpt-a"
+
+
+def test_model_switch_with_owned_context_does_not_copy_the_transcript(
+    tmp_path, monkeypatch
+):
+    agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
+    active = active_session_for(tmp_path)
+    history = [Message.user("keep the owned conversation"), Message.assistant("saved")]
+    agent.load_conversation(messages=history)
+
+    def fail(_self):
+        raise AssertionError("metadata switch copied the owned transcript")
+
+    monkeypatch.setattr(RuntimeAgent, "conversation_entries", property(fail))
+    output = StringIO()
+    try:
+        updated = _switch_model(
+            "demo:gpt-b",
+            None,
+            agent=agent,
+            active_session=active,
+            messages=history,
+            console=build_console(output),
+            args=CLIArgs(root=str(tmp_path)),
+        )
+        assert updated is history
+        assert active.record.model_id == "gpt-b"
+        assert "model switched" in output.getvalue()
+    finally:
+        agent.close()

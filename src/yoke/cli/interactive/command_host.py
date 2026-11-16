@@ -10,7 +10,8 @@ from yoke.agent.models import Message
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.render.base import Console
-from yoke.cli.runtime import ActiveSession, AgentRunner
+from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend import SessionBackend
 
 
 class CommandHost(Protocol):
@@ -92,7 +93,7 @@ class CommandCallbacks:
 class CommandContext:
     """State owned by one command invocation."""
 
-    agent: AgentRunner
+    backend: SessionBackend
     active_session: ActiveSession
     messages: list[Message]
     console: Console

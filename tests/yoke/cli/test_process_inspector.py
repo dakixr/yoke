@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 
 from prompt_toolkit.formatted_text import HTML
 
+from yoke.cli.backend.inspection import ProcessInspection
 from yoke.agent.loop import RuntimeAgent
 from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent.tools.command_process.types import (
@@ -79,7 +80,7 @@ def test_process_inspector_renders_process_metadata_and_safe_output(
     formatted = HTML(render_view_html(state, processes)).__pt_formatted_text__()
     text = "".join(fragment[1] for fragment in formatted)
 
-    assert state.selected_index == 1
+    assert state.cursor.index == 1
     assert "Command session 5678" in text
     assert "OS PID" in text
     assert "␀␛[31mdone␛[0m�" in text
@@ -97,7 +98,7 @@ def test_process_snapshot_cache_coalesces_output_notifications() -> None:
 
     manager = SnapshotManager()
     cache = ProcessSnapshotCache(
-        cast("CommandProcessManager", manager),
+        ProcessInspection(cast("CommandProcessManager", manager)),
         refresh_interval=60,
     )
     initial = cache.snapshots()
@@ -187,7 +188,9 @@ def test_live_process_inspector_throttles_redraws(monkeypatch) -> None:
 
     manager = SnapshotManager()
     monkeypatch.setattr(prompt_toolkit.application, "Application", FakeApplication)
-    open_live_process_inspector(cast("CommandProcessManager", manager))
+    open_live_process_inspector(
+        ProcessInspection(cast("CommandProcessManager", manager))
+    )
 
     assert (
         application_options["min_redraw_interval"]

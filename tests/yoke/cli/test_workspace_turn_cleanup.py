@@ -15,7 +15,7 @@ from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
 from yoke.agent.state import conversation_entries_from_messages
 from yoke.agent.tools import ReadTool, ToolRegistrationContext, ToolRegistrationResult
-from yoke.cli.interactive import turn_runner
+from yoke.cli.backend import turns as turn_runner
 from yoke.cli.interactive.common import PromptCliState, TurnFailure
 from yoke.cli.interactive.prompt import turns
 from yoke.cli.runtime import turn_agent as runtime
@@ -170,12 +170,12 @@ def test_rejection_after_preparation_does_not_promote_unexecuted_fork(
         turn_runner, "start_session_title_generation", lambda *a, **k: root.rmdir()
     )
     monkeypatch.setattr(
-        turns,
-        "promote_runtime_fork",
+        "yoke.session.workspace.promote_session_turn",
         Mock(side_effect=AssertionError("promoted unexecuted fork")),
     )
     monkeypatch.setattr(
-        turns, "retire_turn_agent", lambda agent, **kwargs: retired.append(agent)
+        "yoke.cli.runtime.turn_agent.retire_turn_agent",
+        lambda agent, **kwargs: retired.append(agent),
     )
     try:
         turns.run_prompt_turn(

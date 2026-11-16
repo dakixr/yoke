@@ -2,25 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Literal
-from typing import Protocol
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from yoke.cli.interactive.tool_inspector.state import ToolInspectorState
 
 from yoke.cli.interactive.tool_inspector.render import ToolInspectorItem
 from yoke.cli.interactive.tool_inspector.render import move_selection
 from yoke.cli.interactive.tool_inspector.render import terminal_size
 
 
-class MouseState(Protocol):
-    """Inspector state used by mouse interactions."""
-
-    active_pane: Literal["sidebar", "detail"]
-    list_scroll: int
-    selected_index: int
-    detail_scroll: int
-
-
 def handle_mouse_event(
-    state: MouseState,
+    state: ToolInspectorState,
     visible: list[ToolInspectorItem],
     mouse_event,
 ) -> None:
@@ -53,7 +46,7 @@ def handle_mouse_event(
         return
     row = y - 3
     if state.active_pane == "sidebar" and 0 <= row < body_rows:
-        index = state.list_scroll + row
+        index = state.cursor.scroll + row
         if 0 <= index < len(visible):
-            state.selected_index = index
+            state.cursor.index = index
             state.detail_scroll = 0

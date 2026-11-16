@@ -16,8 +16,9 @@ from yoke.cli.interactive.command_host import (
 from yoke.cli.interactive.common import PendingPrompt
 from yoke.cli.render import print_scrollback_notice
 from yoke.cli.render.base import Console
-from yoke.cli.runtime import ActiveSession, AgentRunner
-from yoke.session.workspace import WorkspaceUnavailable, require_workspace
+from yoke.cli.runtime import ActiveSession
+from yoke.cli.backend import SessionBackend
+from yoke.session.workspace import WorkspaceUnavailable
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +189,7 @@ def find_command(text: str) -> Command | None:
 def handle_slash_command(
     command: str,
     *,
-    agent: AgentRunner,
+    agent: object,
     active_session: ActiveSession,
     messages: list[Message],
     console: Console,
@@ -203,7 +204,13 @@ def handle_slash_command(
         return False, messages, active_session
     host = host or CommandCallbacks()
     ctx = CommandContext(
-        agent, active_session, messages, console, host, pending_images, pending_prompts
+        SessionBackend.wrap(agent, active_session),
+        active_session,
+        messages,
+        console,
+        host,
+        pending_images,
+        pending_prompts,
     )
     if host.basic_mode and not item.available_in_basic:
         print_scrollback_notice(
@@ -218,7 +225,7 @@ def handle_slash_command(
         return True, messages, active_session
     if item.changes_session:
         try:
-            require_workspace(active_session.root, session_id=active_session.id)
+            SessionBackend.require_workspace(active_session)
         except WorkspaceUnavailable as exc:
             print_scrollback_notice(console, str(exc))
             return True, messages, active_session
