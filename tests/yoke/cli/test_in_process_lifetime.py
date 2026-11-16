@@ -1,4 +1,25 @@
-"""Retain local lifetime invariants until the compatibility executor is deleted."""
+"""DELETE WITH cli/runtime/{lifetime,workspaces,cli}.py.
+
+These tests exercise invocation decorators, caller-injected ownership and local
+lease ContextVars. They stay intact until those mechanisms are deleted. Daemon
+coverage of the user-visible promises:
+
+* Error-preserving cleanup and current-provider ownership:
+  test_cli_resource_ownership::test_daemon_closes_current_provider_when_tool_close_fails
+  http/test_runtime_lifetime_regressions::test_agent_close_failure_still_closes_title_provider_and_is_logged
+* Caller detachment leaves shared execution alive:
+  http/test_daemon_api_environment::test_two_clients_share_prompts_detach_and_keep_admission_env_snapshot
+* Lease exclusion through physical cleanup and background work:
+  http/test_workspace_recovery::test_retired_worker_keeps_relocation_excluded_until_physical_completion
+  http/test_workspace_lifecycle_regressions::test_background_command_keeps_a_lease_after_its_turn_is_idle
+* Relocation binding and reload:
+  test_cli_workspaces::test_relocation_preserves_history_and_noop_does_not_write
+  http/test_workspace_recovery::test_relocation_preserves_identity_history_and_rejects_stale_or_invalid_targets
+
+Exact covering names are also recorded in the implementation report. No daemon
+client can receive a caller-owned RuntimeAgent, so borrowed/local object identity
+assertions are specific to the modules being removed.
+"""
 
 from __future__ import annotations
 

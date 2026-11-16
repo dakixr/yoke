@@ -240,7 +240,9 @@ def test_indexed_model_selection_matches_full_snapshot_provider_projection(
     for indexed in (False, True):
         directory = tmp_path / ("indexed" if indexed else "full-snapshot")
         monkeypatch.setenv("YOKE_SESSION_DIR", str(directory))
-        world = World(tmp_path / f"workspace-{indexed}", directory, scenario_name, Tape())
+        world = World(
+            tmp_path / f"workspace-{indexed}", directory, scenario_name, Tape()
+        )
         normalizer = Normalizer(world.root)
         driver = Daemon(world)
         try:
