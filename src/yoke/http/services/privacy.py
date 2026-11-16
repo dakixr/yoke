@@ -1,65 +1,51 @@
-"""Redact client-only values before daemon persistence and observability."""
+"""Memory-only credential sanitation for daemon diagnostics, never transcripts."""
 
 from __future__ import annotations
 
-import logging
-import os
 from collections.abc import Mapping
-from weakref import WeakSet
-from yoke.environment import observation_redaction
 from threading import RLock
 
-from yoke.agent.models import ConversationEntry
+from yoke.ai.providers.credentials import PROVIDER_CREDENTIAL_ENV_NAMES
+from yoke.environment import observation_redaction
 
 
-class SessionPrivacy(logging.Filter):
-    """Own memory-only value redactions for every attached environment.
+class SessionPrivacy:
+    """Retain secret values until shutdown for queued and retired workers.
 
-    Keep old values until daemon shutdown: queued and retired workers can still
-    produce output after their client detaches or replaces its environment.
+    Ordinary environment values, including short terminal dimensions and paths,
+    are user data. Only sufficiently long, secret-named values are diagnostic
+    redactions. This service must never transform provider context or entries.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self._values: set[str] = set()
         self._lock = RLock()
-        self._handlers: WeakSet[logging.Handler] = WeakSet()
 
     def register(self, values: Mapping[str, str]) -> None:
         with self._lock:
             self._values.update(
                 value
                 for name, value in values.items()
-                if value
-                and name != "YOKE_HEADLESS"
+                if len(value) >= 8
                 and (
-                    os.environ.get(name) != value
+                    name.upper() in PROVIDER_CREDENTIAL_ENV_NAMES
                     or any(
-                        part in name.lower()
-                        for part in ("key", "token", "secret", "password")
+                        part in name.casefold()
+                        for part in (
+                            "key",
+                            "token",
+                            "secret",
+                            "password",
+                            "credential",
+                            "auth",
+                        )
                     )
                 )
             )
-        # Handler filters cover descendant loggers, including provider failures.
-        for logger in (
-            logging.getLogger(),
-            *logging.Logger.manager.loggerDict.values(),
-        ):
-            if isinstance(logger, logging.Logger):
-                for handler in logger.handlers:
-                    if self not in handler.filters:
-                        handler.addFilter(self)
-                        self._handlers.add(handler)
 
     def scope(self):
         """Bind sanitation for provider file logging during daemon work."""
         return observation_redaction(self.value)
-
-    def close(self) -> None:
-        """Release handler references when an application shuts down."""
-        for handler in list(self._handlers):
-            handler.removeFilter(self)
-        self._handlers.clear()
 
     def text(self, text: str) -> str:
         with self._lock:
@@ -80,20 +66,32 @@ class SessionPrivacy(logging.Filter):
     def data(self, value: dict[str, object]) -> dict[str, object]:
         return {key: self.value(item) for key, item in value.items()}
 
-    def entries(self, entries: list[ConversationEntry]) -> list[ConversationEntry]:
-        with self._lock:
-            if not self._values:
-                return entries
-        return [
-            ConversationEntry.model_validate(self.value(entry.model_dump(mode="json")))
-            for entry in entries
-        ]
+    def trace_data(self, data: dict[str, object]) -> dict[str, object]:
+        """Sanitize diagnostic content without changing trace IDs or provenance."""
+        fields = {"tool_arguments", "executed_arguments", "result", "text", "error"}
+        return {
+            key: self.value(value) if key in fields else value
+            for key, value in data.items()
+        }
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = self.text(record.getMessage())
-        record.args = ()
-        if record.exc_info:
-            record.exc_text = self.text(
-                logging.Formatter().formatException(record.exc_info)
-            )
-        return True
+    def event_data(self, event_type: str, data: dict[str, object]) -> dict[str, object]:
+        """Sanitize diagnostics; preserve transcript-mirroring event content."""
+        fields = {"error", "lastError"}
+        if event_type in {
+            "session.notice",
+            "session.warning",
+            "session.error",
+            "session.runtime.failed",
+            "session.provider.retry",
+            "session.provider.rate_limited",
+            "session.provider.recovered",
+            "session.model.started",
+            "session.model.ended",
+        }:
+            fields.update({"message", "text", "content", "reason", "detail", "details"})
+        # Identifiers and timing metadata are never subject to substitution.
+        # A completion's top-level error is diagnostic; its result is content.
+        return {
+            key: self.value(value) if key in fields else value
+            for key, value in data.items()
+        }

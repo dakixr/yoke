@@ -27,6 +27,7 @@ from yoke.http.models.tool_trace import (
     ToolTraceOutputInfo,
     ToolTraceTime,
 )
+from yoke.http.services.privacy import SessionPrivacy
 from yoke.http.services.redaction import redact_public_value
 from yoke.http.reads.message_index import SessionMessageIndex
 from yoke.http.reads.cache import SessionReadCache
@@ -60,8 +61,10 @@ class ToolTraceService:
         registry: ToolTraceRuntimeRegistry,
         read_cache: SessionReadCache | None = None,
         message_index: SessionMessageIndex | None = None,
+        privacy: SessionPrivacy | None = None,
     ) -> None:
         self.store = store
+        self.privacy = privacy or SessionPrivacy()
         self.registry = registry
         self.read_cache = read_cache or SessionReadCache(store)
         self.message_index = message_index or SessionMessageIndex(store)
@@ -175,7 +178,11 @@ class ToolTraceService:
         page = store.output_page(call_id, after_seq=after_seq, limit=limit)
         return ToolOutputResponse(
             data=[
-                ToolOutputChunk(seq=chunk.seq, stream=chunk.stream, text=chunk.text)
+                ToolOutputChunk(
+                    seq=chunk.seq,
+                    stream=chunk.stream,
+                    text=self.privacy.text(chunk.text),
+                )
                 for chunk in page.chunks
             ],
             cursor=ToolOutputCursor(
@@ -285,8 +292,8 @@ class ToolTraceService:
                 )
                 latest_seq = output_page.latest_seq
                 truncated = output_page.truncated_before_seq > 0
-        result = redact_public_value(entry.result)
-        executed = redact_public_value(entry.executed_arguments)
+        result = redact_public_value(self.privacy.value(entry.result))
+        executed = redact_public_value(self.privacy.value(entry.executed_arguments))
         public_result = (
             cast(dict[str, object], result) if isinstance(result, dict) else None
         )
@@ -309,7 +316,11 @@ class ToolTraceService:
             turn_id=entry.turn_id,
             sequence=sequence,
             arguments=ToolTraceArguments(
-                raw=_redact_raw_arguments(entry.raw_arguments),
+                raw=_redact_raw_arguments(
+                    self.privacy.text(entry.raw_arguments)
+                    if entry.raw_arguments is not None
+                    else None
+                ),
                 executed=public_executed,
             ),
             time=ToolTraceTime(
@@ -331,11 +342,11 @@ class ToolTraceService:
                 latest_seq=latest_seq,
             ),
             context=[
-                ToolTraceContextInfo(role=item.role, text=item.text)
+                ToolTraceContextInfo(role=item.role, text=self.privacy.text(item.text))
                 for item in entry.context or []
             ],
             after_context=[
-                ToolTraceContextInfo(role=item.role, text=item.text)
+                ToolTraceContextInfo(role=item.role, text=self.privacy.text(item.text))
                 for item in entry.after_context or []
             ],
             retention="runtime" if live else "session",

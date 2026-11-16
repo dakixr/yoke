@@ -149,7 +149,7 @@ def test_startup_precedence_skill_report_and_real_credential_resolver(
             f"/api/v1/session/{session}/message", headers=_auth()
         ).text
         assert "Verified client environment and credential." in messages
-        assert "startup-sentinel-7a45d" not in messages
+        assert "startup-sentinel-7a45d" in messages
 
 
 def test_inherited_stale_model_returns_cli_warning_without_rewriting_config(

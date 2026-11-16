@@ -8,6 +8,16 @@ from pathlib import Path
 
 from yoke.ai.providers.storage import write_private_json
 
+PROVIDER_CREDENTIAL_ENV_NAMES = frozenset(
+    {
+        "YOKE_CODEX_API_KEY",
+        "OPENCODE_API_KEY",
+        "ZAI_API_KEY",
+        "YOKE_OPENAI_API_KEY",
+        "OPENAI_API_KEY",
+    }
+)
+
 
 def provider_credentials_path(home: Path) -> Path:
     """Return the user-local provider credential store path."""

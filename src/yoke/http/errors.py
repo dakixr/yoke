@@ -49,11 +49,12 @@ def error_response(
     headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     """Build the stable public error envelope."""
+    privacy = request.app.state.event_service.privacy
     envelope = ErrorEnvelope(
         error=ErrorBody(
             code=code,
-            message=message,
-            details=details or {},
+            message=privacy.text(message),
+            details=privacy.data(details or {}),
             request_id=request_id(request),
         )
     )

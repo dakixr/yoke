@@ -124,9 +124,7 @@ def wait(client, session):
     ).raise_for_status()
 
 
-def test_concurrent_client_envs_tools_credentials_and_no_secret_storage(
-    tmp_path, caplog
-):
+def test_concurrent_client_envs_tools_credentials_and_raw_transcripts(tmp_path, caplog):
     observed = []
     app = make_app(tmp_path, observed, Barrier(2))
     sentinels = ["sentinel-alpha-cdf379", "sentinel-beta-1a0462"]
@@ -165,13 +163,23 @@ def test_concurrent_client_envs_tools_credentials_and_no_secret_storage(
             traces = str(
                 app.state.runtime_registry.get_if_loaded(session).tool_traces.snapshot()
             )
+            own = sentinels[0 if session == "one" else 1]
+            assert own in history + messages
+            assert own in traces
+            assert (
+                sentinels[1 if session == "one" else 0]
+                not in history + messages + traces
+            )
             for sentinel in sentinels:
-                assert sentinel not in history + messages + traces + caplog.text
+                assert (
+                    "credential-" + sentinel
+                    not in history + messages + traces + caplog.text
+                )
     database_files = list((tmp_path / "sessions").rglob("yoke.db*"))
     assert database_files
     for path in database_files:
         for sentinel in sentinels:
-            assert sentinel.encode() not in path.read_bytes(), path
+            assert ("credential-" + sentinel).encode() not in path.read_bytes(), path
     assert os.environ == original
 
 
@@ -276,7 +284,11 @@ def test_project_dotenv_and_python_env_are_session_local(tmp_path, monkeypatch):
     scoped = project_environment(tmp_path, {"YOKE_SENTINEL_X": "client-value"})
     assert scoped.values["YOKE_SENTINEL_X"] == "client-value"
     assert scoped.values["PROJECT_ONLY"] == "local"
-    assert scoped.values["YOKE_HEADLESS"] == "1"
+    assert "YOKE_HEADLESS" not in scoped.values
+    assert (
+        project_environment(tmp_path, {"YOKE_HEADLESS": "1"}).values["YOKE_HEADLESS"]
+        == "1"
+    )
     assert os.environ == before
     venv = tmp_path / "venv"
     executable = venv / "bin" / "python"
@@ -344,18 +356,21 @@ def test_provider_file_logs_and_validation_errors_do_not_echo_environment(tmp_pa
     from yoke.http.services.privacy import SessionPrivacy
 
     privacy = SessionPrivacy()
-    privacy.register({"YOKE_SENTINEL_X": "file-log-private-9274e"})
-    try:
-        with privacy.scope():
-            log_provider_event(
-                tmp_path, "fixture", "failed", error="file-log-private-9274e"
-            )
-        logs = list(tmp_path.glob("fixture-*.jsonl"))
-        assert logs
-        assert "file-log-private-9274e" not in logs[0].read_text()
-        assert "<redacted>" in logs[0].read_text()
-    finally:
-        privacy.close()
+    secret = "file-log-private-9274e"
+    privacy.register({"MY_API_KEY": secret, "YOKE_SENTINEL_X": "ordinary-value-9274e"})
+    with privacy.scope():
+        log_provider_event(
+            tmp_path,
+            "fixture",
+            "failed",
+            error=secret,
+            message="ordinary-value-9274e 1 80 24",
+        )
+    logs = list(tmp_path.glob("fixture-*.jsonl"))
+    assert logs
+    assert secret not in logs[0].read_text()
+    assert "<redacted>" in logs[0].read_text()
+    assert "ordinary-value-9274e 1 80 24" in logs[0].read_text()
     app = make_app(tmp_path, [])
     with TestClient(app) as client:
         _create_session(client, tmp_path, "one")

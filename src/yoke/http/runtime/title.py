@@ -113,7 +113,7 @@ class SessionTitleAutomation:
                 return
             record = self.store.set_title(
                 self.session_id,
-                self.events.privacy.text(title),
+                title,
                 existing_record=current,
             )
         self.events.durable(

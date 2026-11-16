@@ -36,7 +36,6 @@ from yoke.http.runtime.workspace import (
     uses_workspace,
 )
 from yoke.http.services.event_broker import EventService
-from yoke.http.services.redaction import redact_public_value
 from yoke.session import SessionRecord, SessionStore
 from yoke.http.services.client_session import ClientSession
 
@@ -351,7 +350,7 @@ class TurnExecutor:
             execution.count_tool()
         if execution.retired_event.is_set():
             return
-        traced = self.events.privacy.data(payload)
+        traced = self.events.privacy.trace_data(payload)
         traced["turn_id"] = execution.turn_id
         self.tool_traces.record_event(event, traced)
         usage_update = execution.context_usage.capture(
@@ -418,8 +417,7 @@ class TurnExecutor:
         if event == "context_usage":
             data = {**payload, **(usage_update or {})}
         else:
-            redacted = redact_public_value(payload)
-            data = dict(redacted) if isinstance(redacted, dict) else {"value": redacted}
+            data = dict(payload)
         data.pop("provider_result_projection", None)
         if event != "context_usage":
             data["turnID"] = execution.turn_id

@@ -141,19 +141,39 @@ request message, tool-result ordering, cache scope or compaction handoff format
 changes for a CLI attachment with an equivalent configuration.
 
 Project `.env` loading reads into a copy. Explicit client values win over project
-values. The daemon supplies `YOKE_HEADLESS=1` only when absent. Neither operation
-mutates `os.environ`; the legacy in-process CLI keeps its existing behavior.
+values. It does not inject `YOKE_HEADLESS`: that flag disables the CLI status
+renderer and belongs to the client that chooses headless mode. An explicit
+client value is preserved for tools and child Yoke processes. Dotenv loading
+does not mutate `os.environ`; the in-process CLI keeps its existing behavior.
 Provider plugins and repository tools that directly inspect `os.environ` still
 see the daemon process, as described in the approved design.
 
-Client-specific values and credential values are redacted from persisted entry
-copies, live/durable events, tool traces and daemon logging. This includes a
-tool or assistant echoing a value. The provider's current in-memory tool result
-retains the original output; persisted replay contains the redacted copy.
-Redaction values remain registered until shutdown so retired workers and queued
-inputs cannot leak values after detach. Common inherited process values are
-not treated as secrets merely because they are present in the environment.
-Provider file-event logging uses the same scoped sanitation.
+Transcripts are user content. Entries, messages, tool results and compaction
+summaries are persisted without sanitation, preserving the provider's live
+history and cache identity on resume. Message, tool and prompt events mirror
+that content without substitution, so live rendering agrees with history.
+This applies to durable events too. A tool that prints an environment value
+has deliberately added it to the conversation.
+
+Diagnostic sanitation registers only values of at least eight characters from
+secret-looking environment names containing `key`, `token`, `secret`,
+`password`, `credential` or `auth`, including known provider credential names.
+Ordinary terminal values such as `SHLVL=1`, `COLUMNS=80`, paths, and nonsecret
+sentinels remain intact. Retired and detached clients' secret values stay
+registered in memory until shutdown to cover queued work and late diagnostics.
+Sanitation applies to tool inspectors, provider debug files, API errors, startup
+warnings, warning/error/retry events and diagnostic error fields on other
+events. Existing structured secret-field sanitation in tool inspectors remains.
+It never modifies the transcript or provider request objects.
+
+The daemon configures its own root and uvicorn handler formatters, and sanitizes
+its stdio path, including the detached rotating log. Formatters sanitize a copy
+of the rendered record, including tracebacks. Attaching a client installs no
+logging filters and never rewrites shared records or library handlers. Provider
+file logging sanitizes before truncating diagnostic strings. API validation
+errors omit request bodies, rejected input values and exception contexts, so an
+invalid attachment cannot echo its environment or cwd. Client status responses
+expose attachment metadata and owner IDs only.
 
 An interrupted daemon loses private attachment/admission ownership. Recovered
 work uses a newly attached client's environment or the daemon fallback. Clients

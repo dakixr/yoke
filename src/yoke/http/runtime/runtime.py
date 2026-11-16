@@ -87,7 +87,7 @@ class SessionRuntime:
             session_id, events, index_entry.root if index_entry is not None else None
         )
         self.persistence = TurnPersistence(
-            session_id, store, pending_inputs, read_cache, events.privacy
+            session_id, store, pending_inputs, read_cache
         )
         self.automatic_title = SessionTitleAutomation(
             session_id,
