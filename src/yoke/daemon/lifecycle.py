@@ -49,10 +49,12 @@ class DaemonLifecycle:
         self._on_exit: ExitCallback | None = None
         self._exiting: asyncio.Event | None = None
         self._mutations = 0
+        self._admission_generation = 0
 
     def begin_mutation(self) -> None:
         """Keep an admitted HTTP mutation alive until its handler finishes."""
         self._mutations += 1
+        self._admission_generation += 1
 
     def end_mutation(self) -> None:
         self._mutations -= 1
@@ -87,8 +89,11 @@ class DaemonLifecycle:
         return list(self._leases.values())
 
     async def busy(self) -> bool:
+        generation = self._admission_generation
         active = await self._busy() if self._busy is not None else False
-        return active or self._mutations > 0
+        # A completed handler can have created work after the probe scanned
+        # runtimes but before its queue read finished. Recheck next poll.
+        return active or self._mutations > 0 or generation != self._admission_generation
 
     def request_exit(self, reason: str) -> None:
         """Begin shutdown once; later requests keep the first reason."""

@@ -23,13 +23,18 @@ After a crash, the next lock holder replaces the stale socket and discovery
 record without trusting a pid from disk.
 
 The local listener is `$XDG_RUNTIME_DIR/yoke/daemon.sock`, falling back to
-`~/.yoke/run/daemon.sock`. It accepts only the kernel-reported `SO_PEERCRED` uid
+`~/.yoke/run/daemon.sock` when the runtime directory is unset or its socket path
+exceeds the Unix socket length limit. If the home fallback is also too long,
+startup reports the path error; set a shorter `XDG_RUNTIME_DIR`. Daemon state and
+run directories are set to mode 0700, including existing directories.
+The socket accepts only the kernel-reported `SO_PEERCRED` uid
 of the daemon user, with no bearer token. The browser listener is
 `127.0.0.1:8770`, authenticated with a bearer token. If the port is occupied,
 the daemon reports it and continues socket-only. `--port` or `YOKE_DAEMON_PORT`
 overrides that port; zero requests an ephemeral port. `~/.yoke/daemon.json`,
 mode 0600, records pid, build id, protocol version, socket, selected port and
-token. Detached startup logs go to `~/.yoke/run/daemon.log`.
+token. Detached logs go to `~/.yoke/run/daemon.log`, rotating at 2 MiB with two
+backups throughout the daemon's lifetime.
 
 `yoke.daemon.client.connect_or_spawn()` discovers or starts a detached daemon
 in its own process session, then polls for up to five seconds. ACP uses this
@@ -60,7 +65,8 @@ Authenticated daemon controls are:
   spawn the replacement; systemd restarts an always-on daemon.
 - `POST /api/v1/daemon/stop` with optional `{"force":true}`: refuse busy stops
   with 409 unless explicitly forced. A stop ends local ACP's lease reconnect
-  loop. Starting another client can start a fresh daemon.
+  loop. A normal stop rechecks work before exiting and lets a racing admission
+  drain; force stops immediately. Starting another client can start a fresh daemon.
 
 The CLI equivalents are `yoke daemon status`, `restart [--when-idle]`, and
 `stop [--force]`. Status exits 1 when none answers. Restart starts a daemon if

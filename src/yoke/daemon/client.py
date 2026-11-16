@@ -7,6 +7,7 @@ version-skew policy before handing back the socket to talk to.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -19,6 +20,7 @@ import httpx
 
 from yoke.daemon.build import build_id, protocol_version
 from yoke.daemon.instance import daemon_alive, read_info
+from yoke.daemon.log import DETACHED_ENV
 from yoke.daemon.paths import DaemonPaths
 
 SPAWN_TIMEOUT_SECONDS = 5.0
@@ -107,6 +109,7 @@ def spawn_daemon(paths: DaemonPaths | None = None) -> subprocess.Popen[bytes]:
             start_new_session=True,
             close_fds=True,
             cwd=paths.state_dir,
+            env={**os.environ, DETACHED_ENV: "1"},
         )
     # Reap it if it exits while this client lives (a losing racer exits at once).
     threading.Thread(
@@ -196,7 +199,10 @@ def wait_for_exit(
 
 
 def _spawn_and_wait(paths: DaemonPaths, timeout: float) -> Path:
-    spawn_daemon(paths)
+    try:
+        spawn_daemon(paths)
+    except OSError as exc:
+        raise DaemonUnavailable(f"Could not start Yoke daemon: {exc}") from exc
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         found = find_daemon(paths)

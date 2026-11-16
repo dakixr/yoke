@@ -95,7 +95,12 @@ async def daemon_stop(
         raise ApiError(
             409, "daemon_busy", "A turn is running; pass force to stop anyway."
         )
-    _exit_after_response(lifecycle, "stop")
+    if body and body.force:
+        _exit_after_response(lifecycle, "stop")
+    else:
+        # Recheck admissions in the watcher, just as restart does. A prompt
+        # arriving while this response is sent must not be interrupted.
+        lifecycle.request_stop_when_idle()
     return _control("stop", "now")
 
 
