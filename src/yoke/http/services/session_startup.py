@@ -53,25 +53,47 @@ class SessionStartup:
         )
         self.privacy.register(environment.values)
         with execution_environment(environment), self.privacy.scope():
-            built = build_cli_agent_from_args(args, recover_model=True)
+            try:
+                built = build_cli_agent_from_args(args, recover_model=True)
+            except ValueError as exc:
+                if (
+                    args.headless
+                    or args.model_source != "session"
+                    or not str(exc).startswith("Unsupported provider ")
+                ):
+                    raise
+                args.provider_name = None
+                args.model = None
+                args.reasoning_effort = None
+                args.model_source = None
+                built = build_cli_agent_from_args(args, recover_model=True)
+                built.startup_warning = f"{exc} Falling back to an available provider."
         try:
             state = capture_provider_session_state(built.agent)
             record = self.store.load(session_id)
             assert record is not None
-            self.store.save(
-                session_id,
-                [],
-                conversation_entries=record.conversation_entries,
-                leaf_id=record.leaf_id,
-                root=record.root,
-                title=record.title,
-                active_skills=[*record.active_skills, *built.agent.active_skills],
-                provider_name=state.provider_name,
-                model_id=state.model_id,
-                reasoning_effort=state.reasoning_effort,
-                context_window_tokens=state.context_window_tokens,
-                existing_record=record,
-            )
+            active_skills = [*record.active_skills, *built.agent.active_skills]
+            if (
+                record.provider_name != state.provider_name
+                or record.model_id != state.model_id
+                or record.reasoning_effort != state.reasoning_effort
+                or record.context_window_tokens != state.context_window_tokens
+                or record.active_skills != active_skills
+            ):
+                self.store.save(
+                    session_id,
+                    [],
+                    conversation_entries=record.conversation_entries,
+                    leaf_id=record.leaf_id,
+                    root=record.root,
+                    title=record.title,
+                    active_skills=[*record.active_skills, *built.agent.active_skills],
+                    provider_name=state.provider_name,
+                    model_id=state.model_id,
+                    reasoning_effort=state.reasoning_effort,
+                    context_window_tokens=state.context_window_tokens,
+                    existing_record=record,
+                )
             report = built.tool_report
             return SessionStartupReport(
                 warnings=[self.privacy.text(built.startup_warning)]

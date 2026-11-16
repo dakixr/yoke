@@ -225,3 +225,9 @@ work and background command cleanup retain their leases until physical work
 stops. Clients use the relocation route; no workspace lock files are created.
 ACP holds a daemon lifetime lease over either the discovered socket or its
 explicit authenticated HTTP URL. Its former local ownership flock is gone.
+
+Interactive resume replays the saved transcript before accepting another turn.
+Startup retains saved history and avoids rewriting an unchanged selection and
+skill snapshot. An interactive session whose saved provider was removed reports
+the existing recovery warning and resolves an available provider. Explicit
+selections and headless startup remain strict.

@@ -97,10 +97,10 @@ def terminal_daemon(
     factory: Callable[[SessionRecord], RuntimeAgent] | None = None,
 ) -> Iterator[TerminalDaemon]:
     """Never discover, start or connect to the host's production daemon."""
-    with ExitStack() as stack, monkeypatch.context() as patch:
+    with ExitStack() as stack:
         yield TerminalDaemon(
             stack,
-            patch,
+            monkeypatch,
             factory
             or (
                 lambda record: RuntimeAgent(

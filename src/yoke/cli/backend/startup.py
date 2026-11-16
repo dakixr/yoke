@@ -236,6 +236,8 @@ def run_daemon_interactive(
             input_func=input_func,
             stdout=output,
             stderr=error,
+            replay_session=resume_id is not None,
+            replay_messages=messages if resume_id is not None else None,
         )
     except (
         ValueError,

@@ -3,18 +3,22 @@ from __future__ import annotations
 # ruff: noqa: ANN002, ANN003, ANN401, D100, D103, S101
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from yoke.agent.conversation import render_memory_message
 from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.cli.config import CLIArgs
-from yoke.cli.runtime import run_resume_cli
+from yoke.cli.backend.startup import run_daemon_interactive
 from yoke.cli.render import build_console, print_session_scrollback
 from yoke.session import SessionStore
 
-from .support import CaptureStream, FakeAgent
+from .support import CaptureStream
+from .terminal_daemon_support import ReplyProvider, terminal as terminal
+from yoke.agent.loop import RuntimeAgent
+from tests.yoke.daemon.support import eventually
+from yoke.cli.config.runtime import BuiltCLIAgent
+from yoke.cli.bootstrap.types import ToolLoadReport
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
@@ -23,7 +27,7 @@ from yoke.cli.runtime.resume import project_resumed_session
 from yoke.session.repository import SessionRecord
 
 
-def test_resume_by_id_continues_saved_session(tmp_path: Path) -> None:
+def test_resume_by_id_continues_saved_session(tmp_path: Path, terminal) -> None:
     session_dir = tmp_path / "sessions"
     store = SessionStore(directory=session_dir)
     store.save(
@@ -32,25 +36,36 @@ def test_resume_by_id_continues_saved_session(tmp_path: Path) -> None:
         root=tmp_path,
         title="Saved session",
     )
-    agent = FakeAgent(outputs=["resumed"])
+    requests = []
+
+    class ResumeProvider(ReplyProvider):
+        def complete(self, messages, tools):
+            requests.append(messages)
+            return Message.assistant("resumed")
+
+    terminal.factory = lambda record: RuntimeAgent(
+        ResumeProvider(), [], tool_root=Path(record.root)
+    )
     prompts = iter(["next", "quit"])
 
     def fake_input(_: object = "") -> str:
-        return next(prompts)
+        value = next(prompts)
+        if value == "quit":
+            eventually(lambda: "resumed" in stdout.getvalue())
+        return value
 
     stdout = CaptureStream()
     stderr = CaptureStream()
-    exit_code = run_resume_cli(
+    exit_code = run_daemon_interactive(
         CLIArgs(root=str(tmp_path)),
-        "saved",
-        agent=agent,
+        resume_id="saved",
         input_func=fake_input,
         stdout=stdout,
         stderr=stderr,
     )
 
     assert exit_code == 0
-    assert agent.seen_history_lengths == [2]
+    assert [len(messages) - 1 for messages in requests] == [2]
     output = stdout.getvalue()
     assert "user old" in output
     assert "answer" in output
@@ -65,7 +80,7 @@ def test_resume_by_id_continues_saved_session(tmp_path: Path) -> None:
 
 
 def test_resume_falls_back_when_saved_provider_is_unsupported(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, terminal
 ) -> None:
     session_dir = tmp_path / "sessions"
     store = SessionStore(directory=session_dir)
@@ -76,36 +91,46 @@ def test_resume_falls_back_when_saved_provider_is_unsupported(
         provider_name="codex-websockets",
         model_id="legacy-model",
     )
-    agent = FakeAgent(outputs=["resumed"])
+    requests = []
+
+    class ResumeProvider(ReplyProvider):
+        def complete(self, messages, tools):
+            requests.append(messages)
+            return Message.assistant("resumed")
+
+    terminal.factory = lambda record: RuntimeAgent(
+        ResumeProvider(), [], tool_root=Path(record.root)
+    )
     calls: list[str | None] = []
 
-    def fake_resolve_runtime_agent(
-        args: CLIArgs, *, agent: Any, stderr: Any = None
-    ) -> tuple[Any, None]:
-        del stderr
+    def build(args, *, recover_model):
+        assert recover_model
         calls.append(args.model)
         if args.model == "codex-websockets:legacy-model":
             raise ValueError(
                 "Unsupported provider 'codex-websockets'. Supported providers: demo."
             )
-        return agent, None
+        return BuiltCLIAgent(
+            terminal.factory(SessionStore().load("saved")), ToolLoadReport([], [], [])
+        )
 
     monkeypatch.setattr(
-        "yoke.cli.runtime.cli._resolve_runtime_agent",
-        fake_resolve_runtime_agent,
+        "yoke.http.services.session_startup.build_cli_agent_from_args", build
     )
     prompts = iter(["next", "quit"])
 
     def fake_input(_: object = "") -> str:
-        return next(prompts)
+        value = next(prompts)
+        if value == "quit":
+            eventually(lambda: "resumed" in stdout.getvalue())
+        return value
 
-    stderr = CaptureStream()
-    exit_code = run_resume_cli(
+    stdout, stderr = CaptureStream(), CaptureStream()
+    exit_code = run_daemon_interactive(
         CLIArgs(root=str(tmp_path)),
-        "saved",
-        agent=agent,
+        resume_id="saved",
         input_func=fake_input,
-        stdout=CaptureStream(),
+        stdout=stdout,
         stderr=stderr,
     )
 
@@ -370,6 +395,7 @@ def test_resume_recovers_checkpoint_bypassed_by_active_leaf() -> None:
 def test_resume_does_not_write_unchanged_session_before_interactive(
     tmp_path: Path,
     monkeypatch,
+    terminal,
 ) -> None:
     session_dir = tmp_path / "sessions"
     store = SessionStore(directory=session_dir)
@@ -377,6 +403,7 @@ def test_resume_does_not_write_unchanged_session_before_interactive(
         "saved",
         [Message.user("old"), Message.assistant("answer")],
         root=tmp_path,
+        provider_name="replyprovider",
     )
     save_calls: list[str] = []
     original_save = SessionStore.save
@@ -400,10 +427,9 @@ def test_resume_does_not_write_unchanged_session_before_interactive(
         fake_interactive,
     )
 
-    exit_code = run_resume_cli(
+    exit_code = run_daemon_interactive(
         CLIArgs(root=str(tmp_path)),
-        "saved",
-        agent=FakeAgent(),
+        resume_id="saved",
         stdout=CaptureStream(),
         stderr=CaptureStream(),
     )
