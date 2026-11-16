@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import threading
 
-from yoke.cli.runtime.turn_agent import retire_turn_agent
+from tests.yoke.cli.terminal_daemon_support import terminal as terminal
+from tests.yoke.daemon.support import eventually
+from yoke.cli.backend.headless import run_headless_prompt
+from io import StringIO
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tools import AttachImageTool
 from yoke.agent.tools.command_process import (
@@ -13,7 +16,6 @@ from yoke.agent.tools.command_process import (
 from yoke.agent.tools.web import WebResearchTool
 
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -347,21 +349,32 @@ def test_runtime_command_process_managers_are_isolated_and_shared_by_forks(
 
 
 def test_retired_turn_releases_command_process_manager_lease(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch, terminal
 ) -> None:
     primary = RuntimeAgent(provider=FakeProvider(), tools=tools(tmp_path))
-    forked = primary.fork(isolate_provider=True)
-    manager = primary.command_process_manager
-    try:
-        retire_turn_agent(forked, primary_agent=primary)
-        deadline = time.monotonic() + 5
-        while not forked._closed and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert forked._closed
-    finally:
-        forked.close()
-        primary.close()
+    # This SDK fixture's provider already supplies complete(), as in loop tests.
+    terminal.factory = lambda _record: primary
+    forks = []
+    fork = RuntimeAgent.fork
 
+    def tracking_fork(self, **kwargs):
+        child = fork(self, **kwargs)
+        forks.append(child)
+        return child
+
+    monkeypatch.setattr(RuntimeAgent, "fork", tracking_fork)
+    backend = terminal.backend("retirement", root=tmp_path)
+    backend.title("Retirement fixture", [])
+    assert (
+        run_headless_prompt(
+            backend.connection, "hi", stdout=StringIO(), stderr=StringIO()
+        )
+        == 0
+    )
+    assert forks
+    eventually(lambda: all(child.closed for child in forks))
+    manager = primary.command_process_manager
+    terminal.stack.close()
     with pytest.raises(RuntimeError, match="manager is closed"):
         manager.acquire()
 
