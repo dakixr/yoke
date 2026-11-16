@@ -30,6 +30,7 @@ def register_commands(app: typer.Typer) -> None:
             bool,
             typer.Option(
                 "--headless",
+                "-p",
                 help=(
                     "Run one non-interactive prompt and exit. "
                     "Requires --prompt or piped stdin."
@@ -98,7 +99,10 @@ def register_commands(app: typer.Typer) -> None:
 
             click.echo("Error: --fork cannot be used with --session.", err=True)
             raise typer.Exit(1)
-        from yoke.cli.runtime import run_cli
+        if headless:
+            from yoke.cli.backend.startup import run_daemon_headless as run_cli
+        else:
+            from yoke.cli.runtime import run_cli
 
         raise typer.Exit(
             run_cli(

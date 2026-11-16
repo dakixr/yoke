@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 
 import httpx
@@ -25,6 +27,10 @@ from yoke.cli.runtime.cli import run_cli, run_resume_cli
 from yoke.session import SessionStore
 
 from tests.yoke.session_rows import stored_session_bytes
+from tests.yoke.cli.daemon_support import serve_app
+from yoke.cli.backend.connection import SessionConnection
+from yoke.daemon.lifecycle import DaemonLifecycle
+from yoke.http.app import HttpAppSettings, create_app
 
 from .support import CaptureStream
 
@@ -44,7 +50,13 @@ def isolate_startup(monkeypatch: pytest.MonkeyPatch) -> None:
             ),
         )
 
-    def reject_network(*_args, **_kwargs) -> None:
+    send = httpx.Client.send
+
+    def reject_network(client, request, *args, **kwargs):
+        # CLI-to-daemon traffic is local UDS HTTP; provider traffic remains
+        # forbidden. The headless entrypoint test supplies its own temp server.
+        if request.url.host == "yoke":
+            return send(client, request, *args, **kwargs)
         pytest.fail("Startup must not issue a provider request")
 
     monkeypatch.setattr(config_runtime, "_resolve_cli_agent_config", resolve)
@@ -614,7 +626,20 @@ def test_invalid_cli_thinking_effort_fails_before_session_changes(
     elif mode == "headless":
         argv.extend(["--headless", "--prompt", "Do work"])
 
-    result = CliRunner().invoke(app, argv)
+    with ExitStack() as stack:
+        if mode == "headless":
+            daemon = create_app(
+                HttpAppSettings(
+                    auth_token=None, daemon=DaemonLifecycle(idle_exit=False)
+                )
+            )
+            handle = stack.enter_context(serve_app(daemon))
+            monkeypatch = stack.enter_context(pytest.MonkeyPatch.context())
+            monkeypatch.setattr(
+                "yoke.cli.backend.startup.SessionConnection",
+                partial(SessionConnection, discover=lambda: handle),
+            )
+        result = CliRunner().invoke(app, argv)
 
     assert result.exit_code == 1, result.output
     assert "thinking effort" in result.output

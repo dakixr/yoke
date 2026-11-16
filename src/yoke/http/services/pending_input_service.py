@@ -137,6 +137,7 @@ class PendingInputService:
                         uri=item.uri,
                         name=item.name,
                         mime=item.mime,
+                        image_projection=item.image_projection,
                     )
                     for item in request.prompt.attachments
                 ],
@@ -152,11 +153,7 @@ class PendingInputService:
                     prompt=request.prompt.text,
                     continuation=request.prompt.continuation,
                     attachments=[
-                        {
-                            "uri": item.uri,
-                            "name": item.name,
-                            "mime": item.mime,
-                        }
+                        item.model_dump(exclude={"type"})
                         for item in request.prompt.attachments
                     ],
                     kind="steering" if request.delivery == "steer" else "queued",

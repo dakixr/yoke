@@ -19,6 +19,9 @@ class AdmissionAttachment(BaseModel):
     uri: str
     name: str
     mime: str
+    image_projection: Literal["cli"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class AdmissionRecord(BaseModel):

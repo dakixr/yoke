@@ -60,6 +60,13 @@ emoji aliases are not interpreted as Rich formatting.
 
 ### HTTP and ACP serving
 
+Headless invocation uses the per-user daemon with no local runtime fallback.
+`yoke -p "prompt"` aliases `--headless`; `yoke resume ID --headless --prompt
+"prompt"` runs a turn on an existing session. The first invocation starts the
+daemon. The client sends its environment and cwd on attachment, holds an event
+lease through the turn, and detaches on exit. Interactive entry points still
+use the local runtime pending the next implementation stage.
+
 `yoke serve` runs the process-wide HTTP session runtime. `--session-dir` (or
 `YOKE_HTTP_SESSION_DIR`) selects a dedicated session store. `--hide-token`
 suppresses the startup token line for service managers that inject

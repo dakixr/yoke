@@ -2535,6 +2535,18 @@
       "PromptAttachment": {
         "additionalProperties": false,
         "properties": {
+          "imageProjection": {
+            "anyOf": [
+              {
+                "const": "cli",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imageprojection"
+          },
           "mime": {
             "title": "Mime",
             "type": "string"

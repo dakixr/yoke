@@ -139,6 +139,37 @@ Each phase ships on its own and leaves the app working.
 
 Metrics recorded per phase: cold and warm attach time, time to first assistant event, resume time and RSS on the largest session, DB, WAL and freelist size, writer commit p99, SSE resync count.
 
+## Phase 5 implementation notes
+
+Stage 1 adds `cli/backend/connection.py`, a Unix HTTP client and reconnecting
+session event reader built on existing discovery and build-skew policy. The
+reader subscribes before history recovery, deduplicates durable sequences, reads
+the active transcript on every resync, and reattaches with fresh environment
+values after restart. Mutations do not receive implicit retries. Closing joins
+in-flight discovery before releasing the attachment, preventing a late spawn
+after client cleanup. Stage 1 does not switch entry points to this transport.
+
+Transport tests use an application served on a temporary Unix socket and a
+separate temporary-home daemon for crash recovery. A session-end process guard
+identifies test daemons by a unique inherited run marker and fails if one
+survives cleanup. Other test runs and the production service are excluded.
+
+Stage 2 switches command entry points for `--headless`, `-p` and explicit
+headless resume to the daemon. A temporary startup lease covers model/skill
+discovery until the filtered event lease opens. Status rendering stays local;
+warnings use the existing terminal formatter and the final answer is selected
+by input identity. Existing headless startup does not print a discovery summary,
+so this stage retains that behavior. The startup report remains available for
+interactive use. Interactive and injected in-process test entry points have not
+been removed yet.
+
+Image uploads accept an optional `imageProjection: "cli"` on each attachment.
+The in-process CLI starts image labels at one for each prompt and leaves
+`attachment_name` unset, while existing daemon attachments use cumulative labels
+and retain filenames. Recording this choice on the admission preserves both
+contracts, including queue edits and restart. Existing provider projection
+goldens remain unchanged; the OpenAPI golden adds only the optional field.
+
 ## Phase 1 implementation notes
 
 Choices made where the design was silent, and deliberate deviations.

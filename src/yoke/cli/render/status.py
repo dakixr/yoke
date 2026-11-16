@@ -34,12 +34,20 @@ from yoke.cli.render.scrollback import (
 class StatusIndicator:
     """Status indicator for headless and standard CLI turns."""
 
-    def __init__(self, stream: OutputStream, *, animate: bool = True) -> None:
+    def __init__(
+        self,
+        stream: OutputStream,
+        *,
+        animate: bool = True,
+        headless: bool | None = None,
+    ) -> None:
         self._animate = animate
         self._console = build_console(stream)
         self._status: Status | None = None
         self._last_message = ""
-        self._enabled = not bool(os.environ.get("YOKE_HEADLESS"))
+        self._enabled = not (
+            bool(os.environ.get("YOKE_HEADLESS")) if headless is None else headless
+        )
         self._lock = Lock()
         self._turn_has_tool_output = False
 

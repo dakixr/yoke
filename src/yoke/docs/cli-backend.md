@@ -1,6 +1,7 @@
 # CLI session backend
 
-The CLI still runs `RuntimeAgent` in process. The interactive UI uses
+Headless command entry points use the daemon. Interactive modes still run
+`RuntimeAgent` in process. The interactive UI uses
 `yoke.cli.backend.SessionBackend` for runtime operations, the queue functions in
 `yoke.cli.backend.queue` for durable queue snapshots and compare-and-swap edits,
 and the inspector query objects in `yoke.cli.backend.inspection`. The backend
@@ -30,7 +31,9 @@ and checkpoints tool results in the established order. Accepted and retired
 outcomes go through backend methods so the UI does not inspect runtime forks.
 The HTTP implementation will let the daemon own those lifecycle operations.
 
-Headless execution and runtime bootstrap remain in `cli/runtime` in this phase.
+The former headless implementation remains in `cli/runtime` for differential
+tests until the final Phase 5 cleanup. Runtime bootstrap for interactive modes
+also remains there.
 Front-end scheduling, logical interruption fences and queue presentation remain
 in the interactive package. Their persistence and runtime operations cross the
 backend boundary; replacing them with daemon admission is Phase 5 work. The old
@@ -38,6 +41,19 @@ backend boundary; replacing them with daemon admission is Phase 5 work. The old
 only UI snapshot-installation helpers plus compatibility imports.
 
 ## Route mapping
+
+`backend/connection.py` now supplies HTTP over the discovered Unix socket and
+an owned, filtered SSE subscription. It opens the live subscription before
+reading durable history and transcript pages, deduplicates durable events by
+sequence, and publishes `client.resynced` with the recovered transcript. Stream
+loss repeats discovery and attachment with a fresh environment snapshot.
+`close()` cancels the reader, detaches only its owner, and closes subscriptions.
+Headless command entry points use `backend/startup.py` and `headless.py`.
+They use startup resolution, upload image bytes, admit with a stable input ID
+and `clientID`, render the existing status vocabulary, and retrieve the answer
+for their input from the transcript. Interactive entry points still use the
+in-process adapter until the next stage. Startup holds a temporary daemon lease
+until the session event stream is ready.
 
 `{id}` means the backend's selected session ID.
 

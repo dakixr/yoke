@@ -59,7 +59,46 @@ def register_resume_command(app: typer.Typer) -> None:
                 ),
             ),
         ] = None,
+        headless: Annotated[
+            bool,
+            typer.Option(
+                "--headless",
+                "-p",
+                help="Run one prompt against the saved session and exit.",
+            ),
+        ] = False,
+        prompt: Annotated[
+            str | None,
+            typer.Option("--prompt", help="Prompt for a headless resumed turn."),
+        ] = None,
+        image: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--image", help="Attach a local image to the resumed headless prompt."
+            ),
+        ] = None,
     ) -> None:
+        if headless:
+            from yoke.cli.backend.startup import run_daemon_headless
+
+            if session_id is None:
+                import click
+
+                click.echo("Error: Headless resume requires a session ID.", err=True)
+                raise typer.Exit(1)
+            raise typer.Exit(
+                run_daemon_headless(
+                    build_cli_args(
+                        model=model,
+                        root=root,
+                        prompt=prompt,
+                        headless=True,
+                        images=tuple(image or ()),
+                    ),
+                    resume_id=session_id,
+                    relocate=relocate,
+                )
+            )
         from yoke.cli.runtime import run_resume_cli
 
         raise typer.Exit(
