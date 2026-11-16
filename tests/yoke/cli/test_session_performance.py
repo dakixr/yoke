@@ -2,11 +2,11 @@ from __future__ import annotations
 
 # ruff: noqa: ANN401,D100,D103,D105,S101
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 import json
 from pathlib import Path
 from threading import Lock
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -17,7 +17,10 @@ from yoke.agent.models import Message
 from yoke.cli.interactive.common import PromptCliState
 from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.cli.interactive.prompt.loop import persist_prompt_exit_state
-from yoke.cli.runtime.turn_agent import prepare_turn_agent
+from .terminal_daemon_support import terminal as terminal, session_for
+from .test_cli_model_switching import SwitchableProvider
+from yoke.cli.backend.headless import run_headless_prompt
+from io import StringIO
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.runtime import tree_view
 from yoke.cli.runtime import persist_session_state
@@ -212,33 +215,39 @@ def test_interruption_checkpoint_copies_only_the_synthetic_suffix(
 
 
 def test_turn_preparation_takes_the_validated_active_path(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    large_tree, tmp_path, monkeypatch, terminal
+):
     entries, leaf_id = large_tree
     record, _ = _record_with_counted_entries(entries, leaf_id)
-    active = ActiveSession(
-        record.id,
-        tmp_path,
-        SessionStore(tmp_path),
-        record,
-    )
-    transferred = active.active_entries()
-    agent = RuntimeAgent(provider=NoopProvider(), tools=[])
-    copies = _count_entry_copies(monkeypatch)
-    turn = prepare_turn_agent(agent, messages=[], entries=transferred)
-    runtime_turn = cast(RuntimeAgent, turn)
-    try:
-        assert isinstance(turn, RuntimeAgent)
+    record.root = str(tmp_path)
+    record.created_at = "2099-01-01T00:00:00+00:00"
+    record.updated_at = record.created_at
+    record.title = "Performance fixture"
+    terminal.store.insert_record(record)
+    terminal.factory = lambda _record: RuntimeAgent(provider=NoopProvider(), tools=[])
+    backend = terminal.backend(record.id, root=tmp_path)
+    original_load = RuntimeAgent.load_owned_conversation
+    transfers = []
+
+    def load_owned(self, transferred, **kwargs):
+        copies = _count_entry_copies(monkeypatch)
+        original_load(self, transferred, **kwargs)
+        assert isinstance(self, RuntimeAgent)
         assert copies["count"] == 0
-        assert runtime_turn._context is not None
-        runtime_entries = runtime_turn._context.conversation_log.entries
+        assert self._context is not None
+        runtime_entries = self._context.conversation_log.entries
         assert len(runtime_entries) == ACTIVE_COUNT
         assert runtime_entries[0] is transferred[0]
-    finally:
-        runtime_turn.close()
-        agent.close()
+        transfers.append(len(runtime_entries))
+
+    monkeypatch.setattr(RuntimeAgent, "load_owned_conversation", load_owned)
+    assert (
+        run_headless_prompt(
+            backend.connection, "new prompt", stdout=StringIO(), stderr=StringIO()
+        )
+        == 0
+    )
+    assert transfers
 
 
 def test_runtime_append_copies_only_the_new_entry(
@@ -321,96 +330,88 @@ def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
 
 
 def test_clean_prompt_exit_does_not_capture_or_save_conversation(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    large_tree, tmp_path, monkeypatch, terminal
+):
     entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    record.root = str(tmp_path.resolve())
-    record.provider_name = "noop"
-    record.created_at = "2026-08-03T00:00:00+00:00"
+    record, _ = _record_with_counted_entries(entries, leaf_id)
+    record.root = str(tmp_path)
+    record.created_at = "2099-01-01T00:00:00+00:00"
     record.updated_at = record.created_at
-    active = ActiveSession(
-        record.id,
-        tmp_path,
-        SessionStore(tmp_path / "sessions"),
-        record,
+    record.provider_name = "demo"
+    record.model_id = "gpt-a"
+    record.reasoning_effort = "low"
+    terminal.store.insert_record(record)
+    terminal.factory = lambda _record: RuntimeAgent(
+        provider=SwitchableProvider(), tools=[]
     )
-    state = PromptCliState(messages=[], pending_prompts=[])
-    agent = RuntimeAgent(provider=NoopProvider(), tools=[])
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
+    backend = terminal.backend(record.id, root=tmp_path)
+    state = PromptCliState(messages=[], pending_prompts=[], thinking_effort=None)
+    rows_before = stored_entry_rows(terminal.store, record.id)
+    events = []
+    original = SessionStore.set_selection
 
-    def fail(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("clean exit processed the conversation tree")
+    def set_selection(self, session_id, **kwargs):
+        events.append(kwargs)
+        return original(self, session_id, **kwargs)
 
-    monkeypatch.setattr("yoke.cli.runtime.session.capture_agent_state", fail)
-    monkeypatch.setattr(active.store, "save", fail)
-    monkeypatch.setattr(active.store, "update_metadata", fail)
+    monkeypatch.setattr(SessionStore, "set_selection", set_selection)
 
-    try:
-        persist_prompt_exit_state(
-            state=state,
-            state_lock=Lock(),
-            active_session=active,
-            agent=agent,
-        )
-    finally:
-        agent.close()
+    def fail(*_args, **_kwargs):
+        pytest.fail("prompt exit saved the conversation tree")
 
-    assert counted.scans == scans_before
-    assert copies["count"] == 0
+    monkeypatch.setattr(SessionStore, "save", fail)
+    persist_prompt_exit_state(
+        state=state,
+        state_lock=Lock(),
+        active_session=session_for(backend),
+        agent=backend,
+    )
+    assert stored_entry_rows(terminal.store, record.id) == rows_before
+    assert events == []
 
 
 def test_prompt_exit_writes_only_changed_reasoning_metadata(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    large_tree, tmp_path, monkeypatch, terminal
+):
     entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    record.root = str(tmp_path.resolve())
-    record.provider_name = "noop"
-    record.reasoning_effort = "low"
-    record.created_at = "2026-08-03T00:00:00+00:00"
+    record, _ = _record_with_counted_entries(entries, leaf_id)
+    record.root = str(tmp_path)
+    record.created_at = "2099-01-01T00:00:00+00:00"
     record.updated_at = record.created_at
-    store = SessionStore(tmp_path / "sessions")
-    store.insert_record(record)
-    active = ActiveSession(record.id, tmp_path, store, record)
-    state = PromptCliState(
-        messages=[],
-        pending_prompts=[],
-        thinking_effort="medium",
+    record.provider_name = "demo"
+    record.model_id = "gpt-a"
+    record.reasoning_effort = "low"
+    terminal.store.insert_record(record)
+    terminal.factory = lambda _record: RuntimeAgent(
+        provider=SwitchableProvider(), tools=[]
     )
-    agent = RuntimeAgent(provider=NoopProvider(), tools=[])
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
-    events: list[dict[str, object]] = []
+    backend = terminal.backend(record.id, root=tmp_path)
+    state = PromptCliState(messages=[], pending_prompts=[], thinking_effort="medium")
+    rows_before = stored_entry_rows(terminal.store, record.id)
+    events = []
+    original = SessionStore.set_selection
 
-    def capture_metadata(
-        updated: SessionRecord, fields: Iterable[str]
-    ) -> SessionRecord:
-        events.append({field: getattr(updated, field) for field in fields})
-        return updated
+    def set_selection(self, session_id, **kwargs):
+        events.append(kwargs)
+        return original(self, session_id, **kwargs)
 
-    monkeypatch.setattr(store, "update_metadata", capture_metadata)
+    monkeypatch.setattr(SessionStore, "set_selection", set_selection)
 
-    try:
-        persist_prompt_exit_state(
-            state=state,
-            state_lock=Lock(),
-            active_session=active,
-            agent=agent,
-        )
-    finally:
-        agent.close()
+    def fail(*_args, **_kwargs):
+        pytest.fail("prompt exit saved the conversation tree")
 
-    assert counted.scans == scans_before
-    assert copies["count"] == 0
+    monkeypatch.setattr(SessionStore, "save", fail)
+    persist_prompt_exit_state(
+        state=state,
+        state_lock=Lock(),
+        active_session=session_for(backend),
+        agent=backend,
+    )
+    assert stored_entry_rows(terminal.store, record.id) == rows_before
     assert len(events) == 1
     assert events[0]["reasoning_effort"] == "medium"
-    assert active.record.reasoning_effort == "medium"
+    assert backend.session.record.reasoning_effort == "medium"
+    assert terminal.store.summary_record(record.id).reasoning_effort == "medium"
 
 
 def test_unchanged_transcript_persistence_uses_retained_active_path(
