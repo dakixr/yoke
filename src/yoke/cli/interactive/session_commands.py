@@ -27,6 +27,7 @@ def print_session_info(
     backend: SessionBackend,
 ) -> None:
     """Print active session metadata in scrollback."""
+    backend.refresh_session()
     record = active_session.record
     lines = [
         "Session info:",
@@ -38,7 +39,7 @@ def print_session_info(
         f"Provider: {record.provider_name or 'unknown'}",
         f"Model: {record.model_id or 'unknown'}",
         f"Messages: {len(active_session.messages())}",
-        f"Conversation entries: {len(record.conversation_entries)}",
+        f"Conversation entries: {backend.conversation_entry_count()}",
         f"Created: {record.created_at or 'unknown'}",
         f"Updated: {record.updated_at or 'unknown'}",
         f"Reasoning effort: {record.reasoning_effort or 'unknown'}",

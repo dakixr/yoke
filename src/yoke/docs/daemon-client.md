@@ -1,8 +1,8 @@
 # Daemon client contract
 
-Headless command entry points use this contract. Interactive modes still use
-the in-process adapter pending Phase 5's next stage. The HTTP API supports
-headless, basic and prompt-toolkit clients. Paths have the
+CLI command entry points use this contract. Basic and prompt-toolkit interactive
+clients use the same daemon attachment and event stream as headless clients. The
+HTTP API supports headless, basic and prompt-toolkit clients. Paths have the
 `/api/v1` prefix.
 
 ## Startup and attachment
@@ -195,3 +195,22 @@ the image's `attachment_name` remains unset. Omitted projection keeps the web
 and ACP behavior. The flag is durable, survives queue edits and recovery, and
 does not supply arbitrary provider messages. Unsupported CLI images follow the
 existing runtime image projection instead of the web admission rejection.
+
+## Interactive completion and metadata
+
+A terminal records its locally rendered input IDs before POST returns. Its
+session observer skips those IDs and renders other clients' admitted prompts
+and completed answers once. Queue snapshots are presentation state only; the
+daemon promotes queued inputs. Re-admitting a stale UI copy would execute the
+same turn twice, so the local dequeue path is disabled for daemon sessions.
+
+`GET /session/{id}` includes read-only `databasePath` and
+`contextWindowTokens`. `/info` refreshes that response and uses `tree.entryCount`
+and `time.created`/`time.updated`, matching the in-process metadata display.
+Tool and process inspectors convert validated response DTOs into their existing
+terminal display values. Manual compaction waits for `/wait` before updating UI
+history. Both resume modes use the existing `/relocate` route.
+
+The event reader counts completed reattachments. After an uncertain admission,
+the terminal can wait for a newer attachment before replaying the same input ID;
+other mutations are never replayed automatically.

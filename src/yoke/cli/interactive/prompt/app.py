@@ -57,6 +57,7 @@ from yoke.cli.path_display import format_root_label
 from yoke.cli.render import OutputStream, build_console
 from yoke.cli.runtime import ActiveSession
 from yoke.cli.backend import SessionBackend
+from yoke.cli.interactive.session_observer import SessionObserver
 from yoke.cli.runtime.base import ActiveSessionRef
 
 if TYPE_CHECKING:
@@ -307,38 +308,52 @@ def run_prompt_toolkit_cli(  # noqa: C901
         open_queue_manager=preserve_editor_text,
         update_status=update_status,
     )
-    initialize_prompt_toolkit_session(
-        state=state,
-        replay_session=replay_session,
-        replay_messages=replay_messages,
-        replay_notice=replay_notice,
-        scrollback_console=scrollback_console,
-        start_turn=control.start_turn,
-    )
-    return run_prompt_toolkit_event_loop(
-        state=state,
-        active_session_ref=session_ref,
-        agent=agent,
-        prompt_session=prompt_session,
-        completer=SlashCommandCompleter(
-            skill_provider=agent.available_skills,
-        ),
-        key_bindings=key_bindings,
-        state_lock=state_lock,
-        scrollback_console=scrollback_console,
-        provider_model_text=refresh_provider_model_text,
-        session_title_text=refresh_session_title_text,
-        spinner_frames=spinner_frames,
-        root_label=root_label,
-        request_exit=control.request_exit,
-        update_status=update_status,
-        invalidate_prompt=invalidate_prompt,
-        start_turn=control.start_turn,
-        start_pending_prompt=control.start_pending_prompt,
-        start_compaction=control.start_compaction,
-        steer_active_turn=control.steer_active_turn,
-        open_process_inspector=show_process_inspector,
-        format_context_usage_text=format_context_usage_text,
-        request_context_usage=context_usage_worker.submit,
-        scrollback=scrollback,
-    )
+
+    def remote_messages(messages: list[Message]) -> None:
+        with state_lock:
+            state.messages = messages
+        invalidate_prompt()
+
+    with SessionObserver(
+        agent,
+        renderer=renderer,
+        user=lambda text: scrollback.emit("user", text),
+        output=renderer.print_agent_output,
+        notice=lambda text: scrollback.emit("notice", text),
+        messages=remote_messages,
+    ):
+        initialize_prompt_toolkit_session(
+            state=state,
+            replay_session=replay_session,
+            replay_messages=replay_messages,
+            replay_notice=replay_notice,
+            scrollback_console=scrollback_console,
+            start_turn=control.start_turn,
+        )
+        return run_prompt_toolkit_event_loop(
+            state=state,
+            active_session_ref=session_ref,
+            agent=agent,
+            prompt_session=prompt_session,
+            completer=SlashCommandCompleter(
+                skill_provider=agent.available_skills,
+            ),
+            key_bindings=key_bindings,
+            state_lock=state_lock,
+            scrollback_console=scrollback_console,
+            provider_model_text=refresh_provider_model_text,
+            session_title_text=refresh_session_title_text,
+            spinner_frames=spinner_frames,
+            root_label=root_label,
+            request_exit=control.request_exit,
+            update_status=update_status,
+            invalidate_prompt=invalidate_prompt,
+            start_turn=control.start_turn,
+            start_pending_prompt=control.start_pending_prompt,
+            start_compaction=control.start_compaction,
+            steer_active_turn=control.steer_active_turn,
+            open_process_inspector=show_process_inspector,
+            format_context_usage_text=format_context_usage_text,
+            request_context_usage=context_usage_worker.submit,
+            scrollback=scrollback,
+        )

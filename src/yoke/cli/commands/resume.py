@@ -63,13 +63,12 @@ def register_resume_command(app: typer.Typer) -> None:
             bool,
             typer.Option(
                 "--headless",
-                "-p",
                 help="Run one prompt against the saved session and exit.",
             ),
         ] = False,
         prompt: Annotated[
             str | None,
-            typer.Option("--prompt", help="Prompt for a headless resumed turn."),
+            typer.Option("--prompt", "-p", help="Prompt for a headless resumed turn."),
         ] = None,
         image: Annotated[
             list[str] | None,
@@ -78,7 +77,7 @@ def register_resume_command(app: typer.Typer) -> None:
             ),
         ] = None,
     ) -> None:
-        if headless:
+        if headless or prompt is not None:
             from yoke.cli.backend.startup import run_daemon_headless
 
             if session_id is None:
@@ -99,13 +98,21 @@ def register_resume_command(app: typer.Typer) -> None:
                     relocate=relocate,
                 )
             )
-        from yoke.cli.runtime import run_resume_cli
+        if session_id is None:
+            from yoke.cli.backend.startup import run_daemon_interactive
+
+            raise typer.Exit(
+                run_daemon_interactive(
+                    build_cli_args(model=model, root=root),
+                    picker=True,
+                )
+            )
+        from yoke.cli.backend.startup import run_daemon_interactive
 
         raise typer.Exit(
-            run_resume_cli(
+            run_daemon_interactive(
                 build_cli_args(model=model, root=root),
-                session_id,
-                all_sessions=all_sessions,
+                resume_id=session_id,
                 relocate=relocate,
             )
         )

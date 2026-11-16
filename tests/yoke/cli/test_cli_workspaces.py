@@ -97,11 +97,14 @@ def test_relocation_requires_explicit_id_before_selecting_or_building(
 
 def test_resume_command_passes_explicit_relocation(tmp_path: Path, monkeypatch) -> None:
     run = Mock(return_value=0)
-    monkeypatch.setattr("yoke.cli.runtime.run_resume_cli", run)
+    legacy = Mock(side_effect=AssertionError("Production resume must use the daemon"))
+    monkeypatch.setattr("yoke.cli.runtime.run_resume_cli", legacy)
+    monkeypatch.setattr("yoke.cli.backend.startup.run_daemon_interactive", run)
     result = CliRunner().invoke(app, ["resume", "saved", "--relocate", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    assert run.call_args.args[1] == "saved"
+    assert run.call_args.kwargs["resume_id"] == "saved"
     assert run.call_args.kwargs["relocate"] == tmp_path
+    legacy.assert_not_called()
 
 
 def test_relocation_preserves_history_and_noop_does_not_write(

@@ -77,6 +77,8 @@ class SessionInfo(ApiModel):
     time: SessionTime
     selection: SessionSelection
     context_usage: dict[str, object] | None = None
+    database_path: str | None = None
+    context_window_tokens: int | None = None
     tree: SessionTreeSummary
     queue: SessionQueueSummary
 

@@ -17,6 +17,7 @@ from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.interactive.tool_inspector import open_live_tool_inspector
 from yoke.cli.backend.inspection import ToolInspection
+from yoke.cli.backend.daemon import DaemonSessionBackend
 
 
 if TYPE_CHECKING:
@@ -50,7 +51,11 @@ def create_inspector_launchers(
             with state_lock:
                 return state.messages
 
-        inspection = ToolInspection(message_snapshot, trace_store)
+        inspection = (
+            agent.tool_inspection()
+            if isinstance(agent, DaemonSessionBackend)
+            else ToolInspection(message_snapshot, trace_store)
+        )
 
         schedule(
             lambda: open_live_tool_inspector(

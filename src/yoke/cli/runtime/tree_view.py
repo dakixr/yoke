@@ -71,6 +71,13 @@ def get_session_tree(active_session: ActiveSession) -> list[TreeNode]:
     """Build the persisted session tree."""
     source = active_session.record.conversation_entries
     active_ids = {entry.id for entry in active_session.tree_index.active_entry_refs()}
+    return build_tree_nodes(source, active_ids)
+
+
+def build_tree_nodes(
+    source: list[ConversationEntry], active_ids: set[str]
+) -> list[TreeNode]:
+    """Build selector nodes from local entries or remote presentation entries."""
     nodes_by_id: dict[str, TreeNode] = {}
     roots: list[TreeNode] = []
     for entry in source:

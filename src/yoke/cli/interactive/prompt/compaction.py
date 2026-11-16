@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock, Thread
 
+import httpx
+
 from yoke.cli.interactive.common import PendingPrompt, PromptCliState
 from yoke.cli.interactive.prompt.scrollback import ScrollbackSink
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
@@ -33,21 +35,24 @@ def start_prompt_compaction(
     conversation_entries_snapshot = current_session.active_entries()
 
     def run_compaction() -> None:
-        compacted = SessionBackend.wrap(agent, current_session).compact(
-            message_snapshot,
-            conversation_entries=conversation_entries_snapshot,
-        )
-        if compacted is None:
-            scrollback.emit("notice", "Nothing to compact right now.")
-        else:
-            _persist_prompt_compaction(
-                compacted,
-                state=state,
-                state_lock=state_lock,
-                agent=agent,
-                active_session=active_session_ref.value,
-                scrollback=scrollback,
+        try:
+            compacted = SessionBackend.wrap(agent, current_session).compact(
+                message_snapshot,
+                conversation_entries=conversation_entries_snapshot,
             )
+            if compacted is None:
+                scrollback.emit("notice", "Nothing to compact right now.")
+            else:
+                _persist_prompt_compaction(
+                    compacted,
+                    state=state,
+                    state_lock=state_lock,
+                    agent=agent,
+                    active_session=active_session_ref.value,
+                    scrollback=scrollback,
+                )
+        except (ValueError, OSError, httpx.HTTPError) as exc:
+            scrollback.emit("error", f"Compaction failed: {exc}")
         pending, should_finish = finish_prompt_turn(
             state=state,
             state_lock=state_lock,
@@ -74,6 +79,13 @@ def _persist_prompt_compaction(
     active_session: ActiveSession,
     scrollback: ScrollbackSink,
 ) -> None:
+    from yoke.cli.runtime.compaction import CompactionSnapshot
+
+    if isinstance(compacted, CompactionSnapshot):
+        with state_lock:
+            state.messages = compacted.messages
+        scrollback.emit("notice", format_compaction_note(compacted.payload))
+        return
     (
         updated_messages,
         _preparation,

@@ -237,6 +237,8 @@ class SessionCatalog:
             title=entry.title,
             pinned=entry.pinned,
             archived_at=entry.archived_at,
+            database_path=str(self.store.database_path),
+            context_window_tokens=entry.context_window_tokens,
             location=LocationInfo(directory=entry.root or ""),
             workspace=inspect_workspace(entry.root),
             time=SessionTime(

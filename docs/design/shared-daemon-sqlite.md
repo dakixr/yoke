@@ -170,6 +170,16 @@ and retain filenames. Recording this choice on the admission preserves both
 contracts, including queue edits and restart. Existing provider projection
 goldens remain unchanged; the OpenAPI golden adds only the optional field.
 
+Stage 3 routes basic and prompt-toolkit turns through the daemon. Queue
+promotion remains exclusively in the daemon; the terminal's queue manager edits
+revisioned snapshots but never re-admits their items. A separate session observer
+renders inputs from other clients and queued work, excluding IDs claimed by the
+local turn worker before admission. Validated HTTP DTOs feed the metadata, model,
+tree and inspector display adapters. `/info` reads the real database path and
+context limit from the session response and refreshes counts and timestamps.
+Compaction waits for settlement; interactive relocation uses the existing daemon
+route. `resume ID -p "text"` accepts the same short prompt form as the main command.
+
 ## Phase 1 implementation notes
 
 Choices made where the design was silent, and deliberate deviations.

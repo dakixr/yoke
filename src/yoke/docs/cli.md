@@ -61,11 +61,13 @@ emoji aliases are not interpreted as Rich formatting.
 ### HTTP and ACP serving
 
 Headless invocation uses the per-user daemon with no local runtime fallback.
-`yoke -p "prompt"` aliases `--headless`; `yoke resume ID --headless --prompt
-"prompt"` runs a turn on an existing session. The first invocation starts the
+`yoke -p "prompt"` runs one headless turn; `yoke resume ID -p "prompt"`
+and `yoke resume ID --headless --prompt "prompt"` run a turn on an existing session. The first invocation starts the
 daemon. The client sends its environment and cwd on attachment, holds an event
-lease through the turn, and detaches on exit. Interactive entry points still
-use the local runtime pending the next implementation stage.
+lease through the turn, and detaches on exit. Interactive entry points attach to the same daemon and
+render its filtered session event stream. The local runtime remains available
+only to compatibility and differential tests. Both interactive and headless
+`resume --relocate` call the daemon workspace relocation route.
 
 `yoke serve` runs the process-wide HTTP session runtime. `--session-dir` (or
 `YOKE_HTTP_SESSION_DIR`) selects a dedicated session store. `--hide-token`
@@ -77,7 +79,7 @@ socket and loopback HTTP on port 8770. It exits about five seconds after its las
 client lease closes and all running or queued work drains. `--no-idle-exit`
 keeps it running under systemd. `yoke daemon status|restart|stop` manages it;
 restart and stop refuse while busy unless `--when-idle` or `--force` is supplied,
-respectively. The ordinary CLI still runs in process during this phase.
+respectively. Basic and prompt-toolkit terminals use the same daemon.
 
 `yoke acp` discovers or starts that daemon and holds a lease over stdio's
 lifetime. `--url` or `YOKE_ACP_URL` selects an explicit HTTP server and requires
@@ -1193,5 +1195,8 @@ explicit values win.
 ## Interactive backend boundary
 
 The interactive runtime boundary and its planned HTTP mapping are documented in
-[CLI session backend](cli-backend.md). This is a preparatory refactor; the CLI
-still executes its runtime in process until the daemon-client cutover.
+[CLI session backend](cli-backend.md). The daemon executes turns, promotes queued
+inputs, and owns compaction and workspace relocation. The terminal renders each
+local input once and observes inputs admitted by other clients. `/info` refreshes
+the daemon metadata, including its real database path, entry count, timestamps
+and context window.

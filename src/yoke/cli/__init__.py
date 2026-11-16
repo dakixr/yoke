@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from yoke.cli.config import CLIArgs
     from yoke.cli.main import app
     from yoke.cli.main import main
-    from yoke.cli.runtime import run_cli
+    from yoke.cli.backend.startup import run_daemon_cli as run_cli
 
 
 def __getattr__(name: str) -> Any:  # noqa: ANN401
@@ -24,7 +24,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         globals()[name] = value
         return value
     if name == "run_cli":
-        from yoke.cli.runtime import run_cli
+        from yoke.cli.backend.startup import run_daemon_cli as run_cli
 
         globals()[name] = run_cli
         return run_cli

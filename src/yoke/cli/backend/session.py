@@ -11,7 +11,7 @@ from collections.abc import Sequence, Callable
 import sqlite3
 from pathlib import Path
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import ConversationEntry, Message
@@ -65,6 +65,12 @@ class SessionBackend:
         cls, agent: object, session: ActiveSession | None = None
     ) -> SessionBackend:
         """Adapt a CLI entry point once, or reuse its existing session backend."""
+        from yoke.cli.backend.daemon import DaemonActiveSession, DaemonSessionBackend
+
+        if isinstance(agent, DaemonSessionBackend):
+            if isinstance(session, DaemonActiveSession):
+                agent.select_session(session)
+            return cast(SessionBackend, agent)
         if isinstance(agent, cls):
             if session is not None:
                 agent._session = session
@@ -210,6 +216,9 @@ class SessionBackend:
     def interrupt(stop_event: Event) -> None:
         """POST /session/{id}/interrupt."""
         stop_event.set()
+        backend = getattr(stop_event, "daemon_backend", None)
+        if backend is not None:
+            backend.interrupt(stop_event)
 
     def persist_metadata(self, reasoning_effort: str | None) -> None:
         """POST /session/{id}/selection: persist effort without loading messages."""
@@ -279,8 +288,14 @@ class SessionBackend:
         session.title = session.record.title
         return session.record.pinned
 
+    def refresh_session(self) -> None:
+        """In-process metadata is updated by persistence itself."""
+
+    def conversation_entry_count(self) -> int:
+        return len(self.session.record.conversation_entries)
+
     def database_path(self) -> Path:
-        """Local storage location for /info; the HTTP session DTO omits this."""
+        """Local storage location for the in-process /info oracle."""
         return self.session.store.database_path
 
     def title(self, title: str, messages: list[Message]) -> None:

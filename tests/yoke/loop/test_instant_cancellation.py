@@ -689,6 +689,8 @@ def test_turn_cancellation_retires_live_tool_traces(tmp_path) -> None:
     )
     agent = ToolEventAgent()
     store = ToolTraceStore()
+    trace_ready = threading.Event()
+    unsubscribe = store.subscribe(trace_ready.set)
     renderer = _renderer()
     renderer._record_tool_event = store.record_event
     control = create_prompt_toolkit_control(
@@ -706,6 +708,10 @@ def test_turn_cancellation_retires_live_tool_traces(tmp_path) -> None:
 
     worker = control.start_turn("search", None)
     assert agent.started.wait(timeout=5)
+    # Producer callbacks enqueue events; the renderer consumes them on a
+    # separate thread. Retire a trace only after it has actually become live.
+    assert trace_ready.wait(timeout=5)
+    assert store.snapshot()[0].status == "running"
     assert control.stop_active_turn() is True
     cancelled = store.snapshot()[0]
     assert cancelled.status == "cancelled"
@@ -727,6 +733,7 @@ def test_turn_cancellation_retires_live_tool_traces(tmp_path) -> None:
         },
     )
     assert [entry.tool_call_id for entry in store.snapshot()] == ["call-cancelled"]
+    unsubscribe()
 
 
 def test_non_cooperative_in_process_tool_detaches_during_cancellation() -> None:

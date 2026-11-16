@@ -279,6 +279,11 @@ def compact(
     if compacted is None:
         print_scrollback_notice(console, "Nothing to compact right now.")
         return True, messages, active_session
+    from yoke.cli.runtime.compaction import CompactionSnapshot
+
+    if isinstance(compacted, CompactionSnapshot):
+        print_scrollback_notice(console, format_compaction_note(compacted.payload))
+        return True, compacted.messages, active_session
     (
         updated_messages,
         _preparation,

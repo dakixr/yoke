@@ -13,6 +13,8 @@ from yoke.agent.models import (
     MessageImageURL,
     MessageImageURLContentPart,
     MessageTextContentPart,
+    ToolCall,
+    ToolFunction,
 )
 from yoke.cli.backend.connection import SessionConnection
 from yoke.cli.backend.events import agent_event
@@ -70,7 +72,14 @@ def projected_message(value: dict[str, Any]) -> Message | None:
                     image_url=MessageImageURL(url=item["uri"]), label=item["name"]
                 )
             )
-    return Message(role=kind, content=parts, phase=value.get("phase"))
+    calls = [
+        ToolCall(
+            id=item["id"],
+            function=ToolFunction(name=item["name"], arguments=item["arguments"]),
+        )
+        for item in value.get("toolCalls", [])
+    ]
+    return Message(role=kind, content=parts, phase=value.get("phase"), tool_calls=calls)
 
 
 def input_output(connection: SessionConnection, input_id: str) -> str:
