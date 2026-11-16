@@ -1,5 +1,8 @@
 """Capture the old and daemon headless paths before removing local execution."""
 
+import json
+from pathlib import Path
+
 import pytest
 import httpx
 
@@ -100,6 +103,15 @@ def test_in_process_vs_daemon_headless_stdout_stderr_exit_and_request_bytes(
         normalizer.register(SessionStore(directory).load("oracle-session"))
         requests.append(encode(normalizer.normalize(tape.calls)))
         assert not tape.steps
+    expected = json.loads(
+        (Path(__file__).parent / "fixtures" / "headless" / f"{case}.json").read_text()
+    )
+    assert captures[0] == (
+        expected["stdout"].encode(),
+        expected["stderr"].encode(),
+        expected["exit"],
+    )
+    assert requests[0] == expected["requests"].encode()
     assert captures[0] == captures[1]
     assert requests[0] == requests[1]
 

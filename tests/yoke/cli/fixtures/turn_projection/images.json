@@ -1,0 +1,21 @@
+{
+  "requests": [
+    [
+      [
+        "{\"role\":\"system\",\"content\":\"base instructions\\n  preserve spacing\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}",
+        "{\"role\":\"user\",\"content\":\"previous input\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}",
+        "{\"role\":\"assistant\",\"content\":\"previous answer\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}",
+        "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"current input\",\"cache_control\":null},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,aA==\"},\"detail\":null,\"label\":null,\"attachment_name\":null}],\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}"
+      ],
+      []
+    ]
+  ],
+  "messages": [
+    "{\"role\":\"system\",\"content\":\"base instructions\\n  preserve spacing\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}",
+    "{\"role\":\"user\",\"content\":\"previous input\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}",
+    "{\"role\":\"assistant\",\"content\":\"previous answer\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}",
+    "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"current input\",\"cache_control\":null},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,aA==\"},\"detail\":null,\"label\":null,\"attachment_name\":null}],\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}",
+    "{\"role\":\"assistant\",\"content\":\"projection complete\",\"tool_call_id\":null,\"tool_calls\":[],\"phase\":null,\"reasoning_content\":null,\"reasoning_signature\":null,\"usage\":null}"
+  ],
+  "checkpoints": []
+}

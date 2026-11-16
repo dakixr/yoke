@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import json
+from pathlib import Path
 from dataclasses import dataclass, field
 from threading import Event
 
@@ -171,6 +173,19 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
         render_turn_events(submitted, InteractiveRenderer(io.StringIO()))
         outcome = submitted.result()
         assert isinstance(outcome, TurnSuccess)
+        expected = json.loads(
+            (
+                Path(__file__).parent
+                / "fixtures"
+                / "turn_projection"
+                / f"{scenario}.json"
+            ).read_text()
+        )
+        assert json.loads(json.dumps(providers[0].requests)) == expected["requests"]
+        assert [message.model_dump_json() for message in legacy.messages] == expected[
+            "messages"
+        ]
+        assert checkpoint_payloads[0] == expected["checkpoints"]
         assert providers[0].requests == providers[1].requests
         assert [message.model_dump_json() for message in legacy.messages] == [
             message.model_dump_json() for message in outcome.result.messages
