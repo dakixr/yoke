@@ -5,12 +5,14 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from rich.text import Text
 
+from yoke.agent.models import Message
 from yoke.cli.backend.connection import SessionConnection
+from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.backend.headless import run_headless_prompt
 from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import resolve_image_path
@@ -146,6 +148,93 @@ def run_daemon_headless(
         httpx.HTTPError,
         DaemonUnavailable,
         DaemonIncompatible,
+    ) as exc:
+        print_error(error_console, str(exc))
+        return 1
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def run_daemon_interactive(
+    args: CLIArgs,
+    *,
+    input_func: Callable[..., str] = input,
+    stdout: OutputStream | None = None,
+    stderr: OutputStream | None = None,
+    resume_id: str | None = None,
+    picker: bool = False,
+) -> int:
+    """Run basic or prompt-toolkit mode entirely through the daemon."""
+    output = stdout or sys.stdout
+    error = stderr or sys.stderr
+    error_console = build_console(error)
+    connection: SessionConnection | None = None
+    try:
+        root = Path(args.root).expanduser().resolve()
+        session_id = resume_id or args.session or new_session_id()
+        connection = SessionConnection(
+            session_id,
+            warning=lambda text: print_error(error_console, f"Warning: {text}"),
+            cwd=root,
+        )
+        if picker and resume_id is None and args.session is None:
+            sessions = connection.request(
+                "GET", "session", params={"directory": str(root), "limit": 50}
+            ).get("data", [])
+            if not sessions:
+                raise ValueError("No sessions found for this workspace.")
+            output_console = build_console(output)
+            output_console.print("Sessions:")
+            for index, item in enumerate(sessions, 1):
+                output_console.print(
+                    f"{index}. {item.get('title') or 'Untitled session'} ({item.get('id')})"
+                )
+            choice = input_func("Resume session: ").strip()
+            try:
+                session_id = sessions[int(choice) - 1]["id"]
+            except (ValueError, IndexError, KeyError) as exc:
+                raise ValueError("Invalid session selection.") from exc
+            connection.session_id = session_id
+        validate_selection(connection, args, root)
+        if resume_id or args.session:
+            try:
+                existing = connection.session_request("GET")["data"]
+                root = Path(existing["location"]["directory"])
+            except httpx.HTTPError:
+                existing = None
+        else:
+            existing = None
+        with connection.startup_lease():
+            validate_selection(connection, args, root)
+            created = create_session(connection, args, root=root)
+            connection.start()
+        data = created.get("data", {})
+        backend = DaemonSessionBackend(connection, data)
+        messages = backend.messages()
+        if args.prompt:
+            messages.append(Message.user(args.prompt))
+        report = created.get("startup")
+        if isinstance(report, dict):
+            for warning in report.get("warnings", []):
+                error_console.print(Text(f"Warning: {warning}", style="yellow"))
+        from yoke.cli.interactive import run_interactive_cli
+
+        return run_interactive_cli(
+            args,
+            backend,
+            messages,
+            active_session=cast(Any, backend.session),
+            input_func=input_func,
+            stdout=output,
+            stderr=error,
+        )
+    except (
+        ValueError,
+        OSError,
+        httpx.HTTPError,
+        DaemonIncompatible,
+        DaemonUnavailable,
     ) as exc:
         print_error(error_console, str(exc))
         return 1

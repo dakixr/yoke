@@ -99,13 +99,33 @@ def register_resume_command(app: typer.Typer) -> None:
                     relocate=relocate,
                 )
             )
-        from yoke.cli.runtime import run_resume_cli
+        if session_id is None:
+            from yoke.cli.backend.startup import run_daemon_interactive
+
+            raise typer.Exit(
+                run_daemon_interactive(
+                    build_cli_args(model=model, root=root),
+                    picker=True,
+                )
+            )
+        if relocate is not None:
+            # Relocation remains on the compatibility path until the daemon
+            # exposes the workspace relocation mutation to terminal clients.
+            from yoke.cli.runtime import run_resume_cli
+
+            raise typer.Exit(
+                run_resume_cli(
+                    build_cli_args(model=model, root=root),
+                    session_id,
+                    all_sessions=all_sessions,
+                    relocate=relocate,
+                )
+            )
+        from yoke.cli.backend.startup import run_daemon_interactive
 
         raise typer.Exit(
-            run_resume_cli(
+            run_daemon_interactive(
                 build_cli_args(model=model, root=root),
-                session_id,
-                all_sessions=all_sessions,
-                relocate=relocate,
+                resume_id=session_id,
             )
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Lock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.process_commands import (
@@ -50,7 +50,16 @@ def create_inspector_launchers(
             with state_lock:
                 return state.messages
 
-        inspection = ToolInspection(message_snapshot, trace_store)
+        remote_factory = getattr(agent, "tool_inspection", None)
+        remote = remote_factory() if callable(remote_factory) else None
+        inspection = cast(
+            Any,
+            (
+                remote
+                if remote is not None
+                else ToolInspection(message_snapshot, trace_store)
+            ),
+        )
 
         schedule(
             lambda: open_live_tool_inspector(

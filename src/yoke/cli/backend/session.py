@@ -11,7 +11,7 @@ from collections.abc import Sequence, Callable
 import sqlite3
 from pathlib import Path
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import ConversationEntry, Message
@@ -65,6 +65,12 @@ class SessionBackend:
         cls, agent: object, session: ActiveSession | None = None
     ) -> SessionBackend:
         """Adapt a CLI entry point once, or reuse its existing session backend."""
+        from yoke.cli.backend.daemon import DaemonActiveSession, DaemonSessionBackend
+
+        if isinstance(agent, DaemonSessionBackend):
+            if isinstance(session, DaemonActiveSession):
+                agent._session = session
+            return cast(SessionBackend, agent)
         if isinstance(agent, cls):
             if session is not None:
                 agent._session = session
@@ -210,6 +216,9 @@ class SessionBackend:
     def interrupt(stop_event: Event) -> None:
         """POST /session/{id}/interrupt."""
         stop_event.set()
+        backend = getattr(stop_event, "daemon_backend", None)
+        if backend is not None:
+            backend.interrupt(stop_event)
 
     def persist_metadata(self, reasoning_effort: str | None) -> None:
         """POST /session/{id}/selection: persist effort without loading messages."""

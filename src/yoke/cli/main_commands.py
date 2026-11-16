@@ -102,7 +102,7 @@ def register_commands(app: typer.Typer) -> None:
         if headless:
             from yoke.cli.backend.startup import run_daemon_headless as run_cli
         else:
-            from yoke.cli.runtime import run_cli
+            from yoke.cli.backend.startup import run_daemon_interactive as run_cli
 
         raise typer.Exit(
             run_cli(

@@ -1,8 +1,8 @@
 # Daemon client contract
 
-Headless command entry points use this contract. Interactive modes still use
-the in-process adapter pending Phase 5's next stage. The HTTP API supports
-headless, basic and prompt-toolkit clients. Paths have the
+CLI command entry points use this contract. Basic and prompt-toolkit interactive
+clients use the same daemon attachment and event stream as headless clients. The
+HTTP API supports headless, basic and prompt-toolkit clients. Paths have the
 `/api/v1` prefix.
 
 ## Startup and attachment

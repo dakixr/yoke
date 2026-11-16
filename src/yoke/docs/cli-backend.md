@@ -1,16 +1,16 @@
 # CLI session backend
 
-Headless command entry points use the daemon. Interactive modes still run
-`RuntimeAgent` in process. The interactive UI uses
+All production CLI entry points use the daemon. The interactive UI uses
 `yoke.cli.backend.SessionBackend` for runtime operations, the queue functions in
 `yoke.cli.backend.queue` for durable queue snapshots and compare-and-swap edits,
 and the inspector query objects in `yoke.cli.backend.inspection`. The backend
 contains no terminal rendering. `CommandContext.backend` carries the boundary
 into slash commands; `CommandCallbacks` contains terminal capabilities only.
 
-`SessionBackend.wrap` adapts the existing agent injection entry points and reuses
-an existing backend while the selected session changes. Production construction
-uses `RuntimeAgent`. The `AgentRunner` protocol and its import alias are gone.
+`SessionBackend.wrap` adapts compatibility test doubles and reuses an existing
+backend while the selected session changes. Production construction uses
+`DaemonSessionBackend` over `SessionConnection`. The `AgentRunner` protocol and
+its import alias are gone.
 `runtime/contracts.py` contains only opted-in call-shape adapters for existing
 injected test doubles, with no runner protocols.
 
@@ -24,19 +24,15 @@ vocabulary. Model, provider recovery, warnings, errors, messages, compaction and
 tool events retain their payloads and order. A session subscription can observe
 the same stream independently and has an explicit unsubscribe callback.
 
-The in-process producer runs on its own worker. Rendering occurs in the UI's
-turn worker, after admission has succeeded. The backend still prepares isolated
-turn runtimes, retains workspace leases, invokes the existing `execute_turn`,
-and checkpoints tool results in the established order. Accepted and retired
-outcomes go through backend methods so the UI does not inspect runtime forks.
-The HTTP implementation will let the daemon own those lifecycle operations.
+The daemon producer runs independently. Rendering occurs in the UI's turn
+worker, after admission has succeeded. Accepted and retired outcomes go through
+backend methods so the UI does not inspect runtime forks.
 
-The former headless implementation remains in `cli/runtime` for differential
-tests until the final Phase 5 cleanup. Runtime bootstrap for interactive modes
-also remains there.
+The former in-process implementation remains in `cli/runtime` for differential
+tests until the final cleanup; production bootstrap no longer imports it.
 Front-end scheduling, logical interruption fences and queue presentation remain
 in the interactive package. Their persistence and runtime operations cross the
-backend boundary; replacing them with daemon admission is Phase 5 work. The old
+backend boundary; daemon admission owns those operations. The old
 `interactive/turn_runner.py` is now an import shim, and queue persistence retains
 only UI snapshot-installation helpers plus compatibility imports.
 
@@ -51,8 +47,8 @@ loss repeats discovery and attachment with a fresh environment snapshot.
 Headless command entry points use `backend/startup.py` and `headless.py`.
 They use startup resolution, upload image bytes, admit with a stable input ID
 and `clientID`, render the existing status vocabulary, and retrieve the answer
-for their input from the transcript. Interactive entry points still use the
-in-process adapter until the next stage. Startup holds a temporary daemon lease
+for their input from the transcript. Interactive entry points use the daemon
+adapter. Startup holds a temporary daemon lease
 until the session event stream is ready.
 
 `{id}` means the backend's selected session ID.

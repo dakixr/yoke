@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.backend.models import PendingPrompt
-from yoke.cli.runtime import ActiveSession
+
+if TYPE_CHECKING:
+    from yoke.cli.runtime import ActiveSession
 from yoke.session.queue import (
     PersistedPendingInput,
     PersistedPromptQueue,
@@ -39,6 +42,9 @@ class PromptQueueRevisionConflict(RuntimeError):
 
 def load_prompt_queue_state(active_session: ActiveSession) -> LoadedPromptQueue:
     """Load queue contents and their revision from one sidecar read."""
+    remote = getattr(active_session, "backend", None)
+    if remote is not None and hasattr(remote, "load_queue"):
+        return remote.load_queue()
     payload = load_prompt_queue_snapshot(
         active_session.store.directory,
         active_session.id,
@@ -101,6 +107,13 @@ def commit_prompt_queue(
     expected_revision: int | None = None,
 ) -> int:
     """Persist a CLI queue snapshot and return its committed revision."""
+    remote = getattr(active_session, "backend", None)
+    if remote is not None and hasattr(remote, "commit_queue"):
+        return remote.commit_queue(
+            prompts,
+            pending_images or [],
+            expected_revision=expected_revision,
+        )
     images = pending_images if pending_images is not None else []
     with prompt_queue_transaction(
         active_session.store.directory,
@@ -146,6 +159,10 @@ def clear_prompt_queue(
     expected_revision: int | None = None,
 ) -> None:
     """Clear queued work while keeping the shared revision monotonic."""
+    remote = getattr(active_session, "backend", None)
+    if remote is not None and hasattr(remote, "clear_queue"):
+        remote.clear_queue(expected_revision=expected_revision)
+        return
     with prompt_queue_transaction(
         active_session.store.directory,
         active_session.id,
