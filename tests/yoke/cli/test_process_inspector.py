@@ -12,14 +12,11 @@ from typing import Any, Literal, cast
 
 from prompt_toolkit.formatted_text import HTML
 
-from yoke.cli.backend.inspection import ProcessInspection
+from yoke.cli.backend.daemon.inspection import DaemonInspection
 from yoke.agent.loop import RuntimeAgent
-from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
 )
-from yoke.ai.providers.base import Provider
-from yoke.cli.config import CLIArgs
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.interactive.process_commands import _safe_text, print_process_table
@@ -33,9 +30,9 @@ from yoke.cli.interactive.process_inspector.render import (
     render_view_html,
 )
 from yoke.cli.render import build_console
-from yoke.cli.runtime import create_active_session
 
-from .support import CaptureStream, FakeAgent, FakeProvider
+from .support import CaptureStream
+from .terminal_daemon_support import terminal as terminal, session_for, ReplyProvider
 
 
 def _snapshot(
@@ -98,7 +95,7 @@ def test_process_snapshot_cache_coalesces_output_notifications() -> None:
 
     manager = SnapshotManager()
     cache = ProcessSnapshotCache(
-        ProcessInspection(cast("CommandProcessManager", manager)),
+        cast(DaemonInspection, manager),
         refresh_interval=60,
     )
     initial = cache.snapshots()
@@ -188,9 +185,7 @@ def test_live_process_inspector_throttles_redraws(monkeypatch) -> None:
 
     manager = SnapshotManager()
     monkeypatch.setattr(prompt_toolkit.application, "Application", FakeApplication)
-    open_live_process_inspector(
-        ProcessInspection(cast("CommandProcessManager", manager))
-    )
+    open_live_process_inspector(cast(DaemonInspection, manager))
 
     assert (
         application_options["min_redraw_interval"]
@@ -201,13 +196,15 @@ def test_live_process_inspector_throttles_redraws(monkeypatch) -> None:
 
 def test_ps_slash_command_opens_prompt_toolkit_inspector(
     tmp_path: Path,
+    terminal,
 ) -> None:
-    active_session = create_active_session(CLIArgs(root=str(tmp_path)), root=tmp_path)
+    backend = terminal.backend("processes", root=tmp_path)
+    active_session = session_for(backend)
     opened: list[bool] = []
 
     handled, messages, updated_session = handle_slash_command(
         "/ps",
-        agent=FakeAgent(),
+        agent=backend,
         active_session=active_session,
         messages=[],
         console=build_console(CaptureStream()),
@@ -226,13 +223,26 @@ def test_basic_process_table_escapes_c1_terminal_controls() -> None:
 
 def test_basic_process_table_lists_runtime_owned_processes(
     tmp_path: Path,
+    terminal,
 ) -> None:
     command = (
         f'& "{sys.executable}" -c "import time; time.sleep(5)"'
         if os.name == "nt"
         else f"{shlex.quote(sys.executable)} -c 'import time; time.sleep(5)'"
     )
-    agent = RuntimeAgent(provider=cast(Provider, FakeProvider()), tools=[])
+    agent = RuntimeAgent(provider=ReplyProvider(), tools=[])
+    terminal.factory = lambda _record: agent
+    backend = terminal.backend("process-table", root=tmp_path)
+    backend.title("Process table fixture", [])
+    backend.connection.session_request(
+        "POST", "/prompt", json={"prompt": {"text": "warm runtime"}}
+    )
+    assert (
+        backend.connection.session_request("POST", "/wait", params={"timeoutMs": 5000})[
+            "data"
+        ]["state"]
+        == "idle"
+    )
     try:
         result = agent.command_process_manager.exec_command(
             command=command,
@@ -246,7 +256,7 @@ def test_basic_process_table_lists_runtime_owned_processes(
         assert result.session_id is not None
 
         stream = CaptureStream()
-        print_process_table(build_console(stream), agent)
+        print_process_table(build_console(stream), backend)
         output = stream.getvalue()
 
         assert "Command Processes" in output

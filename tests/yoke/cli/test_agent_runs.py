@@ -13,7 +13,6 @@ from prompt_toolkit.document import Document
 from rich.console import Console
 
 from yoke.agent.models import Message
-from yoke.agent.tools.command_process import CommandProcessManager
 from yoke.cli.interactive.basic import run_basic_interactive_cli
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.commands import SLASH_COMMANDS, handle_slash_command
@@ -24,7 +23,9 @@ from yoke.cli.interactive.completion import SlashCommandCompleter
 from yoke.cli.interactive.prompt.loop import process_prompt_toolkit_prompt
 from yoke.cli.runtime.base import ActiveSessionRef
 
-from .support import CaptureStream, FakeAgent, active_session_for
+from .support import CaptureStream
+from .terminal_daemon_support import terminal as terminal, session_for
+from types import SimpleNamespace
 
 
 class Registry:
@@ -40,14 +41,12 @@ class Registry:
         pass
 
 
-class TrackingAgent(FakeAgent):
-    def __init__(self, manager: CommandProcessManager) -> None:
-        super().__init__()
-        self.command_process_manager = manager
-
-
 def run(agent_id: str, **values: object) -> dict[str, object]:
     return {
+        "schemaVersion": 1,
+        "sessionID": "agents",
+        "lastSeenAt": "2026-09-28T00:00:00+00:00",
+        "updatedAt": "2026-09-28T00:00:00+00:00",
         "agentId": agent_id,
         "runId": f"run-{agent_id}",
         "name": "reviewer",
@@ -64,28 +63,23 @@ def run(agent_id: str, **values: object) -> dict[str, object]:
 
 
 @pytest.fixture
-def tracked(monkeypatch: pytest.MonkeyPatch):
-    manager = CommandProcessManager()
+def tracked(monkeypatch: pytest.MonkeyPatch, tmp_path, terminal):
     registry = Registry([])
-    monkeypatch.setattr(manager, "agent_runs", registry, raising=False)
-    # Neither console path should inspect output, subscribe, or alter a process.
-    forbidden = Mock(side_effect=AssertionError("Not a registry snapshot read"))
-    for name in (
-        "snapshots",
-        "output_chunks",
-        "observe_output",
-        "write_input",
-        "terminate",
-        "subscribe",
-        "exec_command",
-        "exec_argv",
-    ):
-        monkeypatch.setattr(manager, name, forbidden)
-    try:
-        yield TrackingAgent(manager), registry
-        forbidden.assert_not_called()
-    finally:
-        manager.close()
+    backend = terminal.backend("agents", root=tmp_path)
+
+    def snapshots(session_id):
+        assert session_id == backend.session.id
+        return registry.snapshots()
+
+    monkeypatch.setattr(terminal.app.state.agent_run_service, "snapshots", snapshots)
+    forbidden = Mock(
+        side_effect=AssertionError(
+            "Agent inspection must not construct a runtime or execute a prompt"
+        )
+    )
+    terminal.factory = forbidden
+    yield backend, registry
+    forbidden.assert_not_called()
 
 
 def test_agents_command_groups_latest_run_without_changing_state(
@@ -107,7 +101,7 @@ def test_agents_command_groups_latest_run_without_changing_state(
         ),
     ]
     before = deepcopy(registry.runs)
-    active = active_session_for(tmp_path)
+    active = session_for(agent)
     messages = [Message.user("private prompt")]
     stream = CaptureStream()
     inspector = Mock()
@@ -157,7 +151,7 @@ def test_agents_table_uses_literal_text_and_ignores_private_fields(
     handle_slash_command(
         "/agents",
         agent=agent,
-        active_session=active_session_for(tmp_path),
+        active_session=session_for(agent),
         messages=[],
         console=Console(file=stream, width=240, color_system=None),
     )
@@ -185,7 +179,7 @@ def test_agents_rejects_arguments_without_reading(
     handled, _, _ = handle_slash_command(
         command,
         agent=agent,
-        active_session=active_session_for(tmp_path),
+        active_session=session_for(agent),
         messages=[],
         console=Console(file=stream),
     )
@@ -195,15 +189,18 @@ def test_agents_rejects_arguments_without_reading(
 
 def test_agents_empty_and_unavailable_are_distinct(tmp_path: Path, tracked) -> None:
     agent, registry = tracked
-    for runner, expected in (
-        (agent, "No SDK agent runs yet."),
-        (FakeAgent(), "Agent tracking is unavailable"),
+    for available, expected in (
+        (True, "No SDK agent runs yet."),
+        (False, "Agent tracking is unavailable"),
     ):
+        if not available:
+            agent.processes = lambda: SimpleNamespace(available=False)
+        runner = agent
         stream = CaptureStream()
         handled, _, _ = handle_slash_command(
             "/agents",
             agent=runner,
-            active_session=active_session_for(tmp_path),
+            active_session=session_for(agent),
             messages=[],
             console=Console(file=stream),
         )
@@ -231,7 +228,7 @@ def test_agents_terminal_states_do_not_count_as_running(
     handle_slash_command(
         "/agents",
         agent=agent,
-        active_session=active_session_for(tmp_path),
+        active_session=session_for(agent),
         messages=[],
         console=Console(file=stream, width=160),
     )
@@ -254,13 +251,13 @@ def test_basic_cli_dispatches_agents_as_a_snapshot(tmp_path: Path, tracked) -> N
     result = run_basic_interactive_cli(
         agent,
         [],
-        active_session=active_session_for(tmp_path),
+        active_session=session_for(agent),
         input_func=read_input,
         stdout=stream,
         stderr=CaptureStream(),
     )
     assert result == 0 and "SDK agents: 1 running, 1 total" in stream.getvalue()
-    assert agent.seen_history_lengths == [] and registry.reads == 1
+    assert agent.messages() == [] and registry.reads == 1
 
 
 def test_prompt_toolkit_dispatches_agents_without_starting_a_turn(
@@ -268,7 +265,7 @@ def test_prompt_toolkit_dispatches_agents_without_starting_a_turn(
 ) -> None:
     agent, registry = tracked
     registry.runs = [run("prompt")]
-    active = active_session_for(tmp_path)
+    active = session_for(agent)
     messages = [Message.user("previous")]
     state = PromptCliState(messages=messages, pending_prompts=[])
     forbidden = Mock(side_effect=AssertionError("Unexpected interactive action"))
