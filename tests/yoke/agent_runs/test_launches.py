@@ -94,7 +94,12 @@ def test_nested_manager_reports_only_to_original_registry(tmp_path: Path):
 import os, sys
 from pathlib import Path
 from yoke.agent.tools.command_process import CommandProcessManager
-manager = CommandProcessManager(base_environment={{'PATH': os.environ['PATH']}})
+# Keep the test's isolated home: a clean environment must not reach the real ~/.yoke.
+manager = CommandProcessManager(base_environment={{
+    name: os.environ[name]
+    for name in ('PATH', 'HOME', 'YOKE_SESSION_DIR', 'YOKE_DB_PATH')
+    if name in os.environ
+}})
 try:
     process = manager._spawn('grandchild', Path.cwd(), False, None, False,
         argv=[sys.executable, '-c', {CHILD_CODE!r}])
