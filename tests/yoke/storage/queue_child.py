@@ -32,7 +32,7 @@ def wait_for(start: Path) -> None:
 
 def run_cli(directory: Path, session_id: str, count: int, start: Path) -> dict:
     from yoke.cli.interactive.common import PendingPrompt
-    from yoke.cli.interactive.queue.persistence import (
+    from yoke.cli.backend.queue import (
         PromptQueueRevisionConflict,
         commit_prompt_queue,
         load_prompt_queue_state,

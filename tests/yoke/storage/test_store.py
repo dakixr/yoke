@@ -68,7 +68,7 @@ def test_stale_daemon_queue_patch_after_cli_commit_is_a_409(tmp_path: Path) -> N
         f"""
         from pathlib import Path
         from types import SimpleNamespace
-        from yoke.cli.interactive.queue.persistence import (
+        from yoke.cli.backend.queue import (
             commit_prompt_queue, load_prompt_queue_state,
         )
         from yoke.session import SessionStore

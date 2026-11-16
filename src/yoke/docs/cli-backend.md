@@ -34,9 +34,9 @@ selector, rendering and compatibility types still live in `cli/runtime`.
 Logical interruption fences and queue presentation remain in the interactive
 package. The daemon alone promotes its queue; a terminal never dequeues a
 daemon snapshot into another admission. Their persistence and runtime operations cross the
-backend boundary; daemon admission owns those operations. The old
-`interactive/turn_runner.py` is now an import shim, and queue persistence retains
-only UI snapshot-installation helpers plus compatibility imports.
+backend boundary; daemon admission owns those operations. The unused `interactive/turn_runner.py` shim is gone. Queue snapshot-installation
+helpers live in `interactive/queue/snapshot.py`; persistence operations are
+imported from the backend.
 
 ## Route mapping
 
@@ -100,9 +100,8 @@ Compaction waits for the daemon operation to settle before replacing UI history.
 Interactive and headless relocation use `POST /session/{id}/relocate`. No
 production terminal command calls `runtime.cli.run_cli` or `run_resume_cli`;
 those Python compatibility functions remain for injected and differential tests.
-The public `yoke.cli.run_cli` export also selects the daemon by default. Only
-explicit agent injection selects the compatibility adapter; the SDK remains an
-in-process library as specified by the design.
+The public `yoke.cli.run_cli` export accepts no agent injection and always uses
+the daemon. The SDK remains an in-process library as specified by the design.
 
 The process inspector currently displays snapshot output tails, corresponding
 to the output fields on `GET /process`; the API also supports output pagination,
@@ -151,3 +150,10 @@ Shared terminal result values (`CompactionSnapshot`, `TreeNavigationResult`,
 `cli/backend/values.py`. Daemon adapters import these without loading the local
 turn executor. HTTP startup reads saved selection defaults through
 `cli/providers/state.py`.
+
+Daemon clients validate fresh workspace paths before startup. Resume uses the
+saved workspace for attachment and provider discovery; the chooser's root is
+only a filter. Rootless saved records require explicit relocation. Interactive
+`--fork` creates the copy through the daemon before attaching its terminal.
+A stopped runtime result stays a stopped terminal outcome, including when the
+runtime raises `AgentStoppedError` before returning a result.

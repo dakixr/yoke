@@ -7,9 +7,8 @@ from threading import Lock
 
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.queue.persistence import (
-    PromptQueueRevisionConflict,
-    commit_prompt_queue,
+from yoke.cli.backend.queue import PromptQueueRevisionConflict, commit_prompt_queue
+from yoke.cli.interactive.queue.snapshot import (
     queue_ensure_session,
     queue_refresh_if_changed,
     queue_reload,

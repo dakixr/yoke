@@ -10,10 +10,7 @@ from yoke.cli.interactive.common import (
     format_context_usage_text,
 )
 from yoke.cli.interactive.prompt.loop import process_prompt_toolkit_prompt
-from yoke.cli.interactive.queue.persistence import (
-    load_prompt_queue_state,
-    persist_prompt_queue,
-)
+from yoke.cli.backend.queue import load_prompt_queue_state, persist_prompt_queue
 from yoke.cli.render import build_console
 from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.session.queue import load_prompt_queue_snapshot

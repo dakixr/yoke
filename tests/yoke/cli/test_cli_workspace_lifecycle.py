@@ -35,7 +35,7 @@ from yoke.cli.interactive.prompt.lifecycle import PersistentPromptLifecycle, _Su
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.prompt.turns import run_prompt_turn
 from yoke.cli.interactive.queue.mutations import append_prompt, dequeue_prompt
-from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
+from yoke.cli.backend.queue import load_prompt_queue_state
 from yoke.cli.render import InteractiveRenderer, build_console
 from yoke.cli.runtime import turn_agent as turn_runtime
 from yoke.cli.runtime.cli import run_cli, run_resume_cli

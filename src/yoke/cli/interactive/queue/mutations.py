@@ -18,10 +18,12 @@ from yoke.cli.interactive.queue.images import (
 from yoke.cli.interactive.queue.images import (
     remove_pending_image as remove_pending_image,
 )
-from yoke.cli.interactive.queue.persistence import (
+from yoke.cli.backend.queue import (
     PromptQueueRevisionConflict,
     commit_prompt_queue,
     load_prompt_queue_state,
+)
+from yoke.cli.interactive.queue.snapshot import (
     queue_ensure_session,
     queue_install_loaded,
     queue_refresh_if_changed,

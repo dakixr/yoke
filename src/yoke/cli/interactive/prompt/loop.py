@@ -25,7 +25,7 @@ from yoke.cli.interactive.queue.mutations import (
     replace_prompt_queue,
     restore_dequeued_prompt,
 )
-from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
+from yoke.cli.backend.queue import load_prompt_queue_state
 from yoke.cli.interactive.skill_commands import is_skill_command
 from yoke.cli.render import print_scrollback_notice, print_session_scrollback
 from yoke.cli.runtime import ActiveSession

@@ -9,10 +9,7 @@ import pytest
 
 from yoke.cli.interactive.common import PendingPrompt, PromptCliState
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
-from yoke.cli.interactive.queue.persistence import (
-    load_prompt_queue_state,
-    persist_prompt_queue,
-)
+from yoke.cli.backend.queue import load_prompt_queue_state, persist_prompt_queue
 from yoke.session.queue import (
     PersistedPendingInput,
     load_prompt_queue_snapshot,

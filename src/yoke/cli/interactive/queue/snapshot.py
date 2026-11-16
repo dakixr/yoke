@@ -4,15 +4,8 @@ from __future__ import annotations
 
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.runtime import ActiveSession
-from yoke.cli.backend.queue import (
-    LoadedPromptQueue as LoadedPromptQueue,
-    PromptQueueRevisionConflict as PromptQueueRevisionConflict,
-    clear_prompt_queue as clear_prompt_queue,
-    commit_prompt_queue as commit_prompt_queue,
-    load_prompt_queue as load_prompt_queue,
-    load_prompt_queue_state as load_prompt_queue_state,
-    persist_prompt_queue as persist_prompt_queue,
-)
+from yoke.cli.backend.queue import load_prompt_queue_state
+from yoke.cli.backend.values import LoadedPromptQueue
 
 
 def queue_ensure_session(state: PromptCliState, active_session: ActiveSession) -> None:

@@ -18,7 +18,7 @@ from yoke.cli.interactive.prompt import turns
 from yoke.cli.interactive.prompt.control import create_prompt_toolkit_control
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.queue.mutations import append_prompt, dequeue_prompt
-from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
+from yoke.cli.backend.queue import load_prompt_queue_state
 from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.session.queue import load_prompt_queue_snapshot
 from yoke.session.workspace import WorkspaceUnavailable, require_workspace

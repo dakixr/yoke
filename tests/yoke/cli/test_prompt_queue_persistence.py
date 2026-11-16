@@ -21,11 +21,11 @@ from yoke.cli.interactive.queue.mutations import attach_pending_image
 from yoke.cli.interactive.queue.mutations import consume_pending_images
 from yoke.cli.interactive.queue.mutations import next_pending_prompt_index
 from yoke.cli.interactive.queue.mutations import remove_pending_image
-from yoke.cli.interactive.queue.persistence import clear_prompt_queue
-from yoke.cli.interactive.queue.persistence import load_prompt_queue
-from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
-from yoke.cli.interactive.queue.persistence import persist_prompt_queue
-from yoke.cli.interactive.queue.persistence import PromptQueueRevisionConflict
+from yoke.cli.backend.queue import clear_prompt_queue
+from yoke.cli.backend.queue import load_prompt_queue
+from yoke.cli.backend.queue import load_prompt_queue_state
+from yoke.cli.backend.queue import persist_prompt_queue
+from yoke.cli.backend.queue import PromptQueueRevisionConflict
 from yoke.session.queue import load_prompt_queue_snapshot
 from yoke.session.queue import load_prompt_queue_snapshots
 from yoke.session.queue import PersistedPendingInput

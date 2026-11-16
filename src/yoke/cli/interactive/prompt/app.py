@@ -50,7 +50,7 @@ from yoke.cli.interactive.queue.mutations import attach_pending_image
 from yoke.cli.interactive.queue.mutations import (
     remove_pending_image as persist_remove_pending_image,
 )
-from yoke.cli.interactive.queue.persistence import load_prompt_queue_state
+from yoke.cli.backend.queue import load_prompt_queue_state
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.interactive.tool_inspector import ToolTraceStore
 from yoke.cli.path_display import format_root_label
