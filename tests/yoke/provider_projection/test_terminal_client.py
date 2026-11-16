@@ -13,7 +13,7 @@ from yoke.cli.backend.connection import SessionConnection
 from yoke.cli.backend.headless import run_headless_prompt
 from yoke.http.app import HttpAppSettings, create_app
 
-from .golden import Normalizer, encode
+from .golden import Normalizer, encode, storage_projection
 from .recording import Gate, Tape
 from .runtime import World
 from .test_oracle import GOLDEN, scenario
@@ -132,4 +132,6 @@ def test_terminal_daemon_request_bytes_match_frozen_in_process_projection(
     finally:
         driver.close()
     expected = json.loads((GOLDEN / f"{name}.in_process.json").read_bytes())["calls"]
-    assert encode(normalizer.normalize(tape.calls)) == encode(expected)
+    assert encode(storage_projection(normalizer.normalize(tape.calls))) == encode(
+        storage_projection(expected)
+    )

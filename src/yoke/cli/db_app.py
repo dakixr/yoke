@@ -102,3 +102,35 @@ def import_legacy(
     )
     if counts["mismatch"] or counts["failed"]:
         raise typer.Exit(1)
+
+
+@db_app.command("stats")
+def stats() -> None:
+    """Show physical table sizes and logical entry field sizes."""
+    from yoke.storage.statistics import database_stats
+
+    for line in database_stats(_store().database):
+        typer.echo(line)
+
+
+@db_app.command("compact")
+def compact() -> None:
+    """Compact quiet sessions to completion, collect garbage, then VACUUM."""
+    from dataclasses import asdict
+
+    from yoke.storage.admin import database_info
+    from yoke.storage.compactor import compact_database
+
+    database = _store().database
+    before = database_info(database)
+    typer.echo(
+        f"Before: {before.file_bytes} database bytes, {before.wal_bytes} WAL bytes"
+    )
+    result = compact_database(database)
+    for name, count in asdict(result).items():
+        typer.echo(f"{name}: {count}")
+    after = database_info(database)
+    typer.echo(f"After: {after.file_bytes} database bytes, {after.wal_bytes} WAL bytes")
+    typer.echo(
+        "Active sessions and sessions with activity in the last 10 minutes were skipped."
+    )

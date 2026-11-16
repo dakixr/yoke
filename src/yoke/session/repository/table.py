@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from copy import deepcopy
 from collections.abc import Callable, Generator, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -29,6 +30,8 @@ from yoke.session.repository.rows import (
 )
 from yoke.session.repository.utils import parse_timestamp
 from yoke.storage import Database
+from yoke.storage.blob_codec import prepare_blob
+from yoke.storage.entry_transform import strip_usage_raw
 
 _READ_CHUNK = 500
 
@@ -67,7 +70,7 @@ class SessionTable:
             entries = [
                 decode_entry(message, metadata)
                 for message, metadata in connection.execute(
-                    "SELECT blobs.data, entries.metadata FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
+                    "SELECT yoke_blob_data(blobs.sha256, blobs.data), COALESCE(CAST(yoke_blob_data(entries.metadata_sha256, (SELECT data FROM blobs WHERE sha256 = entries.metadata_sha256)) AS TEXT), entries.metadata) FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
                     "WHERE session_id = ? ORDER BY seq",
                     (session_id,),
                 )
@@ -146,7 +149,7 @@ class SessionTable:
                 chunk = unique[start : start + _READ_CHUNK]
                 marks = ", ".join("?" for _ in chunk)
                 for entry_id, message, metadata in connection.execute(
-                    "SELECT entries.id, blobs.data, entries.metadata FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
+                    "SELECT entries.id, yoke_blob_data(blobs.sha256, blobs.data), COALESCE(CAST(yoke_blob_data(entries.metadata_sha256, (SELECT data FROM blobs WHERE sha256 = entries.metadata_sha256)) AS TEXT), entries.metadata) FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
                     f"WHERE session_id = ? AND id IN ({marks})",
                     (session_id, *chunk),
                 ):
@@ -166,7 +169,7 @@ class SessionTable:
         """Decode stored entries one at a time from one read snapshot."""
         with self.database.stream_read() as connection:
             for message, metadata in connection.execute(
-                "SELECT blobs.data, entries.metadata FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
+                "SELECT yoke_blob_data(blobs.sha256, blobs.data), COALESCE(CAST(yoke_blob_data(entries.metadata_sha256, (SELECT data FROM blobs WHERE sha256 = entries.metadata_sha256)) AS TEXT), entries.metadata) FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
                 "WHERE session_id = ? ORDER BY seq",
                 (session_id,),
             ):
@@ -322,10 +325,18 @@ class SessionTable:
                 return _insert_record(connection, record, record.conversation_entries)
             _require_tree_rev(record.id, state, expected_tree_rev)
             rev = state.rev + 1
+            payload = deepcopy(entry.metadata)
+            strip_usage_raw(payload)
+            prepared = prepare_blob(encode_json(payload).encode())
+            digest = prepared.insert(connection)
+            if not prepared.refs:
+                connection.execute(
+                    "INSERT OR IGNORE INTO blob_compaction VALUES (?)", (digest,)
+                )
             changed = connection.execute(
-                "UPDATE entries SET metadata = ?, rev = ? "
+                "UPDATE entries SET metadata = NULL, metadata_sha256 = ?, rev = ? "
                 "WHERE session_id = ? AND id = ?",
-                (encode_json(entry.metadata), rev, record.id, entry.id),
+                (digest, rev, record.id, entry.id),
             ).rowcount
             if changed != 1:
                 raise ValueError("Entry is not in this session.")
@@ -354,9 +365,9 @@ class SessionTable:
             _insert_session(connection, columns)
             connection.execute(
                 "INSERT INTO entries (session_id, seq, id, parent_id, kind, role, "
-                "call_id, created_at, message_sha256, metadata, rev) "
+                "call_id, created_at, message_sha256, metadata, metadata_sha256, rev) "
                 "SELECT ?, seq, id, parent_id, kind, role, call_id, created_at, "
-                "message_sha256, metadata, 1 FROM entries WHERE session_id = ?",
+                "message_sha256, metadata, metadata_sha256, 1 FROM entries WHERE session_id = ?",
                 (record.id, source_id),
             )
             return True

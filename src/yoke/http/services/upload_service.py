@@ -191,7 +191,8 @@ class UploadService:
         path = self.directory / record.id / "files" / record.name
         with self.store.database.read() as connection:
             row = connection.execute(
-                "SELECT data FROM blobs WHERE sha256 = ?", (record.sha256,)
+                "SELECT yoke_blob_data(sha256, data) FROM blobs WHERE sha256 = ?",
+                (record.sha256,),
             ).fetchone()
         if row is None:
             raise ApiError(404, "upload_not_found", "Upload was not found.")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import json
 import os
 import shutil
 from pathlib import Path
@@ -21,7 +22,7 @@ from yoke.session import SessionStore
 
 from .drivers import Daemon, InProcess
 from .runtime import Driver, World
-from .golden import Normalizer, encode
+from .golden import Normalizer, encode, storage_projection
 from .recording import Gate, Tape, answer, tool_calls
 
 SCENARIOS = (
@@ -188,10 +189,15 @@ def scenario(driver: Driver, name: str, normalizer: Normalizer) -> None:
     register()
 
 
+@pytest.mark.parametrize("legacy_compaction", [False, True])
 @pytest.mark.parametrize("path", ["in_process", "daemon"])
 @pytest.mark.parametrize("name", SCENARIOS)
 def test_provider_projection_oracle(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str, name: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    name: str,
+    legacy_compaction: bool,
 ) -> None:
     directory = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(directory))
@@ -222,6 +228,10 @@ def test_provider_projection_oracle(
 
     shutil.rmtree(directory)
     shutil.copytree(snapshot, directory)
+    if legacy_compaction:
+        from .storage import compact_legacy_snapshot
+
+        compact_legacy_snapshot(SessionStore(directory))
     resumed_start = len(tape.calls)
     resumed = driver_type(world, session_id, fresh=False)
     try:
@@ -236,7 +246,7 @@ def test_provider_projection_oracle(
         restored = normalizer_before_resume.normalize(tape.calls[resumed_start:])
     finally:
         resumed.close()
-    assert encode(restored) == encode(live), (
+    assert encode(storage_projection(restored)) == encode(storage_projection(live)), (
         "Fresh file-store runtime changed provider projection"
     )
     actual = encode(
@@ -252,7 +262,7 @@ def test_provider_projection_oracle(
     fixture = GOLDEN / f"{name}.{path}.json"
     if os.environ.get("YOKE_REGENERATE_PROJECTION_GOLDENS") == "1":
         fixture.write_bytes(actual)
-    assert fixture.read_bytes() == actual, (
-        f"Provider projection changed: {fixture.name}"
-    )
+    assert encode(storage_projection(json.loads(fixture.read_bytes()))) == encode(
+        storage_projection(json.loads(actual))
+    ), f"Provider projection changed: {fixture.name}"
     assert not tape.steps

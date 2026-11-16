@@ -287,7 +287,7 @@ def test_valid_cmyk_tiff_is_normalized_before_provider_projection(
             if isinstance(part, MessageImageURLContentPart)
         ]
         assert len(image_parts) == 1
-        assert image_parts[0].image_url.url.startswith("data:image/png;base64,")
+        assert image_parts[0].image_url.url.startswith("data:image/jpeg;base64,")
 
 
 @pytest.mark.parametrize(

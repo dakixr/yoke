@@ -115,3 +115,31 @@ class Normalizer:
 def encode(value: object) -> bytes:
     """Freeze outer formatting while leaving each Message JSON string intact."""
     return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode()
+
+
+def storage_projection(value: Any) -> Any:
+    """Ignore only usage.raw in request Message wrappers, never response bytes.
+
+    Provider serializers do not send usage. Old goldens retain the scripted
+    diagnostic payload; v4 storage intentionally drops it. Preserve every byte
+    outside that one field, including tool-result JSON embedded in content.
+    """
+    if isinstance(value, list):
+        return [storage_projection(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: storage_projection(item) for key, item in value.items()}
+    if "messages_json" in result:
+        messages = []
+        for serialized in result["messages_json"]:
+            usage = json.loads(serialized).get("usage")
+            if isinstance(usage, dict) and "raw" in usage:
+                before = json.dumps(usage, ensure_ascii=False, separators=(",", ":"))
+                usage["raw"] = {}
+                after = json.dumps(usage, ensure_ascii=False, separators=(",", ":"))
+                serialized = serialized.replace(
+                    '"usage":' + before, '"usage":' + after, 1
+                )
+            messages.append(serialized)
+        result["messages_json"] = messages
+    return result

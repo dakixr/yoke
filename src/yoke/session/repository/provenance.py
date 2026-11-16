@@ -35,14 +35,24 @@ def classify_legacy_entries(
         while current is not None and current not in seen:
             seen.add(current)
             row = connection.execute(
-                "SELECT blobs.data, entries.metadata FROM entries JOIN blobs "
+                "SELECT yoke_blob_data(blobs.sha256, blobs.data), entries.metadata FROM entries JOIN blobs "
                 "ON blobs.sha256 = entries.message_sha256 "
                 "WHERE session_id = ? AND id = ?",
                 (owner, current),
             ).fetchone()
             if row is None:
                 break
-            entry = decode_entry(*row)
+            message, metadata = row
+            if connection.execute("PRAGMA user_version").fetchone()[0] >= 4:
+                override = connection.execute(
+                    "SELECT yoke_blob_data(b.sha256, b.data) FROM entries e "
+                    "JOIN blobs b ON b.sha256 = e.metadata_sha256 "
+                    "WHERE e.session_id = ? AND e.id = ?",
+                    (owner, current),
+                ).fetchone()
+                if override is not None:
+                    metadata = override[0].decode()
+            entry = decode_entry(message, metadata)
             chain.append(entry)
             if current != candidate and entry.kind == "user":
                 break

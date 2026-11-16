@@ -19,9 +19,14 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
-from weakref import WeakValueDictionary
+from weakref import WeakValueDictionary, proxy
+from typing import cast
 
 BUSY_TIMEOUT_MS = 5_000
+
+
+class _Connection(sqlite3.Connection):
+    """Allow a weak callback reference without a connection/callback cycle."""
 
 
 class DatabaseError(RuntimeError):
@@ -91,6 +96,7 @@ class Database:
             timeout=BUSY_TIMEOUT_MS / 1000,
             isolation_level=None,
             check_same_thread=False,
+            factory=_Connection,
         )
         connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         connection.create_function(
@@ -98,6 +104,14 @@ class Database:
             1,
             lambda data: hashlib.sha256(data).hexdigest(),
             deterministic=True,
+        )
+        from yoke.storage.blob_codec import decode_blob
+
+        reader = cast(sqlite3.Connection, proxy(connection))
+        connection.create_function(
+            "yoke_blob_data",
+            2,
+            lambda digest, data: decode_blob(reader, digest, data),
         )
         connection.create_function("yoke_casefold", 1, str.casefold, deterministic=True)
         connection.execute("PRAGMA foreign_keys=ON")
@@ -158,11 +172,9 @@ class Database:
             self._writer.execute("PRAGMA busy_timeout=0")
             try:
                 with self.write() as connection:
-                    connection.execute(
-                        "DELETE FROM blobs WHERE sha256 IN (SELECT sha256 FROM blobs "
-                        "WHERE NOT EXISTS (SELECT 1 FROM entries WHERE message_sha256 = blobs.sha256) "
-                        "AND NOT EXISTS (SELECT 1 FROM uploads WHERE sha256 = blobs.sha256) LIMIT 128)"
-                    )
+                    from yoke.storage.blob_codec import collect_blobs
+
+                    collect_blobs(connection)
                     for _ in range(max(0, pages)):
                         if (
                             connection.execute("PRAGMA freelist_count").fetchone()[0]
@@ -179,6 +191,24 @@ class Database:
             finally:
                 self._writer.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         finally:
+            self._lock.release()
+        from yoke.storage.compactor import compact_batch
+
+        compact_batch(self, limit=2, nonblocking=True)
+
+    @contextmanager
+    def write_nowait(self) -> Iterator[sqlite3.Connection]:
+        """Attempt idle work without queuing behind another writer."""
+        if not self._lock.acquire(blocking=False):
+            error = sqlite3.OperationalError("Idle writer is busy")
+            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            raise error
+        try:
+            self._writer.execute("PRAGMA busy_timeout=0")
+            with self.write() as connection:
+                yield connection
+        finally:
+            self._writer.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
             self._lock.release()
 
     def is_current(self) -> bool:

@@ -672,7 +672,7 @@ rebuilt from the database; those paths remain unchanged in saved messages.
 Agent-run observations remain in memory and are lost on restart.
 
 New databases use `auto_vacuum=INCREMENTAL`. Periodic maintenance retains the
-30-day unpinned-session policy, collects blobs with no entry or upload references,
+30-day unpinned-session policy, collects blobs with no entry, metadata, upload or image-parent references,
 and incrementally reclaims up to 256 free pages per pass. A database created
 without auto-vacuum needs an offline conversion: stop every Yoke process, then
 run `sqlite3 /path/to/yoke.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'`.
@@ -687,12 +687,38 @@ not read. Import them explicitly:
 yoke db import-legacy --all             # every session in ~/.yoke/sessions
 yoke db import-legacy 20240421-143022-abc1 --from /path/to/sessions
 yoke db info                            # path, schema version, sizes, counts
+yoke db stats                           # table and entry-field size breakdown
+yoke db compact                         # finish quiet-session compaction and VACUUM
 yoke db backup ~/yoke-backup.db         # consistent copy via VACUUM INTO
 ```
 
+Entry storage omits the provider's raw usage payload and keeps normalized token
+counts. Binary images are stored once by SHA-256, including copies in compaction
+handoffs and metadata overrides. Loading reconstructs the exact saved data URLs
+before runtime or handoff processing. Session forks share the same entry and
+image blobs. Deleting the last reference lets idle maintenance collect them.
+
+Schema v4 only adds storage structures at startup. Idle maintenance converts up
+to two old blobs per pass, preparing images outside the write transaction and
+committing each replacement with its references and cache revisions. It skips
+sessions with active admissions or compactions and any activity in the last ten
+minutes, including other sessions sharing a blob. Committed progress survives
+restart. `yoke db compact` finishes eligible batches and runs SQLite VACUUM;
+active or recently used sessions remain eligible for later idle passes. It
+prints database and WAL sizes before and after, plus conversion counters.
+`yoke db stats` reports physical table/index pages and logical entry bytes by
+kind, split into image strings, usage and other JSON. Logical totals count
+references, so fork and handoff duplicates count more than once.
+
+Local image snapshots fit a 1568-pixel long edge and 1,150,000 pixels without
+upscaling. Opaque images use JPEG quality 90, and images with transparency use
+PNG. A supported original that fits both limits is kept when it is no larger.
+Old images use the same rule during compaction. Invalid or noncanonical image
+data stays inline. Provider image capability filtering is unchanged.
+
 The importer reads each file with the previous JSONL loader (including newer
 titles and pins kept in that directory's `index.json`), inserts it in one
-transaction, reads it back and compares every entry with the loaded record. A
+transaction, reads it back and compares every entry with the loaded record, excluding raw usage. A
 mismatch rolls back the import transaction and is reported. Reruns skip sessions
 already in the database, so an interrupted import resumes where it stopped. Imported sessions
 keep their original timestamps. The database marks an imported session as held

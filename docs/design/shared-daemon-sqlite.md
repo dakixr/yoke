@@ -331,3 +331,35 @@ OpenAPI golden are unchanged. No version bump or push was made.
 - CLI turn and model saves catch SQLite errors alongside filesystem errors,
   preserving warnings and in-memory state. Database administration commands
   report unsupported schemas as clean CLI errors.
+
+
+### Schema v4 image storage and background compaction
+
+Entry hashes identify reconstructed JSON bytes. `blobs.data` holds either the
+inline bytes or a byte-spliced template selected by `blob_codecs`, outside the
+JSON. The manifest records template byte offsets and child hashes. Prefixes
+remain verbatim in the template. Only canonical base64 payloads qualify, and
+both preparation and insertion verify exact reconstruction against the parent
+hash. A user-supplied URL cannot select a codec. Binary images share `blobs`
+with uploads; `blob_refs` relates entry or metadata parents to their children.
+GC checks those edges plus entry, metadata and upload roots, deletes parents
+first, then collects children in subsequent batches. Forks only copy roots.
+
+Whole metadata replacements use `entries.metadata_sha256`; legacy TEXT
+replacements remain readable until idle conversion. Every repository read,
+including streaming, selected-entry filtering and provenance, eagerly expands
+the codec. Handoff image elision runs after expansion. Uploaded bytes use that
+same decoder if their hash also identifies a codec-backed entry.
+
+The schema migration adds structures only. The resumable compactor prepares a
+small batch outside writer transactions, rechecks all owners' inactivity under
+`BEGIN IMMEDIATE`, then atomically inserts replacement blobs and references,
+repoints shared hashes, updates logical `message_bytes`, and bumps `rev` and
+`rewrite_rev`. Raw provider usage is omitted, normalized fields remain, and
+existing image carriers use the new provider dimension limits. New entry writes
+also omit raw usage, including full rewrites and retained handoff messages.
+Completed hashes are marked transactionally. Active admissions, unfinished
+compactions and activity within ten minutes defer conversion. Idle writers do
+not wait behind turn writers. Explicit `yoke db compact` finishes eligible work,
+collects orphans and vacuums; `yoke db stats` distinguishes physical pages from
+logical image, usage and other JSON bytes.

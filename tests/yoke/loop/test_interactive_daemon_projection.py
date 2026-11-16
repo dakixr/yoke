@@ -8,7 +8,7 @@ import pytest
 
 from tests.yoke.cli.interactive_daemon_support import InteractiveDaemon
 from tests.yoke.daemon.support import eventually
-from tests.yoke.provider_projection.golden import Normalizer, encode
+from tests.yoke.provider_projection.golden import Normalizer, encode, storage_projection
 from tests.yoke.provider_projection.recording import Gate, Tape
 from tests.yoke.provider_projection.runtime import World
 from tests.yoke.provider_projection.test_oracle import GOLDEN, scenario
@@ -104,10 +104,10 @@ def test_interactive_daemon_request_bytes_match_frozen_in_process_projection(
     finally:
         driver.close()
     expected = json.loads((GOLDEN / f"{name}.in_process.json").read_bytes())["calls"]
-    actual = encode(normalizer.normalize(world.tape.calls))
-    if actual != encode(expected):
+    actual = encode(storage_projection(normalizer.normalize(world.tape.calls)))
+    if actual != encode(storage_projection(expected)):
         (tmp_path / "actual.json").write_bytes(actual)
-    assert actual == encode(expected)
+    assert actual == encode(storage_projection(expected))
 
 
 def test_interactive_steer_request_bytes_match_frozen_checkpoint_projection(
@@ -151,4 +151,6 @@ def test_interactive_steer_request_bytes_match_frozen_checkpoint_projection(
     expected = json.loads((GOLDEN / "checkpoint_stop.in_process.json").read_bytes())[
         "calls"
     ]
-    assert encode(normalizer.normalize(tape.calls)) == encode(expected)
+    assert encode(storage_projection(normalizer.normalize(tape.calls))) == encode(
+        storage_projection(expected)
+    )

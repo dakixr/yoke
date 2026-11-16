@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import sqlite3
 from collections.abc import Iterable, Iterator
 from typing import Any, cast
@@ -12,6 +11,8 @@ from pydantic_core import from_json
 
 from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import ConversationEntry
+from yoke.storage.blob_codec import prepare_blob
+from yoke.storage.entry_transform import strip_usage_raw
 from yoke.session.repository.models import (
     SESSION_INDEX_SUMMARY_VERSION,
     SessionIndexEntry,
@@ -55,7 +56,9 @@ def encode_json(value: object) -> str:
 
 def encode_entry(entry: ConversationEntry) -> bytes:
     """Return the immutable entry bytes stored in ``blobs.data``."""
-    return encode_json(entry.model_dump(mode="json")).encode("utf-8")
+    payload = entry.model_dump(mode="json")
+    strip_usage_raw(payload)
+    return encode_json(payload).encode("utf-8")
 
 
 def decode_entry(message: bytes, metadata: str | None) -> ConversationEntry:
@@ -109,10 +112,12 @@ def insert_entries(
             totals[0] += 1
             raw = row[8]
             totals[1] += len(raw)
-            digest = hashlib.sha256(raw).hexdigest()
-            connection.execute(
-                "INSERT OR IGNORE INTO blobs VALUES (?, ?)", (digest, raw)
-            )
+            prepared = prepare_blob(raw)
+            digest = prepared.insert(connection)
+            if not prepared.refs:
+                connection.execute(
+                    "INSERT OR IGNORE INTO blob_compaction VALUES (?)", (digest,)
+                )
             yield (*row[:8], digest, *row[9:])
 
     connection.executemany(INSERT_ENTRY, rows())

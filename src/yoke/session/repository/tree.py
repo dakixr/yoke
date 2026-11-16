@@ -10,6 +10,7 @@ from yoke.agent.message_sanitizer import normalize_tool_call_sequence
 from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.session_tree import SessionTree
 from yoke.session.repository.tree_index import SessionTreeIndex
+from yoke.storage.entry_transform import strip_usage_raw
 
 if TYPE_CHECKING:
     from yoke.session.repository import SessionRecord
@@ -44,13 +45,13 @@ def _resolve_saved_conversation_tree(
             if appended is not None:
                 return appended
         tree = SessionTree.restore(
-            existing.conversation_entries,
+            [_without_raw_usage(entry) for entry in existing.conversation_entries],
             existing.leaf_id,
         )
         incoming = _sanitize_conversation_entries(conversation_entries)
     else:
         tree = SessionTree.import_legacy(
-            existing.conversation_entries,
+            [_without_raw_usage(entry) for entry in existing.conversation_entries],
             existing.leaf_id,
         )
         incoming = _sanitize_conversation_entries(
@@ -169,6 +170,7 @@ def _sanitize_conversation_entries(
 def _normalize_conversation_entry(
     entry: ConversationEntry,
 ) -> ConversationEntry:
+    entry = _without_raw_usage(entry)
     message = entry.message
     if message is None:
         return entry.model_copy(deep=True)
@@ -176,3 +178,16 @@ def _normalize_conversation_entry(
     if normalized.role == "assistant" and normalized.content is None:
         normalized.content = ""
     return entry.model_copy(update={"message": normalized}, deep=True)
+
+
+def _without_raw_usage(entry: ConversationEntry) -> ConversationEntry:
+    """Compare persisted intent without creating branches for diagnostic usage.
+
+    Both legacy loaded entries and incoming in-memory entries pass this seam.
+    The entry encoder independently enforces the same rule for every write path.
+    """
+    copied = entry.model_copy(deep=True)
+    if copied.message is not None and copied.message.usage is not None:
+        copied.message.usage.raw = {}
+    strip_usage_raw(copied.metadata)
+    return copied

@@ -60,3 +60,33 @@ def test_only_command_process_identity_is_normalized(tmp_path: Path) -> None:
     )
     calls[0]["messages_json"][-1] = changed.model_dump_json()
     assert Normalizer(tmp_path).normalize(calls) != normalized
+
+
+def test_storage_allowance_changes_only_outer_raw_usage() -> None:
+    from yoke.agent.models import TokenUsage
+
+    from .golden import storage_projection
+
+    message = Message(
+        role="assistant",
+        content='Keep exact spacing.  {"usage":{"raw":{"scripted":true}}}',
+        usage=TokenUsage(input_tokens=37, raw={"scripted": True}),
+    )
+    serialized = message.model_dump_json()
+    calls = [{"messages_json": [serialized], "response_json": serialized}]
+    normalized = storage_projection(calls)
+    expected = message.model_copy(deep=True)
+    assert expected.usage is not None
+    expected.usage.raw = {}
+    assert normalized[0]["messages_json"] == [expected.model_dump_json()]
+    assert normalized[0]["response_json"] == serialized
+    assert json.loads(normalized[0]["messages_json"][0])["content"] == message.content
+    expected.usage.input_tokens = 38
+    assert normalized != storage_projection(
+        [{"messages_json": [expected.model_dump_json()], "response_json": serialized}]
+    )
+    expected.usage.input_tokens = 37
+    expected.content = (expected.text_content() or "") + "changed"
+    assert normalized != storage_projection(
+        [{"messages_json": [expected.model_dump_json()], "response_json": serialized}]
+    )

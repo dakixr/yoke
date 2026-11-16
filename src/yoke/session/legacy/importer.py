@@ -14,6 +14,7 @@ from yoke.session.legacy.loader import (
     read_legacy_index,
 )
 from yoke.session.repository.models import SessionIndex, SessionRecord
+from yoke.session.repository.rows import encode_entry
 from yoke.session.repository.store import SessionStore
 
 ImportStatus = Literal["imported", "skipped", "mismatch", "failed"]
@@ -93,7 +94,7 @@ class _ImportMismatch(Exception):
 def verify_imported_session(store: SessionStore, expected: SessionRecord) -> str | None:
     """Compare the stored record with ``expected``; return a problem or None.
 
-    Compares ``model_dump_json`` of the metadata and of every entry in order,
+    Compares metadata JSON and canonical entry bytes, excluding raw usage,
     which is equivalent to comparing the whole record dump without holding a
     second copy of a large session in memory.
     """
@@ -112,7 +113,7 @@ def verify_imported_session(store: SessionStore, expected: SessionRecord) -> str
         for index, entry in enumerate(stored):
             if index >= len(entries):
                 return "Database has more entries than the JSONL file."
-            if entry.model_dump_json() != entries[index].model_dump_json():
+            if encode_entry(entry) != encode_entry(entries[index]):
                 return f"Entry {index} ({entries[index].id}) differs after import."
             count += 1
     if count != len(entries):

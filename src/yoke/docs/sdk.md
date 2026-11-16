@@ -645,6 +645,10 @@ result = agent.prompt(
 CLI and `AttachImageTool` local images are snapshotted as data URLs before they
 are stored in session history, which keeps resumed sessions independent from
 temporary or later-deleted local files.
+Snapshots fit a 1568-pixel long edge and 1,150,000 pixels. Opaque images use
+JPEG quality 90 and transparent images use PNG; smaller supported originals
+that already fit are retained. The database deduplicates binary image bytes
+and reconstructs the saved data URL when loading history.
 The snapshot is stored only in the image message, not duplicated inside the
 tool-result JSON sent back to the model.
 

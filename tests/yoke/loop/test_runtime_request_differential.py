@@ -262,3 +262,43 @@ def test_runtime_provider_requests_match_baseline(name: str) -> None:
     """All serialized messages, tool schemas, call kinds and cache keys stay fixed."""
     expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
     assert record_scenario(name) == expected[name]
+
+
+@pytest.mark.parametrize("name", SCENARIOS)
+def test_runtime_requests_after_storage_roundtrip(name, tmp_path, monkeypatch):
+    """Tools, skills, images, checkpoint and retry requests survive entry storage."""
+    from yoke.agent.models import ConversationEntry
+    from yoke.session import SessionRecord, SessionStore
+    from yoke.session.repository.table import SessionTable
+
+    store = SessionStore(tmp_path / "projection-store")
+    original = RecordingProvider.complete
+
+    def complete(self, messages, tools):
+        table = SessionTable(store.database)
+        table.delete("projection")
+        table.insert_record(
+            SessionRecord(
+                id="projection",
+                conversation_entries=[
+                    ConversationEntry(
+                        id=str(index), kind="instruction", message=message
+                    )
+                    for index, message in enumerate(messages)
+                ],
+            )
+        )
+        loaded = store.load("projection")
+        return original(
+            self,
+            [
+                entry.message
+                for entry in loaded.conversation_entries
+                if entry.message is not None
+            ],
+            tools,
+        )
+
+    monkeypatch.setattr(RecordingProvider, "complete", complete)
+    expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert record_scenario(name) == expected[name]
