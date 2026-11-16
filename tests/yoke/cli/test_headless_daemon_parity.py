@@ -1,4 +1,4 @@
-"""Capture the old and daemon headless paths before removing local execution."""
+"""Compare daemon headless output with frozen, verified local-path fixtures."""
 
 import json
 from pathlib import Path
@@ -6,15 +6,12 @@ from pathlib import Path
 import pytest
 import httpx
 
-from tests.yoke.provider_projection.drivers import InProcess
 from tests.yoke.provider_projection.golden import Normalizer, encode
 from tests.yoke.provider_projection.recording import Tape, answer, tool_calls
 from tests.yoke.provider_projection.runtime import World
 from yoke.ai.providers.base import ProviderError
 from yoke.cli.backend.connection import SessionConnection
 from yoke.cli.backend.headless import run_headless_prompt, upload_images
-from yoke.cli.render import build_console
-from yoke.cli.runtime.cli import _run_headless_mode
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.session import SessionStore
 
@@ -25,95 +22,72 @@ from .support import CaptureStream
 @pytest.mark.parametrize(
     "case", ["text", "empty", "error", "tool", "skill", "image", "image_unsupported"]
 )
-def test_in_process_vs_daemon_headless_stdout_stderr_exit_and_request_bytes(
+def test_daemon_headless_matches_frozen_stdout_stderr_exit_and_request_bytes(
     tmp_path, monkeypatch, case
 ):
-    captures = []
-    requests = []
-    for daemon in (False, True):
-        directory = tmp_path / ("daemon" if daemon else "in-process")
-        monkeypatch.setenv("YOKE_SESSION_DIR", str(directory))
-        tape = Tape()
-        scenario = {"tool": "tools", "skill": "inline_skill"}.get(case, "chat")
-        if case == "image_unsupported":
-            scenario = "images_unsupported"
-        world = World(tmp_path / "workspace", directory, scenario, tape)
-        prompt = "Preserve café, [brackets], two  spaces.\nAnd a newline."
-        images = ()
-        if case.startswith("image"):
-            images = (world.root / "tiny.png",)
-        if case == "tool":
-            tape.expect(tool_calls(("read", {"path": "input.txt"})))
-        if case == "skill":
-            prompt = "Use $oracle exactly."
-        tape.expect(
-            ProviderError("Fixture provider failed.")
-            if case == "error"
-            else answer("" if case == "empty" else "Exact response.\nSecond line.")
+    directory = tmp_path / "daemon"
+    monkeypatch.setenv("YOKE_SESSION_DIR", str(directory))
+    tape = Tape()
+    scenario = {"tool": "tools", "skill": "inline_skill"}.get(case, "chat")
+    if case == "image_unsupported":
+        scenario = "images_unsupported"
+    world = World(tmp_path / "workspace", directory, scenario, tape)
+    prompt = "Preserve café, [brackets], two  spaces.\nAnd a newline."
+    images = ()
+    if case.startswith("image"):
+        images = (world.root / "tiny.png",)
+    if case == "tool":
+        tape.expect(tool_calls(("read", {"path": "input.txt"})))
+    if case == "skill":
+        prompt = "Use $oracle exactly."
+    tape.expect(
+        ProviderError("Fixture provider failed.")
+        if case == "error"
+        else answer("" if case == "empty" else "Exact response.\nSecond line.")
+    )
+    stdout, stderr = CaptureStream(), CaptureStream()
+    app = create_app(
+        HttpAppSettings(
+            auth_token=None,
+            session_directory=directory,
+            agent_factory=world.agent,
         )
-        stdout, stderr = CaptureStream(), CaptureStream()
-        if daemon:
-            app = create_app(
-                HttpAppSettings(
-                    auth_token=None,
-                    session_directory=directory,
-                    agent_factory=world.agent,
-                )
+    )
+    with serve_app(app) as handle:
+        connection = SessionConnection(
+            "oracle-session", discover=lambda: handle, cwd=world.root
+        )
+        try:
+            connection.request(
+                "POST",
+                "session",
+                json={
+                    "id": connection.session_id,
+                    "title": "Oracle fixture",
+                    "location": {"directory": str(world.root)},
+                },
             )
-            with serve_app(app) as handle:
-                connection = SessionConnection(
-                    "oracle-session", discover=lambda: handle, cwd=world.root
-                )
-                try:
-                    connection.request(
-                        "POST",
-                        "session",
-                        json={
-                            "id": connection.session_id,
-                            "title": "Oracle fixture",
-                            "location": {"directory": str(world.root)},
-                        },
-                    )
-                    code = run_headless_prompt(
-                        connection,
-                        prompt,
-                        image_paths=images,
-                        stdout=stdout,
-                        stderr=stderr,
-                    )
-                finally:
-                    connection.close()
-        else:
-            driver = InProcess(world)
-            try:
-                code = _run_headless_mode(
-                    active_agent=driver.agent,
-                    active_session=driver.active,
-                    session_messages=[],
-                    prompt=prompt,
-                    image_paths=tuple(str(path) for path in images),
-                    error_stream=stderr,
-                    error_console=build_console(stderr),
-                    output_console=build_console(stdout),
-                )
-            finally:
-                driver.close()
-        captures.append((stdout.getvalue().encode(), stderr.getvalue().encode(), code))
-        normalizer = Normalizer(world.root)
-        normalizer.register(SessionStore(directory).load("oracle-session"))
-        requests.append(encode(normalizer.normalize(tape.calls)))
-        assert not tape.steps
+            code = run_headless_prompt(
+                connection,
+                prompt,
+                image_paths=images,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        finally:
+            connection.close()
     expected = json.loads(
         (Path(__file__).parent / "fixtures" / "headless" / f"{case}.json").read_text()
     )
-    assert captures[0] == (
+    assert (stdout.getvalue().encode(), stderr.getvalue().encode(), code) == (
         expected["stdout"].encode(),
         expected["stderr"].encode(),
         expected["exit"],
     )
-    assert requests[0] == expected["requests"].encode()
-    assert captures[0] == captures[1]
-    assert requests[0] == requests[1]
+    normalizer = Normalizer(world.root)
+    normalizer.register(SessionStore(directory).load("oracle-session"))
+    assert encode(normalizer.normalize(tape.calls)) == expected["requests"].encode()
+    assert not tape.steps
 
 
 def test_headless_replays_uncertain_admission_once_without_duplicate_provider_call(

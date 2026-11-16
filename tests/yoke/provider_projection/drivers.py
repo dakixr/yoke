@@ -17,7 +17,6 @@ from yoke.agent.multimodal import build_image_user_message
 from yoke.cli.config import CLIArgs
 from yoke.cli.image_input import build_user_message
 from yoke.cli.interactive.skill_commands import handle_skill_load
-from yoke.cli.runtime.base import execute_turn
 from yoke.cli.runtime.compaction import force_compact_history
 from yoke.cli.runtime.resume import project_resumed_session
 from yoke.cli.runtime.session import (
@@ -85,12 +84,8 @@ class InProcess:
         def run() -> None:
             try:
                 with session_usage_metric_context(self.active, text):
-                    result = execute_turn(
-                        self.agent,
+                    result = self.agent.run(
                         text,
-                        self.active.messages(),
-                        stderr=StringIO(),
-                        conversation_entries=self.active.active_entries(),
                         user_message=(
                             build_image_user_message(
                                 text,
@@ -105,7 +100,9 @@ class InProcess:
                             )
                         ),
                         stop_requested=stopped.is_set,
-                        after_tool_result_appended=checkpoint,
+                        after_tool_result_appended=lambda context: checkpoint(
+                            context.messages, list(context.conversation_log.entries)
+                        ),
                     )
                 assert result.status == ("stopped" if gate else "completed")
             except AgentStoppedError:
