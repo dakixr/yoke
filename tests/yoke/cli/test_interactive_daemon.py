@@ -8,7 +8,6 @@ from threading import Lock
 import pytest
 
 from tests.yoke.provider_projection.recording import Gate, answer, tool_calls
-from yoke.cli.backend import SessionBackend
 from yoke.cli.interactive.common import PromptCliState
 from yoke.cli.interactive.queue.mutations import replace_prompt_queue
 from yoke.cli.interactive.session_commands import print_session_info
@@ -16,7 +15,6 @@ from yoke.cli.interactive.tool_inspector.render import detail_text
 from yoke.cli.interactive.tool_inspector.state import ToolInspectorState
 from yoke.cli.interactive.tree_selector import TreeSelectorResult
 from yoke.cli.render import build_console
-from yoke.cli.runtime import ActiveSession
 from yoke.session import SessionStore
 from yoke.http.models.tool_trace import ToolCallInfo
 
@@ -90,7 +88,7 @@ def test_daemon_second_client_prompt_renders_once(
     assert len(d.tape.calls) == 1
 
 
-def test_daemon_info_matches_every_in_process_line(interactive_daemon, monkeypatch):
+def test_daemon_info_matches_frozen_in_process_lines(interactive_daemon, monkeypatch):
     d = interactive_daemon
     d.tape.expect(answer("metadata answer"))
 
@@ -101,19 +99,12 @@ def test_daemon_info_matches_every_in_process_line(interactive_daemon, monkeypat
 
     d.run("basic", script, monkeypatch)
     record = SessionStore(d.world.directory).load(d.connection.session_id)
+    assert record.created_at is not None and record.updated_at is not None
     assert record.created_at != record.updated_at
     assert record.context_window_tokens == 100_000
-    local = ActiveSession(
-        record.id, d.world.root, SessionStore(d.world.directory), record
-    )
-    expected, actual = io.StringIO(), io.StringIO()
+    actual = io.StringIO()
     print_session_info(
-        build_console(expected), local, backend=SessionBackend(object(), local)
-    )
-    print_session_info(
-        build_console(actual),
-        cast_session(d.backend),
-        backend=SessionBackend.wrap(d.backend),
+        build_console(actual), cast_session(d.backend), backend=d.backend
     )
     from pathlib import Path
 
@@ -125,8 +116,7 @@ def test_daemon_info_matches_every_in_process_line(interactive_daemon, monkeypat
         .replace("<CREATED>", record.created_at)
         .replace("<UPDATED>", record.updated_at)
     )
-    assert expected.getvalue() == frozen
-    assert actual.getvalue() == expected.getvalue()
+    assert actual.getvalue() == frozen
     assert f"Database: {d.world.directory / 'yoke.db'}" in actual.getvalue()
     assert "Conversation entries: 0" not in actual.getvalue()
     assert "Context window: 100000 tokens" in actual.getvalue()

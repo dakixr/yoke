@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yoke.cli.backend.events import agent_event, event_from_sse
 from yoke.cli.interactive.renderer import PromptToolkitLiveRenderer
 from yoke.cli.render.provider_events import format_provider_event
 
@@ -39,16 +40,21 @@ def test_prompt_renderer_emits_provider_warning() -> None:
         set_status=statuses.append,
     )
 
-    renderer.handle_event(
-        "provider_rate_limited",
-        {
-            "provider": "demo",
-            "model": "gpt-test",
-            "attempt": 1,
-            "max_retries": 8,
-            "wait_seconds": 3.0,
-        },
+    event, payload = agent_event(
+        event_from_sse(
+            {
+                "type": "session.provider.rate_limited",
+                "data": {
+                    "provider": "demo",
+                    "model": "gpt-test",
+                    "attempt": 1,
+                    "max_retries": 8,
+                    "wait_seconds": 3.0,
+                },
+            }
+        )
     )
+    renderer.handle_event(event, payload)
 
     assert tools == []
     assert warnings == ["demo:gpt-test rate limited; retry 1/8; waiting 3.0s"]
