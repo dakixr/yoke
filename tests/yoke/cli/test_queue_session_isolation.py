@@ -18,11 +18,15 @@ from yoke.cli.render import build_console
 from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.session.queue import load_prompt_queue_snapshot
 
-from .support import CaptureStream, FakeAgent, active_session_for
+from .support import CaptureStream
+from .terminal_daemon_support import session_for, terminal as terminal
 
 
-def test_new_session_does_not_inherit_previous_session_queue(tmp_path: Path) -> None:
-    active_session = active_session_for(tmp_path)
+def test_new_session_does_not_inherit_previous_session_queue(
+    tmp_path: Path, terminal
+) -> None:
+    backend = terminal.backend("source", root=tmp_path)
+    active_session = session_for(backend)
     persist_prompt_queue(
         active_session,
         [PendingPrompt("old session item", id="old-item", paused=True)],
@@ -40,7 +44,7 @@ def test_new_session_does_not_inherit_previous_session_queue(tmp_path: Path) -> 
     new_session = process_prompt_toolkit_prompt(
         "/new",
         state=state,
-        agent=FakeAgent(),
+        agent=backend,
         active_session_ref=active_session_ref,
         scrollback_console=build_console(CaptureStream()),
         state_lock=Lock(),
@@ -59,19 +63,22 @@ def test_new_session_does_not_inherit_previous_session_queue(tmp_path: Path) -> 
     assert state.queue_revision == 0
     assert state.queue_session_id == new_session.id
     old_queue = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        terminal.store.directory,
         active_session.id,
     )
     new_queue = load_prompt_queue_snapshot(
-        new_session.store.directory,
+        terminal.store.directory,
         new_session.id,
     )
     assert [item.prompt for item in old_queue.prompts] == ["old session item"]
     assert new_queue.prompts == []
 
 
-def test_idle_fork_switches_messages_session_and_queue_mirror(tmp_path: Path) -> None:
-    active_session = active_session_for(tmp_path)
+def test_idle_fork_switches_messages_session_and_queue_mirror(
+    tmp_path: Path, terminal
+) -> None:
+    backend = terminal.backend("source", root=tmp_path)
+    active_session = session_for(backend)
     persist_prompt_queue(
         active_session,
         [PendingPrompt("source-only item", id="source-item", paused=True)],
@@ -89,7 +96,7 @@ def test_idle_fork_switches_messages_session_and_queue_mirror(tmp_path: Path) ->
     forked = process_prompt_toolkit_prompt(
         "/fork",
         state=state,
-        agent=FakeAgent(),
+        agent=backend,
         active_session_ref=active_session_ref,
         scrollback_console=build_console(CaptureStream()),
         state_lock=Lock(),
@@ -109,7 +116,7 @@ def test_idle_fork_switches_messages_session_and_queue_mirror(tmp_path: Path) ->
     assert state.queue_revision == 0
     assert state.queue_session_id == forked.id
     source_queue = load_prompt_queue_snapshot(
-        active_session.store.directory,
+        terminal.store.directory,
         active_session.id,
     )
     assert [item.id for item in source_queue.prompts] == ["source-item"]

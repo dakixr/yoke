@@ -34,6 +34,7 @@ from yoke.cli.backend.values import TreeNavigationResult
 from yoke.cli.runtime import ActiveSession
 from yoke.http.models.session import (
     SessionInfo,
+    SessionCreateResponse,
     SessionResponse,
 )
 from yoke.http.models.skill import SkillInfo, SkillListResponse
@@ -274,7 +275,7 @@ class DaemonSessionBackend:
         return self.session
 
     def new(self) -> DaemonActiveSession:
-        data = SessionResponse.model_validate(
+        data = SessionCreateResponse.model_validate(
             self.connection.request(
                 "POST",
                 "session",
