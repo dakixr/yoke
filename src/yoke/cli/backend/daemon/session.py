@@ -58,6 +58,7 @@ class DaemonSessionBackend:
         return self._session
 
     def select_session(self, session: DaemonActiveSession) -> None:
+        self.connection.select_session(session.id)
         self._session = session
 
     def refresh_session(self) -> None:
@@ -266,7 +267,7 @@ class DaemonSessionBackend:
                 json={"location": {"directory": str(self.session.root)}},
             )
         ).data
-        self.connection.session_id = data.id
+        self.connection.select_session(data.id)
         self._session = DaemonActiveSession(self, data)
         return self.session
 
@@ -281,7 +282,7 @@ class DaemonSessionBackend:
                 },
             )
         ).data
-        self.connection.session_id = data.id
+        self.connection.select_session(data.id)
         self._session = DaemonActiveSession(self, data)
         return self.session
 

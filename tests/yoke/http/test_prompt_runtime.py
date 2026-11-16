@@ -468,7 +468,7 @@ def test_http_prompt_propagates_session_usage_attribution(tmp_path: Path) -> Non
         assert waited.status_code == 200
 
     context = controller.usage_contexts["attribute this"]
-    assert context.surface == "http"
+    assert context.surface == "web"
     assert context.session_id == "http-session"
     assert context.session_title == "HTTP attribution title"
 
@@ -818,7 +818,7 @@ def test_consuming_last_prompt_preserves_queue_revision(tmp_path: Path) -> None:
         assert promoted.id == "inp-first"
         empty = client.get("/api/v1/session/session-a/queue", headers=_auth())
         assert empty.status_code == 200
-        assert empty.json()["data"] == {"revision": 2, "items": []}
+        assert empty.json()["data"] == {"revision": 2, "items": [], "pendingImages": []}
 
         second = client.post(
             "/api/v1/session/session-a/prompt",

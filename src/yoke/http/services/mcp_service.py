@@ -40,6 +40,7 @@ class McpService:
         directory: str | None,
         session_id: str | None,
         include_tools: bool,
+        include_disabled_tools: bool = False,
     ) -> McpListResponse:
         lease = (
             workspace_lease(self.store, session_id)
@@ -78,7 +79,28 @@ class McpService:
                     )
                 )
                 try:
-                    payload = manager.inspect(include_schemas=True)
+                    if include_disabled_tools:
+                        servers = []
+                        for server in config.enabled_servers:
+                            entry: dict[str, object] = {
+                                "name": server.name,
+                                "status": "ready",
+                            }
+                            try:
+                                entry["tools"] = [
+                                    {
+                                        "name": tool.name,
+                                        "description": tool.description,
+                                        "input_schema": tool.input_schema,
+                                    }
+                                    for tool in manager.list_configured_tools(server)
+                                ]
+                            except Exception as exc:
+                                entry.update(status="error", error=str(exc), tools=[])
+                            servers.append(entry)
+                        payload = {"servers": servers}
+                    else:
+                        payload = manager.inspect(include_schemas=True)
                 finally:
                     manager.close()
                 servers = payload.get("servers") if isinstance(payload, dict) else None

@@ -190,7 +190,12 @@ class SessionOperations:
         record, agent = self._primary()
         try:
             with (
-                http_session_usage_metric_context(record),
+                http_session_usage_metric_context(
+                    record,
+                    surface=self.resources.client_session.config.kind
+                    if self.resources.client_session
+                    else "web",
+                ),
                 self.events.privacy.scope(),
                 execution_environment(self.resources.environment(record)),
             ):
@@ -241,7 +246,12 @@ class SessionOperations:
     def _compact_sync(self) -> dict[str, object]:
         record, agent = self._primary()
         with (
-            http_session_usage_metric_context(record),
+            http_session_usage_metric_context(
+                record,
+                surface=self.resources.client_session.config.kind
+                if self.resources.client_session
+                else "web",
+            ),
             execution_environment(self.resources.environment(record)),
         ):
             compacted = force_compact_agent(

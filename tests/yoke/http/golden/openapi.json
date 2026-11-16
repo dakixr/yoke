@@ -2867,6 +2867,13 @@
             "title": "Items",
             "type": "array"
           },
+          "pendingImages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pendingimages",
+            "type": "array"
+          },
           "revision": {
             "title": "Revision",
             "type": "integer"
@@ -3061,6 +3068,13 @@
       "QueuePatchRequest": {
         "additionalProperties": false,
         "properties": {
+          "admissions": {
+            "items": {
+              "$ref": "#/components/schemas/PromptAdmissionRequest"
+            },
+            "title": "Admissions",
+            "type": "array"
+          },
           "expectedRevision": {
             "minimum": 0.0,
             "title": "Expectedrevision",
@@ -3072,6 +3086,25 @@
             },
             "title": "Operations",
             "type": "array"
+          },
+          "pendingImages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pendingimages"
+          },
+          "resume": {
+            "default": true,
+            "title": "Resume",
+            "type": "boolean"
           }
         },
         "required": [
@@ -7107,6 +7140,16 @@
               "title": "Includetools",
               "type": "boolean"
             }
+          },
+          {
+            "in": "query",
+            "name": "includeDisabledTools",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Includedisabledtools",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -7132,6 +7175,44 @@
           }
         },
         "summary": "List Session Mcp Servers"
+      },
+      "patch": {
+        "description": "Reload client-edited MCP files while retaining session tool selection.",
+        "operationId": "refreshSessionMcp",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Session Mcp"
       }
     },
     "/api/v1/session/{session_id}/mcp/{server_name}": {

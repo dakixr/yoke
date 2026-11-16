@@ -324,6 +324,7 @@ class PendingInputService:
                 {"inputID": admission.id, "delivery": admission.delivery},
                 location=record.root,
             )
+            admission.queue_position = index
             admission.state = "promoted"
             admission.promoted_seq = (
                 promoted.durable.seq if promoted.durable is not None else None

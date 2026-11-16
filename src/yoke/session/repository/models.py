@@ -29,7 +29,8 @@ class SessionRecord(BaseModel):
 
     version: int = 5
     id: str
-    origin: str = "cli"
+    # SQLite provenance is not part of the frozen legacy record projection.
+    origin: str = Field(default="cli", exclude=True)
     conversation_entries: list[ConversationEntry] = Field(default_factory=list)
     leaf_id: str | None = None
     active_skills: list[ActiveSkill] = Field(default_factory=list)
@@ -82,7 +83,8 @@ class SessionIndexEntry(BaseModel):
     """Searchable session summary stored in the CLI session index."""
 
     id: str
-    origin: str = "cli"
+    # SQLite provenance is not part of the frozen legacy record projection.
+    origin: str = Field(default="cli", exclude=True)
     root: str | None = None
     title: str | None = None
     created_at: str | None = None

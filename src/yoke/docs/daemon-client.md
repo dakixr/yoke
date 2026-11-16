@@ -243,7 +243,10 @@ for that error event, which follows `session.prompt.settled`.
 `/tools` reads `GET /tool?sessionID=...` and applies the visible selection with
 `PATCH /session/{id}/tool`. Capability grouping, source paths and hidden tools
 retain their terminal behavior. `/mcp` reads the session MCP catalog and changes
-session policy with `PATCH /session/{id}/mcp/{server}`. Repo and global config
+session policy with `PATCH /session/{id}/mcp/{server}`. Terminal tool inspection
+sets `includeDisabledTools=true` alongside `includeTools=true`, so disabled tools
+remain visible and can be enabled again. The ordinary catalog keeps its filtered
+view. Repo and global config
 edits happen in the terminal process. `PATCH /session/{id}/mcp` then reloads
 persisted MCP configuration while retaining other session tool choices.
 
@@ -258,4 +261,11 @@ Usage records identify the attachment captured when an input was admitted:
 `cli`, `web` or `acp`. Reattachment and later clients cannot change that input's
 accounting. Automatic title requests inherit the same attribution. Sessions
 created with a client store its kind in `sessions.origin`; creation without a
-client records `web`. Resuming a session preserves its original origin.
+client records `web`. Resuming a session preserves its original origin. Origin
+is SQLite metadata; the frozen legacy record JSON format stays unchanged.
+
+
+The terminal moves its event stream and owner attachment on `/new` and `/fork`,
+resetting the durable sequence cursor for the newly selected session. A blocked
+promoted input records its queue position and returns paused at that position,
+so earlier paused items keep their order.

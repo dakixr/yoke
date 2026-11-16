@@ -40,12 +40,14 @@ def list_session_mcp_servers(
     request: Request,
     session_id: str,
     include_tools: bool = Query(default=False, alias="includeTools"),
+    include_disabled_tools: bool = Query(default=False, alias="includeDisabledTools"),
 ) -> McpListResponse:
     service: McpService = request.app.state.mcp_service
     return service.list(
         directory=None,
         session_id=session_id,
         include_tools=include_tools,
+        include_disabled_tools=include_disabled_tools,
     )
 
 

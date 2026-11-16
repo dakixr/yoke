@@ -9,7 +9,7 @@ import pytest
 
 from yoke.cli.interactive import mcp_menu, tools_menu
 from yoke.cli.render import build_console
-from yoke.mcp.manager import McpManager
+from yoke.mcp.manager import McpManager, McpToolInfo
 
 from .support import CaptureStream
 from .terminal_daemon_support import TerminalDaemon, terminal as terminal
@@ -92,6 +92,13 @@ def test_mcp_menu_changes_daemon_policy_and_persisted_config(
             ]
         },
     )
+    monkeypatch.setattr(
+        McpManager,
+        "list_configured_tools",
+        lambda *args, **kwargs: (
+            McpToolInfo(name="echo", description="Echo the input", input_schema={}),
+        ),
+    )
     backend = terminal.backend("mcp", root=tmp_path)
     monkeypatch.setattr(mcp_menu, "_select_mcp_server", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -140,3 +147,63 @@ def test_mcp_menu_changes_daemon_policy_and_persisted_config(
             if action == "server"
             else "echo" in written.read_text()
         )
+
+
+@pytest.mark.parametrize("allowlist", [None, [], ["echo"]])
+def test_mcp_menu_can_reenable_a_disabled_tool(
+    tmp_path: Path, monkeypatch, terminal, allowlist
+) -> None:
+    config = tmp_path / ".yoke" / "mcp.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "fixture": {
+                        "command": "unused",
+                        "enabled_tools": allowlist,
+                        "disabled_tools": ["echo"],
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(
+        McpManager,
+        "list_configured_tools",
+        lambda *args, **kwargs: (
+            McpToolInfo(name="echo", description="Echo the input", input_schema={}),
+        ),
+    )
+    backend = terminal.backend("reenable", root=tmp_path)
+    selections = iter([0, None])
+    monkeypatch.setattr(mcp_menu, "_select_mcp_server", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        mcp_menu,
+        "_select_mcp_server_action",
+        lambda server: mcp_menu.McpServerAction("tools", "tools", "test"),
+    )
+
+    def select(rows, **kwargs):
+        assert rows[0].name == "echo"
+        value = next(selections)
+        assert rows[0].enabled is (value is None)
+        return rows[0] if value == 0 else None
+
+    monkeypatch.setattr(mcp_menu, "select_table_item_interactive", select)
+    monkeypatch.setattr(
+        mcp_menu,
+        "_select_mcp_scope",
+        lambda **kwargs: mcp_menu._scope_for_action("session", root=tmp_path),
+    )
+    stream = CaptureStream()
+    mcp_menu.handle_mcp_menu(
+        agent=backend,
+        console=build_console(stream),
+        root=tmp_path,
+        initial_server="fixture",
+    )
+    server = backend.mcp(tmp_path).config().servers[0]
+    assert server.disabled_tools == ()
+    assert server.enabled_tools == (("echo",) if allowlist is not None else None)
+    assert "toggled" in stream.getvalue()

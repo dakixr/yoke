@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import cast
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
@@ -34,9 +33,7 @@ def http_session_usage_metric_context(
 ) -> Iterator[UsageMetricContext]:
     """Attribute an HTTP-owned provider call to its Yoke session."""
     with usage_metric_context(
-        surface=surface
-        or current_usage_metric_context().surface
-        or cast(UsageSurface, record.origin),
+        surface=surface or current_usage_metric_context().surface or "web",
         session_id=record.id,
         session_title=record.title or fallback_session_title(prompt),
     ) as context:

@@ -76,7 +76,27 @@ class DaemonPromptQueue:
             raise PromptQueueRevisionConflict(
                 expected_revision=expected, actual_revision=loaded.revision
             )
-        if prompts == loaded.prompts and pending_images == loaded.pending_images:
+        same_prompts = len(prompts) == len(loaded.prompts) and all(
+            (
+                left.id,
+                left.prompt,
+                left.kind,
+                left.paused,
+                left.continuation,
+                left.attachments,
+            )
+            == (
+                right.id,
+                right.prompt,
+                right.kind,
+                right.paused,
+                right.continuation,
+                right.attachments,
+            )
+            and (left.user_message is None or not left.user_message.has_image_inputs())
+            for left, right in zip(prompts, loaded.prompts, strict=True)
+        )
+        if same_prompts and pending_images == loaded.pending_images:
             return expected
         admissions: list[PromptAdmissionRequest] = []
         existing = {item.id: item for item in loaded.prompts}
