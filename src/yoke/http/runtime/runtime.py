@@ -155,6 +155,7 @@ class SessionRuntime:
             start=self.start,
             automatic_title=self.automatic_title,
             workers=self.workers,
+            message_index=message_index,
         )
         self.reserve_input = self.inputs.reserve_input
         self.idle_mutation = self.operations.idle_mutation

@@ -125,8 +125,11 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
         checkpoints.append(
             [
                 entry.message.model_dump_json()
-                for entry in active_branch_entries(
-                    record.conversation_entries, leaf_id=record.leaf_id
+                for entry in (
+                    active_branch_entries(
+                        record.conversation_entries, leaf_id=record.leaf_id
+                    )
+                    or []
                 )
                 if entry.message is not None
             ]
@@ -189,8 +192,11 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
         instruction,
         *[
             entry.message.model_dump_json()
-            for entry in active_branch_entries(
-                record.conversation_entries, leaf_id=record.leaf_id
+            for entry in (
+                active_branch_entries(
+                    record.conversation_entries, leaf_id=record.leaf_id
+                )
+                or []
             )
             if entry.message is not None
         ],
@@ -205,3 +211,54 @@ def test_shared_turn_runner_preserves_legacy_prompt_provider_projection(
         assert "selected branch summary" in serialized
     if scenario == "tools_checkpoint":
         assert checkpoints
+
+
+@pytest.mark.parametrize(
+    "scenario_name",
+    [
+        "tools",
+        "inline_skill",
+        "images_supported",
+        "checkpoint_stop",
+        "manual_compaction",
+        "tree_navigation",
+    ],
+)
+def test_indexed_model_selection_matches_full_snapshot_provider_projection(
+    tmp_path, monkeypatch, scenario_name
+):
+    """Compare requests/cache scope with the established full-snapshot selection."""
+    from fastapi import FastAPI
+    from typing import cast
+    from tests.yoke.provider_projection.drivers import Daemon
+    from tests.yoke.provider_projection.golden import Normalizer, encode
+    from tests.yoke.provider_projection.recording import Tape, answer
+    from tests.yoke.provider_projection.runtime import World
+    from tests.yoke.provider_projection.test_oracle import scenario
+
+    recordings = []
+    for indexed in (False, True):
+        directory = tmp_path / ("indexed" if indexed else "full-snapshot")
+        monkeypatch.setenv("YOKE_SESSION_DIR", str(directory))
+        world = World(tmp_path / f"workspace-{indexed}", directory, scenario_name, Tape())
+        normalizer = Normalizer(world.root)
+        driver = Daemon(world)
+        try:
+            scenario(driver, scenario_name, normalizer)
+            runtime = cast(
+                FastAPI, driver.client.app
+            ).state.runtime_registry.get_or_start(driver.session_id)
+            if not indexed:
+                runtime.operations.message_index = None
+            driver.request(
+                f"/session/{driver.session_id}/selection",
+                {"provider": "oracle", "model": "oracle-vision"},
+            )
+            world.tape.expect(answer("Selected-model continuation."))
+            driver.prompt("Continue with every accepted instruction and checkpoint.")
+            normalizer.register(SessionStore(directory).load(driver.session_id))
+            recordings.append(encode(normalizer.normalize(world.tape.calls)))
+            assert not world.tape.steps
+        finally:
+            driver.close()
+    assert recordings[0] == recordings[1]

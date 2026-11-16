@@ -353,18 +353,31 @@ class DaemonSessionBackend:
         *,
         args: CLIArgs,
         messages: list[Message],
-    ) -> tuple[ProviderSessionState, list[Message], None]:
-        del args, messages
+    ) -> tuple[ProviderSessionState, list[Message], OSError | None]:
+        del args
         provider, _, model = qualified_model_id.partition(":")
-        self.connection.session_request(
-            "POST",
-            "/selection",
-            json={
-                "provider": provider,
-                "model": model,
-                "reasoningEffort": reasoning_effort,
-            },
-        )
+        try:
+            self.connection.session_request(
+                "POST",
+                "/selection",
+                json={
+                    "provider": provider,
+                    "model": model,
+                    "reasoningEffort": reasoning_effort,
+                },
+            )
+        except DaemonRequestError as exc:
+            error = exc.body.get("error", {})
+            if error.get("code") != "selection_metadata_not_saved":
+                raise
+            details = error["details"]
+            state = ProviderSessionState(
+                provider_name=details["provider"],
+                model_id=details["model"],
+                reasoning_effort=details["reasoningEffort"],
+                context_window_tokens=details["contextWindowTokens"],
+            )
+            return state, messages, OSError(str(exc))
         self.refresh_session()
         record = self.session.record
         return (

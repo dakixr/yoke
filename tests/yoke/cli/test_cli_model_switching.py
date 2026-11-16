@@ -26,14 +26,13 @@ from yoke.cli.interactive.model_commands import _switch_model
 from yoke.cli.providers.state import set_agent_model
 from yoke.cli.providers.state import switch_agent_provider_model
 from yoke.cli.render import build_console
-from yoke.cli.runtime import persist_session_state
-from yoke.cli.runtime import ActiveSession
 from yoke.session.repository import SessionRecord
 from yoke.session import SessionStore
 
 from tests.yoke.session_rows import stored_entry_bytes
 
 from .support import active_session_for
+from .terminal_daemon_support import terminal as terminal, session_for
 
 
 @dataclass
@@ -91,11 +90,13 @@ class SwitchableProvider:
 
 
 def test_model_switch_large_session_writes_only_metadata(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, terminal
 ) -> None:
-    store = SessionStore(tmp_path / "sessions")
+    store = terminal.store
     record = SessionRecord(
         id="large",
+        created_at="2099-01-01T00:00:00+00:00",
+        updated_at="2099-01-01T00:00:00+00:00",
         root=str(tmp_path),
         conversation_entries=[
             ConversationEntry(kind="user", message=Message.user("x" * 1024))
@@ -104,24 +105,22 @@ def test_model_switch_large_session_writes_only_metadata(
     )
     assert store.insert_record(record)
     history = stored_entry_bytes(store, record.id)
-    active_session = ActiveSession(record.id, tmp_path, store, record)
-    agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
+    terminal.factory = lambda _record: RuntimeAgent(
+        provider=SwitchableProvider(), tools=[]
+    )
+    backend = terminal.backend(record.id, root=tmp_path)
+    active_session = session_for(backend)
 
     def fail(*_args: object, **_kwargs: object) -> Never:
         raise AssertionError("full session path was used")
 
-    monkeypatch.setattr("yoke.cli.backend.session.capture_agent_state", fail)
-    monkeypatch.setattr(
-        "yoke.cli.backend.session.persist_session_state",
-        fail,
-    )
     monkeypatch.setattr(SessionStore, "load", fail)
     monkeypatch.setattr(SessionStore, "save", fail)
 
     result = _switch_model(
         "demo:gpt-b",
         "low",
-        agent=agent,
+        agent=backend,
         active_session=active_session,
         messages=[],
         console=build_console(StringIO()),
@@ -135,20 +134,23 @@ def test_model_switch_large_session_writes_only_metadata(
 
 
 def test_model_switch_survives_metadata_write_failure(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, terminal
 ) -> None:
-    agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
-    active_session = active_session_for(tmp_path)
+    provider = SwitchableProvider()
+    terminal.factory = lambda _record: RuntimeAgent(provider=provider, tools=[])
+    backend = terminal.backend("metadata-failure", root=tmp_path)
+    active_session = session_for(backend)
     output = StringIO()
     monkeypatch.setattr(
-        "yoke.cli.runtime.session.save_active_session_metadata",
+        SessionStore,
+        "set_selection",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
     )
 
     result = _switch_model(
         "demo:gpt-b",
         None,
-        agent=agent,
+        agent=backend,
         active_session=active_session,
         messages=[],
         console=build_console(output),
@@ -156,8 +158,8 @@ def test_model_switch_survives_metadata_write_failure(
     )
 
     assert result == []
-    assert isinstance(agent.provider, SwitchableProvider)
-    assert agent.provider.config.model == "gpt-b"
+    assert isinstance(provider, SwitchableProvider)
+    assert provider.config.model == "gpt-b"
     assert "metadata was not saved" in output.getvalue()
 
 
@@ -282,44 +284,39 @@ def test_session_store_can_clear_stale_reasoning_effort(tmp_path: Path) -> None:
 
 
 def test_model_state_save_preserves_interrupted_user_correction(
-    tmp_path: Path,
+    tmp_path: Path, terminal
 ) -> None:
     initial_messages = [
         Message.user("remove row grouping"),
         Message.assistant("Row grouping removed."),
     ]
     initial_entries = conversation_entries_from_messages(initial_messages)
-    agent = RuntimeAgent(
-        provider=SwitchableProvider(),
-        tools=[],
-        conversation_entries=initial_entries,
-    )
-    active_session = active_session_for(tmp_path)
-    persist_session_state(
-        active_session,
-        agent,
-        initial_messages,
-        conversation_entries=initial_entries,
-    )
     interrupted_messages, interrupted_entries = interrupted_turn_snapshot(
         messages=initial_messages,
         entries=initial_entries,
         user_message=Message.user("Fix the outcome cell styling."),
     )
-    persist_session_state(
-        active_session,
-        agent,
+    terminal.store.save(
+        "interrupted-selection",
         interrupted_messages,
+        root=tmp_path,
         conversation_entries=interrupted_entries,
     )
-
-    persist_session_state(active_session, agent, interrupted_messages)
-
-    record = active_session.store.load(active_session.id)
-    branch = active_branch_entries(
-        record.conversation_entries,
-        leaf_id=record.leaf_id,
+    terminal.factory = lambda _record: RuntimeAgent(
+        provider=SwitchableProvider(), tools=[]
     )
+    backend = terminal.backend("interrupted-selection", root=tmp_path)
+    _switch_model(
+        "demo:gpt-b",
+        None,
+        agent=backend,
+        active_session=session_for(backend),
+        messages=interrupted_messages,
+        console=build_console(StringIO()),
+        args=CLIArgs(root=str(tmp_path)),
+    )
+    record = terminal.store.load(backend.session.id)
+    branch = active_branch_entries(record.conversation_entries, leaf_id=record.leaf_id)
     assert [
         message.plain_text_content
         for message in transcript_messages_from_entries(branch)
@@ -329,6 +326,7 @@ def test_model_state_save_preserves_interrupted_user_correction(
         "Fix the outcome cell styling.",
         INTERRUPTED_TURN_NOTICE,
     ]
+    assert backend.session.record.model_id == "gpt-b"
 
 
 def test_model_switch_keeps_bounded_user_epoch_for_equal_window() -> None:
@@ -446,6 +444,7 @@ def test_model_switch_compacts_for_smaller_target() -> None:
 
 def test_interactive_model_switch_adopts_and_persists_compacted_state(
     tmp_path: Path,
+    terminal,
 ) -> None:
     class ShrinkingProvider(SmallTargetProvider):
         def complete(
@@ -469,21 +468,25 @@ def test_interactive_model_switch_adopts_and_persists_compacted_state(
         ),
         messages=original_messages,
     )
-    active_session = active_session_for(tmp_path)
-    persist_session_state(active_session, agent, original_messages)
+    terminal.store.save("compacted-selection", original_messages, root=tmp_path)
+    terminal.factory = lambda _record: agent
+    backend = terminal.backend("compacted-selection", root=tmp_path)
+    active_session = session_for(backend)
 
     updated_messages = _switch_model(
         "demo:gpt-b",
         None,
-        agent=agent,
+        agent=backend,
         active_session=active_session,
         messages=original_messages,
         console=build_console(StringIO()),
         args=CLIArgs(root=str(tmp_path)),
     )
 
-    record = active_session.store.load(active_session.id)
-    assert updated_messages == agent.messages
+    record = terminal.store.load(active_session.id)
+    assert [message.text_content() for message in updated_messages] == [
+        message.text_content() for message in backend.messages()
+    ]
     persisted_runtime = project_conversation(
         record.conversation_entries,
         leaf_id=record.leaf_id,
@@ -534,12 +537,15 @@ def test_model_switch_rolls_back_context_when_auto_compaction_fails() -> None:
 
 
 def test_model_switch_with_owned_context_does_not_copy_the_transcript(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, terminal
 ):
     agent = RuntimeAgent(provider=SwitchableProvider(), tools=[])
     active = active_session_for(tmp_path)
     history = [Message.user("keep the owned conversation"), Message.assistant("saved")]
-    agent.load_conversation(messages=history)
+    terminal.store.save("owned-selection", history, root=tmp_path)
+    terminal.factory = lambda _record: agent
+    backend = terminal.backend("owned-selection", root=tmp_path)
+    active = session_for(backend)
 
     def fail(_self):
         raise AssertionError("metadata switch copied the owned transcript")
@@ -550,13 +556,15 @@ def test_model_switch_with_owned_context_does_not_copy_the_transcript(
         updated = _switch_model(
             "demo:gpt-b",
             None,
-            agent=agent,
+            agent=backend,
             active_session=active,
             messages=history,
             console=build_console(output),
             args=CLIArgs(root=str(tmp_path)),
         )
-        assert updated is history
+        assert [message.text_content() for message in updated] == [
+            message.text_content() for message in history
+        ]
         assert active.record.model_id == "gpt-b"
         assert "model switched" in output.getvalue()
     finally:

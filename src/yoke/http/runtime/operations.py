@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import sqlite3
 from collections.abc import Callable
 from concurrent.futures import Executor
 from datetime import UTC, datetime
@@ -26,6 +27,8 @@ from yoke.agent.skills.paths import default_skill_dirs
 from yoke.http.errors import ApiError, session_not_found
 from yoke.http.models.client_session import ClientSessionRequest
 from yoke.http.runtime.admission import TurnAdmission
+from yoke.http.reads.message_index import SessionMessageIndex
+from yoke.http.runtime.start import indexed_runtime_start
 from yoke.http.runtime.factory import http_session_usage_metric_context
 from yoke.http.runtime.persistence import TurnPersistence, run_blocking
 from yoke.http.runtime.resources import SessionRuntimeResources
@@ -75,6 +78,7 @@ class SessionOperations:
         start: Callable[[ReservedInput], None],
         automatic_title: SessionTitleAutomation,
         workers: WorkerTracker,
+        message_index: SessionMessageIndex | None = None,
     ) -> None:
         self.session_id = session_id
         self.store = store
@@ -90,6 +94,7 @@ class SessionOperations:
         self.start = start
         self.automatic_title = automatic_title
         self.workers = workers
+        self.message_index = message_index
 
     async def idle_mutation[T](self, mutation: Callable[[], T]) -> T:
         """Exclude prompt starts and workspace relocation during a storage mutation."""
@@ -187,7 +192,24 @@ class SessionOperations:
         model_id: str,
         reasoning_effort: str | None,
     ) -> ProviderSessionState:
-        record, agent = self._primary()
+        indexed = indexed_runtime_start(
+            self.store, self.message_index, self.session_id, has_attachments=False
+        )
+        if indexed is not None:
+            record = indexed.record
+            agent = self.resources.ensure_primary(
+                record, load_state=True, active_entries=indexed.entries
+            )
+        else:
+            summary = self.store.summary_record(self.session_id)
+            if summary is not None and summary.leaf_id is None:
+                record = summary
+                agent = self.resources.ensure_primary(
+                    record, load_state=True, active_entries=[]
+                )
+            else:
+                record, agent = self._primary()
+        before = agent.conversation_marker
         try:
             with (
                 http_session_usage_metric_context(record),
@@ -204,14 +226,33 @@ class SessionOperations:
                 )
         finally:
             self.resources.register_provider(agent.provider)
-        updated = self.store.set_selection(
-            self.session_id,
-            provider_name=state.provider_name,
-            model_id=state.model_id,
-            reasoning_effort=state.reasoning_effort,
-            context_window_tokens=state.context_window_tokens,
-            existing_record=record,
-        )
+        if agent.conversation_marker != before:
+            self.persistence.persist_entries(
+                agent.conversation_entries,
+                input_id=None,
+                active_skills=agent.active_skills,
+            )
+        try:
+            updated = self.store.set_selection(
+                self.session_id,
+                provider_name=state.provider_name,
+                model_id=state.model_id,
+                reasoning_effort=state.reasoning_effort,
+                context_window_tokens=state.context_window_tokens,
+                existing_record=record,
+            )
+        except (OSError, sqlite3.Error) as exc:
+            raise ApiError(
+                507,
+                "selection_metadata_not_saved",
+                f"Model switched, but session metadata was not saved: {exc}",
+                {
+                    "provider": state.provider_name,
+                    "model": state.model_id,
+                    "reasoningEffort": state.reasoning_effort,
+                    "contextWindowTokens": state.context_window_tokens,
+                },
+            ) from exc
         self.events.durable(
             self.session_id,
             "session.selection.changed",

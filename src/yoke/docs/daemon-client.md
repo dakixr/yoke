@@ -236,3 +236,9 @@ A workspace rejection can pause an input without settling it. The terminal turn
 reader ends that attempt on `session.runtime.failed` and displays its actionable
 error; the daemon retains the paused input. For settled failures the reader waits
 for that error event, which follows `session.prompt.settled`.
+
+Model selection persists any automatic compaction before returning. An unchanged
+conversation uses indexed runtime seeds and metadata writes. If the provider
+switch succeeds but the metadata write fails, the API returns
+`selection_metadata_not_saved` with the effective selection. The terminal keeps
+the successful switch and reports the metadata failure.
