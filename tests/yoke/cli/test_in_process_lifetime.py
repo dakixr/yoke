@@ -5,6 +5,7 @@ lease ContextVars. They stay intact until those mechanisms are deleted. Daemon
 coverage of the user-visible promises:
 
 * Error-preserving cleanup and current-provider ownership:
+  test_cli_resource_ownership::test_daemon_startup_preserves_construction_error_when_provider_close_fails
   test_cli_resource_ownership::test_daemon_closes_current_provider_when_tool_close_fails
   http/test_runtime_lifetime_regressions::test_agent_close_failure_still_closes_title_provider_and_is_logged
 * Caller detachment leaves shared execution alive:

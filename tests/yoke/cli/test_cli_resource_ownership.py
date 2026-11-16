@@ -161,3 +161,39 @@ def test_daemon_closes_current_provider_when_tool_close_fails(tmp_path, monkeypa
         )
     eventually(lambda: provider.close_calls == 1)
     assert resource.close_calls == 1
+
+
+def test_daemon_startup_preserves_construction_error_when_provider_close_fails(
+    tmp_path, monkeypatch
+):
+    from .terminal_daemon_support import terminal_daemon
+    from .support import CaptureStream
+    from yoke.cli.backend.startup import run_daemon_cli
+    from yoke.cli.config import CLIArgs
+
+    provider = TrackingProvider(close_error=RuntimeError("provider close failed"))
+    monkeypatch.setattr(config_runtime, "prepare_provider_args", lambda _args: None)
+    monkeypatch.setattr(config_runtime, "_load_cli_skill_registry", lambda _root: None)
+    monkeypatch.setattr(
+        config_runtime, "build_provider_from_args", lambda _args: provider
+    )
+
+    def fail_resolution(**_kwargs):
+        raise ValueError("original configuration failure")
+
+    monkeypatch.setattr(config_runtime, "_resolve_cli_agent_config", fail_resolution)
+    with terminal_daemon(monkeypatch):
+        monkeypatch.setattr(
+            "yoke.http.services.session_startup.build_cli_agent_from_args",
+            config_runtime.build_cli_agent_from_args,
+        )
+        stderr = CaptureStream()
+        assert (
+            run_daemon_cli(
+                CLIArgs(root=str(tmp_path)), stdout=CaptureStream(), stderr=stderr
+            )
+            == 1
+        )
+        assert "original configuration failure" in stderr.getvalue()
+        assert "provider close failed" not in stderr.getvalue()
+    assert provider.close_calls == 1
