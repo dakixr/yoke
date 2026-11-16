@@ -6,6 +6,7 @@ from typing import Annotated
 from typing import Literal
 
 from pydantic import Field
+from pydantic.json_schema import SkipJsonSchema
 
 from yoke.http.models.common import ApiModel
 
@@ -24,7 +25,10 @@ class PromptInput(ApiModel):
     text: str = ""
     attachments: list[PromptAttachment] = Field(default_factory=list)
     continuation: bool = Field(default=False, strict=True)
-    skill: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Private CLI queue marker; keep the published web/ACP prompt schema stable.
+    skill: SkipJsonSchema[str | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class PromptAdmissionRequest(ApiModel):

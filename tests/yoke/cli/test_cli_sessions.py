@@ -533,7 +533,7 @@ def test_cli_fork_starts_from_source_session(
         root=tmp_path,
         title="CLI title",
         provider_name="codex",
-        model_id="gpt-5.6-sol",
+        model_id="gpt-6.1-sol",
     )
 
     exit_code = run_cli(

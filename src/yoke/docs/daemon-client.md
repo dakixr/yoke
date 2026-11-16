@@ -247,6 +247,7 @@ Queued CLI `/skill <name>` activation runs at its admitted FIFO position. It
 adds the durable skill marker without a provider call; later queued prompts see
 the newly active instructions.
 The queue adapter tags these commands with the optional durable `prompt.skill`
-field. Ordinary prompt text, including a headless literal `/skill ...`, has no
+field, a private CLI transport extension excluded from the published web/ACP
+prompt schema. Ordinary prompt text, including a headless literal `/skill ...`, has no
 tag and keeps its existing provider projection. Queue edits and admission replay
 retain the tag and its fingerprint.
