@@ -25,7 +25,6 @@ from yoke.http.runtime.turns import (
 )
 from yoke.http.services.pending_input_service import PendingInputService
 from yoke.session import SessionRecord, SessionStore
-from yoke.http.services.privacy import SessionPrivacy
 from yoke.session.admissions import AdmissionRecord
 from yoke.session.interrupt import interrupted_turn_snapshot
 
@@ -39,14 +38,12 @@ class TurnPersistence:
         store: SessionStore,
         pending_inputs: PendingInputService,
         read_cache: SessionReadCache,
-        privacy: SessionPrivacy | None = None,
     ) -> None:
         self.session_id = session_id
         self.store = store
         self.pending_inputs = pending_inputs
         self.read_cache = read_cache
         self.lock = Lock()
-        self.privacy = privacy or SessionPrivacy()
 
     def record(self) -> SessionRecord:
         """Return the shared signature-consistent record snapshot for this session."""
@@ -110,7 +107,7 @@ class TurnPersistence:
             persistence.append(
                 self.store,
                 self.session_id,
-                self.privacy.entries(entries),
+                entries,
                 input_id=input_id,
                 active_skills=active_skill_list(active_skills),
             )
@@ -123,9 +120,7 @@ class TurnPersistence:
         active_skills: object | None = None,
     ) -> None:
         current = self.record()
-        copied = [
-            entry.model_copy(deep=True) for entry in self.privacy.entries(entries)
-        ]
+        copied = [entry.model_copy(deep=True) for entry in entries]
         if input_id is not None:
             tag_input_entry(copied, input_id)
         leaf_id = copied[-1].id if copied else current.leaf_id
@@ -194,7 +189,7 @@ class TurnPersistence:
                 self.session_id,
                 existing_record=record,
                 leaf_id=suffix[-1].id,
-                appended_entries=tuple(self.privacy.entries(suffix)),
+                appended_entries=tuple(suffix),
                 clear_context_usage=False,
             )
 

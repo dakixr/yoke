@@ -13,7 +13,7 @@ Provider-bound behavior must not change: message content and order, tool sequenc
 
 | Topic | Decision |
 |---|---|
-| Tool environment | **(decided)** The attaching client sends its environment and working directory. Tools in that session use it. It is held in daemon memory only, never persisted, and redacted from events, traces and logs. |
+| Tool environment | **(decided)** The attaching client sends its environment and working directory. Tools in that session use it. The mapping and cwd are held in daemon memory only, never persisted as configuration. Secret-named values of at least eight characters are redacted from diagnostic events, traces and logs. Transcript content, including tool output that prints an environment value, remains exact. |
 | Credentials | Follows from the above: provider resolution for a session reads the client environment, not `os.environ`. A daemon under systemd has no shell API keys. |
 | Lifecycle | **(decided)** Auto-spawned by the first client. It stays up while at least one client is connected or a turn is running or queued, then exits after a short grace period (~5 s). There is no idle timer and no private mode. `--no-idle-exit` keeps it always-on for systemd. Background processes started by tools stop with the daemon, as they stop with the CLI today. |
 | Fallback | **(decided)** None. One runtime path: the daemon. |
@@ -134,7 +134,7 @@ Each phase ships on its own and leaves the app working.
 | Concurrency: CLI and web on one session; CAS conflicts return 409; cross-client interrupt; slow SSE recovers through history; SDK usage inserts during turns | 2, 4, 5 |
 | Spawn: 20 simultaneous `yoke --headless` start exactly one daemon; stale socket, stale lock, occupied port | 3 |
 | Skew: two checkouts covering idle restart, busy warn, busy refuse, newer schema | 3 |
-| Environment: two clients with different values of one variable run concurrently; a sentinel never appears in the DB or logs | 4 |
+| Environment: two clients with different values of one variable run concurrently; an unprinted credential never appears in the DB or logs, while printed nonsecret values remain exact in transcript and event history | 4 |
 | Live smoke: CLI (pty), web (browser), ACP (JSON-RPC) against one daemon on one session | 5 |
 
 Metrics recorded per phase: cold and warm attach time, time to first assistant event, resume time and RSS on the largest session, DB, WAL and freelist size, writer commit p99, SSE resync count.

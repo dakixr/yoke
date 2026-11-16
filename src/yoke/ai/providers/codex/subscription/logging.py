@@ -24,7 +24,9 @@ def log_provider_event(
             "event": event,
             "pid": os.getpid(),
             "thread_id": threading.get_ident(),
-            **sanitize_log_fields(fields),
+            **sanitize_log_fields(
+                {key: redact_observation(value) for key, value in fields.items()}
+            ),
         }
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(

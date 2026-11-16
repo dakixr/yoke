@@ -208,7 +208,7 @@ class SessionRuntimeRegistry:
             )
         return _TitleGenerationResult(
             status="generated",
-            title=self.events.privacy.text(title) if title is not None else None,
+            title=title,
         )
 
     async def activate_skill(self, session_id: str, skill_name: str) -> ActiveSkill:

@@ -26,7 +26,12 @@ import uvicorn
 from yoke.daemon.build import build_id, protocol_version
 from yoke.daemon.instance import DaemonInfo, InstanceLock, remove_info, write_info
 from yoke.daemon.lifecycle import DEFAULT_GRACE_SECONDS, DaemonLifecycle
-from yoke.daemon.log import DETACHED_ENV, detached_stdio
+from yoke.daemon.log import (
+    DETACHED_ENV,
+    daemon_logging_config,
+    detached_stdio,
+    sanitized_stdio,
+)
 from yoke.daemon.paths import DEFAULT_PORT, DaemonPaths
 from yoke.daemon.peer import peer_checked
 
@@ -161,10 +166,18 @@ class _DaemonServer(uvicorn.Server):
     """Uvicorn server that ends SSE and lease streams before shutting down."""
 
     def __init__(
-        self, config: uvicorn.Config, close_streams: Callable[[], None]
+        self,
+        config: uvicorn.Config,
+        close_streams: Callable[[], None],
+        redact: Callable[[str], str],
     ) -> None:
         super().__init__(config)
         self._close_streams = close_streams
+        self._redact = redact
+
+    def run(self, sockets: list[socket.socket] | None = None) -> None:
+        with sanitized_stdio(self._redact):
+            super().run(sockets=sockets)
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._close_streams()
@@ -195,6 +208,7 @@ def _build_server(
     config = uvicorn.Config(
         app,
         log_level="info" if verbose else "warning",
+        log_config=daemon_logging_config(app.state.event_service.privacy.text),
         access_log=verbose,
         timeout_keep_alive=KEEPALIVE_TIMEOUT_SECONDS,
         timeout_graceful_shutdown=3,
@@ -207,7 +221,7 @@ def _build_server(
         broker.close()
         lifecycle.request_exit("signal")
 
-    server = _DaemonServer(config, close_streams)
+    server = _DaemonServer(config, close_streams, app.state.event_service.privacy.text)
 
     def on_exit(_reason: str) -> None:
         broker.close()

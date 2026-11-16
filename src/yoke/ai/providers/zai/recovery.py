@@ -12,6 +12,7 @@ from yoke.ai.providers.openai_compat.content import (
     serialize_message_for_openai,
 )
 from yoke.ai.providers.zai.models import ZAIConfig
+from yoke.environment import redact_observation
 
 
 def message_text(message: Message) -> str:
@@ -196,6 +197,8 @@ class ZAIMessageRecovery:
             path = Path(self.config.debug_log_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                handle.write(
+                    json.dumps(redact_observation(record), ensure_ascii=False) + "\n"
+                )
         except OSError:
             return

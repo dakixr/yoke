@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from yoke.session import SessionStore
@@ -45,7 +47,16 @@ def test_cli_attachment_preserves_provider_messages_cache_and_continuation(
                     {
                         "owner": "terminal",
                         "kind": "cli",
-                        "env": {},
+                        "env": {
+                            **os.environ,
+                            "SHLVL": "1",
+                            "COLUMNS": "80",
+                            "LINES": "24",
+                            "MY_SHORT_SECRET": "1",
+                            "MY_API_KEY": "Handoff: preserve input.txt; verify beta.",
+                            "ANOTHER_SECRET": "Automatic handoff: verify alpha.",
+                            "ASSISTANT_TOKEN": "Recorded answer.",
+                        },
                         "cwd": str(world.root),
                     },
                     method="PUT",

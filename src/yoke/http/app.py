@@ -158,7 +158,6 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
                     session_service.close()
                 finally:
                     runtime_registry.shutdown_executor()
-                    events.privacy.close()
 
     app = FastAPI(
         title="Yoke HTTP API",
@@ -191,6 +190,7 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     app.state.tool_trace_service = ToolTraceService(
         store,
         runtime_registry,
+        privacy=events.privacy,
         read_cache=read_cache,
         message_index=message_index,
     )

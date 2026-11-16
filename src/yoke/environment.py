@@ -53,7 +53,6 @@ def project_environment(
 
     merged = dotenv_values(root)
     merged.update(values)
-    merged.setdefault("YOKE_HEADLESS", "1")
     return ExecutionEnvironment(merged, cwd)
 
 

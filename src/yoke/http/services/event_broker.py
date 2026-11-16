@@ -143,7 +143,7 @@ class EventService:
         event = self.journal.append(
             session_id,
             event_type,
-            self.privacy.data(data or {}),
+            self.privacy.event_data(event_type, data or {}),
             location=location,
         )
         public = public_event_from_session_event(event)
@@ -162,7 +162,7 @@ class EventService:
     ) -> PublicEvent:
         event = live_event(
             event_type,
-            self.privacy.data(data),
+            self.privacy.event_data(event_type, data),
             session_id=session_id,
             location=location,
         )

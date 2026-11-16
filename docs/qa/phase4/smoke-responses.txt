@@ -1,7 +1,0 @@
-Read-only SQLite query after isolated daemon exit: /tmp/yoke-phase4-smoke-mexemzz6/yoke.db
-[
-  "smoke-alpha-ok",
-  "smoke-beta-ok",
-  "smoke-detach-ok"
-]
-All three real-provider final replies verified.
