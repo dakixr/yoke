@@ -31,7 +31,6 @@ _LAZY_EXPORTS = {
     "ConversationLog": "yoke.agent.models",
     "MemorySnapshot": "yoke.agent.models",
     "PromptContext": "yoke.agent.prompting",
-    "AgentRunner": "yoke.agent.protocols",
     "AgentStateLoadError": "yoke.agent.persistence",
     "AgentStatePersistenceError": "yoke.agent.persistence",
     "AgentStateSaveError": "yoke.agent.persistence",

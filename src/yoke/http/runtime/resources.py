@@ -10,7 +10,6 @@ from threading import Lock
 from typing import TYPE_CHECKING
 
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.protocols import AgentRunner
 from yoke.http.runtime.agent_runs import SessionAgentRuns
 from yoke.agent.provider_selection import capture_provider_session_state
 from yoke.http.services.privacy import SessionPrivacy
@@ -90,7 +89,7 @@ class SessionRuntimeResources:
             else project_environment(Path(record.root or Path.cwd()), os.environ)
         )
 
-    def build_agent(self, record: SessionRecord) -> AgentRunner:
+    def build_agent(self, record: SessionRecord) -> RuntimeAgent:
         """Construct with a client environment or a copied project fallback."""
         environment = self.environment(record)
         self.privacy.register(environment.values)

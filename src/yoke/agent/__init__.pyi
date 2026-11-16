@@ -37,7 +37,6 @@ from yoke.agent.models import ConversationEntry as ConversationEntry
 from yoke.agent.models import ConversationLog as ConversationLog
 from yoke.agent.models import MemorySnapshot as MemorySnapshot
 from yoke.agent.prompting import PromptContext as PromptContext
-from yoke.agent.protocols import AgentRunner as AgentRunner
 from yoke.agent.persistence import AgentStateLoadError as AgentStateLoadError
 from yoke.agent.persistence import (
     AgentStatePersistenceError as AgentStatePersistenceError,

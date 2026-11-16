@@ -1106,6 +1106,5 @@ it selects indexed reads and falls back to the signature-consistent snapshot.
 Navigation and labels use `SessionTree` intents for both persistence formats.
 `HttpAppSettings.indexed_runtime_seed` defaults to `True`, including with an
 injected agent factory. Factories must return a `RuntimeAgent` with native session ownership.
-The former `AgentRunner` import is a compatibility alias to that runtime type. Test doubles implement
-that native interface too. Set `indexed_runtime_seed` to `False` explicitly when
+Test doubles implement that native interface too. Set `indexed_runtime_seed` to `False` explicitly when
 testing legacy snapshot startup.

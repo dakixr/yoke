@@ -7,7 +7,6 @@ from contextlib import contextmanager
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
-from yoke.agent.protocols import AgentRunner
 from yoke.ai.providers.usage_context import UsageMetricContext, usage_metric_context
 from yoke.cli.config import CLIArgs
 from yoke.cli.config.runtime import build_cli_agent_from_args
@@ -17,7 +16,7 @@ from yoke.session import SessionRecord, fallback_session_title
 from yoke.session.workspace import require_session_workspace
 
 # Every object returned by this factory is owned by its HTTP caller.
-type SessionAgentFactory = Callable[[SessionRecord], AgentRunner]
+type SessionAgentFactory = Callable[[SessionRecord], RuntimeAgent]
 
 
 @contextmanager

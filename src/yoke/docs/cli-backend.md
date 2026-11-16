@@ -9,8 +9,7 @@ into slash commands; `CommandCallbacks` contains terminal capabilities only.
 
 `SessionBackend.wrap` adapts the existing agent injection entry points and reuses
 an existing backend while the selected session changes. Production construction
-uses `RuntimeAgent`. The `AgentRunner` protocol is gone. Its old import remains a
-compatibility alias to `RuntimeAgent` until the HTTP factory import migrates.
+uses `RuntimeAgent`. The `AgentRunner` protocol and its import alias are gone.
 `runtime/contracts.py` contains only opted-in call-shape adapters for existing
 injected test doubles, with no runner protocols.
 
