@@ -157,3 +157,7 @@ only a filter. Rootless saved records require explicit relocation. Interactive
 `--fork` creates the copy through the daemon before attaching its terminal.
 A stopped runtime result stays a stopped terminal outcome, including when the
 runtime raises `AgentStoppedError` before returning a result.
+
+Strict explicit selections and headless saved selections are checked against the
+daemon model catalog before `--fork` creates a durable copy. Invalid models leave
+the source and session list unchanged.

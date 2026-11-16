@@ -73,6 +73,31 @@ def validate_selection(
             return
 
 
+def validate_fork_selection(
+    connection: SessionConnection, args: CLIArgs, root: Path
+) -> None:
+    """Reject strict model selections before creating a durable fork."""
+    selection = args.model
+    if selection is None and args.headless:
+        source = connection.request("GET", f"session/{args.fork_session_id}")["data"][
+            "selection"
+        ]
+        if source.get("provider") and source.get("model"):
+            selection = f"{source['provider']}:{source['model']}"
+    if not selection:
+        return
+    from yoke.cli.providers.selection import parse_cli_model_ref
+
+    ref = parse_cli_model_ref(selection)
+    models = connection.request(
+        "GET", "model", params={"directory": str(root), "provider": ref.provider_name}
+    )["data"]
+    if models and not any(model["id"] == ref.model for model in models):
+        raise ValueError(
+            f"Unknown model {ref.model!r} for provider {ref.provider_name!r}."
+        )
+
+
 def run_daemon_headless(
     args: CLIArgs,
     *,
@@ -118,6 +143,7 @@ def run_daemon_headless(
             info = connection.session_request("GET")["data"]
             root = Path(info["location"]["directory"])
         elif args.fork_session_id:
+            validate_fork_selection(connection, args, root)
             validate_selection(connection, args, root)
             info = connection.request(
                 "POST",
@@ -217,6 +243,7 @@ def run_daemon_interactive(
             )
         validate_selection(connection, args, root)
         if args.fork_session_id:
+            validate_fork_selection(connection, args, root)
             existing = connection.request(
                 "POST",
                 f"session/{args.fork_session_id}/fork",

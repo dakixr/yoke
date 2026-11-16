@@ -23,7 +23,7 @@ from yoke.cli.config import providers as provider_config
 from yoke.cli.main import app
 from yoke.cli.providers.state import apply_session_provider_defaults
 from yoke.cli.providers.state import ProviderSessionState
-from yoke.cli.runtime.cli import run_cli, run_resume_cli
+from yoke.cli.backend.startup import run_daemon_cli as run_cli, run_daemon_interactive
 from yoke.session import SessionStore
 
 from tests.yoke.session_rows import stored_session_bytes
@@ -36,7 +36,7 @@ from .support import CaptureStream
 
 
 @pytest.fixture(autouse=True)
-def isolate_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+def isolate_startup(monkeypatch: pytest.MonkeyPatch):
     for key in ("ZAI_API_KEY", "OPENCODE_API_KEY", "YOKE_CODEX_API_KEY"):
         monkeypatch.setenv(key, "test-key")
     monkeypatch.setattr(config_runtime, "_load_cli_skill_registry", lambda _root: None)
@@ -61,6 +61,30 @@ def isolate_startup(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(config_runtime, "_resolve_cli_agent_config", resolve)
     monkeypatch.setattr(httpx.Client, "send", reject_network)
+
+    original_request = SessionConnection.request
+
+    def request(connection, method, route, **kwargs):
+        response = original_request(connection, method, route, **kwargs)
+        if method == "POST" and route == "session":
+            connection.startup_report = response.get("startup", {})
+        return response
+
+    monkeypatch.setattr(SessionConnection, "request", request)
+
+    daemon = create_app(
+        HttpAppSettings(auth_token=None, daemon=DaemonLifecycle(idle_exit=False))
+    )
+    with serve_app(daemon) as handle:
+        monkeypatch.setattr(
+            "yoke.cli.backend.startup.SessionConnection",
+            partial(SessionConnection, discover=lambda: handle),
+        )
+        yield
+
+
+def run_resume_cli(args, session_id, **kwargs):
+    return run_daemon_interactive(args, resume_id=session_id, **kwargs)
 
 
 def write_default(root: Path, model: str) -> Path:
@@ -98,11 +122,9 @@ def test_interactive_stale_default_opens_and_keeps_config(
 
     def interactive(args, agent, messages, **kwargs) -> int:
         opened.append(agent)
-        assert args.provider_name == provider_name
-        assert args.model == default_model
-        assert args.reasoning_effort == default_effort
-        assert agent.provider.config.model == default_model
-        assert agent.provider.config.reasoning_effort == default_effort
+        assert agent.connection.startup_report["modelSource"] == "config"
+        assert agent.session.record.model_id == default_model
+        assert agent.session.record.reasoning_effort == default_effort
         assert kwargs["active_session"].record.model_id == default_model
         assert [message.text_content() for message in messages] == ["Keep my prompt"]
         return 0
@@ -117,7 +139,7 @@ def test_interactive_stale_default_opens_and_keeps_config(
 
     assert result == 0
     assert len(opened) == 1
-    assert opened[0]._closed
+    assert opened[0].connection._closed.is_set()
     assert path.read_bytes() == original
     warning = " ".join(stderr.getvalue().split())
     assert warning.count("Warning:") == 1
@@ -137,7 +159,7 @@ def test_explicit_unknown_model_does_not_recover(
     )
 
     assert run_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
-    assert args.model_source == "cli"
+    assert args.model == "zai:retired"
     assert "Unknown model 'retired'" in stderr.getvalue()
     assert "Warning:" not in stderr.getvalue()
 
@@ -185,10 +207,10 @@ def test_resume_recovers_saved_model_without_losing_history(
 
     def interactive(args, agent, messages, **kwargs) -> int:
         opened.append(agent)
-        assert args.model_source == "session"
-        assert agent.provider.provider_name == "zai"
-        assert agent.provider.config.model == "glm-5.3-flash"
-        assert agent.provider.config.reasoning_effort == "max"
+        assert agent.connection.startup_report["modelSource"] == "session"
+        assert agent.session.record.provider_name == "zai"
+        assert agent.session.record.model_id == "glm-5.3-flash"
+        assert agent.session.record.reasoning_effort == "max"
         assert [message.text_content() for message in messages] == ["old", "answer"]
         assert kwargs["active_session"].id == "saved"
         assert kwargs["replay_session"]
@@ -204,7 +226,7 @@ def test_resume_recovers_saved_model_without_losing_history(
         == 0
     )
     assert len(opened) == 1
-    assert opened[0]._closed
+    assert opened[0].connection._closed.is_set()
     assert "Saved model zai:retired" in " ".join(stderr.getvalue().split())
     assert path.read_bytes() == original
     assert [message.text_content() for message in store.load("saved").messages] == [
@@ -304,7 +326,7 @@ def test_failed_default_does_not_retry_or_switch_provider(
 
     assert run_cli(args, stdout=CaptureStream(), stderr=stderr) == 1
     assert attempts == [("zai", None, None)]
-    assert args.model == "retired"
+    assert args.model is None
     assert "broken-default" in stderr.getvalue()
     assert "Warning:" not in stderr.getvalue()
 
@@ -407,9 +429,10 @@ def register_provider(context):
         == 0
     )
 
-    assert args.provider_name == "demo"
-    assert args.model == "current"
-    assert args.reasoning_effort == "high"
+    record = SessionStore().load(SessionStore().list_index_entries()[0].id)
+    assert record.provider_name == "demo"
+    assert record.model_id == "current"
+    assert record.reasoning_effort == "high"
     assert "Started with demo:current" in " ".join(stderr.getvalue().split())
     assert path.read_bytes() == original
 
@@ -496,10 +519,10 @@ def test_named_and_forked_sessions_use_saved_selection(
     def interactive(args, agent, messages, **kwargs) -> int:
         active = kwargs["active_session"]
         opened.append(active.id)
-        assert args.model_source == "session"
-        assert agent.provider.provider_name == "zai"
-        assert agent.provider.config.model == "glm-5.3-flash"
-        assert agent.provider.config.reasoning_effort == (
+        assert agent.connection.startup_report["modelSource"] == "session"
+        assert agent.session.record.provider_name == "zai"
+        assert agent.session.record.model_id == "glm-5.3-flash"
+        assert agent.session.record.reasoning_effort == (
             "max" if saved_model == "retired" else "low"
         )
         assert active.root == (destination if fork else source_root)
@@ -577,10 +600,10 @@ def test_explicit_continuation_selection_and_effort_win(
     )
 
     def interactive(args, agent, _messages, **_kwargs) -> int:
-        assert args.model_source == "cli"
-        assert agent.provider.provider_name == "opencode-go"
-        assert agent.provider.config.model == "deepseek-v4.1-flash"
-        assert agent.provider.config.reasoning_effort == "high"
+        assert agent.connection.startup_report["modelSource"] == "cli"
+        assert agent.session.record.provider_name == "opencode-go"
+        assert agent.session.record.model_id == "deepseek-v4.1-flash"
+        assert agent.session.record.reasoning_effort == "high"
         return 0
 
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", interactive)
