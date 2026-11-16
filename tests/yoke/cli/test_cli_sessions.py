@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import Mock
 
 import pytest
 
@@ -16,17 +15,20 @@ from yoke.agent.session_tree import InvalidCurrentError
 from yoke.agent.skills.models import ActiveSkill
 from yoke.ai.providers.base import Provider
 from yoke.cli.config import CLIArgs
-from yoke.cli.backend import session as backend_session
 from yoke.cli.interactive.commands import handle_slash_command
 from yoke.cli.render import build_console
-from yoke.cli.runtime import create_active_session, run_cli
+from yoke.cli.backend.startup import run_daemon_cli as run_cli
 from yoke.session import SessionStore
 from yoke.session.legacy.importer import import_legacy_sessions
 from yoke.session.repository.models import SessionRecord
 
 from tests.yoke.session_rows import stored_entry_rows
 
-from .support import CaptureStream, FakeAgent
+from .support import CaptureStream
+from .terminal_daemon_support import (
+    session_for,
+    terminal as terminal,
+)
 
 
 def session_payload(session_dir: Path, session_id: str) -> dict[str, Any]:
@@ -143,7 +145,9 @@ def test_importer_rejects_unsupported_legacy_schema_without_rewriting(
 
 
 def test_cli_session_json_keeps_transcript_after_compaction(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
+    monkeypatch,
+    terminal,
 ) -> None:
     class CompactingProvider(Provider):
         def complete(
@@ -180,6 +184,8 @@ def test_cli_session_json_keeps_transcript_after_compaction(
         ),
     )
 
+    terminal.stack.callback(agent.close)
+    terminal.factory = lambda _record: agent.fork(include_state=False)
     exit_code = run_cli(
         CLIArgs(
             prompt="follow-up",
@@ -187,7 +193,6 @@ def test_cli_session_json_keeps_transcript_after_compaction(
             session="compact-demo",
             root=str(tmp_path),
         ),
-        agent=agent,
     )
 
     assert exit_code == 0
@@ -210,6 +215,7 @@ def test_cli_session_json_keeps_transcript_after_compaction(
 
 def test_regenerate_title_uses_conversation_and_persists_title(
     tmp_path: Path,
+    terminal,
 ) -> None:
     class TitleProvider(Provider):
         supports_image_inputs = False
@@ -226,18 +232,21 @@ def test_regenerate_title_uses_conversation_and_persists_title(
             return Message.assistant('"Investigate Automatic Session Titles"')
 
     provider = TitleProvider()
-    agent = FakeAgent(provider=provider)
+    terminal.factory = lambda record: RuntimeAgent(
+        provider, [], tool_root=Path(record.root) if record.root else None
+    )
     messages = [
         Message.user("The automatic title is stale."),
         Message.assistant("I will inspect it."),
     ]
-    active_session = create_active_session(CLIArgs(root=str(tmp_path)), root=tmp_path)
-    active_session.title = "Old title"
+    terminal.store.save("regenerate", messages, root=tmp_path, title="Old title")
+    backend = terminal.backend("regenerate", root=tmp_path)
+    active_session = session_for(backend)
     console_stream = CaptureStream()
 
     handled, returned_messages, updated_session = handle_slash_command(
         "/regenerate-title",
-        agent=agent,
+        agent=backend,
         active_session=active_session,
         messages=messages,
         console=build_console(console_stream),
@@ -256,12 +265,11 @@ def test_regenerate_title_uses_conversation_and_persists_title(
     assert "Updated session title" in console_stream.getvalue()
 
 
-def test_cli_auto_persists_unnamed_session_globally(tmp_path: Path, capsys) -> None:
-    agent = FakeAgent()
-
+def test_cli_auto_persists_unnamed_session_globally(
+    tmp_path: Path, capsys, terminal
+) -> None:
     exit_code = run_cli(
         CLIArgs(prompt="persist this", headless=True, root=str(tmp_path)),
-        agent=agent,
     )
 
     assert exit_code == 0
@@ -336,7 +344,9 @@ def test_session_save_can_clear_skills_and_skill_directories(
     assert loaded.skill_dirs == []
 
 
-def test_title_slash_command_persists_title(tmp_path: Path, monkeypatch) -> None:
+def test_title_slash_command_persists_title(
+    tmp_path: Path, monkeypatch, terminal
+) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     store = SessionStore()
@@ -347,14 +357,12 @@ def test_title_slash_command_persists_title(tmp_path: Path, monkeypatch) -> None
         root=tmp_path,
         title="Generated title",
     )
-    active_session = create_active_session(
-        CLIArgs(session="title-command", root=str(tmp_path)),
-        root=tmp_path,
-    )
+    backend = terminal.backend("title-command", root=tmp_path)
+    active_session = session_for(backend)
 
     handled, _messages, _session = handle_slash_command(
         "/title Manual title",
-        agent=FakeAgent(),
+        agent=backend,
         active_session=active_session,
         messages=messages,
         console=build_console(CaptureStream()),
@@ -365,51 +373,63 @@ def test_title_slash_command_persists_title(tmp_path: Path, monkeypatch) -> None
     assert record.title == "Manual title"
 
 
-def test_pin_slash_command_toggles_active_session(tmp_path: Path, monkeypatch) -> None:
+def test_pin_slash_command_toggles_active_session(
+    tmp_path: Path, monkeypatch, terminal
+) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     store = SessionStore()
     store.save("pin-demo", [Message.user("hello")], root=tmp_path)
-    active_session = create_active_session(
-        CLIArgs(session="pin-demo", root=str(tmp_path)),
-        root=tmp_path,
-    )
+    backend = terminal.backend("pin-demo", root=tmp_path)
+    active_session = session_for(backend)
     console_stream = CaptureStream()
     console = build_console(console_stream)
-    persist = Mock(wraps=backend_session.persist_session_state)
-    monkeypatch.setattr(backend_session, "persist_session_state", persist)
+    writes = []
+    save = SessionStore.save
+
+    def track_save(self, *args, **kwargs):
+        writes.append(args[0])
+        return save(self, *args, **kwargs)
+
+    monkeypatch.setattr(SessionStore, "save", track_save)
 
     handled, messages, updated_session = handle_slash_command(
         "/pin",
-        agent=FakeAgent(),
+        agent=backend,
         active_session=active_session,
-        messages=active_session.record.messages,
+        messages=backend.messages(),
         console=console,
     )
 
     assert handled is True
-    assert messages == active_session.record.messages
+    assert messages == backend.messages()
     assert updated_session.record.pinned is True
     loaded = store.load("pin-demo")
     assert loaded.pinned is True
     assert loaded.messages == [Message.user("hello")]
-    assert persist.call_count == 0
+    assert writes == []
     assert "Session pinned: pin-demo" in console_stream.getvalue()
 
 
-def test_pin_slash_command_persists_new_session(tmp_path: Path, monkeypatch) -> None:
+def test_pin_slash_command_persists_new_session(
+    tmp_path: Path, monkeypatch, terminal
+) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
-    active_session = create_active_session(
-        CLIArgs(root=str(tmp_path)),
-        root=tmp_path,
-    )
-    persist = Mock(wraps=backend_session.persist_session_state)
-    monkeypatch.setattr(backend_session, "persist_session_state", persist)
+    backend = terminal.backend("new-pin", root=tmp_path)
+    active_session = session_for(backend)
+    writes = []
+    save = SessionStore.save
+
+    def track_save(self, *args, **kwargs):
+        writes.append(args[0])
+        return save(self, *args, **kwargs)
+
+    monkeypatch.setattr(SessionStore, "save", track_save)
 
     handled, _messages, updated_session = handle_slash_command(
         "/pin",
-        agent=FakeAgent(),
+        agent=backend,
         active_session=active_session,
         messages=[],
         console=build_console(CaptureStream()),
@@ -421,7 +441,7 @@ def test_pin_slash_command_persists_new_session(tmp_path: Path, monkeypatch) -> 
     assert loaded.pinned is True
     assert loaded.messages == []
     assert loaded.created_at is not None
-    assert persist.call_count == 1
+    assert writes == []
 
 
 def test_session_store_fork_copies_session_without_pin(
@@ -464,30 +484,22 @@ def test_session_store_fork_copies_session_without_pin(
 
 
 def test_fork_slash_command_switches_to_persisted_copy(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
+    monkeypatch,
+    terminal,
 ) -> None:
-    class SessionAwareProvider:
-        def __init__(self) -> None:
-            self.session_ids: list[str] = []
-
-        def set_session_id(self, session_id: str) -> None:
-            self.session_ids.append(session_id)
-
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
     store = SessionStore()
     messages = [Message.user("hello"), Message.assistant("hi")]
     store.save("fork-source", messages, root=tmp_path, title="Fork title")
-    active_session = create_active_session(
-        CLIArgs(session="fork-source", root=str(tmp_path)),
-        root=tmp_path,
-    )
+    backend = terminal.backend("fork-source", root=tmp_path)
+    active_session = session_for(backend)
     console_stream = CaptureStream()
-    provider = SessionAwareProvider()
 
     handled, forked_messages, forked_session = handle_slash_command(
         "/fork",
-        agent=FakeAgent(provider=provider),
+        agent=backend,
         active_session=active_session,
         messages=messages,
         console=build_console(console_stream),
@@ -496,10 +508,10 @@ def test_fork_slash_command_switches_to_persisted_copy(
     forked = SessionStore().load(forked_session.id)
     assert handled is True
     assert forked_session.id != active_session.id
-    assert forked_messages == messages
+    assert forked_messages == backend.messages()
     assert forked.messages == messages
     assert forked.title == "Fork title (fork)"
-    assert provider.session_ids == [forked_session.id]
+    assert backend.connection.session_id == forked_session.id
     assert SessionStore(session_dir).exists(forked_session.id)
     assert f"Forked session fork-source -> {forked_session.id}" in (
         console_stream.getvalue()
@@ -507,7 +519,10 @@ def test_fork_slash_command_switches_to_persisted_copy(
 
 
 def test_cli_fork_starts_from_source_session(
-    tmp_path: Path, monkeypatch, capsys
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    terminal,
 ) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
@@ -528,7 +543,6 @@ def test_cli_fork_starts_from_source_session(
             fork_session_id="source-cli",
             root=str(tmp_path),
         ),
-        agent=FakeAgent(),
     )
 
     assert exit_code == 0
@@ -554,7 +568,9 @@ def test_cli_fork_starts_from_source_session(
 
 
 def test_info_slash_command_prints_active_session_metadata(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
+    monkeypatch,
+    terminal,
 ) -> None:
     session_dir = tmp_path / "sessions"
     monkeypatch.setenv("YOKE_SESSION_DIR", str(session_dir))
@@ -569,17 +585,15 @@ def test_info_slash_command_prints_active_session_metadata(
         reasoning_effort="medium",
         context_window_tokens=400_000,
     )
-    active_session = create_active_session(
-        CLIArgs(session="info-demo", root=str(tmp_path)),
-        root=tmp_path,
-    )
+    backend = terminal.backend("info-demo", root=tmp_path)
+    active_session = session_for(backend)
     console_stream = CaptureStream()
 
     handled, _messages, _session = handle_slash_command(
         "/info",
-        agent=FakeAgent(),
+        agent=backend,
         active_session=active_session,
-        messages=active_session.record.messages,
+        messages=backend.messages(),
         console=build_console(console_stream),
     )
 
