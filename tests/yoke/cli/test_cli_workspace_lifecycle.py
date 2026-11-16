@@ -4,10 +4,8 @@
 
 from __future__ import annotations
 
-from yoke.cli.backend import SessionBackend
 
 import asyncio
-from contextlib import contextmanager
 from pathlib import Path
 from queue import Queue
 from threading import Event, Lock
@@ -16,7 +14,7 @@ from unittest.mock import Mock
 import pytest
 
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.models import Message
+from yoke.agent.models import Message, MessageTextContentPart
 from yoke.agent.skills.models import ActiveSkill
 from yoke.cli.bootstrap.config import ToolDiscoveryProvider
 from yoke.cli.config import CLIArgs
@@ -35,21 +33,19 @@ from yoke.cli.interactive.prompt.lifecycle import PersistentPromptLifecycle, _Su
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.prompt.turns import run_prompt_turn
 from yoke.cli.interactive.queue.mutations import append_prompt, dequeue_prompt
-from yoke.cli.backend.queue import load_prompt_queue_state
+from .daemon_queue_support import load_prompt_queue_state
 from yoke.cli.render import InteractiveRenderer, build_console
-from yoke.cli.runtime import turn_agent as turn_runtime
-from yoke.cli.runtime.cli import run_cli, run_resume_cli
-from yoke.cli.runtime.lifetime import close_cli_owned_agent, register_cli_owned_agent
-from yoke.cli.runtime.session import create_active_session
-from yoke.cli.runtime.workspaces import retain_workspace_lease
+from yoke.cli.backend.startup import run_daemon_cli as run_cli, run_daemon_interactive
 from yoke.session import SessionStore
 from yoke.session.workspace import WorkspaceBusy, WorkspaceUnavailable, workspace_lease
 
-from .support import CaptureStream, FakeAgent, active_session_for
+from .support import CaptureStream
+from .terminal_daemon_support import ReplyProvider, session_for, terminal as terminal
+from tests.yoke.daemon.support import eventually
 
 
 def test_relocation_rediscovers_configuration_and_skills(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, terminal
 ) -> None:
     target = tmp_path / "target"
     skill_dir = target / ".yoke" / "skills" / "fresh-skill"
@@ -81,6 +77,10 @@ def test_relocation_rediscovers_configuration_and_skills(
         "_build_startup_provider",
         lambda args, **kwargs: (ToolDiscoveryProvider(), None),
     )
+    monkeypatch.setattr(
+        "yoke.http.services.session_startup.build_cli_agent_from_args",
+        config_runtime.build_cli_agent_from_args,
+    )
     original_resolve = config_runtime._resolve_cli_agent_config
     resolutions = []
 
@@ -93,15 +93,26 @@ def test_relocation_rediscovers_configuration_and_skills(
     monkeypatch.setattr(config_runtime, "_resolve_cli_agent_config", resolve)
 
     def interactive(_args, agent, messages, **kwargs):
-        assert any(skill.name == "fresh-skill" for skill in agent.available_skills)
-        assert agent.active_skills == [historical_skill]
-        assert agent.tool_report.config_path == target / ".yoke" / "config.json"
-        assert "read" not in agent.tools
+        assert any(skill.name == "fresh-skill" for skill in agent.available_skills())
+        assert store.load("saved").active_skills == [historical_skill]
         assert (
-            kwargs["active_session"].record.conversation_entries
+            resolutions[0].tool_report.config_path == target / ".yoke" / "config.json"
+        )
+        assert "read" not in agent.tools().active_names()
+        assert (
+            store.load(kwargs["active_session"].id).conversation_entries
             == original.conversation_entries
         )
-        assert messages == original.messages
+        assert messages == [
+            message.model_copy(
+                update={
+                    "content": [
+                        MessageTextContentPart(text=message.text_content() or "")
+                    ]
+                }
+            )
+            for message in original.messages
+        ]
         assert any(
             "TARGET WORKSPACE INSTRUCTIONS" in message.text_content()
             for message in resolutions[0].system_messages
@@ -110,9 +121,9 @@ def test_relocation_rediscovers_configuration_and_skills(
 
     monkeypatch.setattr("yoke.cli.interactive.run_interactive_cli", interactive)
     assert (
-        run_resume_cli(
+        run_daemon_interactive(
             CLIArgs(root=str(tmp_path)),
-            "saved",
+            resume_id="saved",
             relocate=target,
             stdout=CaptureStream(),
             stderr=CaptureStream(),
@@ -124,75 +135,112 @@ def test_relocation_rediscovers_configuration_and_skills(
 
 @pytest.mark.parametrize("fail", [False, True])
 def test_owned_agent_and_provider_close_before_lease_release(
-    tmp_path: Path, fail: bool
+    tmp_path: Path, monkeypatch, terminal, fail: bool
 ) -> None:
-    store = SessionStore()
-    store.save("saved", [], root=tmp_path)
+    store = terminal.store
+    store.save("saved", [], root=tmp_path, title="Fixture")
     cleanup = []
+    primary = ReplyProvider()
+    entered, release = Event(), Event()
 
-    def close_resource(name: str) -> None:
-        with pytest.raises(WorkspaceBusy):
-            with workspace_lease(store, "saved", exclusive=True):
-                pass
-        cleanup.append(name)
+    class Fork(ReplyProvider):
+        def complete(self, messages, tools):
+            entered.set()
+            assert release.wait(timeout=5)
+            if fail:
+                raise ValueError("failed during persistence")
+            return super().complete(messages, tools)
 
-    agent = Mock()
-    agent.close.side_effect = lambda: close_resource("agent")
-    agent.provider.close.side_effect = lambda: close_resource("provider")
+        def close(self):
+            with pytest.raises(WorkspaceBusy):
+                with workspace_lease(store, "saved", exclusive=True):
+                    pass
+            cleanup.append("provider")
 
-    @close_cli_owned_agent
-    def invocation() -> None:
-        retain_workspace_lease(store, "saved")
-        register_cli_owned_agent(agent)
-        if fail:
-            raise ValueError("failed during persistence")
+    class Primary(ReplyProvider):
+        def fork_for_turn(self):
+            return Fork()
 
-    if fail:
-        with pytest.raises(ValueError, match="failed during persistence"):
-            invocation()
-    else:
-        invocation()
-    assert cleanup == ["agent", "provider"]
+    primary = Primary()
+    terminal.factory = lambda _: RuntimeAgent(primary, [], tool_root=tmp_path)
+    close = RuntimeAgent.close
+
+    def close_agent(self):
+        if isinstance(self.provider, Fork) and not self.closed:
+            with pytest.raises(WorkspaceBusy):
+                with workspace_lease(store, "saved", exclusive=True):
+                    pass
+            cleanup.append("agent")
+        close(self)
+
+    monkeypatch.setattr(RuntimeAgent, "close", close_agent)
+    backend = terminal.backend("saved", root=tmp_path)
+    turn = backend.submit(
+        "hello",
+        [],
+        entries=[],
+        stop_event=Event(),
+        user_message=None,
+        checkpoint=lambda *_: None,
+    )
+    assert entered.wait(timeout=3)
+    if not fail:
+        backend.interrupt()
+    release.set()
+    list(turn)
+    assert isinstance(turn.result(), TurnFailure if fail else TurnStopped)
+    eventually(lambda: cleanup == ["agent", "provider"])
+    backend.connection.session_request("POST", "/drain", params={"timeoutMs": 5000})
     with workspace_lease(store, "saved", exclusive=True):
         pass
 
 
 def test_headless_rechecks_workspace_after_agent_construction(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, terminal
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    agent = FakeAgent()
+    calls = []
 
-    def resolve(*args, **kwargs):
+    class Provider(ReplyProvider):
+        def complete(self, messages, tools):
+            calls.append(messages)
+            return super().complete(messages, tools)
+
+    def factory(_record):
+        agent = RuntimeAgent(Provider(), [], tool_root=root)
         root.rmdir()
-        return agent, None
+        return agent
 
-    monkeypatch.setattr("yoke.cli.runtime.cli._resolve_runtime_agent", resolve)
+    terminal.factory = factory
     assert (
         run_cli(
             CLIArgs(root=str(root), prompt="hello", headless=True),
-            agent=agent,
             stdout=CaptureStream(),
             stderr=CaptureStream(),
         )
         == 1
     )
-    assert not agent.seen_history_lengths
-    assert SessionStore().list() == []
+    assert not calls
+    # HTTP creation is durable before startup; it contains no executed history.
+    records = terminal.store.list()
+    assert len(records) == 1
+    assert terminal.store.load(records[0].id).messages == []
 
 
 @pytest.mark.parametrize("mode", ["basic", "prompt"])
 def test_deleted_workspace_reports_turn_failure_without_executing(
-    tmp_path: Path, monkeypatch, mode: str
+    tmp_path: Path, monkeypatch, terminal, mode: str
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
+    backend = terminal.backend("saved", root=root)
+    active = session_for(backend)
     root.rmdir()
-    agent = FakeAgent()
+    agent = backend
     prepare = Mock(side_effect=AssertionError("forked provider before validation"))
-    monkeypatch.setattr("yoke.cli.backend.turns.prepare_turn_agent", prepare)
+    runtime = terminal.app.state.runtime_registry.get_if_loaded(active.id)
+    monkeypatch.setattr(runtime.execution, "prepare", prepare)
     results: Queue[TurnSuccess | TurnStopped | TurnFailure] = Queue()
     if mode == "basic":
         thread = _start_basic_turn(
@@ -221,18 +269,20 @@ def test_deleted_workspace_reports_turn_failure_without_executing(
         )
     outcome = results.get(timeout=1)
     assert isinstance(outcome, TurnFailure)
-    assert isinstance(outcome.error, WorkspaceUnavailable)
     assert "--relocate" in str(outcome.error)
-    assert not agent.seen_history_lengths
+    assert "--relocate" in str(outcome.error)
+    assert terminal.store.load(active.id).messages == []
     prepare.assert_not_called()
 
 
 def test_missing_workspace_keeps_queue_and_restores_submitted_text(
     tmp_path: Path,
+    terminal,
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
+    backend = terminal.backend("saved", root=root)
+    active = session_for(backend)
     state = PromptCliState(messages=[], pending_prompts=[])
     lock = Lock()
     queued = PendingPrompt("queued work")
@@ -242,8 +292,13 @@ def test_missing_workspace_keeps_queue_and_restores_submitted_text(
     before = load_prompt_queue_state(active)
     root.rmdir()
     assert dequeue_prompt(state=state, state_lock=lock, active_session=active) is None
-    assert state.pending_prompts == [queued]
-    assert "--relocate" in (state.status_message or "")
+    assert [(p.id, p.prompt) for p in state.pending_prompts] == [
+        (queued.id, queued.prompt)
+    ]
+    assert (
+        backend.connection.session_request("GET")["data"]["workspace"]["status"]
+        == "missing"
+    )
     assert load_prompt_queue_state(active) == before
     start = Mock()
     with pytest.raises(WorkspaceUnavailable):
@@ -261,21 +316,30 @@ def test_missing_workspace_keeps_queue_and_restores_submitted_text(
     start.assert_not_called()
     assert load_prompt_queue_state(active) == before
     root.mkdir()
-    assert dequeue_prompt(state=state, state_lock=lock, active_session=active) == queued
+    assert dequeue_prompt(state=state, state_lock=lock, active_session=active) is None
+    assert [p.id for p in backend.load_queue().prompts] == [queued.id]
+    from .daemon_queue_support import wake
+
+    wake(active)
+    assert backend.load_queue().prompts == []
+    assert [m.text_content() for m in backend.messages() if m.role == "user"] == [
+        queued.prompt
+    ]
 
 
 @pytest.mark.parametrize("command", ["/fork", "/new"])
 def test_deleted_workspace_session_switch_is_recoverable(
-    tmp_path: Path, command: str
+    tmp_path: Path, terminal, command: str
 ) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
-    active = active_session_for(root)
+    backend = terminal.backend("saved", root=root)
+    active = session_for(backend)
     root.rmdir()
     stream = CaptureStream()
     handled, messages, updated = handle_slash_command(
         command,
-        agent=FakeAgent(),
+        agent=backend,
         active_session=active,
         messages=[],
         console=build_console(stream),
@@ -284,80 +348,104 @@ def test_deleted_workspace_session_switch_is_recoverable(
     assert messages == []
     assert updated is active
     assert "--relocate" in stream.getvalue()
-    assert SessionStore().list() == []
+    assert [record.id for record in terminal.store.list()] == [active.id]
 
 
 @pytest.mark.parametrize("prompt", ["/new", "ordinary prompt"])
 def test_prompt_submission_executor_retains_new_session_lease(
-    tmp_path: Path, prompt: str
+    tmp_path: Path, terminal, prompt: str
 ) -> None:
-    store = SessionStore()
-    seen = []
+    entered, release = Event(), Event()
+
+    class Provider(ReplyProvider):
+        def complete(self, messages, tools):
+            entered.set()
+            assert release.wait(timeout=5)
+            return super().complete(messages, tools)
+
+    terminal.factory = lambda _: RuntimeAgent(Provider(), [], tool_root=tmp_path)
+    backend = terminal.backend("initial", root=tmp_path)
+    turns = []
 
     def submit(_prompt: str, _action: str) -> None:
-        active = create_active_session(CLIArgs(root=str(tmp_path)), root=tmp_path)
-        seen.append(active.id)
+        if _prompt == "/new":
+            backend.new()
+        backend.title("Fixture", [])
+        turns.append(
+            backend.submit(
+                "hello",
+                [],
+                entries=[],
+                stop_event=Event(),
+                user_message=None,
+                checkpoint=lambda *_: None,
+            )
+        )
+        assert entered.wait(timeout=3)
         with pytest.raises(WorkspaceBusy):
-            with workspace_lease(store, active.id, exclusive=True):
+            with workspace_lease(terminal.store, backend.session.id, exclusive=True):
                 pass
 
     config = Mock()
     config.process_submission = submit
     lifecycle = PersistentPromptLifecycle(config)
-
-    @close_cli_owned_agent
-    def invocation() -> None:
-        try:
-            asyncio.run(lifecycle._process_submission(_Submission(prompt, "steer")))
-            with pytest.raises(WorkspaceBusy):
-                with workspace_lease(store, seen[0], exclusive=True):
-                    pass
-        finally:
-            lifecycle._submission_executor.shutdown(wait=True)
-
-    invocation()
-    with workspace_lease(store, seen[0], exclusive=True):
+    try:
+        asyncio.run(lifecycle._process_submission(_Submission(prompt, "steer")))
+        with pytest.raises(WorkspaceBusy):
+            with workspace_lease(terminal.store, backend.session.id, exclusive=True):
+                pass
+    finally:
+        release.set()
+        lifecycle._submission_executor.shutdown(wait=True)
+    list(turns[0])
+    assert isinstance(turns[0].result(), TurnSuccess)
+    backend.connection.session_request("POST", "/drain", params={"timeoutMs": 5000})
+    with workspace_lease(terminal.store, backend.session.id, exclusive=True):
         pass
 
 
 def test_retired_turn_keeps_lease_until_detached_cleanup(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, terminal
 ) -> None:
-    active = active_session_for(tmp_path)
-    primary = RuntimeAgent(ToolDiscoveryProvider(), tools=[], tool_root=tmp_path)
     release, waiting, finished = Event(), Event(), Event()
-    real_take = turn_runtime.take_turn_workspace
 
-    def wait(_tools) -> None:
-        waiting.set()
-        assert release.wait(timeout=2)
+    class Fork(ReplyProvider):
+        def complete(self, messages, tools):
+            raise ValueError("retire failed turn")
 
-    @contextmanager
-    def take(agent):
-        with real_take(agent):
-            yield
-        finished.set()
+        def close(self):
+            waiting.set()
+            assert release.wait(timeout=5)
+            finished.set()
 
-    monkeypatch.setattr(turn_runtime, "wait_for_in_process_tools", wait)
-    monkeypatch.setattr(turn_runtime, "take_turn_workspace", take)
+    provider = ReplyProvider()
 
-    @close_cli_owned_agent
-    def invocation() -> None:
-        retain_workspace_lease(active.store, active.id)
-        register_cli_owned_agent(primary)
-        fork = turn_runtime.prepare_turn_agent(
-            primary, messages=[], entries=[], active_session=active
-        )
-        SessionBackend.wrap(primary).retire_turn(fork)
+    class Primary(ReplyProvider):
+        def fork_for_turn(self):
+            return Fork()
 
+    provider = Primary()
+    terminal.factory = lambda _: RuntimeAgent(provider, [], tool_root=tmp_path)
+    terminal.store.save("saved", [], root=tmp_path, title="Fixture")
+    backend = terminal.backend("saved", root=tmp_path)
+    turn = backend.submit(
+        "hello",
+        [],
+        entries=[],
+        stop_event=Event(),
+        user_message=None,
+        checkpoint=lambda *_: None,
+    )
     try:
-        invocation()
-        assert waiting.wait(timeout=1)
+        assert waiting.wait(timeout=3)
         with pytest.raises(WorkspaceBusy):
-            with workspace_lease(active.store, active.id, exclusive=True):
+            with workspace_lease(terminal.store, "saved", exclusive=True):
                 pass
     finally:
         release.set()
-        assert finished.wait(timeout=2)
-    with workspace_lease(active.store, active.id, exclusive=True):
+        assert finished.wait(timeout=3)
+    list(turn)
+    assert isinstance(turn.result(), TurnFailure)
+    backend.connection.session_request("POST", "/drain", params={"timeoutMs": 5000})
+    with workspace_lease(terminal.store, "saved", exclusive=True):
         pass

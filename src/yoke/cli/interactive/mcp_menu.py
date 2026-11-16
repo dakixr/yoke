@@ -47,11 +47,6 @@ def handle_mcp_menu(
     from yoke.cli.render import print_scrollback_notice
 
     backend = SessionBackend.wrap(agent)
-    if not backend.runtime_available:
-        print_scrollback_notice(
-            console, "/mcp is only available for RuntimeAgent sessions."
-        )
-        return
     inventory = backend.mcp(root)
     selected_server = initial_server
     while True:

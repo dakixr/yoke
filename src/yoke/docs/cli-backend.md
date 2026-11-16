@@ -161,3 +161,8 @@ runtime raises `AgentStoppedError` before returning a result.
 Strict explicit selections and headless saved selections are checked against the
 daemon model catalog before `--fork` creates a durable copy. Invalid models leave
 the source and session list unchanged.
+
+The tools and MCP menus accept daemon catalogs directly. They no longer test
+for an in-process runtime. Queue drafts, including pending image paths, persist
+through the daemon; one revision-checked PATCH installs new admissions and
+edits together. A terminal never removes a queue item to execute it locally.

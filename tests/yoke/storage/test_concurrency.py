@@ -66,7 +66,10 @@ def test_cli_and_daemon_queue_edits_conflict_and_never_lose_updates(
         queue.revision == summaries["cli"]["commits"] + summaries["daemon"]["commits"]
     )
     admissions = AdmissionStore(directory).load("shared").records
-    assert sorted(admissions) == sorted(f"daemon-{index}" for index in range(COUNT))
+    assert sorted(admissions) == sorted(
+        [f"daemon-{index}" for index in range(COUNT)]
+        + [f"cli-{index}" for index in range(COUNT)]
+    )
     assert admissions["daemon-0"].prompt == f"daemon edit {COUNT - 1}"
     # Conflicts surface as the errors each client already handles.
     assert summaries["cli"]["conflicts"] + summaries["daemon"]["conflicts"] > 0

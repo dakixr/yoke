@@ -210,7 +210,7 @@ def test_selection_switches_runtime_and_persists_metadata(
             for event_type, data in live_events
         )
     assert observed is not None
-    assert observed.surface == "http"
+    assert observed.surface == "web"
     assert observed.session_id == "session-a"
 
 
@@ -283,7 +283,7 @@ def test_manual_compaction_propagates_http_session_usage_attribution(
         assert waited.status_code == 200
 
     assert observed is not None
-    assert observed.surface == "http"
+    assert observed.surface == "web"
     assert observed.session_id == "session-a"
     assert observed.session_title == "Compaction title"
 
@@ -377,7 +377,7 @@ def test_title_generation_propagates_http_session_usage_attribution(
         assert regenerated.status_code == 200
 
     assert observed is not None
-    assert observed.surface == "http"
+    assert observed.surface == "web"
     assert observed.session_id == "session-a"
     assert observed.call_kind == "session_title"
 

@@ -7,7 +7,12 @@ from contextlib import contextmanager
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
-from yoke.ai.providers.usage_context import UsageMetricContext, usage_metric_context
+from yoke.ai.providers.usage_context import (
+    UsageMetricContext,
+    UsageSurface,
+    current_usage_metric_context,
+    usage_metric_context,
+)
 from yoke.cli.config import CLIArgs
 from yoke.cli.config.runtime import build_cli_agent_from_args
 from yoke.cli.providers.state import apply_session_defaults_to_args
@@ -23,10 +28,12 @@ type SessionAgentFactory = Callable[[SessionRecord], RuntimeAgent]
 def http_session_usage_metric_context(
     record: SessionRecord,
     prompt: str = "",
+    *,
+    surface: UsageSurface | None = None,
 ) -> Iterator[UsageMetricContext]:
     """Attribute an HTTP-owned provider call to its Yoke session."""
     with usage_metric_context(
-        surface="http",
+        surface=surface or current_usage_metric_context().surface or "web",
         session_id=record.id,
         session_title=record.title or fallback_session_title(prompt),
     ) as context:
@@ -37,6 +44,8 @@ def generate_http_session_title(
     agent_factory: SessionAgentFactory,
     record: SessionRecord,
     messages: Sequence[Message],
+    *,
+    surface: UsageSurface | None = None,
 ) -> str | None:
     """Generate a title with the session's HTTP agent configuration."""
     from yoke.session.title import generate_session_title
@@ -49,7 +58,7 @@ def generate_http_session_title(
         ),
         "",
     )
-    with http_session_usage_metric_context(record, prompt):
+    with http_session_usage_metric_context(record, prompt, surface=surface):
         agent = agent_factory(record)
         try:
             return generate_session_title(agent, messages)

@@ -16,7 +16,7 @@ from yoke.ai.providers.base import ProviderModelInfo
 from yoke.http.models.catalog import ModelListResponse
 from yoke.http.models.mcp import McpListResponse
 from yoke.http.models.tool import ToolInfo, ToolListResponse
-from yoke.mcp.config import McpConfig, McpServerConfig
+from yoke.mcp.config import McpConfig, McpServerConfig, server_supports_tool
 from yoke.mcp.manager import McpToolInfo
 
 
@@ -58,7 +58,7 @@ class DaemonMcpInventory:
         self.connection = connection
 
     def config(self) -> McpConfig:
-        data = self.read()
+        data = self.read(include_tools=False)
         return McpConfig(
             servers=tuple(
                 McpServerConfig(
@@ -75,16 +75,23 @@ class DaemonMcpInventory:
             )
         )
 
-    def read(self) -> McpListResponse:
+    def read(self, *, include_tools: bool = True) -> McpListResponse:
         return McpListResponse.model_validate(
             self.connection.session_request(
-                "GET", "/mcp", params={"includeTools": True}
+                "GET",
+                "/mcp",
+                params={
+                    "includeTools": include_tools,
+                    "includeDisabledTools": include_tools,
+                },
             )
         )
 
     def list_tools(self, server: McpServerConfig) -> tuple[McpToolInfo, ...]:
         for item in self.read().data:
             if item.name == server.name:
+                if item.error:
+                    raise ValueError(item.error)
                 return tuple(
                     McpToolInfo(
                         name=value.name,
@@ -107,15 +114,15 @@ class DaemonMcpInventory:
         enabled = (
             set(server.enabled_tools) if server.enabled_tools is not None else None
         )
-        if enabled is not None:
-            if tool_name in enabled:
-                enabled.remove(tool_name)
+        if server_supports_tool(server, tool_name):
+            if enabled is not None:
+                enabled.discard(tool_name)
             else:
-                enabled.add(tool_name)
-        elif tool_name in disabled:
-            disabled.remove(tool_name)
+                disabled.add(tool_name)
         else:
-            disabled.add(tool_name)
+            disabled.discard(tool_name)
+            if enabled is not None:
+                enabled.add(tool_name)
         self.connection.session_request(
             "PATCH",
             f"/mcp/{server.name}",
@@ -127,7 +134,7 @@ class DaemonMcpInventory:
         )
 
     def refresh(self) -> None:
-        self.read()
+        self.connection.session_request("PATCH", "/mcp")
 
 
 class DaemonModelCatalog:

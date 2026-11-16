@@ -40,12 +40,14 @@ def list_session_mcp_servers(
     request: Request,
     session_id: str,
     include_tools: bool = Query(default=False, alias="includeTools"),
+    include_disabled_tools: bool = Query(default=False, alias="includeDisabledTools"),
 ) -> McpListResponse:
     service: McpService = request.app.state.mcp_service
     return service.list(
         directory=None,
         session_id=session_id,
         include_tools=include_tools,
+        include_disabled_tools=include_disabled_tools,
     )
 
 
@@ -104,3 +106,17 @@ async def patch_session_mcp_server(
     return McpSessionPatchResponse(
         data=service.configured_server(session_id, server_name)
     )
+
+
+@router.patch(
+    "/session/{session_id}/mcp",
+    response_model=McpListResponse,
+    operation_id="refreshSessionMcp",
+)
+async def refresh_session_mcp(request: Request, session_id: str) -> McpListResponse:
+    """Reload client-edited MCP files while retaining session tool selection."""
+    runtimes: SessionRuntimeRegistry = request.app.state.runtime_registry
+    runtime = runtimes.get_or_start(session_id)
+    await runtime.idle_mutation(runtime.resources.refresh_mcp)
+    service: McpService = request.app.state.mcp_service
+    return service.list(directory=None, session_id=session_id, include_tools=False)

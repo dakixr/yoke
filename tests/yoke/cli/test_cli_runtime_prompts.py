@@ -280,7 +280,7 @@ def test_headless_cli_propagates_session_usage_attribution(tmp_path, terminal) -
     assert exit_code == 0
     assert len(contexts) == 1
     context = contexts[0]
-    assert context.surface == "http"
+    assert context.surface == "cli"
     assert context.session_id is not None
     assert context.session_id.startswith("20")
     assert context.session_title == "CLI attribution title"

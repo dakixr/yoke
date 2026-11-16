@@ -254,6 +254,7 @@ class TurnExecutor:
                     self.automatic_title.start,
                     execution.admission,
                     execution.client.environment if execution.client else None,
+                    execution.client.config.kind if execution.client else "web",
                 )
             loop.call_soon_threadsafe(self.thinking, execution)
             turn_agent = self.prepare(
@@ -283,6 +284,7 @@ class TurnExecutor:
             with http_session_usage_metric_context(
                 record,
                 execution.admission.prompt,
+                surface=execution.client.config.kind if execution.client else "web",
             ):
 
                 def checkpoint(context: AgentContext) -> None:

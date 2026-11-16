@@ -95,11 +95,15 @@ async def patch_queue(
 ) -> QueueResponse:
     data = await asyncio.get_running_loop().run_in_executor(
         _registry(request).storage_executor,
-        _pending(request).patch_queue,
+        _registry(request)
+        .get_or_start(session_id)
+        .resources.configuration.clients.patch_queue,
+        _pending(request),
         session_id,
         body,
     )
-    await _registry(request).get_or_start(session_id).wake()
+    if body.resume:
+        await _registry(request).get_or_start(session_id).wake()
     return QueueResponse(data=data)
 
 

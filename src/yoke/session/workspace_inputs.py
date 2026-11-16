@@ -52,7 +52,8 @@ def reconcile_workspace_inputs(
                 created_at=item.time_created,
                 paused=True,
             )
-            queue.prompts.insert(0, restored)
+            position = item.queue_position if item.queue_position is not None else 0
+            queue.prompts.insert(min(position, len(queue.prompts)), restored)
             queued[item.id] = restored
             changed = True
         elif not existing.paused:

@@ -330,6 +330,19 @@ class SessionRuntimeResources:
         with self.lock:
             return self.configuration.policy_snapshot()
 
+    def refresh_mcp(self) -> None:
+        """Reload persisted MCP configuration without changing other tools."""
+        with self.lock:
+            primary = self._primary_agent
+            if primary is not None:
+                names = set(primary.tools)
+                primary.refresh_tools(force=True)
+                primary.tools = {
+                    name: tool
+                    for name, tool in primary.tools.items()
+                    if name in {"mcp_inspect", "mcp_call"} or name in names
+                }
+
     def set_mcp_policy(
         self,
         server_name: str,

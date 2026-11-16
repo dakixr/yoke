@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,D103,S101
-import base64
+from PIL import Image
 from pathlib import Path
 from threading import Event, Lock, Thread
 
@@ -17,12 +17,18 @@ from yoke.cli.interactive.prompt.loop import process_prompt_toolkit_prompt
 from yoke.cli.interactive.prompt.submission import submit_prompt_toolkit_prompt
 from yoke.cli.interactive.queue import manager
 from yoke.cli.interactive.queue.mutations import attach_pending_image
-from yoke.cli.backend.queue import load_prompt_queue_state, persist_prompt_queue
+from .daemon_queue_support import load_prompt_queue_state, persist_prompt_queue
 from yoke.cli.render import build_console
 from yoke.cli.runtime.base import ActiveSessionRef
 from yoke.session.queue import load_prompt_queue_snapshot
 
-from .support import CaptureStream, FakeAgent, active_session_for
+from .support import CaptureStream
+from .daemon_queue_support import (
+    active_session_for as active_session_for,
+    terminal as terminal,
+    store_for,
+    remote,
+)
 
 
 def _state_from_disk(active_session) -> PromptCliState:
@@ -37,12 +43,7 @@ def _state_from_disk(active_session) -> PromptCliState:
 
 
 def _tiny_png(path: Path) -> ImageAttachment:
-    path.write_bytes(
-        base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
-            "x8AAwMCAO7Z0mQAAAAASUVORK5CYII="
-        )
-    )
+    Image.new("RGB", (1, 1), color="red").save(path)
     return ImageAttachment(path=path)
 
 
@@ -67,7 +68,7 @@ def _process_queue_manager(
     return process_prompt_toolkit_prompt(
         "/queue",
         state=state,
-        agent=FakeAgent(),
+        agent=remote(active_session).backend,
         active_session_ref=ActiveSessionRef(active_session),
         scrollback_console=build_console(stdout or CaptureStream()),
         state_lock=Lock(),
@@ -82,6 +83,7 @@ def _process_queue_manager(
 
 
 def test_missing_image_does_not_consume_the_attachment_or_prompt(
+    active_session_for,
     tmp_path: Path,
 ) -> None:
     active = active_session_for(tmp_path)
@@ -108,7 +110,7 @@ def test_missing_image_does_not_consume_the_attachment_or_prompt(
 
 
 def test_failing_message_builder_leaves_images_and_prompt_recoverable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    active_session_for, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
@@ -137,7 +139,9 @@ def test_failing_message_builder_leaves_images_and_prompt_recoverable(
     assert state.next_editor_text == "describe it"
 
 
-def test_queue_append_and_image_consumption_use_one_commit(tmp_path: Path) -> None:
+def test_queue_append_and_image_consumption_use_one_commit(
+    active_session_for, tmp_path: Path, terminal
+) -> None:
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
     image = _tiny_png(tmp_path / "image.png")
@@ -155,16 +159,24 @@ def test_queue_append_and_image_consumption_use_one_commit(tmp_path: Path) -> No
         steer_active_turn=lambda *_args, **_kwargs: False,
     )
 
-    persisted = load_prompt_queue_snapshot(active.store.directory, active.id)
+    persisted = load_prompt_queue_snapshot(store_for(active).directory, active.id)
     assert persisted.revision == 2
     assert persisted.pending_images == []
     assert [item.prompt for item in persisted.prompts] == ["describe it"]
-    assert persisted.prompts[0].user_message is not None
-    assert persisted.prompts[0].user_message.has_image_inputs()
+    attachment = persisted.prompts[0].attachments[0]
+    assert attachment["mime"] == "image/png"
+    assert attachment["image_projection"] == "cli"
+    uploaded = terminal.app.state.upload_service.resolve(
+        attachment["uri"],
+        session_id=active.id,
+        name=attachment["name"],
+        mime=attachment["mime"],
+    )
+    assert uploaded.read_bytes() == image.path.read_bytes()
 
 
 def test_failing_queue_commit_retains_prompt_and_images(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    active_session_for, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import yoke.cli.interactive.queue.mutations as mutations
 
@@ -197,7 +209,9 @@ def test_failing_queue_commit_retains_prompt_and_images(
     assert state.next_editor_text == "describe it"
 
 
-def test_failing_immediate_start_retains_prompt_and_images(tmp_path: Path) -> None:
+def test_failing_immediate_start_retains_prompt_and_images(
+    active_session_for, tmp_path: Path
+) -> None:
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
     image = _tiny_png(tmp_path / "image.png")
@@ -224,7 +238,7 @@ def test_failing_immediate_start_retains_prompt_and_images(tmp_path: Path) -> No
 
 
 def test_failing_post_start_image_commit_does_not_retry_accepted_prompt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    active_session_for, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import yoke.cli.interactive.queue.images as image_mutations
 
@@ -263,7 +277,9 @@ def test_failing_post_start_image_commit_does_not_retry_accepted_prompt(
     assert state.next_editor_text is None
 
 
-def test_failing_steer_callback_retains_prompt_and_images(tmp_path: Path) -> None:
+def test_failing_steer_callback_retains_prompt_and_images(
+    active_session_for, tmp_path: Path
+) -> None:
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
     image = _tiny_png(tmp_path / "image.png")
@@ -290,7 +306,9 @@ def test_failing_steer_callback_retains_prompt_and_images(tmp_path: Path) -> Non
     assert state.next_editor_text == "describe it"
 
 
-def test_steering_false_queues_once_with_its_image(tmp_path: Path) -> None:
+def test_steering_false_queues_once_with_its_image(
+    active_session_for, tmp_path: Path
+) -> None:
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
     image = _tiny_png(tmp_path / "image.png")
@@ -322,7 +340,7 @@ def test_steering_false_queues_once_with_its_image(tmp_path: Path) -> None:
 
 
 def test_manager_restores_dequeued_steering_when_worker_race_is_lost(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    active_session_for, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     active = active_session_for(tmp_path)
     prompt = PendingPrompt("steer me", kind="steering", id="steer")
@@ -344,7 +362,7 @@ def test_manager_restores_dequeued_steering_when_worker_race_is_lost(
 
 
 def test_unchanged_idle_manager_does_not_start_ordinary_work(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    active_session_for, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     active = active_session_for(tmp_path)
     persist_prompt_queue(active, [PendingPrompt("ordinary", id="ordinary")])
@@ -367,8 +385,8 @@ def test_unchanged_idle_manager_does_not_start_ordinary_work(
     assert persisted.revision == 1
 
 
-def test_manager_restores_steering_when_start_callback_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_daemon_manager_never_starts_a_local_worker_for_steering(
+    active_session_for, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     active = active_session_for(tmp_path)
     persist_prompt_queue(
@@ -382,20 +400,21 @@ def test_manager_restores_steering_when_start_callback_fails(
         lambda manager_state, **_kwargs: manager_state.prompts,
     )
 
-    with pytest.raises(RuntimeError, match="start failed"):
-        _process_queue_manager(
-            active,
-            state,
-            start_turn=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                RuntimeError("start failed")
-            ),
-        )
+    _process_queue_manager(
+        active,
+        state,
+        start_turn=lambda *_args, **_kwargs: pytest.fail(
+            "daemon input readmitted by UI"
+        ),
+    )
 
     persisted = load_prompt_queue_state(active)
     assert [item.id for item in persisted.prompts] == ["steer"]
 
 
-def test_stale_empty_submit_does_not_bypass_authoritative_queue(tmp_path: Path) -> None:
+def test_stale_empty_submit_does_not_bypass_authoritative_queue(
+    active_session_for, tmp_path: Path
+) -> None:
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
     persist_prompt_queue(active, [PendingPrompt("first", id="first")])
@@ -416,7 +435,9 @@ def test_stale_empty_submit_does_not_bypass_authoritative_queue(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("command", ["/new", "/fork"])
-def test_active_worker_rejects_session_switch(tmp_path: Path, command: str) -> None:
+def test_active_worker_rejects_session_switch(
+    active_session_for, tmp_path: Path, command: str
+) -> None:
     active = active_session_for(tmp_path)
     state = _state_from_disk(active)
     state.worker = Thread()
@@ -426,7 +447,7 @@ def test_active_worker_rejects_session_switch(tmp_path: Path, command: str) -> N
     result = process_prompt_toolkit_prompt(
         command,
         state=state,
-        agent=FakeAgent(),
+        agent=remote(active).backend,
         active_session_ref=active_ref,
         scrollback_console=build_console(stdout),
         state_lock=Lock(),
@@ -444,7 +465,7 @@ def test_active_worker_rejects_session_switch(tmp_path: Path, command: str) -> N
 
 
 def test_worker_completion_after_switch_rejection_does_not_create_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    active_session_for, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import yoke.cli.interactive.prompt.loop as prompt_loop
 
@@ -467,7 +488,7 @@ def test_worker_completion_after_switch_rejection_does_not_create_session(
             process_prompt_toolkit_prompt(
                 "/new",
                 state=state,
-                agent=FakeAgent(),
+                agent=remote(active).backend,
                 active_session_ref=active_ref,
                 scrollback_console=build_console(CaptureStream()),
                 state_lock=Lock(),
@@ -490,3 +511,53 @@ def test_worker_completion_after_switch_rejection_does_not_create_session(
     assert not command.is_alive()
     assert results == [active]
     assert active_ref.value is active
+
+
+def test_daemon_patch_rolls_back_new_admissions_when_an_edit_fails(
+    tmp_path: Path, terminal
+) -> None:
+    from yoke.cli.backend.connection import DaemonRequestError
+    from yoke.session.admissions import AdmissionStore
+    from yoke.session.events import SessionEventJournal
+
+    backend = terminal.backend("atomic", root=tmp_path)
+    before = SessionEventJournal(terminal.store.directory).latest_sequence("atomic")
+    with pytest.raises(DaemonRequestError) as caught:
+        backend.connection.session_request(
+            "PATCH",
+            "/queue",
+            json={
+                "expectedRevision": 0,
+                "resume": False,
+                "pendingImages": [str(tmp_path / "draft.png")],
+                "admissions": [
+                    {
+                        "id": "rolled-back",
+                        "clientID": backend.connection.owner,
+                        "prompt": {"text": "do not admit"},
+                    }
+                ],
+                "operations": [{"op": "remove", "id": "missing"}],
+            },
+        )
+    assert caught.value.status == 404
+    assert backend.load_queue().revision == 0
+    assert backend.load_queue().prompts == []
+    assert backend.load_queue().pending_images == []
+    assert AdmissionStore(terminal.store.directory).load("atomic").records == {}
+    assert (
+        SessionEventJournal(terminal.store.directory).latest_sequence("atomic")
+        == before
+    )
+
+
+def test_pending_image_draft_survives_a_new_daemon_client(
+    tmp_path: Path, terminal
+) -> None:
+    backend = terminal.backend("draft", root=tmp_path)
+    image = ImageAttachment(tmp_path / "draft.png")
+    assert backend.commit_queue([], [image], expected_revision=0) == 1
+    reader = terminal.backend("draft", root=tmp_path)
+    assert reader.load_queue().pending_images == [image]
+    assert reader.load_queue().revision == 1
+    assert reader.load_queue().prompts == []

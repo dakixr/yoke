@@ -65,6 +65,7 @@ class QueueItem(ApiModel):
 
 class QueueData(ApiModel):
     revision: int
+    pending_images: list[str] = Field(default_factory=list)
     items: list[QueueItem]
 
 
@@ -127,3 +128,6 @@ type QueueOperation = Annotated[
 class QueuePatchRequest(ApiModel):
     expected_revision: int = Field(ge=0)
     operations: list[QueueOperation]
+    admissions: list[PromptAdmissionRequest] = Field(default_factory=list)
+    pending_images: list[str] | None = None
+    resume: bool = True

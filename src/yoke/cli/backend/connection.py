@@ -61,11 +61,41 @@ class SessionConnection:
         self._closed = Event()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[None] | None = None
+        self._stream_task: asyncio.Task[None] | None = None
         self._worker: Thread | None = None
 
     def set_cwd(self, directory: Path) -> None:
         """Use the resolved workspace for startup and later reattachments."""
         self._cwd = directory.resolve()
+
+    def select_session(self, session_id: str) -> None:
+        """Move this terminal's attachment and stream to another session."""
+        if session_id == self.session_id:
+            return
+        if self._loop is None:
+            self.session_id = session_id
+            return
+
+        async def change() -> None:
+            transport = httpx.AsyncHTTPTransport(uds=str(self._handle.socket))
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://yoke/api/v1/",
+                timeout=10,
+                trust_env=False,
+            ) as http:
+                response = await http.delete(
+                    f"session/{self.session_id}/client", params={"owner": self.owner}
+                )
+                response.raise_for_status()
+            self.session_id = session_id
+            self._seq = 0
+            self._ready.clear()
+            if self._stream_task is not None:
+                self._stream_task.cancel()
+
+        asyncio.run_coroutine_threadsafe(change(), self._loop).result(timeout=15)
+        self.start()
 
     def client_config(self) -> dict[str, Any]:
         """Take a fresh private environment snapshot, including after restart."""
@@ -175,7 +205,16 @@ class SessionConnection:
                         timeout=httpx.Timeout(10, read=None),
                         trust_env=False,
                     ) as http:
-                        await self._attached_stream(http)
+                        self._stream_task = asyncio.create_task(
+                            self._attached_stream(http)
+                        )
+                        try:
+                            await self._stream_task
+                        except asyncio.CancelledError:
+                            if self._closed.is_set():
+                                raise
+                        finally:
+                            self._stream_task = None
                 except (httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
                     if self._ready.is_set():
                         self.events.publish(

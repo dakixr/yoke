@@ -43,6 +43,7 @@ class AdmissionRecord(BaseModel):
     settled_at: str | None = None
     outcome: Literal["completed", "stopped", "failed", "recovered"] | None = None
     workspace_blocked: bool = False
+    queue_position: int | None = None
 
 
 class AdmissionSnapshot(BaseModel):

@@ -9,19 +9,23 @@ import pytest
 
 from yoke.cli.interactive.common import PendingPrompt, PromptCliState
 from yoke.cli.interactive.prompt.turns import finish_prompt_turn
-from yoke.cli.backend.queue import load_prompt_queue_state, persist_prompt_queue
+from .daemon_queue_support import load_prompt_queue_state, persist_prompt_queue
 from yoke.session.queue import (
-    PersistedPendingInput,
     load_prompt_queue_snapshot,
-    prompt_queue_transaction,
 )
 
-from .support import active_session_for
+from .daemon_queue_support import (
+    active_session_for as active_session_for,
+    terminal as terminal,
+    store_for,
+    remote,
+    wake,
+)
 
 
 @pytest.mark.parametrize("initially_paused", [False, True])
 def test_finish_turn_refreshes_an_empty_or_paused_mirror(
-    tmp_path: Path, initially_paused: bool
+    active_session_for, tmp_path: Path, initially_paused: bool
 ) -> None:
     active = active_session_for(tmp_path)
     original = PendingPrompt("old prompt", id="item", paused=True)
@@ -34,17 +38,8 @@ def test_finish_turn_refreshes_an_empty_or_paused_mirror(
         queue_revision=loaded.revision,
         queue_session_id=active.id,
     )
-    with prompt_queue_transaction(active.store.directory, active.id) as transaction:
-        transaction.snapshot.prompts = [
-            PersistedPendingInput(
-                id="item",
-                prompt="authoritative prompt",
-                paused=False,
-                created_at=original.created_at,
-            )
-        ]
-        transaction.snapshot.revision += 1
-        transaction.commit()
+    persist_prompt_queue(active, [PendingPrompt("authoritative prompt", id="item")])
+    wake(active)
 
     selected, shutting_down = finish_prompt_turn(
         state=state,
@@ -53,10 +48,12 @@ def test_finish_turn_refreshes_an_empty_or_paused_mirror(
         request_context_usage=lambda _text: None,
     )
 
-    assert selected is not None
-    assert selected.prompt == "authoritative prompt"
-    assert selected.paused is False
+    assert selected is None
+    assert [
+        m.text_content() for m in remote(active).backend.messages() if m.role == "user"
+    ] == ["authoritative prompt"]
+    assert state.pending_prompts == []
     assert shutting_down is False
-    persisted = load_prompt_queue_snapshot(active.store.directory, active.id)
+    persisted = load_prompt_queue_snapshot(store_for(active).directory, active.id)
     assert persisted.prompts == []
     assert persisted.revision == state.queue_revision

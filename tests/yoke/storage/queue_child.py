@@ -14,11 +14,6 @@ import json
 import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
-
-if TYPE_CHECKING:
-    from yoke.cli.runtime import ActiveSession
 
 
 def wait_for(start: Path) -> None:
@@ -31,37 +26,47 @@ def wait_for(start: Path) -> None:
 
 
 def run_cli(directory: Path, session_id: str, count: int, start: Path) -> dict:
-    from yoke.cli.interactive.common import PendingPrompt
-    from yoke.cli.backend.queue import (
-        PromptQueueRevisionConflict,
-        commit_prompt_queue,
-        load_prompt_queue_state,
-    )
+    from contextlib import closing
+    from tests.yoke.cli.daemon_support import serve_app
+    from yoke.cli.backend.connection import SessionConnection
+    from yoke.cli.backend.daemon import DaemonSessionBackend
+    from yoke.cli.backend.models import PendingPrompt
+    from yoke.cli.backend.values import PromptQueueRevisionConflict
+    from yoke.http.app import create_app, HttpAppSettings
     from yoke.session import SessionStore
 
-    active = cast(
-        "ActiveSession",
-        SimpleNamespace(store=SessionStore(directory), id=session_id),
-    )
-    conflicts = 0
-    wait_for(start)
-    for index in range(count):
-        while True:
-            loaded = load_prompt_queue_state(active)
-            prompts = [
-                *loaded.prompts,
-                PendingPrompt(prompt=f"cli {index}", id=f"cli-{index}"),
-            ]
-            try:
-                commit_prompt_queue(
-                    active,
-                    prompts,
-                    loaded.pending_images,
-                    expected_revision=loaded.revision,
-                )
-                break
-            except PromptQueueRevisionConflict:
-                conflicts += 1
+    from yoke.session.workspace import require_session_workspace
+
+    root = require_session_workspace(SessionStore(directory).load(session_id))
+    app = create_app(HttpAppSettings(auth_token=None, session_directory=directory))
+    with (
+        serve_app(app) as handle,
+        closing(
+            SessionConnection(session_id, discover=lambda: handle, cwd=root)
+        ) as connection,
+    ):
+        connection.start()
+        backend = DaemonSessionBackend(
+            connection, connection.session_request("GET")["data"]
+        )
+        conflicts = 0
+        wait_for(start)
+        for index in range(count):
+            while True:
+                loaded = backend.load_queue()
+                prompts = [
+                    *loaded.prompts,
+                    PendingPrompt(prompt=f"cli {index}", id=f"cli-{index}"),
+                ]
+                try:
+                    backend.commit_queue(
+                        prompts,
+                        loaded.pending_images,
+                        expected_revision=loaded.revision,
+                    )
+                    break
+                except PromptQueueRevisionConflict:
+                    conflicts += 1
     return {"role": "cli", "commits": count, "conflicts": conflicts}
 
 

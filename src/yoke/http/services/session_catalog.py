@@ -149,6 +149,7 @@ class SessionCatalog:
             session_id,
             [],
             root=root,
+            origin=request.client.kind if request.client else "web",
             title=request.title,
             provider_name=selection.provider if selection is not None else None,
             model_id=selection.model if selection is not None else None,

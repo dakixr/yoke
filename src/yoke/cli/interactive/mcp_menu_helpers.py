@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from yoke.cli.backend.catalog import McpInventory
+from yoke.cli.backend.daemon.catalog import DaemonMcpInventory
 from yoke.cli.runtime.selector.ui import select_list_item_interactive
 from yoke.mcp.config import MCP_CONFIG_RELATIVE_PATH
 from yoke.mcp.config import GLOBAL_MCP_CONFIG_RELATIVE_PATH
@@ -47,7 +48,7 @@ class McpToolRow:
 
 def _load_mcp_tool_rows(
     *,
-    inventory: McpInventory,
+    inventory: McpInventory | DaemonMcpInventory,
     server: McpServerConfig,
 ) -> list[McpToolRow] | str:
     if server.transport not in {"stdio", "streamable-http", "http"}:
@@ -134,7 +135,7 @@ def _set_mcp_server_enabled(
     scope: McpMenuScope,
     server: McpServerConfig,
     enabled: bool,
-    inventory: McpInventory,
+    inventory: McpInventory | DaemonMcpInventory,
 ) -> None:
     if scope.id == "session":
         inventory.set_enabled(server, enabled)
@@ -156,7 +157,7 @@ def _toggle_mcp_tool(
     scope: McpMenuScope,
     server: McpServerConfig,
     tool_name: str,
-    inventory: McpInventory,
+    inventory: McpInventory | DaemonMcpInventory,
 ) -> None:
     if scope.id == "session":
         inventory.toggle_tool(server, tool_name)
