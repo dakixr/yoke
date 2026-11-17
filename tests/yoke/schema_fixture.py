@@ -14,7 +14,7 @@ from yoke.storage.database import Database
 @pytest.fixture(scope="session")
 def empty_schema(tmp_path_factory: pytest.TempPathFactory) -> bytes:
     path = tmp_path_factory.mktemp("schema") / "empty.db"
-    database = Database(path)
+    database = Database(path, migrate=True)
     database.close()
     return path.read_bytes()
 
@@ -35,7 +35,9 @@ def fresh_database_from_schema(
         return
     initialize = Database.__init__
 
-    def initialize_fresh(database: Database, path: Path) -> None:
+    def initialize_fresh(
+        database: Database, path: Path, *, migrate: bool = False
+    ) -> None:
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             with NamedTemporaryFile(dir=path.parent) as source:
@@ -49,6 +51,6 @@ def fresh_database_from_schema(
                     pass
         # These disposable databases test higher-level behavior, not power-loss
         # durability. Storage/migration/import/atomic-write cases stay NORMAL.
-        initialize(database, path, synchronous="OFF")
+        initialize(database, path, migrate=migrate, synchronous="OFF")
 
     monkeypatch.setattr(Database, "__init__", initialize_fresh)

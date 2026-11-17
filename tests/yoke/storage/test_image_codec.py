@@ -52,7 +52,7 @@ def legacy(database: Database) -> None:
 
 
 def test_codec_exact_prefix_offsets_noncanonical_and_forgery(tmp_path: Path) -> None:
-    database = Database(tmp_path / "db")
+    database = Database(tmp_path / "db", migrate=True)
     url = image_url()
     raw = json.dumps(
         {
@@ -255,7 +255,7 @@ def test_compactor_metadata_images_and_transaction_rollback(
 
 
 def test_image_upload_dedup_and_invalid_data_stays_inline(tmp_path: Path) -> None:
-    database = Database(tmp_path / "db")
+    database = Database(tmp_path / "db", migrate=True)
     url = image_url()
     data = base64.b64decode(url.split(",")[1])
     digest = hashlib.sha256(data).hexdigest()
@@ -342,7 +342,7 @@ def test_codec_callback_does_not_keep_database_connections_alive(
     import gc
     import weakref
 
-    database = Database(tmp_path / "db")
+    database = Database(tmp_path / "db", migrate=True)
     with database.read() as connection:
         reference = weakref.ref(connection)
     del connection
@@ -391,3 +391,82 @@ def test_repeated_saves_do_not_branch_on_omitted_diagnostic_usage(
         assert saved.leaf_id == first.leaf_id
     usage = messages[1].usage
     assert usage is not None and usage.raw == {"payload": "large"}
+
+
+@pytest.mark.parametrize("kind", ["truncated", "bomb", "unexpected"])
+def test_poison_image_is_left_inline_and_never_retried(tmp_path, monkeypatch, kind):
+    import struct
+    import zlib
+
+    raw_image = base64.b64decode(image_url().split(",")[1])
+    if kind == "truncated":
+        raw_image = raw_image[:50]
+    elif kind == "bomb":
+        # A valid IHDR CRC with a 100 million pixel size, without allocating it.
+        ihdr = struct.pack(">IIBBBBB", 10_000, 10_000, 8, 2, 0, 0, 0)
+        raw_image = (
+            raw_image[:8]
+            + struct.pack(">I", len(ihdr))
+            + b"IHDR"
+            + ihdr
+            + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr))
+            + raw_image[33:]
+        )
+    url = "data:image/png;base64," + base64.b64encode(raw_image).decode()
+    store = SessionStore(tmp_path)
+    record = store.save(
+        "poison", [Message.user([{"type": "image_url", "image_url": {"url": url}}])]
+    )
+    legacy(store.database)
+    quiet(store.database)
+    if kind == "unexpected":
+
+        def fail(_raw):
+            raise RuntimeError("unexpected decoder error")
+
+        monkeypatch.setattr("yoke.storage.compactor.transform_entry", fail)
+    result = compact_batch(store.database)
+    assert result.failures_inline == 1
+    assert result.processed == 1
+    assert store.load("poison").conversation_entries == record.conversation_entries
+    with store.database.read() as connection:
+        assert connection.execute("SELECT count(*) FROM blob_codecs").fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM blob_compaction"
+        ).fetchone() == (1,)
+    with store.database.read() as connection:
+        assert connection.execute(
+            "SELECT failures FROM blob_compaction_failures"
+        ).fetchall() == [(1,)]
+    store.database.close()
+    store = SessionStore(tmp_path)
+    assert compact_batch(store.database).processed == 0
+
+
+@pytest.mark.parametrize("failure", ["crash", "timeout"])
+def test_native_decoder_failure_is_contained(tmp_path, monkeypatch, failure):
+    import subprocess
+    from yoke.storage import image_worker
+
+    url = image_url()
+    store = SessionStore(tmp_path)
+    record = store.save(
+        "decoder", [Message.user([{"type": "image_url", "image_url": {"url": url}}])]
+    )
+    legacy(store.database)
+    quiet(store.database)
+    calls = []
+
+    def fail_decoder(argv, **kwargs):
+        calls.append((argv, kwargs["timeout"]))
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        raise subprocess.CalledProcessError(-11, argv)
+
+    monkeypatch.setattr(image_worker.subprocess, "run", fail_decoder)
+    result = compact_batch(store.database)
+    assert result.failures_inline == 1
+    assert store.load("decoder").conversation_entries == record.conversation_entries
+    assert calls[0][1] == 5
+    assert compact_batch(store.database).processed == 0
+    assert len(calls) == 1

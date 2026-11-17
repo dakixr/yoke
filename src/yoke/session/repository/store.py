@@ -57,10 +57,11 @@ class SessionStore:
         directory: Path | None = None,
         *,
         database_path: Path | None = None,
+        migrate: bool = True,
     ) -> None:
         self.directory = (directory or default_session_directory()).resolve()
         self.database_path = database_path or database_path_for(self.directory)
-        self.database: Database = open_database(self.database_path)
+        self.database: Database = open_database(self.database_path, migrate=migrate)
         self._table = SessionTable(self.database)
         self._tree_writer = SessionTreeWriter(self._table)
         self.save_tree_delta = self._tree_writer.save_tree_delta

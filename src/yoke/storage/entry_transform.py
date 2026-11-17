@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from yoke.agent.image_data import image_bytes_to_data_url
+from yoke.storage.image_worker import reencode_image
 
 
 def strip_usage_raw(value: Any) -> None:
@@ -58,16 +57,14 @@ class ImageTransform:
             self.failures += 1
             self.failed_urls.add(url)
             return
-        from PIL import Image
-
         try:
             raw = base64.b64decode(payload, validate=True)
             if base64.b64encode(raw).decode("ascii") != payload:
                 self.failures += 1
                 self.failed_urls.add(url)
                 return
-            candidate = image_bytes_to_data_url(raw)
-        except (ValueError, OSError, binascii.Error, Image.DecompressionBombError):
+            candidate = reencode_image(raw)
+        except Exception:  # noqa: BLE001 - retain every undecodable image inline
             self.failures += 1
             self.failed_urls.add(url)
             return

@@ -10,11 +10,18 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 
-from yoke.agent.tools.command_process.admission import spawn
+from yoke.agent.tools.command_process import admission
+from yoke.agent.tools.command_process.agent_runs import prepare_launch
+from yoke.agent.tools.command_process.coordination import acquired, check_cancelled
+from yoke.agent.tools.python_env import prepare_python_env
+from yoke.agent.tools.shell import build_shell_command
+from yoke.agent_runs.context import Binding
+from yoke.ai.providers.usage_attribution import attribute_subprocess_environment
 from yoke.agent.tools.command_process.output import CompletedCommandProcess
 from yoke.agent.tools.command_process.process import _ManagedCommandProcess
 from yoke.agent.tools.command_process.types import (
     MAX_COMPLETED_PROCESS_COUNT,
+    MAX_PROCESS_COUNT,
     CancelRequested,
     CommandProcessOutputPage,
     CommandProcessResult,
@@ -318,7 +325,126 @@ class CommandProcessManager:
         if first_error is not None:
             raise first_error
 
-    _spawn = spawn
+    def allocate_session_id(self) -> int:
+        """Allocate a JSON-safe handle without ever recycling retired runtime IDs."""
+        used = set(self._processes)
+        used.update(item.snapshot.session_id for item in self._completed)
+        used.update(item.session_id for item in self._completion_events)
+        while self._next_session_id in used:
+            self._next_session_id += 1
+        if self._next_session_id >= 2**53:
+            raise RuntimeError("Process session ID space exhausted")
+        session_id = self._next_session_id
+        self._next_session_id += 1
+        return session_id
+
+    def _spawn(
+        self,
+        command: str,
+        cwd: Path,
+        tty: bool,
+        shell: str | None,
+        login: bool,
+        *,
+        argv: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        timeout_seconds: int | None = None,
+        cancel_requested: CancelRequested | None = None,
+    ) -> _ManagedCommandProcess:
+        values = argv if argv is not None else [command, shell or ""]
+        if any("\x00" in value for value in values):
+            raise ValueError("Process arguments must not contain NUL characters")
+        with acquired(self._spawn_lock, cancel_requested):
+            self._prune()
+            managed: _ManagedCommandProcess | None = None
+            master_fd: int | None = None
+            slave_fd: int | None = None
+            launch_binding: Binding | None = None
+            try:
+                with self._lock:
+                    if self._closed:
+                        raise RuntimeError("Command process manager is closed")
+                    check_cancelled(cancel_requested)
+                    session_id = self.allocate_session_id()
+                    process_env = (
+                        env.copy() if env is not None else self.base_environment()
+                    )
+                    attribute_subprocess_environment(process_env)
+                    launch_binding = prepare_launch(self, process_env, session_id)
+                    if env is None:
+                        prepare_python_env(process_env)
+                    process_argv = argv or build_shell_command(
+                        command, process_env, shell=shell, login=login
+                    )
+                    check_cancelled(cancel_requested)
+                    process, master_fd, slave_fd = admission.open_process(
+                        process_argv, cwd, process_env, tty=tty
+                    )
+                    managed = self._managed_process_factory(
+                        session_id=session_id,
+                        command=command,
+                        cwd=cwd,
+                        process=process,
+                        tty=tty,
+                        master_fd=master_fd,
+                        on_change=self._notify,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    if launch_binding is None:
+                        pass  # Reporting outage, child SDK admission remains mandatory.
+                    elif launch_binding.registry is self.agent_runs:
+                        # A shell can exit while its owned descendants still run.
+                        # Retire authority after existing tree cleanup, not shell exit.
+                        self.agent_runs.watch_launch(
+                            launch_binding.token,
+                            lambda owned=managed: 0 if owned.closed else None,
+                        )
+                    else:
+                        with suppress(Exception):
+                            launch_binding.attach(process.pid)
+                        self.agent_runs.watch_remote_launch(
+                            lambda owned=managed: owned.closed, launch_binding.revoke
+                        )
+                    self._processes[session_id] = managed
+                    managed.start_readers()
+            except BaseException:
+                if launch_binding is not None:
+                    with suppress(Exception):
+                        launch_binding.revoke()
+                if managed is not None:
+                    try:
+                        managed.terminate()
+                    except BaseException:
+                        # Keep failed cleanup owned by the manager for a later retry.
+                        pass
+                    else:
+                        with self._lock:
+                            self._processes.pop(managed.session_id, None)
+                elif master_fd is not None:
+                    os.close(master_fd)
+                raise
+            finally:
+                if slave_fd is not None:
+                    os.close(slave_fd)
+        self._notify()
+        return managed
+
+    def _prune(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Command process manager is closed")
+            if len(self._processes) < MAX_PROCESS_COUNT:
+                return
+            oldest = min(
+                self._processes.values(),
+                key=lambda process: (not process.finished, process.last_used_at),
+            )
+        if oldest.finished:
+            self._complete(oldest.session_id)
+        else:
+            raise RuntimeError(
+                "Process capacity reached; finish work or use process_cancel before starting another process"
+            )
 
     def _get(self, session_id: int) -> _ManagedCommandProcess:
         with self._lock:

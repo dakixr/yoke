@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 
+from yoke.session import SessionStore
 from yoke.session.admissions import AdmissionRecord
 from yoke.session.admissions import AdmissionSnapshot
 from yoke.session.admissions import AdmissionStore
@@ -13,6 +14,7 @@ def test_concurrent_admission_saves_each_commit_a_whole_snapshot(
     tmp_path: Path,
 ) -> None:
     session_directory = tmp_path / "sessions"
+    SessionStore(session_directory)
     start = Barrier(2)
 
     def save(input_id: str) -> None:

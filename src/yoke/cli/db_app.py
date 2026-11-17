@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import sqlite3
 from pathlib import Path
 from typing import Annotated
 
@@ -21,9 +22,25 @@ def _store():  # noqa: ANN202
 
     try:
         return SessionStore()
-    except DatabaseError as exc:
-        typer.echo(f"Error: {exc}", err=True)
+    except (DatabaseError, OSError, sqlite3.Error) as exc:
+        from yoke.session.repository.utils import default_database_path
+        from yoke.storage.errors import database_open_error
+
+        typer.echo(database_open_error(default_database_path(), exc), err=True)
         raise typer.Exit(1) from exc
+
+
+@db_app.command("check")
+def check() -> None:
+    """Check SQLite integrity, foreign keys, sample codecs and orphan references."""
+    from yoke.session.repository.utils import default_database_path
+    from yoke.storage.check import check_database
+
+    result = check_database(default_database_path())
+    for line in result.lines:
+        typer.echo(line)
+    if not result.ok:
+        raise typer.Exit(1)
 
 
 @db_app.command("info")

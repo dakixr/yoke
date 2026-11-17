@@ -87,6 +87,15 @@ def _daemon_turn_save_failure(tmp_path, monkeypatch, terminal, caplog, *, full):
     assert "Session finalization failed." in errors.getvalue()
     assert ("database or disk is full" if full else "database is locked") in caplog.text
     assert output.getvalue() == ""
+    assert str(terminal.store.database_path) in errors.getvalue().replace("\n", "")
+    assert ("database or disk is full" if full else "database is locked") in " ".join(
+        errors.getvalue().split()
+    )
+    with runtime.resources.lock:
+        primary = runtime.resources.primary_locked()
+        assert primary is not prepared[0]
+        if primary is not None:
+            assert primary.messages == terminal.store.load("disk-failure").messages
     assert prepared[0].messages == [Message.user(prompt), Message.assistant("done")]
     assert terminal.store.load("disk-failure").messages == []
     assert (

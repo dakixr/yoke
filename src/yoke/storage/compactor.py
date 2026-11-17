@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 import time
 from dataclasses import dataclass
 
 from yoke.storage.blob_codec import collect_blobs, prepare_blob
 from yoke.storage.database import Database
-from yoke.storage.entry_transform import transform_entry
+from yoke.storage.entry_transform import ImageTransform, transform_entry
+
+LOGGER = logging.getLogger(__name__)
 
 # Shared entry hashes are only rewritten when *all* owners are quiet. Admission
 # settlement is authoritative even for turns older than the activity window.
@@ -86,8 +89,18 @@ def compact_batch(
     for old_sha, raw in candidates:
         if nonblocking and time.monotonic() - started > 0.2:
             break
-        transformed, images = transform_entry(raw)
-        prepared = prepare_blob(transformed, inline_urls=images.failed_urls)
+        try:
+            transformed, images = transform_entry(raw)
+            prepared = prepare_blob(transformed, inline_urls=images.failed_urls)
+        except Exception:  # noqa: BLE001 - poison blobs must never be retried
+            LOGGER.debug(
+                "Leaving failed compaction blob %s inline", old_sha, exc_info=True
+            )
+            transformed = raw
+            images = ImageTransform(failures=1)
+            from yoke.storage.blob_codec import EncodedBlob
+
+            prepared = EncodedBlob(old_sha, raw, raw, (), ())
         try:
             with (
                 database.write_nowait()
@@ -146,12 +159,18 @@ def compact_batch(
                 )
                 result.images_externalized += externalized
                 result.images_reencoded += images.reencoded
-                result.failures_inline += (
+                failures = (
                     images.failures
                     + prepared.failures
                     + len(prepared.refs)
                     - externalized
                 )
+                if failures:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO blob_compaction_failures VALUES (?, ?)",
+                        (new_sha, failures),
+                    )
+                result.failures_inline += failures
         except sqlite3.OperationalError as exc:
             if not nonblocking or exc.sqlite_errorcode not in {
                 sqlite3.SQLITE_BUSY,

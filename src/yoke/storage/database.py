@@ -17,10 +17,18 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from importlib import resources
 from pathlib import Path
 from weakref import WeakValueDictionary, proxy
 from typing import Literal, cast
+
+from yoke.storage.schema import (
+    DatabaseError as DatabaseError,
+    SchemaTooNewError as SchemaTooNewError,
+    check_schema,
+    migrate_schema,
+    migrations as migrations,
+    schema_version as schema_version,
+)
 
 BUSY_TIMEOUT_MS = 5_000
 
@@ -29,66 +37,42 @@ class _Connection(sqlite3.Connection):
     """Allow a weak callback reference without a connection/callback cycle."""
 
 
-class DatabaseError(RuntimeError):
-    """The Yoke database cannot be opened."""
-
-
-class SchemaTooNewError(DatabaseError):
-    """The database was migrated by a newer Yoke release."""
-
-    def __init__(self, path: Path, found: int, supported: int) -> None:
-        super().__init__(
-            f"{path} uses schema version {found}, but this Yoke release supports "
-            f"up to {supported}. Upgrade Yoke to open it."
-        )
-        self.found = found
-        self.supported = supported
-
-
-def migrations() -> list[tuple[int, str]]:
-    """Return the ordered (version, sql) migrations shipped with this release."""
-    folder = resources.files("yoke.storage").joinpath("migrations")
-    found: list[tuple[int, str]] = []
-    for item in folder.iterdir():
-        name = item.name
-        if not name.endswith(".sql"):
-            continue
-        found.append((int(name.split("_", 1)[0]), item.read_text(encoding="utf-8")))
-    found.sort()
-    for expected, (version, _) in enumerate(found, start=1):
-        if version != expected:
-            raise DatabaseError(f"Migration {expected:04d} is missing.")
-    return found
-
-
-def schema_version() -> int:
-    """Return the newest schema version this release can migrate to."""
-    return len(migrations())
-
-
 class Database:
     """Connections and transactions for one database file in this process."""
 
     def __init__(
-        self, path: Path, *, synchronous: Literal["NORMAL", "OFF"] = "NORMAL"
+        self,
+        path: Path,
+        *,
+        migrate: bool = False,
+        synchronous: Literal["NORMAL", "OFF"] = "NORMAL",
     ) -> None:
         if synchronous not in {"NORMAL", "OFF"}:
             raise ValueError("synchronous must be NORMAL or OFF")
         self._synchronous = synchronous
-        self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path.expanduser().absolute()
+        path = self.path
+        self._may_create = migrate
+        if migrate:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        elif not path.is_file():
+            raise DatabaseError(f"Database does not exist: {path}")
         self._lock = threading.RLock()
         self._owner: int | None = None
         self._depth = 0
         self._callbacks: list[tuple[int, Callable[[], None]]] = []
         self._local = threading.local()
         self._pid = os.getpid()
+        self._closed = False
         self._writer = self._connect()
         try:
             # Conversion of an existing large v1 database can exceed the
             # normal write timeout. Concurrent starters wait for its migration.
             self._writer.execute("PRAGMA busy_timeout=60000")
-            self._migrate()
+            if migrate:
+                migrate_schema(self._writer, self.path)
+            else:
+                check_schema(self._writer, self.path)
             self._writer.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         except BaseException:
             self._writer.close()
@@ -97,69 +81,39 @@ class Database:
 
     def _connect(self, *, query_only: bool = False) -> sqlite3.Connection:
         connection = sqlite3.connect(
-            self.path,
+            self.path.as_uri() + ("?mode=rwc" if self._may_create else "?mode=rw"),
+            uri=True,
             timeout=BUSY_TIMEOUT_MS / 1000,
             isolation_level=None,
             check_same_thread=False,
             factory=_Connection,
         )
-        connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        connection.create_function(
-            "yoke_sha256",
-            1,
-            lambda data: hashlib.sha256(data).hexdigest(),
-            deterministic=True,
-        )
-        from yoke.storage.blob_codec import decode_blob
-
-        reader = cast(sqlite3.Connection, proxy(connection))
-        connection.create_function(
-            "yoke_blob_data",
-            2,
-            lambda digest, data: decode_blob(reader, digest, data),
-        )
-        connection.create_function("yoke_casefold", 1, str.casefold, deterministic=True)
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute(f"PRAGMA synchronous={self._synchronous}")
-        if query_only:
-            connection.execute("PRAGMA query_only=ON")
-        return connection
-
-    def _migrate(self) -> None:
-        available = migrations()
-        supported = len(available)
-        connection = self._writer
-        current = connection.execute("PRAGMA user_version").fetchone()[0]
-        if current > supported:
-            raise SchemaTooNewError(self.path, current, supported)
-        if current == 0:
-            # Only effective before the first table exists.
-            connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
-        mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
-        if str(mode).lower() != "wal":
-            raise DatabaseError(f"Could not enable WAL for {self.path} ({mode}).")
-        if current == supported:
-            return
-        connection.execute("BEGIN IMMEDIATE")
         try:
-            # Another process may have migrated while this one waited.
-            current = connection.execute("PRAGMA user_version").fetchone()[0]
-            if current > supported:
-                raise SchemaTooNewError(self.path, current, supported)
-            for version, sql in available[current:]:
-                for statement in _statements(sql):
-                    connection.execute(statement)
-                if version == 2:
-                    from yoke.session.repository.provenance import (
-                        classify_legacy_entries,
-                    )
+            connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+            connection.create_function(
+                "yoke_sha256",
+                1,
+                lambda data: hashlib.sha256(data).hexdigest(),
+                deterministic=True,
+            )
+            from yoke.storage.blob_codec import decode_blob
 
-                    classify_legacy_entries(connection)
-                connection.execute(f"PRAGMA user_version={version}")
-            connection.execute("COMMIT")
+            reader = cast(sqlite3.Connection, proxy(connection))
+            connection.create_function(
+                "yoke_blob_data",
+                2,
+                lambda digest, data: decode_blob(reader, digest, data),
+            )
+            connection.create_function(
+                "yoke_casefold", 1, str.casefold, deterministic=True
+            )
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute(f"PRAGMA synchronous={self._synchronous}")
+            if query_only:
+                connection.execute("PRAGMA query_only=ON")
+            return connection
         except BaseException:
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
+            connection.close()
             raise
 
     def maintain(self, *, pages: int = 256) -> None:
@@ -218,7 +172,11 @@ class Database:
 
     def is_current(self) -> bool:
         """Return whether this object still owns the file now at its path."""
-        return self._pid == os.getpid() and self._identity == _file_identity(self.path)
+        return (
+            not self._closed
+            and self._pid == os.getpid()
+            and self._identity == _file_identity(self.path)
+        )
 
     @contextmanager
     def write(self) -> Iterator[sqlite3.Connection]:
@@ -342,6 +300,7 @@ class Database:
         """Close the writer and this thread's reader."""
         with self._lock:
             self._writer.close()
+            self._closed = True
         reader = getattr(self._local, "connection", None)
         if reader is not None:
             reader.close()
@@ -352,14 +311,16 @@ _databases: WeakValueDictionary[Path, Database] = WeakValueDictionary()
 _databases_lock = threading.Lock()
 
 
-def open_database(path: Path) -> Database:
-    """Return this process's shared database for a file, opening it on first use."""
+def open_database(path: Path, *, migrate: bool = False) -> Database:
+    """Attach to an exact schema; only owning stores authorize migration."""
     key = Path(os.path.abspath(path.expanduser()))
     with _databases_lock:
         database = _databases.get(key)
         if database is not None and database.is_current():
+            with database.read() as connection:
+                check_schema(connection, key)
             return database
-        database = Database(key)
+        database = Database(key, migrate=migrate)
         _databases[key] = database
         return database
 
@@ -370,18 +331,3 @@ def _file_identity(path: Path) -> tuple[int, int] | None:
     except OSError:
         return None
     return stat.st_dev, stat.st_ino
-
-
-def _statements(sql: str) -> Iterator[str]:
-    buffer = ""
-    for line in sql.splitlines(keepends=True):
-        if line.lstrip().startswith("--"):
-            continue
-        buffer += line
-        if sqlite3.complete_statement(buffer):
-            statement = buffer.strip()
-            if statement:
-                yield statement
-            buffer = ""
-    if buffer.strip():
-        raise DatabaseError("Migration ends with an incomplete statement.")

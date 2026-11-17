@@ -1,148 +1,15 @@
-"""Serialize process admission without holding the reader notification lock."""
+"""Process launch dependency and compatibility handle allocator."""
 
 from __future__ import annotations
 
-import os
-from contextlib import suppress
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from yoke.agent.tools.command_process.agent_runs import prepare_launch
-from yoke.agent.tools.command_process.coordination import (
-    acquired,
-    check_cancelled,
-)
-from yoke.agent.tools.command_process.process import _ManagedCommandProcess
-from yoke.agent.tools.command_process.spawn import open_process
-from yoke.agent.tools.command_process.types import MAX_PROCESS_COUNT, CancelRequested
-from yoke.agent.tools.python_env import prepare_python_env
-from yoke.agent.tools.shell import build_shell_command
-from yoke.agent_runs.context import Binding
-from yoke.ai.providers.usage_attribution import attribute_subprocess_environment
+from yoke.agent.tools.command_process.spawn import open_process as open_process
 
 if TYPE_CHECKING:
     from yoke.agent.tools.command_process.manager import CommandProcessManager
 
 
 def allocate_session_id(manager: CommandProcessManager) -> int:
-    """Allocate a JSON-safe handle without ever recycling retired runtime IDs."""
-    used = set(manager._processes)
-    used.update(item.snapshot.session_id for item in manager._completed)
-    used.update(item.session_id for item in manager._completion_events)
-    while manager._next_session_id in used:
-        manager._next_session_id += 1
-    if manager._next_session_id >= 2**53:
-        raise RuntimeError("Process session ID space exhausted")
-    session_id = manager._next_session_id
-    manager._next_session_id += 1
-    return session_id
-
-
-def spawn(
-    manager: CommandProcessManager,
-    command: str,
-    cwd: Path,
-    tty: bool,
-    shell: str | None,
-    login: bool,
-    *,
-    argv: list[str] | None = None,
-    env: dict[str, str] | None = None,
-    timeout_seconds: int | None = None,
-    cancel_requested: CancelRequested | None = None,
-) -> _ManagedCommandProcess:
-    values = argv if argv is not None else [command, shell or ""]
-    if any("\x00" in value for value in values):
-        raise ValueError("Process arguments must not contain NUL characters")
-    with acquired(manager._spawn_lock, cancel_requested):
-        _prune(manager)
-        managed: _ManagedCommandProcess | None = None
-        master_fd: int | None = None
-        slave_fd: int | None = None
-        launch_binding: Binding | None = None
-        try:
-            with manager._lock:
-                if manager._closed:
-                    raise RuntimeError("Command process manager is closed")
-                check_cancelled(cancel_requested)
-                session_id = allocate_session_id(manager)
-                process_env = (
-                    env.copy() if env is not None else manager.base_environment()
-                )
-                attribute_subprocess_environment(process_env)
-                launch_binding = prepare_launch(manager, process_env, session_id)
-                if env is None:
-                    prepare_python_env(process_env)
-                process_argv = argv or build_shell_command(
-                    command, process_env, shell=shell, login=login
-                )
-                check_cancelled(cancel_requested)
-                process, master_fd, slave_fd = open_process(
-                    process_argv, cwd, process_env, tty=tty
-                )
-                managed = manager._managed_process_factory(
-                    session_id=session_id,
-                    command=command,
-                    cwd=cwd,
-                    process=process,
-                    tty=tty,
-                    master_fd=master_fd,
-                    on_change=manager._notify,
-                    timeout_seconds=timeout_seconds,
-                )
-                if launch_binding is None:
-                    pass  # Reporting outage, child SDK admission remains mandatory.
-                elif launch_binding.registry is manager.agent_runs:
-                    # A shell can exit while its owned descendants still run.
-                    # Retire authority after existing tree cleanup, not shell exit.
-                    manager.agent_runs.watch_launch(
-                        launch_binding.token,
-                        lambda owned=managed: 0 if owned.closed else None,
-                    )
-                else:
-                    with suppress(Exception):
-                        launch_binding.attach(process.pid)
-                    manager.agent_runs.watch_remote_launch(
-                        lambda owned=managed: owned.closed, launch_binding.revoke
-                    )
-                manager._processes[session_id] = managed
-                managed.start_readers()
-        except BaseException:
-            if launch_binding is not None:
-                with suppress(Exception):
-                    launch_binding.revoke()
-            if managed is not None:
-                try:
-                    managed.terminate()
-                except BaseException:
-                    # Keep failed cleanup owned by the manager for a later retry.
-                    pass
-                else:
-                    with manager._lock:
-                        manager._processes.pop(managed.session_id, None)
-            elif master_fd is not None:
-                os.close(master_fd)
-            raise
-        finally:
-            if slave_fd is not None:
-                os.close(slave_fd)
-    manager._notify()
-    return managed
-
-
-def _prune(manager: CommandProcessManager) -> None:
-    with manager._lock:
-        if manager._closed:
-            raise RuntimeError("Command process manager is closed")
-        if len(manager._processes) < MAX_PROCESS_COUNT:
-            return
-        oldest = min(
-            manager._processes.values(),
-            key=lambda process: (not process.finished, process.last_used_at),
-        )
-    if oldest.finished:
-        manager._complete(oldest.session_id)
-    else:
-        raise RuntimeError(
-            "Process capacity reached; finish work or use process_cancel before starting another process"
-        )
+    """Allocate through the owner, preserving the historical helper import."""
+    return manager.allocate_session_id()

@@ -8,7 +8,6 @@ from typing import Literal, cast
 import pytest
 
 from yoke.agent.loop.agent import RuntimeAgent
-from yoke.agent.loop.cache_scope import conversation_cache_scope
 from yoke.agent.loop.requests import ModelRequests
 from yoke.agent.loop.types import AgentEventHandler
 from yoke.agent.models import AgentContext
@@ -49,3 +48,11 @@ def capture_request_state(monkeypatch: pytest.MonkeyPatch) -> None:
         setattr(runtime.provider, "oracle_context", context)
 
     monkeypatch.setattr(ModelRequests, "__init__", observe)
+
+
+def conversation_cache_scope(context: AgentContext) -> str:
+    """Return the stable cache scope for one logical conversation."""
+    for entry in context.conversation_log.entries:
+        if entry.kind not in {"instruction", "memory_snapshot"}:
+            return entry.id
+    return "empty-conversation"

@@ -57,7 +57,7 @@ def test_v1_migration_preserves_raw_entry_bytes_and_mutable_metadata(
                     '{"label":"edited"}' if seq == 1 else None,
                 ),
             )
-    migrated = Database(path)
+    migrated = Database(path, migrate=True)
     with migrated.read() as connection:
         assert (
             connection.execute("PRAGMA user_version").fetchone()[0] == schema_version()

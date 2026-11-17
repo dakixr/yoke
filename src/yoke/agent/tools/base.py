@@ -39,6 +39,14 @@ class LocalTool(BaseModel, ABC):
     provider_result_projection: ClassVar[str | None] = None
     _context: dict[str, object] = PrivateAttr(default_factory=dict)
 
+    def binding_value(self, key: str) -> object | None:
+        """Read tool-local execution state shared by parsed invocations."""
+        return self._context.get(key)
+
+    def bind_value(self, key: str, value: object) -> None:
+        """Attach tool-local execution state for later parsed invocations."""
+        self._context[key] = value
+
     @classmethod
     def bind(cls, **context: object) -> LocalTool:
         """Create a bound tool instance with the given execution context."""

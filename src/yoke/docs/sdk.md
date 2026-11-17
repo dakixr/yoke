@@ -239,7 +239,12 @@ same schema and privacy rules. Read them with
 `yoke.ai.providers.usage_writer.read_usage_events()`, optionally filtering by
 `provider`, `session_id`, or ISO `since` timestamp and selecting `database_path`.
 Writes commit atomically with `synchronous=NORMAL`, the shared database policy.
-A write failure raises `yoke.ai.providers.UsageLogWriteError`; a failed insertion
+SDK writes never create or migrate the database. If it is missing, older or newer
+than the SDK's supported schema, the usage write is skipped with a debug log and
+the provider call continues. Start the owning Yoke daemon to initialize or upgrade
+an older database; upgrade the SDK to match a newer schema. Handoff reads also
+require an existing compatible schema and never migrate it.
+Other write failures raise `yoke.ai.providers.UsageLogWriteError`; a failed insertion
 leaves no partial row. Usage rows survive session retention.
 
 ## Automatic agent tracking

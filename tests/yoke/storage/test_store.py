@@ -54,7 +54,7 @@ def test_newer_schema_is_refused(tmp_path: Path) -> None:
     connection.execute("PRAGMA user_version = 999")
     connection.close()
     with pytest.raises(SchemaTooNewError, match="schema version 999"):
-        Database(path)
+        Database(path, migrate=True)
 
 
 def test_writes_roll_back_together_and_after_commit_waits(tmp_path: Path) -> None:
@@ -90,7 +90,7 @@ def test_writes_roll_back_together_and_after_commit_waits(tmp_path: Path) -> Non
 def test_after_commit_runs_all_callbacks_before_reporting_failure(
     tmp_path: Path,
 ) -> None:
-    database = Database(tmp_path / "callbacks.db")
+    database = Database(tmp_path / "callbacks.db", migrate=True)
     called: list[str] = []
 
     def fail() -> None:
@@ -195,19 +195,21 @@ def test_database_is_shared_per_file_and_reopened_after_replacement(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "yoke.db"
-    first = open_database(path)
-    assert open_database(path) is first
+    first = open_database(path, migrate=True)
+    assert open_database(path, migrate=True) is first
     first.close()
     for suffix in ("", "-wal", "-shm"):
         Path(f"{path}{suffix}").unlink(missing_ok=True)
-    assert open_database(path) is not first
+    assert open_database(path, migrate=True) is not first
 
 
 def test_disposable_synchronous_override_preserves_transactions(tmp_path):
     for name, expected in (("default", 1), ("disposable", 0)):
         path = tmp_path / (name + ".db")
         database = (
-            Database(path) if name == "default" else Database(path, synchronous="OFF")
+            Database(path, migrate=True)
+            if name == "default"
+            else Database(path, migrate=True, synchronous="OFF")
         )
         try:
             with database.read() as connection:

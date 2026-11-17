@@ -232,12 +232,12 @@ def workers_for_tools(tools: dict[str, LocalTool]) -> InProcessTools:
     if isinstance(tools, RuntimeTools):
         return tools.workers
     for tool in tools.values():
-        workers = tool._context.get("in_process_workers")
+        workers = tool.binding_value("in_process_workers")
         if isinstance(workers, InProcessTools):
             return workers
     workers = InProcessTools()
     for tool in tools.values():
-        tool._context["in_process_workers"] = workers
+        tool.bind_value("in_process_workers", workers)
     return workers
 
 
