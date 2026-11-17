@@ -17,8 +17,10 @@ from yoke.session.repository.utils import default_database_path
 
 
 @pytest.mark.parametrize("versions", [("3.34.1", "3.35.0"), ("3.35.0", "3.35.0")])
-def test_two_disk_builds_and_leases_cannot_ping_pong(tmp_path, monkeypatch, versions):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_two_disk_builds_and_leases_cannot_ping_pong(
+    tmp_path, monkeypatch, short_socket_dir, versions
+):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     builds = [f"{version}+g{tree}" for version, tree in zip(versions, ("aaaa", "bbbb"))]
     running = builds[0]
     restarts = []
@@ -86,8 +88,10 @@ def test_same_version_hash_skew_warns_and_protocol_skew_refuses(busy):
         )
 
 
-def test_database_mismatch_refuses_before_restart(tmp_path, monkeypatch):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_database_mismatch_refuses_before_restart(
+    tmp_path, monkeypatch, short_socket_dir
+):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     mine = tmp_path / "client.db"
     theirs = tmp_path / "daemon.db"
     monkeypatch.setenv("YOKE_DB_PATH", str(mine))
@@ -144,8 +148,10 @@ def test_spawn_preserves_proxy_and_tls_settings(name, lower):
     assert spawn_environment({name: "configured"})[name] == "configured"
 
 
-def test_windows_stale_record_never_sends_a_request(tmp_path, monkeypatch):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_windows_stale_record_never_sends_a_request(
+    tmp_path, monkeypatch, short_socket_dir
+):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     paths.ensure()
     instance.write_info(
         paths,
@@ -212,9 +218,9 @@ def test_spawn_resolves_database_relative_to_client_cwd(tmp_path, monkeypatch):
 
 
 def test_windows_old_protocol_discovery_fails_with_upgrade_advice(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, short_socket_dir
 ):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     paths.ensure()
     instance.write_info(
         paths,

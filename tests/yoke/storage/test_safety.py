@@ -159,7 +159,9 @@ def test_sqlite_full_rolls_back_append_and_retained_index(tmp_path, monkeypatch)
     assert store.load("s") == before
 
 
-def test_daemon_reports_database_startup_cause(tmp_path, monkeypatch, capsys):
+def test_daemon_reports_database_startup_cause(
+    tmp_path, monkeypatch, short_socket_dir, capsys
+):
     from yoke.daemon import server
     from yoke.daemon.paths import DaemonPaths
 
@@ -168,7 +170,7 @@ def test_daemon_reports_database_startup_cause(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("YOKE_DB_PATH", str(path))
     monkeypatch.setattr(server, "preload_runtime", lambda: None)
     monkeypatch.setattr(server, "_bind_unix", lambda _path: None)
-    assert server.run_daemon(port=0, paths=DaemonPaths(tmp_path, tmp_path / "run")) == 1
+    assert server.run_daemon(port=0, paths=DaemonPaths(tmp_path, short_socket_dir)) == 1
     error = capsys.readouterr().err
     assert str(path) in error
     assert "not a database" in error
@@ -177,13 +179,15 @@ def test_daemon_reports_database_startup_cause(tmp_path, monkeypatch, capsys):
     assert "Traceback" not in error
 
 
-def test_spawning_clients_receive_database_startup_error(tmp_path, monkeypatch):
+def test_spawning_clients_receive_database_startup_error(
+    tmp_path, monkeypatch, short_socket_dir
+):
     from types import SimpleNamespace
 
     from yoke.daemon import client
     from yoke.daemon.paths import DaemonPaths
 
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     paths.ensure()
     message = f"Yoke database startup failed: {tmp_path / 'yoke.db'}: schema version 99. Upgrade Yoke."
 
@@ -244,14 +248,16 @@ def test_default_database_and_handoff_opens_cannot_migrate(tmp_path, monkeypatch
         assert path.read_bytes() == before
 
 
-def test_spawn_does_not_report_an_old_database_failure(tmp_path, monkeypatch):
+def test_spawn_does_not_report_an_old_database_failure(
+    tmp_path, monkeypatch, short_socket_dir
+):
     import os
     from types import SimpleNamespace
 
     from yoke.daemon import client
     from yoke.daemon.paths import DaemonPaths
 
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     paths.ensure()
     paths.log.write_text("Yoke database startup failed: stale error from yesterday\n")
     os.utime(paths.log, ns=(1, 1))

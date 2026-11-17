@@ -141,18 +141,18 @@ def test_idle_timer_resets_when_a_new_lease_arrives():
     asyncio.run(scenario())
 
 
-def test_busy_tcp_port_keeps_unix_listener_available(tmp_path):
+def test_busy_tcp_port_keeps_unix_listener_available(short_socket_dir):
     from yoke.daemon.server import _bind_tcp, _bind_unix
 
     with socket.socket() as occupied:
         occupied.bind(("127.0.0.1", 0))
         occupied.listen()
-        listener = _bind_unix(tmp_path / "daemon.sock")
+        listener = _bind_unix(short_socket_dir / "daemon.sock")
         try:
             assert _bind_tcp(occupied.getsockname()[1]) is None
             assert listener.family == socket.AF_UNIX
             assert listener.fileno() >= 0
-            assert (tmp_path / "daemon.sock").exists()
+            assert (short_socket_dir / "daemon.sock").exists()
         finally:
             listener.close()
 

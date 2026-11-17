@@ -17,7 +17,7 @@ def test_default_builtin_policy_uses_curated_allowlist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "yoke.agent.capabilities.builtins.shutil.which",
+        "yoke.agent.capabilities.builtins.find_search_binary",
         lambda name: f"/test-bin/{name}" if name in {"rg", "fd"} else None,
     )
     resolved = resolve_agent_config(

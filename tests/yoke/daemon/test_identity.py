@@ -26,9 +26,9 @@ def proof(token, nonce, port):
     "reply", ["valid", "wrong-token", "wrong-port", "replay", "empty", "not-json"]
 )
 def test_windows_verifies_identity_without_disclosing_token(
-    tmp_path, monkeypatch, reply
+    tmp_path, monkeypatch, short_socket_dir, reply
 ):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     paths.ensure()
     instance.write_info(
         paths,

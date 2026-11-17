@@ -17,8 +17,10 @@ from yoke.daemon.paths import DaemonPaths
 from yoke.daemon.transport import TcpEndpoint, async_client, client_options
 
 
-def test_discovery_selects_recorded_tcp_port_and_authenticates(tmp_path, monkeypatch):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_discovery_selects_recorded_tcp_port_and_authenticates(
+    tmp_path, monkeypatch, short_socket_dir
+):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     paths.ensure()
     info = instance.DaemonInfo(123, "build", "1", "", 12345, "private-token", True, 0)
     instance.write_info(paths, info)
@@ -86,8 +88,10 @@ def test_tcp_endpoint_refuses_missing_capability(port, token):
         TcpEndpoint(port, token)
 
 
-def test_windows_spawn_flags_and_log_redirection(tmp_path, monkeypatch):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_windows_spawn_flags_and_log_redirection(
+    tmp_path, monkeypatch, short_socket_dir
+):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     executable = sys.executable
     monkeypatch.setattr(
         client, "sys", SimpleNamespace(platform="win32", executable=executable)
@@ -112,8 +116,10 @@ def test_unix_spawn_keeps_new_session(monkeypatch):
     assert client.spawn_options() == {"start_new_session": True}
 
 
-def test_windows_lock_contends_probes_and_releases(tmp_path, monkeypatch):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_windows_lock_contends_probes_and_releases(
+    tmp_path, monkeypatch, short_socket_dir
+):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     held = set()
     calls = []
 
@@ -198,7 +204,7 @@ def test_acp_updates_tcp_token_and_port_on_rediscovery(tmp_path):
 
 
 def test_wait_for_tcp_exit_discovers_a_replacement_holding_the_lock(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, short_socket_dir
 ):
     old = TcpEndpoint(1234, "old-token")
     replacement = TcpEndpoint(4321, "new-token")
@@ -212,13 +218,13 @@ def test_wait_for_tcp_exit_discovers_a_replacement_holding_the_lock(
 
     monkeypatch.setattr(client, "_daemon_pid", pid)
     client.wait_for_exit(
-        old, 111, timeout=0.1, paths=DaemonPaths(tmp_path, tmp_path / "run")
+        old, 111, timeout=0.1, paths=DaemonPaths(tmp_path, short_socket_dir)
     )
     assert seen == [replacement]
 
 
-def test_spawn_environment_is_allowlisted(tmp_path, monkeypatch):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_spawn_environment_is_allowlisted(tmp_path, monkeypatch, short_socket_dir):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     for key, value in {
         "YOKE_ROOT_SESSION_ID": "wrong-owner",
         "YOKE_PARENT_RUN_ID": "wrong-run",

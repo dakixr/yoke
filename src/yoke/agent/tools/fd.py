@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -17,6 +16,7 @@ from pydantic import ConfigDict, Field, model_validator
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.search_common import bound_text
 from yoke.agent.tools.search_common import add_option
+from yoke.agent.tools.search_common import find_search_binary
 from yoke.agent.tools.search_common import path_detail
 from yoke.agent.tools.search_common import run_search_process
 from yoke.agent.tools.search_common import split_nul_paths
@@ -39,7 +39,7 @@ FdSort = Literal["none", "path"]
 
 
 def _resolve_fd_binary() -> str:
-    fd_path = shutil.which("fd")
+    fd_path = find_search_binary("fd")
     if fd_path:
         return fd_path
     raise FileNotFoundError("fd binary was not found on PATH")

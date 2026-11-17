@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 
 from yoke.daemon.lifecycle import DaemonLifecycle
 
@@ -117,3 +119,18 @@ def test_detached_log_rotates_during_one_run(sandbox):
     files = list(sandbox.paths.log.parent.glob("daemon.log*"))
     assert len(files) == 3
     assert all(path.stat().st_size <= MAX_LOG_BYTES for path in files)
+
+
+def test_startup_error_tolerates_a_coarse_log_timestamp(tmp_path):
+    from yoke.daemon.log import startup_error
+
+    path = tmp_path / "daemon.log"
+    path.write_text("Yoke database startup failed: schema version 99\n")
+    now = time.time_ns()
+    os.utime(path, ns=(now, now - 500_000_000))
+    assert (
+        startup_error(path, since_ns=now)
+        == "Yoke database startup failed: schema version 99"
+    )
+    os.utime(path, ns=(now, now - 2_000_000_000))
+    assert startup_error(path, since_ns=now) is None

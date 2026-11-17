@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -38,6 +37,7 @@ from yoke.agent.tools.apply_patch.instructions import (
 )
 from yoke.agent.tools.image_generation import provider_supports_image_generation
 from yoke.agent.tools.mcp import LazyMcpManager, register_mcp_tools
+from yoke.agent.tools.search_common import find_search_binary
 
 
 @dataclass(slots=True, frozen=True)
@@ -119,9 +119,9 @@ class FileSearchCapability(BaseCapability):
         context: ToolRegistrationContext,
     ) -> Iterable[LocalTool]:
         native: list[LocalTool] = []
-        if shutil.which("rg") is not None:
+        if find_search_binary("rg") is not None:
             native.append(bind_tool_class(RipgrepTool, context))
-        if shutil.which("fd") is not None:
+        if find_search_binary("fd") is not None:
             native.append(bind_tool_class(FdTool, context))
         if native:
             return tuple(native)

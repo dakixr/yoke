@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from tests.short_paths import short_temp_dir
 from tests.yoke.tool_fixture import local_file_tools as local_file_tools
 
 # Resolved at import, before any fixture points HOME at a temporary directory.
@@ -28,10 +29,22 @@ from tests.yoke.schema_fixture import (
 )
 
 
+@pytest.fixture(scope="session")
+def _short_runtime_root() -> Iterator[Path]:
+    """Session-lived root under /tmp so per-test runtimes cannot outlive it.
+
+    Cleanup happens after every monkeypatched fixture is undone; removing a
+    function-scoped tree can otherwise run while a test still wraps os.scandir.
+    """
+    with short_temp_dir("yk-rt-") as root:
+        yield root
+
+
 @pytest.fixture(autouse=True)
 def isolate_yoke_local_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    _short_runtime_root: Path,
 ) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("YOKE_STATE_CHECKS", "1")
@@ -40,10 +53,21 @@ def isolate_yoke_local_state(
     # Ambient DB overrides would make unrelated tests share one database. Tests
     # exercising YOKE_DB_PATH set their own override after this fixture.
     monkeypatch.delenv("YOKE_DB_PATH", raising=False)
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
+    # A real XDG runtime directory is short; tmp_path under macOS's TMPDIR is
+    # long enough to push a daemon socket past sun_path.
+    runtime = _short_runtime_root / uuid4().hex
+    runtime.mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
     monkeypatch.setenv("YOKE_DAEMON_PORT", "0")
     monkeypatch.setenv("YOKE_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setenv("YOKE_PROVIDER_LOGS_DIR", str(tmp_path / "provider-logs"))
+
+
+@pytest.fixture
+def short_socket_dir() -> Iterator[Path]:
+    """A temp directory whose Unix socket paths fit the smallest sun_path."""
+    with short_temp_dir() as directory:
+        yield directory
 
 
 @pytest.fixture(autouse=True, scope="session")

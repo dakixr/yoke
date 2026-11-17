@@ -76,6 +76,9 @@ paths, types, extensions, excludes, depth, time and size filters, ignore
 behaviour, sorting, a `limit` and an optional regex over returned paths. You
 cannot express pipelines or switches that start subprocesses. Use
 `command_exec` for those. MCP `rg` ignores `RIPGREP_CONFIG_PATH`.
+Both binaries are found on `PATH`; on macOS the Homebrew prefixes
+`/opt/homebrew/bin` and `/usr/local/bin` are also searched, so a daemon started
+by launchd with a minimal `PATH` still finds them.
 
 `rg` returns structured matches with paths, line numbers and submatches, path
 lists in file modes, or `{path, count}` objects in count mode. `fd` returns

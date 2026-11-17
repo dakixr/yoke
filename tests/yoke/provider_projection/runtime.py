@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from typing import Protocol
-
-from PIL import Image
 
 from yoke.agent.context import CompactionPolicy, ContextManager
 from yoke.agent.loop import RuntimeAgent
@@ -17,6 +16,14 @@ from yoke.cli.config import DEFAULT_SYSTEM_PROMPT
 from yoke.session import SessionRecord
 
 from .recording import Gate, RecordingProvider, Tape
+
+# Golden projections freeze this file's exact bytes. Pillow encodes PNG through
+# the host's libpng/zlib, whose compressed output differs between platforms, so
+# pin one 2x2 red PNG instead of re-encoding it in every test process.
+TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8"
+    "z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg=="
+)
 
 
 class World:
@@ -33,7 +40,7 @@ class World:
             encoding="utf-8",
         )
         (root / "input.txt").write_text("alpha\nbeta\n", encoding="utf-8")
-        Image.new("RGB", (2, 2), color="red").save(root / "tiny.png")
+        (root / "tiny.png").write_bytes(TINY_PNG)
         self.skills = []
         for name in ("oracle", "review"):
             skill_root = root / ".yoke" / "skills" / name

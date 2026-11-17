@@ -3,7 +3,6 @@ from __future__ import annotations
 # ruff: noqa: D100,D102,E501,S603
 
 import json
-import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -14,6 +13,7 @@ from pydantic import ConfigDict, Field, model_validator
 from yoke.agent.tools.base import WorkspaceTool
 from yoke.agent.tools.search_common import bound_text
 from yoke.agent.tools.search_common import add_option
+from yoke.agent.tools.search_common import find_search_binary
 from yoke.agent.tools.search_common import parse_nul_counts
 from yoke.agent.tools.search_common import parse_rg_json_items
 from yoke.agent.tools.search_common import run_search_process
@@ -29,7 +29,7 @@ RgSort = Literal["none", "path"]
 
 
 def _resolve_rg_binary() -> str:
-    rg_path = shutil.which("rg")
+    rg_path = find_search_binary("rg")
     if rg_path:
         return rg_path
     raise FileNotFoundError("ripgrep binary 'rg' was not found on PATH")

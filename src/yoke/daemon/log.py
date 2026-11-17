@@ -18,6 +18,9 @@ from uvicorn.logging import AccessFormatter, DefaultFormatter
 
 DETACHED_ENV = "YOKE_DAEMON_DETACHED"
 MAX_LOG_BYTES = 2 * 1024 * 1024
+# File timestamps come from the kernel's coarse clock, which can trail the
+# fine-grained time.time_ns() a spawner records by a tick or a filesystem tick.
+_TIMESTAMP_SLACK_NS = 1_000_000_000
 
 
 def open_spawn_log(path: Path) -> BinaryIO:
@@ -32,7 +35,7 @@ def open_spawn_log(path: Path) -> BinaryIO:
 def startup_error(path: Path, *, since_ns: int = 0) -> str | None:
     """Read the last storage startup diagnostic from bounded detached stdio."""
     try:
-        if path.stat().st_mtime_ns < since_ns:
+        if path.stat().st_mtime_ns + _TIMESTAMP_SLACK_NS < since_ns:
             return None
         with path.open("rb") as stream:
             stream.seek(0, 2)

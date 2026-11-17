@@ -79,7 +79,13 @@ def test_surrogate_text_columns_save_and_update(tmp_path: Path, field: str) -> N
     bad = "bad-\udcff-\ud83d\ude00"
     value = os.fsdecode(bytes(tmp_path) + b"/bad-\xff") if field == "root" else bad
     if field == "root":
-        os.mkdir(value)
+        try:
+            os.mkdir(value)
+        except OSError as error:
+            pytest.skip(
+                "This filesystem cannot name a directory with non-UTF-8 bytes, "
+                f"as on macOS/APFS and Windows: {error}"
+            )
     record = cast(Any, store).save("s", [Message.user("hi")], **{field: value})
     expected = value.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
     assert getattr(store.load("s"), field) == expected

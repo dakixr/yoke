@@ -67,6 +67,9 @@ class Server:
                 continue
             except OSError:
                 return
+            if self.stopped.is_set():
+                connection.close()
+                return
             with connection:
                 deadline = time.monotonic() + OPERATION_TIMEOUT
                 try:
@@ -95,9 +98,24 @@ class Server:
                             "Could not send agent run failure response", exc_info=True
                         )
 
+    def _wake_accept(self) -> None:
+        """Connect once so a listener blocked in accept() returns promptly."""
+        try:
+            with socket.socket(self.socket.family, socket.SOCK_STREAM) as wake:
+                wake.settimeout(OPERATION_TIMEOUT)
+                if self.socket.family == getattr(socket, "AF_UNIX", None):
+                    wake.connect(self.address)
+                else:
+                    wake.connect(("127.0.0.1", self.socket.getsockname()[1]))
+        except OSError:
+            pass
+
     def close(self) -> None:
         self.stopped.set()
-        # close() alone need not interrupt another thread blocked in accept().
+        # close() alone need not interrupt another thread blocked in accept(),
+        # and macOS does not wake a timed accept when the descriptor closes. A
+        # throwaway connection lets the loop observe the stop flag on every OS.
+        self._wake_accept()
         with suppress(OSError):
             self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()

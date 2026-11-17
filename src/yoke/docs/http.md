@@ -26,9 +26,10 @@ The daemon listens in two places:
 | Unix socket `$XDG_RUNTIME_DIR/yoke/daemon.sock` | Linux, macOS | The kernel-reported peer uid must match the daemon's user. No token. |
 | TCP `127.0.0.1:8770` | All | Bearer token from `~/.yoke/daemon.json`. |
 
-If `XDG_RUNTIME_DIR` is unset, or the socket path would exceed the Unix limit of
-107 bytes, the socket moves to `~/.yoke/run/daemon.sock`. If that path is also
-too long, startup fails and you need a shorter `XDG_RUNTIME_DIR`. Windows has no
+If `XDG_RUNTIME_DIR` is unset, or the socket path would exceed the Unix limit
+(107 bytes on Linux, 103 on macOS and the BSDs, both excluding the terminating
+NUL), the socket moves to `~/.yoke/run/daemon.sock`. If that path is also too
+long, startup fails and you need a shorter `XDG_RUNTIME_DIR`. Windows has no
 socket and uses TCP only.
 
 If port 8770 is taken, the daemon logs a warning and binds an ephemeral loopback

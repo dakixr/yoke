@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_PORT = 8770
-# sockaddr_un.sun_path is 108 bytes on Linux, including the terminating NUL.
-_MAX_SOCKET_PATH = 107
+# sockaddr_un.sun_path includes the terminating NUL: 108 bytes on Linux and
+# 104 bytes on macOS and the BSDs.
+_MAX_SOCKET_PATH = 103 if sys.platform == "darwin" else 107
 
 
 @dataclass(frozen=True, slots=True)

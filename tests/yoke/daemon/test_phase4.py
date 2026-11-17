@@ -64,8 +64,10 @@ def test_restart_racing_completed_admission_waits():
 
 
 @pytest.mark.parametrize("scheduled", ["now", "when_idle"])
-def test_restart_timeout_falls_back_to_skew_policy(tmp_path, monkeypatch, scheduled):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_restart_timeout_falls_back_to_skew_policy(
+    tmp_path, monkeypatch, short_socket_dir, scheduled
+):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     monkeypatch.setattr(
         client,
         "unix_client",
@@ -85,8 +87,10 @@ def test_restart_timeout_falls_back_to_skew_policy(tmp_path, monkeypatch, schedu
 
 
 @pytest.mark.parametrize("restarted", [False, True])
-def test_discovery_steps_restart_at_most_once(tmp_path, monkeypatch, restarted):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+def test_discovery_steps_restart_at_most_once(
+    tmp_path, monkeypatch, short_socket_dir, restarted
+):
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     monkeypatch.setattr(client, "find_daemon", lambda paths: paths.socket)
     monkeypatch.setattr(client, "build_id", lambda: "3.40.0+gclient")
     monkeypatch.setattr(client, "fresh_build_id", lambda: "3.40.0+gdisk")
@@ -174,12 +178,14 @@ def test_status_reports_phase_and_consistent_busy_reasons(tmp_path):
     asyncio.run(scenario())
 
 
-def test_daemon_status_command_shows_phase_and_busy_reasons(tmp_path, monkeypatch):
+def test_daemon_status_command_shows_phase_and_busy_reasons(
+    tmp_path, monkeypatch, short_socket_dir
+):
     import typer
     from typer.testing import CliRunner
     from yoke.cli.daemon_app import daemon_app
 
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     monkeypatch.setattr(client, "find_daemon", lambda paths: paths.socket)
     data = {
         "pid": 123,

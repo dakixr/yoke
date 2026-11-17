@@ -8,11 +8,11 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
 
+from tests.short_paths import short_temp_dir
 from yoke.daemon.client import connect_or_spawn, find_daemon, spawn_options, unix_client
 from yoke.daemon.instance import daemon_alive, read_info
 from yoke.daemon.paths import DaemonPaths
@@ -156,8 +156,7 @@ class DaemonSandbox:
 @pytest.fixture
 def sandbox(monkeypatch: pytest.MonkeyPatch) -> Iterator[DaemonSandbox]:
     # Keep sun_path short even with pytest's descriptive test directory names.
-    with TemporaryDirectory(prefix="ykd-") as directory:
-        root = Path(directory)
+    with short_temp_dir("ykd-") as root:
         home = root / "home"
         providers = home / ".yoke" / "providers"
         providers.mkdir(parents=True)

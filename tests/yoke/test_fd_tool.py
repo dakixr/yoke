@@ -3,7 +3,6 @@ from __future__ import annotations
 # ruff: noqa: D100, D101, D102, D103, D106, S101
 
 from pathlib import Path
-import shutil
 from typing import Any, cast
 
 import pytest
@@ -14,10 +13,11 @@ from yoke.agent.models import Message
 from yoke.agent.tools import FdTool
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools.context import ModelIdentity
+from yoke.agent.tools.search_common import find_search_binary
 from yoke.ai.providers.base import Provider
 
 requires_fd = pytest.mark.skipif(
-    shutil.which("fd") is None, reason="fd is not installed"
+    find_search_binary("fd") is None, reason="fd is not installed"
 )
 
 
@@ -50,7 +50,7 @@ def test_fd_is_first_class_file_search_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "yoke.agent.capabilities.builtins.shutil.which",
+        "yoke.agent.capabilities.builtins.find_search_binary",
         lambda name: f"/test-bin/{name}" if name in {"rg", "fd"} else None,
     )
     provider = ProviderStub()
@@ -119,6 +119,7 @@ def test_fd_bounds_output(tmp_path: Path) -> None:
     assert len(result["output"]) < 20
 
 
+@requires_fd
 def test_fd_rejects_non_directory_root(tmp_path: Path) -> None:
     file_path = tmp_path / "file.txt"
     file_path.write_text("", encoding="utf-8")

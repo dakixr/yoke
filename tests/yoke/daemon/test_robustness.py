@@ -24,10 +24,10 @@ from yoke.session.repository.utils import default_database_path
     ],
 )
 def test_old_client_converges_without_scheduling_restarts(
-    tmp_path, monkeypatch, daemon_build, disk_build, busy, expected
+    tmp_path, monkeypatch, short_socket_dir, daemon_build, disk_build, busy, expected
 ):
     monkeypatch.setattr(client, "protocol_version", lambda: "1")
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     restarts = []
     posts = []
     monkeypatch.setenv("YOKE_DAEMON_BUILD_ID", disk_build)
@@ -139,9 +139,11 @@ def test_shutdown_cancels_all_watchers_and_closes_runtimes(
     assert "watcher failed" in caplog.text
 
 
-def test_restart_admission_race_is_attempted_only_once(tmp_path, monkeypatch):
+def test_restart_admission_race_is_attempted_only_once(
+    tmp_path, monkeypatch, short_socket_dir
+):
     monkeypatch.setattr(client, "protocol_version", lambda: "1")
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     monkeypatch.setenv("YOKE_DAEMON_BUILD_ID", "3.35.0+gdisk")
     monkeypatch.setattr(client, "build_id", lambda: "3.35.0+gclient")
     monkeypatch.setattr(client, "find_daemon", lambda paths: paths.socket)

@@ -39,10 +39,26 @@ def test_search_registration_selects_native_tools_or_portable_fallbacks(
     expected: list[str],
 ) -> None:
     monkeypatch.setattr(
-        "yoke.agent.capabilities.builtins.shutil.which",
+        "yoke.agent.capabilities.builtins.find_search_binary",
         lambda name: f"/test-bin/{name}" if name in available else None,
     )
 
     tools = register_search_tools(registration_context(tmp_path))
 
     assert [tool.name for tool in tools] == expected
+
+
+def test_macos_search_binary_falls_back_to_homebrew_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yoke.agent.tools import search_common
+
+    binary = tmp_path / "rg"
+    binary.write_text("", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setattr(search_common.sys, "platform", "darwin")
+    monkeypatch.setattr(search_common.shutil, "which", lambda name: None)
+    monkeypatch.setattr(search_common, "_DARWIN_BINARY_DIRS", (str(tmp_path),))
+
+    assert search_common.find_search_binary("rg") == str(binary)

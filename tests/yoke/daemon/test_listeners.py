@@ -15,9 +15,9 @@ from yoke.daemon.paths import DaemonPaths
 
 @pytest.mark.parametrize("explicit", [False, True])
 def test_default_port_falls_back_and_publishes_actual_port(
-    tmp_path, monkeypatch, capsys, explicit
+    tmp_path, monkeypatch, short_socket_dir, capsys, explicit
 ):
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     with socket.socket() as occupied:
         occupied.bind(("127.0.0.1", 0))
         occupied.listen()
@@ -68,12 +68,12 @@ def test_port_source_keeps_explicit_default_strict(
     assert run.call_args.kwargs["port"] == expected
 
 
-def test_status_reports_recorded_fallback_port(tmp_path, monkeypatch):
+def test_status_reports_recorded_fallback_port(tmp_path, monkeypatch, short_socket_dir):
     import httpx
     from yoke.daemon import client
     from yoke.cli.daemon_app import daemon_app
 
-    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    paths = DaemonPaths(tmp_path, short_socket_dir)
     monkeypatch.setattr(DaemonPaths, "default", lambda: paths)
     monkeypatch.setattr(client, "find_daemon", lambda paths: paths.socket)
     data = {

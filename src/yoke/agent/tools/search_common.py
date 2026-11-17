@@ -5,13 +5,30 @@ from __future__ import annotations
 import json
 import os
 import selectors
+import shutil
 import stat
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+
+# launchd starts GUI daemons with a minimal PATH that omits Homebrew prefixes.
+_DARWIN_BINARY_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
+
+
+def find_search_binary(name: str) -> str | None:
+    """Resolve rg/fd, including the Homebrew directories macOS GUI apps omit."""
+    found = shutil.which(name)
+    if found is not None or sys.platform != "darwin":
+        return found
+    for directory in _DARWIN_BINARY_DIRS:
+        candidate = Path(directory) / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 def split_nul_paths(stdout: str) -> list[str]:
