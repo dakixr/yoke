@@ -63,8 +63,8 @@ def run_daemon_from_environment(
     session_directory: Path | None,
 ) -> int:
     """Run the daemon, taking an unset port and the grace period from the environment."""
-    if port is None:
-        port = int(os.environ.get(PORT_ENV) or DEFAULT_PORT)
+    if port is None and (configured_port := os.environ.get(PORT_ENV)):
+        port = int(configured_port)
     grace = float(os.environ.get(GRACE_ENV) or DEFAULT_GRACE_SECONDS)
     return run_daemon(
         port=port,
@@ -77,7 +77,7 @@ def run_daemon_from_environment(
 
 def run_daemon(
     *,
-    port: int = DEFAULT_PORT,
+    port: int | None = None,
     idle_exit: bool = True,
     grace_seconds: float = DEFAULT_GRACE_SECONDS,
     verbose: bool = False,
@@ -101,10 +101,18 @@ def run_daemon(
         preload_runtime()
         if sys.platform != "win32":
             unix_sock = _bind_unix(paths.socket)
-        tcp_sock = _bind_tcp(port)
-        if sys.platform == "win32" and tcp_sock is None:
-            raise OSError(f"Daemon loopback port {port} is unavailable")
-        selected_port = int(tcp_sock.getsockname()[1]) if tcp_sock else None
+        requested_port = DEFAULT_PORT if port is None else port
+        tcp_sock = _bind_tcp(requested_port)
+        if tcp_sock is None and port is None:
+            print(
+                f"WARNING: Yoke daemon default port {DEFAULT_PORT} is unavailable; "
+                "falling back to an ephemeral loopback port. See yoke daemon status.",
+                flush=True,
+            )
+            tcp_sock = _bind_tcp(0)
+        if tcp_sock is None:
+            raise OSError(f"Daemon loopback port {requested_port} is unavailable")
+        selected_port = int(tcp_sock.getsockname()[1])
         token = os.environ.get("YOKE_HTTP_TOKEN") or secrets.token_urlsafe(32)
         lifecycle = DaemonLifecycle(idle_exit=idle_exit, grace_seconds=grace_seconds)
         server = _build_server(
@@ -131,15 +139,7 @@ def run_daemon(
         print(f"Yoke daemon {build_id()} pid {os.getpid()}", flush=True)
         if unix_sock is not None:
             print(f"Yoke daemon socket {paths.socket}", flush=True)
-        if selected_port is None:
-            print(
-                f"Yoke daemon port {port} is in use; running socket-only",
-                flush=True,
-            )
-        else:
-            print(
-                f"Yoke daemon listening on http://127.0.0.1:{selected_port}", flush=True
-            )
+        print(f"Yoke daemon listening on http://127.0.0.1:{selected_port}", flush=True)
         server.run(sockets=[s for s in (unix_sock, tcp_sock) if s is not None])
         print(f"Yoke daemon exiting: {lifecycle.exit_reason or 'signal'}", flush=True)
         return 0

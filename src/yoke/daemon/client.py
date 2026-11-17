@@ -17,9 +17,10 @@ from typing import Any, Literal, TypedDict
 
 import httpx
 
-from yoke.daemon.build import build_id, protocol_version
+from yoke.daemon.build import build_id, fresh_build_id, protocol_version
+from yoke.daemon.environment import spawn_environment
 from yoke.daemon.instance import daemon_alive, read_info
-from yoke.daemon.log import DETACHED_ENV, open_spawn_log
+from yoke.daemon.log import open_spawn_log
 from yoke.daemon.paths import DaemonPaths
 from yoke.daemon.transport import Endpoint, TcpEndpoint, client_options
 
@@ -63,15 +64,16 @@ def skew_action(
     daemon_build: str,
     daemon_protocol: str,
     busy: bool,
+    disk_build: str | None = None,
 ) -> SkewAction:
     """Decide how a client attaches to a daemon built from other code.
 
-    Idle: restart it. Busy: attach with a warning when the protocol matches,
-    otherwise refuse. Another client's turn is never interrupted.
+    Restart only an idle daemon that differs from a fresh spawn. Compatible
+    skew attaches with a warning; incompatible skew refuses.
     """
     if client_build == daemon_build and client_protocol == daemon_protocol:
         return "attach"
-    if not busy:
+    if not busy and daemon_build != (disk_build or client_build):
         return "restart"
     return "warn" if client_protocol == daemon_protocol else "refuse"
 
@@ -129,7 +131,7 @@ def spawn_daemon(paths: DaemonPaths | None = None) -> subprocess.Popen[bytes]:
             **spawn_options(),
             close_fds=True,
             cwd=paths.state_dir,
-            env={**os.environ, DETACHED_ENV: "1"},
+            env=spawn_environment(os.environ),
         )
     # Reap it if it exits while this client lives (a losing racer exits at once).
     threading.Thread(
@@ -151,6 +153,7 @@ def connect_or_spawn(
         status = _data(client.get("daemon"))
     action = skew_action(
         client_build=build_id(),
+        disk_build=fresh_build_id(),
         client_protocol=protocol_version(),
         daemon_build=status["buildID"],
         daemon_protocol=status["protocolVersion"],
@@ -165,22 +168,20 @@ def connect_or_spawn(
         )
         if not restarted:
             # A turn admitted after the status read gets the busy skew policy.
-            return connect_or_spawn(paths, timeout=timeout, allow_restart=allow_restart)
+            return connect_or_spawn(paths, timeout=timeout, allow_restart=False)
         return connect_or_spawn(paths, timeout=timeout, allow_restart=False)
     if action == "refuse":
         raise DaemonIncompatible(
             f"The running Yoke daemon ({status['buildID']}, protocol "
-            f"{status['protocolVersion']}) is busy and incompatible with this "
+            f"{status['protocolVersion']}) is incompatible with this "
             f"client ({build_id()}, protocol {protocol_version()}). "
-            "Retry once its turns finish."
+            "Restart the client to load current code, or retry once turns finish."
         )
     warning = None
     if action == "warn":
-        with unix_client(socket_path) as client:
-            client.post("daemon/restart", json={"whenIdle": True})
         warning = (
             f"Yoke daemon runs {status['buildID']}, this client is {build_id()}; "
-            "it restarts once its running turns finish."
+            "attached with compatible protocol. Restart the client to load current code."
         )
     return DaemonHandle(
         socket=socket_path,

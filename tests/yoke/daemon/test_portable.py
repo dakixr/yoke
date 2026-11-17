@@ -104,12 +104,16 @@ def test_windows_lock_contends_probes_and_releases(tmp_path, monkeypatch):
         assert os.lseek(fd, 0, os.SEEK_CUR) == 0
         assert size == 1
         calls.append(fd)
+        if mode == 0:
+            assert fd in held
+            held.remove(fd)
+            return
         if held:
             raise OSError(errno.EACCES, "lock held")
         held.add(fd)
 
     monkeypatch.setitem(
-        sys.modules, "msvcrt", SimpleNamespace(LK_NBLCK=2, locking=locking)
+        sys.modules, "msvcrt", SimpleNamespace(LK_NBLCK=2, LK_UNLCK=0, locking=locking)
     )
     monkeypatch.setattr(instance, "sys", SimpleNamespace(platform="win32"))
     first = instance.InstanceLock.acquire(paths, wait_seconds=0)
@@ -119,8 +123,9 @@ def test_windows_lock_contends_probes_and_releases(tmp_path, monkeypatch):
     first.release()
     with pytest.raises(OSError):
         os.fstat(calls[0])
-    held.clear()  # The real Windows kernel releases the byte lock on close.
+    assert not held
     assert not instance.daemon_alive(paths)
+    assert not held
 
 
 def test_windows_paths_ignore_xdg_and_socket_length(tmp_path, monkeypatch):
@@ -193,3 +198,52 @@ def test_wait_for_tcp_exit_discovers_a_replacement_holding_the_lock(
         old, 111, timeout=0.1, paths=DaemonPaths(tmp_path, tmp_path / "run")
     )
     assert seen == [replacement]
+
+
+def test_spawn_environment_is_allowlisted(tmp_path, monkeypatch):
+    paths = DaemonPaths(tmp_path, tmp_path / "run")
+    for key, value in {
+        "YOKE_ROOT_SESSION_ID": "wrong-owner",
+        "YOKE_PARENT_RUN_ID": "wrong-run",
+        "YOKE_AGENT_RUN_HOST": "wrong-host",
+        "YOKE_HTTP_TOKEN": "ambient-token",
+        "OPENAI_API_KEY": "ambient-secret",
+        "YOKE_CODEX_API_KEY": "ambient-secret",
+        "VIRTUAL_ENV": "/client/venv",
+        "PATH": os.pathsep.join(["/client/venv/bin", "/usr/bin"]),
+        "LANG": "en_US.UTF-8",
+        "LC_CTYPE": "C.UTF-8",
+        "SystemRoot": "C:\\Windows",
+        "COMSPEC": "C:\\Windows\\cmd.exe",
+        "YOKE_DB_PATH": str(tmp_path / "explicit.db"),
+    }.items():
+        monkeypatch.setenv(key, value)
+    spawn = Mock(return_value=Mock())
+    monkeypatch.setattr(client.subprocess, "Popen", spawn)
+    client.spawn_daemon(paths)
+    environment = {
+        key.upper(): value for key, value in spawn.call_args.kwargs["env"].items()
+    }
+    for key in (
+        "YOKE_ROOT_SESSION_ID",
+        "YOKE_PARENT_RUN_ID",
+        "YOKE_AGENT_RUN_HOST",
+        "YOKE_HTTP_TOKEN",
+        "OPENAI_API_KEY",
+        "YOKE_CODEX_API_KEY",
+        "VIRTUAL_ENV",
+    ):
+        assert key not in environment
+    assert environment["PATH"] == "/usr/bin"
+    for key in (
+        "HOME",
+        "USERPROFILE",
+        "LANG",
+        "LC_CTYPE",
+        "SystemRoot",
+        "COMSPEC",
+        "YOKE_DB_PATH",
+        "YOKE_SESSION_DIR",
+        "YOKE_DAEMON_PORT",
+    ):
+        assert environment[key.upper()] == os.environ[key]

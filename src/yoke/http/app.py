@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -70,6 +71,9 @@ from yoke.session import SessionStore
 from yoke.session.admissions import AdmissionStore
 from yoke.session.events import SessionEventJournal
 from yoke.session.workspace import WorkspaceError
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,17 +151,24 @@ def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
         finally:
             for task in background:
                 task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            broker.close()
             try:
-                await runtime_registry.close_runtimes()
+                results = await asyncio.gather(*background, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, Exception):
+                        LOGGER.error(
+                            "Daemon background task failed during shutdown",
+                            exc_info=result,
+                        )
             finally:
-                agent_runs.close()
+                broker.close()
                 try:
-                    session_service.close()
+                    await runtime_registry.close_runtimes()
                 finally:
-                    runtime_registry.shutdown_executor()
+                    agent_runs.close()
+                    try:
+                        session_service.close()
+                    finally:
+                        runtime_registry.shutdown_executor()
 
     app = FastAPI(
         title="Yoke HTTP API",
@@ -293,10 +304,19 @@ async def _maintain_session_index(
     """Keep filesystem repair and retention work off HTTP request threads."""
     if initial_delay_seconds:
         await asyncio.sleep(initial_delay_seconds)
-    await asyncio.to_thread(store.maintain_index, force=True)
+    force = True
+    backoff = 5.0
     while True:
-        await asyncio.sleep(5)
-        await asyncio.to_thread(store.maintain_index)
+        try:
+            await asyncio.to_thread(store.maintain_index, force=force)
+        except Exception:  # noqa: BLE001 - maintenance must survive corrupt data and transient I/O
+            LOGGER.exception("Session index maintenance failed; retrying")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+        else:
+            force = False
+            backoff = 5.0
+            await asyncio.sleep(5)
 
 
 async def _warm_runtime_import(*, initial_delay_seconds: float) -> None:

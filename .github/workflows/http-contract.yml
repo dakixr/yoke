@@ -96,6 +96,7 @@ jobs:
           tests/yoke/cli/test_startup_performance.py
           tests/yoke/http/test_contract.py
           tests/yoke/daemon/test_portable.py
+          tests/yoke/daemon/test_listeners.py
           tests/yoke/daemon/test_windows_process.py
           tests/yoke/cli/test_headless_client.py
           tests/yoke/daemon/test_capability_tcp.py

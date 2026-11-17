@@ -78,7 +78,12 @@ class SessionRuntimeResources:
         self._closed = False
 
     def environment(self, record: SessionRecord) -> ExecutionEnvironment:
-        """Resolve a scope without exposing the values to persistence."""
+        """Use attachment state, or daemon process configuration plus project dotenv.
+
+        The auto-spawn allow-list defines that fallback; direct services may
+        supply provider credentials explicitly through their EnvironmentFile.
+        Values stay in memory.
+        """
         import os
         from pathlib import Path
 

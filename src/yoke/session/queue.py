@@ -80,11 +80,11 @@ def load_prompt_queue_snapshots(
 
 
 def has_queued_prompts(session_directory: Path) -> bool:
-    """Return whether any stored session has a queued prompt, without parsing it."""
+    """Return whether any stored session has a runnable queued prompt."""
     with session_database(session_directory).read() as connection:
         row = connection.execute(
             "SELECT EXISTS (SELECT 1 FROM inputs i JOIN sessions s ON s.id = i.session_id "
-            "WHERE i.position IS NOT NULL)"
+            "WHERE i.position IS NOT NULL AND i.paused = 0)"
         ).fetchone()
     return bool(row[0])
 

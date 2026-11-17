@@ -46,6 +46,8 @@ class SessionStartup:
         existing_names = {skill.name for skill in record.active_skills}
         args.skills = tuple(name for name in args.skills if name not in existing_names)
         client = request.client
+        # Unattached/browser startup uses only the daemon process configuration
+        # plus project dotenv. Auto-spawn scrubs that process environment first.
         environment = project_environment(
             Path(args.root),
             client.env if client is not None and client.env is not None else os.environ,

@@ -208,6 +208,11 @@ def test_queued_prompt_presence_matches_stored_queues(tmp_path):
     write_prompt_queue_snapshot(
         store.directory, "saved", PersistedPromptQueue(prompts=[paused])
     )
+    assert not has_queued_prompts(store.directory)
+    runnable = paused.model_copy(update={"id": "runnable", "paused": False})
+    write_prompt_queue_snapshot(
+        store.directory, "saved", PersistedPromptQueue(prompts=[paused, runnable])
+    )
     assert has_queued_prompts(store.directory)
     write_prompt_queue_snapshot(store.directory, "saved", PersistedPromptQueue())
     assert not has_queued_prompts(store.directory)

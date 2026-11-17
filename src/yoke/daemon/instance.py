@@ -31,6 +31,14 @@ def _lock(fd: int, *, shared: bool = False) -> None:
         fcntl.flock(fd, mode | fcntl.LOCK_NB)
 
 
+def _unlock(fd: int) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+
 def _contended(exc: OSError) -> bool:
     if sys.platform == "win32":
         return exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK)
@@ -87,8 +95,11 @@ class InstanceLock:
 
     def release(self) -> None:
         if self._fd is not None:
-            os.close(self._fd)
-            self._fd = None
+            fd, self._fd = self._fd, None
+            try:
+                _unlock(fd)
+            finally:
+                os.close(fd)
 
 
 def daemon_alive(paths: DaemonPaths) -> bool:
@@ -99,6 +110,7 @@ def daemon_alive(paths: DaemonPaths) -> bool:
         return False
     try:
         _lock(fd, shared=True)
+        _unlock(fd)
     except OSError as exc:
         if not _contended(exc):
             raise

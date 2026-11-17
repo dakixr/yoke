@@ -7,6 +7,23 @@ clients use the same daemon attachment and event stream as headless clients. The
 HTTP API supports headless, basic and prompt-toolkit clients. Paths have the
 `/api/v1` prefix.
 
+## Build identity and restart policy
+
+A process keeps its initial build identity. Source checkouts include git HEAD and
+an SHA-256 digest of tracked edits and untracked file contents, so two dirty
+states have different identities. Before deciding to replace a daemon, discovery
+also computes the build a fresh spawn would load from disk, without using the
+process cache. It reads the on-disk version too.
+
+Automatic restart requires an idle daemon whose build differs from that fresh
+build. An older client therefore leaves a daemon already running current disk
+code alone. Each discovery attempts at most one restart, including admission
+races. A compatible mismatch attaches with a warning and never schedules a
+restart for later. An incompatible protocol refuses attachment when replacement
+cannot help or work is busy. Use `yoke daemon restart --when-idle` to explicitly
+schedule a restart after runnable or executing work finishes. Paused prompts do
+not keep the daemon busy, and client leases alone do not block a restart.
+
 ## Startup and attachment
 
 Create a session with `POST /session`. Set `startup: true` to run the existing CLI
@@ -157,6 +174,23 @@ redaction. `provider_result_projection` remains private. The web controller
 refreshes only its recognized types and ignores the additional types.
 
 ## Environment and privacy
+
+Automatically spawned daemons inherit only HOME/USERPROFILE, PATH, LANG/LC_*,
+TMPDIR/TEMP/TMP, XDG_RUNTIME_DIR, SystemRoot/COMSPEC, and explicit daemon
+configuration. That configuration is YOKE_DB_PATH, YOKE_SESSION_DIR,
+YOKE_HTTP_SESSION_DIR, YOKE_DAEMON_PORT, YOKE_DAEMON_IDLE_GRACE, and the
+YOKE_DAEMON_BUILD_ID/YOKE_DAEMON_PROTOCOL test hooks. Activated virtualenv and
+Conda bin directories are removed from PATH. Provider credentials, virtualenv
+selection, YOKE_HTTP_TOKEN, run attribution and arbitrary YOKE_* variables are
+not inherited. Each attachment supplies its own full environment in memory.
+
+Browser startup and sessions with no attachment explicitly fall back to a copy
+of the daemon process environment plus the project's `.env`. Auto-spawned
+fallbacks therefore contain the allow-listed configuration, project values and
+credentials loaded from the user's configured credential stores. Directly
+launched daemons retain their service environment, including provider credentials
+and a service-supplied YOKE_HTTP_TOKEN. Auto-spawn sanitation does not alter
+systemd EnvironmentFile behavior.
 
 Environment dictionaries and attach cwd values remain in memory. They are not
 session/admission fields and are never included in client status or events.

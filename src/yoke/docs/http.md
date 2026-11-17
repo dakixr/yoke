@@ -29,8 +29,10 @@ run directories are set to mode 0700, including existing directories.
 The socket accepts only the kernel-reported peer uid of the daemon user
 (`SO_PEERCRED` on Linux, `getpeereid` on macOS), with no bearer token. The browser listener is
 `127.0.0.1:8770`, authenticated with a bearer token. If the port is occupied,
-the daemon reports it and continues socket-only. `--port` or `YOKE_DAEMON_PORT`
-overrides that port; zero requests an ephemeral port. `~/.yoke/daemon.json`,
+the daemon logs a warning and falls back to an ephemeral loopback port.
+`yoke daemon status` reports the selected URL. Explicit `--port` or
+`YOKE_DAEMON_PORT` settings are strict, including an explicit 8770; an occupied
+explicit port fails startup. Zero requests an ephemeral port. `~/.yoke/daemon.json`,
 mode 0600 on Unix, records pid, build id, protocol version, socket, selected port
 and token. Detached logs go to `~/.yoke/run/daemon.log`, rotating at 2 MiB with two
 backups throughout the daemon's lifetime. Windows opens inherited log handles
@@ -47,9 +49,10 @@ No live systemd service is migrated automatically. A sample user unit is in
 On Windows, CLI and ACP clients use the loopback TCP port and bearer token
 from `daemon.json`. There is no Unix socket or `XDG_RUNTIME_DIR` requirement.
 The daemon holds an exclusive `msvcrt.locking` byte lock for its lifetime;
-Windows releases it on process exit, including a crash. An occupied TCP port
-fails startup because Windows clients require that listener. No in-process
-fallback exists on any platform.
+Normal shutdown explicitly unlocks before closing; Windows also releases the
+lock on process exit, including a crash. Default-port fallback works on Windows
+too. An occupied explicit TCP port fails startup. No in-process fallback exists
+on any platform.
 
 Before publishing the token, Windows startup replaces the state and run
 directories' DACLs with protected ACLs granting full control only to the current
@@ -1131,3 +1134,8 @@ Navigation and labels use `SessionTree` intents for both persistence formats.
 injected agent factory. Factories must return a `RuntimeAgent` with native session ownership.
 Test doubles implement that native interface too. Set `indexed_runtime_seed` to `False` explicitly when
 testing legacy snapshot startup.
+
+Session-index maintenance logs failed iterations and retries with exponential
+backoff from five to sixty seconds. Successful maintenance resets the delay to
+five seconds. Shutdown cancels all background tasks before joining them, logs
+their failures, and closes session runtimes even when a task has already failed.
