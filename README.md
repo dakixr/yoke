@@ -1,9 +1,9 @@
 # yoke
 
-Yoke is a coding agent you run from the terminal, drive from any ACP client, or
-embed in Python. It reads and edits files, runs commands, searches the web,
-uses skills and MCP servers, and keeps every conversation as a session you can
-resume or branch.
+Yoke is a coding agent you use from the terminal, a browser-based web UI or any
+ACP client, or embed in Python. It reads and edits files, runs commands,
+searches the web, uses skills and MCP servers, and keeps every conversation as
+a session you can resume or branch.
 
 ## How it fits together
 
