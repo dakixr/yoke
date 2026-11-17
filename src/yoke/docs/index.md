@@ -1,127 +1,99 @@
 # Yoke
 
-Yoke is a local-first coding-agent CLI and Python SDK. It combines a fast,
-stateful agent runtime with provider-aware capabilities, durable sessions,
-structured observability, and automatic usage accounting.
+Yoke is a coding agent you run from the terminal or embed in Python. It reads
+and edits files, runs commands, searches the web, uses skills and MCP servers,
+and keeps every conversation as a session you can resume or branch.
 
-## Use Yoke
+The `yoke` command is a client of a per-user daemon that the first command
+starts for you. The daemon runs the turns and saves sessions in SQLite at
+`~/.yoke/yoke.db`, so the terminal, the web UI and editor integrations all see
+the same sessions. The Python SDK runs agents in your own process.
 
-- [CLI](cli.md): interactive sessions, resumable work, and headless commands.
-- [SDK](sdk.md): embedded agents, direct completions, async batches, and durable
-  role agents.
-- [Tool-only MCP server](mcp-server.md): expose Yoke's coding and process tools
-  over Streamable HTTP without running a second agent.
-- [Shared process tools](process-tools.md): launch, input, wait, cancel, and
-  page output through the same native and MCP interface.
-- [HTTP harness API](http.md): run one process-wide daemon that can inspect and
-  drive many durable Yoke sessions from one client.
+## Install
 
-- [ACP and T3 Code](acp.md): register a generic ACP provider, attach client MCP
-  tools, and use session modes and interactive requests.
-
-## Design
-
-- [Runtime implementation](runtime.md): ownership, request sequencing and
-  differential guards for changes to the agent loop.
-
-For development, `uv run pytest` runs the complete Python suite in isolated
-workers. Use `uv run pytest -n 0 path/to/test.py` for serial debugging. Test
-fixtures keep HOME, runtime directories and databases separate from user state;
-storage tests retain real migration and crash-recovery checks.
-
-### Providers and models
-
-Yoke ships three provider families:
-
-- `codex`: Codex subscription authentication over the Responses WebSocket
-  transport, including hosted web search and image generation.
-- `opencode-go`: OpenCode Go models through their native Responses or
-  OpenAI-compatible transports.
-- `zai`: Z.ai Coding Plan access for GLM models.
-
-Global provider plugins under `~/.yoke/providers/` can add other services.
-Provider catalogs advertise model context windows, thinking controls, image
-input support, and model-specific system messages. Yoke refreshes capabilities
-when the active provider or model changes, so the model sees only tools it can
-actually use.
-
-### Capabilities and tools
-
-Capabilities are stable, high-level IDs such as `file.read`, `file.write`,
-`file.search`, `web.search`, `web.research`, `image.attach`, and
-`image.generate`. Their concrete tools are selected at runtime:
-
-- GPT-family models receive `apply_patch`; other models receive `edit` and
-  `write`.
-- Native `rg` and `fd` are used when installed, with portable search fallbacks.
-- Image attachment is removed for models known not to accept images.
-- Image generation is exposed only by a compatible Codex provider.
-- Codex web research uses hosted Responses web search; other providers use
-  Yoke's local keyless search, fetch, and synthesis workflow.
-
-The CLI also discovers Python tools from `.yoke/` and `~/.yoke/`. MCP servers
-are represented by a compact inspect/call facade so large remote tool catalogs
-do not consume the model context until needed.
-
-### Sessions and performance
-
-Sessions live in one SQLite database, `~/.yoke/yoke.db`, shared by the CLI and
-the HTTP daemon through WAL. They retain conversation branches, provider/model state,
-tool activity, compaction checkpoints, titles, and pins. Response continuity,
-prompt-cache affinity, context projection, and bounded compaction keep long
-sessions efficient without discarding the canonical event history.
-
-SDK agents can save portable state snapshots and autosave durable roles. The
-async API serializes calls on one stateful agent, while `run_many()` creates a
-fresh isolated agent and provider for every bounded fan-out task.
-
-Sessions, conversation entries, durable events, prompt admissions and prompt
-queues are rows in that database. Every write is a `BEGIN IMMEDIATE`
-transaction, so a CLI and a daemon editing the same session serialize through
-SQLite instead of file locks; queue and tree edits compare-and-swap on stored
-revisions. Usage logs and workspace leases still use the portable file lock in
-`yoke._file_io`.
-
-The persistence implementation is exposed from `yoke.session` and organized
-under `yoke.session.repository` on top of `yoke.storage`; CLI, HTTP, ACP, and
-handoff code use that shared repository. HTTP transcript pagination reads entry
-topology from the database and decodes only the entries a page shows.
-
-### Usage and observability
-
-Every completed provider response is recorded automatically in the
-`usage_events` table of `~/.yoke/yoke.db`. Records include normalized
-token usage and execution attribution for CLI, HTTP, and SDK calls. Writes are local,
-transactional across concurrent Yoke processes, and can be redirected
-with `YOKE_DB_PATH`. Persistent write failures are raised rather
-than silently dropping metrics.
-
-SDK observers provide `quiet`, `messages`, `actions`, and `full` trace levels.
-Console, logging, JSONL, and composite observers share the same event stream,
-including provider retries, tool work, cancellation, compaction, and batch
-attempts.
-
-## Quick start
+Yoke needs Python 3.12 or newer.
 
 ```bash
-yoke
-yoke --headless "Add type annotations to src/utils.py"
+uv tool install git+https://github.com/dakixr/yoke.git
+yoke version
 ```
+
+To work on Yoke itself:
+
+```bash
+uv sync
+uv run yoke --help
+```
+
+## Quickstart
+
+Connect a provider. Use one of these:
+
+```bash
+yoke login codex                  # ChatGPT Codex subscription
+export OPENCODE_API_KEY=...       # OpenCode Go
+export ZAI_API_KEY=...            # Z.ai Coding Plan
+```
+
+Check that Yoke sees it:
+
+```bash
+yoke providers doctor
+yoke models list
+```
+
+Start a session in your project:
+
+```bash
+cd ~/src/my-app
+yoke
+```
+
+Type a request and press `Enter`. While the agent works, press `Enter` to
+redirect it, `Tab` to queue a follow-up, or `Esc` twice to stop it. Run `/help`
+for commands and `?` for keyboard shortcuts.
+
+Run one task without the interactive UI:
+
+```bash
+yoke --headless "add type annotations to src/utils.py"
+```
+
+Come back to earlier work:
+
+```bash
+yoke resume
+```
+
+By default the agent can read, edit and search files and use the web. Shell
+commands are off until you allow them:
+
+```bash
+yoke tools activate shell
+```
+
+Use the SDK from Python:
 
 ```python
 from yoke.ai import Agent, build_builtin_provider
 
-agent = Agent(
-    provider=build_builtin_provider("codex:gpt-6.1-sol:medium"),
-)
-
+agent = Agent(provider=build_builtin_provider("codex:gpt-6.1-sol:medium"))
 result = agent.prompt("Add type annotations to src/utils.py")
 print(result.output)
 agent.close()
 ```
 
-Use `await agent.prompt_async(...)` in asyncio applications. Use `run_many()`
-for independent parallel tasks and attach a `ConsoleObserver("actions")` when
-live progress matters.
+## Find what you need
 
-- [Composed MCP work](mcp-composition.md): batches, Python composition, process observation, recipes, and file transfer.
+| To do this | Read |
+| --- | --- |
+| Start sessions, run headless, pick a model, attach images, use skills, learn the keys and slash commands | [CLI](cli.md) |
+| Resume, fork, branch, relocate and hand off sessions, and maintain the database | [Sessions](sessions.md) |
+| Set up providers, `config.json`, tool policy, custom tools, MCP servers, `AGENTS.md` and environment variables | [Configuration](configuration.md) |
+| Embed agents in Python, run tasks in parallel, save agent state, read usage records | [SDK](sdk.md) |
+| Drive sessions over HTTP, or run the daemon and web UI | [HTTP API](http.md), [Daemon client contract](daemon-client.md) |
+| Connect T3 Code or another ACP editor | [ACP and T3 Code](acp.md) |
+| Serve Yoke's tools to another agent over MCP | [Tool-only MCP server](mcp-server.md), [Composed MCP work](mcp-composition.md) |
+| Understand `command_exec`, `process_read` and the other process tools | [Shared process tools](process-tools.md) |
+| Use the web UI's tool, tree, process and agent views | [Web inspectors](web-inspectors.md) |
+| Change the agent loop, providers, tool execution or storage | [Runtime internals](runtime.md), [CLI session backend](cli-backend.md) |

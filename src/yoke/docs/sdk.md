@@ -1,36 +1,37 @@
 # SDK
 
-Embed yoke in Python with a small top-level surface and explicit submodules:
+The SDK runs Yoke agents inside your own Python process. It does not use the
+daemon. Each `Agent` owns its provider, tools and conversation.
 
-- `yoke.ai` for the common path: `Agent`, `RunConfig`, `Image`, `complete()`, and built-in provider construction
-- `yoke.ai.types` for result and error value types
-- `yoke.ai.providers` for concrete provider/config classes
-- `yoke.ai.skills` for composable instruction sets
-- `yoke.ai.utils` for optional diagnostics and low-level convenience helpers
+| Module | Contents |
+| --- | --- |
+| `yoke.ai` | `Agent`, `RunConfig`, `Image`, `complete()`, `run_many()`, observers, `build_builtin_provider()` |
+| `yoke.ai.types` | Result and error types, including `AgentResult`, `BatchResult` and `StructuredOutputError` |
+| `yoke.ai.providers` | Provider and config classes, provider resolution, `UsageLogWriteError` |
+| `yoke.ai.skills` | `Skill` |
+| `yoke.ai.utils` | `print_builtin_provider_status()`, default configs, message helpers |
+| `yoke.agent.tools` | Built-in tool classes, `LocalTool`, `WorkspaceTool` |
 
-## Agent
+## Create an agent
 
 ```python
 from yoke.ai import Agent, build_builtin_provider
 
-provider = build_builtin_provider("codex:gpt-6.1-sol:medium")
-agent = Agent(provider=provider)
-
+agent = Agent(provider=build_builtin_provider("codex:gpt-6.1-sol:medium"))
 result = agent.prompt("Add type annotations to src/utils.py")
 print(result.output)
 agent.close()
 ```
 
-`Agent` is stateful. Reuse one instance to retain conversation context and
-close it when finished. When `config` is omitted, the SDK builds a coding
-configuration rooted at the current working directory. Its high-level
-capabilities include file read/write/search, shell execution, image attachment
-and generation, web fetch/search/research, and document extraction.
-Provider-aware resolution removes unsupported tools and chooses the appropriate
-concrete implementation.
+An `Agent` keeps its conversation between prompts. Reuse one instance for a
+conversation and call `close()` when you are done, which releases its provider
+and tool resources.
 
-Pass `RunConfig` when you need an explicit root, system prompt, tool list,
-skills, hooks, compaction policy, or execution mode:
+Without a `config`, the agent works in the current directory with a short
+coding system prompt and these capabilities: `file.read`, `file.write`,
+`file.search`, `shell`, `image.attach`, `image.generate`, `web.fetch`,
+`web.search` and `web.research`. Unlike the CLI, the SDK default includes
+`shell`. Pass a `RunConfig` to choose for yourself:
 
 ```python
 from yoke.ai import Agent, RunConfig, build_builtin_provider
@@ -44,99 +45,142 @@ agent = Agent(
 )
 ```
 
-Prompt text uses the same explicit skill-mention runtime as the CLI and web UI.
-When a file-backed skill is present in `RunConfig.skills`, `$skill-name` in a
-prompt appends a fresh activation before that user message. Several skills can
-be mentioned in one prompt; repeated mentions in that prompt activate once.
+| `RunConfig` field | Default | Meaning |
+| --- | --- | --- |
+| `root` | required | Workspace root for file and process tools. |
+| `sys_prompt` | none | System prompt. |
+| `tools` | `()` | Capability IDs, tool classes or bound tool instances. |
+| `skills` | `()` | `Skill` objects. See [Skills](#skills). |
+| `include_agents_file` | `True` | Add `~/.yoke/AGENTS.md` and `<root>/AGENTS.md` to the system prompt. |
+| `compaction` | model-based | A `CompactionPolicy`. |
+| `tool_execution` | `"parallel"` | How tool calls from one model response run. |
+| `before_tool_call`, `after_tool_call` | none | Hooks around each tool call. |
+| `messages`, `conversation_entries` | none | Starting conversation. |
+| `name` | none | Display name in agent tracking. Use a short role name such as `"reviewer"`. |
+| `root_session_id`, `parent_run_id`, `inherit_usage_attribution` | inherited | Usage attribution. See [Usage records](#usage-records). |
 
-Agent runs do not have an iteration-limit setting. Bound a run with a
-cooperative `stop_requested` callback, or use `prompt_async(..., timeout=...)`
-when a time limit is appropriate.
+Other `Agent` arguments are `state_path`, `autosave` and `observer`, covered
+below.
 
-Provider selections use `provider:model:thinking_effort`. Yoke's public SDK
-exposes `Agent`, `RunConfig`, `complete()`, `run_many()`, observers, durable
-state, structured outputs, and provider helpers with consistent call shapes.
+An agent run has no iteration limit. To bound one, pass a `stop_requested`
+callback to `prompt()`, or use `prompt_async(..., timeout=...)`.
+
+## Choose a provider
 
 ```python
 from yoke.ai import build_builtin_provider
 from yoke.ai.utils import print_builtin_provider_status
 
-print_builtin_provider_status()
-provider = build_builtin_provider("codex:gpt-6.1-sol:medium")
+print_builtin_provider_status()     # credentials, models, context windows
+provider = build_builtin_provider("zai:glm-5.3-flash:max")
 ```
 
-The default SDK selection is `codex:gpt-6.1-sol:medium`. Built-in providers are
-`codex`, `opencode-go`, and `zai`. The same helper also resolves global
-custom provider plugins under `~/.yoke/providers/`. Provider status includes
-credential readiness, model catalogs, context windows, thinking controls, and
-image-input metadata.
+`build_builtin_provider()` takes a `provider:model:effort` selection and
+defaults to `codex:gpt-6.1-sol:medium`. It resolves the built-in providers
+`codex`, `opencode-go` and `zai`, and custom provider plugins in
+`~/.yoke/providers/`. It reads credentials from the environment and from the
+store that `yoke login` writes. The credentials and models for each provider are
+listed in [Configuration](configuration.md#providers-and-credentials).
 
-If a custom provider factory returns an instance that fails validation or
-model-catalog initialization, Yoke closes that instance before reporting the
-original error. An error during cleanup does not replace the construction error.
+`build_builtin_provider()` also accepts `env=`, `home=` and `session_id=`.
+OpenCode Go sends a stable `x-opencode-session` header per provider. Pass the
+same `session_id` when you rebuild a provider and want to keep that identity.
 
-Codex can authenticate from its OAuth state, the Codex account vault, or
-`YOKE_CODEX_API_KEY`. OpenCode Go uses `OPENCODE_API_KEY`, plus optional
-`YOKE_OPENCODE_GO_BASE_URL` and `YOKE_OPENCODE_GO_MODEL_PREFIX` for gateways; Z.ai uses
-`ZAI_API_KEY`. The CLI credential store is also included in provider
-resolution. OpenCode Go requests include a stable `x-opencode-session` value.
-Pass `session_id=` to `build_builtin_provider()` when provider instances must
-retain the same OpenCode Go session identity after reconstruction.
+To build a provider directly, use the classes in `yoke.ai.providers`, such as
+`OpenCodeGoProvider(OpenCodeGoConfig(api_key=...))`.
 
-Yoke-owned outbound HTTPS and WSS connections verify TLS certificates and
-hostnames by default. Set `YOKE_DISABLE_TLS=1` to disable verification across
-providers and other Yoke-owned network clients. Values `0`, `false`, `no`, and
-`off` keep verification enabled. An injected HTTP client keeps its own TLS
-configuration.
+Yoke checks TLS certificates on its own connections. `YOKE_DISABLE_TLS=1` turns
+that off. An HTTP client you pass in keeps its own TLS settings.
 
-Provider HTTP retries share capped exponential backoff with bounded jitter.
-`Retry-After` accepts seconds or an HTTP date, including an explicit zero delay.
-Connect and pool timeouts can retry. Read timeouts can retry before any response
-bytes arrive. OpenAI-compatible chat completions and OpenCode Go chat fail
-immediately on every read timeout, including one before the first response byte,
-because a generation may still be running. ZAI honors the full `Retry-After`
-value even when it exceeds the configured backoff cap. Other HTTP providers cap
-that delay. Once a response stream has delivered bytes, a timeout fails without
-replaying the generation. Codex WebSockets also fail on a disconnect after a
-response frame; an idle socket closed before the next response can reconnect.
+### Retries and timeouts
 
-Codex HTTP and WebSocket responses use the same event reducer and transient
-error markers. WebSockets now recognize `server_is_overloaded`, `temporarily
-unavailable`, `currently overloaded`, and `try again later`. Explicit server and
-rate-limit error events still use the provider retry budget. Plain-text error
-bodies are limited to 500 characters; HTML error pages use the HTTP reason phrase.
+Built-in providers retry connection failures, rate limits and server errors
+with capped exponential backoff and jitter. They honor `Retry-After` in seconds
+or as an HTTP date. They retry a read timeout only if no response bytes have
+arrived. OpenAI-compatible chat providers, including OpenCode Go chat models,
+never retry a read timeout, because the generation may still be running. Once a
+stream has started, a failure is final and Yoke does not replay the generation
+or run partial tool calls. Response and stream idle timeouts default to 15
+minutes.
 
-Built-in providers inherit the concrete `BaseProvider` in
-`yoke.ai.providers.base`. It supplies model selection, completion dispatch,
-transport ownership, cancellation, and HTTP fork defaults. The minimal `Provider`
-protocol remains the contract for plugins. Codex request builders accept config,
-cache key, and turn state explicitly, and providers own their mutable state.
-Internal imports use `codex.websocket.provider`, `codex.websocket.config`, and
-`codex.events`; the `codex.websockets` shim and private host protocols were removed.
-The lazy top-level `CodexWebSockets` and `CodexWebSocketsConfig` names remain
-available.
+## Send a prompt
 
-Built-in providers implement `fork_for_turn()` to copy request state and config.
-A fork retains an injected HTTP client as a borrowed transport; closing the fork
-does not close that client. Owned clients and live WebSockets are independent.
-Custom providers should implement `fork_for_turn()` for isolation. Without this
-hook, `fork_provider()` logs a warning and shares the instance for compatibility.
-A hook that returns the original instance also logs a warning.
+`prompt()` takes text and returns an `AgentResult` with `output`, the final
+text. It also accepts these keyword arguments:
 
-`provider_identity(provider)` in `yoke.ai.providers.base` returns normalized
-`name`, `model`, and `reasoning_effort` metadata. An unnamed provider uses
-`unknown`; absent model or effort values are `None`.
+| Argument | Use |
+| --- | --- |
+| `images`, `image_urls` | Attach images. See [Images](#images). |
+| `output_type` | A Pydantic model for structured output. |
+| `observer`, `on_event` | Watch this prompt. See [Observe a run](#observe-a-run). |
+| `stop_requested` | A callable that returns `True` to stop the run. |
+| `before_tool_call`, `after_tool_call` | Hooks for this prompt only. |
 
-Codex uses Responses continuity and a stable cache scope. Healthy follow-up
-requests can send only the new input against the prior response; stale anchors
-recover from retained opaque output or visible history. Forked agents receive
-isolated provider state. Provider/model system messages and tool capabilities
-refresh when model identity changes.
+Results and transcript properties such as `agent.messages` are copies. Changing
+them does not change the agent.
 
-## Async Agents
+### Images
 
-Use `prompt_async()` from an asyncio application. It has the same inputs and
-result type as `prompt()`, plus an optional timeout.
+```python
+from yoke.ai import Image
+
+result = agent.prompt(
+    "Compare [Image #1] and [Image #2].",
+    images=[
+        Image.from_path("current.png"),
+        Image.from_url("https://example.com/reference.png"),
+    ],
+)
+```
+
+`complete()` accepts the same `images` argument. The provider must support image
+input. Yoke stores local images in the conversation as resized data URLs, so a
+saved agent does not depend on the original file.
+
+### Structured output
+
+```python
+from pydantic import BaseModel
+
+
+class ReviewSummary(BaseModel):
+    verdict: str
+    risks: list[str]
+
+
+result = agent.prompt("Review the authentication module.", output_type=ReviewSummary)
+summary = result.structured
+```
+
+Yoke asks the model for JSON that matches the schema and validates the answer.
+If validation fails, it tells the model what was wrong and tries again, up to
+three attempts in total. After the third failure it raises
+`StructuredOutputError` with the raw output attached.
+
+### Skills
+
+```python
+from yoke.agent.tools import ReadTool
+from yoke.ai.skills import Skill
+
+agent = Agent(
+    provider=provider,
+    config=RunConfig(
+        root=".",
+        tools=[ReadTool],
+        skills=[
+            Skill.from_dir("./skills/code-review"),
+            Skill.inline(name="repo-style", sys_prompt="Prefer small patches and explicit types."),
+        ],
+    ),
+)
+```
+
+A `$skill-name` mention in a prompt activates a skill from `RunConfig.skills`
+just before that prompt, the same way it works in the CLI. One prompt can
+mention several skills, and Yoke activates each one once per prompt.
+
+## Use asyncio
 
 ```python
 import asyncio
@@ -145,215 +189,41 @@ from yoke.ai import Agent, build_builtin_provider
 
 
 async def main() -> None:
-    agent = Agent(
-        provider=build_builtin_provider("codex:gpt-6.1-sol:medium")
-    )
+    agent = Agent(provider=build_builtin_provider("codex:gpt-6.1-sol:medium"))
     async with agent:
-        result = await agent.prompt_async(
-            "Summarize the current project.", timeout=120
-        )
+        result = await agent.prompt_async("Summarize the project.", timeout=120)
         print(result.output)
 
 
 asyncio.run(main())
 ```
 
-The underlying agent runtime remains synchronous, so `prompt_async()` runs it
-in a worker thread instead of blocking the event loop. Concurrent calls on the
-same stateful `Agent` serialize before allocating worker threads, protecting its
-conversation state without exhausting the executor. One `Agent` is bound to the
-first event loop that calls `prompt_async()`; use a separate agent in another
-event loop. Cross-loop use raises `RuntimeError` instead of risking a blocked
-waiter. Closing is idempotent,
-waits for active work, rejects queued prompts once closing begins, and prevents
-subsequent state mutation. Cancelling `aclose()` still waits for its close worker
-before it propagates cancellation. Transcript properties and prompt results
-return snapshots, so changing their lists does not change agent state. Use
-`run_many()` for independent work.
+`prompt_async()` takes the same arguments as `prompt()` plus `timeout`. The agent
+loop is synchronous, so `prompt_async()` runs it in a worker thread. `async with`
+closes the agent through `aclose()`. `Agent` does not support a plain `with`
+block.
 
-For agent-authored orchestration, load the
-[`yoke-subagents` skill](../agent/skills/built_in/yoke-subagents/SKILL.md).
-Start with its self-contained examples for one worker, two independent audits,
-or a single role persisted across processes. Small jobs need neither task JSON
-nor handoff files; one durable role only adds a state file. Larger fan-out and
-coder/reviewer examples add contracts, traces, and retained results under
-`.agents_local/`. Review acceptance still leaves changed-path verification and
-final test execution to the parent.
+Rules for async use:
 
-Synchronous event and tool hooks run in the worker thread. They must be
-thread-safe and must not recursively prompt, close, save, restore, reset, or
-fork the same agent.
+- Concurrent calls on one agent run one at a time, in order.
+- An agent belongs to the first event loop that calls `prompt_async()`. Using it
+  from another loop raises `RuntimeError`. Create one agent per loop.
+- The timeout includes time spent waiting behind another prompt.
+- Cancellation and timeouts stop the run through its stop callback. Your
+  `await` returns at once, but the worker thread finishes in the background. A
+  new prompt on the same agent waits until that worker stops.
+- Closing waits for running work, rejects queued prompts and can be called more
+  than once.
 
-## Usage Metrics
+Synchronous event handlers and tool hooks run in the worker thread. They must be
+thread safe, and they must not prompt, close, save, restore, reset or fork the
+same agent.
 
-Yoke records every completed provider response from the CLI, HTTP API, and SDK
-in the `usage_events` table of `~/.yoke/yoke.db`. Records contain only
-the provider, model, completion time, normalized token counts, and explicit
-execution attribution. Attribution includes `surface`, `call_kind`, CLI or HTTP
-session identity, or the SDK operation and a random SDK run ID as applicable. A
-`session_title` can contain up to 80 characters derived from the first user
-prompt when the user has not assigned a title. Records do not contain complete
-prompts, responses, tools, paths, caller-supplied batch task IDs, or raw provider
-payloads. A provider that does not report token counts still gets a completion
-record with an empty `usage` object. Usage records continue to use
-`schema_version: 1`; the attribution fields are optional additions.
+## Run tasks in parallel
 
-Reported zero counts remain zero. For aliases such as `output_tokens` and
-`completion_tokens`, the fallback applies only when the preferred value is
-missing or invalid, not when it is zero.
-
-SDK operations are `complete`, `agent`, and `run_many`. A random `sdk_run_id`
-groups the provider calls produced by one direct completion, agent prompt, or
-batch task attempt. Call kinds distinguish direct completions, model iterations,
-structured-output retries, compaction summaries, branch summaries, and overflow
-retries. Yoke sets this metadata at its CLI, HTTP, and SDK entry points and
-propagates it with execution context; it does not infer attribution from process
-arguments or stack frames.
-
-Command and Python tools export `YOKE_ROOT_SESSION_ID` and `YOKE_PARENT_RUN_ID`
-in each child's environment. SDK agents resolve these once at construction,
-preferring active execution context over environment values. `complete()` resolves
-them per call. Nested SDK subprocesses retain the root session and use the launching
-SDK prompt's run ID as their immediate parent. A direct CLI or HTTP child has no
-parent run ID because the session does not have an SDK run ID.
-
-Override attribution with `RunConfig(root=..., root_session_id=...,
-parent_run_id=...)`. Set `inherit_usage_attribution=False` to detach from inherited
-context, while still allowing explicit IDs. `complete()` accepts the same three
-keywords. `run_many()` uses each agent's configuration. Forks preserve resolved
-attribution; loading a saved agent resolves attribution for the new execution,
-rather than restoring its previous owner. Reusable workers should construct agents
-with explicit attribution for each job.
-
-Attached usage records keep `surface="sdk"` and their own `sdk_run_id`, and add
-`root_session_id`, `parent_run_id` when available, and `session_id` equal to the
-root session for session-based aggregation. Each response is recorded only once.
-This is log attribution, not an update to the parent conversation's token counters.
-The IDs are accounting hints, not authorization, and do not enter provider prompts
-or cache identity. Remote launches require explicit forwarding of the environment.
-
-Set `YOKE_DB_PATH` to use another SQLite database. SDK processes insert usage
-rows directly through WAL, including while the CLI or daemon writes sessions.
-`YOKE_USAGE_METRIC_LOG_DIR` no longer controls persistence. Records retain the
-same schema and privacy rules. Read them with
-`yoke.ai.providers.usage_writer.read_usage_events()`, optionally filtering by
-`provider`, `session_id`, or ISO `since` timestamp and selecting `database_path`.
-Writes commit atomically with `synchronous=NORMAL`, the shared database policy.
-SDK writes never create or migrate the database. If it is missing, older or newer
-than the SDK's supported schema, the usage write is skipped with a debug log and
-the provider call continues. Start the owning Yoke daemon to initialize or upgrade
-an older database; upgrade the SDK to match a newer schema. Handoff reads also
-require an existing compatible schema and never migrate it.
-Other write failures raise `yoke.ai.providers.UsageLogWriteError`; a failed insertion
-leaves no partial row. Usage rows survive session retention.
-
-## Automatic agent tracking
-
-SDK agents launched by Yoke's managed command or Python tools register each
-prompt with their owning runtime. Existing Python orchestrators need no special
-spawn tool or observer. `RunConfig(name="reviewer", root=..., tools=...)` adds an
-optional display label; use a short role name rather than task instructions or
-sensitive text.
-
-`Agent.agent_id` identifies the SDK instance. Each prompt has a separate run ID,
-matching `sdk_run_id` in usage logs. Reusing an agent keeps its identity while
-creating another run. Forks and newly loaded SDK instances get new identities.
-Constructing an agent alone does not make it active. Batch attempts retain their
-task and attempt metadata alongside their own run IDs.
-
-The host issues a private launch capability. Session IDs in accounting settings
-cannot authorize reporting into another session. Nested managed launches retain
-the original reporting host and record their immediate parent run. Reporting
-metadata stays out of provider prompts, conversation state, and cache identity.
-A standalone SDK call without a managed reporting context remains standalone.
-
-Captured SDK instances retain authority independently of their parent's retained
-run history. A transient retention failure is retried before later prompting,
-using the same request identity so a lost acknowledgement does not create another
-capability. `close()` releases this authority even when no prompt ran. A failed
-release stays queued for retry without changing the agent's execution result.
-Each Python process permits at most 4096 managed instances, including releases
-awaiting acknowledgement, to bound this cleanup queue. Close unused instances.
-
-For managed runs, registration must succeed before the first provider call.
-Later reporting failures do not replace the SDK result. Execution state and
-observation health are separate: a missed heartbeat or disconnected client means
-the status is stale or unknown, not that the agent succeeded or failed. A
-cancellation request does not settle a run until its synchronous worker stops.
-An ordinary command does not become dependent on reporting after a tracking
-outage, but an SDK prompt inside that command still requires registration.
-
-Inspect the native web session's Agents section, use `/agents` in the CLI, or
-call the read-only MCP `agent_runs` tool. HTTP and ACP expose the same retained
-observations. The registry reports bounded identity, model, status, and last-tool
-metadata, not prompts, tool arguments, full outputs, or exception messages. Usage
-logs remain the accounting record; joining by run ID does not add child usage to
-the parent's conversation counters. Observation does not control agent execution.
-
-## Observing Agent Work
-
-Use an SDK observer for live, structured visibility into an agent run. The
-`actions` detail level shows assistant commentary, the final assistant message,
-compact tool-call signatures, and tool failures. It redacts argument keys that
-look like credentials and is the recommended level for subagents.
-
-```python
-from yoke.ai import Agent, ConsoleObserver
-
-agent = Agent(
-    provider=provider,
-    observer=ConsoleObserver("actions", label="reviewer"),
-)
-result = agent.prompt("Review the current changes.")
-```
-
-The available detail levels are:
-
-- `quiet`: do not emit live activity.
-- `messages`: emit assistant commentary, the final message, and agent errors.
-- `actions`: add compact tool-call signatures and tool failures.
-- `full`: emit every runtime event, including tool results, usage, retries, and
-  compaction activity.
-
-`LoggingObserver` sends the same rendered output to a Python logger.
-`JsonlObserver` writes redacted structured events for later inspection. Use
-`CompositeObserver` to send one run to multiple destinations. You can set an
-observer on `Agent`, pass one for a specific `prompt()` or `prompt_async()`
-call, or pass one to `run_many()`. A batch observer automatically adds the task
-ID and retry attempt to each event. The existing raw `on_event` callback remains
-available for compatibility and custom runtime integrations. Observer failures
-are logged and do not fail the agent run. Each observer receives an isolated
-deep payload snapshot, so an observer cannot change runtime results or another
-observer's input. Serialized tool arguments are parsed before credential
-redaction; malformed serialized arguments are hidden rather than logged.
-Singular token keys such as `accessToken`, `refreshToken`, and `authToken` are
-redacted regardless of case. Plural usage counters such as `input_tokens` and
-`outputTokens` remain visible.
-
-Cancellation and timeouts are cooperative. They signal the runtime through its
-existing stop callback and propagate to the async caller immediately. The
-synchronous worker may continue until it observes that signal, and its eventual
-outcome is consumed in the background. The agent's prompt lock prevents another
-prompt from mutating the same state while that worker retires, and closing the
-agent waits for active work before releasing resources. Providers and tools
-should still implement cooperative cancellation and lower-level timeouts. The
-timeout budget includes time queued behind another prompt; a late completion
-never replaces an already-raised timeout or cancellation.
-In-process tools receive a latched cancellation signal during shutdown. Yoke
-waits for a bounded cleanup window before releasing their resources; if a tool
-ignores cancellation beyond that window, `close()` raises and leaves the agent
-open so cleanup can be retried safely.
-
-## Async Batches
-
-`run_many()` executes independent tasks with bounded concurrency. Supply a
-synchronous or asynchronous factory that creates a fresh `Agent` for each task
-and retry attempt. Each agent must also own a different provider instance;
-reused agents and providers are rejected. The helper closes every accepted
-agent after its attempt without closing an active owner when it rejects a
-duplicate. Results preserve input order even when tasks finish in a different
-order. Synchronous factories run in worker threads and do not block the event
-loop.
+`run_many()` runs independent tasks with a concurrency limit. Give it a factory
+that builds a new `Agent`, with its own provider instance, for each task and
+each retry.
 
 ```python
 import asyncio
@@ -390,48 +260,67 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Each item has a terminal status of `completed`, `error`, or `timed_out`, plus
-its attempt count, duration, result, and exception. Failures remain isolated in
-their input slots rather than cancelling unrelated tasks. `BatchResult.usage`
-sums every provider-reported call retained in successful or partial task
-transcripts, including tool-loop and structured-output retry calls. Calls that
-fail before reporting usage cannot be counted. Usage already present in an
-agent's initial or restored transcript is excluded from batch totals.
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `agent_factory` | required | Sync or async callable that takes a `BatchTask` and returns a new `Agent`. |
+| `max_concurrency` | 8 | Tasks running at once. |
+| `timeout` | none | Seconds per attempt. |
+| `max_attempts` | 1 | Attempts per task, each with a new agent. |
+| `retry_delay` | 0 | Seconds between attempts. |
+| `should_retry` | retry all | Called with the exception. Return `False` to stop retrying. |
+| `on_progress` | none | Sync or async callback that takes a `BatchProgress`. |
+| `output_type` | none | Pydantic model for every task. |
+| `observer` | none | Observer for every task. Events carry the task ID and attempt. |
 
-Pass `on_progress` a synchronous or asynchronous callback accepting one
-`BatchProgress` event. Callback failures do not abort work; they are retained in
-`BatchResult.progress_errors`. `should_retry` can reject non-transient errors,
-and `retry_delay` adds a fixed non-negative delay before another fresh attempt.
-A `should_retry` failure becomes the error for that item and does not stop other
-items.
+`run_many()` rejects an agent or provider that it has already seen, and closes
+each agent after its attempt. Results come back in input order. Each item has a
+status of `completed`, `error` or `timed_out`, plus attempt count, duration,
+result and exception. One failed task does not cancel the others.
 
-Batch observers also receive `batch_attempt_error` events for factory,
-registration, prompt, retry-policy, and cleanup failures. The event carries the
-task ID, attempt number, and failure stage. Built-in console and logging
-observers bound the rendered error text.
+`BatchResult.usage` adds up the token counts every attempt reported, including
+retries. It excludes usage already in an agent's starting transcript. Calls that
+failed before reporting usage are not counted. Errors raised by `on_progress`
+are collected in `BatchResult.progress_errors` and do not stop the batch.
 
-`max_attempts` retries failed or timed-out tasks with a newly created agent.
-Cancelling `run_many()` cancels queued tasks, cooperatively stops active agents,
-waits for cleanup, and then re-raises `asyncio.CancelledError`.
-Worker shutdown errors are suppressed in these paths so callers consistently
-receive their original `TimeoutError` or `asyncio.CancelledError`.
+Cancelling `run_many()` cancels queued tasks, stops running agents, waits for
+cleanup and then raises `asyncio.CancelledError`.
 
-## Durable Agent State
+## Observe a run
 
-Use `Agent.save()` and `Agent.load()` to persist SDK agent state across
-processes. The snapshot stores portable `AgentState` only: conversation entries,
-active skills, and skill directories. It does not store provider clients, API
-keys, tool instances, callbacks, shell sessions, or other live runtime objects.
-Supply provider and `RunConfig` again when loading.
-Codex response identifiers, routing state, and encrypted replay journals are
-process-local provider state and are not serialized into `AgentState`. A
-resumed process reconstructs provider context from the persisted visible
-conversation. Direct compaction-summary requests retain the active provider
-scope, then Yoke begins a reduced provider epoch containing stable
-instructions, bounded recent user context, the newest handoff, and subsequent
-messages. The canonical conversation log remains append-oriented and preserves
-omitted history for audit and branching. Providers without native response
-journals replay the reduced projection with the same logical cache scope.
+An observer shows what an agent is doing while it works.
+
+```python
+from yoke.ai import Agent, ConsoleObserver
+
+agent = Agent(provider=provider, observer=ConsoleObserver("actions", label="reviewer"))
+```
+
+| Detail level | Shows |
+| --- | --- |
+| `quiet` | Nothing. |
+| `messages` | Commentary, the final message and errors. |
+| `actions` | `messages`, plus one line per tool call and tool failures. The best level for subagents. |
+| `full` | Every runtime event, including tool results, usage, retries and compaction. |
+
+| Observer | Output |
+| --- | --- |
+| `ConsoleObserver(detail="actions", stream=None, label=None, max_length=1000)` | Text on stdout, or on `stream`. |
+| `LoggingObserver(logger, detail="actions", level=logging.INFO, label=None, max_length=1000)` | Text through a Python logger. |
+| `JsonlObserver(path, detail="full", label=None)` | One JSON event per line. |
+| `CompositeObserver` | Sends events to several observers. |
+
+Set an observer on the `Agent`, pass one to a single `prompt()` call, or pass one
+to `run_many()`. The older `on_event` callback still receives raw runtime events.
+
+Observers get a private copy of each event, so they cannot change results or
+each other's input. If an observer raises, Yoke logs the error and the run continues.
+Observers hide argument values whose keys look like credentials, such as
+`accessToken` or `authToken`. Token counters such as `input_tokens` stay
+visible.
+
+## Save and restore state
+
+`Agent.save()` and `Agent.load()` keep an agent's conversation across processes.
 
 ```python
 from yoke.ai import Agent, RunConfig, build_builtin_provider
@@ -443,19 +332,15 @@ agent = Agent(provider=provider, config=config)
 agent.prompt("Summarize the latest input file.")
 agent.save("state/summary-agent.json")
 
-resumed = Agent.load(
-    "state/summary-agent.json",
-    provider=provider,
-    config=config,
-)
+resumed = Agent.load("state/summary-agent.json", provider=provider, config=config)
 result = resumed.prompt("Draft the follow-up email.")
 resumed.save()
-print(result.output)
 ```
 
-For recurring jobs, bind an agent to a state file and opt in to autosave.
-If the file exists, the constructor restores it. If it does not exist, the
-agent starts empty and uses that path for future saves.
+For a recurring job, give the agent a state file and turn on autosave. If the
+file exists, the constructor loads it. If not, the agent starts empty. With
+autosave on, the agent saves to that path after each completed tool result and
+at the end of each prompt.
 
 ```python
 agent = Agent(
@@ -464,18 +349,13 @@ agent = Agent(
     state_path="state/nightly-agent.json",
     autosave=True,
 )
-
 agent.prompt("Process any new work since the previous run.")
 ```
 
-Use `restore()` to replace an existing agent's portable state while keeping the
-current provider and runtime configuration.
+`agent.restore(path)` replaces the conversation of an existing agent and keeps
+its provider and config.
 
-```python
-agent.restore("state/checkpoint.json")
-```
-
-The default file format is a single human-readable JSON snapshot:
+The state file is JSON:
 
 ```json
 {
@@ -489,124 +369,29 @@ The default file format is a single human-readable JSON snapshot:
 }
 ```
 
-Treat state files as sensitive: they can contain prompts, model outputs, tool
-results, local paths, and proprietary data. Do not load untrusted state into an
-agent with privileged tools. Lower-level persistence helpers live in
-`yoke.agent.persistence` for applications that need to store
-`AgentState` in their own storage layer.
+It holds conversation entries, active skills and skill directories. It does not
+hold the provider, API keys, tools, callbacks or running processes, so pass the
+provider and `RunConfig` again when loading. Provider response chains are not
+saved either. A loaded agent rebuilds the provider context from the visible
+conversation.
+
+State files contain prompts, outputs, tool results and paths. Treat them as
+sensitive, and do not load an untrusted state file into an agent with shell or
+write tools.
+
+To keep state in your own storage, use `yoke.agent.capture_agent_state()` and
+the helpers in `yoke.agent.persistence`:
 
 ```python
 from yoke.agent import capture_agent_state
 
 state = capture_agent_state(agent)
-# Store `state.model_dump(mode="json")` in your application's storage layer.
+payload = state.model_dump(mode="json")
 ```
 
-The CLI production runtime is `RuntimeAgent`. The former `AgentRunner` protocol
-has been removed; its old import is a compatibility alias to `RuntimeAgent`.
-Interactive front ends use the [CLI session backend](cli-backend.md). Existing
-injected test doubles retain their explicit message/history call adapters while
-the in-process CLI implementation is being retired.
+## Call a model without tools
 
-Providers may implement `complete_with_cancel(messages, tools, *,
-cancel_requested)` for native request cancellation and `fork_for_turn()` for
-independent mutable request state. Interactive turns reconstruct providers with
-a clone of their `config` when possible; providers with neither hook remain
-compatible but must tolerate concurrent calls if a retired request overlaps its
-replacement. `Agent.close()` releases owned provider and tool resources.
-
-## Built-In Tools
-
-Import built-in tools from `yoke.agent.tools` and pass capability IDs,
-classes, or bound instances to `RunConfig.tools`.
-
-```python
-from yoke.agent.tools import ReadTool, EditTool, WriteTool
-```
-
-| Class | Runtime name | Purpose |
-| --- | --- | --- |
-| `ReadTool` | `read` | Read text files from the workspace, with pagination for large files. |
-| `EditTool` | `edit` | Replace exact text in files, including targeted occurrences or replace-all edits. |
-| `WriteTool` | `write` | Create or overwrite a UTF-8 text file under the workspace. |
-| `ApplyPatchTool` | `apply_patch` | Apply codex-style multi-file patches inside the workspace. |
-| `CommandExecTool` / `ExecCommandTool` / `CommandTool` | `command_exec` | Run shell commands or direct argv processes with auto or background execution. |
-| `PythonExecTool` | `python_exec` | Run Python with a separate execution timeout and host-owned initial observation window. |
-| `ProcessInputTool` | `process_input` | Write nonempty input and collect a short response, optionally after a supplied cursor. |
-| `ProcessReadTool` | `process_read` | Wait for all requested processes to finish, return on any output or completion, or take a snapshot. |
-| `ProcessCancelTool` | `process_cancel` | Terminate an owned process tree and retain final output for paging. |
-| `FdTool` | `fd` | Find files and directories with typed pattern, path, type, extension, ignore, depth, time/size, sorting, filtering, and limit fields. |
-| `RipgrepTool` | `rg` | Search contents or list files with typed patterns, paths, globs, file types, match/result modes, context, sorting, and limits. |
-| `ExtractFileContextTool` | `extract_file_context` | Extract readable text context from documents such as PDFs or Office files. |
-| `AttachImageTool` | `attach_image` | Attach local images into the conversation for multimodal follow-up prompts. |
-| `ImageGenerationTool` | `image_generation` | Generate or edit images when the active Codex provider supports it. |
-| `WebFetchTool` | `web_fetch` | Fetch and page through readable URL content by character offset. |
-| `WebSearchTool` | `web_search` | Return quick search links and snippets. |
-| `WebResearchTool` | `web_research` | Answer a web research question with concise sources and notes. |
-| `SkillTool` | `skill` | Let the agent load configured skills at runtime. |
-
-Most workspace tools can be passed as classes and are bound to `RunConfig.root`
-automatically. Pass already-bound instances when you need custom context. Pass
-capability IDs such as `"file.write"` when you want the SDK to choose the
-provider/model-specific concrete tools.
-
-The `shell` capability provides the five process tools listed above. Native
-Yoke and MCP share their runtime names, execution modes, and cursor semantics.
-See [Shared process tools](process-tools.md) for wait limits, result fields,
-post-exit paging, retention gaps, and migration from the removed tool names
-and `yield_time_ms` argument. Existing `ExecCommandTool`, `CommandTool`, and
-`PythonExecTool` imports remain usable; Python import compatibility does not
-make old model-facing tool names callable.
-
-Import `ProcessInputTool`, `ProcessReadTool`, and `ProcessCancelTool` from
-`yoke.agent.tools.processes`.
-`ProcessCursor` and `ProcessReadRequest` are Pydantic models in
-`yoke.agent.tools.processes.models`. Each read session contains `session_id`
-and an optional opaque `cursor` string returned by an earlier result. The read
-request also contains `until`, `wait_ms`, and `max_bytes`; copy cursors back
-unchanged rather than interpreting or constructing them.
-
-`FdTool` and `RipgrepTool` accept only typed search fields. Native argument
-strings are intentionally not part of the SDK contract; use `command_exec` for
-shell composition or native CLI behavior outside the typed search surface.
-Tool execution still produces and persists the complete JSON result. Before a
-provider request, Yoke projects selected high-volume built-ins into a smaller
-model-facing form. `rg`, `fd`, `apply_patch`, and `web_search` use TOON 4.1 for
-tabular data; command-process tools keep JSON but omit duplicate bookkeeping.
-New process projections retain session IDs, cursors, gaps, `has_more_output`,
-and exit codes, including after a process finishes.
-Custom message transforms run before this projection, so they continue to see
-the canonical JSON result. Projection provenance is stored on the exact
-tool-result entry, and hook-replaced results or custom subclasses do not inherit
-built-in projection implicitly. Legacy entries without projection provenance
-remain canonical JSON when resumed.
-
-Capabilities are implemented in `yoke.agent.capabilities`. Each
-`BaseCapability` resolves a high-level ability into one or more concrete tools
-for the active provider/model, and both the CLI and SDK use that same registry.
-Built-in `file.write` exposes `apply_patch` for GPT-family models and
-`edit` plus `write` for other models. Image attachment is omitted when a
-model is known not to support image input, and `image.generate` resolves only
-for a compatible Codex provider. SDK tool binding resolves only selected
-capabilities; unknown IDs fail without constructing unrelated tool resources.
-`web_research` uses Codex hosted Responses
-web search when available. Multiple hosted research calls from one model
-response run concurrently and keep provider tool-result order stable. Other
-providers use bounded local search, fetch, and provider synthesis. The local
-workflow applies a shared fetched-source character budget so many large pages
-cannot grow context without a bound.
-SDK-bound tool classes receive provider context when they are resolved through
-a capability or agent runtime.
-
-`WebFetchTool` defaults to the first 20,000 characters of normalized page
-content. Use its 1-based `offset` and `limit` fields to continue reading. Set
-`mode="raw"` to page through the unprocessed response text. The tool caches the
-selected representation for continuation calls and returns `next_offset` while
-more content remains. It does not return duplicate summaries, chunks, or links.
-
-## Direct Completion
-
-Use `complete()` when you do not need the agent loop or local tools.
+`complete()` sends one request with no agent loop and no tools.
 
 ```python
 from yoke.ai import complete
@@ -616,100 +401,64 @@ result = complete(
     sys_prompt="Answer briefly.",
     prompt="Summarize this text in three bullets.",
 )
-
 print(result.output)
 ```
 
-`complete()` does not accept tools or function schemas. Local execution belongs
-to `Agent`.
+`complete()` also takes `messages`, `images`, `image_urls` and `output_type`.
+It does not accept tools. Use `Agent` when the model needs to act.
 
-## Images
+## Built-in tools
 
-Use the same `Image` helper with `complete()` and `Agent.prompt()`.
-
-```python
-from yoke.ai import Image
-
-result = complete(
-    provider=provider,
-    prompt="Describe [Image #1].",
-    images=[Image.from_path("screenshot.png")],
-)
-```
+Pass capability IDs, tool classes or bound tool instances in `RunConfig.tools`.
+A capability ID such as `"file.write"` lets Yoke pick the right tools for the
+provider and model. Classes are bound to `RunConfig.root`. Unknown capability
+IDs fail before any tool is built.
 
 ```python
-result = agent.prompt(
-    "Compare [Image #1] and [Image #2].",
-    images=[
-        Image.from_path("current.png"),
-        Image.from_url("https://example.com/reference.png"),
-    ],
-)
+from yoke.agent.tools import EditTool, ReadTool, WriteTool
 ```
 
-CLI and `AttachImageTool` local images are snapshotted as data URLs before they
-are stored in session history, which keeps resumed sessions independent from
-temporary or later-deleted local files.
-Snapshots fit a 1568-pixel long edge and 1,150,000 pixels. Opaque images use
-JPEG quality 90 and transparent images use PNG; smaller supported originals
-that already fit are retained. The database deduplicates binary image bytes
-and reconstructs the saved data URL when loading history.
-The snapshot is stored only in the image message, not duplicated inside the
-tool-result JSON sent back to the model.
+| Class | Tool name | Does |
+| --- | --- | --- |
+| `ReadTool` | `read` | Read a text file, a page at a time. |
+| `EditTool` | `edit` | Replace exact text in a file. |
+| `WriteTool` | `write` | Create or overwrite a UTF-8 file. |
+| `ApplyPatchTool` | `apply_patch` | Apply a multi-file patch in Codex format. |
+| `CommandExecTool` | `command_exec` | Run a shell command or an `argv` program. Also importable as `ExecCommandTool` and `CommandTool`. |
+| `PythonExecTool` | `python_exec` | Run Python code with its own execution timeout. |
+| `ProcessInputTool` | `process_input` | Send input to a running process. |
+| `ProcessReadTool` | `process_read` | Wait for processes, read output or take a snapshot. |
+| `ProcessCancelTool` | `process_cancel` | Stop a process tree and keep its final output. |
+| `FdTool` | `fd` | Find files by name, type, extension, depth, time or size. |
+| `RipgrepTool` | `rg` | Search file contents or list files. |
+| `ExtractFileContextTool` | `extract_file_context` | Extract text from PDFs, Office files and images. |
+| `AttachImageTool` | `attach_image` | Add a local image to the conversation. |
+| `ImageGenerationTool` | `image_generation` | Generate or edit images with Codex. |
+| `WebFetchTool` | `web_fetch` | Read a URL, 20,000 characters at a time by default. |
+| `WebSearchTool` | `web_search` | Return search links and snippets. |
+| `WebResearchTool` | `web_research` | Answer a question from several web sources. |
+| `SkillTool` | `skill` | Let the agent activate skills. |
 
-## Structured Outputs
+The process tool classes are also in `yoke.agent.tools.processes`, and their
+request models are in `yoke.agent.tools.processes.models`. Treat process
+cursors as opaque strings and pass them back unchanged.
+[Shared process tools](process-tools.md) documents waits, paging and result
+fields.
 
-Pass a Pydantic model as `output_type`.
+`fd` and `rg` take typed fields only, not raw command-line flags. Use
+`command_exec` for pipelines. `web_fetch` takes a 1-based `offset` and `limit`,
+returns `next_offset` while more text remains, and accepts `mode="raw"` for the
+unprocessed response.
 
-```python
-from pydantic import BaseModel
+Tools return full JSON results, which the conversation keeps. Before sending a
+request, Yoke shrinks the results of `rg`, `fd`, `apply_patch`, `web_search` and
+the process tools into a smaller form for the model. Hooks and message
+transforms see the full result.
 
+### Custom tools
 
-class ReviewSummary(BaseModel):
-    verdict: str
-    risks: list[str]
-
-
-result = agent.prompt(
-    "Review the authentication module.",
-    output_type=ReviewSummary,
-)
-
-summary = result.structured
-```
-
-When `output_type` is provided, the SDK asks the model for JSON matching that
-schema and validates the final output. If validation fails, it sends a schema
-correction system message and retries up to three total attempts before raising
-`StructuredOutputError` from `yoke.ai.types` with the raw output
-attached. Omit `output_type` for free-form text.
-
-## Skills
-
-Pass materialized `Skill` objects in `RunConfig.skills`.
-
-```python
-from yoke.ai.skills import Skill
-
-agent = Agent(
-    provider=provider,
-    config=RunConfig(
-        root=".",
-        tools=[ReadTool],
-        skills=[
-            Skill.from_dir("./skills/code-review"),
-            Skill.inline(
-                name="repo-style",
-                sys_prompt="Prefer minimal patches and explicit typing.",
-            ),
-        ],
-    ),
-)
-```
-
-## Local Tools
-
-Subclass `LocalTool` for custom executable tools.
+Subclass `LocalTool`, or `WorkspaceTool` for a tool that works with files in the
+workspace. Fields are Pydantic fields and become the tool's arguments.
 
 ```python
 from pydantic import Field
@@ -725,12 +474,120 @@ class EchoTool(LocalTool):
 
     def execute(self) -> dict[str, object]:
         return {"ok": True, "text": self.text}
+
+
+agent = Agent(provider=provider, config=RunConfig(root=".", tools=[EchoTool]))
 ```
 
-Workspace-aware tools should subclass `WorkspaceTool`.
+The CLI loads tools from plugin files. See
+[Configuration](configuration.md#custom-tools).
 
-CLI tool plugins can use provider-aware registration with
-`register_tools(context)`. The context exposes `root`, `home`, `provider`,
-`provider_name`, `model_id`, `model_name`, `model_key`, `reasoning_effort`, and
-`cancel_requested`; interactive CLI sessions refresh this registration when the
-active provider or model changes.
+## Delegate work to other agents
+
+The built-in [`yoke-subagents` skill](../agent/skills/built_in/yoke-subagents/SKILL.md)
+shows how an agent can start and coordinate SDK agents. It has short examples
+for one worker, two parallel audits and a role that persists across processes.
+Its larger examples add task contracts, traces and results under
+`.agents_local/`.
+
+## Automatic agent tracking
+
+When an SDK agent runs inside a process started by Yoke's `command_exec` or
+`python_exec`, it reports each prompt to the session that started it. Your
+script needs no extra code. Set `RunConfig(name=...)` to give it a display name.
+
+You can see these agents in the web UI's Agents panel, with `/agents` in the
+CLI, and through the MCP `agent_runs` tool. HTTP and ACP clients get the same
+data. Each entry shows a name, model, status and last tool. Prompts, tool
+arguments, outputs and error messages are not reported.
+
+`Agent.agent_id` identifies the agent instance. Each prompt gets its own run ID,
+which matches `sdk_run_id` in usage records. A fork or a loaded agent gets a new
+ID.
+
+The rules:
+
+- A prompt fails if it cannot register with its session before its first
+  provider call. Later reporting failures do not affect the result.
+- A missed heartbeat or lost connection marks a run's status as unknown, never
+  as succeeded or failed.
+- Tracking never controls the agent. Watching it does not stop it.
+- A process may have at most 4096 tracked agents open, counting ones waiting to
+  be released. Close agents you no longer need.
+- An agent outside a Yoke-started process is not tracked.
+
+Session IDs in the environment do not grant the right to report into a session.
+Yoke gives each started process a private capability for that.
+
+## Usage records
+
+Yoke records every completed provider response, from the SDK, the CLI and the
+HTTP API, in the `usage_events` table of `~/.yoke/yoke.db`. Set `YOKE_DB_PATH`
+to use another file.
+
+A record has the provider, model, completion time, token counts and attribution.
+Attribution is the caller kind in `surface`, the `call_kind`, and either the
+session ID or the SDK operation and `sdk_run_id`. It may include a `session_title` of up to 80
+characters. It never contains prompts, responses, tool data, paths or batch task
+IDs. A provider that reports no token counts still gets a record with an empty
+`usage` object.
+
+| SDK operation | `sdk_run_id` groups |
+| --- | --- |
+| `complete` | one `complete()` call |
+| `agent` | one `prompt()` |
+| `run_many` | one batch attempt |
+
+`call_kind` separates direct completions, model iterations, structured output
+retries, compaction summaries, branch summaries and overflow retries.
+
+Read records with:
+
+```python
+from yoke.ai.providers.usage_writer import read_usage_events
+
+for event in read_usage_events(provider="codex", since="2026-11-01T00:00:00Z"):
+    print(event)
+```
+
+The SDK writes to the database only if it already exists with a schema version
+this release supports. Otherwise it skips the record, logs at debug level and
+lets the provider call succeed. Start the Yoke daemon to create or upgrade the
+database. Any other write failure raises `UsageLogWriteError`, and no partial
+row is left.
+
+### Attribution across processes
+
+`command_exec` and `python_exec` set `YOKE_ROOT_SESSION_ID` and
+`YOKE_PARENT_RUN_ID` for the processes they start. An SDK agent in such a
+process records the root session and the run that launched it, so you can add up
+a session's total usage. These records keep `surface="sdk"` and their own
+`sdk_run_id`, and set `session_id` to the root session. They do not change the
+parent conversation's token counters.
+
+An agent reads this context when you construct it. `complete()` reads it on
+each call. Override it with `root_session_id` and `parent_run_id` on `RunConfig`
+or `complete()`, or set `inherit_usage_attribution=False` to ignore the
+inherited values. A loaded agent takes attribution from the process that loads
+it. Remote processes need the variables forwarded explicitly.
+
+## Custom providers
+
+A provider must implement `complete(messages, tools)`. Custom providers are
+plugins in `~/.yoke/providers/`. See
+[Configuration](configuration.md#custom-providers).
+
+These optional methods matter:
+
+| Method | Why |
+| --- | --- |
+| `complete_with_cancel(messages, tools, *, cancel_requested)` | Lets Yoke cancel a request in flight. Without it Yoke calls `complete()`. |
+| `fork_for_turn()` | Returns an independent copy for a forked agent or an isolated turn. Without it Yoke logs a warning and shares the instance, which then must tolerate overlapping calls. |
+
+Built-in providers subclass `yoke.ai.providers.base.BaseProvider`. A forked
+built-in provider shares an injected HTTP client and does not close it.
+`provider_identity(provider)` in the same module returns the `name`, `model` and
+`reasoning_effort` Yoke sees, with `unknown` for an unnamed provider.
+
+If a provider plugin's factory returns an instance that fails validation, Yoke
+closes that instance and reports the original error.

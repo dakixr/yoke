@@ -1,1261 +1,448 @@
 # CLI
 
-At startup, yoke automatically loads environment variables from a `.env` file
-located next to the yoke source package at `src/yoke/.env`, if present.
-The CLI entrypoint keeps package startup lightweight for commands such as
-`yoke --help` and `yoke version`; provider, tool, model, skills, and interactive
-runtime modules are imported only when the selected command needs them.
-On Windows, interactive mode also guards prompt-toolkit's console-input watcher
-against a benign late reschedule during Python asyncio executor shutdown, so
-exiting yoke does not print an unrelated callback traceback.
+This page covers day-to-day use of the `yoke` command. Saved sessions, resume
+and the session database are in [Sessions](sessions.md). Providers, config
+files, tool policy, MCP servers and environment variables are in
+[Configuration](configuration.md).
 
-## Basic usage
+## How the CLI runs
+
+Every `yoke` session runs in a shared per-user daemon. The terminal is a client.
+The first `yoke` command starts the daemon if none is running, and the daemon
+exits about five seconds after its last client leaves and its queued work is
+done. There is no in-process fallback. If the daemon cannot start, the command
+prints the error and exits with status 1.
+
+When the CLI attaches, it sends its environment variables and working directory
+to the daemon. Turns in that session use those values, so provider keys such as
+`OPENCODE_API_KEY` come from the shell that ran `yoke`. The daemon also reads a
+`.env` file in the workspace root. Values from the client environment win over
+`.env` values.
+
+See [The daemon](#the-daemon) for status, restart and running it under systemd.
+
+## Start a session
 
 ```bash
-# Start an interactive session
+# Open an interactive session in the current directory
 yoke
 
-# Start interactive mode with an initial prompt
+# Open one with a first prompt
 yoke "explain this codebase"
 
-# Run headless (one turn, print output, exit)
-yoke --headless "run the tests and summarize failures"
+# Work in another directory
+yoke --root /path/to/project
 
-# Pipe input
+# Pick a model and preload a skill
+yoke --model codex:gpt-6.1-sol:high --skill code-review "review src/auth.py"
+```
+
+A bare argument that is not a subcommand becomes the prompt, so
+`yoke "explain this"` is the same as `yoke --prompt "explain this"`.
+
+The workspace root defaults to the current directory. File tools resolve
+relative paths against it. Yoke also reads `AGENTS.md` and the config, MCP
+servers, skills and tool plugins under `.yoke/` from it.
+
+Yoke picks one of two interactive modes:
+
+| Mode | When | Notes |
+| --- | --- | --- |
+| Full-screen | stdout is a terminal | prompt-toolkit editor, bottom toolbar, inspectors, `/tree` and `/queue` |
+| Basic | stdout is not a terminal | Reads lines. Lines sent during a turn are queued. `Ctrl+C`, `exit` or `quit` stops the turn and exits. |
+
+Type `exit` or `quit` to leave either mode. Run `/help` for the slash commands
+and `/shortcuts` or `?` for the keyboard shortcuts in the current mode.
+
+## Run headless
+
+Headless mode runs one turn, prints the final answer and exits.
+
+```bash
+yoke --headless "run the tests and summarize failures"
+yoke -p "run the tests and summarize failures"
+
+# Read the prompt from stdin
 echo "what does utils.py do?" | yoke --headless
 
-# Attach one or more local images to the initial prompt
+# Continue a saved session
+yoke resume 20261117-143022-a1b2c3 -p "now fix the first failure"
+```
+
+The final assistant message goes to stdout. Progress and errors go to stderr.
+
+| Exit status | Meaning |
+| --- | --- |
+| 0 | The turn completed. |
+| 1 | The turn failed or stopped, or startup failed. |
+| 130 | You pressed `Ctrl+C`. Yoke asks the daemon to interrupt the turn. |
+
+When the prompt comes from stdin, Yoke reads only the first line.
+
+Headless runs are strict about models. An unknown model or an unsupported
+thinking effort is an error, and Yoke never substitutes another model. See
+[Choose a model](#choose-a-model).
+
+## Choose a model
+
+A model selection has the form `provider:model[:effort]`:
+
+```bash
+yoke --model codex:gpt-6.1-sol:medium
+yoke --model opencode-go:deepseek-v4.1-flash
+yoke --model zai:glm-5.3-flash:max
+```
+
+You can also pass only the model name, and Yoke picks a provider from the
+credentials you have. If you leave out the effort, Yoke uses the model's
+default. The model table and the provider defaults are in
+[Configuration](configuration.md#models).
+
+Yoke picks the model for a new session in this order:
+
+1. `--model` on the command line.
+2. `default_model` and `default_reasoning_effort` in `.yoke/config.json`.
+3. The same keys in `~/.yoke/config.json`.
+4. The provider's default model.
+
+A resumed session keeps its saved provider, model and effort unless you pass
+`--model`. This applies to `yoke resume`, an existing `--session` and `--fork`.
+
+Yoke checks the effort against the provider's model catalog. An unsupported
+effort, or an empty one such as `codex:gpt-6.1-sol:`, fails with a list of the
+supported levels and changes nothing.
+
+If the configured default model or a resumed session's model has left the
+catalog, interactive mode retries once with the same provider's current default
+model. It prints a warning naming both models. It does not rewrite your config.
+Run `yoke models set` to save a new default. This recovery never applies to an
+explicit `--model`, to headless runs, or to authentication and network errors,
+and Yoke never switches to a different provider.
+
+To change the model during a session:
+
+- Run `/model` or press `Ctrl+X` then `M` to open a table of models from all
+  ready providers. Choosing a row switches to that model at its default effort.
+- Press `Shift+Tab` to cycle the thinking effort through the current model's
+  levels.
+
+If the new model has a smaller context window, Yoke may compact the working
+context before the switch. If compaction fails or the context still does not
+fit, Yoke rolls back the switch and keeps the previous model.
+
+To save a default:
+
+```bash
+yoke models list                              # every model from every provider
+yoke models set codex:gpt-6.1-sol:high        # save to ~/.yoke/config.json
+yoke models set opencode-go:deepseek-v4.1-flash --repo   # save to .yoke/config.json
+yoke models set                               # choose from a list
+```
+
+`yoke models set` writes `default_model` and `default_reasoning_effort` as
+separate keys. Choosing from the list saves the model's default effort. It
+rejects a model the provider's catalog does not list before writing anything.
+
+## Attach images
+
+```bash
 yoke --image screenshot.png "describe this screenshot"
 yoke --headless --image chart.png --image legend.png "summarize these charts"
+yoke resume 20261117-143022-a1b2c3 -p "compare with this" --image new.png
 ```
 
-Prompt-toolkit startup prints only the tool-loading summary and version banner.
-Run `/help` for commands and `/shortcuts` or `?` for the keyboard reference.
-Basic mode, selected when stdout is not a terminal or an input function is
-supplied by an embedding application, queues lines submitted during a turn. Its
-terminal startup and `/shortcuts` use the same basic-mode help. Both modes share
-turn preparation, cancellation error handling, and session replay. Seeded user
-messages retain their original text and image blocks; their displayed prompt uses
-the transcript text projection.
+In a full-screen session:
 
-Interactive mode keeps one prompt-toolkit application alive for the complete
-session. Prompt submissions are serialized away from the terminal event loop,
-and fullscreen selectors temporarily suspend and then restore the editor,
-including any text that was present before opening them. Agent, tool, and
-commentary output is queued in order, rendered in worker threads, and committed
-to native terminal scrollback in short batches. Idle sessions do not redraw on
-a timer; the spinner redraws only while a turn is active. This keeps cursor
-movement and typing responsive even when Markdown rendering, tool output, or
-session persistence is busy.
+- Press `Ctrl+V` or `Alt+V` to paste an image from the clipboard. If the
+  clipboard holds text, Yoke pastes the text. Use `Alt+V` when your terminal
+  captures `Ctrl+V`.
+- Run `/image path/to/file.png` to attach a file.
+- Press `Ctrl+U` to remove the last pending image.
 
-New and resumed user prompts use the same full-width terminal block renderer,
-including line wrapping and blank-line padding. Plain-text output keeps its
-separate live-prompt and scrollback labels. Terminal decorations are available
-when the output encoding supports box-drawing characters, including CP437;
-ASCII-only streams keep the plain-text fallback.
-Assistant commentary and final responses share the same scrollback Markdown
-renderer and blank-line spacing. Redirected output preserves their Markdown text.
-Diagnostic text and redirected prompts are literal text, so square brackets and
-emoji aliases are not interpreted as Rich formatting.
+Pending images appear in the bottom toolbar and go with the next prompt you
+send. Yoke offers image tools only when the current model accepts images.
 
-### HTTP and ACP serving
+Yoke stores a copy of each attached image in the session, so a resumed session
+does not need the original file. It scales the copy to fit a 1568-pixel long
+edge and 1,150,000 pixels, and never scales up. Opaque images are stored as JPEG
+at quality 90 and images with transparency as PNG. An original that already
+fits and is no larger is kept as is.
 
-Headless invocation uses the per-user daemon with no local runtime fallback.
-`yoke -p "prompt"` runs one headless turn; `yoke resume ID -p "prompt"`
-and `yoke resume ID --headless --prompt "prompt"` run a turn on an existing session. The first invocation starts the
-daemon. The client sends its environment and cwd on attachment, holds an event
-lease through the turn, and detaches on exit. Interactive entry points attach to the same daemon and
-render its filtered session event stream. The local CLI runtime and its injected
-agent entry points have been removed. Both interactive and headless
-`resume --relocate` call the daemon workspace relocation route.
+## Steer, queue and stop a turn
 
-`yoke serve` runs the process-wide HTTP session runtime. `--session-dir` (or
-`YOKE_HTTP_SESSION_DIR`) selects a dedicated session store. `--hide-token`
-suppresses the startup token line for service managers that inject
-`YOKE_HTTP_TOKEN` through a protected environment file.
+While a turn runs, you can keep typing.
 
-`yoke serve --daemon` runs the per-user daemon with a uid-authorized Unix
-socket on Unix and token-authenticated loopback HTTP on port 8770. Windows
-clients use the loopback listener with the token from the ACL-protected
-`~/.yoke/daemon.json`. It exits about five seconds after its last
-client lease closes and all running or queued work drains. `--no-idle-exit`
-keeps it running under systemd. `yoke daemon status|restart|stop` manages it;
-restart and stop refuse while busy unless `--when-idle` or `--force` is supplied,
-respectively. Basic and prompt-toolkit terminals use the same daemon.
-
-`yoke acp` discovers or starts that daemon and holds a lease over stdio's
-lifetime. `--url` or `YOKE_ACP_URL` selects an explicit HTTP server and requires
-`--token` or `YOKE_ACP_TOKEN`. It keeps Yoke's HTTP runtime authoritative for
-sessions, tools, models, and cancellation, and advertises only models whose
-native providers are currently ready. ACP supports text prompts, inline images,
-embedded file attachments, model and reasoning selection, session load/resume,
-tool lifecycle updates, client MCP servers, plans, interactive questions, and
-permission modes. See [ACP and T3 Code](acp.md) for setup and the complete
-contract. Images reach the model as image content; generic files are saved for Yoke's file-reading tools rather than
-expanded into the prompt. Attachment-only turns are accepted. The native store
-keeps the uploaded bytes when an ACP process exits or a session is resumed.
-
-Tool rows retain their action and target when they finish, rather than using
-the result JSON as a label. The ACP peer identifies file reads, edits, searches,
-and command execution for stock client presentation; process polling and MCP
-calls keep descriptive labels. Command and search arguments gain display aliases
-only in ACP, without changing native tool execution or model-visible messages.
-Expanded output uses readable text with a bounded head/tail preview, while
-`rawOutput` retains the native structured result. Clients may impose their own
-limits. File locations use the native session's workspace for relative paths,
-never the peer's potentially different working directory. Interrupted calls
-with no final result close as unconfirmed failures rather than staying active.
-
-Managed jobs that remain running after a command launch or process read also
-publish a separate background-task lifecycle to the Yoke T3 adapter. A client
-with that adapter shows Monitoring when these are the only remaining work after
-the turn ends. Generic ACP clients retain the observations as tool
-activity; see [presentation limits](acp.md#generic-t3-presentation-limits). The
-ACP peer watches the native process inspector through read-only requests and event invalidations, with a 15-second fallback snapshot check for
-lost notifications. Job completion, failure, and termination update that task
-even when the foreground turn has finished. Repeated snapshots and
-elapsed-time-only changes do not generate new activity rows.
-
-Ending observation does not stop a job. A disconnected observer or closed ACP
-peer ends its displayed monitoring task with the process status marked unknown,
-not successful. The peer tracks jobs observed by its command and process tools;
-after reconnecting, a process read can reestablish observation of a running job.
-Long process waits use a Monitoring label, while `wait_ms: 0` remains a snapshot.
-When a successful turn settles before its live tool notifications arrive, the
-bridge recovers missing calls from that turn's saved transcript and inspector.
-Already displayed completions are not replayed.
-
-SDK subagents also publish their own lifecycle, separately from the Python
-process that hosts them. ACP attaches the native agent roster on session create
-or load, then reconciles changes even after the foreground turn ends. The Yoke
-T3 adapter translates these observations into existing subagent task events.
-Losing the observer marks its knowledge stale or lost; it does not complete or
-stop the underlying agent. Older daemons without the agent-run endpoint continue
-to support ordinary ACP sessions without an agent roster.
-
-ACP clients request a promptless continuation with `prompt: []` and
-`_meta.yokeContinuation: true`. This performs another inference on the existing
-conversation without inserting a synthetic user message. Empty prompts without
-that explicit marker are rejected. Current daemons also support plan mode,
-permission requests, form questions, session listing, and ACP-level forking.
-
-To steer an active ACP turn, clients send `session/cancel`, wait for its
-in-flight `session/prompt` response, then send the correction in the same
-session with a fresh `_meta.yokeInputID`. Yoke confirms cancellation only after
-native workers drain; the next prompt retains the interrupted conversation.
-T3 Code keeps these successive native prompts inside one visible turn. A
-client must not send concurrent prompts or reuse an earlier input ID.
-
-Once a valid ACP prompt is accepted, cancellation during setup or attachment
-upload still persists that input before interrupting it. Rapid corrections
-therefore remain in the resumed conversation rather than disappearing between
-the client's dispatch and the native admission receipt. Interruption appends
-only its recovery/checkpoint suffix, without copying historical tool payloads.
-
-ACP clients can include `_meta.yoke.cwd` in their client capabilities during
-initialization. Yoke then returns that workspace's skill catalog in
-`_meta.yoke.skills`, allowing clients such as T3 Code to offer `$skill-name`
-completion while sending the authored prompt text unchanged.
-
-Sessions created through ACP start unnamed. The native HTTP runtime generates
-their title from the first prompt using the same background title flow as other
-Yoke sessions, rather than retaining a client-specific placeholder.
-
-Native uploads accept at most 20 attachments and 20 MiB per file. The ACP peer
-also limits inline content to 32 MiB decoded and 48 MiB serialized JSON. Clients
-may impose smaller limits. Mooncake's T3 adapter currently caps its complete
-encoded prompt at 15 MiB to fit T3's 16 MiB transport frame; base64 encoding
-reduces the usable raw attachment budget to roughly 11 MiB.
-
-Local ACP clients only need:
-
-```bash
-yoke acp
-```
-
-For an always-on daemon use the sample [systemd user unit](../../../docs/yoke-daemon.service).
-See [daemon transport and lifecycle](http.md#per-user-daemon) for discovery paths,
-port conflicts, build skew, and control endpoints.
-
----
-
-## Providers and models
-
-Select models with `provider:model` or `provider:model:thinking_effort`:
-
-```bash
-yoke --model codex:gpt-6.1-sol:medium "..."
-yoke --model codex:gpt-6-astra:max "..."
-yoke --model opencode-go:muse-spark-1.3-contributor:high "..."
-yoke --model opencode-go:deepseek-v4.1-flash "..."
-yoke --model zai:glm-5.3-flash:max "..."
-```
-
-Yoke's built-in providers are:
-
-| Provider | Authentication |
+| Action | Key |
 | --- | --- |
-| `codex` | `yoke login codex`, `~/.codex/auth.json`, the account vault under `~/.codex-auth/accounts/`, or `YOKE_CODEX_API_KEY` |
-| `opencode-go` | `OPENCODE_API_KEY` or `yoke login opencode-go` |
-| `zai` | `ZAI_API_KEY` or `yoke login zai` |
+| Stop the turn and send this prompt instead | `Enter` |
+| Queue the prompt to run after the current turn | `Tab` |
+| Stop the turn | `Esc` `Esc` |
+| Open the queue manager | `Ctrl+X` then `Q`, or `/queue` |
 
-Provider selections without a model use these defaults:
+Stopping or steering keeps everything up to the last completed tool result.
+Yoke records your prompt and an interruption marker, and the next turn starts
+from there. Yoke marks tool calls that were still running as cancelled. Command
+timeouts kill the whole process tree.
 
-| Provider | Default selection |
+The queue manager lets you edit, delete, reorder, pause and promote queued
+prompts, and mark a prompt as a steering prompt. Steering prompts run before
+normal ones. Output from a running turn waits while the manager is open, so it
+cannot overwrite your edit.
+
+The daemon saves queued prompts and pending images with the session, so they
+survive exiting and resuming. A prompt leaves the queue when it starts. A
+`/skill` command queued with `Tab` activates the skill when it reaches the
+front of the queue.
+
+Turns longer than 60 seconds end with a summary line such as
+`Worked for 1m02s · 6 tools`.
+
+## Compact the context
+
+Yoke compacts the provider context automatically when it nears the model's
+window, and once more if the provider reports an overflow. Run `/compact` to do
+it now. Compaction asks the model for a handoff summary and starts a smaller
+context from that summary, your recent prompts and the latest messages. The
+saved session keeps the full history, and `/tree` still shows it.
+
+## Use skills
+
+A skill is a directory with a `SKILL.md` file that tells the agent how to
+handle one kind of task. Yoke finds skills in three places:
+
+| Location | Scope |
 | --- | --- |
-| `codex` | `codex:gpt-6.1-sol:medium` |
-| `opencode-go` | `opencode-go:deepseek-v4.1-flash:high` |
-| `zai` | `zai:glm-5.3-flash:max` |
+| Built in, under `src/yoke/agent/skills/built_in/` | `create-skill`, `yoke-sessions`, `yoke-subagents` |
+| `.yoke/skills/` | the current workspace |
+| `~/.yoke/skills/` | every workspace |
 
-Yoke caps `glm-5.3-flash` at a 400,000-token context window for `zai`, even
-when the upstream provider advertises a larger window. The catalog, runtime
-token budget, compaction policy, and context-usage display all use that capped
-value. OpenCode Go caps both of its models at 400,000 tokens.
+When two locations have a skill with the same name, the built-in skill wins,
+then the workspace skill, then the global one.
 
-OpenCode Go can be routed through an OpenAI-compatible gateway such as the
-fleet's CLIProxy. Set `YOKE_OPENCODE_GO_BASE_URL` to the gateway's `/v1` URL
-(default `https://opencode.ai/zen/go/v1`) and, if the gateway namespaces Go
-models, `YOKE_OPENCODE_GO_MODEL_PREFIX` (for example `opencode-go`, which sends
-`opencode-go/<model>` upstream). Yoke model IDs stay `opencode-go:<model>`.
-`OPENCODE_API_KEY` is still required; a gateway that does its own auth can take
-a placeholder value.
-
-Codex uses a persistent Responses WebSocket transport and keeps response
-continuity, encrypted replay state, prompt-cache affinity, and routing metadata
-in memory. Session IDs provide stable cache scope across provider
-reconstruction and resume. New and forked sessions receive distinct scopes.
-Every Codex request and WebSocket handshake sends that scope as the
-`session_id` header, so a reconnect after an idle close, and any Codex load
-balancer in front of it, stays on the warm prompt cache. Leading system
-messages form the Codex `instructions`; system context added later, such as a
-skill activated mid-session, is sent in place as a `developer` input message so
-the cached prefix and response continuity survive the activation.
-The advertised Codex catalog includes `gpt-6-astra`, `gpt-6.1-sol`,
-`gpt-6.1-terra`, and `gpt-6-luna`. GPT-6.1 Sol is the default. GPT-6 Sol and
-GPT-5.6 models no longer appear as selectable models; the Codex provider still
-handles legacy configurations that already use them.
-Select GPT-6.1 Sol with `yoke --model codex:gpt-6.1-sol:medium "..."`.
-Yoke caps its context window at 400,000 tokens and supports image inputs and
-`low`, `medium`, `high`, `xhigh`, and `max` reasoning efforts (default:
-`medium`). Availability depends on the signed-in Codex account and rollout.
-Select Astra with `yoke --model codex:gpt-6-astra:medium "..."`. Yoke caps
-its context window at 400,000 tokens and supports image inputs and `low`,
-`medium`, `high`, `xhigh`, and `max` reasoning efforts (default: `medium`).
-Select Luna with `codex:gpt-6-luna:<effort>`. Yoke caps it at 400,000 tokens;
-it supports image inputs and `none`, `low`, `medium`, `high`, `xhigh`, and
-`max` reasoning efforts (default: `medium`).
-Select Terra with `yoke --model codex:gpt-6.1-terra:medium "..."`.
-Yoke caps its context window at 400,000 tokens and supports image inputs and
-`none`, `low`, `medium`, `high`, `xhigh`, and `max` reasoning efforts (default:
-`medium`).
-
-OpenCode Go advertises two models. The Contributor tier of
-`muse-spark-1.3-contributor` caps at 400,000 tokens for agentic work and
-exposes `minimal`, `low`, `medium`, `high`, and `xhigh` reasoning efforts
-(default: `high`). Muse Spark uses the Responses path. DeepSeek V4.1 Flash
-(`deepseek-v4.1-flash`) is the default OpenCode Go model and uses
-OpenAI-compatible chat completions. It supports image inputs and `low`,
-`high`, and `max` reasoning efforts (default: `high`). Yoke sends
-`x-opencode-session` with one stable value per Yoke session, including retries
-and resumed conversations. Forked sessions receive a new value. Z.ai exposes
-GLM-5.3-Flash with `low`, `high`, and `max` reasoning efforts, defaulting to
-`max`. Go chat requests stream text, reasoning, tool
-calls, and usage internally, then return one complete response to Yoke. A
-truncated stream fails without executing partial tool calls or replaying the
-generation. Message serialization and session cache headers remain unchanged.
-Provider catalogs also declare context windows, image-input support, and
-model-specific system messages.
-
-Built-in provider response and stream-idle timeouts default to 15 minutes.
-Connection-establishment and WebSocket health-check timeouts remain shorter so
-unreachable services fail promptly.
-
-Use these commands to inspect or change defaults:
+Activate a skill in any of these ways:
 
 ```bash
-yoke models list
-yoke models set codex:gpt-6.1-sol:medium
-yoke models set opencode-go:deepseek-v4.1-flash:high
-yoke models set zai:glm-5.3-flash:max
-yoke models set
-yoke models set --repo
-
-yoke providers list
-yoke providers doctor
-yoke providers login codex
-yoke providers init my-provider
+# At startup
+yoke --skill code-review "review the changes in src/auth.py"
 ```
 
-Without `--repo`, model defaults are written to
-`~/.yoke/config.json`; workspace defaults live in `.yoke/config.json`.
-Explicit CLI flags win, while resumed sessions prefer their saved provider,
-model, and thinking effort when no model override is supplied. An explicit
-`--model provider:model:effort` overrides both the saved model and effort,
-including with `yoke resume`, `--session`, and `--fork`.
+```text
+/skill code-review review the current diff
+$code-review $repo-style review the current diff
+```
 
-The CLI validates thinking effort against the destination provider's catalog.
-An unsupported effort fails with an error listing the supported levels. This
-applies to `--model`, `yoke resume --model`, and `yoke models set`, as well as
-efforts loaded from config or saved sessions. Invalid selections do not change
-config or saved session state. Empty effort suffixes such as `provider:model:`
-also fail. Providers without a catalog receive the effort for their own
-validation. Omitting the effort uses the model's advertised default.
-`yoke models set` saves the model and effort separately as `default_model` and
-`default_reasoning_effort`. Its picker chooses a model with its default effort;
-pass `provider:model:effort` to save a specific effort.
+`/skill name` activates the skill. Any text after the name is sent as a normal
+prompt. A `$name` mention anywhere in a prompt activates that skill just before
+the prompt runs. Typing `$` opens completion, and `Enter` or `Tab` inserts the
+name without sending. Yoke activates mentions in order, once each per prompt,
+and leaves the text visible to the model. Mentions inside Markdown code or
+escaped with a backslash are plain text. The agent can also activate skills
+itself through the `skill` tool.
 
-When a configured default model or a resumed session's model is no longer in
-the provider catalog, the interactive CLI retries once with that same provider's
-current default model and thinking effort. A warning identifies the old and new
-models and points to `/model`. Config files are not rewritten. Use `yoke models
-set` to save a replacement default. Authentication, network, and other provider
-initialization errors do not trigger model recovery, and fresh startup does not
-switch to another provider when the configured provider is unavailable.
+Activation adds the current `SKILL.md` content and a list of the files in the
+skill directory to the conversation. The session keeps that text, so a resumed
+session still works if the skill file moves or is deleted. Activating a skill
+again adds a fresh copy.
 
-Saved model selection applies to `yoke resume`, an existing `--session`, and
-`--fork`. Named sessions use their saved workspace root; forks keep the requested
-destination root. Yoke checks the selection before creating a fork or changing
-saved session metadata, so a strict selection failure leaves the source intact.
-
-Explicit `--model` selections and all `--headless` runs remain strict: an unknown
-model exits with an error instead of choosing a replacement. This also applies
-to explicit overrides during resume. SDK and HTTP construction do not enable
-interactive model recovery. `yoke models set` rejects unknown IDs before writing
-config when the provider exposes a catalog, including an empty catalog. Providers
-without a catalog can still accept arbitrary model IDs.
-
-Global custom providers are Python modules under `~/.yoke/providers/`. A
-plugin defines `register_provider(context)` and may define
-`list_provider_models(context)`; the alternate `CONFIG_CLASS` plus
-`PROVIDER_CLASS` convention is also supported. CLI and SDK provider
-resolution use the same plugin registry, credential store, readiness checks,
-and model metadata.
-
-Image attachment is available only when the selected provider/model accepts
-image input. Codex additionally exposes provider-hosted image generation.
-Codex web research uses hosted Responses web search with external access and a
-high search-context budget. Multiple Codex-hosted web research calls emitted in
-one model response run concurrently, while their tool results still return to
-the provider in the original call order. Other providers retain Yoke's local
-keyless search, fetch, and multi-source synthesis workflow.
-
-Provider retries, rate limits, connection recovery, and stale-continuity
-fallbacks appear as visible warning events in interactive and observed SDK
-runs. Yoke-owned outbound HTTPS and WSS connections use the operating system's
-standard TLS certificate and hostname validation. Set `YOKE_DISABLE_TLS=1` to
-disable that verification for providers, web tools, remote MCP servers, Codex
-OAuth and quota requests, and MCP file downloads. Values `0`, `false`, `no`,
-and `off` keep verification enabled. Injected HTTP clients keep their own TLS
-configuration. Codex request logs default to
-`~/.yoke/providers/logs/`; `YOKE_CODEX_LOGS_DIR` overrides that location, with
-`YOKE_PROVIDER_LOGS_DIR` as the shared provider fallback. Yoke resolves these
-paths when it creates the provider config, so changes to `HOME` apply without
-restarting Python. Each `request_ok` entry records `continuity_mode` and, when
-the request could not continue the previous response, a `continuity_reason`
-such as `request_changed:instructions`, `history_diverged:<index>/<retained>:<item
-type>`, `account_changed`, or `no_response_anchor`. Reasons name keys,
-positions, and item types only, never content. Every completed response also writes an attributed local
-usage record in the `usage_events` table of `~/.yoke/yoke.db`.
-
----
-
-## Mermaid Diagrams
-
-In terminal output, fenced `mermaid` blocks render as width-aware Unicode art.
-Yoke supports nine diagram families: flowchart, state, class, ER, sequence, pie,
-mindmap, timeline, and git graph. A malformed diagram, or one wider than the
-available terminal columns, remains readable in a framed source fallback.
-Redirected and other non-TTY output preserves the original Markdown instead of
-replacing it with terminal art, so transcripts and downstream automation keep
-the source form.
-
-Rendering happens in-process and requires no Node.js installation, browser,
-subprocess, or network access. Set `YOKE_MERMAID=0` (also `false`, `no`, or
-`off`) to show Mermaid fences as ordinary highlighted code blocks.
-
-## Images In Interactive Mode
-
-In prompt-toolkit mode, yoke can keep pending image attachments for the next user
-turn.
-
-- Press `Ctrl+V` or `Alt+V` to paste text or attach an image from the
-  clipboard when one is available. Use `Alt+V` when the terminal intercepts
-  `Ctrl+V`. Clipboard image detection and PNG encoding run in the background,
-  so a large clipboard image does not freeze prompt editing.
-- Press `Ctrl+U` to remove the last pending image attachment.
-- Press `Enter` to steer/send immediately while a turn is running.
-- Press `Tab` to queue the prompt behind the current turn.
-- Press `Shift+Tab` to cycle thinking effort through the active model's supported levels.
-- Press `Ctrl+X` then `Q`, or run `/queue`, to open the fullscreen queue manager.
-- In the queue manager, you can edit, delete, promote, pause, reorder, or mark queued prompts as steering prompts. While the queue manager or its item editor is open, output from an active turn is deferred until you close the manager, so tool calls and response text cannot overwrite your edit.
-- Queued prompts and pending image attachments are persisted with the session, so they survive exit/resume. Steering prompts run before normal queued prompts, and active steering requests stop the current turn first.
-- After workspace validation, starting a queued prompt removes it from persisted queue state immediately, so consumed prompts cannot reappear after a crash or later resume. An unavailable workspace leaves pending prompts queued.
-- A `/skill` command queued with `Tab` stays inactive until it reaches its queue position. Yoke then activates the skill once and does not send the command to the model.
-- While slash-command completions are open, use `Up`/`Down` to move between
-  options; `Left`/`Right` keep moving the cursor through the whole prompt,
-  including across newline boundaries.
-- Press `Esc Esc` to stop the current turn immediately; yoke records the user
-  prompt and interruption marker while retiring in-flight tool calls in the
-  background.
-- Press `Ctrl+J` to insert a newline.
-- Press `Ctrl+X` then `O` to open the fullscreen tool inspector. It shows complete
-  tool-call arguments, validated/executed arguments when available, and full
-  tool results in an alternate-buffer view without adding noise to scrollback.
-  When opened during a running turn, the inspector refreshes live, supports
-  arrow-key navigation, mouse selection/scrolling, and shows streamed tool
-  output before the final result arrives. Stopping or steering a turn marks its
-  in-flight tool calls as cancelled and ignores late events from retired work.
-  Terminal control bytes are shown as visible control pictures so ANSI-bearing
-  output and malformed Unicode cannot break inspector navigation. Live redraws
-  are rate-limited, unchanged trace snapshots and detail layouts are reused,
-  and streamed output is compacted within its bounded history so large or
-  noisy tool sessions do not block navigation.
-- Run `/agents` to print the latest run for each observed SDK agent in this
-  runtime. The snapshot includes its display name, model, status, and last tool.
-  Only running agents with live observation count as active. Run the command
-  again to refresh; it does not stop work or consume process output.
-- Run `/ps` or press `Ctrl+X` then `Ctrl+P` to open the
-  fullscreen process inspector. It lists running and
-  recently completed `command_exec` sessions for this live yoke runtime and
-  shows each command's PID, working directory, timing, exit status, and bounded
-  output history without consuming output needed by `process_read`. The view
-  refreshes while processes produce output. Notifications are coalesced and
-  decoded/wrapped output is reused until the process bytes, terminal width, or
-  wrapping mode changes, so large retained output does not get rebuilt for
-  every small update. Process state is ephemeral and is
-  not restored when a persisted conversation session is resumed. The basic CLI
-  prints the same process metadata as a table instead of opening a fullscreen
-  view.
-- In basic interactive mode, `Ctrl+C`, `exit`, and `quit` also request active
-  turn cancellation before yoke saves the resumable session state.
-- Pasting multiline text keeps the entire paste in the current prompt; press
-  `Enter` after the paste to submit it.
-- Use `/image path/to/file.png` to attach a local image file explicitly.
-- Use `/tree` to navigate the current session tree, fork from an older point,
-  label entries, search/filter history, and optionally summarize the branch you
-  are leaving.
-- Use `/title new-title` to rename the active session shown in resume/session
-  lists and on the right side of the prompt-toolkit bottom toolbar.
-- Use `/pin` to pin or unpin the active session from inside the session.
-- Use `/info` to print the active session id, title, pin state, storage path,
-  provider/model, message counts, timestamps, and context-window metadata.
-- Use `/fork` to copy the current saved session into a new persisted session and
-  continue future turns in that fork.
-- Use `/help` to list commands and their argument syntax.
-- Use `/shortcuts` or `?` to print the active mode's keyboard shortcuts in scrollback.
-  Newline help shows `Ctrl+J` plus the binding supported by this installation,
-  either `Shift+Enter` or `Esc` then `Enter`.
-
-Command dispatch, completion, usage validation, and terminal-control policy use
-the registry in `cli/interactive/commands.py`. Shortcut registration and help use
-the binding table in `cli/interactive/prompt/keys.py`. The `/tools` menu applies
-selections through `RuntimeAgent.apply_tool_selection()`, preserving registered
-tool instructions and hidden runtime tools.
-
-Pending image attachments are shown in the bottom toolbar and are sent with the
-next submitted prompt. Submitted CLI and `attach_image` tool images are stored
-as compact data-URL snapshots in the session, so resumed conversations do not
-depend on temporary clipboard files or deleted local paths. Older sessions that
-still reference a missing local image path degrade that image to a text
-placeholder instead of failing the provider request.
-`attach_image` keeps that snapshot only in the appended image message; its tool
-result contains compact path and label metadata rather than a duplicate base64
-payload, so large images do not consume the context window twice.
-The prompt-toolkit bottom toolbar uses the same accent palette and status flow
-as yoke: `Thinking`, `Streaming`, `Running tool`, `Compacting`, and
-`Recovering`. Set `YOKE_BAR_TIMER`, `YOKE_BAR_TOKENS`, `YOKE_BAR_GAUGE`,
-`YOKE_BAR_TOOLS`, or `YOKE_BAR_TURN` to `0`/`false`/`off` to hide optional
-segments, or to a truthy value to force-enable them where applicable.
-Turns that run for more than 60 seconds also print a dim completion summary in
-scrollback, such as `Worked for 1m02s · 6 tools`.
-
-Shell command tool timeouts terminate the full subprocess tree and bound final
-pipe collection, so timed-out commands finish as tool results instead of staying
-pending behind child processes that keep stdout or stderr open. Steering or
-stopping a turn logically retires it immediately and targets a UI handoff under
-100 ms; a replacement steering turn starts without waiting for the retired
-provider request or tool to physically exit. Retired generations are fenced so
-late output cannot replace the accepted conversation or render into the active
-turn.
-
-Most tool calls run in isolated child processes created with the cross-platform
-`spawn` start method, avoiding unsafe `fork` state in the multithreaded CLI.
-Their termination and kill
-escalation continue in a background reaper after cancellation. Tools that cannot
-be spawned or explicitly require in-process resources run in supervised daemon
-threads: cooperative tools observe the cancellation callback, while
-non-cooperative tools are detached from the UI and retain their resources until
-they return. The sub-100 ms target is therefore a logical handoff guarantee, not
-a guarantee that every remote request, thread, or kernel process has exited.
-Runtime shutdown signals all remaining in-process tools and waits for a bounded
-cleanup window before releasing their resources. If a non-cooperative tool
-outlives that window, shutdown fails explicitly and leaves the runtime open for
-a later cleanup attempt instead of falsely reporting a completed close.
-Steering keeps the original turn timer and accumulated tool count while the
-replacement model run continues. An explicit `Esc`, `Esc` stop prints the same
-elapsed-time and tool-count summary as a completed turn, including for turns
-shorter than one minute. Both paths continue from the last accepted tool-result
-checkpoint. The in-memory continuation branch is available immediately, while
-per-session write serialization prevents a retired stop checkpoint from racing
-with or replacing a newer turn.
-
-Yoke checkpoints accepted session state to the same session database transaction after tool
-results and records a synthetic interruption checkpoint immediately when a turn
-is stopped or steered. A steering turn starts from the latest checkpoint,
-including activated skills, while retired turns cannot overwrite a newer
-generation's state. Later metadata changes, such as switching models, preserve
-that checkpoint instead of restoring the runtime's older pre-interruption branch.
-Checkpoint writes use unique temporary files with short retries for transient
-Windows file-lock races, and a failed checkpoint is reported as a warning rather
-than crashing the active turn.
-
-Use `/model` in interactive mode to open a fullscreen table of advertised models
-across providers and switch to the selected row.
-Choosing a row uses that model's advertised default thinking effort instead of
-carrying the previous provider's effort across the switch.
-Context budgeting follows the selected model's advertised window, and yoke may
-compact the provider working context before a switch to a smaller context
-window. The canonical session remains append-only. The switch rolls back when
-handoff generation fails or the reduced epoch still does not fit.
-Failed cross-provider preparation or budget rebinding restores the previous
-provider and prepared context, closes the unsuccessful target, and keeps the
-previous provider open.
-When providers report token usage, yoke stores normalized input, output,
-reasoning, cached-input, cache-creation, and total token counts on the
-assistant response for session diagnostics and future budgeting improvements.
-Provider-reported counts are also used only when their provider and model match
-the active model.
-They also fall back to the current conservative estimate when persisted provider
-usage understates a rebuilt or resumed prompt. Handoff generation is one normal
-continuation request, not a flattened or chunked side request. The current epoch
-must therefore still fit the provider for the handoff request to succeed.
-The manual `/compact` command appends a synthetic handoff instruction to the
-current provider epoch and stores the assistant response as the checkpoint. It
-then starts a reduced epoch containing prior real user intent, the newest
-handoff, and the normal post-checkpoint tail. Pre-handoff user intent is bounded
-newest-first by `recent_user_tokens` (20,000 tokens by default); one boundary
-message may be tail-truncated to keep the limit strict. The handoff prompt asks
-for at most `handoff_target_tokens` (12,000 tokens by default). Automatic
-threshold and overflow paths use the same flow; overflow retries at most once
-after a successful reduction.
-
----
-
-## Sessions
-
-Sessions save your conversation so you can pick up where you left off.
+### Create a skill
 
 ```bash
-# Start or continue a named session
-yoke --session my-project "let's keep working on the auth module"
-
-# Resume interactively (pick from a list)
-yoke resume
-
-# Resume interactively across all roots
-yoke resume --all
-
-# Resume a specific session by id
-yoke resume 20240421-143022-abc1
-
-# Explicitly relocate that session to an existing workspace, keeping its ID
-yoke resume 20240421-143022-abc1 --relocate /new/path/to/project
-
-# Start directly from a forked session
-yoke --fork 20240421-143022-abc1
-
-# Fork into a different existing workspace without changing the source session
-yoke --root /new/path/to/project --fork 20240421-143022-abc1
-
-# Print portable context for another agent
-yoke session-handoff 20240421-143022-abc1
-
-# Keep only the last three user turns and their assistant/tool activity
-yoke session-handoff 20240421-143022-abc1 --tail 3
-
-# Include full persisted tool arguments and results
-yoke session-handoff 20240421-143022-abc1 --tool-detail full
+yoke skills init repo-style          # creates .yoke/skills/repo-style/SKILL.md
+yoke skills list
+yoke skills show repo-style          # file list, then the instructions
 ```
 
-### Recovering a missing workspace
+A skill name is lowercase kebab-case and must match its directory name:
 
-A saved session's working directory must still exist and be a readable directory
-before Yoke constructs its provider or starts work. This applies to both
-`yoke resume ID` and an existing `yoke --session ID`. If the directory has moved
-or disappeared, Yoke reports the unavailable workspace and the explicit
-`yoke resume ID --relocate /new/path` recovery command. It does not create the
-missing directory, silently use the shell's current directory, or select a
-different project. `resume --root` filters the session selector; it is not
-permission to relocate an existing session.
-
-Existing sessions with no saved root also require explicit relocation. They do
-not inherit the invocation directory, even for older records. Fresh sessions
-still inherit the invocation working directory unless `--root` selects another.
-
-Restore the saved directory and resume normally, or use `--relocate` with an
-existing destination directory. Relocation updates the workspace of the same
-session ID. It does not move project files, create a new conversation, or erase
-the original transcript and branches. Relocating to the current valid directory
-is an idempotent no-op. Invalid destinations leave the saved session unchanged.
-
-The daemon serializes relocation with active turns, operations and live child
-processes. Stop that work, then remove pending queue items, including paused
-work, before relocating. Execution holds shared workspace leases in daemon
-memory through physical worker and resource cleanup. Relocation takes an
-exclusive lease. Clients request relocation through the daemon; leases create
-no `sessions/workspaces/*.lock` files. A missing directory must not consume a
-pending prompt merely because it became unavailable between admission and
-execution.
-
-If a directory disappears after a prompt has left the queue but before execution,
-the CLI saves that input paused in `/queue`, including its original identity and
-images. Direct submissions rejected at that point use the same durable queue
-recovery. Restoring the directory does not automatically run a paused input;
-explicitly unpause it or remove it before relocating.
-
-History and cached activated-skill instructions remain historical facts.
-The next runtime rediscovers workspace configuration, tools, available skills
-and MCP from the destination. It does not replace old skill instructions in the
-conversation with a newly found file of the same name. A fork with an explicit
-valid destination is a separate option when the source workspace is missing.
-It creates a new session ID and leaves the source untouched. A fork that would
-inherit an unavailable workspace fails before creating the new session.
-
-Saved history remains readable without a live workspace. Use the browser to
-inspect it, or print a portable handoff with `yoke session-handoff ID`.
-
-`yoke session-handoff <session-id>` reads the persisted active branch directly;
-it does not contact `yoke serve` or require HTTP authentication. The default
-Markdown output includes the session title and working directory, saved model
-selection, active skills, compaction-aware conversation state, compact tool
-calls/results, and image labels or local paths where useful. Compact tool detail
-keeps small head/tail excerpts instead of letting command output dominate the
-continuation context. Use `--tool-detail full` when exact persisted tool
-arguments/results matter; the overall `--max-chars` bound still applies.
-Historical context that Yoke already compacted is represented by the persisted
-handoff instead of replaying superseded messages.
-
-Use `--tail <n>` to keep the last `n` user turns together with the assistant and
-tool activity caused by those turns. A persisted compaction summary remains in
-the handoff, so a short tail keeps the session's earlier working context without
-replaying its old transcript.
-
-The bounded reader walks the active branch over the stored entry topology and
-decodes only the selected entries. A broken parent chain falls back to the
-complete session load.
-
-Use `--max-chars <n>` to change the output bound, or `--format json` when a
-structured consumer needs the same portable handoff. The built-in
-`yoke-sessions` skill uses handoffs to inspect saved sessions and to recover the
-saved root, provider, model, and reasoning effort before automated continuation.
-
-Sessions are stored in the SQLite database `~/.yoke/yoke.db` and auto-expire
-after 30 days unless pinned. Set `YOKE_DB_PATH` to use another database file;
-`YOKE_SESSION_DIR` relocates both the database (as `yoke.db` inside it) and the
-remaining disposable attachment files under `~/.yoke/sessions/` by default.
-Workspace leases live in daemon memory. Settings and credentials stay files.
-The CLI and the HTTP daemon share the database through WAL, so both can write
-at once:
-each write is one `BEGIN IMMEDIATE` transaction, and a process waits up to 5
-seconds for another process's transaction. The stored agent state uses
-structured conversation entries so memory snapshots, typed compaction handoffs,
-and branched session trees can be restored without flattening to transcript
-text. Each entry row references the exact JSON bytes in a SHA-256 blob shared by
-forks; a later label or
-other metadata edit is stored beside it rather than appended, and an entry
-append commits together with its session row. A database written by a newer
-Yoke release is refused rather than opened.
-
-Schema version 2 automatically converts v1 entry bytes to content-addressed
-blobs in one transaction. HTTP lists and pages select metadata or entry IDs in
-SQL and fetch only the selected payloads. Upload metadata and original bytes
-also live in the database. Native file tools use stable, disposable files
-rebuilt from the database; those paths remain unchanged in saved messages.
-Agent-run observations remain in memory and are lost on restart.
-
-New databases use `auto_vacuum=INCREMENTAL`. Periodic maintenance retains the
-30-day unpinned-session policy, collects blobs with no entry, metadata, upload or image-parent references,
-and incrementally reclaims up to 256 free pages per pass. A database created
-without auto-vacuum needs an offline conversion: stop every Yoke process, then
-run `sqlite3 /path/to/yoke.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'`.
-Migration does not run a potentially long full vacuum at startup. Phase 1 Yoke
-databases already enable incremental auto-vacuum.
-
-
-Sessions saved by earlier releases as JSONL files under `~/.yoke/sessions/` are
-not read. Import them explicitly:
-
-```bash
-yoke db import-legacy --all             # every session in ~/.yoke/sessions
-yoke db import-legacy 20240421-143022-abc1 --from /path/to/sessions
-yoke db info                            # path, schema version, sizes, counts
-yoke db check                           # read-only integrity and reference checks
-yoke db stats                           # table and entry-field size breakdown
-yoke db compact                         # finish quiet-session compaction and VACUUM
-yoke db backup ~/yoke-backup.db         # consistent copy via VACUUM INTO
-```
-
-Entry storage omits the provider's raw usage payload and keeps normalized token
-counts. Binary images are stored once by SHA-256, including copies in compaction
-handoffs and metadata overrides. Loading reconstructs the exact saved data URLs
-before runtime or handoff processing. Session forks share the same entry and
-image blobs. Deleting the last reference lets idle maintenance collect them.
-
-Schema v4 only adds storage structures at startup. Idle maintenance converts up
-to two old blobs per pass, preparing images outside the write transaction and
-committing each replacement with its references and cache revisions. It skips
-sessions with active admissions or compactions and any activity in the last ten
-minutes, including other sessions sharing a blob. Committed progress survives
-restart. Compaction decodes images in a disposable process with a five-second
-timeout and a 20-million-pixel limit. Truncated images, decoder exceptions, native
-crashes and timeouts leave the image inline and persist a failure marker so a
-restart does not retry it. `yoke db compact` finishes eligible batches and runs
-SQLite VACUUM; active or recently used sessions remain eligible for later idle passes. It
-prints database and WAL sizes before and after, plus conversion counters.
-
-Before upgrading an existing schema, the owning store saves a consistent
-`yoke.db.pre-v<N>` beside the database, where `N` is the target schema version.
-Only the latest completed migration backup is kept. A failed backup blocks the
-migration. SDK usage writes and handoff reads never migrate the shared database.
-
-`yoke db check` opens the existing database read-only, runs SQLite `quick_check`
-and foreign-key checks, reconstructs a sample of 32 blobs with codecs first, and
-checks orphan references. It prints a summary and exits non-zero for problems or
-a schema this release cannot inspect. It does not create or migrate a database.
-Queues and events referring to sessions that have never been saved are reported
-as orphan references too. Run `yoke db info` explicitly to migrate an older schema.
-
-Database startup failures name the database path and cause in the daemon log and
-in CLI/ACP spawn errors. Upgrade Yoke for a newer schema; release competing
-writers for a locked database. For damage, run `yoke db check`, stop clients and
-the daemon, and restore the latest adjacent pre-migration backup before restarting.
-Keep a copy of the damaged database and its WAL before restoring.
-
-`yoke db stats` reports physical table/index pages and logical entry bytes by
-kind, split into image strings, usage and other JSON. Logical totals count
-references, so fork and handoff duplicates count more than once.
-
-Local image snapshots fit a 1568-pixel long edge and 1,150,000 pixels without
-upscaling. Opaque images use JPEG quality 90, and images with transparency use
-PNG. A supported original that fits both limits is kept when it is no larger.
-Old images use the same rule during compaction. Invalid or noncanonical image
-data stays inline. Provider image capability filtering is unchanged.
-
-The importer reads each file with the previous JSONL loader (including newer
-titles and pins kept in that directory's `index.json`), inserts it in one
-transaction, reads it back and compares every entry with the loaded record, excluding raw usage. A
-mismatch rolls back the import transaction and is reported. Reruns skip sessions
-already in the database, so an interrupted import resumes where it stopped. Imported sessions
-keep their original timestamps. The database marks an imported session as held
-until its next conversation save or tree edit, so an old import survives the
-first retention pass. After it is used, normal 30-day retention applies unless
-pinned. Durable HTTP event journals and pending queues are not imported.
-Metadata-only changes, including `/model`, write only the changed session
-columns and update the loaded record in memory. They do not rebuild or reload the
-conversation. Interactive shutdown also trusts the latest accepted turn
-checkpoint. It saves only changed provider metadata and queue content instead
-of capturing and reconciling the complete conversation again. Context-usage
-estimates run outside the prompt-critical path and coalesce pending requests so
-only one scan runs at a time. Large sessions do not delay input after a command.
-An estimation error is logged without replacing the last valid usage value;
-later estimates still run.
-Every CLI mode generates a title in a background thread from the first prompt.
-The useful turn starts without waiting for that request. Headless mode writes
-the agent response first, then waits during cleanup for the title worker so the
-persisted session still receives its generated title. Use `/regenerate-title`
-to generate a new title from the current conversation; use `/title <new-title>`
-to set one manually. If asynchronous generation fails, Yoke retains the local
-first-prompt fallback.
-OpenAI-compatible providers create their HTTP transport on the first model
-request instead of importing and initializing it during CLI startup.
-MCP configuration is still read during tool registration so the provider sees
-the same `mcp_inspect` and `mcp_call` tools, but MCP client and HTTP transport
-modules are loaded only when an MCP tool actually executes.
-Rich Markdown parsing is also loaded only when Yoke renders assistant or
-scrollback content, rather than while opening an empty interactive prompt.
-
-The `SessionTree` module is the authoritative seam for session topology. It owns
-parent assignment, active selection, legacy repair, branch reconciliation,
-compaction checkpoints, and typed runtime, provider, audit, and scrollback
-projections. Callers append intents and request projections instead of editing
-entry IDs or rebuilding paths. An active CLI session validates the complete
-topology once and retains entry and parent indexes. Prompt, stop, steer, and
-context-estimate paths then walk and copy only the selected branch. The SQLite
-session store remains a persistence adapter at the `SessionTree` seam.
-
-An isolated CLI turn takes ownership of its already-copied, validated active
-path. It does not copy the primary runtime context before replacing it. Message
-appends use a `SessionTree` append delta, and provider prompt assembly reuses the
-runtime projection until a mutation changes it. Accepted turns transfer their
-owned context back to the primary runtime instead of rebuilding it.
-
-Normal saves prove that the runtime branch extends the retained active path.
-They sanitize only the new suffix, insert that suffix with the changed session
-columns in one transaction, and update the loaded record and indexes in memory. The writer trusts this proof
-instead of comparing every persisted entry. Branch changes and legacy inputs
-still use complete `SessionTree` reconciliation. Retention cleanup runs when
-sessions are listed instead of delaying each turn checkpoint.
-
-The model and live runtime receive the current provider epoch, while `/tree`
-retains the complete active message path. Detached checkpoints remain audit
-state and are not inserted into another active branch's provider prompt.
-
-Startup scrollback is independently bounded to the latest 400 user-visible audit
-messages. Internal compaction handoff messages do not replace or hide the
-assistant and tool activity around a compaction boundary. When older messages
-are omitted, yoke prints their count, explains whether a compaction summary
-remains in model context, and points to `/tree`.
-Scrollback rendering skips an internal handoff marker without discarding any
-real messages that occur before it.
-Legacy handoff recovery also removes exact copies of provider-retained messages,
-including nested handoffs, before it applies the scrollback limit.
-Resuming an unchanged session is read-only until the conversation or its
-metadata changes, and subsequent saves reuse the record already loaded by the
-runtime instead of decoding the session repeatedly. Normal resume projections
-copy only active-path values; detached legacy handoffs retain the complete-tree
-recovery path.
-
-`/tree` is available in the prompt-toolkit TUI. It opens a fullscreen navigator
-over the session entries. Selecting a user entry rewinds to that entry's parent
-and puts the selected user text back in the editor, so submitting it creates a
-new branch. Selecting an assistant, tool, compaction, or summary entry continues
-after that entry. Navigation never deletes abandoned history; future turns are
-built only from the active branch. The selector supports search, filter cycling,
-local folding, entry labels stored as metadata, and distinct colored headers for
-message types such as user, assistant, tool, and summaries. Inactive branches
-start folded at their first visible entry. Search temporarily expands them and
-uses retained per-filter candidate indexes, so large inactive branches do not
-delay normal navigation. Before moving branches, yoke asks whether to create a
-branch summary; `No summary` is the default, while custom summary guidance is
-appended to the standard summary prompt when chosen.
-After navigation, yoke reprints the active branch transcript before showing the
-next prompt so the visible scrollback matches the selected point.
-
-In a terminal, `yoke resume` opens a keyboard-driven selector with aligned
-columns for pin status, session title, last activity, and session id. Use
-`Up`/`Down` or `j`/`k` to move, `PgUp`/`PgDn` to scroll faster, `Home`/`End` to
-jump, and `Enter` to resume. Press `/` to fuzzy-search by title, `p` to pin or
-unpin the highlighted session, and `q` or `Esc` to cancel. Pinned sessions are
-shown at the top of the table and are protected from normal session-retention
-cleanup. Pass `--all` to list saved sessions across every workspace root
-instead of only the current root; that view adds a root-path column before the
-session id.
-Tree navigation and label edits compare-and-swap on the session's stored tree
-revision. If another process changed the tree since the session was loaded, the
-edit fails instead of overwriting it; title, pin and model edits by another
-process are never overwritten by a turn save.
-Use `--fork <session-id>` to copy an existing session into a new session id and
-continue there without appending to the original; `--fork` cannot be combined
-with `--session` because one selects a source session and the other names the
-target session.
-
----
-
-## Skills
-
-A skill is a Markdown file that tells the agent how to approach a type of task. You create skills once and activate them by name.
-
-### Creating a skill
-
-Create a directory with a `SKILL.md` file. The directory name must match the skill name:
-
-```
-my-skills/
-└── code-review/
-    └── SKILL.md
+```text
+.yoke/skills/
+  code-review/
+    SKILL.md
 ```
 
 ```markdown
 ---
 name: code-review
-description: Detailed code review focusing on security and correctness
+description: Code review focused on security and correctness
 ---
 
-When reviewing code, always check for:
-- Security vulnerabilities
-- Missing error handling
-- Unclear variable names
-
-Format findings as a prioritized list.
+Check for injection, missing error handling and unclear names.
+Report findings as a prioritized list.
 ```
 
-Skill name rules: lowercase kebab-case, directory name must match the `name` field.
-Skill files may use UTF-8 with or without a byte order mark (BOM).
+`SKILL.md` may start with a UTF-8 byte order mark. Pass `--root` to `yoke skills`
+to work on another workspace. The built-in `create-skill` skill walks the agent
+through the same steps and asks where the new skill should go.
 
-Yoke also ships with a built-in `create-skill` skill that helps the agent create
-new skills correctly. It tells the agent to ask where the skill should be
-created first (repo-local, global, or custom directory) and then use
-`yoke skills init` to scaffold it.
+## Inspect tools, processes and agents
 
-### Using skills from the CLI
+| Command or key | Shows |
+| --- | --- |
+| `Ctrl+X` then `O` | The tool inspector: full arguments and results for every tool call, updated live during a turn. |
+| `/ps`, or `Ctrl+X` then `Ctrl+P` | Running and recent `command_exec` processes: PID, directory, timing, exit status and output. Basic mode prints a table. |
+| `/agents` | The latest run of each SDK agent started from this session's tools, with model, status and last tool. |
+| `/info` | Session ID, title, pin state, database path, model, message counts and context window. |
+
+The inspectors are read only. They do not consume output that `process_read`
+still needs, and they do not stop work. Process state lives in the daemon, so
+`/ps` does not show processes from before a daemon restart.
+
+## Diagrams
+
+In a terminal, fenced `mermaid` blocks render as text diagrams. Yoke supports
+flowchart, state, class, ER, sequence, pie, mindmap, timeline and git graph
+diagrams. A diagram that fails to parse or is wider than the terminal shows its
+source in a frame instead. Redirected output keeps the original Markdown. Set
+`YOKE_MERMAID=0` to show Mermaid blocks as ordinary code.
+
+## The daemon
+
+You rarely need to manage the daemon. These commands help when you do:
 
 ```bash
-# Activate a skill at startup
-yoke --skill code-review "review the changes in src/auth.py"
-
-# Activate a skill during an interactive session, then submit a prompt
-/skill code-review review the current diff with this workflow
-
-# Activate multiple skills as part of a normal prompt
-$code-review $repo-style review the current diff
-
-# Inspect and scaffold skills
-yoke skills list
-yoke skills show code-review
-yoke skills init repo-style
+yoke daemon status               # pid, build, socket, port, leases; exit 1 if none
+yoke daemon restart              # restart on the code installed now
+yoke daemon restart --when-idle  # restart once running turns finish
+yoke daemon stop                 # refuses while a turn runs
+yoke daemon stop --force
 ```
 
-`yoke skills list` and `yoke skills show` use the same built-in, global, and
-repo-local discovery paths as normal CLI sessions. Pass `--root` when you want
-repo-local discovery or scaffolding to target a different workspace. `yoke
-skills show <name>` prints the recursive list of full file paths in the skill
-directory before the `SKILL.md` instructions, matching the file context the
-model receives when that skill is activated.
+`yoke daemon restart` refuses while a turn runs unless you pass `--when-idle`.
+After you upgrade Yoke, the next client restarts an idle daemon that runs older
+code. A busy daemon keeps running and the client attaches with a warning.
 
-### Skill directories
+On Linux and macOS, clients connect over a Unix socket that only your user can
+use. The daemon also listens on `127.0.0.1:8770` for the browser UI, with a
+bearer token stored in `~/.yoke/daemon.json`. Windows clients use the loopback
+port and that token. Detached daemons log to `~/.yoke/run/daemon.log`.
 
-Yoke auto-discovers skills from:
-- built-in yoke skills under `src/yoke/agent/skills/built_in/`
-- `.yoke/skills/` — skills for the current repo
-- `~/.yoke/skills/` — your personal skills, available in every project
-
-Place skill folders inside these directories and they'll be available by name.
-If the same skill name exists in more than one scope, Yoke uses the built-in
-skill first, then the repo-local skill, then the global skill. Lower-priority
-copies are ignored instead of preventing the session from starting.
-
-During a session the agent can also activate skills itself when the `skill`
-tool is available. Each activation reads the skill's current `SKILL.md` content
-and appends it as a system message at the end of the conversation context. That
-message also includes a recursive list of full file paths in the skill
-directory, so skills can reference supporting files next to `SKILL.md`.
-The compact `skill` tool result contains active skill metadata only because the
-complete instructions are already in that system message.
-Activating a skill that is already active simply appends a fresh skill system
-message; there is no separate refresh path. Yoke stores the loaded `SKILL.md`
-content in session history, so resumed sessions keep working even if the
-original skill file is later moved or deleted. Interactive skill activation
-preserves the structured active branch, including compaction memory snapshots,
-and appends the activated skill after that snapshot instead of rebuilding the
-branch from the rendered message transcript.
-
-You can manually activate a skill with `/skill <name>`. If you include text
-after the skill name, yoke activates the skill and submits the remaining text as
-the next normal user prompt, so multiline prompts are supported in the
-interactive editor.
-
-You can also mention skills anywhere in a normal prompt with `$skill-name`.
-Typing `$` opens skill completion at the caret; `Enter` or `Tab` inserts the
-selected name without sending the prompt, so one prompt can mention several
-skills. Yoke activates known mentions in textual order immediately before that
-prompt runs, keeps the mention text visible to the model, and ignores duplicate
-mentions within the same prompt. A later prompt can mention the skill again to
-append a fresh activation. Escaped mentions and mentions inside Markdown code
-are treated as literal text. Queueing or editing a prompt does not activate its
-mentions until that prompt actually runs.
-
-Yoke ships with a built-in `create-skill` skill in the codebase under
-`src/yoke/agent/skills/built_in/create-skill/SKILL.md`. It instructs the
-agent to ask where the skill should be created first (repo-local, global, or
-custom location), then scaffold it with `yoke skills init`.
-
----
-
-## MCP servers
-
-Configure global MCP servers in `~/.yoke/mcp.json` and workspace servers in
-`.yoke/mcp.json`. Streamable HTTP servers verify TLS certificates by default. For
-an internal server with a self-signed certificate, set `"verify": false` on that
-server. This disables TLS certificate verification only for that MCP server.
-`YOKE_DISABLE_TLS=1` overrides all streamable HTTP server settings and disables
-verification for every Yoke-owned outbound TLS connection.
-
-The `/mcp` menu uses `yoke.mcp.editing` for persisted configuration changes.
-Session-only changes stay in the session policy and do not write either file.
-
-Managers created from these config paths re-read them before `mcp_inspect` and
-`mcp_call`. Existing clients are reused when their server config is unchanged.
-Changed or removed server clients are closed after any active call finishes and
-are recreated on demand. A temporarily invalid config reports a reload error
-without discarding the last valid config.
-
-## Adding extra tools
-
-Place compatibility plugins directly in `.yoke/*.py` or `~/.yoke/*.py`, or put namespaced plugins anywhere under `.yoke/tools/` or `~/.yoke/tools/`. Yoke does not recurse through other `.yoke` directories, so cache files, session state, generated artifacts, provider data, and skill helper modules are never imported as tool plugins. When the workspace root is your home directory, the shared `~/.yoke/` plugin directory is loaded once rather than once per scope.
-
-Older installations recursively imported Python from arbitrary nested `.yoke`
-directories. Move any such intentional plugin under `.yoke/tools/` before
-upgrading. Files under cache, artifact, provider, session, or other content
-directories are no longer executable plugin candidates.
-
-There are three ways to define tools in these files.
-
-### `@function_tool` — quickest option
-
-Decorate a typed function and yoke turns it into a tool. The function name becomes the tool name, the docstring becomes the description, and every parameter becomes an argument the agent can pass.
-
-```python
-# .yoke/tools.py
-from yoke.cli.tools.decorators import function_tool
-
-@function_tool
-def notify(message: str, title: str = "yoke") -> dict:
-    """Send a desktop notification."""
-    import subprocess
-    subprocess.run(["notify-send", title, message])
-    return {"ok": True}
-```
-
-Override the name or description when the function name isn't ideal:
-
-```python
-@function_tool(name="send_notification", description="Pop up a desktop alert.")
-def notify(message: str) -> dict:
-    import subprocess
-    subprocess.run(["notify-send", message])
-    return {"ok": True}
-```
-
-Rules:
-- Every parameter must have a type annotation.
-- No `*args` or `**kwargs`.
-- Must return a `dict`.
-
-### `@class_tool` — full control
-
-For tools that need more logic, workspace access, or Pydantic validation, write a `LocalTool` subclass and mark it with `@class_tool`.
-
-```python
-# .yoke/tools.py
-from pydantic import Field
-from yoke.cli.tools.decorators import class_tool
-from yoke.agent.tools import WorkspaceTool
-
-@class_tool
-class AppendFileTool(WorkspaceTool):
-    name = "append_file"
-    description = "Append text to a file, creating it if it doesn't exist."
-
-    path: str = Field(description="File path relative to the workspace.")
-    content: str = Field(description="Text to append.")
-
-    def execute(self) -> dict:
-        target = self._resolve_path(self.path, allow_missing=True)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("a") as f:
-            f.write(self.content)
-        return {"ok": True, "path": self._display_path(target)}
-```
-
-Use `@class_tool(name=..., description=...)` to override the class-level attributes without editing the class body.
-
-### `register_tools(context)` — explicit registration
-
-If you need runtime configuration (credentials, feature flags, provider/model selection, …) return tools from a `register_tools` function. When this function is present, yoke uses it instead of scanning for decorated classes.
-
-```python
-# .yoke/tools.py
-def register_tools(context):
-    api_key = context.home.joinpath(".my_tool_key").read_text().strip()
-    if context.model_id and context.model_id.startswith("gpt"):
-        return [FastApiTool.bind(root=context.root, api_key=api_key)]
-    return [MyApiTool.bind(root=context.root, api_key=api_key)]
-```
-
-`context` exposes `root`, `home`, `provider`, `provider_name`, `model_id`,
-`model_name`, `model_key`, `reasoning_effort`, and `cancel_requested`. In CLI
-sessions yoke refreshes provider-aware tool registration when the active provider
-or model changes, so a tool can expose different capabilities per model.
-
-While fullscreen modal screens such as `/tools`, `/queue`, `/model`, `/tree`,
-and the tool inspector are open, background agent output is deferred and replayed
-after the modal exits to avoid alternate-buffer bleed-through.
-
-Tools added any of these ways appear alongside the built-ins. To restrict which tools are active, use a tool policy (see below).
-
----
-
-## System instructions (`AGENTS.md`)
-
-`AGENTS.md` is loaded into the agent's system prompt automatically.
-
-- `~/.yoke/AGENTS.md` — applies to all your yoke sessions
-- `AGENTS.md` in the repo root — applies when running yoke inside that repo
-
-```markdown
-# AGENTS.md
-
-This is a FastAPI project. Use async functions throughout.
-The test suite is run with `make test`.
-Never edit migration files directly.
-```
-
----
-
-## Tool policy
-
-Control which capabilities and exact tool overrides the agent can use via `config.json`.
-
-Use `yoke tools list` to inspect the current inventory. It exits non-zero when discovery fails, shows each tool's capability slice, warns about unknown capability IDs, and warns when an exact tool override does not match a loaded tool.
-
-You can also scaffold and update policy from the CLI:
+To keep the daemon running without clients, for example under systemd:
 
 ```bash
-yoke tools init
-yoke tools activate file.write --repo
-yoke tools deactivate shell --global
-yoke tools deactivate repo_echo --tool --repo
+yoke serve --daemon --no-idle-exit
 ```
 
-`yoke tools init` creates `.yoke/example_tools.py` in the selected workspace. `yoke tools activate` and `yoke tools deactivate` write capability policy by default; pass `--tool` to write an exact concrete tool override for custom tools or debugging. Config is written to `.yoke/config.json` by default; pass `--global` for `~/.yoke/config.json` or `--repo` to make the workspace target explicit.
+The repository has a sample user unit in
+[`docs/yoke-daemon.service`](../../../docs/yoke-daemon.service). The [HTTP API](http.md)
+and [daemon client](daemon-client.md) docs cover socket paths, port conflicts
+and build checks.
 
-Use `/tools` in interactive mode to toggle concrete tools for the current run. After selecting tools, yoke asks whether to apply the change only to the current session, persist it to this workspace root's `.yoke/config.json`, or persist it globally to `~/.yoke/config.json`. Runtime-injected tools that are not displayed in the menu, such as `skill`, are preserved and are not written as disabled merely because they were absent from the selection table. Persisting a built-in capability selection also clears older exact-tool overrides for the concrete tools in that row, so stale overrides cannot contradict the selected state. When the current root is the home directory, the duplicate root scope is omitted because it resolves to the global config path.
+A daemon that a client starts automatically gets a minimal environment. It
+does not inherit arbitrary variables from the shell that started it. Settings it reads from its own
+environment, such as `YOKE_DISABLE_TLS`, must be set where the daemon starts,
+for example in the systemd unit.
 
-- Built-in defaults — applied even when no config file exists
-- `~/.yoke/config.json` — global policy
-- `.yoke/config.json` — workspace policy (workspace overrides global and defaults)
+## Other front ends
 
-The effective precedence order is: built-in capability defaults, then global config, then workspace config. Capability policy gates whole tool slices, then exact `tools` entries can override individual concrete implementations. Built-in capabilities live in `yoke.agent.capabilities`, where each `BaseCapability` resolves a high-level ability into one or more provider/model-specific concrete tools.
+Yoke has three other entry points:
 
-By default yoke allows these built-in capabilities: `file.read`, `file.write`, `file.search`, `image.attach`, `image.generate`, `web.fetch`, `web.search`, and `web.research`. Provider-aware capabilities can resolve to no concrete tool when the selected provider or model cannot support them. The `file.read` capability registers both `read` for UTF-8 text and `extract_file_context` for best-effort document and image extraction. `shell` is a known capability for shell and Python execution tools, but denied unless enabled by config.
+| Command | Use |
+| --- | --- |
+| `yoke serve` | Standalone HTTP API and web UI on `127.0.0.1:8765`. See [HTTP API](http.md). |
+| `yoke acp` | Agent Client Protocol over stdio, for editors such as T3 Code. See [ACP and T3 Code](acp.md). |
+| `yoke-mcp` | Tool-only MCP server with no agent. See [Tool-only MCP server](mcp-server.md). |
 
-```json
-{
-  "capabilities": {
-    "file.write": "deny",
-    "shell": "deny",
-    "web.fetch": "deny"
-  },
-  "tools": {
-    "repo_echo": "allow",
-    "write": "deny"
-  }
-}
-```
+`yoke acp` uses the local daemon. To point it at another server, set
+`YOKE_ACP_URL` or pass `--url`, and set `YOKE_ACP_TOKEN`.
 
-Values are `"allow"` or `"deny"`. Capability IDs and tool names are exact strings; glob patterns are not supported. If yoke sees legacy glob keys in `tools`, such as `"*"`, it replaces that config file with the current default capability policy. Built-in `file.write` is model-aware: GPT/OpenAI-style models receive `apply_patch` and its patch-format system instructions, while other models receive `edit` plus `write`. Disabling the capability also removes its contributed instructions from the context.
+## Reference
 
-If a `config.json`, tool plugin, or skill file is malformed, yoke reports the file path and a short plain-English reason such as invalid JSON syntax, missing `SKILL.md` frontmatter, or a plugin import failure.
-Invalid tool plugins are skipped with a warning. A failed import is removed from
-the module cache so another plugin cannot reuse its partially initialized exports.
+### Command-line options
 
-**Example: read-only agent**
+These options apply when `yoke` runs without a subcommand.
 
-```json
-{
-  "capabilities": {
-    "file.write": "deny",
-    "file.search": "allow",
-    "file.read": "allow",
-    "web.fetch": "deny",
-    "web.research": "deny",
-    "shell": "deny"
-  }
-}
-```
+| Option | Meaning |
+| --- | --- |
+| `--prompt TEXT` | First prompt. A bare argument does the same. |
+| `--headless`, `-p` | Run one turn and exit. Needs a prompt or stdin. |
+| `--session NAME` | Use `NAME` as the session ID. Continues that session if it exists, otherwise creates it. |
+| `--fork ID` | Copy session `ID` into a new session and continue there. Cannot be combined with `--session`. |
+| `--model SEL` | `provider:model[:effort]`, or just a model name. |
+| `--root DIR` | Workspace root. Defaults to the current directory. |
+| `--skill NAME` | Activate a skill at startup. Repeatable. |
+| `--image PATH` | Attach an image to the first prompt. Repeatable. |
 
-**Built-in capability IDs:** `file.read`, `file.write`, `file.search`, `image.attach`, `image.generate`, `web.fetch`, `web.search`, `web.research`, `shell`, `mcp`
+### Subcommands
 
-**Built-in tool names:** `read`, `edit`, `write`, `apply_patch`, `fd`, `rg`, `find`, `grep`, `ls`, `command_exec`, `python_exec`, `process_input`, `process_read`, `process_cancel`, `web_fetch`, `web_search`, `web_research`, `extract_file_context`, `attach_image`, `image_generation`, `mcp_inspect`, `mcp_call`
+| Command | Purpose |
+| --- | --- |
+| `yoke version` | Print the version. |
+| `yoke resume [ID]` | Resume a session. See [Sessions](sessions.md). |
+| `yoke session-handoff ID` | Print a portable summary of a session. See [Sessions](sessions.md#hand-off-a-session). |
+| `yoke db ...` | Inspect, back up and maintain the session database. See [Sessions](sessions.md#maintain-the-database). |
+| `yoke daemon status\|restart\|stop` | Manage the shared daemon. |
+| `yoke login NAME` | Store credentials for a provider. Same as `yoke providers login`. |
+| `yoke models list\|set` | List models and save a default. |
+| `yoke providers list\|doctor\|login\|init` | Inspect providers, check credentials, scaffold a provider plugin. |
+| `yoke tools list\|init\|activate\|deactivate` | Inspect tools and edit tool policy. See [Configuration](configuration.md#tool-policy). |
+| `yoke skills list\|show\|init` | Inspect and scaffold skills. |
+| `yoke mcp [SERVER]` | Show configured MCP servers and their tools. |
+| `yoke serve` | Run the HTTP API. `--daemon` runs the shared daemon. |
+| `yoke acp` | Serve Agent Client Protocol on stdio. |
 
-Native and MCP process tools use the same names. Tool-name settings and callers
-must migrate from `exec_command`, `exec_python`, `write_stdin`, and `process_io`;
-execution `yield_time_ms` and `wait_ms` are rejected in new requests. Use
-semantic `mode` on launch and `process_read(wait_ms=...)` after launch. See
-[the migration table](process-tools.md#breaking-migration). The `shell`
-capability ID and existing Python imports `ExecCommandTool`, `CommandTool`, and
-`PythonExecTool` remain usable.
+Run any command with `--help` for its options.
 
-The native `rg` and `fd` tools expose typed search fields instead of shell-like
-argument strings. Use `limit` and `sort` for common result shaping, and use
-`command_exec` for pipelines or command execution. `rg` supports structured
-match, file-list, files-with-matches, and count modes; match results include
-line numbers and submatches. Both tools report subprocess failures with
-`ok: false`, a diagnostic `error`, and the exit code. A no-match exit remains a
-successful search. `max_output_chars` accepts values from 1 through 200,000.
-Yoke keeps those complete JSON results in the session, but sends a smaller
-provider-only projection back to the model. Search rows are flattened and use
-TOON 4.1 tabular notation where it reduces repetition; the persisted result,
-CLI tool inspector, handoff, and audit paths retain the original JSON. The web
-Tool activity detail reuses the recorded provider projection when one applied.
-Projection eligibility is recorded with the specific tool-result entry, so
-resuming a session or changing the active tool registry cannot reinterpret old
-results. For `rg`, a single submatch is flattened into match text and offset
-columns; rows with multiple submatches remain canonical JSON so no match detail
-is lost.
-The portable `ls`, `find`, and `grep` tools mark a result as truncated only when
-a matching entry or line was actually omitted, not merely when the result
-reaches its limit.
+### Slash commands
 
-The `command_exec` tool accepts either `cmd` for shell syntax or `argv` for a
-direct process launch with no shell parsing. Shell mode defaults to PowerShell
-on Windows and Bash elsewhere. Direct argv mode is preferable when the caller
-already has argument boundaries, especially for paths and values containing
-shell metacharacters. Both execution tools default to `mode="auto"` with a
-host-owned 30,000 ms native initial wait. Use `mode="background"` to return
-without waiting. If auto returns a running process, choose any longer wait on
-`process_read.wait_ms`. Successful process items keep their `session_id` and
-opaque `cursor` even after exit.
+| Command | Action |
+| --- | --- |
+| `/help` | List commands. |
+| `/shortcuts`, `?` | List keyboard shortcuts for the current mode. |
+| `/new` | Start a new session in the same workspace. |
+| `/model` | Open the model switcher. |
+| `/skill <name> [prompt]` | Activate a skill, then send the rest as a prompt. |
+| `/image <path>` | Attach an image to the next prompt. |
+| `/compact` | Compact the context now. |
+| `/tree` | Navigate and branch the session tree. Full-screen only. |
+| `/queue` | Open the queue manager. Full-screen only. |
+| `/fork` | Copy this session and continue in the copy. |
+| `/title <new-title>` | Rename the session. |
+| `/regenerate-title` | Ask the model for a new title. |
+| `/pin` | Pin or unpin the session. |
+| `/info` | Show session metadata. |
+| `/tools` | Turn tools on or off for this session, this workspace or globally. |
+| `/mcp [server]` | Manage MCP servers and their tools. |
+| `/ps` | Open the process inspector. |
+| `/agents` | Show the latest SDK agent runs. |
 
-Use `process_read` to wait for completion or retrieve output, `process_input`
-to send nonempty input, and `process_cancel` to stop an owned process tree.
-`/ps` inspects the current runtime's processes. Native reads default to 60,000
-ms and accept up to 3,600,000 ms, one hour. Completion mode waits for all
-requested sessions; output-oriented mode returns on any unread output or
-terminal session. A zero-wait read is a snapshot. Read deadlines leave the
-process running. Follow each returned cursor, including after exit when
-`has_more_output` is true, and account for reported retention gaps. See
-[Shared process tools](process-tools.md) for input cursors, result fields,
-paging, and the lower MCP wait cap.
+Text that starts with `/` but is not a command goes to the model as a prompt.
 
-On Windows, bash-style Python heredocs such as
-`python - <<'PY'` are rewritten to PowerShell pipelines while preserving stdin
-through yoke's `python`/`python3` shims. Native PowerShell pipelines use UTF-8
-without a BOM. Windows PowerShell also judges native command success by
-`LASTEXITCODE`, so harmless stderr from a successful command does not become a
-false tool failure. Terminating PowerShell exceptions still propagate.
-The provider-only process projection keeps output, session IDs, cursors, gaps,
-`has_more_output`, and exit codes, plus errors, cancellation, and timeout state.
-Duplicate runtime bookkeeping stays in the canonical session result. Legacy
-saved results retain their established projection when a session is resumed.
+### Keyboard shortcuts
 
-The `python_exec` tool uses yoke's current interpreter by default, preferring
-the parent shell's active `VIRTUAL_ENV` or `CONDA_PREFIX`. Pass
-`python_executable` to run a single call with a specific interpreter, for
-example a worktree-local `.venv` Python. Child subprocesses launched by that
-code inherit `YOKE_PYTHON_EXECUTABLE`; use that environment variable or
-`sys.executable` when a nested process must use the same interpreter. Python
-uses the same launch and read contract as commands. Its `timeout` is a separate
-execution deadline in seconds, not an initial wait or read deadline.
+Full-screen mode:
 
-`skill` is added when yoke discovers one or more skill directories.
+| Key | Action |
+| --- | --- |
+| `Enter` | Send. During a turn, stop it and send this prompt. |
+| `Tab` | Queue behind the current turn. Inserts the selected completion when one is open. |
+| `Esc` `Esc` | Stop the current turn. |
+| `Shift+Tab` | Cycle thinking effort. |
+| `Ctrl+J`, or `Shift+Enter` where the terminal supports it, otherwise `Esc` then `Enter` | Insert a newline. |
+| `Ctrl+V`, `Alt+V` | Paste text or attach a clipboard image. |
+| `Ctrl+U` | Remove the last pending image. |
+| `Ctrl+X` then `O` | Tool inspector. |
+| `Ctrl+X` then `Ctrl+P` | Process inspector. |
+| `Ctrl+X` then `Q` | Queue manager. |
+| `Ctrl+X` then `M` | Model switcher. |
+| `Ctrl+X` then `T` | Session tree. |
+| `Up`, `Down` | Move through completions when the menu is open. |
 
----
+A multiline paste stays in the editor. Press `Enter` to send it.
 
-## Workspace root
+Basic mode has two keys. `Enter` sends a line, and lines sent during a turn are
+queued. `Ctrl+C` stops the turn and exits.
 
-By default yoke uses the current directory as the workspace root — all file tools operate relative to it.
+### Bottom toolbar
 
-```bash
-yoke --root /path/to/project "..."
-```
+The toolbar shows the session title, the turn status and optional segments.
+The status is one of `Thinking`, `Streaming`, `Running tool`, `Compacting` and
+`Recovering`. Set these variables to `0`, `false`, `no` or `off` to hide a segment, or to any other
+value to show it.
 
-MCP stdio subprocesses receive a small runtime environment (`PATH`, home and
-user paths, locale, terminal, shell, temporary-directory, XDG directories,
-proxy and CA-certificate variables, and Windows system paths). Other inherited variables are excluded by default. Add variable names to
-`env_vars` to copy their current values, or set explicit values in `env`; those
-explicit values win.
-
-## Interactive backend boundary
-
-The interactive runtime boundary and its planned HTTP mapping are documented in
-[CLI session backend](cli-backend.md). The daemon executes turns, promotes queued
-inputs, and owns compaction and workspace relocation. The terminal renders each
-local input once and observes inputs admitted by other clients. `/info` refreshes
-the daemon metadata, including its real database path, entry count, timestamps
-and context window.
-
-The public Python `yoke.cli.run_cli(args, ...)` entry point also connects to the
-daemon and accepts no agent injection. Resume replays saved history, uses the
-saved workspace rather than the chooser filter, and requires explicit
-relocation for records with no workspace.
+| Variable | Segment | Default |
+| --- | --- | --- |
+| `YOKE_BAR_TIMER` | Elapsed turn time | on |
+| `YOKE_BAR_GAUGE` | Context usage gauge | on |
+| `YOKE_BAR_TOOLS` | Tool calls this turn | on |
+| `YOKE_BAR_TOKENS` | Token counts | off |
+| `YOKE_BAR_TURN` | Turn number | off |
