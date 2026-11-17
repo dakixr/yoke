@@ -1860,6 +1860,7 @@ export interface components {
         };
         /** PermissionResolution */
         PermissionResolution: {
+            by?: components["schemas"]["ResolvedBy"] | null;
             /** Message */
             message?: string | null;
             /**
@@ -2120,6 +2121,7 @@ export interface components {
         QuestionResolution: {
             /** Answers */
             answers?: string[];
+            by?: components["schemas"]["ResolvedBy"] | null;
             /**
              * Rejected
              * @default false
@@ -2266,6 +2268,12 @@ export interface components {
             /** Data */
             data: components["schemas"]["LocationInfo"][];
         };
+        /**
+         * ResolvedBy
+         * @description Who ended a request, so a client can tell a stop from a denial.
+         * @enum {string}
+         */
+        ResolvedBy: "user" | "turn_stopped" | "session_closed";
         /** ResolvedLocation */
         ResolvedLocation: {
             /** Directory */
