@@ -689,6 +689,7 @@ not read. Import them explicitly:
 yoke db import-legacy --all             # every session in ~/.yoke/sessions
 yoke db import-legacy 20240421-143022-abc1 --from /path/to/sessions
 yoke db info                            # path, schema version, sizes, counts
+yoke db check                           # read-only integrity and reference checks
 yoke db stats                           # table and entry-field size breakdown
 yoke db compact                         # finish quiet-session compaction and VACUUM
 yoke db backup ~/yoke-backup.db         # consistent copy via VACUUM INTO
@@ -705,9 +706,31 @@ to two old blobs per pass, preparing images outside the write transaction and
 committing each replacement with its references and cache revisions. It skips
 sessions with active admissions or compactions and any activity in the last ten
 minutes, including other sessions sharing a blob. Committed progress survives
-restart. `yoke db compact` finishes eligible batches and runs SQLite VACUUM;
-active or recently used sessions remain eligible for later idle passes. It
+restart. Compaction decodes images in a disposable process with a five-second
+timeout and a 20-million-pixel limit. Truncated images, decoder exceptions, native
+crashes and timeouts leave the image inline and persist a failure marker so a
+restart does not retry it. `yoke db compact` finishes eligible batches and runs
+SQLite VACUUM; active or recently used sessions remain eligible for later idle passes. It
 prints database and WAL sizes before and after, plus conversion counters.
+
+Before upgrading an existing schema, the owning store saves a consistent
+`yoke.db.pre-v<N>` beside the database, where `N` is the target schema version.
+Only the latest completed migration backup is kept. A failed backup blocks the
+migration. SDK usage writes and handoff reads never migrate the shared database.
+
+`yoke db check` opens the existing database read-only, runs SQLite `quick_check`
+and foreign-key checks, reconstructs a sample of 32 blobs with codecs first, and
+checks orphan references. It prints a summary and exits non-zero for problems or
+a schema this release cannot inspect. It does not create or migrate a database.
+Queues and events referring to sessions that have never been saved are reported
+as orphan references too. Run `yoke db info` explicitly to migrate an older schema.
+
+Database startup failures name the database path and cause in the daemon log and
+in CLI/ACP spawn errors. Upgrade Yoke for a newer schema; release competing
+writers for a locked database. For damage, run `yoke db check`, stop clients and
+the daemon, and restore the latest adjacent pre-migration backup before restarting.
+Keep a copy of the damaged database and its WAL before restoring.
+
 `yoke db stats` reports physical table/index pages and logical entry bytes by
 kind, split into image strings, usage and other JSON. Logical totals count
 references, so fork and handoff duplicates count more than once.

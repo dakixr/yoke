@@ -29,6 +29,27 @@ def open_spawn_log(path: Path) -> BinaryIO:
     return open(path, "ab")
 
 
+def startup_error(path: Path, *, since_ns: int = 0) -> str | None:
+    """Read the last storage startup diagnostic from bounded detached stdio."""
+    try:
+        if path.stat().st_mtime_ns < since_ns:
+            return None
+        with path.open("rb") as stream:
+            stream.seek(0, 2)
+            stream.seek(max(0, stream.tell() - 16 * 1024))
+            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    return next(
+        (
+            line
+            for line in reversed(lines)
+            if line.startswith("Yoke database startup failed:")
+        ),
+        None,
+    )
+
+
 class _LogStream(io.TextIOBase):
     def __init__(self, path: Path) -> None:
         self.handler = RotatingFileHandler(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Callable
 from concurrent.futures import Executor
 from time import monotonic
@@ -110,6 +111,11 @@ class TurnFinalizer:
             self.activity.active = None
             self.activity.state = "error"
             self.activity.last_error = "Session finalization failed."
+            if isinstance(error, sqlite3.Error):
+                self.activity.last_error += (
+                    f" Could not write {self.store.database_path}: {error}. "
+                    "Free disk space or release the database lock, then retry the input."
+                )
             self.activity.activity = None
             self.activity.tool_call_ids.pop(execution.turn_id, None)
             self.activity.best_effort_durable(

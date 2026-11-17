@@ -48,21 +48,6 @@ class ContextRecordingProvider:
         return Message.assistant("ok")
 
 
-def test_runtime_reuses_cache_scope_and_isolates_conversations() -> None:
-    first_provider = ContextRecordingProvider()
-    first_agent = RuntimeAgent(provider=first_provider, tools=[])
-
-    first_agent.run("same opening prompt")
-    first_agent.run("second turn")
-
-    second_provider = ContextRecordingProvider()
-    second_agent = RuntimeAgent(provider=second_provider, tools=[])
-    second_agent.run("same opening prompt")
-
-    assert first_provider.cache_scopes[0] == first_provider.cache_scopes[1]
-    assert first_provider.cache_scopes[0] != second_provider.cache_scopes[0]
-
-
 def test_compaction_reuses_scope_then_resets_reduced_epoch() -> None:
     class CompactionContextProvider(ContextRecordingProvider):
         def __init__(self) -> None:

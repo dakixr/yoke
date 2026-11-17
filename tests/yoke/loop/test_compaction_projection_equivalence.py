@@ -11,7 +11,7 @@ from yoke.agent.conversation import project_conversation
 from yoke.agent.context.compaction_projection import (
     next_compaction_generation_from_active_path,
 )
-from yoke.agent.loop.cache_scope import conversation_cache_scope
+from tests.yoke.loop.request_state_support import conversation_cache_scope
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message

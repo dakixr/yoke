@@ -103,6 +103,21 @@ agent_runs(...), tool_traces as queries over entries.call_id
 - Workspace leases move into daemon memory.
 
 **Maintenance.** `auto_vacuum=INCREMENTAL`, `incremental_vacuum` during idle, `VACUUM INTO` for `yoke db backup`. Migrations use `PRAGMA user_version` with ordered `.sql` files applied at daemon start. A binary that finds a newer schema version refuses to start.
+Only the daemon/CLI owning store and explicit `yoke db` commands migrate. SDK
+usage writers require an exact schema version and skip incompatible or missing
+storage with a debug log. SDK handoff reads require a compatible existing schema.
+
+Before migration SQL, a separate read connection takes a consistent backup while
+`BEGIN IMMEDIATE` excludes writers. Atomic publication writes `yoke.db.pre-v<N>`
+beside the database, using the target schema version and retaining the latest
+completed backup. Backup failure aborts the upgrade. `yoke db check` diagnoses an
+existing database read-only with quick_check, foreign keys, sampled codec
+reconstruction and orphan-reference checks. Startup errors include the path,
+cause and recovery advice in both detached logs and spawning-client errors.
+
+Image compaction uses a disposable subprocess with a five-second timeout and a
+20-million-pixel limit. Failed blobs stay inline and receive persistent completion
+and failure markers, so decoder crashes and hangs cannot poison daemon restarts.
 
 **Search.** FTS5 over user and assistant text plus titles, after cutover.
 

@@ -143,12 +143,13 @@ class SessionTreeIndex:
     ) -> None:
         """Replace all retained topology after a non-append reconciliation."""
         replacement = type(self)(entries, leaf_id)
-        self._entries = replacement._entries
-        self._by_id = replacement._by_id
-        self._parent_by_id = replacement._parent_by_id
-        self._positions = replacement._positions
-        self._leaf_id = replacement._leaf_id
-        self._active_refs = replacement._active_refs
+        # Validation above leaves the current index intact on invalid input.
+        self._entries = entries
+        self._by_id = {entry.id: entry for entry in entries}
+        self._parent_by_id = {entry.id: entry.parent_id for entry in entries}
+        self._positions = {entry.id: position for position, entry in enumerate(entries)}
+        self._leaf_id = replacement.leaf_id
+        self._active_refs = None
 
     def commit_entry_replacement(
         self,

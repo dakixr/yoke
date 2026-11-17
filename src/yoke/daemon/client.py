@@ -20,7 +20,7 @@ import httpx
 from yoke.daemon.build import build_id, fresh_build_id, protocol_version
 from yoke.daemon.environment import spawn_environment
 from yoke.daemon.instance import daemon_alive, read_info
-from yoke.daemon.log import open_spawn_log
+from yoke.daemon.log import open_spawn_log, startup_error
 from yoke.daemon.paths import DaemonPaths
 from yoke.daemon.transport import Endpoint, TcpEndpoint, client_options
 
@@ -228,8 +228,9 @@ def wait_for_exit(
 
 
 def _spawn_and_wait(paths: DaemonPaths, timeout: float) -> Endpoint:
+    started_ns = time.time_ns()
     try:
-        spawn_daemon(paths)
+        process = spawn_daemon(paths)
     except OSError as exc:
         raise DaemonUnavailable(f"Could not start Yoke daemon: {exc}") from exc
     deadline = time.monotonic() + timeout
@@ -237,7 +238,14 @@ def _spawn_and_wait(paths: DaemonPaths, timeout: float) -> Endpoint:
         found = find_daemon(paths)
         if found is not None:
             return found
+        if process.poll() is not None:
+            error = startup_error(paths.log, since_ns=started_ns)
+            if error is not None:
+                raise DaemonUnavailable(error)
         time.sleep(0.05)
+    error = startup_error(paths.log, since_ns=started_ns)
+    if error is not None:
+        raise DaemonUnavailable(error)
     raise DaemonUnavailable(
         f"Yoke daemon did not start within {timeout:.0f}s; see {paths.log}"
     )

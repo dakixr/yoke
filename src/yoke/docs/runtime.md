@@ -59,7 +59,25 @@ Agent-run reporting closes its listening socket with `shutdown()` before
 `close()` so an idle `accept()` in the listener thread wakes immediately.
 Closing the registry no longer waits for the accept timeout.
 
-`storage.database.Database(path, *, synchronous="NORMAL")` keeps the normal
+`storage.database.Database(path, *, migrate=False, synchronous="NORMAL")` and
+`open_database(path, *, migrate=False)` attach to an existing exact-version schema.
+The daemon/CLI store and explicit database commands authorize migrations with
+`migrate=True`. Queue, admission, event and SDK usage helpers only attach; the
+SDK handoff reader passes `SessionStore(migrate=False)`. The store default remains
+migration-enabled for its owning runtime callers.
+
+Schema upgrades hold `BEGIN IMMEDIATE` while a separate read connection backs up
+the committed source with SQLite's backup API. Publication is atomic, and a
+backup failure precedes any migration SQL. Schema v5 adds persistent compaction
+failure counts. The disposable image worker contains native crashes and decoder
+hangs without changing the provider image projection.
+
+Failed turn writes roll back before repository records, append cursors or tree
+indexes advance. A turn agent is promoted only after persistence succeeds. A
+failed fork is retired, and the retained runtime state continues to match the
+saved branch. SQLite finalization errors include the path, cause and retry action.
+
+The database keeps the normal
 SQLite durability policy by default. `synchronous="OFF"` is available for
 explicitly disposable databases. The non-storage test fixture uses that setting
 for its isolated schema copies; storage tests and production callers retain

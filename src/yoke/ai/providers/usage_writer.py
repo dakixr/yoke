@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 from yoke.session.repository.utils import default_database_path
-from yoke.storage import open_database
+from yoke.storage import DatabaseError, open_database
+
+LOGGER = logging.getLogger(__name__)
 
 
 class UsageLogWriteError(OSError):
@@ -41,6 +44,8 @@ def append_usage(
                     json.dumps(record, ensure_ascii=False, separators=(",", ":")),
                 ),
             )
+    except DatabaseError as exc:
+        LOGGER.debug("Skipping provider usage: %s", exc)
     except (OSError, sqlite3.Error) as exc:
         raise UsageLogWriteError("Could not persist provider usage metric.") from exc
 

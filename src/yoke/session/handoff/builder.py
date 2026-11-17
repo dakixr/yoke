@@ -47,7 +47,7 @@ def build_session_handoff(
         raise ValueError("tail must be at least 1.")
     if tool_detail not in {"compact", "full"}:
         raise ValueError("tool_detail must be compact or full.")
-    session_store = store or SessionStore()
+    session_store = store or SessionStore(migrate=False)
     if not session_store.exists(session_id):
         raise ValueError(f"Session not found: {session_id}")
 

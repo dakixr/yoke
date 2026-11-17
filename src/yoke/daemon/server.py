@@ -13,6 +13,7 @@ import importlib
 import os
 import pkgutil
 import secrets
+import sqlite3
 import socket
 import sys
 import time
@@ -34,6 +35,7 @@ from yoke.daemon.log import (
 )
 from yoke.daemon.paths import DEFAULT_PORT, DaemonPaths
 from yoke.daemon.peer import peer_checked
+from yoke.storage import DatabaseError
 
 # Spawned daemons take no arguments, so these are read from the environment.
 PORT_ENV = "YOKE_DAEMON_PORT"
@@ -115,14 +117,25 @@ def run_daemon(
         selected_port = int(tcp_sock.getsockname()[1])
         token = os.environ.get("YOKE_HTTP_TOKEN") or secrets.token_urlsafe(32)
         lifecycle = DaemonLifecycle(idle_exit=idle_exit, grace_seconds=grace_seconds)
-        server = _build_server(
-            token=token,
-            lifecycle=lifecycle,
-            socket_path=paths.socket,
-            port=selected_port,
-            verbose=verbose,
-            session_directory=session_directory,
-        )
+        try:
+            server = _build_server(
+                token=token,
+                lifecycle=lifecycle,
+                socket_path=paths.socket,
+                port=selected_port,
+                verbose=verbose,
+                session_directory=session_directory,
+            )
+        except (OSError, sqlite3.Error, DatabaseError) as exc:
+            from yoke.session.repository.utils import database_path_for
+            from yoke.storage.errors import database_open_error
+
+            print(
+                database_open_error(database_path_for(session_directory), exc),
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
         write_info(
             paths,
             DaemonInfo(
