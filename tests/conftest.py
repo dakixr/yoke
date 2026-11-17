@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import pwd
 import signal
 import time
 from collections.abc import Iterator
@@ -11,6 +10,15 @@ from uuid import uuid4
 import pytest
 
 from tests.yoke.tool_fixture import local_file_tools as local_file_tools
+
+# Resolved at import, before any fixture points HOME at a temporary directory.
+# The pwd lookup also ignores a HOME override inherited by the test run.
+try:
+    import pwd
+
+    _REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+except ImportError:  # Windows
+    _REAL_HOME = Path.home()
 from tests.yoke.scheduling import (
     pytest_collection_modifyitems as pytest_collection_modifyitems,
 )
@@ -40,7 +48,7 @@ def isolate_yoke_local_state(
 @pytest.fixture(autouse=True, scope="session")
 def forbid_real_database_writes() -> Iterator[None]:
     """Fail the run if any test, or a subprocess it starts, creates ~/.yoke/yoke.db."""
-    real = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".yoke" / "yoke.db"
+    real = _REAL_HOME / ".yoke" / "yoke.db"
     existed = real.exists()
     yield
     if not existed and real.exists():
@@ -51,6 +59,8 @@ def forbid_real_database_writes() -> Iterator[None]:
 
 def _daemon_processes() -> set[int]:
     found: set[int] = set()
+    if not Path("/proc").is_dir():
+        return found  # Process inspection is Linux-only; other hosts skip the check.
     for process in Path("/proc").iterdir():
         if not process.name.isdecimal():
             continue

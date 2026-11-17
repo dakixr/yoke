@@ -17,7 +17,7 @@ import httpx
 
 from yoke.cli.backend.events import EventSubscriptions, event_from_sse
 from yoke.daemon.client import DaemonHandle, connect_or_spawn, unix_client
-from yoke.daemon.uds import async_unix_transport
+from yoke.daemon.uds import async_unix_transport, ignore_cancelled_socket_wakeups
 
 
 class DaemonRequestError(ValueError):
@@ -186,6 +186,7 @@ class SessionConnection:
 
     async def _listen(self) -> None:
         self._loop = asyncio.get_running_loop()
+        ignore_cancelled_socket_wakeups(self._loop)
         self._task = asyncio.current_task()
         try:
             while not self._closed.is_set():

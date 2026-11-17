@@ -81,13 +81,28 @@ try {
   const address = `http://127.0.0.1:${server.address().port}/`;
   let chromeLog = "";
   chrome = spawn(process.env.CHROME_BIN || "google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--no-first-run", "--no-proxy-server", "--disable-background-networking", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  // Chrome reports its DevTools endpoint on stderr, but some builds stop
+  // printing it. The DevToolsActivePort file in the profile is always written.
   const endpoint = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Chrome did not start: ${chromeLog}`)), 15000);
-    chrome.on("error", (error) => { clearTimeout(timer); reject(error); });
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); clearInterval(poll);
+      error ? reject(error) : resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error(`Chrome did not start: ${chromeLog}`)), 30000);
+    const poll = setInterval(async () => {
+      try {
+        const [port, route] = (await readFile(path.join(profile, "DevToolsActivePort"), "utf8")).trim().split("\n");
+        if (port && route) finish(null, `ws://127.0.0.1:${port}${route}`);
+      } catch { /* not written yet */ }
+    }, 100);
+    chrome.on("error", (error) => finish(error));
+    chrome.on("exit", (code) => finish(new Error(`Chrome exited with ${code}: ${chromeLog}`)));
     chrome.stderr.on("data", (chunk) => {
       chromeLog += chunk;
       const match = chromeLog.match(/DevTools listening on (ws:\/\/\S+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      if (match) finish(null, match[1]);
     });
   });
   const socket = new WebSocket(endpoint);

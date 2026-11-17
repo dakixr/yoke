@@ -592,7 +592,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Refresh Session Mcp
+         * @description Reload client-edited MCP files while retaining session tool selection.
+         */
+        patch: operations["refreshSessionMcp"];
         trace?: never;
     };
     "/api/v1/session/{session_id}/mcp/{server_name}": {
@@ -1233,6 +1237,8 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            /** Envvars */
+            envVars?: string[];
             /** Headers */
             headers?: {
                 [key: string]: string;
@@ -1252,6 +1258,18 @@ export interface components {
         ClientSessionRequest: {
             /** Additionaldirectories */
             additionalDirectories?: string[];
+            /** Cwd */
+            cwd?: string | null;
+            /** Env */
+            env?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Kind
+             * @default acp
+             * @enum {string}
+             */
+            kind: "cli" | "web" | "acp";
             /** Mcpservers */
             mcpServers?: components["schemas"]["ClientMcpServer"][];
             /**
@@ -1927,6 +1945,8 @@ export interface components {
         };
         /** PromptAdmissionRequest */
         PromptAdmissionRequest: {
+            /** Clientid */
+            clientID?: string | null;
             /**
              * Delivery
              * @default steer
@@ -1948,6 +1968,8 @@ export interface components {
         };
         /** PromptAttachment */
         PromptAttachment: {
+            /** Imageprojection */
+            imageProjection?: "cli" | null;
             /** Mime */
             mime: string;
             /** Name */
@@ -2061,6 +2083,8 @@ export interface components {
         QueueData: {
             /** Items */
             items: components["schemas"]["QueueItem"][];
+            /** Pendingimages */
+            pendingImages?: string[];
             /** Revision */
             revision: number;
         };
@@ -2137,10 +2161,19 @@ export interface components {
         QueueOperation: components["schemas"]["QueueUpdateOperation"] | components["schemas"]["QueueDeliveryOperation"] | components["schemas"]["QueuePausedOperation"] | components["schemas"]["QueueRemoveOperation"] | components["schemas"]["QueueMoveBeforeOperation"] | components["schemas"]["QueueMoveAfterOperation"] | components["schemas"]["QueueMoveToStartOperation"];
         /** QueuePatchRequest */
         QueuePatchRequest: {
+            /** Admissions */
+            admissions?: components["schemas"]["PromptAdmissionRequest"][];
             /** Expectedrevision */
             expectedRevision: number;
             /** Operations */
             operations: components["schemas"]["QueueOperation"][];
+            /** Pendingimages */
+            pendingImages?: string[] | null;
+            /**
+             * Resume
+             * @default true
+             */
+            resume: boolean;
         };
         /** QueuePausedOperation */
         QueuePausedOperation: {
@@ -2224,12 +2257,30 @@ export interface components {
         };
         /** SessionCreateRequest */
         SessionCreateRequest: {
+            client?: components["schemas"]["ClientSessionRequest"] | null;
+            /**
+             * Headless
+             * @default false
+             */
+            headless: boolean;
             /** Id */
             id?: string | null;
             location: components["schemas"]["LocationInfo"];
             selection?: components["schemas"]["SessionCreateSelection"] | null;
+            /** Skills */
+            skills?: string[];
+            /**
+             * Startup
+             * @default false
+             */
+            startup: boolean;
             /** Title */
             title?: string | null;
+        };
+        /** SessionCreateResponse */
+        SessionCreateResponse: {
+            data: components["schemas"]["SessionInfo"];
+            startup?: components["schemas"]["SessionStartupReport"] | null;
         };
         /** SessionCreateSelection */
         SessionCreateSelection: {
@@ -2258,6 +2309,10 @@ export interface components {
             contextUsage?: {
                 [key: string]: unknown;
             } | null;
+            /** Contextwindowtokens */
+            contextWindowTokens?: number | null;
+            /** Databasepath */
+            databasePath?: string | null;
             /** Id */
             id: string;
             location: components["schemas"]["LocationInfo"];
@@ -2372,6 +2427,19 @@ export interface components {
         /** SessionSkillResponse */
         SessionSkillResponse: {
             data: components["schemas"]["SessionSkillData"];
+        };
+        /** SessionStartupReport */
+        SessionStartupReport: {
+            /** Activeskills */
+            activeSkills?: string[];
+            /** Modelsource */
+            modelSource?: string | null;
+            /** Toolreport */
+            toolReport?: {
+                [key: string]: unknown;
+            };
+            /** Warnings */
+            warnings?: string[];
         };
         /** SessionTime */
         SessionTime: {
@@ -3042,6 +3110,7 @@ export interface operations {
     streamEvents: {
         parameters: {
             query?: {
+                sessionID?: string | null;
                 /** @description Name this client; under `yoke serve --daemon` the stream is a lease. */
                 client?: string | null;
             };
@@ -3592,7 +3661,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionResponse"];
+                    "application/json": components["schemas"]["SessionCreateResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3694,7 +3763,9 @@ export interface operations {
     };
     getSessionClient: {
         parameters: {
-            query?: never;
+            query?: {
+                owner?: string | null;
+            };
             header?: never;
             path: {
                 session_id: string;
@@ -4005,7 +4076,39 @@ export interface operations {
         parameters: {
             query?: {
                 includeTools?: boolean;
+                includeDisabledTools?: boolean;
             };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refreshSessionMcp: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 session_id: string;

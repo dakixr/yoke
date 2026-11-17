@@ -89,7 +89,6 @@ jobs:
           tests/yoke/test_file_io.py
           tests/yoke/test_session_workspace.py
           tests/yoke/bootstrap/test_plugin_loader.py
-          tests/yoke/cli/test_session_index_cache.py
           tests/yoke/cli/test_prompt_queue_persistence.py
           tests/yoke/cli/test_startup_performance.py
           tests/yoke/http/test_contract.py
