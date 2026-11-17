@@ -193,6 +193,13 @@ def test_mcp_http_contract_and_identity_validation(tmp_path, monkeypatch):
                 "capabilities": {},
                 "serverInfo": {"name": "t3", "version": "1"},
             }
+        elif body["method"] == "tools/list":
+            result = {
+                "tools": [
+                    {"name": name, "inputSchema": {"type": "object"}}
+                    for name in ("t3_thread_configuration", "t3_thread_read")
+                ]
+            }
         else:
             name = body["params"]["name"]
             data = {"threadId": thread_id}

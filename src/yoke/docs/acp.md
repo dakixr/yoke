@@ -164,7 +164,12 @@ pending permission requests, questions and the latest plan.
 T3 sends ACP `session/close` both when the user settles a thread and when it
 releases an idle session, and the message carries no reason. To tell them
 apart, the daemon reads the thread's `settled` state through T3's injected
-`t3-code` MCP server:
+`t3-code` MCP server. It discovers available tools with MCP `tools/list`, then
+calls `t3_thread_configure` with no arguments to identify the scoped thread.
+Older T3 servers use `t3_thread_configuration` instead. The daemon only uses
+an identity tool whose schema accepts an empty argument object. It passes the
+returned ID to `t3_thread_read` and checks that the response identifies the
+same thread.
 
 - If T3 reports the thread settled, the daemon archives the matching Yoke
   session once its workers and queued inputs finish.
@@ -176,8 +181,20 @@ apart, the daemon reads the thread's `settled` state through T3's injected
   Yoke alone.
 - Loading or resuming an archived session unarchives it at once.
 
-The daemon checks when the client detaches and every 15 seconds after that. The
-observer keeps running after the ACP connection closes, so settling an idle
+The daemon checks when the client detaches and every 15 seconds after that.
+Network failures, timeouts, HTTP 408, 425, 429 and server errors delay retries
+by 30, 60, 120, 240, then 300 seconds. Retries stay five minutes apart until a
+read succeeds, which restores the normal cadence. Reattaching the same
+credential does not reset this delay. The daemon logs the first failure in
+each outage, without credentials, URLs or tool output.
+
+A missing tool, an unknown tool or method, revoked access, invalid parameters
+or another non-transient protocol error stops observation for that binding
+and discards its credential. The daemon logs one warning naming the failed
+capability and does not retry it. Loading or resuming the thread attaches a
+new binding and tries discovery again.
+
+The observer keeps running after the ACP connection closes, so settling an idle
 thread still reaches Yoke. It holds T3's scoped MCP credential in memory,
 separate from the model's tools, until T3 revokes it, another client replaces
 it, or the daemon exits. The daemon never saves that credential. After a daemon

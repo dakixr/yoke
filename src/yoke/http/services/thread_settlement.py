@@ -12,7 +12,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any
+
+import httpx
 
 from yoke.http.errors import ApiError, session_busy, session_not_found
 from yoke.mcp.client import McpClientError, StreamableHttpClient
@@ -33,6 +36,8 @@ class ThreadBinding:
     server: McpServerConfig = field(repr=False)
     thread_id: str | None = None
     archived_by_sync: bool = False
+    failures: int = 0
+    next_read_at: float = 0.0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
@@ -50,30 +55,73 @@ def _result(result: dict[str, Any]) -> dict[str, Any]:
     raise McpClientError("T3 thread read returned no structured state")
 
 
+class SettlementReadError(McpClientError):
+    """A safe capability label and retry policy, never remote response text."""
+
+    def __init__(
+        self, capability: str, *, transient: bool = False, reason: str = "read failed"
+    ) -> None:
+        super().__init__(reason)
+        self.capability = capability
+        self.transient = transient
+
+
+def _transient(exc: Exception) -> bool:
+    if isinstance(exc, SettlementReadError):
+        return exc.transient
+    if isinstance(exc, McpClientError):
+        # The HTTP client supplies status codes but discards JSON-RPC error codes.
+        # All other MCP errors, including unknown tools, are permanent.
+        return str(exc).startswith(
+            tuple(
+                f"MCP HTTP {kind} failed: {status} "
+                for kind in ("request", "notification")
+                for status in (408, 425, 429, *range(500, 600))
+            )
+        )
+    return isinstance(exc, (httpx.TransportError, TimeoutError, ConnectionError))
+
+
 def read_thread(binding: ThreadBinding) -> dict[str, Any]:
-    """Read authoritative state without involving the model or its tool cache."""
+    """Discover scoped identity from the catalogue, outside the model's tools."""
     client = StreamableHttpClient(binding.server, root=binding.server.cwd or Path.cwd())
+    capability = "tools/list"
     try:
+        tools = {tool.name: tool for tool in client.list_tools()}
+        capability = "t3_thread_read"
+        if capability not in tools:
+            raise SettlementReadError(capability)
         thread_id = binding.thread_id
         if thread_id is None:
-            thread_id = _result(client.call_tool("t3_thread_configuration", {})).get(
-                "threadId"
+            capability = "t3_thread_configure or t3_thread_configuration"
+            identity_tool = next(
+                (
+                    name
+                    for name in ("t3_thread_configure", "t3_thread_configuration")
+                    if name in tools and not tools[name].input_schema.get("required")
+                ),
+                None,
             )
+            if identity_tool is None:
+                raise SettlementReadError(capability)
+            capability = identity_tool
+            thread_id = _result(client.call_tool(identity_tool, {})).get("threadId")
             if not isinstance(thread_id, str) or not thread_id:
-                raise McpClientError("T3 did not identify the scoped thread")
+                raise SettlementReadError(capability)
+        capability = "t3_thread_read"
         data = _result(
             client.call_tool(
-                "t3_thread_read",
-                {
-                    "threadId": thread_id,
-                    "limit": 1,
-                    "runLimit": 1,
-                },
+                capability,
+                {"threadId": thread_id, "limit": 1, "runLimit": 1},
             )
         ).get("thread")
         if not isinstance(data, dict) or data.get("threadId") != thread_id:
-            raise McpClientError("T3 thread identity mismatch")
+            raise SettlementReadError(capability, reason="T3 thread identity mismatch")
         return data
+    except SettlementReadError:
+        raise
+    except Exception as exc:
+        raise SettlementReadError(capability, transient=_transient(exc)) from None
     finally:
         client.close()
 
@@ -115,10 +163,11 @@ class ThreadSettlementService:
                 or previous.server.headers != {"Authorization": authorization}
             ):
                 previous = None
+            if previous is not None:
+                # Reattaching the same credential must not reset backoff or its lock.
+                return
             self.bindings[session_id] = ThreadBinding(
                 owner=config.owner,
-                thread_id=previous.thread_id if previous else None,
-                archived_by_sync=previous.archived_by_sync if previous else False,
                 server=McpServerConfig(
                     name="t3-code",
                     transport="streamable-http",
@@ -141,6 +190,8 @@ class ThreadSettlementService:
         async with binding.lock, self._slots:
             if self.bindings.get(session_id) is not binding:
                 return
+            if monotonic() < binding.next_read_at:
+                return
             try:
                 if self.sessions.store.summary_record(session_id) is None:
                     self.bindings.pop(session_id, None)
@@ -148,6 +199,8 @@ class ThreadSettlementService:
                 data = await asyncio.to_thread(read_thread, binding)
                 if self.bindings.get(session_id) is not binding:
                     return
+                binding.failures = 0
+                binding.next_read_at = 0.0
                 binding.thread_id = data["threadId"]
                 settled = data.get("settled") is True or data.get("archived") is True
                 active = data.get("settled") is False and data.get("archived") is False
@@ -195,18 +248,36 @@ class ThreadSettlementService:
                     self.bindings.pop(session_id, None)
                 # Busy/queued sessions are retried after their native work drains.
             except Exception as exc:
-                # Never log credentials, tool output, or endpoint URLs.
-                if isinstance(exc, McpClientError) and any(
-                    f"{status} " in str(exc) for status in (401, 403, 404)
-                ):
-                    if self.bindings.get(session_id) is binding:
-                        self.bindings.pop(session_id, None)
-                LOGGER.warning(
-                    "T3 settlement read failed for %s provider %s (%s)",
-                    session_id,
-                    binding.server.name,
-                    type(exc).__name__,
+                if self.bindings.get(session_id) is not binding:
+                    return
+                # Never log credentials, tool output, endpoint URLs or exception text.
+                capability = (
+                    exc.capability if isinstance(exc, SettlementReadError) else "read"
                 )
+                permanent = isinstance(exc, McpClientError) and not _transient(exc)
+                if permanent:
+                    self.bindings.pop(session_id, None)
+                    LOGGER.warning(
+                        "T3 settlement sync disabled for %s provider %s: "
+                        "capability %s unavailable or invalid (%s)",
+                        session_id,
+                        binding.server.name,
+                        capability,
+                        type(exc).__name__,
+                    )
+                    return
+                binding.failures = min(binding.failures + 1, 5)
+                delay = min(300, 30 * 2 ** (binding.failures - 1))
+                binding.next_read_at = monotonic() + delay
+                if binding.failures == 1:
+                    LOGGER.warning(
+                        "T3 settlement read failed for %s provider %s: "
+                        "capability %s; retrying with backoff (%s)",
+                        session_id,
+                        binding.server.name,
+                        capability,
+                        type(exc).__name__,
+                    )
 
     async def watch(self) -> None:
         try:
