@@ -51,7 +51,7 @@ class TerminalDaemon:
     ) -> None:
         self.stack = stack
         self.factory = factory
-        self.store = SessionStore()
+        self.store = SessionStore(migrate=True)
         self._app: FastAPI | None = None
         self._handle: DaemonHandle | None = None
         monkeypatch.setattr(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -108,20 +107,6 @@ class OpenAICompatibleConfig(BaseModel):
         if not normalized:
             raise ValueError("api_key_header_name must not be empty")
         return normalized
-
-    @classmethod
-    def from_env(cls, **overrides: object) -> OpenAICompatibleConfig:
-        """Create a config populated from standardized environment variables."""
-        values: dict[str, Any] = {
-            "api_key": os.getenv("YOKE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
-            "model": os.getenv("YOKE_OPENAI_MODEL") or os.getenv("OPENAI_MODEL"),
-            "base_url": os.getenv("YOKE_OPENAI_BASE_URL")
-            or os.getenv("OPENAI_BASE_URL"),
-        }
-        values.update(
-            {key: value for key, value in overrides.items() if value is not None}
-        )
-        return cls(**{key: value for key, value in values.items() if value is not None})
 
 
 class OpenAICompatibleProvider(

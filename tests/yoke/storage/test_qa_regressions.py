@@ -34,7 +34,7 @@ from yoke.session.workspace import relocate_session_workspace
 
 
 def saved(tmp_path: Path) -> SessionStore:
-    store = SessionStore(tmp_path / "sessions")
+    store = SessionStore(tmp_path / "sessions", migrate=True)
     store.save("s", [Message.user("a"), Message.assistant("b")], root=tmp_path)
     return store
 
@@ -75,7 +75,7 @@ def test_abandoned_iterator_does_not_stale_a_pooled_reader(tmp_path: Path) -> No
 
 @pytest.mark.parametrize("field", ["root", "title", "provider_name", "model_id"])
 def test_surrogate_text_columns_save_and_update(tmp_path: Path, field: str) -> None:
-    store = SessionStore(tmp_path / "sessions")
+    store = SessionStore(tmp_path / "sessions", migrate=True)
     bad = "bad-\udcff-\ud83d\ude00"
     value = os.fsdecode(bytes(tmp_path) + b"/bad-\xff") if field == "root" else bad
     if field == "root":
@@ -95,7 +95,7 @@ def test_metadata_edit_never_resurrects_deleted_session(
     store = saved(tmp_path)
     stale = store.summary_record("s")
     assert stale is not None and stale.leaf_id is not None
-    assert SessionStore(store.directory).delete("s")
+    assert SessionStore(store.directory, migrate=True).delete("s")
     with pytest.raises(ValueError, match="Session not found"):
         if mutation == "title":
             store.set_title("s", "new", existing_record=stale)
@@ -111,7 +111,7 @@ def test_metadata_edit_never_resurrects_deleted_session(
 
 
 def test_surrogate_entry_columns_match_sanitized_blob(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path / "sessions")
+    store = SessionStore(tmp_path / "sessions", migrate=True)
     entry = ConversationEntry(
         id="entry-\ud800",
         kind="tool_result",

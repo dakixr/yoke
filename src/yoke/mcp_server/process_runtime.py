@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
+from typing import Any
 import threading
 
 from anyio import CapacityLimiter
 from anyio.to_thread import run_sync
 
 from yoke.agent.tools.base import LocalTool
+from yoke.mcp_server.execution import processes
+from yoke.mcp_server.execution.processes import ProcessRead
 from yoke.mcp_server.execution.process_manager import MCPProcessManager
 from yoke.mcp_server.execution.workers import admission, cancelled_result, settle
 
@@ -32,6 +36,29 @@ class ProcessRuntime:
         self._reads = asyncio.Semaphore(max_concurrent_calls)
         self._read_threads = CapacityLimiter(max_concurrent_calls)
         self._patch_lock = asyncio.Lock()
+
+    async def run_operation[T](self, operation: Callable[[], T]) -> T:
+        """Run blocking service work under the shared call capacity limit."""
+        async with self._total:
+            return await run_sync(operation)
+
+    async def read_process(
+        self, request: ProcessRead, *, cancel: threading.Event | None = None
+    ) -> dict[str, Any]:
+        """Observe process history using capacity reserved for readers."""
+        return await processes.read(
+            self.manager,
+            request,
+            cancel=cancel,
+            slots=self._reads,
+            limiter=self._read_threads,
+        )
+
+    @asynccontextmanager
+    async def patch_guard(self) -> AsyncIterator[None]:
+        """Serialize patch recipes with individual apply_patch calls."""
+        async with self._patch_lock:
+            yield
 
     async def execute(
         self, name: str, tool: LocalTool, *, cancel: threading.Event

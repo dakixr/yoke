@@ -56,7 +56,7 @@ def check_schema(connection: sqlite3.Connection, path: Path) -> None:
     if found < supported:
         raise DatabaseError(
             f"{path} uses schema version {found}; this release needs {supported}. "
-            "Open it with the Yoke daemon or an explicit yoke db command to migrate."
+            "Start the Yoke daemon or run yoke db migrate with the daemon stopped."
         )
 
 

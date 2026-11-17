@@ -30,17 +30,28 @@ class Worker:
     @classmethod
     def open(cls, pid: int) -> Worker:
         worker = cls(pid)
+        worker.observe()
+        return worker
+
+    def observe(self) -> None:
+        """Bind death observation to this PID's current identity, at most once."""
+        if any(
+            value is not None
+            for value in (self.fd, self.birth, self._queue, self._handle)
+        ):
+            return
+        pid = self.pid
         if hasattr(os, "pidfd_open"):
             try:
-                worker.fd = getattr(os, "pidfd_open")(pid)
-                return worker
+                self.fd = getattr(os, "pidfd_open")(pid)
+                return
             except OSError:
                 pass
         if sys.platform.startswith("linux"):
             identity = _proc_identity(pid)
             if identity is None or identity[1] in {"Z", "X"}:
                 raise ProcessLookupError("Agent worker exited")
-            worker.birth = identity[0]
+            self.birth = identity[0]
         elif sys.platform == "win32":
             import ctypes
             from ctypes import wintypes
@@ -59,8 +70,8 @@ class Worker:
             handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only.
             if not handle:
                 raise OSError("Cannot observe agent worker")
-            worker._kernel = kernel
-            worker._handle = handle
+            self._kernel = kernel
+            self._handle = handle
         elif sys.platform == "darwin" or sys.platform.startswith(
             ("freebsd", "openbsd", "netbsd")
         ):
@@ -82,10 +93,9 @@ class Worker:
             except BaseException:
                 queue.close()
                 raise
-            worker._queue = queue
+            self._queue = queue
         else:
             raise RuntimeError("This platform cannot observe agent worker death")
-        return worker
 
     def dead(self) -> bool:
         if self.fd is not None:

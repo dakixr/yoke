@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,7 @@ async def check_patch(
     root: Path,
     request: CheckPatch,
     dispatch: Dispatch,
-    patch_lock: asyncio.Lock,
+    patch_lock: AbstractAsyncContextManager[None],
     job_root: Path,
 ) -> dict[str, Any]:
     paths = {name: (root / name).resolve() for name in request.expected_hashes}

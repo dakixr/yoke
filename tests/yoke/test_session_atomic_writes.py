@@ -14,7 +14,7 @@ def test_concurrent_admission_saves_each_commit_a_whole_snapshot(
     tmp_path: Path,
 ) -> None:
     session_directory = tmp_path / "sessions"
-    SessionStore(session_directory)
+    SessionStore(session_directory, migrate=True)
     start = Barrier(2)
 
     def save(input_id: str) -> None:

@@ -81,7 +81,7 @@ def test_index_derived_session_record_does_not_project_unloaded_history(
         root=tmp_path,
     )
 
-    summary = store.list()[0]
+    summary = store.list_index_entries()[0].to_record()
 
     assert summary.id == saved.id
     assert summary.leaf_id == saved.leaf_id
@@ -141,7 +141,9 @@ def test_cli_auto_persists_unnamed_session_globally(
 
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == "synthetic response"
-    records = SessionStore().list(root=tmp_path)
+    records = [
+        entry.to_record() for entry in SessionStore().list_index_entries(root=tmp_path)
+    ]
     assert len(records) == 1
     assert records[0].root == str(tmp_path.resolve())
     assert records[0].title == "persist this"

@@ -35,7 +35,7 @@ from pathlib import Path
 from yoke.agent.models import Message
 from yoke.session import SessionStore
 from yoke.session.queue import PersistedPendingInput, prompt_queue_transaction
-store = SessionStore(Path(sys.argv[1]))
+store = SessionStore(Path(sys.argv[1]), migrate=True)
 record = store.save("durable", [Message.user("acknowledged entry")])
 store.set_title("durable", "acknowledged title")
 with prompt_queue_transaction(store.directory, "durable") as transaction:
@@ -57,7 +57,7 @@ sys.stdin.read()
         process.kill()
         process.communicate(timeout=10)
         assert process.returncode == -9
-        store = SessionStore(tmp_path)
+        store = SessionStore(tmp_path, migrate=True)
         record = store.load("durable")
         assert record.messages == [Message.user("acknowledged entry")]
         assert record.conversation_entries[0].id == ack["entry_id"]
@@ -77,7 +77,7 @@ def test_two_process_queue_revision_conflict_preserves_both_edits(
     tmp_path: Path,
 ) -> None:
     # communicate() works on Windows too; only the SIGKILL test is platform-specific.
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     store.save("shared", [], root=tmp_path)
     script = """
 import json, sys
@@ -87,7 +87,7 @@ from yoke.http.errors import ApiError
 from yoke.http.models.prompt import QueuePatchRequest
 from yoke.session import SessionStore
 from yoke.session.queue import load_prompt_queue_snapshot
-store = SessionStore(Path(sys.argv[1]))
+store = SessionStore(Path(sys.argv[1]), migrate=True)
 service = pending_service(store)
 snapshot = load_prompt_queue_snapshot(store.directory, "shared")
 print(json.dumps({"revision": snapshot.revision}), flush=True)

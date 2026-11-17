@@ -21,7 +21,6 @@ from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.execution import (
     gateway,
     policy,
-    processes,
     python,
     reads,
     search,
@@ -139,18 +138,17 @@ class ExecutionService:
         if isinstance(request, Inspect):
             return await run_sync(partial(gateway.inspect, self.manager, request))
         if isinstance(request, DownstreamCall):
-            async with self.runtime._total:
-                result = await run_sync(
-                    partial(
-                        gateway.call,
-                        self.manager,
-                        server=request.server,
-                        tool=request.tool,
-                        arguments=request.arguments,
-                        expected_hash=request.schema_hash,
-                        cancel_requested=cancel.is_set if cancel else None,
-                    )
+            result = await self.runtime.run_operation(
+                partial(
+                    gateway.call,
+                    self.manager,
+                    server=request.server,
+                    tool=request.tool,
+                    arguments=request.arguments,
+                    expected_hash=request.schema_hash,
+                    cancel_requested=cancel.is_set if cancel else None,
                 )
+            )
             if request.fields:
                 return {
                     "ok": result.get("ok", True),
@@ -167,13 +165,7 @@ class ExecutionService:
                 fields=request.fields,
             )
         if isinstance(request, ProcessRead):
-            return await processes.read(
-                self.runtime.manager,
-                request,
-                cancel=cancel,
-                slots=self.runtime._reads,
-                limiter=self.runtime._read_threads,
-            )
+            return await self.runtime.read_process(request, cancel=cancel)
         if isinstance(request, ProcessCancel):
             token = self._sessions.pop(request.session_id, None)
             if token:
@@ -194,18 +186,21 @@ class ExecutionService:
                 self.config.root,
                 request,
                 self.dispatch,
-                self.runtime._patch_lock,
+                self.runtime.patch_guard(),
                 Path(self._patch_jobs.name),
             )
         if isinstance(request, ImportFiles):
-            async with self.runtime._total:
-                return await run_sync(partial(self.transfers.imports, request))
+            return await self.runtime.run_operation(
+                partial(self.transfers.imports, request)
+            )
         if isinstance(request, WriteBinary):
-            async with self.runtime._total:
-                return await run_sync(partial(self.transfers.write, request))
+            return await self.runtime.run_operation(
+                partial(self.transfers.write, request)
+            )
         if isinstance(request, ExportFile):
-            async with self.runtime._total:
-                return await run_sync(partial(self.transfers.export, request))
+            return await self.runtime.run_operation(
+                partial(self.transfers.export, request)
+            )
         raise ValueError("Unsupported action")
 
     def _limit_remote_wait(self, name: str, values: dict[str, Any]) -> dict[str, Any]:
@@ -234,10 +229,9 @@ class ExecutionService:
         }
         if name == "read_file":
             request = ReadTool.model_validate(arguments)
-            async with self.runtime._total:
-                return await run_sync(
-                    partial(reads.read_file, self.config.root, request.model_dump())
-                )
+            return await self.runtime.run_operation(
+                partial(reads.read_file, self.config.root, request.model_dump())
+            )
         parsed = spec.tool_class.bind(**binding).parse_arguments(
             policy.arguments(self.config, name, arguments)
         )
@@ -245,8 +239,9 @@ class ExecutionService:
             from yoke.mcp_server.search import MCPFdTool, MCPRipgrepTool
 
             assert isinstance(parsed, (MCPFdTool, MCPRipgrepTool))
-            async with self.runtime._total:
-                return await run_sync(partial(search.execute, parsed, cancel))
+            return await self.runtime.run_operation(
+                partial(search.execute, parsed, cancel)
+            )
         return await self.runtime.execute(name, parsed, cancel=cancel)
 
     async def batch(self, request: BatchRead) -> dict[str, Any]:

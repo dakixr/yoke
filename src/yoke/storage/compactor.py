@@ -7,9 +7,13 @@ import logging
 import time
 from dataclasses import dataclass
 
-from yoke.storage.blob_codec import collect_blobs, prepare_blob
+from yoke.storage.blob_codec import collect_blobs, decode_blob, prepare_blob
 from yoke.storage.database import Database
-from yoke.storage.entry_transform import ImageTransform, transform_entry
+from yoke.storage.entry_transform import (
+    CompactionDeferred,
+    ImageTransform,
+    transform_entry,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,7 +58,7 @@ AND (EXISTS (SELECT 1 FROM entries WHERE message_sha256 = b.sha256)
 AND """
     + _QUIET
 )
-_CANDIDATES = "SELECT b.sha256, yoke_blob_data(b.sha256, b.data) " + _ELIGIBLE
+_CANDIDATES = "SELECT b.sha256, b.data " + _ELIGIBLE
 
 
 @dataclass
@@ -86,21 +90,32 @@ def compact_batch(
     started = time.monotonic()
     with database.read() as connection:
         candidates = connection.execute(_CANDIDATES + " LIMIT ?", (limit,)).fetchall()
-    for old_sha, raw in candidates:
+    for old_sha, stored in candidates:
         if nonblocking and time.monotonic() - started > 0.2:
             break
+        original_size = 0
         try:
-            transformed, images = transform_entry(raw)
+            with database.read() as connection:
+                raw = decode_blob(connection, old_sha, stored)
+            if raw is None:
+                raise ValueError(f"Missing entry blob: {old_sha}")
+            original_size = len(raw)
+            transformed, images = (
+                transform_entry(raw, deadline=started + 0.2)
+                if nonblocking
+                else transform_entry(raw)
+            )
             prepared = prepare_blob(transformed, inline_urls=images.failed_urls)
+        except CompactionDeferred:
+            # Budget exhaustion is not corruption. Explicit compaction has no
+            # idle deadline and can finish entries too large for maintenance.
+            return result
         except Exception:  # noqa: BLE001 - poison blobs must never be retried
             LOGGER.debug(
                 "Leaving failed compaction blob %s inline", old_sha, exc_info=True
             )
-            transformed = raw
             images = ImageTransform(failures=1)
-            from yoke.storage.blob_codec import EncodedBlob
-
-            prepared = EncodedBlob(old_sha, raw, raw, (), ())
+            prepared = None
         try:
             with (
                 database.write_nowait()
@@ -111,6 +126,19 @@ def compact_batch(
                     "SELECT 1 " + _ELIGIBLE + " AND b.sha256 = ?", (old_sha,)
                 ).fetchone()
                 if eligible is None:
+                    continue
+                if prepared is None:
+                    # Preserve the original codec and bytes, including damaged
+                    # evidence. Completion and failure markers commit together.
+                    connection.execute(
+                        "INSERT OR IGNORE INTO blob_compaction VALUES (?)", (old_sha,)
+                    )
+                    connection.execute(
+                        "INSERT OR REPLACE INTO blob_compaction_failures VALUES (?, 1)",
+                        (old_sha,),
+                    )
+                    result.processed += 1
+                    result.failures_inline += 1
                     continue
                 owners = connection.execute(
                     "SELECT session_id, count(*) FROM entries WHERE message_sha256 = ? GROUP BY session_id",
@@ -130,7 +158,7 @@ def compact_batch(
                     (new_sha, old_sha),
                 )
                 affected = {
-                    owner: count * (len(transformed) - len(raw))
+                    owner: count * (len(prepared.raw) - original_size)
                     for owner, count in owners
                 }
                 affected.update(

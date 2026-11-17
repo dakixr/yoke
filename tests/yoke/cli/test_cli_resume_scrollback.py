@@ -259,7 +259,7 @@ def test_save_reuses_loaded_record_without_decoding_history_again(
     loaded = store.load("current")
     with monkeypatch.context() as guard:
         guard.setattr(
-            "yoke.session.repository.table.decode_entry",
+            "yoke.session.repository.rows.decode_entry",
             lambda *_args, **_kwargs: pytest.fail("session was decoded again"),
         )
         store.save(

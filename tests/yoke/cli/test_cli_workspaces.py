@@ -85,7 +85,7 @@ def test_invalid_workspace_rejected_before_agent_construction(
     assert code == 1
     builder.assert_not_called()
     assert stored_session_bytes(store, "saved") == before
-    assert [record.id for record in store.list()] == ["saved"]
+    assert [record.id for record in store.list_index_entries()] == ["saved"]
     assert "Falling back" not in stderr.getvalue()
     if mode in {"resume", "session"}:
         assert "yoke resume saved --relocate" in " ".join(stderr.getvalue().split())
@@ -246,4 +246,4 @@ def test_invalid_fresh_path_is_not_a_cwd_fallback(root: str, terminal) -> None:
         == 1
     )
     provider.assert_not_called()
-    assert SessionStore().list() == []
+    assert SessionStore().list_index_entries() == []

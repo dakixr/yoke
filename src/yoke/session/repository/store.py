@@ -57,7 +57,7 @@ class SessionStore:
         directory: Path | None = None,
         *,
         database_path: Path | None = None,
-        migrate: bool = True,
+        migrate: bool = False,
     ) -> None:
         self.directory = (directory or default_session_directory()).resolve()
         self.database_path = database_path or database_path_for(self.directory)
@@ -176,19 +176,12 @@ class SessionStore:
                 )
         return record
 
-    def list(self, *, root: Path | str | None = None) -> builtins.list[SessionRecord]:
-        """List session records without conversation history."""
-        return [entry.to_record() for entry in self.list_index_entries(root=root)]
-
     def list_index_entries(
         self,
         *,
         root: Path | str | None = None,
-        maintain: bool = True,
     ) -> builtins.list[SessionIndexEntry]:
         """List lightweight session summaries without loading conversation history."""
-        if maintain:
-            self.maintain_index()
         entries = self._table.index_entries(normalize_root(root))
         return sorted(
             entries,
