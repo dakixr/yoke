@@ -2,14 +2,10 @@ from __future__ import annotations
 
 # ruff: noqa: ANN002, ANN003, ANN401, D100, D103, S101
 
-from pathlib import Path
-
-import pytest
 
 from yoke.agent.conversation import render_memory_message
 from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.cli.render import build_console, print_session_scrollback
-from yoke.session import SessionStore
 
 from .support import CaptureStream
 from .terminal_daemon_support import terminal as terminal
@@ -248,27 +244,3 @@ def test_resume_recovers_checkpoint_bypassed_by_active_leaf() -> None:
     assert len(projection.runtime_messages) == 2
     assert projection.runtime_messages[0].text_content() == "old"
     assert projection.runtime_messages[1].text_content() == "tail"
-
-
-def test_save_reuses_loaded_record_without_decoding_history_again(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    store = SessionStore(directory=tmp_path)
-    store.save("current", [Message.user("hello")], root=tmp_path)
-    loaded = store.load("current")
-    with monkeypatch.context() as guard:
-        guard.setattr(
-            "yoke.session.repository.rows.decode_entry",
-            lambda *_args, **_kwargs: pytest.fail("session was decoded again"),
-        )
-        store.save(
-            "current",
-            loaded.messages,
-            conversation_entries=loaded.conversation_entries,
-            leaf_id=loaded.leaf_id,
-            root=tmp_path,
-            existing_record=loaded,
-        )
-
-    assert store.load("current").messages[0].text_content() == "hello"

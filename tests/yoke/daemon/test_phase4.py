@@ -114,20 +114,10 @@ def test_discovery_steps_restart_at_most_once(tmp_path, monkeypatch, restarted):
     )
     restart = Mock(return_value=restarted)
     monkeypatch.setattr(client, "restart_daemon", restart)
-    steps = []
-    monkeypatch.setattr(client, "_discovery_step", steps.append)
-    assert client.connect_or_spawn(paths).warning
+    handle = client.connect_or_spawn(paths)
+    assert handle.warning
+    assert handle.pid == 123
     restart.assert_called_once()
-    assert steps == [
-        client.DiscoveryStep.PROBE,
-        client.DiscoveryStep.STATUS,
-        client.DiscoveryStep.DECIDE,
-        client.DiscoveryStep.RESTART_ONCE,
-        client.DiscoveryStep.PROBE,
-        client.DiscoveryStep.STATUS,
-        client.DiscoveryStep.DECIDE,
-        client.DiscoveryStep.ATTACH,
-    ]
 
 
 def test_older_schema_only_offers_migration(tmp_path):

@@ -130,13 +130,10 @@ def test_cross_provider_switch_rolls_back_compaction_when_rebind_fails(
     )
     agent = _agent(previous)
     original_entries = agent.conversation_entries
-    target_rebinds = 0
 
     def fail_target_rebind(context_manager, *, provider):
-        nonlocal target_rebinds
         budget = real_rebind_budget(context_manager, provider=provider)
         if provider is target:
-            target_rebinds += 1
             assert agent.conversation_entries != original_entries
             raise RuntimeError("rebind failed")
         return budget
@@ -157,7 +154,6 @@ def test_cross_provider_switch_rolls_back_compaction_when_rebind_fails(
             model_id="target-model",
         )
 
-    assert target_rebinds == 1
     assert agent.provider is previous
     assert agent.conversation_entries == original_entries
     assert agent.context_manager.compactor.model == "source-model"

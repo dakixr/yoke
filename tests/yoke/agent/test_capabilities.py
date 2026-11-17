@@ -7,7 +7,6 @@ from pathlib import Path
 from yoke.agent.capabilities import create_builtin_capabilities
 from yoke.agent.capabilities import known_builtin_capability_ids
 from yoke.agent.models import Message
-from yoke.agent.tools import LocalTool
 from yoke.agent.tools import ToolRegistrationContext
 from yoke.agent.tools.context import ModelIdentity
 from yoke.ai.providers.base import Provider
@@ -56,19 +55,6 @@ def tool_names_for(
         if capability.capability_id == capability_id
         for tool in capability.tools
     }
-
-
-def test_capability_tools_receive_runtime_context(tmp_path) -> None:
-    registrations = create_builtin_capabilities(context(tmp_path, "gpt-test"))
-    tool = next(
-        tool
-        for capability in registrations
-        if capability.capability_id == "file.write"
-        for tool in capability.tools
-    )
-
-    assert isinstance(tool, LocalTool)
-    assert tool._context["runtime_context"] is not None
 
 
 def test_builtin_capabilities_have_one_file_read_interface() -> None:

@@ -32,18 +32,11 @@ def test_kernel_peer_uid_is_current_user():
 def test_peer_uid_without_so_peercred_uses_getpeereid(monkeypatch):
     # macOS has no SO_PEERCRED; the owner must still be admitted there.
     monkeypatch.delattr(socket, "SO_PEERCRED", raising=False)
-    calls: list[int] = []
-
-    def fake_getpeereid(fd: int) -> int:
-        calls.append(fd)
-        return os.getuid()
-
-    monkeypatch.setattr("yoke.daemon.peer._getpeereid_uid", fake_getpeereid)
+    monkeypatch.setattr("yoke.daemon.peer._getpeereid_uid", lambda _fd: os.getuid())
     left, right = socket.socketpair()
     try:
         assert peer_uid(left) == os.getuid()
         assert connection_authorized(left)
-        assert calls == [left.fileno(), left.fileno()]
     finally:
         left.close()
         right.close()

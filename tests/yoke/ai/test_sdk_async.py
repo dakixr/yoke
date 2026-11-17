@@ -245,17 +245,25 @@ def test_prompt_async_parses_structured_output(tmp_path: Path) -> None:
 
 
 def test_structured_retry_instruction_is_scoped(tmp_path: Path) -> None:
+    requests: list[list[Message]] = []
+
+    class RecordingProvider(SequencedProvider):
+        def complete(self, messages, tools):
+            requests.append(list(messages))
+            return super().complete(messages, tools)
+
     agent = Agent(
-        provider=SequencedProvider(["not-json", '{"value":"ok"}', "plain"]),
+        provider=RecordingProvider(["not-json", '{"value":"ok"}', "plain"]),
         config=config(tmp_path),
     )
     result = agent.prompt("json", output_type=StructuredAnswer)
     assert result.structured == StructuredAnswer(value="ok")
     assert agent.prompt("plain").output == "plain"
-    assert agent._runtime._context is not None
+    assert len(requests) == 3
     assert all(
-        "corrected structured output" not in message.plain_text_content.lower()
-        for message in agent._runtime._context.instructions
+        "corrected structured output" not in (message.plain_text_content or "").lower()
+        for message in requests[2]
+        if message.role == "system"
     )
     agent.close()
 

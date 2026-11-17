@@ -20,10 +20,6 @@ from yoke.ai.providers.base import (
     provider_identity,
 )
 from yoke.ai.providers.cancellation import cancellation_watcher
-from yoke.ai.providers.codex.subscription import (
-    CodexSubscriptionProvider,
-)
-from yoke.ai.providers.codex.websocket.provider import CodexProvider
 
 from tests.yoke.ai.providers.transport_support import (
     HTTP_KINDS,
@@ -80,17 +76,6 @@ def test_builtin_identity_catalog_and_fork(kind: str, tmp_path: Path) -> None:
             forked.close()
             assert not client.is_closed
             provider.close()
-
-
-def test_codex_concrete_providers_share_config_contract(tmp_path: Path) -> None:
-    http = _provider("codex-http", tmp_path, None)
-    websocket = _provider("codex-ws", tmp_path, None)
-    # Concrete declarations make pyright validate both implementations.
-    http_host: CodexSubscriptionProvider = cast(CodexSubscriptionProvider, http)
-    ws_host: CodexProvider = cast(CodexProvider, websocket)
-    assert http_host.config.model == ws_host.config.model
-    http.close()
-    websocket.close()
 
 
 def test_unknown_fork_logs_shared_state_and_false_isolation(

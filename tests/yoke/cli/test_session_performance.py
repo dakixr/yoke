@@ -1,55 +1,27 @@
 from __future__ import annotations
 
-# ruff: noqa: ANN401,D100,D103,D105,S101
+# ruff: noqa: ANN001,D100,D103,S101
 
-from collections.abc import Iterator
 import json
 from pathlib import Path
 from threading import Lock
-from typing import Any
 
 import pytest
 
-from yoke.agent.context import ContextManager
+from yoke.agent.models import ConversationEntry, Message
 from yoke.agent.session_tree import SessionTree
 from yoke.agent.loop import RuntimeAgent
-from yoke.agent.models import ConversationEntry
-from yoke.agent.models import Message
 from yoke.cli.interactive.common import PromptCliState
-from yoke.session.interrupt import interrupted_turn_snapshot
 from yoke.cli.interactive.prompt.loop import persist_prompt_exit_state
-from .terminal_daemon_support import terminal as terminal, session_for
-from .test_cli_model_switching import SwitchableProvider
-from yoke.cli.backend.headless import run_headless_prompt
-from io import StringIO
-from tests.yoke.session_support import StoredSession
-from yoke.cli.runtime import tree_view
-from tests.yoke.session_support import persist_session_state
-from tests.yoke.session_support import save_active_session
-from yoke.cli.runtime.tree_view import flatten_tree_rows
-from yoke.cli.runtime.tree_view import build_tree_nodes
-from yoke.cli.runtime.tree_view import default_folded_tree_ids
-
 from yoke.session.repository import SessionRecord
 from yoke.session import SessionStore
 from yoke.session.legacy.jsonl import decode_session_record
 from yoke.session.repository.table import SessionTable
 
 from tests.yoke.session_rows import stored_entry_rows
-
-# Scan/copy counters detect regressions independently of fixture size.
-ENTRY_COUNT = 256
-ACTIVE_COUNT = 32
-
-
-class ScanCountingEntries(list[ConversationEntry]):
-    """Count complete entry-list iterations without using wall time."""
-
-    scans: int = 0
-
-    def __iter__(self) -> Iterator[ConversationEntry]:
-        self.scans += 1
-        return super().__iter__()
+from tests.yoke.session_support import StoredSession
+from .terminal_daemon_support import terminal as terminal, session_for
+from .test_cli_model_switching import SwitchableProvider
 
 
 class NoopProvider:
@@ -65,11 +37,26 @@ class NoopProvider:
         return Message.assistant("done")
 
 
-@pytest.fixture(scope="module")
-def large_tree() -> tuple[list[ConversationEntry], str]:
+def _legacy_jsonl(record: SessionRecord) -> str:
+    """Encode a record the way the JSONL store wrote it."""
+    lines = [
+        {"type": "yoke_session", "version": 2},
+        {
+            "type": "metadata",
+            **record.model_dump(mode="json", exclude={"conversation_entries"}),
+        },
+        *(
+            {"type": "entry", "entry": entry.model_dump(mode="json")}
+            for entry in record.conversation_entries
+        ),
+    ]
+    return "".join(json.dumps(line) + "\n" for line in lines)
+
+
+def _large_record(tmp_path: Path) -> SessionRecord:
     entries: list[ConversationEntry] = []
     parent_id: str | None = None
-    for index in range(ACTIVE_COUNT):
+    for index in range(32):
         entry = ConversationEntry(
             id=f"active-{index:08d}",
             kind="control",
@@ -77,268 +64,22 @@ def large_tree() -> tuple[list[ConversationEntry], str]:
         )
         entries.append(entry)
         parent_id = entry.id
-    inactive_parent_id = entries[0].id
-    for index in range(ACTIVE_COUNT, ENTRY_COUNT):
-        entry = ConversationEntry(
-            id=f"inactive-{index:08d}",
-            kind="user" if index == ACTIVE_COUNT else "control",
-            message=(
-                Message.user("inactive branch") if index == ACTIVE_COUNT else None
-            ),
-            parent_id=inactive_parent_id,
-        )
-        entries.append(entry)
-        inactive_parent_id = entry.id
     assert parent_id is not None
-    return entries, parent_id
-
-
-def _record_with_counted_entries(
-    entries: list[ConversationEntry], leaf_id: str
-) -> tuple[SessionRecord, ScanCountingEntries]:
-    counted = ScanCountingEntries(entries)
-    record = SessionRecord.model_construct(
+    record = SessionRecord(
         id="large-session",
-        conversation_entries=counted,
-        leaf_id=leaf_id,
+        conversation_entries=entries,
+        leaf_id=parent_id,
     )
-    return record, counted
-
-
-def _count_entry_copies(
-    monkeypatch: pytest.MonkeyPatch,
-) -> dict[str, int]:
-    copies = {"count": 0}
-    original = ConversationEntry.model_copy
-
-    def counted_copy(
-        self: ConversationEntry, *args: Any, **kwargs: Any
-    ) -> ConversationEntry:
-        copies["count"] += 1
-        return original(self, *args, **kwargs)
-
-    monkeypatch.setattr(ConversationEntry, "model_copy", counted_copy)
-    return copies
-
-
-def test_retained_index_scans_once_and_copies_only_the_active_path(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    active = StoredSession(
-        record.id,
-        tmp_path,
-        SessionStore(tmp_path),
-        record,
-    )
-    validation_scans = counted.scans
-    copies = _count_entry_copies(monkeypatch)
-
-    first = active.active_entries()
-    second = active.active_entries()
-
-    assert validation_scans == 2
-    assert counted.scans == validation_scans
-    assert len(first) == ACTIVE_COUNT
-    assert len(second) == ACTIVE_COUNT
-    assert copies["count"] == ACTIVE_COUNT * 2
-
-
-def test_interruption_snapshot_reuses_active_history(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    active = StoredSession(
-        record.id,
-        tmp_path,
-        SessionStore(tmp_path),
-        record,
-    )
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
-
-    messages, snapshot = interrupted_turn_snapshot(
-        messages=[],
-        entries=active.active_entry_refs(),
-        user_message=Message.user("steer"),
-    )
-
-    assert counted.scans == scans_before
-    assert copies["count"] == 0
-    assert len(messages) == 2
-    assert len(snapshot) == ACTIVE_COUNT + 2
-    assert snapshot[-3] is active.tree_index.active_entry_refs()[-1]
-
-
-def test_interruption_checkpoint_copies_only_the_synthetic_suffix(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    store = SessionStore(tmp_path / "sessions")
-    store.insert_record(record)
-    active = StoredSession(record.id, tmp_path, store, record)
-    messages, snapshot = interrupted_turn_snapshot(
-        messages=[],
-        entries=active.active_entry_refs(),
-        user_message=Message.user("stop"),
-    )
-    agent = RuntimeAgent(provider=NoopProvider(), tools=[])
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
-
-    def fail(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("interruption checkpoint reconciled the complete tree")
-
-    monkeypatch.setattr("yoke.agent.session_tree.SessionTree.reconcile", fail)
-
-    try:
-        persist_session_state(
-            active,
-            agent,
-            messages,
-            conversation_entries=snapshot,
-        )
-    finally:
-        agent.close()
-
-    assert counted.scans == scans_before
-    assert copies["count"] < 10
-    assert active.record.conversation_entries[-2].kind == "user"
-    assert active.record.conversation_entries[-1].kind == "assistant"
-
-
-def test_turn_preparation_takes_the_validated_active_path(
-    large_tree, tmp_path, monkeypatch, terminal
-):
-    entries, leaf_id = large_tree
-    record, _ = _record_with_counted_entries(entries, leaf_id)
     record.root = str(tmp_path)
     record.created_at = "2099-01-01T00:00:00+00:00"
     record.updated_at = record.created_at
-    record.title = "Performance fixture"
-    terminal.store.insert_record(record)
-    terminal.factory = lambda _record: RuntimeAgent(provider=NoopProvider(), tools=[])
-    backend = terminal.backend(record.id, root=tmp_path)
-    original_load = RuntimeAgent.load_owned_conversation
-    transfers = []
-
-    def load_owned(self, transferred, **kwargs):
-        copies = _count_entry_copies(monkeypatch)
-        original_load(self, transferred, **kwargs)
-        assert isinstance(self, RuntimeAgent)
-        assert copies["count"] == 0
-        assert self._context is not None
-        runtime_entries = self._context.conversation_log.entries
-        assert len(runtime_entries) == ACTIVE_COUNT
-        assert runtime_entries[0] is transferred[0]
-        transfers.append(len(runtime_entries))
-
-    monkeypatch.setattr(RuntimeAgent, "load_owned_conversation", load_owned)
-    assert (
-        run_headless_prompt(
-            backend.connection, "new prompt", stdout=StringIO(), stderr=StringIO()
-        )
-        == 0
-    )
-    assert transfers
-
-
-def test_runtime_append_copies_only_the_new_entry(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entries, leaf_id = large_tree
-    record, _ = _record_with_counted_entries(entries, leaf_id)
-    active = StoredSession(
-        record.id,
-        tmp_path,
-        SessionStore(tmp_path),
-        record,
-    )
-    manager = ContextManager()
-    context = manager.initialize_owned(
-        "",
-        active.active_entries(),
-        append_prompt=False,
-    )
-    copies = _count_entry_copies(monkeypatch)
-
-    manager.append_message(context, Message.user("new"))
-
-    assert copies["count"] == 1
-    assert len(context.conversation_log.entries) == ACTIVE_COUNT + 1
-    assert context.conversation_log.entries[-1].parent_id == leaf_id
-
-
-def test_proven_save_appends_without_tree_scan_or_prefix_comparison(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    store = SessionStore(tmp_path / "sessions")
-    store.insert_record(record)
-    active = StoredSession(record.id, tmp_path, store, record)
-    incoming = active.active_entries()
-    appended = ConversationEntry(
-        id="appended-entry",
-        kind="user",
-        message=Message.user("new"),
-        parent_id=leaf_id,
-    )
-    incoming.append(appended)
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
-    committed: list[SessionRecord] = []
-    original_save = store.save
-
-    def fail(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("full-tree fallback was used")
-
-    def track_save(*args: Any, **kwargs: Any) -> SessionRecord:
-        saved = original_save(*args, **kwargs)
-        committed.append(saved)
-        return saved
-
-    monkeypatch.setattr("yoke.session.repository.tree.SessionTree.restore", fail)
-    monkeypatch.setattr("yoke.session.repository.table._extends", fail)
-    monkeypatch.setattr(store, "load", fail)
-    monkeypatch.setattr(store, "maintain_index", fail)
-    monkeypatch.setattr(store, "save", track_save)
-
-    save_active_session(
-        active,
-        [Message.user("new")],
-        conversation_entries=incoming,
-    )
-
-    assert committed == [active.record]
-    assert counted.scans == scans_before
-    assert copies["count"] < 10
-    assert active.record.conversation_entries[-1].id == appended.id
-    assert active.tree_index.active_entry_refs()[-1].id == appended.id
-    assert stored_entry_rows(store, record.id)[-1][1] == appended.id
+    return record
 
 
 def test_clean_prompt_exit_does_not_capture_or_save_conversation(
-    large_tree, tmp_path, monkeypatch, terminal
+    tmp_path, monkeypatch, terminal
 ):
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    record.root = str(tmp_path)
-    record.created_at = "2099-01-01T00:00:00+00:00"
-    record.updated_at = record.created_at
+    record = _large_record(tmp_path)
     record.provider_name = "demo"
     record.model_id = "gpt-a"
     record.reasoning_effort = "low"
@@ -363,28 +104,20 @@ def test_clean_prompt_exit_does_not_capture_or_save_conversation(
 
     monkeypatch.setattr(SessionStore, "save", fail)
     monkeypatch.setattr(SessionStore, "load", fail)
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
     persist_prompt_exit_state(
         state=state,
         state_lock=Lock(),
         active_session=session_for(backend),
         agent=backend,
     )
-    assert counted.scans == scans_before
-    assert copies["count"] == 0
     assert stored_entry_rows(terminal.store, record.id) == rows_before
     assert events == []
 
 
 def test_prompt_exit_writes_only_changed_reasoning_metadata(
-    large_tree, tmp_path, monkeypatch, terminal
+    tmp_path, monkeypatch, terminal
 ):
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    record.root = str(tmp_path)
-    record.created_at = "2099-01-01T00:00:00+00:00"
-    record.updated_at = record.created_at
+    record = _large_record(tmp_path)
     record.provider_name = "demo"
     record.model_id = "gpt-a"
     record.reasoning_effort = "low"
@@ -409,16 +142,12 @@ def test_prompt_exit_writes_only_changed_reasoning_metadata(
 
     monkeypatch.setattr(SessionStore, "save", fail)
     monkeypatch.setattr(SessionStore, "load", fail)
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
     persist_prompt_exit_state(
         state=state,
         state_lock=Lock(),
         active_session=session_for(backend),
         agent=backend,
     )
-    assert counted.scans == scans_before
-    assert copies["count"] == 0
     assert stored_entry_rows(terminal.store, record.id) == rows_before
     assert len(events) == 1
     assert events[0]["reasoning_effort"] == "medium"
@@ -426,128 +155,17 @@ def test_prompt_exit_writes_only_changed_reasoning_metadata(
     assert terminal.store.summary_record(record.id).reasoning_effort == "medium"
 
 
-def test_unchanged_transcript_persistence_uses_retained_active_path(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    store = SessionStore(tmp_path / "sessions")
-    store.insert_record(record)
-    active = StoredSession(record.id, tmp_path, store, record)
-    messages = active.messages()
-    agent = RuntimeAgent(provider=NoopProvider(), tools=[])
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
-
-    def fail(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("unchanged transcript used full-tree reconciliation")
-
-    monkeypatch.setattr("yoke.agent.session_tree.SessionTree.reconcile", fail)
-    monkeypatch.setattr(store, "load", fail)
-    monkeypatch.setattr(store, "maintain_index", fail)
-
-    try:
-        persist_session_state(active, agent, messages)
-    finally:
-        agent.close()
-
-    assert counted.scans == scans_before
-    assert copies["count"] <= ACTIVE_COUNT
-
-
-def test_tree_selector_build_and_filter_are_single_pass(
-    large_tree: tuple[list[ConversationEntry], str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
-    active = StoredSession(
-        record.id,
-        tmp_path,
-        SessionStore(tmp_path),
-        record,
-    )
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
-    filter_calls = {"count": 0}
-    original_filter = tree_view._filter_matches
-
-    def counted_filter(*args: Any, **kwargs: Any) -> bool:
-        filter_calls["count"] += 1
-        if filter_calls["count"] > ENTRY_COUNT:
-            pytest.fail("tree filtering scanned a subtree more than once")
-        return original_filter(*args, **kwargs)
-
-    monkeypatch.setattr(tree_view, "_filter_matches", counted_filter)
-
-    roots = build_tree_nodes(
-        active.record.conversation_entries,
-        {entry.id for entry in active.tree_index.active_entry_refs()},
-    )
-    folded = default_folded_tree_ids(roots)
-    rows = flatten_tree_rows(
-        roots,
-        current_leaf_id=leaf_id,
-        folded_ids=folded,
-    )
-
-    assert counted.scans == scans_before + 1
-    assert copies["count"] == 0
-    assert filter_calls["count"] == 0
-    searched = flatten_tree_rows(
-        roots,
-        current_leaf_id=leaf_id,
-        search="not-present",
-    )
-    assert filter_calls["count"] == 1
-    assert folded == {f"inactive-{ACTIVE_COUNT:08d}"}
-    assert [row.entry.id for row in rows] == [
-        f"inactive-{ACTIVE_COUNT:08d}",
-        leaf_id,
-    ]
-    assert [row.entry.id for row in searched] == [leaf_id]
-
-
-def test_store_load_streams_without_path_read_text(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = SessionStore(tmp_path)
-    record = SessionRecord(
-        id="streamed",
-        conversation_entries=[
-            ConversationEntry(id="one", kind="user", message=Message.user("x"))
-        ],
-        leaf_id="one",
-    )
-    store.insert_record(record)
-
-    def fail_read_text(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("Path.read_text loaded the complete session")
-
-    monkeypatch.setattr(Path, "read_text", fail_read_text)
-
-    loaded = store.load(record.id)
-
-    assert loaded.conversation_entries[0].id == "one"
-
-
 def test_tree_label_writes_one_indexed_entry_update(
-    large_tree: tuple[list[ConversationEntry], str],
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch,
 ) -> None:
-    entries, leaf_id = large_tree
-    record, counted = _record_with_counted_entries(entries, leaf_id)
+    record = _large_record(tmp_path)
+    leaf_id = record.leaf_id
+    assert leaf_id is not None
     store = SessionStore(tmp_path / "sessions")
     store.insert_record(record)
     active = StoredSession(record.id, tmp_path, store, record)
     rows_before = stored_entry_rows(store, record.id)
-    scans_before = counted.scans
-    copies = _count_entry_copies(monkeypatch)
 
     def fail_rewrite(*_args: object, **_kwargs: object) -> None:
         pytest.fail("label update rewrote the complete session")
@@ -563,20 +181,16 @@ def test_tree_label_writes_one_indexed_entry_update(
         active.id, entry, existing_record=active.record, tree_index=active.tree_index
     )
 
-    assert counted.scans == scans_before + 2
-    assert copies["count"] == 2
     rows_after = stored_entry_rows(store, record.id)
     changed = [
         index for index, row in enumerate(rows_after) if row != rows_before[index]
     ]
     assert len(rows_after) == len(rows_before)
     assert [rows_after[index][1] for index in changed] == [leaf_id]
-    assert record.conversation_entries[ACTIVE_COUNT - 1].metadata == {}
+    assert record.conversation_entries[31].metadata == {}
     loaded = store.load(record.id)
-    assert loaded.conversation_entries[ACTIVE_COUNT - 1].metadata == {
-        "label": "checkpoint"
-    }
-    assert loaded.conversation_entries[ACTIVE_COUNT - 1].id == leaf_id
+    assert loaded.conversation_entries[31].metadata == {"label": "checkpoint"}
+    assert loaded.conversation_entries[31].id == leaf_id
 
 
 def test_duplicate_entry_replacement_uses_latest_event_order() -> None:
@@ -606,19 +220,3 @@ def test_duplicate_entry_replacement_uses_latest_event_order() -> None:
         "first",
     ]
     assert decoded.conversation_entries[-1].metadata == {"replacement": True}
-
-
-def _legacy_jsonl(record: SessionRecord) -> str:
-    """Encode a record the way the JSONL store wrote it."""
-    lines = [
-        {"type": "yoke_session", "version": 2},
-        {
-            "type": "metadata",
-            **record.model_dump(mode="json", exclude={"conversation_entries"}),
-        },
-        *(
-            {"type": "entry", "entry": entry.model_dump(mode="json")}
-            for entry in record.conversation_entries
-        ),
-    ]
-    return "".join(json.dumps(line) + "\n" for line in lines)

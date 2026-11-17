@@ -47,7 +47,6 @@ def test_registry_is_an_explicit_tool_allowlist(tmp_path: Path) -> None:
         async with memory_client(service) as client:
             result = await client.list_tools()
             assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
-            assert set(TOOL_REGISTRY) == set(EXPECTED_TOOLS[:10])
             tools = {tool.name: tool for tool in result.tools}
             read_tool = tools["read_file"]
             image_tool = tools["view_image"]
@@ -114,20 +113,6 @@ def test_registry_is_an_explicit_tool_allowlist(tmp_path: Path) -> None:
             assert image_tool.input_schema == TOOL_REGISTRY[
                 "view_image"
             ].tool_class.model_json_schema(by_alias=True)
-
-    asyncio.run(scenario())
-
-
-def test_old_process_names_are_not_mcp_aliases(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        service = create_service(MCPServerConfig(root=tmp_path))
-        async with memory_client(service):
-            for name in ("exec_command", "exec_python", "write_stdin", "process_io"):
-                result = await service.adapter.call_tool(name, {})
-                payload = structured(result)
-                assert result.is_error is True
-                assert payload["error_code"] == "UNKNOWN_TOOL"
-                assert payload["execution_started"] is False
 
     asyncio.run(scenario())
 

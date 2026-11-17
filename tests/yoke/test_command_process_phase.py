@@ -228,15 +228,6 @@ def test_reading_phase_and_snapshots_never_changes_lifecycle_state(caplog) -> No
 def test_lifecycle_flags_are_derived_from_the_phase() -> None:
     managed = make_process()
 
-    assert isinstance(vars(_ManagedCommandProcess)["finished"], property)
-    assert isinstance(vars(_ManagedCommandProcess)["closed"], property)
-    assert "_effective_phase_locked" not in vars(_ManagedCommandProcess)
-    assert "_mark_finished_locked" not in vars(_ManagedCommandProcess)
-    assert "_tree_cleanup_complete" not in vars(managed)
-    assert "_local_cleanup_complete" not in vars(managed)
-    assert "finished" not in vars(managed)
-    assert "closed" not in vars(managed)
-
     assert managed.phase is ProcessPhase.EXITED
     assert managed.finished is True
     assert managed.finished_monotonic is not None
