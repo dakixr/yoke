@@ -34,6 +34,11 @@ def test_headless_autospawns_and_prints(sandbox, monkeypatch):
     assert sandbox.status()["pid"]
     from yoke.session import SessionStore
 
-    assert [
-        message.text_content() for message in SessionStore().load("saved").messages
-    ] == ["hello", "echo:hello"]
+    store = SessionStore()
+    try:
+        assert [message.text_content() for message in store.load("saved").messages] == [
+            "hello",
+            "echo:hello",
+        ]
+    finally:
+        store.database.close()

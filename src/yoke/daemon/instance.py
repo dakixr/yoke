@@ -1,19 +1,40 @@
 """Single-instance lock and the ``daemon.json`` discovery record.
 
-Liveness is decided by the lock, never by a pid: the kernel drops a ``flock``
+Liveness is decided by the lock, never by a pid: the kernel drops a file lock
 when its holder dies, so a stale socket or record left by a killed daemon is
 simply overwritten by the next daemon that wins the lock.
 """
 
 from __future__ import annotations
 
-import fcntl
+import errno
 import json
 import os
+import sys
 import time
 from dataclasses import asdict, dataclass
 
 from yoke.daemon.paths import DaemonPaths
+
+
+def _lock(fd: int, *, shared: bool = False) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        # A byte beyond EOF can be locked. Never write into a held lock.
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+        fcntl.flock(fd, mode | fcntl.LOCK_NB)
+
+
+def _contended(exc: OSError) -> bool:
+    if sys.platform == "win32":
+        return exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK)
+    return isinstance(exc, BlockingIOError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +52,7 @@ class DaemonInfo:
 
 
 class InstanceLock:
-    """An exclusive ``flock`` on ``daemon.lock`` held for the daemon's lifetime."""
+    """An exclusive OS file lock on ``daemon.lock`` held for the daemon's lifetime."""
 
     def __init__(self, fd: int) -> None:
         self._fd: int | None = fd
@@ -46,12 +67,17 @@ class InstanceLock:
         probing the lock; a live daemon holds it far longer than this.
         """
         paths.ensure()
-        fd = os.open(paths.lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        fd = os.open(
+            paths.lock, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600
+        )
         deadline = time.monotonic() + wait_seconds
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
+                _lock(fd)
+            except OSError as exc:
+                if not _contended(exc):
+                    os.close(fd)
+                    raise
                 if time.monotonic() >= deadline:
                     os.close(fd)
                     return None
@@ -68,12 +94,14 @@ class InstanceLock:
 def daemon_alive(paths: DaemonPaths) -> bool:
     """Return whether some process holds the daemon lock right now."""
     try:
-        fd = os.open(paths.lock, os.O_RDWR | os.O_NOFOLLOW)
+        fd = os.open(paths.lock, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
     except FileNotFoundError:
         return False
     try:
-        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except BlockingIOError:
+        _lock(fd, shared=True)
+    except OSError as exc:
+        if not _contended(exc):
+            raise
         return True
     finally:
         os.close(fd)
@@ -84,10 +112,17 @@ def write_info(paths: DaemonPaths, info: DaemonInfo) -> None:
     """Atomically replace ``daemon.json`` with a private (0600) record."""
     temporary = paths.info.with_name(f".{paths.info.name}.{os.getpid()}.tmp")
     fd = os.open(
-        temporary, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600
+        temporary,
+        os.O_CREAT | os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
     )
     try:
-        os.fchmod(fd, 0o600)
+        if sys.platform == "win32":
+            from yoke.daemon.windows import protect_path
+
+            protect_path(temporary)
+        else:
+            os.fchmod(fd, 0o600)
         os.write(fd, json.dumps(asdict(info), indent=2).encode() + b"\n")
     finally:
         os.close(fd)

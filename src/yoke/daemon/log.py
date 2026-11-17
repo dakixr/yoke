@@ -11,13 +11,22 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, BinaryIO, TextIO
 
 from uvicorn.config import LOGGING_CONFIG
 from uvicorn.logging import AccessFormatter, DefaultFormatter
 
 DETACHED_ENV = "YOKE_DAEMON_DETACHED"
 MAX_LOG_BYTES = 2 * 1024 * 1024
+
+
+def open_spawn_log(path: Path) -> BinaryIO:
+    """Open detached stdio; Windows handles permit the daemon to rotate it."""
+    if sys.platform == "win32":
+        from yoke.daemon.windows import open_log
+
+        return open_log(path)
+    return open(path, "ab")
 
 
 class _LogStream(io.TextIOBase):

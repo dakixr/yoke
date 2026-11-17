@@ -9,6 +9,7 @@ import pytest
 
 PROCESS_GROUPS = {
     "cli/test_headless_client.py": "daemon-processes",
+    "daemon/test_windows_process.py": "daemon-processes",
     "daemon/test_process.py": "daemon-processes",
     "daemon/test_adversarial_process.py": "daemon-processes",
 }

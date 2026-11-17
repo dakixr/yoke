@@ -22,6 +22,7 @@ from yoke.acp.process_monitor import ProcessMonitor
 from yoke.acp.prompting import InlineAttachment
 from yoke.acp.state import ActiveTurn
 from yoke.daemon.uds import async_unix_transport
+from yoke.daemon.transport import Endpoint, TcpEndpoint
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 
@@ -57,6 +58,12 @@ class NativeClient:
         self.process_monitor = ProcessMonitor(self)
         self.agent_monitor = AgentMonitor(self)
         self.event_hub = NativeEventHub(self)
+
+    def use_daemon_endpoint(self, endpoint: Endpoint) -> None:
+        """Refresh Windows requests and SSE after discovery rotates the token."""
+        if isinstance(endpoint, TcpEndpoint):
+            self.http.base_url = f"http://127.0.0.1:{endpoint.port}/api/v1/"
+            self.http.headers["Authorization"] = f"Bearer {endpoint.token}"
 
     async def hold_lease(self) -> None:
         """Hold the contacted daemon alive, including for explicit HTTP URLs."""

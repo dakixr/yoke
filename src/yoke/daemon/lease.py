@@ -6,35 +6,41 @@ import asyncio
 import logging
 import os
 import json
+from collections.abc import Callable
 
 import httpx
 
-from yoke.daemon.client import connect_or_spawn
+from yoke.daemon.client import DaemonHandle, connect_or_spawn
 from yoke.daemon.paths import DaemonPaths
-from yoke.daemon.uds import async_unix_transport
+from yoke.daemon.transport import async_client
 
 LOGGER = logging.getLogger(__name__)
 _RETRY_SECONDS = 0.5
 
 
-async def hold_lease(client: str, paths: DaemonPaths | None = None) -> None:
+async def hold_lease(
+    client: str,
+    paths: DaemonPaths | None = None,
+    *,
+    on_connect: Callable[[DaemonHandle], None] | None = None,
+) -> None:
     """Hold ``GET /daemon/lease`` open until cancelled.
 
     When the stream ends (the daemon restarted for a new build, or crashed),
     rediscover the daemon, starting one if needed, and take a new lease. The
-    socket path is stable, so the client's other connections keep working.
+    Unix socket path is stable. ``on_connect`` lets TCP clients refresh their
+    port and token before opening other connections.
     """
     paths = paths or DaemonPaths.default()
     params = {"client": client, "pid": str(os.getpid())}
     while True:
         try:
             handle = await asyncio.to_thread(connect_or_spawn, paths)
-            transport = async_unix_transport(handle.socket)
-            async with httpx.AsyncClient(
-                transport=transport,
-                base_url="http://yoke/api/v1/",
+            if on_connect is not None:
+                on_connect(handle)
+            async with async_client(
+                handle.socket,
                 timeout=httpx.Timeout(10.0, read=None),
-                trust_env=False,
             ) as http:
                 async with http.stream("GET", "daemon/lease", params=params) as stream:
                     stream.raise_for_status()

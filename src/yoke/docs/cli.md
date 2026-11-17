@@ -75,7 +75,9 @@ suppresses the startup token line for service managers that inject
 `YOKE_HTTP_TOKEN` through a protected environment file.
 
 `yoke serve --daemon` runs the per-user daemon with a uid-authorized Unix
-socket and loopback HTTP on port 8770. It exits about five seconds after its last
+socket on Unix and token-authenticated loopback HTTP on port 8770. Windows
+clients use the loopback listener with the token from the ACL-protected
+`~/.yoke/daemon.json`. It exits about five seconds after its last
 client lease closes and all running or queued work drains. `--no-idle-exit`
 keeps it running under systemd. `yoke daemon status|restart|stop` manages it;
 restart and stop refuse while busy unless `--when-idle` or `--force` is supplied,

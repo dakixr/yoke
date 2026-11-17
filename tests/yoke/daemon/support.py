@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -14,9 +13,11 @@ from typing import Any
 
 import pytest
 
-from yoke.daemon.client import connect_or_spawn, find_daemon, unix_client
+from yoke.daemon.client import connect_or_spawn, find_daemon, spawn_options, unix_client
 from yoke.daemon.instance import daemon_alive, read_info
 from yoke.daemon.paths import DaemonPaths
+from yoke.daemon.log import open_spawn_log
+from yoke.agent_runs.worker import Worker
 
 PLUGIN = """
 import os
@@ -71,16 +72,17 @@ class DaemonSandbox:
         self.root = root
         self.paths = DaemonPaths.default()
         self.processes: list[subprocess.Popen[bytes]] = []
+        self.workers: dict[int, Worker] = {}
 
     def start(self, *args: str) -> int:
         self.paths.ensure()
-        with self.paths.log.open("ab") as log:
+        with open_spawn_log(self.paths.log) as log:
             process = subprocess.Popen(
                 [sys.executable, "-m", "yoke", "serve", "--daemon", *args],
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=log,
-                start_new_session=True,
+                **spawn_options(),
             )
         self.processes.append(process)
         try:
@@ -94,31 +96,61 @@ class DaemonSandbox:
             return {}
         with unix_client(path) as http:
             response = http.get("daemon")
-            return response.json()["data"] if response.is_success else {}
+            data = response.json()["data"] if response.is_success else {}
+            if data:
+                self.observe(data["pid"])
+            return data
 
     def connect(self):  # noqa: ANN201
         try:
-            return connect_or_spawn(self.paths, timeout=15)
+            handle = connect_or_spawn(self.paths, timeout=15)
+            self.observe(handle.pid)
+            return handle
         except Exception as exc:
             raise AssertionError(self.paths.log.read_text()) from exc
+
+    def observe(self, pid: int) -> None:
+        if pid not in self.workers:
+            try:
+                self.workers[pid] = Worker.open(pid)
+            except OSError:
+                pass  # An already-exited process no longer holds a log handle.
 
     def wait_stopped(self, timeout: float = 8) -> None:
         eventually(lambda: not daemon_alive(self.paths), timeout)
 
     def stop(self) -> None:
+        info = read_info(self.paths)
+        if info is not None and daemon_alive(self.paths):
+            self.observe(info.pid)
         try:
             if find_daemon(self.paths):
-                with unix_client(self.paths.socket) as http:
+                with unix_client(find_daemon(self.paths) or self.paths.socket) as http:
                     http.post("daemon/stop", json={"force": True})
             self.wait_stopped()
         except Exception:  # noqa: BLE001
             info = read_info(self.paths)
             if info and daemon_alive(self.paths):
-                os.kill(info.pid, signal.SIGKILL)
+                # Only the PID published under this sandbox's lifetime lock.
+                if sys.platform == "win32":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(info.pid), "/T", "/F"],
+                        check=False,
+                        capture_output=True,
+                    )
+                else:
+                    import signal
+
+                    os.kill(info.pid, signal.SIGKILL)
         for process in self.processes:
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=8)
+        for worker in self.workers.values():
+            try:
+                eventually(worker.dead, timeout=10)
+            finally:
+                worker.close()
 
 
 @pytest.fixture

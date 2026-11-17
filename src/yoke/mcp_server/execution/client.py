@@ -25,9 +25,11 @@ def _request(operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
     )
     if len(payload) > 4 * 1024 * 1024:
         raise ValueError("Bridge request exceeds 4 MiB")
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+    local_tcp = _address.startswith("tcp:")
+    family = socket.AF_INET if local_tcp else socket.AF_UNIX
+    with socket.socket(family, socket.SOCK_STREAM) as connection:
         connection.settimeout(180)
-        connection.connect(_address)
+        connection.connect(("127.0.0.1", int(_address[4:])) if local_tcp else _address)
         connection.sendall(payload)
         with connection.makefile("rb") as reader:
             raw = reader.readline(8 * 1024 * 1024 + 1)

@@ -363,3 +363,21 @@ compactions and activity within ten minutes defer conversion. Idle writers do
 not wait behind turn writers. Explicit `yoke db compact` finishes eligible work,
 collects orphans and vacuums; `yoke db stats` distinguishes physical pages from
 logical image, usage and other JSON bytes.
+
+### Windows daemon support in 3.33.0
+
+Windows uses the existing loopback TCP listener for CLI, ACP and leases, with
+bearer authentication from the discovery record. Unix keeps its socket and
+peer-uid path unchanged. Windows requires a usable TCP port, ignores
+`XDG_RUNTIME_DIR` and Unix socket path limits, and publishes an empty socket
+field. The state directory and discovery record receive protected current-user
+DACLs before token publication. ACL failures abort startup.
+
+The lifetime lock uses `msvcrt.locking` on one byte on Windows and `flock` on
+Unix. Discovery liveness still comes from the lock, never a persisted PID.
+Windows spawn uses `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`; Unix keeps
+`start_new_session=True`. Normal stop and restart are authenticated HTTP
+requests that run the shared graceful lifecycle, so no Windows signal emulation
+is needed. Windows agent-run reporting retains its existing per-launch TCP
+capability channel. The managed Python MCP bridge uses the same loopback
+approach with its existing per-execution capabilities and revocation.

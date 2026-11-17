@@ -17,7 +17,8 @@ import httpx
 
 from yoke.cli.backend.events import EventSubscriptions, event_from_sse
 from yoke.daemon.client import DaemonHandle, connect_or_spawn, unix_client
-from yoke.daemon.uds import async_unix_transport, ignore_cancelled_socket_wakeups
+from yoke.daemon.transport import async_client
+from yoke.daemon.uds import ignore_cancelled_socket_wakeups
 
 
 class DaemonRequestError(ValueError):
@@ -78,12 +79,9 @@ class SessionConnection:
             return
 
         async def change() -> None:
-            transport = async_unix_transport(self._handle.socket)
-            async with httpx.AsyncClient(
-                transport=transport,
-                base_url="http://yoke/api/v1/",
+            async with async_client(
+                self._handle.socket,
                 timeout=10,
-                trust_env=False,
             ) as http:
                 response = await http.delete(
                     f"session/{self.session_id}/client", params={"owner": self.owner}
@@ -137,7 +135,8 @@ class SessionConnection:
                 "GET", "daemon/lease", params={"client": self.owner}
             ) as response:
                 response.raise_for_status()
-                next(response.iter_lines())
+                lines = response.iter_lines()
+                next(lines)
                 yield
 
     def start(self, *, timeout: float = 10) -> None:
@@ -200,12 +199,9 @@ class SessionConnection:
                         self._handle = await discovery
                         raise
                     self._report_warning()
-                    transport = async_unix_transport(self._handle.socket)
-                    async with httpx.AsyncClient(
-                        transport=transport,
-                        base_url="http://yoke/api/v1/",
+                    async with async_client(
+                        self._handle.socket,
                         timeout=httpx.Timeout(10, read=None),
-                        trust_env=False,
                     ) as http:
                         self._stream_task = asyncio.create_task(
                             self._attached_stream(http)
@@ -230,12 +226,9 @@ class SessionConnection:
         finally:
             # Do not discover or spawn a daemon just to detach on exit.
             try:
-                transport = async_unix_transport(self._handle.socket)
-                async with httpx.AsyncClient(
-                    transport=transport,
-                    base_url="http://yoke/api/v1/",
+                async with async_client(
+                    self._handle.socket,
                     timeout=2,
-                    trust_env=False,
                 ) as http:
                     await http.delete(
                         f"session/{self.session_id}/client",

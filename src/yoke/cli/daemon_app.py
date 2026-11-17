@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from yoke.daemon.transport import Endpoint
 from typing import Annotated
 
 import typer
@@ -122,7 +122,7 @@ def stop(
     typer.echo(f"Yoke daemon {pid} stopped.")
 
 
-def _wait_until_gone(socket_path: Path, pid: int) -> None:
+def _wait_until_gone(socket_path: Endpoint, pid: int) -> None:
     from yoke.daemon.client import DaemonUnavailable, wait_for_exit
 
     try:

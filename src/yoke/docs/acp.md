@@ -1,7 +1,7 @@
 # ACP and T3 Code
 
 `yoke acp` is a stdio ACP agent backed by the per-user Yoke daemon.
-With no URL, it discovers the Unix socket or starts a detached
+With no URL, it discovers the local daemon or starts a detached
 `yoke serve --daemon`, then holds a named event-stream lease until ACP closes.
 The daemon owns durable conversations and execution. Closing ACP releases its
 client tool configuration and prompt observers. Saved sessions remain available.
@@ -9,8 +9,9 @@ client tool configuration and prompt observers. Saved sessions remain available.
 ## T3 Code setup
 
 Use `yoke acp` as the local command. No URL or bearer token is needed for the
-local Unix socket, which authenticates the peer's uid. Discovery waits up to
-five seconds for startup; daemon output goes to `~/.yoke/run/daemon.log`.
+local Unix socket, which authenticates the peer's uid. On Windows it uses the
+loopback TCP port and bearer token from the user-private `daemon.json`.
+Discovery waits up to five seconds for startup; daemon output goes to `~/.yoke/run/daemon.log`.
 `yoke daemon status`, `restart`, and `stop` inspect or control it.
 
 An explicit `--url` or `YOKE_ACP_URL` selects an existing HTTP server instead.

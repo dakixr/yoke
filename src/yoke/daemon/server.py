@@ -99,8 +99,11 @@ def run_daemon(
         if os.environ.get(DETACHED_ENV) == "1":
             stdio.enter_context(detached_stdio(paths.log))
         preload_runtime()
-        unix_sock = _bind_unix(paths.socket)
+        if sys.platform != "win32":
+            unix_sock = _bind_unix(paths.socket)
         tcp_sock = _bind_tcp(port)
+        if sys.platform == "win32" and tcp_sock is None:
+            raise OSError(f"Daemon loopback port {port} is unavailable")
         selected_port = int(tcp_sock.getsockname()[1]) if tcp_sock else None
         token = os.environ.get("YOKE_HTTP_TOKEN") or secrets.token_urlsafe(32)
         lifecycle = DaemonLifecycle(idle_exit=idle_exit, grace_seconds=grace_seconds)
@@ -118,7 +121,7 @@ def run_daemon(
                 pid=os.getpid(),
                 build_id=build_id(),
                 protocol_version=protocol_version(),
-                socket=str(paths.socket),
+                socket=str(paths.socket) if unix_sock is not None else "",
                 port=selected_port,
                 token=token,
                 idle_exit=idle_exit,
@@ -126,7 +129,8 @@ def run_daemon(
             ),
         )
         print(f"Yoke daemon {build_id()} pid {os.getpid()}", flush=True)
-        print(f"Yoke daemon socket {paths.socket}", flush=True)
+        if unix_sock is not None:
+            print(f"Yoke daemon socket {paths.socket}", flush=True)
         if selected_port is None:
             print(
                 f"Yoke daemon port {port} is in use; running socket-only",
@@ -201,7 +205,7 @@ def _build_server(
             auth_token=token,
             session_directory=session_directory,
             daemon=lifecycle,
-            daemon_socket=str(socket_path),
+            daemon_socket=str(socket_path) if sys.platform != "win32" else None,
         )
     )
     app.state.daemon_port = port
@@ -253,7 +257,10 @@ def _bind_tcp(port: int) -> socket.socket | None:
     """Bind loopback TCP for the browser; ``None`` when the port is taken."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if sys.platform == "win32":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", port))
         sock.listen(128)
     except OSError as exc:

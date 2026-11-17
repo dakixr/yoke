@@ -4,8 +4,7 @@
 sessions and serves the packaged browser application from the same origin. The
 daemon owns the session runtime registry, queue admission, execution workers,
 event feed, process inspector, tool inspector, and the shared services used by
-the CLI. The normal interactive CLI continues to call those Python/runtime
-services directly and does not route itself through HTTP.
+the CLI. Interactive and headless CLI clients attach to the per-user daemon over HTTP.
 
 `yoke serve --session-dir PATH` (or `YOKE_HTTP_SESSION_DIR`) selects an explicit
 session store for a dedicated daemon. `--hide-token` suppresses the startup
@@ -17,12 +16,12 @@ session state and physical worker drain.
 
 ## Per-user daemon
 
-`yoke serve --daemon` runs one daemon per user. The exclusive lifetime flock on
+`yoke serve --daemon` runs one daemon per user. The exclusive lifetime OS lock on
 `~/.yoke/daemon.lock` is taken before binding. A losing startup racer exits 0.
 After a crash, the next lock holder replaces the stale socket and discovery
 record without trusting a pid from disk.
 
-The local listener is `$XDG_RUNTIME_DIR/yoke/daemon.sock`, falling back to
+On Linux and macOS, the local listener is `$XDG_RUNTIME_DIR/yoke/daemon.sock`, falling back to
 `~/.yoke/run/daemon.sock` when the runtime directory is unset or its socket path
 exceeds the Unix socket length limit. If the home fallback is also too long,
 startup reports the path error; set a shorter `XDG_RUNTIME_DIR`. Daemon state and
@@ -32,15 +31,39 @@ The socket accepts only the kernel-reported peer uid of the daemon user
 `127.0.0.1:8770`, authenticated with a bearer token. If the port is occupied,
 the daemon reports it and continues socket-only. `--port` or `YOKE_DAEMON_PORT`
 overrides that port; zero requests an ephemeral port. `~/.yoke/daemon.json`,
-mode 0600, records pid, build id, protocol version, socket, selected port and
-token. Detached logs go to `~/.yoke/run/daemon.log`, rotating at 2 MiB with two
-backups throughout the daemon's lifetime.
+mode 0600 on Unix, records pid, build id, protocol version, socket, selected port
+and token. Detached logs go to `~/.yoke/run/daemon.log`, rotating at 2 MiB with two
+backups throughout the daemon's lifetime. Windows opens inherited log handles
+with delete sharing so they permit rotation. Windows opens inherited stdio log
+handles with delete sharing so rotation can rename those files.
 
 `yoke.daemon.client.connect_or_spawn()` discovers or starts a detached daemon
-in its own process session, then polls for up to five seconds. ACP uses this
-helper by default. The interactive and headless CLI still run in process.
+in its own process session, then polls for up to five seconds. CLI and ACP use this
+helper by default. Windows detaches with `DETACHED_PROCESS` and
+`CREATE_NEW_PROCESS_GROUP`, without a POSIX session.
 No live systemd service is migrated automatically. A sample user unit is in
 [`docs/yoke-daemon.service`](../../../docs/yoke-daemon.service).
+
+On Windows, CLI and ACP clients use the loopback TCP port and bearer token
+from `daemon.json`. There is no Unix socket or `XDG_RUNTIME_DIR` requirement.
+The daemon holds an exclusive `msvcrt.locking` byte lock for its lifetime;
+Windows releases it on process exit, including a crash. An occupied TCP port
+fails startup because Windows clients require that listener. No in-process
+fallback exists on any platform.
+
+Before publishing the token, Windows startup replaces the state and run
+directories' DACLs with protected ACLs granting full control only to the current
+process user's SID. Child files inherit that access. The temporary discovery
+record also receives a protected user-only DACL before its atomic replacement
+of `daemon.json`. A filesystem that cannot enforce these ACLs causes startup to
+fail. Use a local user profile on an ACL-capable filesystem such as NTFS.
+Windows administrators can still take ownership using their administrative
+privileges, as root can on Unix. Never share the token or copy it into logs.
+
+Stop and restart use authenticated HTTP controls on every platform. The daemon
+closes event streams, drains workers and releases its lock after removing its
+discovery record. Windows does not need Unix signals or signal-zero PID probes
+for daemon liveness or normal shutdown.
 
 A lease is an authenticated open event stream that identifies the client.
 `GET /api/v1/event?client=web` makes the normal feed a lease. Alternatively,

@@ -59,6 +59,33 @@ selects the most recently attached remaining client. `DELETE .../client?owner=`
 removes only that owner and is safe during a turn. It neither interrupts work
 nor changes another attachment's tools, approval policy, or environment.
 
+## Local transport
+
+Every CLI and ACP invocation discovers or auto-spawns the shared per-user
+daemon. Linux and macOS keep the Unix socket transport and kernel peer-uid
+authorization. Windows reads the selected loopback TCP port and bearer token
+from `~/.yoke/daemon.json`; all requests, event streams and leases send that
+token. The record has a protected DACL granting only the current user access,
+as do the daemon state and run directories. TCP never uses the Unix peer-uid
+authentication exemption.
+
+Windows lifetime locking uses a nonblocking exclusive byte lock held until the
+process exits. A second daemon exits successfully without starting listeners.
+Startup retains the HTTP line iterator for its configuration lease, so it
+remains open until configuration finishes. Detached startup uses Windows process
+creation flags; stop, restart and idle
+shutdown use the same HTTP lifecycle controls as Unix. Reconnection rediscovers
+the endpoint and token, including after a restart on an ephemeral port. A
+restart waiter also rediscovers TCP before reading the active daemon identity,
+so another client can start the replacement without trapping the waiter on the
+old port.
+
+Agent-run reporting already uses per-launch random capabilities over loopback
+TCP on Windows. The managed Python MCP bridge also uses loopback TCP there,
+with its existing per-execution token, deadline, budgets and revocation checks.
+Reported worker PIDs are observed through Windows process handles and are never
+used as authority to signal arbitrary processes.
+
 ## Admission and capacity
 
 Add `clientID` to `POST /session/{id}/prompt` to select the admitting attachment.

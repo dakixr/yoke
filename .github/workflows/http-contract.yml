@@ -83,6 +83,9 @@ jobs:
       - name: Sync Python environment
         run: uv sync --group dev
 
+      - name: Validate Windows CLI imports
+        run: uv run python -c "import yoke.cli.main; import yoke.acp.runner; import yoke.daemon.server"
+
       - name: Validate Windows session startup paths
         run: >-
           uv run pytest -q
@@ -92,3 +95,7 @@ jobs:
           tests/yoke/cli/test_prompt_queue_persistence.py
           tests/yoke/cli/test_startup_performance.py
           tests/yoke/http/test_contract.py
+          tests/yoke/daemon/test_portable.py
+          tests/yoke/daemon/test_windows_process.py
+          tests/yoke/cli/test_headless_client.py
+          tests/yoke/daemon/test_capability_tcp.py

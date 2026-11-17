@@ -1,8 +1,7 @@
-"""Find, start and attach to the per-user daemon over its Unix socket.
+"""Discover and attach CLI and ACP clients to the shared per-user daemon.
 
-``connect_or_spawn`` is what every client (ACP now, the CLI later) calls: it
-connects to a running daemon or spawns a detached one, then applies the
-version-skew policy before handing back the socket to talk to.
+Unix uses its peer-checked socket; Windows uses the recorded loopback port and
+bearer token. Apply the same version-skew policy before returning either.
 """
 
 from __future__ import annotations
@@ -14,18 +13,17 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 import httpx
 
 from yoke.daemon.build import build_id, protocol_version
 from yoke.daemon.instance import daemon_alive, read_info
-from yoke.daemon.log import DETACHED_ENV
+from yoke.daemon.log import DETACHED_ENV, open_spawn_log
 from yoke.daemon.paths import DaemonPaths
-from yoke.daemon.uds import unix_transport
+from yoke.daemon.transport import Endpoint, TcpEndpoint, client_options
 
 SPAWN_TIMEOUT_SECONDS = 5.0
-_BASE_URL = "http://yoke/api/v1/"
 
 type SkewAction = Literal["attach", "restart", "warn", "refuse"]
 
@@ -42,18 +40,17 @@ class DaemonIncompatible(RuntimeError):
 class DaemonHandle:
     """An attached daemon: where it listens and what the client was told."""
 
-    socket: Path
+    socket: Endpoint
     pid: int
     build_id: str
     protocol_version: str
     warning: str | None = None
 
 
-def unix_client(socket_path: Path, *, timeout: float = 5.0) -> httpx.Client:
-    """Return a synchronous API client bound to the daemon socket."""
+def unix_client(socket_path: Endpoint, *, timeout: float = 5.0) -> httpx.Client:
+    """Return a local API client, preserving the historical Unix helper name."""
     return httpx.Client(
-        transport=unix_transport(socket_path),
-        base_url=_BASE_URL,
+        **client_options(socket_path),
         timeout=timeout,
         trust_env=False,
     )
@@ -79,15 +76,23 @@ def skew_action(
     return "warn" if client_protocol == daemon_protocol else "refuse"
 
 
-def find_daemon(paths: DaemonPaths | None = None) -> Path | None:
-    """Return the socket of a daemon that answers ``/health``, if any.
+def find_daemon(paths: DaemonPaths | None = None) -> Endpoint | None:
+    """Return a healthy local endpoint, authenticating Windows TCP discovery.
 
     The socket recorded in ``daemon.json`` is tried too, for a client whose
     ``XDG_RUNTIME_DIR`` differs from the daemon's.
     """
     paths = paths or DaemonPaths.default()
-    candidates = [paths.socket]
     info = read_info(paths)
+    if sys.platform == "win32":
+        if info is None or info.port is None or not info.token:
+            return None
+        try:
+            endpoint = TcpEndpoint(info.port, info.token)
+        except ValueError:
+            return None
+        return endpoint if _healthy(endpoint) else None
+    candidates = [paths.socket]
     if info is not None and Path(info.socket) != paths.socket:
         candidates.append(Path(info.socket))
     for candidate in candidates:
@@ -96,18 +101,32 @@ def find_daemon(paths: DaemonPaths | None = None) -> Path | None:
     return None
 
 
+class SpawnOptions(TypedDict, total=False):
+    creationflags: int
+    start_new_session: bool
+
+
+def spawn_options() -> SpawnOptions:
+    """Detach without a console on Windows, preserving POSIX session creation."""
+    if sys.platform == "win32":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, also testable on Unix.
+        return {"creationflags": 0x00000008 | 0x00000200}
+    return {"start_new_session": True}
+
+
 def spawn_daemon(paths: DaemonPaths | None = None) -> subprocess.Popen[bytes]:
     """Start a detached ``yoke serve --daemon`` logging to ``~/.yoke/run``."""
     paths = paths or DaemonPaths.default()
     paths.ensure()
-    with open(paths.log, "ab") as log:
+    with open_spawn_log(paths.log) as log:
         process = subprocess.Popen(
             # -P: never import from the working directory.
             [sys.executable, "-P", "-m", "yoke", "serve", "--daemon"],
+            text=False,
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **spawn_options(),
             close_fds=True,
             cwd=paths.state_dir,
             env={**os.environ, DETACHED_ENV: "1"},
@@ -173,7 +192,7 @@ def connect_or_spawn(
 
 
 def restart_daemon(
-    socket_path: Path, pid: int, *, timeout: float, paths: DaemonPaths | None = None
+    socket_path: Endpoint, pid: int, *, timeout: float, paths: DaemonPaths | None = None
 ) -> bool:
     """Restart an idle daemon; return False if an admission made it busy."""
     with unix_client(socket_path) as client:
@@ -186,20 +205,28 @@ def restart_daemon(
 
 
 def wait_for_exit(
-    socket_path: Path, pid: int, *, timeout: float, paths: DaemonPaths | None = None
+    socket_path: Endpoint, pid: int, *, timeout: float, paths: DaemonPaths | None = None
 ) -> None:
     """Wait for the lifetime lock, not just an unavailable HTTP listener."""
     paths = paths or DaemonPaths.default()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        current_pid = _daemon_pid(socket_path)
+        # TCP restarts can select a new port and always rotate the token. A
+        # lease holder may already have spawned the replacement and taken its
+        # lock before this waiter observes the old lock being released.
+        endpoint = (
+            (find_daemon(paths) or socket_path)
+            if isinstance(socket_path, TcpEndpoint)
+            else socket_path
+        )
+        current_pid = _daemon_pid(endpoint)
         if not daemon_alive(paths) or (current_pid is not None and current_pid != pid):
             return
         time.sleep(0.05)
     raise DaemonUnavailable(f"Yoke daemon {pid} did not exit within {timeout:.0f}s")
 
 
-def _spawn_and_wait(paths: DaemonPaths, timeout: float) -> Path:
+def _spawn_and_wait(paths: DaemonPaths, timeout: float) -> Endpoint:
     try:
         spawn_daemon(paths)
     except OSError as exc:
@@ -215,18 +242,20 @@ def _spawn_and_wait(paths: DaemonPaths, timeout: float) -> Path:
     )
 
 
-def _healthy(socket_path: Path) -> bool:
-    if not socket_path.exists():
+def _healthy(socket_path: Endpoint) -> bool:
+    if isinstance(socket_path, Path) and not socket_path.exists():
         return False
     try:
         with unix_client(socket_path, timeout=2.0) as client:
-            response = client.get("health")
+            response = client.get(
+                "capabilities" if isinstance(socket_path, TcpEndpoint) else "health"
+            )
     except httpx.HTTPError:
         return False
     return response.status_code == 200
 
 
-def _daemon_pid(socket_path: Path) -> int | None:
+def _daemon_pid(socket_path: Endpoint) -> int | None:
     try:
         with unix_client(socket_path, timeout=1.0) as client:
             return int(_data(client.get("daemon"))["pid"])

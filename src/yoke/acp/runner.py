@@ -30,7 +30,12 @@ async def _run(native: NativeClient, *, lease_client: str | None) -> None:
     if lease_client is not None:
         from yoke.daemon.lease import hold_lease
 
-        lease = asyncio.create_task(hold_lease(lease_client))
+        lease = asyncio.create_task(
+            hold_lease(
+                lease_client,
+                on_connect=lambda handle: native.use_daemon_endpoint(handle.socket),
+            )
+        )
     else:
         lease = asyncio.create_task(native.hold_lease())
     try:
@@ -80,7 +85,15 @@ def run_acp_with_daemon() -> int:
         return 1
     if handle.warning:
         print(f"Yoke ACP: {handle.warning}", file=sys.stderr)
-    socket_path = str(handle.socket)
+    from yoke.daemon.transport import TcpEndpoint
+
+    endpoint = handle.socket
+    if isinstance(endpoint, TcpEndpoint):
+        return _serve(
+            lambda: NativeClient(f"http://127.0.0.1:{endpoint.port}", endpoint.token),
+            lease_client="acp",
+        )
+    socket_path = str(endpoint)
     return _serve(
         lambda: NativeClient(DAEMON_SOCKET_URL, None, uds=socket_path),
         lease_client="acp",

@@ -1,10 +1,11 @@
-"""Per-run capability dispatch over a private parent-owned Unix socket."""
+"""Per-run capability dispatch over a private parent-owned local listener."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import secrets
+import sys
 import tempfile
 import threading
 import time
@@ -67,9 +68,15 @@ class PythonBridge:
     async def prepare(self, request: ComposePython) -> tuple[str, Run, str]:
         async with self._start_lock:
             if self._server is None:
-                self._server = await asyncio.start_unix_server(
-                    self._handle, path=self.address, limit=4 * 1024 * 1024 + 1
-                )
+                if sys.platform == "win32":
+                    self._server = await asyncio.start_server(
+                        self._handle, "127.0.0.1", 0, limit=4 * 1024 * 1024 + 1
+                    )
+                    self.address = f"tcp:{self._server.sockets[0].getsockname()[1]}"
+                else:
+                    self._server = await asyncio.start_unix_server(
+                        self._handle, path=self.address, limit=4 * 1024 * 1024 + 1
+                    )
         token = secrets.token_urlsafe(32)
         run = Run(
             time.monotonic() + request.timeout,

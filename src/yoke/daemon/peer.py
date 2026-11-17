@@ -20,7 +20,7 @@ LOGGER = logging.getLogger(__name__)
 
 def peer_uid(sock: socket.socket) -> int | None:
     """Return the uid of the process on the other end of a Unix socket."""
-    if sock.family != socket.AF_UNIX:
+    if sock.family != getattr(socket, "AF_UNIX", None):
         return None
     option = getattr(socket, "SO_PEERCRED", None)
     if option is None:
@@ -54,7 +54,7 @@ def peer_authorized(uid: int | None, *, owner_uid: int | None = None) -> bool:
 
 def connection_authorized(sock: socket.socket | None) -> bool:
     """Admit TCP connections (token-checked later) and same-uid Unix peers."""
-    if sock is None or sock.family != socket.AF_UNIX:
+    if sock is None or sock.family != getattr(socket, "AF_UNIX", None):
         return True
     try:
         return peer_authorized(peer_uid(sock))
