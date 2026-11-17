@@ -193,8 +193,8 @@ including reconnects.
 ## Working location palette
 
 The new-session draft and the workspace relocation notice share one location
-control. The trigger shows the chosen directory and opens a palette whose path
-parsing and browsing follow T3 Code's project picker.
+control. The trigger shows the chosen directory and opens a palette that
+parses typed paths and browses directories.
 
 The input has focus, and no row is selected until an arrow key or click picks
 one. Enter or **Select folder** confirms the selected directory. **Open** or

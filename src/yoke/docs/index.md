@@ -92,7 +92,7 @@ agent.close()
 | Set up providers, `config.json`, tool policy, custom tools, MCP servers, `AGENTS.md` and environment variables | [Configuration](configuration.md) |
 | Embed agents in Python, run tasks in parallel, save agent state, read usage records | [SDK](sdk.md) |
 | Drive sessions over HTTP, or run the daemon | [HTTP API](http.md), [HTTP reference](http-reference.md), [Daemon client contract](daemon-client.md) |
-| Connect T3 Code or another ACP editor | [ACP and T3 Code](acp.md) |
+| Use Yoke from an ACP client | [ACP](acp.md) |
 | Serve Yoke's tools to another agent over MCP | [Tool-only MCP server](mcp-server.md), [Composed MCP work](mcp-composition.md) |
 | Understand `command_exec`, `process_read` and the other process tools | [Shared process tools](process-tools.md) |
 | Use the web UI and its tool, tree, process and agent views | [Web UI](web-ui.md), [Web inspectors](web-inspectors.md) |

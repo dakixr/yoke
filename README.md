@@ -1,6 +1,6 @@
 # yoke
 
-Yoke is a coding agent you run from the terminal, drive from an editor, or
+Yoke is a coding agent you run from the terminal, drive from any ACP client, or
 embed in Python. It reads and edits files, runs commands, searches the web,
 uses skills and MCP servers, and keeps every conversation as a session you can
 resume or branch.
@@ -9,8 +9,8 @@ resume or branch.
 
 Every `yoke` command talks to one per-user daemon, which the first command
 starts for you. The daemon runs the turns and saves sessions in SQLite at
-`~/.yoke/yoke.db`. The terminal, the browser UI and editors such as T3 Code all
-see the same sessions, so you can start work in one and continue it in another.
+`~/.yoke/yoke.db`. The terminal, the browser UI and ACP clients all see the
+same sessions, so you can start work in one and continue it in another.
 On Linux and macOS clients reach the daemon over a private Unix socket; on
 Windows they use a loopback port with a bearer token.
 
@@ -55,7 +55,7 @@ Other entry points:
 | --- | --- |
 | See or manage the daemon | `yoke daemon status`, `yoke daemon restart`, `yoke daemon stop` |
 | Open the browser UI | Use the `http` address from `yoke daemon status` with the token in `~/.yoke/daemon.json` |
-| Use Yoke from T3 Code or another ACP editor | `yoke acp` (see [ACP and T3 Code](src/yoke/docs/acp.md)) |
+| Use Yoke from an ACP client | `yoke acp` (see [ACP](src/yoke/docs/acp.md)) |
 | Serve only Yoke's tools to another agent | `yoke-mcp --root /path/to/project` (see [MCP server](src/yoke/docs/mcp-server.md)) |
 | Check or maintain the session database | `yoke db check`, `yoke db stats`, `yoke db compact` |
 

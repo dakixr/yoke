@@ -349,7 +349,7 @@ Yoke has three other entry points:
 | Command | Use |
 | --- | --- |
 | `yoke serve` | Standalone HTTP API and web UI on `127.0.0.1:8765`. See [HTTP API](http.md). |
-| `yoke acp` | Agent Client Protocol over stdio, for editors such as T3 Code. See [ACP and T3 Code](acp.md). |
+| `yoke acp` | Agent Client Protocol over stdio, for ACP clients. See [ACP](acp.md). |
 | `yoke-mcp` | Tool-only MCP server with no agent. See [Tool-only MCP server](mcp-server.md). |
 
 `yoke acp` uses the local daemon. To point it at another server, set

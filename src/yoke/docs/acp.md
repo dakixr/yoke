@@ -1,8 +1,8 @@
-# ACP and T3 Code
+# ACP
 
 This page is for people who use Yoke from an Agent Client Protocol (ACP)
-client such as T3 Code. It covers setup, what the ACP bridge supports, how
-approval modes work, and how T3 thread settlement reaches Yoke.
+client. It covers setup, what the ACP bridge supports, how approval modes
+work, and how T3 thread settlement reaches Yoke.
 
 `yoke acp` is an ACP agent on stdio. It does not run turns itself. It forwards
 each ACP session to the per-user Yoke daemon described in [http.md](http.md),
