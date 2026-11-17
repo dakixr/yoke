@@ -93,7 +93,7 @@ refuse rule.
 Skew handling never interrupts another client's turn, and a client that
 attaches with a warning does not schedule a restart. Run
 `yoke daemon restart --when-idle` to restart once work drains. Open leases do
-not block a restart, and paused inputs do not count as work.
+not block a restart. Paused inputs and held queues do not count as work.
 
 On Windows, a client checks that the daemon recorded in `daemon.json` is alive
 and makes it prove its identity, bound to a fresh nonce and the recorded port,
@@ -337,3 +337,35 @@ A prompt may set `imageProjection: "cli"` on image attachments. The daemon
 then builds the provider message in the terminal's format. Image labels restart
 at one for each prompt, and images carry no attachment name. Without it, the daemon uses the browser and ACP projection.
 The flag is saved with the input and survives queue edits and recovery.
+
+
+## Observe input phases
+
+Check `features.inputLifecycle` before using the durable input API. Protocol
+stays 2. Load `GET /session/{id}/input?live=true` for `inputs`, `held` and
+`inputRevision`. Input phases are `queued`, `paused`, `promoted`, `running`,
+`settled` and `removed`. `pauseCause` records `user` or `workspace`.
+
+Apply `session.input.changed` in `inputRevision` order. Each transition includes
+the input's phase and identity. The revision survives daemon restarts. Refresh
+the snapshot on a gap. Legacy prompt and queue events still arrive in their
+original order, so clients can keep their existing handlers during migration.
+
+A held queue has a reason such as `interrupt`, `finalization_failed`,
+`selection_failed`, `daemon_restart` or `workspace_unavailable`. Display the
+reason and offer `POST /session/{id}/queue/resume`. An admission or patch with
+`resume: true` also clears the hold. Resume preserves individual pauses.
+
+Cancel a specific input through `POST /session/{id}/input/{inputID}/cancel`.
+This removes a queued or paused input without stopping another client's turn.
+It stops a promoted or running input only when that input owns the turn.
+Terminal inputs return `409 input_settled`. Read one input, including its
+terminal outcome, with `GET /session/{id}/input/{inputID}`.
+
+The prompt receipt includes `phase` and reflects the state after wake. A lease
+connection callback runs after the daemon acknowledges the lease, so TCP clients
+can refresh their endpoint before making requests against the replacement.
+
+The daemon also holds an idle queue with reason `manual` when a request uses
+`resume: false`. Hold changes publish `session.queue.held` with `held` and
+`inputRevision`. Holds do not change the legacy queue edit revision.

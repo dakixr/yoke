@@ -221,6 +221,7 @@ def _build_server(
             daemon_socket=str(socket_path) if sys.platform != "win32" else None,
         )
     )
+    app.state.pending_input_service.hold_stranded()
     app.state.daemon_port = port
     config = uvicorn.Config(
         app,

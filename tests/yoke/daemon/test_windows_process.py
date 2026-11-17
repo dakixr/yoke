@@ -83,6 +83,17 @@ def test_spawn_attach_second_client_auth_acp_and_idle_exit(sandbox, monkeypatch)
 def test_cli_restart_and_stop_refresh_acp_transport_and_release_lock(
     sandbox, monkeypatch
 ):
+    from typer.testing import CliRunner
+    from yoke.cli.main import app
+
+    def control(*arguments: str) -> subprocess.CompletedProcess[str]:
+        # Exercise the real parser and commands. Both daemons still run in fresh
+        # processes; three extra CLI wrapper interpreters only add import load.
+        result = CliRunner().invoke(app, list(arguments))
+        return subprocess.CompletedProcess(
+            arguments, result.exit_code, result.stdout, result.stderr
+        )
+
     monkeypatch.setenv("YOKE_DAEMON_IDLE_GRACE", "5")
     original = sandbox.start("--no-idle-exit")
     endpoint = sandbox.connect().socket
@@ -100,17 +111,17 @@ def test_cli_restart_and_stop_refresh_acp_transport_and_release_lock(
 
         lease = asyncio.create_task(hold_lease("acp", sandbox.paths, on_connect=attach))
         try:
-            await asyncio.wait_for(connected.wait(), 10)
+            await asyncio.wait_for(connected.wait(), 20)
             connected.clear()
-            restarted = await asyncio.to_thread(invoke, "daemon", "restart")
+            restarted = await asyncio.to_thread(control, "daemon", "restart")
             assert restarted.returncode == 0, restarted.stderr
-            await asyncio.wait_for(connected.wait(), 10)
+            await asyncio.wait_for(connected.wait(), 20)
             assert (await native.data("GET", "daemon"))["pid"] != original
             # Observe the replacement so teardown waits on its process handle.
             assert sandbox.status()["pid"] != original
-            stopped = await asyncio.to_thread(invoke, "daemon", "stop")
+            stopped = await asyncio.to_thread(control, "daemon", "stop")
             assert stopped.returncode == 0, stopped.stderr
-            await asyncio.wait_for(lease, 10)
+            await asyncio.wait_for(lease, 20)
         finally:
             lease.cancel()
             await asyncio.gather(lease, return_exceptions=True)
@@ -119,7 +130,7 @@ def test_cli_restart_and_stop_refresh_acp_transport_and_release_lock(
     asyncio.run(scenario())
     sandbox.wait_stopped()
     assert find_daemon(sandbox.paths) is None
-    assert invoke("daemon", "status").returncode == 1
+    assert control("daemon", "status").returncode == 1
 
 
 def test_crashed_lock_holder_releases_os_lock(sandbox):

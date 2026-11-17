@@ -1256,6 +1256,11 @@
             "title": "Images",
             "type": "boolean"
           },
+          "inputLifecycle": {
+            "default": true,
+            "title": "Inputlifecycle",
+            "type": "boolean"
+          },
           "mcp": {
             "default": true,
             "title": "Mcp",
@@ -1516,6 +1521,122 @@
           "name"
         ],
         "title": "ImageContent",
+        "type": "object"
+      },
+      "InputInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "clientID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clientid"
+          },
+          "delivery": {
+            "enum": [
+              "steer",
+              "queue"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "completed",
+                  "stopped",
+                  "failed",
+                  "recovered"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "pauseCause": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PauseCause"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "$ref": "#/components/schemas/InputPhaseName"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "turnID": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnid"
+          }
+        },
+        "required": [
+          "id",
+          "phase",
+          "delivery",
+          "prompt"
+        ],
+        "title": "InputInfo",
+        "type": "object"
+      },
+      "InputPhaseName": {
+        "enum": [
+          "queued",
+          "paused",
+          "promoted",
+          "running",
+          "settled",
+          "removed"
+        ],
+        "type": "string"
+      },
+      "InputResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InputInfo"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "InputResponse",
         "type": "object"
       },
       "InterruptData": {
@@ -2070,6 +2191,14 @@
         "title": "ModelListResponse",
         "type": "object"
       },
+      "PauseCause": {
+        "enum": [
+          "user",
+          "workspace"
+        ],
+        "title": "PauseCause",
+        "type": "string"
+      },
       "PermissionListResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2526,6 +2655,10 @@
             "title": "Id",
             "type": "string"
           },
+          "phase": {
+            "$ref": "#/components/schemas/InputPhaseName",
+            "default": "queued"
+          },
           "promotedSeq": {
             "anyOf": [
               {
@@ -2972,6 +3105,21 @@
       "QueueData": {
         "additionalProperties": false,
         "properties": {
+          "held": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueueHold"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputRevision": {
+            "default": 0,
+            "title": "Inputrevision",
+            "type": "integer"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/QueueItem"
@@ -3027,6 +3175,20 @@
         "title": "QueueDeliveryOperation",
         "type": "object"
       },
+      "QueueHold": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "QueueHold",
+        "type": "object"
+      },
       "QueueItem": {
         "additionalProperties": false,
         "properties": {
@@ -3045,6 +3207,16 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "pauseCause": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PauseCause"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "paused": {
             "title": "Paused",
@@ -3731,6 +3903,51 @@
           "queue"
         ],
         "title": "SessionInfo",
+        "type": "object"
+      },
+      "SessionInputs": {
+        "additionalProperties": false,
+        "properties": {
+          "held": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueueHold"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputRevision": {
+            "title": "Inputrevision",
+            "type": "integer"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/InputInfo"
+            },
+            "title": "Inputs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputRevision",
+          "inputs"
+        ],
+        "title": "SessionInputs",
+        "type": "object"
+      },
+      "SessionInputsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SessionInputs"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SessionInputsResponse",
         "type": "object"
       },
       "SessionListResponse": {
@@ -7267,6 +7484,151 @@
         "summary": "Session History"
       }
     },
+    "/api/v1/session/{session_id}/input": {
+      "get": {
+        "operationId": "getSessionInputs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "live",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Live",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInputsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Inputs"
+      }
+    },
+    "/api/v1/session/{session_id}/input/{input_id}": {
+      "get": {
+        "operationId": "getSessionInput",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "input_id",
+            "required": true,
+            "schema": {
+              "title": "Input Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Input"
+      }
+    },
+    "/api/v1/session/{session_id}/input/{input_id}/cancel": {
+      "post": {
+        "operationId": "cancelSessionInput",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "input_id",
+            "required": true,
+            "schema": {
+              "title": "Input Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Input"
+      }
+    },
     "/api/v1/session/{session_id}/interrupt": {
       "post": {
         "operationId": "interruptSession",
@@ -7976,6 +8338,45 @@
           }
         },
         "summary": "Patch Queue"
+      }
+    },
+    "/api/v1/session/{session_id}/queue/resume": {
+      "post": {
+        "operationId": "resumeSessionQueue",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Queue"
       }
     },
     "/api/v1/session/{session_id}/relocate": {

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal
@@ -18,22 +17,29 @@ from yoke.http.models.prompt import (
 from yoke.http.services.event_broker import EventService
 from yoke.http.services.prompt_queue import (
     apply_operation as _apply_operation,
-    fingerprint as _fingerprint,
-    legacy_fingerprint as _legacy_fingerprint,
     next_eligible_index as _next_eligible_index,
     prompt_from_admission as _prompt_from_admission,
     queue_data as _queue_data,
-    receipt as _receipt,
 )
 from yoke.http.runtime.prompt_input import validate_prompt
 from yoke.http.services.upload_service import UploadService
 from yoke.session import SessionStore
-from yoke.session.admissions import AdmissionAttachment, AdmissionRecord, AdmissionStore
-from yoke.session.queue import PersistedPendingInput, prompt_queue_transaction
+from yoke.session.admissions import AdmissionRecord, AdmissionStore
+from yoke.session.queue import prompt_queue_transaction
+from yoke.session.input_lifecycle import InputLifecycle
+from yoke.session.input_phase import (
+    InputEvent,
+    Queued,
+    Paused,
+    Promoted,
+    Removed,
+    Settled,
+    PauseCause,
+)
+from yoke.http.services.input_service import InputService
 from yoke.session.workspace import (
     WorkspaceBusy,
     inspect_workspace,
-    require_session_workspace,
     workspace_lease,
 )
 from yoke.session.workspace_inputs import reconcile_workspace_inputs
@@ -49,135 +55,21 @@ class PendingInputService:
         events: EventService,
         uploads: UploadService,
     ) -> None:
+        from yoke.http.services.prompt_admission import PromptAdmissionService
+
+        self.admit = PromptAdmissionService(store, admissions, events, uploads).admit
         self.store = store
         self.admissions = admissions
         self.events = events
         self.uploads = uploads
-
-    def admit(
-        self,
-        session_id: str,
-        request: PromptAdmissionRequest,
-        *,
-        publish_queue: bool = True,
-    ) -> PromptAdmissionReceipt:
-        """Durably admit one idempotent input before any model-visible promotion."""
-        record = self._require_session(session_id)
-        self._validate_prompt(session_id, request.prompt)
-        input_id = request.id or f"inp_{secrets.token_hex(12)}"
-        fingerprint = _fingerprint(session_id, request.prompt, request.delivery)
-        with prompt_queue_transaction(self.store.directory, session_id) as transaction:
-            snapshot = self.admissions.load(session_id)
-            reconcile_workspace_inputs(
-                self.admissions, session_id, transaction, snapshot=snapshot
-            )
-            existing = snapshot.records.get(input_id)
-            if existing is not None:
-                legacy_match = (
-                    not existing.attachments
-                    and not existing.continuation
-                    and not request.prompt.continuation
-                    and not request.prompt.attachments
-                    and existing.fingerprint
-                    == _legacy_fingerprint(
-                        session_id,
-                        request.prompt.text,
-                        request.delivery,
-                    )
-                )
-                if existing.fingerprint != fingerprint and not legacy_match:
-                    raise ApiError(
-                        409,
-                        "input_identity_conflict",
-                        "Input id was already used with different admission data.",
-                        {"inputID": input_id},
-                    )
-                return _receipt(existing)
-
-            # Relocation uses this queue lock too. Load the binding inside it,
-            # after identity replay but before unarchiving, pinning or admission.
-            record = self._require_session(session_id)
-            require_session_workspace(record)
-            if record.archived_at is not None:
-                record = self.store.set_archived(
-                    session_id,
-                    False,
-                    existing_record=record,
-                )
-                self.events.durable(
-                    session_id,
-                    "session.updated",
-                    {
-                        "sessionID": record.id,
-                        "title": record.title,
-                        "pinned": record.pinned,
-                        "archivedAt": record.archived_at,
-                    },
-                    location=record.root,
-                )
-
-            self._pin_prompt(session_id, request.prompt)
-
-            event = self.events.durable(
-                session_id,
-                "session.prompt.admitted",
-                {
-                    "inputID": input_id,
-                    "clientID": request.client_id,
-                    "delivery": request.delivery,
-                    "prompt": request.prompt.model_dump(mode="json", by_alias=True),
-                },
-                location=record.root,
-            )
-            admitted_seq = event.durable.seq if event.durable is not None else 0
-            admission = AdmissionRecord(
-                id=input_id,
-                session_id=session_id,
-                prompt=request.prompt.text,
-                continuation=request.prompt.continuation,
-                skill=request.prompt.skill,
-                attachments=[
-                    AdmissionAttachment(
-                        uri=item.uri,
-                        name=item.name,
-                        mime=item.mime,
-                        image_projection=item.image_projection,
-                    )
-                    for item in request.prompt.attachments
-                ],
-                delivery=request.delivery,
-                fingerprint=fingerprint,
-                time_created=datetime.now(UTC).isoformat(),
-                admitted_seq=admitted_seq,
-            )
-            queue = transaction.snapshot
-            queue.prompts.append(
-                PersistedPendingInput(
-                    id=input_id,
-                    prompt=request.prompt.text,
-                    continuation=request.prompt.continuation,
-                    skill=request.prompt.skill,
-                    attachments=[
-                        item.model_dump(exclude={"type"})
-                        for item in request.prompt.attachments
-                    ],
-                    kind="steering" if request.delivery == "steer" else "queued",
-                    created_at=admission.time_created,
-                )
-            )
-            if publish_queue:
-                queue.revision += 1
-            snapshot.records[input_id] = admission
-            self.admissions.save(session_id, snapshot)
-            transaction.commit()
-            if publish_queue:
-                self.events.durable(
-                    session_id,
-                    "session.queue.updated",
-                    {"revision": queue.revision},
-                    location=record.root,
-                )
-            return _receipt(admission)
+        self.lifecycle = InputLifecycle(admissions, events)
+        self.control = InputService(store, admissions, events, self.lifecycle)
+        self.hold_stranded = self.control.hold_stranded
+        self.set_hold = self.control.set_hold
+        self.get_input = self.control.get_input
+        self.receipt = self.control.receipt
+        self.start_input = self.control.start
+        self.recover = self.control.recover
 
     def queue(self, session_id: str) -> QueueData:
         record = self._require_session(session_id)
@@ -192,7 +84,11 @@ class PendingInputService:
     def _queue_snapshot(self, session_id: str, *, orphaned: bool = False) -> QueueData:
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
             reconcile_workspace_inputs(
-                self.admissions, session_id, transaction, orphaned=orphaned
+                self.admissions,
+                session_id,
+                transaction,
+                orphaned=orphaned,
+                events=self.events,
             )
             return _queue_data(transaction.snapshot)
 
@@ -205,7 +101,9 @@ class PendingInputService:
     ) -> QueueData:
         record = self._require_session(session_id)
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
-            reconcile_workspace_inputs(self.admissions, session_id, transaction)
+            reconcile_workspace_inputs(
+                self.admissions, session_id, transaction, events=self.events
+            )
             queue = transaction.snapshot
             if queue.revision != request.expected_revision:
                 raise ApiError(
@@ -238,6 +136,8 @@ class PendingInputService:
             }
             edited_ids: set[str] = set()
             removed_ids: set[str] = set()
+            if request.resume:
+                queue.held_reason = None
             for operation in request.operations:
                 if operation.op == "update":
                     self._validate_prompt(session_id, operation.prompt)
@@ -247,6 +147,39 @@ class PendingInputService:
                 elif operation.op == "remove":
                     removed_ids.add(operation.id)
                 _apply_operation(prompts, admissions.records, operation)
+                current = admissions.records[operation.id]
+                if operation.op == "remove":
+                    target, event = Removed(), InputEvent.REMOVE
+                else:
+                    position = next(
+                        i for i, item in enumerate(prompts) if item.id == operation.id
+                    )
+                    if operation.op == "setPaused":
+                        target = (
+                            Paused(position, PauseCause.USER)
+                            if operation.paused
+                            else Queued(position)
+                        )
+                        event = (
+                            InputEvent.PAUSE if operation.paused else InputEvent.RESUME
+                        )
+                        if isinstance(current.phase, type(target)):
+                            target = current.phase
+                            event = InputEvent.EDIT
+                    else:
+                        target = (
+                            Paused(position, current.phase.cause)
+                            if isinstance(current.phase, Paused)
+                            else Queued(position)
+                        )
+                        event = (
+                            InputEvent.MOVE
+                            if operation.op.startswith("move")
+                            else InputEvent.EDIT
+                        )
+                self.lifecycle.apply(transaction, session_id, current, event, target)
+                prompts = list(queue.prompts)
+                admissions = self.admissions.load(session_id)
             for prompt in prompts:
                 for attachment in prompt.attachments:
                     self.uploads.pin(
@@ -259,8 +192,8 @@ class PendingInputService:
             if request.pending_images is not None:
                 queue.pending_images = list(request.pending_images)
             queue.revision += 1
-            self.admissions.save(session_id, admissions)
             transaction.commit()
+            self.lifecycle.reindex(transaction, session_id)
             retained_uris = {
                 attachment.uri
                 for admission in admissions.records.values()
@@ -308,8 +241,12 @@ class PendingInputService:
         """Atomically promote the next eligible input for one runtime drain."""
         record = self._require_session(session_id)
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
-            reconcile_workspace_inputs(self.admissions, session_id, transaction)
+            reconcile_workspace_inputs(
+                self.admissions, session_id, transaction, events=self.events
+            )
             queue = transaction.snapshot
+            if queue.held_reason is not None:
+                return None
             index = _next_eligible_index(queue.prompts, allow_queue=allow_queue)
             if index is None:
                 return None
@@ -326,15 +263,17 @@ class PendingInputService:
                 {"inputID": admission.id, "delivery": admission.delivery},
                 location=record.root,
             )
-            admission.queue_position = index
-            admission.state = "promoted"
-            admission.promoted_seq = (
-                promoted.durable.seq if promoted.durable is not None else None
-            )
+            seq = promoted.durable.seq if promoted.durable is not None else 0
             queue.revision += 1
-            admissions.records[admission.id] = admission
-            self.admissions.save(session_id, admissions)
-            transaction.commit()
+            self.lifecycle.apply(
+                transaction,
+                session_id,
+                admission,
+                InputEvent.PROMOTE,
+                Promoted(seq, index),
+                replacing=not allow_queue,
+            )
+            self.lifecycle.reindex(transaction, session_id)
             self.events.durable(
                 session_id,
                 "session.queue.updated",
@@ -347,7 +286,9 @@ class PendingInputService:
         """Return the oldest promoted input that has no terminal runtime outcome."""
         self._require_session(session_id)
         with prompt_queue_transaction(self.store.directory, session_id) as transaction:
-            reconcile_workspace_inputs(self.admissions, session_id, transaction)
+            reconcile_workspace_inputs(
+                self.admissions, session_id, transaction, events=self.events
+            )
             admissions = self.admissions.load(session_id)
             promoted = [
                 item
@@ -373,7 +314,7 @@ class PendingInputService:
     ) -> None:
         """Mark one promoted input as having reached a terminal runtime boundary."""
         record = self._require_session(session_id)
-        with prompt_queue_transaction(self.store.directory, session_id):
+        with prompt_queue_transaction(self.store.directory, session_id) as transaction:
             admissions = self.admissions.load(session_id)
             admission = admissions.records.get(input_id)
             if admission is None:
@@ -386,11 +327,15 @@ class PendingInputService:
                 )
             if admission.settled:
                 return
-            admission.settled = True
-            admission.settled_at = datetime.now(UTC).isoformat()
-            admission.outcome = outcome
-            admissions.records[input_id] = admission
-            self.admissions.save(session_id, admissions)
+            self.lifecycle.apply(
+                transaction,
+                session_id,
+                admission,
+                InputEvent.RECOVER_SETTLE
+                if outcome == "recovered"
+                else InputEvent.SETTLE,
+                Settled(outcome, datetime.now(UTC).isoformat()),
+            )
             self.events.durable(
                 session_id,
                 "session.prompt.settled",
@@ -406,12 +351,3 @@ class PendingInputService:
 
     def _validate_prompt(self, session_id: str, prompt: PromptInput) -> None:
         validate_prompt(self, session_id, prompt)
-
-    def _pin_prompt(self, session_id: str, prompt: PromptInput) -> None:
-        for attachment in prompt.attachments:
-            self.uploads.pin(
-                attachment.uri,
-                session_id=session_id,
-                name=attachment.name,
-                mime=attachment.mime,
-            )

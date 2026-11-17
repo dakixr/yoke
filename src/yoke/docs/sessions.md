@@ -278,3 +278,31 @@ interrupted import picks up where it stopped. Imported sessions keep their
 timestamps, titles and pins. An imported session is safe from retention until
 you next use it. After that, the normal 30-day rule applies. The importer does
 not bring over HTTP event journals or queued prompts.
+
+
+## Input phases and held queues
+
+Schema v6 stores one phase for each input: queued, paused, promoted, running,
+settled or removed. Settled inputs record their outcome. Paused inputs record
+whether the user paused them or the workspace became unavailable. The daemon
+writes the phase, queue projection and transition event in one transaction.
+Legacy admission fields remain available to existing readers.
+
+Stop holds the remaining queue with reason `interrupt`. Failed finalization
+and model selection hold it with their failure reason. On startup, the daemon
+holds stranded runnable queues with `daemon_restart`. Restoring the workspace
+or restarting the daemon never resumes held work automatically. A held queue
+does not prevent idle exit or an idle restart.
+
+Resume through the HTTP queue resume route, or submit an admission or queue
+patch with `resume: true`. Resume clears the session hold and preserves input
+pauses. Unpause a workspace input only after restoring its directory.
+
+Only daemon startup and `yoke db migrate` upgrade to schema v6. The migration
+backs up the database first, backfills input phases from v5 admission and queue
+fields, and starts each session's durable input revision at zero. Existing
+readers report the required migration without changing the database.
+
+The daemon also holds an idle queue with reason `manual` when a request uses
+`resume: false`. Hold changes publish `session.queue.held` with `held` and
+`inputRevision`. Holds do not change the legacy queue edit revision.

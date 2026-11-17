@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
-from pydantic import Field
+from pydantic import Field, model_serializer, model_validator
+
+from yoke.session.input_phase import (
+    InputPhase,
+    Queued,
+    Paused,
+    Promoted,
+    Running,
+    Settled,
+    Removed,
+    PauseCause,
+)
 
 from yoke.session.inputs import ensure_input_row, session_database, sync_input_row
 
@@ -36,14 +47,81 @@ class AdmissionRecord(BaseModel):
     delivery: Literal["steer", "queue"]
     fingerprint: str
     time_created: str
-    state: Literal["admitted", "promoted", "removed"] = "admitted"
+    phase: InputPhase = Field(default_factory=lambda: Queued(0))
     admitted_seq: int
     promoted_seq: int | None = None
-    settled: bool = False
-    settled_at: str | None = None
-    outcome: Literal["completed", "stopped", "failed", "recovered"] | None = None
-    workspace_blocked: bool = False
-    queue_position: int | None = None
+    client_id: str | None = None
+
+    def __init__(self, **data: Any) -> None:  # noqa: ANN401
+        # Legacy callers can still supply state and settlement projection fields.
+        super().__init__(**data)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_phase(cls, value):  # noqa: ANN001, ANN206
+        """Read pre-v6 records and legacy in-process constructors once."""
+        if isinstance(value, dict) and "phase" not in value:
+            value = dict(value)
+            position = value.get("queue_position") or 0
+            if value.get("state") == "removed":
+                phase = Removed()
+            elif value.get("settled"):
+                phase = Settled(
+                    value.get("outcome") or "recovered", value.get("settled_at") or ""
+                )
+            elif value.get("workspace_blocked"):
+                phase = Paused(position, PauseCause.WORKSPACE)
+            elif value.get("state") == "promoted":
+                phase = Promoted(value.get("promoted_seq") or 0, position)
+            else:
+                phase = Queued(position)
+            value["phase"] = phase
+        return value
+
+    @property
+    def state(self) -> Literal["admitted", "promoted", "removed"]:
+        if isinstance(self.phase, Removed):
+            return "removed"
+        return "admitted" if isinstance(self.phase, (Queued, Paused)) else "promoted"
+
+    @property
+    def settled(self) -> bool:
+        return isinstance(self.phase, Settled)
+
+    @property
+    def outcome(self):  # noqa: ANN201
+        return self.phase.outcome if isinstance(self.phase, Settled) else None
+
+    @property
+    def settled_at(self) -> str | None:
+        return self.phase.settled_at if isinstance(self.phase, Settled) else None
+
+    @property
+    def workspace_blocked(self) -> bool:
+        return (
+            isinstance(self.phase, Paused) and self.phase.cause == PauseCause.WORKSPACE
+        )
+
+    @property
+    def queue_position(self) -> int | None:
+        if isinstance(self.phase, (Promoted, Running)):
+            return self.phase.queue_position
+        if isinstance(self.phase, (Queued, Paused)):
+            return self.phase.position
+        return None
+
+    @model_serializer(mode="wrap")
+    def legacy_projection(self, handler):  # noqa: ANN001, ANN201
+        result = handler(self)
+        result.update(
+            state=self.state,
+            settled=self.settled,
+            outcome=self.outcome,
+            settled_at=self.settled_at,
+            workspace_blocked=self.workspace_blocked,
+            queue_position=self.queue_position,
+        )
+        return result
 
 
 class AdmissionSnapshot(BaseModel):

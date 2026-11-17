@@ -12,8 +12,10 @@ from yoke.http.models.prompt import (
     PromptInput,
     QueueData,
     QueueItem,
+    QueueHold,
 )
 from yoke.session.admissions import AdmissionAttachment, AdmissionRecord
+from yoke.session.input_phase import PauseCause
 from yoke.session.queue import (
     PersistedPendingInput,
     PersistedPromptQueue,
@@ -54,6 +56,7 @@ def receipt(record: AdmissionRecord) -> PromptAdmissionReceipt:
         prompt=prompt_from_admission(record),
         delivery=record.delivery,
         state=record.state,
+        phase=record.phase.kind,
         admitted_seq=record.admitted_seq,
         promoted_seq=record.promoted_seq,
         time_created=record.time_created,
@@ -80,6 +83,8 @@ def prompt_from_admission(record: AdmissionRecord) -> PromptInput:
 def queue_data(queue: PersistedPromptQueue) -> QueueData:
     return QueueData(
         revision=queue.revision,
+        held=QueueHold(reason=queue.held_reason) if queue.held_reason else None,
+        input_revision=queue.input_revision,
         pending_images=list(queue.pending_images),
         items=[
             QueueItem(
@@ -95,6 +100,8 @@ def queue_data(queue: PersistedPromptQueue) -> QueueData:
                 ),
                 delivery="steer" if item.kind == "steering" else "queue",
                 paused=item.paused,
+                pause_cause=item.pause_cause
+                or (PauseCause.USER if item.paused else None),
                 created_at=item.created_at,
             )
             for item in queue.prompts
@@ -153,7 +160,6 @@ def apply_operation(items, admissions, operation) -> None:  # noqa: ANN001
         return
     if operation.op == "remove":
         items.pop(index)
-        admission.state = "removed"
         return
     if operation.op == "moveToStart":
         move_queue_item(items, index, 0)

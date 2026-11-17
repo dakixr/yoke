@@ -1,9 +1,9 @@
 """Rows of the ``inputs`` table shared by admissions and the prompt queue.
 
-An input row carries up to two authoritative JSON payloads: ``admission``
-(an HTTP admission record) and ``pending`` (a queued input with its queue
-``position``). The remaining columns are derived from those payloads by
-:func:`sync_input_row` after every write, so they never disagree with them.
+The admission's typed phase owns the lifecycle. Its pending payload and queue
+position project queued or paused inputs. The other columns index that phase
+and its legacy admission fields. Legacy queue-only writers keep their pending
+projection until schema migration gives the input an admission identity.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def sync_input_row(
     assert source is not None
     connection.execute(
         "UPDATE inputs SET state = ?, delivery = ?, paused = ?, prompt = ?, "
-        "admitted_seq = ?, promoted_seq = ? WHERE session_id = ? AND id = ?",
+        "admitted_seq = ?, promoted_seq = ?, phase = ? WHERE session_id = ? AND id = ?",
         (
             admission.get("state") if admission is not None else None,
             delivery,
@@ -56,6 +56,11 @@ def sync_input_row(
             str(source.get("prompt", "")),
             admission.get("admitted_seq") if admission is not None else None,
             admission.get("promoted_seq") if admission is not None else None,
+            admission["phase"]["kind"]
+            if admission and "phase" in admission
+            else "paused"
+            if pending and pending.get("paused")
+            else "queued",
             session_id,
             input_id,
         ),

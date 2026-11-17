@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from yoke.session.admissions import AdmissionSnapshot, AdmissionStore
-from yoke.session.queue import PersistedPendingInput, PromptQueueTransaction
+from yoke.session.queue import PromptQueueTransaction
+from yoke.session.input_lifecycle import InputEvents
 
 
 def reconcile_workspace_inputs(
@@ -13,6 +14,7 @@ def reconcile_workspace_inputs(
     *,
     snapshot: AdmissionSnapshot | None = None,
     orphaned: bool = False,
+    events: InputEvents | None = None,
 ) -> bool:
     """Materialize durable pause intent without losing promoted recovery state.
 
@@ -33,37 +35,27 @@ def reconcile_workspace_inputs(
     ]
     if not repair:
         return False
-    for item in repair:
-        item.workspace_blocked = True
-    # Never remove the recoverable promoted state before replacement is durable.
-    admissions.save(session_id, snapshot)
+    from yoke.session.input_lifecycle import InputLifecycle
+    from yoke.session.input_phase import InputEvent, Paused, PauseCause
+
+    lifecycle = InputLifecycle(admissions, events)
     changed = False
     for item in sorted(repair, key=lambda value: value.admitted_seq, reverse=True):
         existing = queued.get(item.id)
-        if existing is None:
-            restored = PersistedPendingInput(
-                id=item.id,
-                prompt=item.prompt,
-                continuation=item.continuation,
-                attachments=[
-                    attachment.model_dump() for attachment in item.attachments
-                ],
-                kind="steering" if item.delivery == "steer" else "queued",
-                created_at=item.time_created,
-                paused=True,
-            )
-            position = item.queue_position if item.queue_position is not None else 0
-            queue.prompts.insert(min(position, len(queue.prompts)), restored)
-            queued[item.id] = restored
-            changed = True
-        elif not existing.paused:
-            existing.paused = True
-            changed = True
+        if existing is not None and existing.paused and isinstance(item.phase, Paused):
+            continue
+        position = item.queue_position if item.queue_position is not None else 0
+        lifecycle.apply(
+            transaction,
+            session_id,
+            item,
+            InputEvent.BLOCK_WORKSPACE,
+            Paused(position, PauseCause.WORKSPACE),
+        )
+        changed = True
     if changed:
+        queue.held_reason = "workspace_unavailable"
         queue.revision += 1
         transaction.commit()
-    for item in repair:
-        item.state = "admitted"
-        item.workspace_blocked = False
-    admissions.save(session_id, snapshot)
+        lifecycle.reindex(transaction, session_id)
     return changed

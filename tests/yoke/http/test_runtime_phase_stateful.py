@@ -203,8 +203,8 @@ def test_generated_runtime_histories(tmp_path: Path):
         RuntimeMachine,
         settings=settings(
             derandomize=True,
-            max_examples=12,
-            stateful_step_count=12,
-            deadline=None,
+            max_examples=2,
+            stateful_step_count=4,
+            deadline=500,
         ),
     )

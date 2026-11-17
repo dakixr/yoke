@@ -15,6 +15,7 @@ from yoke.http.models.event import PublicEvent
 from yoke.session.events import SessionEvent
 from yoke.session.events import SessionEventJournal
 from yoke.http.services.privacy import SessionPrivacy
+from yoke.http.services.durable_publication import DurablePublication
 
 
 @dataclass(slots=True)
@@ -131,6 +132,10 @@ class EventService:
         self.privacy = SessionPrivacy()
         self.journal = journal
         self.broker = broker
+        self.publication = DurablePublication(
+            journal,
+            lambda event: self.broker.publish(public_event_from_session_event(event)),
+        )
 
     def durable(
         self,
@@ -140,6 +145,7 @@ class EventService:
         *,
         location: str | None = None,
     ) -> PublicEvent:
+        self.publication.prepare(session_id)
         event = self.journal.append(
             session_id,
             event_type,
@@ -149,7 +155,7 @@ class EventService:
         public = public_event_from_session_event(event)
         # Inside a write transaction (admission, queue edits) publish only once
         # the event is durable, so a client refetch sees the committed state.
-        self.journal.after_commit(lambda: self.broker.publish(public))
+        self.journal.after_commit(lambda: self.publication.committed(event))
         return public
 
     def live(

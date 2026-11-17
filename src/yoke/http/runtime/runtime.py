@@ -161,6 +161,9 @@ class SessionRuntime:
             workers=self.workers,
             message_index=message_index,
         )
+        self.activity.hold_queue = lambda reason: pending_inputs.set_hold(
+            session_id, reason
+        )
         self.reserve_input = self.inputs.reserve_input
         self.idle_mutation = self.operations.idle_mutation
         self.run_blocking = partial(run_blocking, storage_executor)
@@ -173,6 +176,7 @@ class SessionRuntime:
     async def wake(self) -> None:
         """Start eligible work or apply a pending steer at a safe control boundary."""
         async with self.gate:
+            await self.run_blocking(self.pending_inputs.set_hold, self.session_id, None)
             try:
                 await self.run_blocking(require_runtime_workspace, self)
             except WorkspaceUnavailable as exc:
@@ -235,6 +239,59 @@ class SessionRuntime:
             turn_id = self.activity.active.turn_id
             await self.finalizer.retire(reason="user")
             return InterruptData(interrupted=True, turn_id=turn_id)
+
+    async def hold_if_idle(self) -> None:
+        """An explicit no-resume request must leave visible, quiescent work."""
+        async with self.gate:
+            if self.activity.active is not None or self.activity.operation is not None:
+                return
+            queue = await self.run_blocking(self.pending_inputs.queue, self.session_id)
+            if queue.held is None and any(not item.paused for item in queue.items):
+                await self.run_blocking(
+                    self.pending_inputs.set_hold, self.session_id, "manual"
+                )
+
+    async def cancel_input(self, input_id: str) -> None:
+        """Cancel only the named input under the runtime's admission gate."""
+        from yoke.http.errors import ApiError
+        from yoke.http.models.prompt import QueuePatchRequest
+
+        async with self.gate:
+            pending = self.pending_inputs
+            record = await self.run_blocking(
+                pending.get_input, self.session_id, input_id
+            )
+            if record.phase.kind in {"settled", "removed"}:
+                raise ApiError(
+                    409, "input_settled", "Input already reached a terminal phase."
+                )
+            if record.phase.kind in {"queued", "paused"}:
+                queue = await self.run_blocking(pending.queue, self.session_id)
+                await self.run_blocking(
+                    pending.patch_queue,
+                    self.session_id,
+                    QueuePatchRequest.model_validate(
+                        {
+                            "expectedRevision": queue.revision,
+                            "operations": [{"op": "remove", "id": input_id}],
+                            "resume": False,
+                        }
+                    ),
+                )
+            elif (
+                self.activity.active is not None
+                and self.activity.active.admission.id == input_id
+            ):
+                await self.finalizer.retire(reason="user")
+            elif self.activity.active is None:
+                await self.run_blocking(
+                    pending.settle, self.session_id, input_id, outcome="stopped"
+                )
+                await self.run_blocking(pending.set_hold, self.session_id, "interrupt")
+            else:
+                raise ApiError(
+                    409, "input_not_active", "Another input owns the active turn."
+                )
 
     async def wait(self, timeout_seconds: float | None = None) -> ActiveRuntimeInfo:
         """Wait until the current logical generation settles."""

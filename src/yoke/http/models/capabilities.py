@@ -20,6 +20,7 @@ class HealthResponse(ApiModel):
 class FeatureFlags(ApiModel):
     global_events: bool = True
     prompt_admission: bool = True
+    input_lifecycle: bool = True
     steering: bool = True
     queue_editor: bool = True
     session_tree: bool = True

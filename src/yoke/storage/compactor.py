@@ -25,13 +25,17 @@ _BUSY = """
    OR EXISTS (SELECT 1 FROM events ev WHERE ev.session_id = s.id
               AND julianday(ev.time) > julianday('now', '-10 minutes'))
    OR EXISTS (SELECT 1 FROM inputs i WHERE i.session_id = s.id
-              AND i.admission IS NOT NULL
-              AND json_extract(i.admission, '$.state') = 'promoted'
-              AND coalesce(json_extract(i.admission, '$.settled'), 0) = 0)
-   OR coalesce((SELECT max(seq) FROM events WHERE session_id = s.id
-                AND type = 'session.compaction.started'), 0) >
-      coalesce((SELECT max(seq) FROM events WHERE session_id = s.id
-                AND type = 'session.compaction.ended'), 0)
+              AND (i.phase IN ('promoted', 'running')
+                   OR (i.phase IS NULL AND json_extract(i.admission, '$.state') = 'promoted'
+                       AND coalesce(json_extract(i.admission, '$.settled'), 0) = 0)))
+   OR EXISTS (SELECT 1 FROM events started WHERE started.session_id = s.id
+              AND started.type = 'session.compaction.started'
+              AND NOT EXISTS (SELECT 1 FROM events terminal
+                  WHERE terminal.session_id = s.id AND terminal.seq > started.seq
+                  AND terminal.type IN ('session.compaction.ended', 'session.compaction.failed')
+                  AND json_extract(terminal.data, '$.operationID') IS
+                      json_extract(started.data, '$.operationID')))
+
 """
 _QUIET = (
     """

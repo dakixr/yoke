@@ -148,6 +148,10 @@ Errors:
 | Method and path | Purpose |
 | --- | --- |
 | `POST /session/{id}/prompt` | Admit one input. |
+| `GET /session/{id}/input` | Snapshot with `inputRevision`, `held` and `inputs`. Query `live`, default true, excludes terminal inputs. |
+| `GET /session/{id}/input/{inputID}` | Read one input, including terminal inputs. |
+| `POST /session/{id}/input/{inputID}/cancel` | Remove a queued or paused input, or stop this promoted or running input. Returns the input. Terminal inputs return 409 `input_settled`; unknown inputs return 404 `input_not_found`. |
+| `POST /session/{id}/queue/resume` | Clear the queue hold and wake eligible work. Returns the queue. |
 | `GET /session/{id}/queue` | Pending inputs and the queue revision. |
 | `PATCH /session/{id}/queue` | Apply queue operations and admissions atomically against a revision. |
 | `POST /session/{id}/interrupt` | Stop the running turn. Returns `{interrupted, turnID, reason}`. Operations return `interrupted: false` and `reason: "operation_not_interruptible"`. |
@@ -176,12 +180,23 @@ them. Protocol version stays 2.
 
 The response is a receipt: `id`, `sessionID`, `prompt`, `delivery`, `state`
 (`admitted`, `promoted` or `removed`), `admittedSeq`, `promotedSeq`,
-`timeCreated`. Repeating a request with the same `id`, prompt and delivery
-returns the original receipt.
+`timeCreated` and `phase`. The daemon reads the receipt after wake. Repeating a
+request with the same `id`, prompt and delivery returns its current receipt.
 
 Queue item: `id`, `prompt`, `delivery`, `paused`, `createdAt`,
-`state: "admitted"`. `GET /queue` returns `{revision, items, pendingImages}`.
+`state: "admitted"` and `pauseCause`, either `user`, `workspace` or null.
+`GET /queue` returns `{revision, items, pendingImages, held, inputRevision}`.
+`held` is null or `{reason}`. Resume clears the queue hold and preserves input
+pauses. `inputRevision` survives restarts and counts input transitions.
 `pendingImages` is draft state that the terminal client keeps with the queue.
+
+`features.inputLifecycle` advertises these additions. Protocol stays 2.
+Input snapshots contain `id`, `phase`, `delivery`, `position`, `pauseCause`,
+`turnID`, `outcome`, `clientID` and `prompt`. Phases are `queued`, `paused`,
+`promoted`, `running`, `settled` and `removed`. `session.input.changed` carries
+these values with `inputID` instead of `id`, plus `previous`, `cause` and
+`inputRevision`. The event commits with the transition. Legacy events keep
+their order.
 
 `PATCH /session/{id}/queue` request:
 
@@ -527,3 +542,8 @@ Runtime state, permission and question events use reliable overflow handling.
 They stay live-only, but a full subscriber queue closes with
 `server.resyncRequired` instead of silently dropping a state change. Consumers
 must reconnect and refresh their snapshots after that event.
+
+
+Queue holds publish `session.queue.held` with `held` and `inputRevision`.
+They leave the legacy queue edit revision unchanged. An idle `resume: false`
+request records hold reason `manual`.

@@ -581,6 +581,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/session/{session_id}/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Inputs */
+        get: operations["getSessionInputs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/session/{session_id}/input/{input_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Input */
+        get: operations["getSessionInput"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/session/{session_id}/input/{input_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Input */
+        post: operations["cancelSessionInput"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/session/{session_id}/interrupt": {
         parameters: {
             query?: never;
@@ -788,6 +839,23 @@ export interface paths {
         head?: never;
         /** Patch Queue */
         patch: operations["patchSessionQueue"];
+        trace?: never;
+    };
+    "/api/v1/session/{session_id}/queue/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Queue */
+        post: operations["resumeSessionQueue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/session/{session_id}/relocate": {
@@ -1514,6 +1582,11 @@ export interface components {
              */
             images: boolean;
             /**
+             * Inputlifecycle
+             * @default true
+             */
+            inputLifecycle: boolean;
+            /**
              * Mcp
              * @default true
              */
@@ -1644,6 +1717,34 @@ export interface components {
             type: "image";
             /** Uri */
             uri?: string | null;
+        };
+        /** InputInfo */
+        InputInfo: {
+            /** Clientid */
+            clientID?: string | null;
+            /**
+             * Delivery
+             * @enum {string}
+             */
+            delivery: "steer" | "queue";
+            /** Id */
+            id: string;
+            /** Outcome */
+            outcome?: ("completed" | "stopped" | "failed" | "recovered") | null;
+            pauseCause?: components["schemas"]["PauseCause"] | null;
+            phase: components["schemas"]["InputPhaseName"];
+            /** Position */
+            position?: number | null;
+            /** Prompt */
+            prompt: string;
+            /** Turnid */
+            turnID?: number | null;
+        };
+        /** @enum {string} */
+        InputPhaseName: "queued" | "paused" | "promoted" | "running" | "settled" | "removed";
+        /** InputResponse */
+        InputResponse: {
+            data: components["schemas"]["InputInfo"];
         };
         /** InterruptData */
         InterruptData: {
@@ -1822,6 +1923,11 @@ export interface components {
             data: components["schemas"]["ModelInfo"][];
             location: components["schemas"]["LocationInfo"];
         };
+        /**
+         * PauseCause
+         * @enum {string}
+         */
+        PauseCause: "user" | "workspace";
         /** PermissionListResponse */
         PermissionListResponse: {
             /** Data */
@@ -1980,6 +2086,8 @@ export interface components {
             delivery: "steer" | "queue";
             /** Id */
             id: string;
+            /** @default queued */
+            phase: components["schemas"]["InputPhaseName"];
             /** Promotedseq */
             promotedSeq?: number | null;
             prompt: components["schemas"]["PromptInput"];
@@ -2132,6 +2240,12 @@ export interface components {
         };
         /** QueueData */
         QueueData: {
+            held?: components["schemas"]["QueueHold"] | null;
+            /**
+             * Inputrevision
+             * @default 0
+             */
+            inputRevision: number;
             /** Items */
             items: components["schemas"]["QueueItem"][];
             /** Pendingimages */
@@ -2154,6 +2268,11 @@ export interface components {
              */
             op: "setDelivery";
         };
+        /** QueueHold */
+        QueueHold: {
+            /** Reason */
+            reason: string;
+        };
         /** QueueItem */
         QueueItem: {
             /** Createdat */
@@ -2165,6 +2284,7 @@ export interface components {
             delivery: "steer" | "queue";
             /** Id */
             id: string;
+            pauseCause?: components["schemas"]["PauseCause"] | null;
             /** Paused */
             paused: boolean;
             prompt: components["schemas"]["PromptInput"];
@@ -2395,6 +2515,18 @@ export interface components {
             title?: string | null;
             tree: components["schemas"]["SessionTreeSummary"];
             workspace: components["schemas"]["WorkspaceStatus"];
+        };
+        /** SessionInputs */
+        SessionInputs: {
+            held?: components["schemas"]["QueueHold"] | null;
+            /** Inputrevision */
+            inputRevision: number;
+            /** Inputs */
+            inputs: components["schemas"]["InputInfo"][];
+        };
+        /** SessionInputsResponse */
+        SessionInputsResponse: {
+            data: components["schemas"]["SessionInputs"];
         };
         /** SessionListResponse */
         SessionListResponse: {
@@ -4139,6 +4271,103 @@ export interface operations {
             };
         };
     };
+    getSessionInputs: {
+        parameters: {
+            query?: {
+                live?: boolean;
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInputsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getSessionInput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                input_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InputResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancelSessionInput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                input_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InputResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     interruptSession: {
         parameters: {
             query?: never;
@@ -4585,6 +4814,37 @@ export interface operations {
                 "application/json": components["schemas"]["QueuePatchRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resumeSessionQueue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

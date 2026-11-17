@@ -20,7 +20,6 @@ from yoke.session import SessionStore
 from yoke.session.admissions import AdmissionRecord
 from yoke.session.queue import prompt_queue_transaction
 from yoke.session.workspace import WorkspaceUnavailable, workspace_lease
-from yoke.session.workspace_inputs import reconcile_workspace_inputs
 
 
 class TurnAdmission:
@@ -51,7 +50,7 @@ class TurnAdmission:
         """Cover promotion, waiting for capacity, execution, and cleanup with one lease.
 
         A promoted input without this lease is an orphan after a process exits.
-        Acquiring before promotion makes that distinction safe across processes.
+        Acquiring before promotion makes that distinction safe within one daemon process.
         """
         with ExitStack() as use:
             use.enter_context(workspace_lease(self.store, self.session_id))
@@ -63,7 +62,10 @@ class TurnAdmission:
                         break
                     snapshot = self.persistence.snapshot()
                     if not input_is_persisted(snapshot.record, promoted.id):
-                        return ReservedInput(promoted, use.pop_all())
+                        return ReservedInput(
+                            self.pending_inputs.recover(self.session_id, promoted.id),
+                            use.pop_all(),
+                        )
                     if not input_has_terminal_assistant(
                         snapshot.active_path_entries, promoted.id
                     ):
@@ -90,10 +92,19 @@ class TurnAdmission:
             current = admissions.records.get(admission.id)
             if current is None or current.settled or current.state == "removed":
                 return
-            current.workspace_blocked = True
-            reconcile_workspace_inputs(
-                pending.admissions, self.session_id, transaction, snapshot=admissions
+            from yoke.session.input_phase import InputEvent, Paused, PauseCause
+
+            pending.lifecycle.apply(
+                transaction,
+                self.session_id,
+                current,
+                InputEvent.BLOCK_WORKSPACE,
+                Paused(current.queue_position or 0, PauseCause.WORKSPACE),
             )
+            transaction.snapshot.held_reason = "workspace_unavailable"
+            transaction.snapshot.revision += 1
+            transaction.commit()
+            pending.lifecycle.reindex(transaction, self.session_id)
             queue = transaction.snapshot
             record = self.store.summary_record(self.session_id)
             self.events.durable(
@@ -115,6 +126,7 @@ class TurnAdmission:
                 recover=recover,
             )
         except WorkspaceUnavailable as exc:
+            self.pending_inputs.set_hold(self.session_id, "workspace_unavailable")
             if self.activity.active is None and self.activity.operation is None:
                 self.activity.enter(
                     Idle(str(exc), "workspace_unavailable"),

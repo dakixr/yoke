@@ -13,6 +13,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, Field
 
 from yoke.agent.models import Message
+from yoke.session.input_phase import PauseCause
 from yoke.session.inputs import ensure_input_row, session_database, sync_input_row
 
 
@@ -27,6 +28,7 @@ class PersistedPendingInput(BaseModel):
     kind: Literal["queued", "steering"] = "queued"
     created_at: str
     paused: bool = False
+    pause_cause: PauseCause | None = None
     user_message: Message | None = None
 
 
@@ -35,6 +37,8 @@ class PersistedPromptQueue(BaseModel):
 
     version: int = 1
     revision: int = 0
+    held_reason: str | None = None
+    input_revision: int = 0
     prompts: list[PersistedPendingInput] = Field(default_factory=list)
     pending_images: list[str] = Field(default_factory=list)
 
@@ -84,7 +88,8 @@ def has_queued_prompts(session_directory: Path) -> bool:
     with session_database(session_directory).read() as connection:
         row = connection.execute(
             "SELECT EXISTS (SELECT 1 FROM inputs i JOIN sessions s ON s.id = i.session_id "
-            "WHERE i.position IS NOT NULL AND i.paused = 0)"
+            "LEFT JOIN session_queues q ON q.session_id = i.session_id "
+            "WHERE i.position IS NOT NULL AND i.paused = 0 AND q.held_reason IS NULL)"
         ).fetchone()
     return bool(row[0])
 
@@ -122,7 +127,7 @@ def _read_queue(
     connection: sqlite3.Connection, session_id: str
 ) -> PersistedPromptQueue:
     meta = connection.execute(
-        "SELECT queue_rev, pending_images FROM session_queues WHERE session_id = ?",
+        "SELECT queue_rev, pending_images, held_reason, input_revision FROM session_queues WHERE session_id = ?",
         (session_id,),
     ).fetchone()
     prompts = [
@@ -137,6 +142,8 @@ def _read_queue(
         return PersistedPromptQueue(prompts=prompts)
     return PersistedPromptQueue(
         revision=int(meta[0]),
+        held_reason=meta[2],
+        input_revision=int(meta[3]),
         prompts=prompts,
         pending_images=json.loads(meta[1]),
     )
@@ -170,16 +177,29 @@ def _write_queue(
         )
     for input_id in dict.fromkeys([*previous, *ids]):
         sync_input_row(connection, session_id, input_id)
-    if snapshot.revision == 0 and not snapshot.prompts and not snapshot.pending_images:
+    if (
+        snapshot.revision == 0
+        and not snapshot.prompts
+        and not snapshot.pending_images
+        and snapshot.held_reason is None
+        and snapshot.input_revision == 0
+    ):
         connection.execute(
             "DELETE FROM session_queues WHERE session_id = ?", (session_id,)
         )
         return
     connection.execute(
-        "INSERT INTO session_queues (session_id, queue_rev, pending_images) "
-        "VALUES (?, ?, ?) ON CONFLICT (session_id) DO UPDATE SET "
-        "queue_rev = excluded.queue_rev, pending_images = excluded.pending_images",
-        (session_id, snapshot.revision, json.dumps(snapshot.pending_images)),
+        "INSERT INTO session_queues (session_id, queue_rev, pending_images, held_reason, input_revision) "
+        "VALUES (?, ?, ?, ?, ?) ON CONFLICT (session_id) DO UPDATE SET "
+        "queue_rev = excluded.queue_rev, pending_images = excluded.pending_images, "
+        "held_reason = excluded.held_reason, input_revision = excluded.input_revision",
+        (
+            session_id,
+            snapshot.revision,
+            json.dumps(snapshot.pending_images),
+            snapshot.held_reason,
+            snapshot.input_revision,
+        ),
     )
 
 

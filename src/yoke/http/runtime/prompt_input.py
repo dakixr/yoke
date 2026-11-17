@@ -18,11 +18,14 @@ from yoke.session.admissions import AdmissionRecord
 
 if TYPE_CHECKING:
     from yoke.http.services.pending_input_service import PendingInputService
+    from yoke.http.services.prompt_admission import PromptAdmissionService
     from yoke.session import SessionRecord
 
 
 def validate_prompt(
-    service: PendingInputService, session_id: str, prompt: PromptInput
+    service: PendingInputService | PromptAdmissionService,
+    session_id: str,
+    prompt: PromptInput,
 ) -> None:
     if prompt.continuation:
         if prompt.text or prompt.attachments:

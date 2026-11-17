@@ -8,6 +8,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Literal
+from collections.abc import Callable
 
 from yoke.http.errors import session_busy
 from yoke.http.models.session import ActiveRuntimeInfo, RuntimeOperationInfo
@@ -42,6 +43,7 @@ class RuntimeStatus:
         self._revision = 0
         self.tool_call_ids: dict[int, set[str]] = {}
         self.changed = asyncio.Event()
+        self.hold_queue: Callable[[str | None], None] | None = None
 
     @property
     def phase(self) -> RuntimePhase:
@@ -101,6 +103,16 @@ class RuntimeStatus:
         if isinstance(new, Retiring):
             new.execution.stop_event.set()
             new.execution.retired_event.set()
+        if (
+            isinstance(new, Idle)
+            and new.hold
+            and new.hold != "compaction_failed"
+            and self.hold_queue is not None
+        ):
+            try:
+                self.hold_queue("interrupt" if new.hold == "user" else new.hold)
+            except Exception:  # noqa: BLE001 - preserve terminal ownership on disk failure
+                LOGGER.exception("Failed to persist queue hold for %s", self.session_id)
         self._phase = new
         self._revision += 1
         if (

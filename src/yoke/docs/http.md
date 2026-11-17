@@ -70,7 +70,8 @@ A lease is an open stream that keeps the daemon alive. `GET /event?client=<name>
 and `GET /daemon/lease?client=<name>` both hold one. The daemon exits about five
 seconds after it has no leases and no work. Work means a running, stopping or
 input-waiting turn, a worker still finishing a retired turn, or an unpaused
-queued input in any session. Paused inputs do not keep the daemon alive.
+queued input in a queue that is not held. Paused inputs and held queues do not
+keep the daemon alive.
 `--no-idle-exit` turns idle exit off, for a daemon run by a service manager.
 A sample systemd user unit is in
 [`docs/yoke-daemon.service`](../../../docs/yoke-daemon.service).
@@ -830,3 +831,35 @@ const fork = await client.forkSession("my-session", {
 ```
 
 The daemon serves its OpenAPI document at `GET /openapi.json`.
+
+
+## Durable input lifecycle
+
+Check `features.inputLifecycle` in `/capabilities` before using the input routes.
+Protocol stays 2. Each input has one durable phase: `queued`, `paused`,
+`promoted`, `running`, `settled` or `removed`. Promotion reserves a turn;
+`running` means the turn acquired capacity and can start its worker.
+
+`GET /session/{id}/input?live=true` returns the live inputs, the queue hold and
+`inputRevision`. Set `live=false` to include terminal inputs. Read one input
+with `GET /session/{id}/input/{inputID}`. Every phase change journals
+`session.input.changed` with `inputID`, `previous`, `phase`, `cause`,
+`inputRevision`, `delivery`, `position`, `pauseCause`, `turnID`, `outcome`,
+`clientID` and `prompt`. The revision increases within the session and survives
+daemon restarts. Refresh the snapshot if you miss a revision. Legacy prompt
+and queue events still arrive in their original order.
+
+Stop, failed finalization and failed model selection hold the queue with a
+reason. Startup holds stranded queues with `daemon_restart`. A failed workspace
+check records `workspace_unavailable`. A hold preserves the queue and lets the
+daemon idle out. Resume with `POST /session/{id}/queue/resume` or an admission
+or queue patch with `resume: true`. Resuming never unpauses individual inputs.
+
+`POST /session/{id}/input/{inputID}/cancel` removes a queued or paused input.
+For a promoted or running input, it stops only that input. Terminal inputs
+return `409 input_settled`. The prompt admission response includes `phase` and
+reads the receipt after wake, so it can already report promotion.
+
+The daemon also holds an idle queue with reason `manual` when a request uses
+`resume: false`. Hold changes publish `session.queue.held` with `held` and
+`inputRevision`. Holds do not change the legacy queue edit revision.

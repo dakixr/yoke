@@ -9,6 +9,7 @@ from pydantic import Field
 from pydantic.json_schema import SkipJsonSchema
 
 from yoke.http.models.common import ApiModel
+from yoke.session.input_phase import PauseCause
 
 
 class PromptAttachment(ApiModel):
@@ -39,12 +40,18 @@ class PromptAdmissionRequest(ApiModel):
     client_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+type InputPhaseName = Literal[
+    "queued", "paused", "promoted", "running", "settled", "removed"
+]
+
+
 class PromptAdmissionReceipt(ApiModel):
     id: str
     session_id: str
     prompt: PromptInput
     delivery: Literal["steer", "queue"]
     state: Literal["admitted", "promoted", "removed"]
+    phase: InputPhaseName = "queued"
     admitted_seq: int
     promoted_seq: int | None = None
     time_created: str
@@ -60,12 +67,19 @@ class QueueItem(ApiModel):
     delivery: Literal["steer", "queue"]
     paused: bool
     created_at: str
+    pause_cause: PauseCause | None = None
     state: Literal["admitted"] = "admitted"
+
+
+class QueueHold(ApiModel):
+    reason: str
 
 
 class QueueData(ApiModel):
     revision: int
     pending_images: list[str] = Field(default_factory=list)
+    held: QueueHold | None = None
+    input_revision: int = 0
     items: list[QueueItem]
 
 
@@ -131,3 +145,29 @@ class QueuePatchRequest(ApiModel):
     admissions: list[PromptAdmissionRequest] = Field(default_factory=list)
     pending_images: list[str] | None = None
     resume: bool = True
+
+
+class InputInfo(ApiModel):
+    id: str
+    phase: InputPhaseName
+    delivery: Literal["steer", "queue"]
+    position: int | None = None
+    pause_cause: PauseCause | None = None
+    turn_id: int | None = None
+    outcome: Literal["completed", "stopped", "failed", "recovered"] | None = None
+    client_id: str | None = None
+    prompt: str
+
+
+class SessionInputs(ApiModel):
+    input_revision: int
+    held: QueueHold | None = None
+    inputs: list[InputInfo]
+
+
+class SessionInputsResponse(ApiModel):
+    data: SessionInputs
+
+
+class InputResponse(ApiModel):
+    data: InputInfo

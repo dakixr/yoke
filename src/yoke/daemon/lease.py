@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 import httpx
 
-from yoke.daemon.client import DaemonHandle, connect_or_spawn
+from yoke.daemon.client import DaemonHandle, connect_or_spawn, wait_for_exit
 from yoke.daemon.paths import DaemonPaths
 from yoke.daemon.transport import async_client
 
@@ -36,19 +36,32 @@ async def hold_lease(
     while True:
         try:
             handle = await asyncio.to_thread(connect_or_spawn, paths)
-            if on_connect is not None:
-                on_connect(handle)
             async with async_client(
                 handle.socket,
                 timeout=httpx.Timeout(10.0, read=None),
             ) as http:
                 async with http.stream("GET", "daemon/lease", params=params) as stream:
                     stream.raise_for_status()
+                    announced = False
+                    restarting = False
                     async for line in stream.aiter_lines():
                         if line.startswith("data: "):
                             data = json.loads(line[6:])
+                            if data.get("leaseID") and not announced:
+                                announced = True
+                                if on_connect is not None:
+                                    on_connect(handle)
+                            if data.get("reason") == "restart":
+                                restarting = True
                             if data.get("reason") == "stop":
                                 return
+            if restarting:
+                # Wait for the old lifetime lock before rediscovery. An immediate
+                # probe can otherwise announce the exiting daemon as reconnected.
+                await asyncio.to_thread(
+                    wait_for_exit, handle.socket, handle.pid, timeout=15, paths=paths
+                )
+                continue
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - keep retrying; the client must not die with the daemon

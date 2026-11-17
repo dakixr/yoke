@@ -13,6 +13,8 @@ from yoke.http.models.prompt import (
     PromptAdmissionResponse,
     QueuePatchRequest,
     QueueResponse,
+    SessionInputsResponse,
+    InputResponse,
 )
 from yoke.http.models.session import InterruptData, InterruptResponse, WaitResponse
 from yoke.http.services.pending_input_service import PendingInputService
@@ -71,6 +73,14 @@ async def admit_prompt(
     )
     if body.resume:
         await runtime.wake()
+    else:
+        await runtime.hold_if_idle()
+    receipt = await asyncio.get_running_loop().run_in_executor(
+        _registry(request).storage_executor,
+        _pending(request).receipt,
+        session_id,
+        receipt.id,
+    )
     return PromptAdmissionResponse(data=receipt)
 
 
@@ -93,7 +103,7 @@ async def patch_queue(
     session_id: str,
     body: QueuePatchRequest,
 ) -> QueueResponse:
-    data = await asyncio.get_running_loop().run_in_executor(
+    await asyncio.get_running_loop().run_in_executor(
         _registry(request).storage_executor,
         _registry(request)
         .get_or_start(session_id)
@@ -102,9 +112,14 @@ async def patch_queue(
         session_id,
         body,
     )
+    runtime = _registry(request).get_or_start(session_id)
     if body.resume:
-        await _registry(request).get_or_start(session_id).wake()
-    return QueueResponse(data=data)
+        await runtime.wake()
+    else:
+        await runtime.hold_if_idle()
+    return QueueResponse(
+        data=await asyncio.to_thread(_pending(request).queue, session_id)
+    )
 
 
 @router.post(
@@ -153,3 +168,51 @@ async def wait_for_session(
             else await registry.wait(session_id, 0)
         )
     return WaitResponse(data=status)
+
+
+@router.get(
+    "/session/{session_id}/input",
+    response_model=SessionInputsResponse,
+    operation_id="getSessionInputs",
+)
+def get_inputs(
+    request: Request, session_id: str, live: bool = True
+) -> SessionInputsResponse:
+    return SessionInputsResponse(
+        data=_pending(request).control.snapshot(session_id, live=live)
+    )
+
+
+@router.get(
+    "/session/{session_id}/input/{input_id}",
+    response_model=InputResponse,
+    operation_id="getSessionInput",
+)
+def get_input(request: Request, session_id: str, input_id: str) -> InputResponse:
+    control = _pending(request).control
+    return InputResponse(data=control.info(control.get_input(session_id, input_id)))
+
+
+@router.post(
+    "/session/{session_id}/queue/resume",
+    response_model=QueueResponse,
+    operation_id="resumeSessionQueue",
+)
+async def resume_queue(request: Request, session_id: str) -> QueueResponse:
+    await _registry(request).get_or_start(session_id).wake()
+    return QueueResponse(
+        data=await asyncio.to_thread(_pending(request).queue, session_id)
+    )
+
+
+@router.post(
+    "/session/{session_id}/input/{input_id}/cancel",
+    response_model=InputResponse,
+    operation_id="cancelSessionInput",
+)
+async def cancel_input(
+    request: Request, session_id: str, input_id: str
+) -> InputResponse:
+    runtime = _registry(request).get_or_start(session_id)
+    await runtime.cancel_input(input_id)
+    return get_input(request, session_id, input_id)

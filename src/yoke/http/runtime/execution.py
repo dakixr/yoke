@@ -22,7 +22,7 @@ from yoke.http.runtime.entry_persistence import normalized_runtime_entry_count
 from yoke.http.runtime.factory import http_session_usage_metric_context
 from yoke.http.runtime.finalization import TurnFinalizer
 from yoke.http.runtime.owned_cleanup import execute_with_cleanup
-from yoke.http.runtime.persistence import TurnPersistence
+from yoke.http.runtime.persistence import TurnPersistence, run_blocking
 from yoke.http.runtime.prompt_input import (
     validate_execution_images,
 )
@@ -154,6 +154,15 @@ class TurnExecutor:
                     execution,
                     Activity.LOADING if execution.cold_start else Activity.THINKING,
                 )
+            if execution.retired_event.is_set():
+                return
+            await run_blocking(
+                self.finalizer.storage_executor,
+                self.finalizer.pending_inputs.start_input,
+                self.session_id,
+                execution.admission.id,
+                execution.turn_id,
+            )
             if execution.retired_event.is_set():
                 return
             execution.start_worker()
