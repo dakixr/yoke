@@ -162,3 +162,52 @@ def test_busy_tcp_port_keeps_unix_listener_available(tmp_path):
             assert (tmp_path / "daemon.sock").exists()
         finally:
             listener.close()
+
+
+def test_daemon_without_idle_exit_probes_only_for_a_pending_restart():
+    async def scenario():
+        lifecycle = DaemonLifecycle(idle_exit=False, poll_seconds=0.01)
+        calls = 0
+
+        async def probe():
+            nonlocal calls
+            calls += 1
+            return False
+
+        lifecycle.bind_busy_probe(probe)
+        watcher = asyncio.create_task(lifecycle.watch())
+        try:
+            await asyncio.sleep(0.1)
+            assert calls == 0
+            lifecycle.request_restart_when_idle()
+            await asyncio.wait_for(watcher, 1)
+            assert calls >= 1
+            assert lifecycle.exit_reason == "restart"
+        finally:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_queued_prompt_presence_matches_stored_queues(tmp_path):
+    from yoke.session import SessionStore
+    from yoke.session.queue import (
+        PersistedPendingInput,
+        PersistedPromptQueue,
+        has_queued_prompts,
+        write_prompt_queue_snapshot,
+    )
+
+    store = SessionStore(tmp_path / "sessions")
+    store.save("saved", [], root=tmp_path)
+    assert not has_queued_prompts(store.directory)
+    paused = PersistedPendingInput(
+        id="input", prompt="later", created_at="now", paused=True
+    )
+    write_prompt_queue_snapshot(
+        store.directory, "saved", PersistedPromptQueue(prompts=[paused])
+    )
+    assert has_queued_prompts(store.directory)
+    write_prompt_queue_snapshot(store.directory, "saved", PersistedPromptQueue())
+    assert not has_queued_prompts(store.directory)

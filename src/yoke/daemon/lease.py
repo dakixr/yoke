@@ -11,6 +11,7 @@ import httpx
 
 from yoke.daemon.client import connect_or_spawn
 from yoke.daemon.paths import DaemonPaths
+from yoke.daemon.uds import async_unix_transport
 
 LOGGER = logging.getLogger(__name__)
 _RETRY_SECONDS = 0.5
@@ -28,7 +29,7 @@ async def hold_lease(client: str, paths: DaemonPaths | None = None) -> None:
     while True:
         try:
             handle = await asyncio.to_thread(connect_or_spawn, paths)
-            transport = httpx.AsyncHTTPTransport(uds=str(handle.socket))
+            transport = async_unix_transport(handle.socket)
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="http://yoke/api/v1/",

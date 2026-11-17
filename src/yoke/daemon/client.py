@@ -22,6 +22,7 @@ from yoke.daemon.build import build_id, protocol_version
 from yoke.daemon.instance import daemon_alive, read_info
 from yoke.daemon.log import DETACHED_ENV
 from yoke.daemon.paths import DaemonPaths
+from yoke.daemon.uds import unix_transport
 
 SPAWN_TIMEOUT_SECONDS = 5.0
 _BASE_URL = "http://yoke/api/v1/"
@@ -51,7 +52,7 @@ class DaemonHandle:
 def unix_client(socket_path: Path, *, timeout: float = 5.0) -> httpx.Client:
     """Return a synchronous API client bound to the daemon socket."""
     return httpx.Client(
-        transport=httpx.HTTPTransport(uds=str(socket_path)),
+        transport=unix_transport(socket_path),
         base_url=_BASE_URL,
         timeout=timeout,
         trust_env=False,

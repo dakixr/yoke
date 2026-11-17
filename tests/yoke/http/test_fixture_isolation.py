@@ -1,4 +1,4 @@
-"""Cached validation metadata must not share application secrets or storage."""
+"""Separate HTTP applications never share secrets or storage."""
 
 from pathlib import Path
 

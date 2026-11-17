@@ -6,7 +6,7 @@ import asyncio
 
 from yoke.http.runtime.registry import SessionRuntimeRegistry
 from yoke.session import SessionStore
-from yoke.session.queue import load_prompt_queue_snapshots
+from yoke.session.queue import has_queued_prompts
 
 
 class DaemonWork:
@@ -26,8 +26,6 @@ class DaemonWork:
         return await asyncio.to_thread(self.queued)
 
     def queued(self) -> bool:
-        sessions = self.store.list_index_entries(maintain=False)
-        queues = load_prompt_queue_snapshots(
-            self.store.directory, (session.id for session in sessions)
-        )
-        return any(queue.prompts for queue in queues.values())
+        # The lifecycle polls this several times a second; one indexed EXISTS
+        # keeps an idle daemon idle however many sessions are stored.
+        return has_queued_prompts(self.store.directory)

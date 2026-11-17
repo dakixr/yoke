@@ -17,6 +17,7 @@ import httpx
 
 from yoke.cli.backend.events import EventSubscriptions, event_from_sse
 from yoke.daemon.client import DaemonHandle, connect_or_spawn, unix_client
+from yoke.daemon.uds import async_unix_transport
 
 
 class DaemonRequestError(ValueError):
@@ -77,7 +78,7 @@ class SessionConnection:
             return
 
         async def change() -> None:
-            transport = httpx.AsyncHTTPTransport(uds=str(self._handle.socket))
+            transport = async_unix_transport(self._handle.socket)
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="http://yoke/api/v1/",
@@ -198,7 +199,7 @@ class SessionConnection:
                         self._handle = await discovery
                         raise
                     self._report_warning()
-                    transport = httpx.AsyncHTTPTransport(uds=str(self._handle.socket))
+                    transport = async_unix_transport(self._handle.socket)
                     async with httpx.AsyncClient(
                         transport=transport,
                         base_url="http://yoke/api/v1/",
@@ -228,7 +229,7 @@ class SessionConnection:
         finally:
             # Do not discover or spawn a daemon just to detach on exit.
             try:
-                transport = httpx.AsyncHTTPTransport(uds=str(self._handle.socket))
+                transport = async_unix_transport(self._handle.socket)
                 async with httpx.AsyncClient(
                     transport=transport,
                     base_url="http://yoke/api/v1/",

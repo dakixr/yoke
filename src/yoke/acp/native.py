@@ -21,6 +21,7 @@ from yoke.acp.observation.hub import NativeEventHub
 from yoke.acp.process_monitor import ProcessMonitor
 from yoke.acp.prompting import InlineAttachment
 from yoke.acp.state import ActiveTurn
+from yoke.daemon.uds import async_unix_transport
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 
@@ -49,9 +50,7 @@ class NativeClient:
             headers={"Authorization": "Bearer " + token} if token else None,
             timeout=35,
             limits=limits,
-            transport=(
-                httpx.AsyncHTTPTransport(uds=uds, limits=limits) if uds else None
-            ),
+            transport=(async_unix_transport(uds, limits=limits) if uds else None),
             trust_env=False,
             follow_redirects=False,
         )

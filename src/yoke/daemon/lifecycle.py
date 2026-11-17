@@ -115,8 +115,13 @@ class DaemonLifecycle:
         idle_since: float | None = None
         while self.exit_reason is None:
             await asyncio.sleep(self.poll_seconds)
+            waiting_for_idle = self.restart_pending or self._stop_pending
+            if not self.idle_exit and not waiting_for_idle:
+                # A daemon that never idles out needs the probe only to time a
+                # requested restart or stop.
+                continue
             busy = await self.busy()
-            if (self.restart_pending or self._stop_pending) and not busy:
+            if waiting_for_idle and not busy:
                 self.request_exit("stop" if self._stop_pending else "restart")
                 return
             if not self.idle_exit or busy or self._leases:
