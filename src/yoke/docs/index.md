@@ -91,9 +91,9 @@ agent.close()
 | Resume, fork, branch, relocate and hand off sessions, and maintain the database | [Sessions](sessions.md) |
 | Set up providers, `config.json`, tool policy, custom tools, MCP servers, `AGENTS.md` and environment variables | [Configuration](configuration.md) |
 | Embed agents in Python, run tasks in parallel, save agent state, read usage records | [SDK](sdk.md) |
-| Drive sessions over HTTP, or run the daemon and web UI | [HTTP API](http.md), [Daemon client contract](daemon-client.md) |
+| Drive sessions over HTTP, or run the daemon | [HTTP API](http.md), [HTTP reference](http-reference.md), [Daemon client contract](daemon-client.md) |
 | Connect T3 Code or another ACP editor | [ACP and T3 Code](acp.md) |
 | Serve Yoke's tools to another agent over MCP | [Tool-only MCP server](mcp-server.md), [Composed MCP work](mcp-composition.md) |
 | Understand `command_exec`, `process_read` and the other process tools | [Shared process tools](process-tools.md) |
-| Use the web UI's tool, tree, process and agent views | [Web inspectors](web-inspectors.md) |
+| Use the web UI and its tool, tree, process and agent views | [Web UI](web-ui.md), [Web inspectors](web-inspectors.md) |
 | Change the agent loop, providers, tool execution or storage | [Runtime internals](runtime.md), [CLI session backend](cli-backend.md) |
