@@ -26,6 +26,18 @@ class SchemaTooNewError(DatabaseError):
         self.supported = supported
 
 
+class SchemaTooOldError(DatabaseError):
+    """The database needs the daemon's serialized schema upgrade."""
+
+    def __init__(self, path: Path, found: int, supported: int) -> None:
+        super().__init__(
+            f"{path} uses schema version {found}; this release needs {supported}. "
+            "Start the Yoke daemon or run yoke db migrate with the daemon stopped."
+        )
+        self.found = found
+        self.supported = supported
+
+
 def migrations() -> list[tuple[int, str]]:
     """Return the ordered (version, sql) migrations shipped with this release."""
     folder = resources.files("yoke.storage").joinpath("migrations")
@@ -54,10 +66,7 @@ def check_schema(connection: sqlite3.Connection, path: Path) -> None:
     if found > supported:
         raise SchemaTooNewError(path, found, supported)
     if found < supported:
-        raise DatabaseError(
-            f"{path} uses schema version {found}; this release needs {supported}. "
-            "Start the Yoke daemon or run yoke db migrate with the daemon stopped."
-        )
+        raise SchemaTooOldError(path, found, supported)
 
 
 def migrate_schema(connection: sqlite3.Connection, path: Path) -> None:

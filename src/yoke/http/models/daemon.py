@@ -16,6 +16,14 @@ class LeaseInfo(ApiModel):
     opened_at: float
 
 
+class DaemonWorkInfo(ApiModel):
+    running_sessions: list[str] = Field(default_factory=list)
+    runnable_queues: list[str] = Field(default_factory=list)
+    held_queues: list[str] = Field(default_factory=list)
+    mutations: int = 0
+    admission_changed: bool = False
+
+
 class DaemonStatusData(ApiModel):
     pid: int
     build_id: str
@@ -27,6 +35,10 @@ class DaemonStatusData(ApiModel):
     busy: bool
     restart_pending: bool
     leases: list[LeaseInfo]
+    phase: Literal["serving", "draining", "exiting"] = "serving"
+    pending_exit: Literal["restart", "stop"] | None = None
+    exit_reason: Literal["idle", "restart", "stop", "signal"] | None = None
+    work: DaemonWorkInfo = Field(default_factory=DaemonWorkInfo)
 
 
 class DaemonStatusResponse(ApiModel):

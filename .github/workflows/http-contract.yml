@@ -95,6 +95,8 @@ jobs:
           tests/yoke/cli/test_prompt_queue_persistence.py
           tests/yoke/cli/test_startup_performance.py
           tests/yoke/http/test_contract.py
+          tests/yoke/daemon/test_phase4.py
+          tests/yoke/daemon/test_phase4_machine.py
           tests/yoke/daemon/test_portable.py
           tests/yoke/daemon/test_client_review.py
           tests/yoke/daemon/test_identity.py

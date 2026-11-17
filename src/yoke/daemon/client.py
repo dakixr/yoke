@@ -7,6 +7,7 @@ bearer token. Apply the same version-skew policy before returning either.
 from __future__ import annotations
 
 import os
+import logging
 import secrets
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from enum import StrEnum
 from typing import Any, Literal, TypedDict
 
 import httpx
@@ -157,85 +159,144 @@ def spawn_daemon(paths: DaemonPaths | None = None) -> subprocess.Popen[bytes]:
     return process
 
 
+class DiscoveryStep(StrEnum):
+    """Each discovery has one restart edge, consumed before it is followed."""
+
+    PROBE = "probe"
+    SPAWN = "spawn"
+    STATUS = "status"
+    DECIDE = "decide"
+    RESTART_ONCE = "restart_once"
+    ATTACH = "attach"
+    REFUSE = "refuse"
+
+
+def _discovery_step(step: DiscoveryStep) -> None:
+    logging.getLogger(__name__).debug("Daemon discovery: step=%s", step)
+
+
 def connect_or_spawn(
     paths: DaemonPaths | None = None,
     *,
     timeout: float = SPAWN_TIMEOUT_SECONDS,
     allow_restart: bool = True,
 ) -> DaemonHandle:
-    """Attach to the daemon, starting it first when none answers."""
+    """Discover through bounded steps, consuming at most one restart attempt."""
     paths = paths or DaemonPaths.default()
-    socket_path = find_daemon(paths) or _spawn_and_wait(paths, timeout)
-    with unix_client(socket_path) as client:
-        status = _data(client.get("daemon"))
+    step = DiscoveryStep.PROBE
+    socket_path: Endpoint | None = None
+    status: dict[str, Any] = {}
+    action: SkewAction = "attach"
+    restart_available = allow_restart
+    # Longest path: probe/spawn/status/decide/restart, then probe/spawn/status/
+    # decide/attach. A failed or raced restart consumes the same single edge.
+    for _ in range(10):
+        _discovery_step(step)
+        match step:
+            case DiscoveryStep.PROBE:
+                socket_path = find_daemon(paths)
+                step = (
+                    DiscoveryStep.STATUS
+                    if socket_path is not None
+                    else DiscoveryStep.SPAWN
+                )
+            case DiscoveryStep.SPAWN:
+                socket_path = _spawn_and_wait(paths, timeout)
+                step = DiscoveryStep.STATUS
+            case DiscoveryStep.STATUS:
+                assert socket_path is not None
+                with unix_client(socket_path) as client:
+                    status = _data(client.get("daemon"))
+                _check_database(status)
+                step = DiscoveryStep.DECIDE
+            case DiscoveryStep.DECIDE:
+                action = skew_action(
+                    client_build=build_id(),
+                    disk_build=fresh_build_id(),
+                    client_protocol=protocol_version(),
+                    daemon_build=status["buildID"],
+                    daemon_protocol=status["protocolVersion"],
+                    busy=bool(status["busy"]),
+                )
+                if action == "restart" and not restart_available:
+                    action = (
+                        "warn"
+                        if status["protocolVersion"] == protocol_version()
+                        else "refuse"
+                    )
+                step = (
+                    DiscoveryStep.RESTART_ONCE
+                    if action == "restart"
+                    else DiscoveryStep.REFUSE
+                    if action == "refuse"
+                    else DiscoveryStep.ATTACH
+                )
+            case DiscoveryStep.RESTART_ONCE:
+                assert socket_path is not None
+                restart_available = False
+                restart_daemon(socket_path, status["pid"], timeout=timeout, paths=paths)
+                step = DiscoveryStep.PROBE
+            case DiscoveryStep.REFUSE:
+                raise DaemonIncompatible(
+                    f"The running Yoke daemon ({status['buildID']}, protocol "
+                    f"{status['protocolVersion']}) is incompatible with this "
+                    f"client ({build_id()}, protocol {protocol_version()}). "
+                    "Upgrade/restart the older client or daemon explicitly, or retry once "
+                    "turns finish if a newer on-disk release is available."
+                )
+            case DiscoveryStep.ATTACH:
+                assert socket_path is not None
+                if status.get("databasePath") is None:
+                    raise DaemonIncompatible(
+                        "The running Yoke daemon does not report its database path. "
+                        "Upgrade and restart the daemon before attaching."
+                    )
+                warning = None
+                if action == "warn":
+                    warning = (
+                        f"Yoke daemon runs {status['buildID']}, this client is {build_id()}; "
+                        "attached with compatible protocol. Automatic restart requires a newer "
+                        "release on disk; align client and daemon versions to remove this warning."
+                    )
+                return DaemonHandle(
+                    socket=socket_path,
+                    pid=int(status["pid"]),
+                    build_id=status["buildID"],
+                    protocol_version=status["protocolVersion"],
+                    warning=warning,
+                )
+    raise DaemonUnavailable("Yoke daemon discovery exceeded its step limit")
+
+
+def _check_database(status: dict[str, Any]) -> None:
     database_path = status.get("databasePath")
-    if database_path is not None:
-        requested = default_database_path().resolve()
-        actual = Path(database_path).expanduser().resolve()
-        if requested != actual:
-            raise DaemonUnavailable(
-                f"Yoke database mismatch: client requested {requested}, but the "
-                f"running daemon uses {actual}. Use the daemon database path or "
-                "stop it explicitly before starting with another YOKE_DB_PATH."
-            )
-    action = skew_action(
-        client_build=build_id(),
-        disk_build=fresh_build_id(),
-        client_protocol=protocol_version(),
-        daemon_build=status["buildID"],
-        daemon_protocol=status["protocolVersion"],
-        busy=bool(status["busy"]),
-    )
-    if action == "restart" and not allow_restart:
-        # A restart already happened and another build won the lock.
-        action = "warn" if status["protocolVersion"] == protocol_version() else "refuse"
-    if action == "restart":
-        restarted = restart_daemon(
-            socket_path, status["pid"], timeout=timeout, paths=paths
-        )
-        if not restarted:
-            # A turn admitted after the status read gets the busy skew policy.
-            return connect_or_spawn(paths, timeout=timeout, allow_restart=False)
-        return connect_or_spawn(paths, timeout=timeout, allow_restart=False)
-    if action == "refuse":
-        raise DaemonIncompatible(
-            f"The running Yoke daemon ({status['buildID']}, protocol "
-            f"{status['protocolVersion']}) is incompatible with this "
-            f"client ({build_id()}, protocol {protocol_version()}). "
-            "Upgrade/restart the older client or daemon explicitly, or retry once "
-            "turns finish if a newer on-disk release is available."
-        )
     if database_path is None:
-        raise DaemonIncompatible(
-            "The running Yoke daemon does not report its database path. "
-            "Upgrade and restart the daemon before attaching."
+        return
+    requested = default_database_path().resolve()
+    actual = Path(database_path).expanduser().resolve()
+    if requested != actual:
+        raise DaemonUnavailable(
+            f"Yoke database mismatch: client requested {requested}, but the "
+            f"running daemon uses {actual}. Use the daemon database path or "
+            "stop it explicitly before starting with another YOKE_DB_PATH."
         )
-    warning = None
-    if action == "warn":
-        warning = (
-            f"Yoke daemon runs {status['buildID']}, this client is {build_id()}; "
-            "attached with compatible protocol. Automatic restart requires a newer "
-            "release on disk; align client and daemon versions to remove this warning."
-        )
-    return DaemonHandle(
-        socket=socket_path,
-        pid=int(status["pid"]),
-        build_id=status["buildID"],
-        protocol_version=status["protocolVersion"],
-        warning=warning,
-    )
 
 
 def restart_daemon(
     socket_path: Endpoint, pid: int, *, timeout: float, paths: DaemonPaths | None = None
 ) -> bool:
-    """Restart an idle daemon; return False if an admission made it busy."""
+    """Wait for a requested restart; return False if work delays shutdown."""
     with unix_client(socket_path) as client:
         response = client.post("daemon/restart", json={})
         if response.status_code == 409:
             return False
         _data(response)
-    wait_for_exit(socket_path, pid, timeout=timeout, paths=paths)
+    try:
+        wait_for_exit(socket_path, pid, timeout=timeout, paths=paths)
+    except DaemonUnavailable:
+        # Pending drains and older daemons can race an admission. Rediscover
+        # once with restart consumed, then use the compatible warn/refuse rule.
+        return False
     return True
 
 

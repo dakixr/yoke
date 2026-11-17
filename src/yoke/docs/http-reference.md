@@ -49,10 +49,28 @@ returns `404 daemon_mode_required`.
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /daemon` | Status: `pid`, `buildID`, `protocolVersion`, `socket`, `port`, `idleExit`, `busy`, `restartPending`, `leases[]` of `{id, client, pid, openedAt}`. |
+| `GET /daemon` | Status: `pid`, `buildID`, `protocolVersion`, `databasePath`, `socket`, `port`, `idleExit`, `busy`, `restartPending`, `phase`, `pendingExit`, `exitReason`, `work`, `leases[]` of `{id, client, pid, openedAt}`. |
 | `POST /daemon/restart` | Body `{whenIdle?: bool}`. Returns `{action: "restart", scheduled: "now" \| "when_idle"}`. |
 | `POST /daemon/stop` | Body `{force?: bool}`. Returns `{action: "stop", scheduled: "now"}`. `force` interrupts running turns. |
 | `GET /daemon/lease` | SSE stream that holds a lease. Query `client` (required, 1 to 64 characters) and `pid`. Sends `daemon.lease`, heartbeats every 15 s, then `daemon.exiting` with `reason`. |
+
+`phase` is `serving`, `draining` or `exiting`. While draining, `pendingExit`
+is `restart` or `stop`; stop overrides restart. Once exiting, `exitReason`
+is `idle`, `restart`, `stop` or `signal` and cannot change. Draining accepts
+work until the watcher commits to exit.
+
+`work` contains `runningSessions`, `runnableQueues`, `heldQueues`, `mutations`
+and `admissionChanged`. The session lists name active runtime phases or retained
+workers, unpaused queues without a hold, and held queues respectively. Held
+queues never make `busy` true. In-flight mutations and a probe invalidated by a
+concurrent admission also count as busy. Legacy `busy` and `restartPending`
+remain available. Protocol stays 2.
+
+Restart returns `scheduled: "when_idle"` while exit is pending, even if the
+first work check was idle. The watcher checks admissions again before exiting.
+Clients wait for the old pid to exit; automatic discovery falls back to the
+version-skew warn or refuse policy if that wait times out. Open leases do not
+block a requested restart or stop.
 
 Errors: `409 daemon_busy` from restart without `whenIdle` and from stop without
 `force` while work runs. `503 daemon_exiting` from a lease opened during

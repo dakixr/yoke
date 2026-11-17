@@ -1518,10 +1518,20 @@ export interface components {
             busy: boolean;
             /** Databasepath */
             databasePath: string;
+            /** Exitreason */
+            exitReason?: ("idle" | "restart" | "stop" | "signal") | null;
             /** Idleexit */
             idleExit: boolean;
             /** Leases */
             leases: components["schemas"]["LeaseInfo"][];
+            /** Pendingexit */
+            pendingExit?: ("restart" | "stop") | null;
+            /**
+             * Phase
+             * @default serving
+             * @enum {string}
+             */
+            phase: "serving" | "draining" | "exiting";
             /** Pid */
             pid: number;
             /** Port */
@@ -1532,6 +1542,7 @@ export interface components {
             restartPending: boolean;
             /** Socket */
             socket?: string | null;
+            work?: components["schemas"]["DaemonWorkInfo"];
         };
         /** DaemonStatusResponse */
         DaemonStatusResponse: {
@@ -1545,6 +1556,25 @@ export interface components {
              * @default false
              */
             force: boolean;
+        };
+        /** DaemonWorkInfo */
+        DaemonWorkInfo: {
+            /**
+             * Admissionchanged
+             * @default false
+             */
+            admissionChanged: boolean;
+            /** Heldqueues */
+            heldQueues?: string[];
+            /**
+             * Mutations
+             * @default 0
+             */
+            mutations: number;
+            /** Runnablequeues */
+            runnableQueues?: string[];
+            /** Runningsessions */
+            runningSessions?: string[];
         };
         /** DrainData */
         DrainData: {

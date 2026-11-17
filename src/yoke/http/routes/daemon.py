@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
 from yoke.daemon.build import build_id, protocol_version
-from yoke.daemon.lifecycle import DaemonLifecycle
+from yoke.daemon.lifecycle import DaemonLifecycle, Draining, ExitReason, phase_name
 from yoke.http.auth import require_auth
 from yoke.http.errors import ApiError
 from yoke.http.models.daemon import (
@@ -22,6 +22,7 @@ from yoke.http.models.daemon import (
     DaemonStatusResponse,
     DaemonStopRequest,
     LeaseInfo,
+    DaemonWorkInfo,
 )
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -39,6 +40,8 @@ def lifecycle_of(request: Request) -> DaemonLifecycle:
 @router.get("/daemon", response_model=DaemonStatusResponse, operation_id="daemonStatus")
 async def daemon_status(request: Request) -> DaemonStatusResponse:
     lifecycle = lifecycle_of(request)
+    work = await lifecycle.work_summary()
+    phase = lifecycle.phase
     return DaemonStatusResponse(
         data=DaemonStatusData(
             pid=os.getpid(),
@@ -50,7 +53,17 @@ async def daemon_status(request: Request) -> DaemonStatusResponse:
             socket=request.app.state.daemon_socket,
             port=getattr(request.app.state, "daemon_port", None),
             idle_exit=lifecycle.idle_exit,
-            busy=await lifecycle.busy(),
+            busy=work.busy,
+            phase=phase_name(phase),
+            pending_exit=phase.pending.value if isinstance(phase, Draining) else None,
+            exit_reason=lifecycle.exit_reason,
+            work=DaemonWorkInfo(
+                running_sessions=list(work.running_sessions),
+                runnable_queues=list(work.runnable_queues),
+                held_queues=list(work.held_queues),
+                mutations=work.mutations,
+                admission_changed=work.admission_changed,
+            ),
             restart_pending=lifecycle.restart_pending,
             leases=[
                 LeaseInfo(
@@ -84,7 +97,7 @@ async def daemon_restart(
         return _control("restart", "when_idle")
     # The watcher rechecks work, including admissions racing this request.
     lifecycle.request_restart_when_idle()
-    return _control("restart", "now")
+    return _control("restart", "when_idle")
 
 
 @router.post(
@@ -143,7 +156,7 @@ async def _lease_stream(  # noqa: ANN202
         lifecycle.close_lease(lease)
 
 
-def _exit_after_response(lifecycle: DaemonLifecycle, reason: str) -> None:
+def _exit_after_response(lifecycle: DaemonLifecycle, reason: ExitReason) -> None:
     asyncio.get_running_loop().call_later(0.05, lifecycle.request_exit, reason)
 
 

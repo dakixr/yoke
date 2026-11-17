@@ -58,6 +58,20 @@ def status() -> None:
         typer.echo(f"  token     in {paths.info}")
     typer.echo(f"  idle exit {'on' if data['idleExit'] else 'off'}")
     typer.echo(f"  busy      {'yes' if data['busy'] else 'no'}")
+    if phase := data.get("phase"):
+        pending = data.get("pendingExit") or data.get("exitReason")
+        typer.echo(f"  phase     {phase}" + (f" ({pending})" if pending else ""))
+    if work := data.get("work"):
+        for key, label in (
+            ("runningSessions", "active"),
+            ("runnableQueues", "queued"),
+            ("heldQueues", "held"),
+        ):
+            if sessions := work.get(key):
+                typer.echo(f"  {label:<9} {', '.join(sessions)}")
+        typer.echo(f"  mutations {work.get('mutations', 0)}")
+        if work.get("admissionChanged"):
+            typer.echo("  admission changed during probe; checking work again")
     if data["restartPending"]:
         typer.echo("  restart   pending, once turns finish")
     leases = data["leases"]
@@ -88,7 +102,7 @@ def restart(
             typer.echo("Yoke daemon is busy; retry with --when-idle.", err=True)
             raise typer.Exit(1)
         response.raise_for_status()
-        if response.json()["data"]["scheduled"] == "when_idle":
+        if response.json()["data"]["scheduled"] == "when_idle" and when_idle:
             typer.echo(f"Yoke daemon {old_pid} restarts once its turns finish.")
             return
         _wait_until_gone(socket_path, old_pid)

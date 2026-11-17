@@ -5,12 +5,15 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from yoke.storage.schema import SchemaTooNewError
+from yoke.storage.schema import SchemaTooNewError, SchemaTooOldError
 
 
 def database_open_error(path: Path, cause: BaseException) -> str:
     """Name the database, cause and recovery action without a traceback."""
-    prefix = f"Yoke database startup failed: {path}: {cause}."
+    detail = str(cause).rstrip(".")
+    prefix = f"Yoke database startup failed: {path}: {detail}."
+    if isinstance(cause, SchemaTooOldError):
+        return prefix
     if isinstance(cause, SchemaTooNewError):
         return prefix + " Upgrade Yoke to match the database schema."
     if isinstance(cause, sqlite3.Error) and getattr(

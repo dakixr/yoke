@@ -1101,6 +1101,23 @@
             "title": "Databasepath",
             "type": "string"
           },
+          "exitReason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "idle",
+                  "restart",
+                  "stop",
+                  "signal"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exitreason"
+          },
           "idleExit": {
             "title": "Idleexit",
             "type": "boolean"
@@ -1111,6 +1128,31 @@
             },
             "title": "Leases",
             "type": "array"
+          },
+          "pendingExit": {
+            "anyOf": [
+              {
+                "enum": [
+                  "restart",
+                  "stop"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pendingexit"
+          },
+          "phase": {
+            "default": "serving",
+            "enum": [
+              "serving",
+              "draining",
+              "exiting"
+            ],
+            "title": "Phase",
+            "type": "string"
           },
           "pid": {
             "title": "Pid",
@@ -1145,6 +1187,9 @@
               }
             ],
             "title": "Socket"
+          },
+          "work": {
+            "$ref": "#/components/schemas/DaemonWorkInfo"
           }
         },
         "required": [
@@ -1184,6 +1229,44 @@
           }
         },
         "title": "DaemonStopRequest",
+        "type": "object"
+      },
+      "DaemonWorkInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "admissionChanged": {
+            "default": false,
+            "title": "Admissionchanged",
+            "type": "boolean"
+          },
+          "heldQueues": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Heldqueues",
+            "type": "array"
+          },
+          "mutations": {
+            "default": 0,
+            "title": "Mutations",
+            "type": "integer"
+          },
+          "runnableQueues": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Runnablequeues",
+            "type": "array"
+          },
+          "runningSessions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Runningsessions",
+            "type": "array"
+          }
+        },
+        "title": "DaemonWorkInfo",
         "type": "object"
       },
       "DrainData": {

@@ -85,10 +85,18 @@ they attach with a warning. After editing Yoke without bumping its version, run
 `yoke daemon restart` to load your changes.
 
 The client restarts with `POST /daemon/restart`, waits for the old pid to exit,
-and starts a new daemon if no other client has. Each discovery restarts at most
-once. If a turn was admitted between the status read and the restart, the
-daemon refuses with `409 daemon_busy` and the client falls back to the warn or
-refuse rule.
+and starts a new daemon if no other client has. Discovery follows explicit
+steps: probe, spawn if needed, status, decide, restart once, then attach or
+refuse. A restart attempt is consumed before the client re-probes, even if
+another checkout wins the replacement lock or an admission delays the restart.
+Each discovery takes at most ten steps and requests at most one restart.
+
+A restart response reports `scheduled: "when_idle"` while the request is
+pending. The daemon watcher checks work again before committing to exit. If a
+turn was admitted between the status read and the restart, the daemon refuses
+with `409 daemon_busy`. If work arrives after the request, the client waits up
+to its discovery timeout, then re-reads status and applies the warn or refuse
+rule. A delayed restart does not make compatible discovery fail.
 
 Skew handling never interrupts another client's turn, and a client that
 attaches with a warning does not schedule a restart. Run
@@ -99,6 +107,26 @@ On Windows, a client checks that the daemon recorded in `daemon.json` is alive
 and makes it prove its identity, bound to a fresh nonce and the recorded port,
 before sending the bearer token. A stale record therefore never leaks the
 token to another program on that port.
+
+## Daemon lifecycle and work
+
+`GET /daemon` reports `phase` as `serving`, `draining` or `exiting`.
+`pendingExit` is `restart` or `stop` while draining; `exitReason` is `idle`,
+`restart`, `stop` or `signal` once exiting. Stop takes priority over a pending
+restart. Draining still accepts work. Exiting rejects new requests with
+`503 daemon_exiting`, and the first exit reason stays fixed.
+
+The additive `work` object explains `busy`. `runningSessions` lists sessions
+with an active runtime phase or a worker still cleaning up. `runnableQueues`
+lists sessions with unpaused inputs in an unheld queue. `heldQueues` lists
+held queues for information; they never keep the daemon busy. `mutations`
+counts admitted HTTP mutations still in flight. `admissionChanged` means an
+admission started while the probe was reading work, so the daemon treats that
+snapshot as busy and probes again before exiting.
+
+An idle exit needs no work and no leases for the grace period. A requested
+restart or stop waits for work but ignores leases. `yoke daemon status` shows
+the phase and work reasons.
 
 ## Hold a lease
 

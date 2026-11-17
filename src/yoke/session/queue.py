@@ -94,6 +94,24 @@ def has_queued_prompts(session_directory: Path) -> bool:
     return bool(row[0])
 
 
+def queue_work_sessions(
+    session_directory: Path,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return runnable and held queue owners in one indexed input scan."""
+    with session_database(session_directory).read() as connection:
+        rows = connection.execute(
+            "SELECT DISTINCT i.session_id, q.held_reason IS NOT NULL "
+            "FROM inputs i JOIN sessions s ON s.id = i.session_id "
+            "LEFT JOIN session_queues q ON q.session_id = i.session_id "
+            "WHERE i.position IS NOT NULL "
+            "AND (i.paused = 0 OR q.held_reason IS NOT NULL) ORDER BY i.session_id"
+        ).fetchall()
+    return (
+        tuple(row[0] for row in rows if not row[1]),
+        tuple(row[0] for row in rows if row[1]),
+    )
+
+
 def write_prompt_queue_snapshot(
     session_directory: Path,
     session_id: str,
