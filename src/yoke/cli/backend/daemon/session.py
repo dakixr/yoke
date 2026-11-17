@@ -47,7 +47,7 @@ class DaemonSessionBackend:
         self.connection = connection
         self.events = connection.events
         self._session = DaemonActiveSession(self, SessionInfo.model_validate(data))
-        self._queue = DaemonPromptQueue(connection)
+        self._queue = DaemonPromptQueue(connection, started=self.owns_input)
         self._local_inputs: set[str] = set()
         self._input_lock = Lock()
 
