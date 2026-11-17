@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -62,6 +64,9 @@ class ClientSession:
             os.environ if config.env is None else config.env,
             cwd=Path(config.cwd) if config.cwd is not None else root,
         )
+        self._on_waiting: ContextVar[Callable[[bool], object] | None] = ContextVar(
+            "client_waiting", default=None
+        )
         self.latest_plan: dict[str, object] | None = None
 
     def environment_fallback(self) -> ClientSession:
@@ -78,6 +83,31 @@ class ClientSession:
             self.events,
             self.root,
         )
+
+    @contextmanager
+    def waiting(self, on_waiting: Callable[[bool], object]) -> Iterator[None]:
+        """Bind a worker-local status callback without changing tool policy."""
+        token = self._on_waiting.set(on_waiting)
+        try:
+            yield
+        finally:
+            self._on_waiting.reset(token)
+
+    def turn_actions(self) -> ClientSession | ClientTurnActions:
+        """Capture this turn's callback for tools that start their own threads."""
+        callback = self._on_waiting.get()
+        return ClientTurnActions(self, callback) if callback is not None else self
+
+    @contextmanager
+    def _human_wait(self) -> Iterator[None]:
+        callback = self._on_waiting.get()
+        if callback is not None:
+            callback(True)
+        try:
+            yield
+        finally:
+            if callback is not None:
+                callback(False)
 
     def before_tool(
         self,
@@ -122,16 +152,17 @@ class ClientSession:
                         "rawInput": context.arguments,
                     },
                 )
-                while True:
-                    if cancelled():
-                        self.human_input.cancel_permission(
-                            self.session_id, info.id, by=ResolvedBy.TURN_STOPPED
-                        )
-                    try:
-                        reply = self.human_input.wait_permission(info.id, 0.1)
-                        break
-                    except TimeoutError:
-                        continue
+                with self._human_wait():
+                    while True:
+                        if cancelled():
+                            self.human_input.cancel_permission(
+                                self.session_id, info.id, by=ResolvedBy.TURN_STOPPED
+                            )
+                        try:
+                            reply = self.human_input.wait_permission(info.id, 0.1)
+                            break
+                        except TimeoutError:
+                            continue
                 if reply.reply != "allow" or cancelled():
                     return BeforeToolCallResult(
                         block=True, reason="Tool permission denied or cancelled"
@@ -153,20 +184,21 @@ class ClientSession:
             options=options,
             multiple=multiple,
         )
-        while True:
-            if cancelled():
-                self.human_input.cancel_question(
-                    self.session_id, info.id, by=ResolvedBy.TURN_STOPPED
-                )
-            try:
-                reply = self.human_input.wait_question(info.id, 0.1)
-                return {
-                    "ok": not reply.rejected,
-                    "answers": reply.answers,
-                    "rejected": reply.rejected,
-                }
-            except TimeoutError:
-                continue
+        with self._human_wait():
+            while True:
+                if cancelled():
+                    self.human_input.cancel_question(
+                        self.session_id, info.id, by=ResolvedBy.TURN_STOPPED
+                    )
+                try:
+                    reply = self.human_input.wait_question(info.id, 0.1)
+                    return {
+                        "ok": not reply.rejected,
+                        "answers": reply.answers,
+                        "rejected": reply.rejected,
+                    }
+                except TimeoutError:
+                    continue
 
     def plan(
         self, steps: list[dict[str, str]], explanation: str | None
@@ -179,3 +211,28 @@ class ClientSession:
             location=str(self.root),
         )
         return {"ok": True}
+
+
+class ClientTurnActions:
+    """Keep a question worker's status callback tied to its originating turn."""
+
+    def __init__(
+        self, client: ClientSession, on_waiting: Callable[[bool], object]
+    ) -> None:
+        self.client = client
+        self.on_waiting = on_waiting
+
+    def question(
+        self,
+        question: str,
+        options: list[str],
+        multiple: bool,
+        cancelled: Callable[[], bool],
+    ) -> dict[str, object]:
+        with self.client.waiting(self.on_waiting):
+            return self.client.question(question, options, multiple, cancelled)
+
+    def plan(
+        self, steps: list[dict[str, str]], explanation: str | None
+    ) -> dict[str, object]:
+        return self.client.plan(steps, explanation)

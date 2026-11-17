@@ -150,9 +150,17 @@ Errors:
 | `POST /session/{id}/prompt` | Admit one input. |
 | `GET /session/{id}/queue` | Pending inputs and the queue revision. |
 | `PATCH /session/{id}/queue` | Apply queue operations and admissions atomically against a revision. |
-| `POST /session/{id}/interrupt` | Stop the running turn. Returns `{interrupted, turnID}`. |
+| `POST /session/{id}/interrupt` | Stop the running turn. Returns `{interrupted, turnID, reason}`. Operations return `interrupted: false` and `reason: "operation_not_interruptible"`. |
 | `POST /session/{id}/wait` | Wait until the session is idle. Query `timeoutMs`, 1 to 300,000, default no limit. Returns runtime state. |
 | `POST /session/{id}/drain` | Wait until the session's workers exit. Query `timeoutMs`, 1 to 300,000, default 30,000. Returns `{drained, activeWorkers}`. |
+
+Runtime snapshots from `/session/active` and `/wait` include `state`, `phase`,
+`revision`, `inputID`, `turnID`, `startedAt`, `operation`, `activity`, `error`
+and `lastError`. `error` and `lastError` carry the same message. `operation` is
+`{id, kind}` for `selection` or `compaction`, or null. `phase` is `idle`,
+`turn_active`, `retiring` or `operation_active`. Revisions increase for each
+phase or activity transition within one loaded runtime. A daemon restart resets
+them. Protocol version stays 2.
 
 `POST /session/{id}/prompt` request:
 
@@ -252,7 +260,7 @@ Live event types:
 | `server.connected` | First frame. `serverInstanceID`. |
 | `server.resyncRequired` | Your stream overflowed and is closing. Catch up from history. |
 | `server.stopping` | The daemon is shutting down. |
-| `session.active.changed` | Runtime state: `state`, `turnID`, `startedAt`, `error`, `activity`. |
+| `session.active.changed` | Runtime state: `state`, `phase`, `revision`, `inputID`, `turnID`, `startedAt`, `operation`, `error`, `activity`. |
 | `session.model.started`, `session.model.ended` | One model call. |
 | `session.message.updated` | An assistant message as the agent produced it, with `content` and `phase`. |
 | `session.tool.started`, `session.tool.delta`, `session.tool.ended` | Tool lifecycle and output. |
@@ -514,3 +522,8 @@ cd clients/typescript && npm ci && npm run generate && npm run check
 
 Commit the regenerated `openapi.json` and `clients/typescript/src/schema.d.ts`
 together. The `HTTP contract` GitHub Actions workflow fails when either drifts.
+
+Runtime state, permission and question events use reliable overflow handling.
+They stay live-only, but a full subscriber queue closes with
+`server.resyncRequired` instead of silently dropping a state change. Consumers
+must reconnect and refresh their snapshots after that event.

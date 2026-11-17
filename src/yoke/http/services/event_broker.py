@@ -166,7 +166,7 @@ class EventService:
             session_id=session_id,
             location=location,
         )
-        self.broker.publish(event, ephemeral=True)
+        self.broker.publish(event, ephemeral=event_type not in _STATE_EVENTS)
         return event
 
 
@@ -207,3 +207,14 @@ def live_event(
         durable=None,
         data=data,
     )
+
+
+_STATE_EVENTS = frozenset(
+    {
+        "session.active.changed",
+        "session.permission.requested",
+        "session.permission.resolved",
+        "session.question.requested",
+        "session.question.resolved",
+    }
+)

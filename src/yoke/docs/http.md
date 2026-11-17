@@ -398,6 +398,36 @@ attachments. The session must already contain a user message
 returns `400 invalid_continuation`. The flag is part of the idempotency
 comparison.
 
+## Runtime phases
+
+The daemon owns one in-memory phase per loaded session. A turn reports
+`turn_active`, a stop reports `retiring`, and model selection and manual
+compaction report `operation_active`. A session with no logical work reports
+`idle`, including when its legacy `state` is `error`.
+
+`GET /session/active`, `/wait` and `session.active.changed` include `phase`,
+`revision`, `inputID` and `operation`. The operation value is `{id, kind}` with
+kind `selection` or `compaction`, or null. Each phase or activity change increases
+`revision` within the loaded runtime. Refresh snapshots after reconnecting,
+since a restarted daemon starts a new revision sequence. Permission and question
+waits report `state: "waiting_input"`. Model selection reports `state: "running"`
+while it owns the session.
+
+A failed stop write clears the active turn, reports `error` and keeps late
+worker output fenced. The daemon leaves queued work stopped after this failure,
+as it does after a successful user stop. A failed compaction-start journal write
+leaves the session idle. A compaction task failure or cancellation clears its
+operation and publishes the error. Cancellation waits for an already running
+worker to finish before admitting another mutation.
+
+`POST /interrupt` leaves operations running and returns `interrupted: false`
+with `reason: "operation_not_interruptible"`. Clients can use `operation` to
+hide the turn Stop action during manual compaction or model selection.
+
+Runtime state, permission and question events stay live-only. If a subscriber
+cannot keep up, the daemon sends `server.resyncRequired` and closes the stream.
+Reconnect and refresh snapshots instead of relying on a missing state event.
+
 ## Wait for the answer
 
 `POST /session/{id}/wait?timeoutMs=60000` blocks until the session has no
@@ -419,7 +449,7 @@ running turn or operation, then returns its runtime state:
 still 200 and reports the current state, for example `running`. Omit
 `timeoutMs` to wait without a limit. `state` is one of `idle`, `running`,
 `stopping`, `waiting_input` or `error`. `error` means the last turn failed, and
-`lastError` holds its message.
+`error` and the retained `lastError` field hold the same message.
 
 Wait observes the session, not one input. If other inputs are queued behind
 yours, the session stays busy until they finish too. To follow a single input,

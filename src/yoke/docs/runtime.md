@@ -246,6 +246,44 @@ uv run ruff format .
 
 `generate_exports.py --check` and `test_lazy_export_tables.py` detect drift.
 
+## HTTP runtime phases
+
+`http/runtime/phase.py` defines the immutable `Idle`, `TurnActive`, `Retiring`
+and `OperationActive` values and their transition table. `RuntimeStatus.enter`
+validates every phase change, logs its cause at DEBUG, increases the runtime
+revision and publishes `session.active.changed`. Snapshots use the same
+projection. `Idle` carries the last error and a local reason when queued work
+must remain stopped. Queue holds become durable in the input lifecycle phase.
+
+| Current phase | Allowed next phases |
+| --- | --- |
+| Idle | Idle for error updates, TurnActive, OperationActive |
+| TurnActive | TurnActive for activity changes, Retiring, Idle |
+| Retiring | Idle, TurnActive for steering |
+| OperationActive | Idle, TurnActive for queued work |
+
+`TurnActive` activity changes retain the execution identity. Permission and
+question waits post status callbacks to the loop and report `waiting_input`.
+Model selection and manual compaction both report `running`. Stop fences a turn
+before saving its interruption. Guarded retirement clears logical ownership and
+publishes an error even when persistence fails. Manual compaction acquires
+logical ownership only after its start marker is durable. Operation cancellation
+clears ownership, including cancellation while waiting for capacity. A running
+operation worker keeps its lane and capacity until physical cleanup completes.
+
+`TurnExecution` owns `ExecPhase` milestones, from `RESERVED` through
+`WAITING_SLOT`, `SLOT_HELD`, `WORKER_RUNNING` and `EXECUTING` to `DONE`.
+Its `release_slot` method releases acquired capacity once. Terminal executions
+retain their final milestone so cleanup can distinguish submitted workers from
+work that never reached the executor. Worker stop and retired events remain
+thread-safe fences. Logical retirement and physical worker cleanup remain
+separate lifetimes.
+
+Set `YOKE_STATE_CHECKS=1` to raise on ownership invariant failures. Tests set it
+automatically. Runtime transitions log the machine, session, previous and next
+phase, cause and revision. These changes affect daemon status and ownership;
+provider requests, instructions and cache identity retain their existing form.
+
 ## Tests
 
 ```bash

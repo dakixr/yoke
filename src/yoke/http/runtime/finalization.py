@@ -8,6 +8,7 @@ import sqlite3
 from collections.abc import Callable
 from concurrent.futures import Executor
 from time import monotonic
+from typing import Literal
 
 from yoke.agent.observability import ToolTraceStore
 from yoke.http.runtime.admission import TurnAdmission
@@ -62,35 +63,25 @@ class TurnFinalizer:
         self.active_slots = active_slots
         self.start = start
 
-    def release_slot(self, execution: TurnExecution) -> None:
-        if execution.slot_acquired and not execution.slot_released:
-            execution.slot_released = True
-            self.active_slots.release()
-
     async def finish(
         self,
         execution: TurnExecution,
         outcome: TurnOutcome,
     ) -> None:
         async with self.gate:
-            self.release_slot(execution)
+            execution.release_slot(self.active_slots)
             if (
                 execution.retired_event.is_set()
                 or self.activity.active is not execution
             ):
                 return
-            self.activity.last_error = await run_blocking(
+            error = await run_blocking(
                 self.storage_executor, self.persist_outcome, execution, outcome
             )
-            self.activity.active = None
-            self.activity.activity = None
-            self.activity.tool_call_ids.pop(execution.turn_id, None)
+            self.activity.settle_to_idle(error=error)
             next_admission = await self.inputs.reserve_input()
             if next_admission is not None:
                 self.start(next_admission)
-            else:
-                self.activity.state = "error" if self.activity.last_error else "idle"
-                self.activity.publish_activity(None)
 
     async def fail(
         self,
@@ -98,7 +89,7 @@ class TurnFinalizer:
         error: BaseException,
     ) -> None:
         """Recover local controller state after uncertain final persistence."""
-        self.release_slot(execution)
+        execution.release_slot(self.active_slots)
         LOGGER.error(
             "HTTP runtime finalization failed for session %s input %s.",
             self.session_id,
@@ -108,34 +99,26 @@ class TurnFinalizer:
         async with self.gate:
             if self.activity.active is not execution:
                 return
-            self.activity.active = None
-            self.activity.state = "error"
-            self.activity.last_error = "Session finalization failed."
+            message = "Session finalization failed."
             if isinstance(error, sqlite3.Error):
-                self.activity.last_error += (
+                message += (
                     f" Could not write {self.store.database_path}: {error}. "
                     "Free disk space or release the database lock, then retry the input."
                 )
-            self.activity.activity = None
-            self.activity.tool_call_ids.pop(execution.turn_id, None)
             self.activity.best_effort_durable(
                 "session.runtime.failed",
                 {
                     "inputID": execution.admission.id,
                     "turnID": execution.turn_id,
-                    "error": self.activity.last_error,
+                    "error": message,
                 },
             )
-            self.activity.best_effort_publish_activity(None)
+            self.activity.settle_to_idle(error=message, hold="finalization_failed")
 
-    async def retire(self, *, reason: str) -> None:
+    async def retire(self, *, reason: Literal["user", "steering", "shutdown"]) -> None:
         execution = self.activity.active
         if execution is None:
             return
-        self.activity.state = "stopping"
-        execution.stop_event.set()
-        execution.retired_event.set()
-        self.tool_traces.retire_turn(execution.turn_id)
 
         def persist() -> None:
             self.persistence.persist_interruption(
@@ -159,15 +142,14 @@ class TurnFinalizer:
                 location=self.activity.event_location,
             )
 
-        await run_blocking(self.storage_executor, persist)
-        self.release_slot(execution)
-        if execution.task is not None and not execution.worker_started:
-            execution.task.cancel()
-        self.activity.active = None
-        self.activity.state = "idle"
-        self.activity.activity = None
-        self.activity.tool_call_ids.pop(execution.turn_id, None)
-        self.activity.publish_activity(None)
+        try:
+            with self.activity.retiring(execution, reason):
+                self.tool_traces.retire_turn(execution.turn_id)
+                await run_blocking(self.storage_executor, persist)
+        finally:
+            execution.release_slot(self.active_slots)
+            if execution.task is not None and not execution.worker_started:
+                execution.task.cancel()
 
     def persist_outcome(
         self, execution: TurnExecution, outcome: TurnOutcome

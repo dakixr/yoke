@@ -36,7 +36,7 @@ def client_tool_factory(
             return base
         tools = list(base.tools)
         names = {tool.name for tool in tools}
-        extras = list(client_tools(client))
+        extras = list(client_tools(client.turn_actions()))
         policy = context.session.mcp_policy
         if policy is not None and policy.injected_servers:
             extras.extend(

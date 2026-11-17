@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import nullcontext
 from concurrent.futures import Executor, Future
 from collections.abc import Callable
 from threading import Lock
@@ -31,6 +32,7 @@ from yoke.http.runtime.start import (
     indexed_runtime_start,
 )
 from yoke.http.runtime.status import RuntimeStatus
+from yoke.http.runtime.phase import Activity
 from yoke.http.runtime.title import SessionTitleAutomation
 from yoke.http.runtime.turns import TurnExecution, TurnOutcome
 from yoke.http.runtime.workers import WorkerTracker
@@ -111,11 +113,6 @@ class TurnExecutor:
         self.message_index = message_index
         self.indexed_runtime_seed = indexed_runtime_seed
 
-    def release_slot(self, execution: TurnExecution) -> None:
-        if execution.slot_acquired and not execution.slot_released:
-            execution.slot_released = True
-            self.active_slots.release()
-
     def launch(self, execution: TurnExecution) -> None:
         tracker = self.workers
         tracker.admit(execution.turn_id)
@@ -123,6 +120,7 @@ class TurnExecutor:
         def finished(_task: asyncio.Task[None]) -> None:
             try:
                 if not execution.worker_started:
+                    execution.complete_without_slot()
                     execution.workspace_use.close()
             finally:
                 tracker.release(execution.turn_id)
@@ -140,31 +138,31 @@ class TurnExecutor:
         preparation_cleanup: list[Future[None]] = []
         loop = asyncio.get_running_loop()
         try:
+            execution.wait_for_slot()
             if execution.cold_start:
                 # Preserve the admission response's head start on cold session loads.
                 await asyncio.sleep(0.05)
             if self.active_slots.locked() and self.activity.active is execution:
-                self.activity.activity = "Waiting for a slot"
-                self.activity.publish_activity(execution)
+                self.activity.set_activity(execution, Activity.WAITING_SLOT)
             await self.active_slots.acquire()
-            execution.slot_acquired = True
+            execution.acquired_slot()
             if (
                 self.activity.active is execution
                 and self.activity.activity == "Waiting for a slot"
             ):
-                self.activity.activity = (
-                    "Loading session" if execution.cold_start else "Thinking"
+                self.activity.set_activity(
+                    execution,
+                    Activity.LOADING if execution.cold_start else Activity.THINKING,
                 )
-                self.activity.publish_activity(execution)
             if execution.retired_event.is_set():
                 return
+            execution.start_worker()
             worker = self.executor.submit(
                 lambda: execute_with_cleanup(
                     lambda: self.execute(execution, loop),
                     preparation_cleanup,
                 ),
             )
-            execution.worker_started = True
             self.workers.retain(execution.turn_id, completion)
             outcome = await asyncio.shield(asyncio.wrap_future(worker))
             await self.finalizer.finish(execution, outcome)
@@ -175,7 +173,8 @@ class TurnExecutor:
             await self.finalizer.fail(execution, exc)
         finally:
             if worker is None:
-                self.release_slot(execution)
+                execution.release_slot(self.active_slots)
+                execution.workspace_use.close()
             else:
                 retain_cancelled_worker(
                     worker,
@@ -183,7 +182,7 @@ class TurnExecutor:
                     retire_agent=lambda agent: retire_owned(
                         self.resources, agent, preparation_cleanup
                     ),
-                    release_slot=lambda: self.release_slot(execution),
+                    release_slot=lambda: execution.release_slot(self.active_slots),
                     release_resources=execution.workspace_use.close,
                     completed=lambda: completion.set_result(None),
                 )
@@ -200,13 +199,20 @@ class TurnExecutor:
             execution_environment(
                 execution.client.environment if execution.client else None
             ),
+            execution.client.waiting(
+                lambda waiting: loop.call_soon_threadsafe(
+                    self.activity.set_activity,
+                    execution,
+                    Activity.WAITING_INPUT if waiting else Activity.TOOL,
+                )
+            )
+            if execution.client
+            else nullcontext(),
         ):
             return self._execute(execution, loop)
 
     def _execute(
-        self,
-        execution: TurnExecution,
-        loop: asyncio.AbstractEventLoop,
+        self, execution: TurnExecution, loop: asyncio.AbstractEventLoop
     ) -> TurnOutcome:
         turn_agent: RuntimeAgent | None = None
         try:
@@ -290,7 +296,7 @@ class TurnExecutor:
                 def checkpoint(context: AgentContext) -> None:
                     self.checkpoint(execution, context)
 
-                execution.execution_started = True
+                execution.start_execution()
                 result = turn_agent.run(
                     execution.admission.prompt,
                     user_message=user_message,
@@ -404,8 +410,7 @@ class TurnExecutor:
         if execution.retired_event.is_set() or self.activity.active is not execution:
             return
         if self.activity.activity == "Loading session":
-            self.activity.activity = "Thinking"
-            self.activity.publish_activity(execution)
+            self.activity.set_activity(execution, Activity.THINKING)
 
     def publish(
         self,
@@ -434,8 +439,7 @@ class TurnExecutor:
         if event == "tool_execution_end" and active_tool_call_ids:
             next_activity = "Running tool"
         if next_activity is not None and next_activity != self.activity.activity:
-            self.activity.activity = next_activity
-            self.activity.publish_activity(execution)
+            self.activity.set_activity(execution, Activity(next_activity))
         if event == "model_end" and usage_update is not None:
             self.events.live(
                 "session.context.updated",

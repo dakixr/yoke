@@ -139,12 +139,22 @@ class SessionRelocateRequest(ApiModel):
     expected_directory: str | None = None
 
 
+class RuntimeOperationInfo(ApiModel):
+    id: str
+    kind: Literal["selection", "compaction"]
+
+
 class ActiveRuntimeInfo(ApiModel):
     state: Literal["idle", "running", "stopping", "waiting_input", "error"]
     turn_id: int | None = None
     started_at: str | None = None
     activity: str | None = None
     last_error: str | None = None
+    error: str | None = None
+    revision: int = 0
+    input_id: str | None = None
+    phase: Literal["idle", "turn_active", "retiring", "operation_active"] = "idle"
+    operation: RuntimeOperationInfo | None = None
 
 
 class SessionActiveResponse(ApiModel):
@@ -152,6 +162,7 @@ class SessionActiveResponse(ApiModel):
 
 
 class InterruptData(ApiModel):
+    reason: Literal["operation_not_interruptible"] | None = None
     interrupted: bool
     turn_id: int | None = None
 
