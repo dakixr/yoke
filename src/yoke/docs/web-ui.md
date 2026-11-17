@@ -22,6 +22,41 @@ the token in the URL fragment, which the browser does not send to the server.
 A `?token=` query is also accepted. The app removes either form from the
 address bar and history as soon as it reads it.
 
+## Controller ownership
+
+`state/controller.js` remains the app's public facade and composition root.
+Views keep calling the same methods. It wires named action callbacks and state
+owners; it does not own mutation generations or connection buffers.
+
+| Module under `assets/js/state` | Owns |
+| --- | --- |
+| `connection.js` | Authentication, SSE identity and buffering, bootstrap, resync and event-triggered refresh policy. |
+| `sessions.js` | Session lists, search, location enrichment, metadata mutation chains, title regeneration and forks. |
+| `navigation.js` | Route selection and persisted reviewed/unread markers. |
+| `transcript.js` | Message snapshots, paging, history catch-up and live assistant/tool reconciliation. |
+| `inputs.js` | Prompt admission, queue revisions and mutations, interrupt, compaction and uploads. |
+| `human-input.js` | Permission/question snapshots and optimistic replies. |
+| `drafts.js` | New-session draft persistence, creation and foreground/background submission. |
+| `configuration.js` | Serialized model, tool and MCP changes, skill activation and pending model selections. |
+| `commands.js` | Slash and palette dispatch, focus actions, sidebar/palette controls and notices. |
+| `lifecycle.js` | Lifecycle epochs and scheduled-task ownership. |
+
+Each owner retires its own requests and mutations. The lifecycle resets the
+connection, retires optimistic session state, cancels timers, then retires the
+owners and inspector in that order. Queue summary projection and pending model
+selection projection stay with their owners, so list and metadata reads do not
+inspect another owner's mutation maps. The facade retains state aliases for
+existing diagnostics and regression fixtures.
+
+`session-machine.js` remains the pure input/runtime reducer. Workspace recovery
+stays in `state/workspace/controller.js`. Inspector selection, tree and detail
+requests stay in `inspector/state`; process list and action refreshes live with
+process detail/output ownership. Agent runs remain in
+`inspector/agents/controller.js`, which owns their subscriptions and refreshes.
+These modules read public store state and use explicit action callbacks to
+coordinate work. They do not change HTTP calls, refresh delays or provider
+messages.
+
 ## Markdown and math
 
 The app sanitizes assistant Markdown with the bundled DOMPurify before display
@@ -279,6 +314,7 @@ Run the Node state suites from the repository root. The `HTTP contract` GitHub
 Actions workflow runs all of them except `test_web_location_picker.mjs`.
 
 ```bash
+node --experimental-default-type=module scripts/test_web_controller_modules.mjs
 node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
 node --experimental-default-type=module scripts/test_web_agent_runs.mjs
 node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs

@@ -52,6 +52,7 @@ jobs:
           node --experimental-default-type=module scripts/test_web_markdown_math.mjs
           node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs
           node --experimental-default-type=module scripts/test_web_workspace_races.mjs
+          node --experimental-default-type=module scripts/test_web_controller_modules.mjs
           node --experimental-default-type=module scripts/test_web_session_machine.mjs
           node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
           node --experimental-default-type=module scripts/test_web_inspector_state.mjs

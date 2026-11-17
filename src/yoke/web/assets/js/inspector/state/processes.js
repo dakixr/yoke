@@ -9,6 +9,42 @@ export class ProcessInspectorState {
 
   invalidate() { this.outputRequests.clear(); }
 
+  async refreshList(sessionID) {
+    if (store.getState().ui.inspector?.mode !== "process" && !store.getState().sessionData[sessionID]?.processes) return;
+    const request = this.owner.nextRequest(sessionID, "process:list");
+    const selection = this.owner.selectedRequest(sessionID, "process");
+    const response = await api.processes({ sessionID, limit: 200 });
+    if (
+      !this.owner.ownsRequest(request) ||
+      !this.owner.ownsSelection(sessionID, "process", selection)
+    ) return;
+    this.owner.setSessionField(sessionID, "processes", response.data);
+  }
+
+  async signalProcess(processID, signal) {
+    const lifecycleEpoch = this.owner.lifecycleEpoch();
+    const response = await api.processSignal(processID, signal);
+    if (this.owner.lifecycleEpoch() !== lifecycleEpoch) return;
+    const sessionID = response.data.sessionID;
+    if (sessionID) {
+      await this.refreshList(sessionID);
+      if (this.owner.lifecycleEpoch() !== lifecycleEpoch) return;
+      await this.refresh(processID);
+    }
+  }
+
+  async sendProcessInput(processID, text) {
+    const lifecycleEpoch = this.owner.lifecycleEpoch();
+    const response = await api.processStdin(processID, text);
+    if (this.owner.lifecycleEpoch() !== lifecycleEpoch) return;
+    const sessionID = response.data.sessionID;
+    if (sessionID) {
+      await this.refreshList(sessionID);
+      if (this.owner.lifecycleEpoch() !== lifecycleEpoch) return;
+      await this.refresh(processID);
+    }
+  }
+
   async load(processID) {
     const owner = this.owner;
     const sessionID = store.getState().ui.selectedSessionID;

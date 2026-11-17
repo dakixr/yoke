@@ -1,12 +1,15 @@
 // @ts-check
 
+import { errorMessage } from "../lib/errors.js";
 import { retireSession } from "./session-machine.js";
 import { store } from "./store.js";
-import { ApiError } from "../api/client.js";
 
 export class BrowserLifecycle {
-  constructor(controller) {
-    this.controller = controller;
+  constructor({ notice, resetConnection, clearBuffers, retireOwners }) {
+    this.notice = notice;
+    this.resetConnection = resetConnection;
+    this.clearBuffers = clearBuffers;
+    this.retireOwners = retireOwners;
     this.epoch = 0;
     this.scheduler = new OwnedScheduler(this);
   }
@@ -16,29 +19,16 @@ export class BrowserLifecycle {
   }
 
   retire({ stopStream = false } = {}) {
-    const controller = this.controller;
     this.epoch += 1;
-    if (stopStream) controller.sse?.stop();
-    if (stopStream) controller.sse = null;
-    controller.bootstrapping = false;
-    controller.resyncing = false;
-    controller.bootstrapEpoch = null;
-    controller.resyncEpoch = null;
-    controller.broadResyncPending = false;
-    controller.resyncPending = false;
+    this.resetConnection({ stopStream });
     store.setState((state) => ({ ...state,
       active: Object.fromEntries(Object.entries(state.active).filter(([, runtime]) => !runtime.optimistic)),
       sessionData: Object.fromEntries(
       Object.entries(state.sessionData).map(([id, data]) => [id, retireSession(data)]),
     ) }));
-    controller.bufferEvents = false;
-    controller.eventBuffer = [];
+    this.clearBuffers();
     this.scheduler.cancel();
-    if (controller.liveFrame !== null) cancelAnimationFrame(controller.liveFrame);
-    controller.liveFrame = null;
-    controller.pendingLiveEvents.clear();
-    for (const map of mutationOwnershipMaps(controller)) map.clear();
-    controller.inspectorState.invalidateLifecycle();
+    this.retireOwners();
   }
 }
 
@@ -79,36 +69,7 @@ class OwnedScheduler {
     try {
       await task();
     } catch (error) {
-      if (this.lifecycle.owns(epoch)) this.lifecycle.controller.notice(errorMessage(error));
+      if (this.lifecycle.owns(epoch)) this.lifecycle.notice(errorMessage(error));
     }
   }
-}
-
-function mutationOwnershipMaps(controller) {
-  return [
-    controller.messageRefreshGeneration,
-    controller.liveToolRefreshGeneration,
-    controller.optimisticSessionGeneration,
-    controller.sessionMutationChains,
-    controller.sessionPendingMutations,
-    controller.queueMutationChains,
-    controller.queueServerRevisions,
-    controller.queueMutationGeneration,
-    controller.queuePendingMutations,
-    controller.humanInputGeneration,
-    controller.selectionGeneration,
-    controller.selectionMutationChains,
-    controller.pendingSelections,
-    controller.toolMutationChains,
-    controller.toolMutationGeneration,
-    controller.mcpMutationChains,
-    controller.mcpMutationGeneration,
-  ];
-}
-
-function errorMessage(error) {
-  if (error instanceof ApiError) {
-    return `${error.message}${error.requestID ? ` (${error.requestID})` : ""}`;
-  }
-  return error?.message || String(error);
 }
