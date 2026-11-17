@@ -177,12 +177,6 @@ class SessionNotifications:
                 self.requests[key] = task
                 task.add_done_callback(lambda _done: self.requests.pop(key, None))
 
-    async def cancel_requests(self, session_id: str) -> None:
-        tasks = [task for key, task in self.requests.items() if key[0] == session_id]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-
     async def interact(self, session_id: str, kind: str, data: dict[str, Any]) -> None:
         native = self.agent.native
         permission = kind == "session.permission.requested"

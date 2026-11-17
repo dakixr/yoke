@@ -356,7 +356,11 @@ message arrives. A local submission appears immediately, then its authoritative
 phase replaces that projection. Settlement, removal and connection retirement
 clear local projections. Stop and compaction roll back only their own pending
 runtime projection, so a late HTTP response cannot restore an older turn.
-Older daemons use the prompt-event compatibility projection.
+Protocol 3 is current. The browser requires `features.inputLifecycle`,
+`globalEvents`, `promptAdmission`, `steering` and `queueEditor`. It stops
+connection setup if the protocol or features differ and asks the user to
+upgrade, restart the daemon and reload the page. Reconnect validates the same
+contract and stops the event stream on incompatibility.
 
 A held queue shows **Queue held** in Pending work and in the sidebar. Choose
 **Resume queue** to let the daemon promote eligible inputs. Resume leaves

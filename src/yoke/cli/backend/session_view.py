@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from yoke.cli.backend.events import BackendEvent
-from yoke.http.models.prompt import InputInfo, QueueData, QueueHold, SessionInputs
+from yoke.http.models.prompt import InputInfo, QueueHold, SessionInputs
 from yoke.http.models.session import ActiveRuntimeInfo
 
 LOGGER = logging.getLogger(__name__)
@@ -105,11 +105,8 @@ class SessionViewStore:
     Callbacks run outside the store lock and must never perform I/O.
     """
 
-    def __init__(
-        self, session_id: str, owner: str, *, input_lifecycle: bool = True
-    ) -> None:
+    def __init__(self, session_id: str, owner: str) -> None:
         self.owner = owner
-        self.input_lifecycle = input_lifecycle
         self._view = SessionView(session_id)
         self._local: set[str] = set()
         self._lock = RLock()
@@ -175,31 +172,6 @@ class SessionViewStore:
             )
         return self._notify()
 
-    def install_legacy_snapshot(
-        self, queue: Mapping[str, object], runtime: Mapping[str, object]
-    ) -> SessionView:
-        """Isolate the old daemon's started filter and unversioned queue snapshot."""
-        snapshot = QueueData.model_validate(queue)
-        active = ActiveRuntimeInfo.model_validate(runtime)
-        with self._lock:
-            live = {
-                item.id: InputView(
-                    item.id,
-                    "paused" if item.paused else "queued",
-                    item.delivery,
-                    index,
-                    item.prompt.text,
-                    "local" if item.id in self._local else "remote",
-                    item.pause_cause,
-                )
-                for index, item in enumerate(snapshot.items)
-                if item.id not in self._local
-            }
-            self._view = replace(
-                self._view, inputs=MappingProxyType(live), runtime=_runtime(active)
-            )
-        return self._notify()
-
     def apply_event(self, event: BackendEvent) -> SessionView:
         kind, payload = event["type"], event["payload"]
         with self._lock:
@@ -211,10 +183,7 @@ class SessionViewStore:
                 if active.revision <= view.runtime.revision:
                     return view
                 self._view = replace(view, runtime=_runtime(active))
-            elif (
-                kind in {"session.input.changed", "session.queue.held"}
-                and self.input_lifecycle
-            ):
+            elif kind in {"session.input.changed", "session.queue.held"}:
                 revision = int(str(payload["inputRevision"]))
                 if revision <= view.input_revision:
                     return view
@@ -259,8 +228,6 @@ class SessionViewStore:
                     self._view = replace(
                         view, inputs=MappingProxyType(values), input_revision=revision
                     )
-            elif not self.input_lifecycle:
-                self._legacy_event(event)
             else:
                 return view
             LOGGER.debug(
@@ -271,38 +238,6 @@ class SessionViewStore:
                 self._view.resync_pending,
             )
         return self._notify()
-
-    def _legacy_event(self, event: BackendEvent) -> None:
-        """Protocol-2 fallback only. Lifecycle-capable daemons never use inference."""
-        kind, payload = event["type"], event["payload"]
-        input_id = payload.get("inputID")
-        if not isinstance(input_id, str):
-            return
-        values = dict(self._view.inputs)
-        old = values.get(input_id)
-        if kind in {"session.prompt.settled", "session.prompt.removed"}:
-            values.pop(input_id, None)
-            self._local.discard(input_id)
-        elif kind in {"session.prompt.admitted", "session.prompt.promoted"}:
-            prompt = payload.get("prompt")
-            text = (
-                str(prompt.get("text", ""))
-                if isinstance(prompt, dict)
-                else old.prompt
-                if old
-                else ""
-            )
-            values[input_id] = InputView(
-                input_id,
-                "promoted"
-                if kind.endswith("promoted") or input_id in self._local
-                else "queued",
-                str(payload.get("delivery", "queue")),
-                None,
-                text,
-                "local" if input_id in self._local else "remote",
-            )
-        self._view = replace(self._view, inputs=MappingProxyType(values))
 
     def subscribe(self, callback: Callable[[SessionView], None]) -> Callable[[], None]:
         with self._lock:

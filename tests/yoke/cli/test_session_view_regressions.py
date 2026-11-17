@@ -79,11 +79,7 @@ def test_workspace_paused_input_is_visible_in_capability_queue(terminal, tmp_pat
     terminal.factory = unavailable
     submitted = backend.submit("keep me visible", user_message=None)
     list(submitted)
-    # The legacy started filter reproduces B5 even after a workspace pause.
     backend.view_store.mark_local(submitted.input_id)
-    backend.view_store.input_lifecycle = False
-    assert backend.load_queue().prompts == []
-    backend.view_store.input_lifecycle = True
     loaded = backend.load_queue()
     assert [item.id for item in loaded.prompts] == [submitted.input_id]
     assert loaded.prompts[0].paused

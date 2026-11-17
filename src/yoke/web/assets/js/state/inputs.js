@@ -10,7 +10,6 @@ import {
   mergeServerSessionSummary,
   applyQueueOperations,
   installSessionSummary,
-  queueSummary,
   projectSubmission,
   rollbackSubmission,
   restoreSessionSummary,
@@ -60,7 +59,6 @@ export class InputController {
   }
 
   async refreshInputs(sessionID) {
-    if (!store.getState().capabilities?.features?.inputLifecycle) return;
     const epoch = this.lifecycle.epoch;
     const response = await api.inputs(sessionID);
     if (this.lifecycle.owns(epoch)) store.setState((state) => installInputs(state, sessionID, response.data));
@@ -87,20 +85,24 @@ export class InputController {
     if (authoritative) this.queueServerRevisions.set(sessionID, queue.revision || 0);
     store.setState((state) => {
       const current = state.sessionData[sessionID] || {};
-      if (current.inputLifecycle) {
-        const inputs = { ...current.inputs };
-        if (queue.inputRevision === current.inputRevision) {
-          for (const item of queue.items || []) {
-            if (inputs[item.id]) inputs[item.id] = { ...inputs[item.id], prompt: item.prompt };
+      const inputs = { ...current.inputs };
+      if (!authoritative) {
+        const desired = new Set((queue.items || []).map((item) => item.id));
+        for (const [id, item] of Object.entries(inputs)) {
+          if (["queued", "paused"].includes(item.phase) && !desired.has(id)) delete inputs[id];
+        }
+        for (const [position, item] of (queue.items || []).entries()) {
+          if (["queued", "paused"].includes(inputs[item.id]?.phase)) {
+            inputs[item.id] = { ...inputs[item.id], ...item, position, phase: item.paused ? "paused" : "queued" };
           }
         }
-        return installSessionMachine(state, sessionID, { ...current, inputs,
-          queue: { ...current.queue, revision: queue.revision, pendingImages: queue.pendingImages } });
+      } else if (queue.inputRevision === current.inputRevision) {
+        for (const item of queue.items || []) {
+          if (inputs[item.id]) inputs[item.id] = { ...inputs[item.id], prompt: item.prompt };
+        }
       }
-      return { ...state,
-        sessions: state.sessions[sessionID] ? { ...state.sessions, [sessionID]: { ...state.sessions[sessionID], queue: queueSummary(queue) } } : state.sessions,
-        sessionData: { ...state.sessionData, [sessionID]: { ...current, queue } },
-      };
+      return installSessionMachine(state, sessionID, { ...current, inputs,
+        queue: { ...current.queue, revision: queue.revision, pendingImages: queue.pendingImages } });
     });
   }
 
@@ -276,6 +278,8 @@ export class InputController {
           .filter((item) => item.generation !== generation);
         if (remaining.length) this.queuePendingMutations.set(sessionID, remaining);
         else this.queuePendingMutations.delete(sessionID);
+        await this.refreshInputs(sessionID);
+        if (!this.lifecycle.owns(lifecycleEpoch)) return null;
         this.installAuthoritativeQueue(sessionID, response.data);
         return response.data;
       } catch (error) {
@@ -286,6 +290,8 @@ export class InputController {
         else this.queuePendingMutations.delete(sessionID);
         try {
           const refreshed = await api.queue(sessionID);
+          if (!this.lifecycle.owns(lifecycleEpoch)) return null;
+          await this.refreshInputs(sessionID);
           if (!this.lifecycle.owns(lifecycleEpoch)) return null;
           this.installAuthoritativeQueue(sessionID, refreshed.data);
         } catch {

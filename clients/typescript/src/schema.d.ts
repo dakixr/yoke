@@ -1305,7 +1305,7 @@ export interface components {
             limits: components["schemas"]["CapabilityLimits"];
             /**
              * Protocolversion
-             * @default 2
+             * @default 3
              */
             protocolVersion: string;
         };
@@ -1604,8 +1604,9 @@ export interface components {
             /**
              * Globalevents
              * @default true
+             * @constant
              */
-            globalEvents: boolean;
+            globalEvents: true;
             /**
              * Images
              * @default true
@@ -1614,8 +1615,9 @@ export interface components {
             /**
              * Inputlifecycle
              * @default true
+             * @constant
              */
-            inputLifecycle: boolean;
+            inputLifecycle: true;
             /**
              * Mcp
              * @default true
@@ -1634,8 +1636,9 @@ export interface components {
             /**
              * Promptadmission
              * @default true
+             * @constant
              */
-            promptAdmission: boolean;
+            promptAdmission: true;
             /**
              * Pty
              * @default false
@@ -1649,8 +1652,9 @@ export interface components {
             /**
              * Queueeditor
              * @default true
+             * @constant
              */
-            queueEditor: boolean;
+            queueEditor: true;
             /**
              * Sessionarchive
              * @default true
@@ -1674,8 +1678,9 @@ export interface components {
             /**
              * Steering
              * @default true
+             * @constant
              */
-            steering: boolean;
+            steering: true;
             /**
              * Toolinspector
              * @default true
@@ -2116,18 +2121,12 @@ export interface components {
             delivery: "steer" | "queue";
             /** Id */
             id: string;
-            /** @default queued */
             phase: components["schemas"]["InputPhaseName"];
             /** Promotedseq */
             promotedSeq?: number | null;
             prompt: components["schemas"]["PromptInput"];
             /** Sessionid */
             sessionID: string;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "admitted" | "promoted" | "removed";
             /** Timecreated */
             timeCreated: string;
         };
@@ -2318,12 +2317,6 @@ export interface components {
             /** Paused */
             paused: boolean;
             prompt: components["schemas"]["PromptInput"];
-            /**
-             * State
-             * @default admitted
-             * @constant
-             */
-            state: "admitted";
         };
         /** QueueMoveAfterOperation */
         QueueMoveAfterOperation: {

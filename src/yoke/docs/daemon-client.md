@@ -66,7 +66,7 @@ contents, for example `3.34.1+g8bc4e1d31613.dirty.5c1e0a9b2d4f7e31`. Two
 different sets of edits produce different IDs. The hash is only computed when
 the git checkout actually contains this Yoke package, so Yoke installed in
 another project's virtualenv reports its plain version. The protocol version is
-`2`. It changes whenever a client and daemon on either side of the change would
+`3`. It changes whenever a client and daemon on either side of the change would
 disagree about the wire format or required fields.
 
 During discovery the client also reads the version that a newly started daemon
@@ -81,7 +81,12 @@ would load from disk right now, cached for two seconds. Then it decides:
 
 Only a strictly newer release version triggers a restart. Two checkouts at the
 same version with different commits or edits never restart each other's daemon;
-they attach with a warning. After editing Yoke without bumping its version, run
+they attach with a warning when their protocols match and otherwise refuse.
+Protocol-2 clients refuse a protocol-3 daemon, and protocol-3 clients refuse a
+protocol-2 daemon. The error asks the user to upgrade or restart the older
+client or daemon. Discovery can restart an idle daemon once when a newer release
+is on disk, but it never attaches across protocols or repeats that restart.
+After editing Yoke without bumping its version, run
 `yoke daemon restart` to load your changes.
 
 The client restarts with `POST /daemon/restart`, waits for the old pid to exit,
@@ -386,15 +391,15 @@ The flag is saved with the input and survives queue edits and recovery.
 
 ## Observe input phases
 
-Check `features.inputLifecycle` before using the durable input API. Protocol
-stays 2. Load `GET /session/{id}/input?live=true` for `inputs`, `held` and
+Protocol 3 is current. Clients require `features.inputLifecycle`, `globalEvents`,
+`promptAdmission`, `steering` and `queueEditor`. Missing features or a different
+protocol fail attachment with an upgrade and restart message. Load `GET /session/{id}/input?live=true` for `inputs`, `held` and
 `inputRevision`. Input phases are `queued`, `paused`, `promoted`, `running`,
 `settled` and `removed`. `pauseCause` records `user` or `workspace`.
 
 Apply `session.input.changed` in `inputRevision` order. Each transition includes
 the input's phase and identity. The revision survives daemon restarts. Refresh
-the snapshot on a gap. Legacy prompt and queue events still arrive in their
-original order, so clients can keep their existing handlers during migration.
+the snapshot on a gap. Clients use these phases for input placement and completion.
 
 A held queue has a reason such as `interrupt`, `finalization_failed`,
 `selection_failed`, `daemon_restart` or `workspace_unavailable`. Display the
@@ -413,4 +418,4 @@ can refresh their endpoint before making requests against the replacement.
 
 The daemon also holds an idle queue with reason `manual` when a request uses
 `resume: false`. Hold changes publish `session.queue.held` with `held` and
-`inputRevision`. Holds do not change the legacy queue edit revision.
+`inputRevision`. Holds do not change the queue edit revision.

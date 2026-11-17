@@ -64,7 +64,7 @@ async def run_command(
                 "POST", native.path(session_id, "/wait?timeoutMs=30000")
             )
             result: Any = (
-                "Compaction failed: " + str(status.get("lastError"))
+                "Compaction failed: " + str(status.get("error"))
                 if status["state"] == "error"
                 else "Compaction is still running."
                 if status["state"] != "idle"
@@ -124,6 +124,5 @@ async def run_command(
                 },
             },
         )
-        if agent.lifecycle.enabled:
-            await agent.notifications.refresh(session_id)
+        await agent.notifications.refresh(session_id)
     return s.PromptResponse(stop_reason="end_turn")

@@ -139,7 +139,7 @@ Later attachments do not change origin. On creation, `client.kind` wins;
 without a client, `origin` may be supplied and otherwise defaults to `web`.
 In-process SDK agents keep file snapshots and usage rows, without creating
 session rows. An SDK client using this HTTP API can supply `origin: "sdk"`.
-Protocol version remains 2.
+Protocol 3 is current.
 
 ### Authentication
 
@@ -392,7 +392,7 @@ curl -X POST "$BASE/session/$SID/prompt" -H "Authorization: Bearer $TOKEN" \
       "continuation": false
     },
     "delivery": "queue",
-    "state": "admitted",
+    "phase": "queued",
     "admittedSeq": 2,
     "promotedSeq": null,
     "timeCreated": "2026-11-17T12:06:42.623534+00:00"
@@ -463,7 +463,7 @@ running turn or operation, then returns its runtime state:
     "turnID": null,
     "startedAt": null,
     "activity": null,
-    "lastError": null
+    "error": null
   }
 }
 ```
@@ -472,12 +472,13 @@ running turn or operation, then returns its runtime state:
 still 200 and reports the current state, for example `running`. Omit
 `timeoutMs` to wait without a limit. `state` is one of `idle`, `running`,
 `stopping`, `waiting_input` or `error`. `error` means the last turn failed, and
-`error` and the retained `lastError` field hold the same message.
+`error` holds the runtime failure message. Runtime snapshots also include the
+same value in `lastError`.
 
 Wait observes the session, not one input. If other inputs are queued behind
 yours, the session stays busy until they finish too. To follow a single input,
-watch its events: `session.prompt.promoted` when it starts and
-`session.prompt.settled` when it ends, with `outcome` set to `completed`,
+watch `session.input.changed` for `phase: "running"` when it starts and
+`phase: "settled"` when it ends, with `outcome` set to `completed`,
 `stopped`, `failed` or `recovered`.
 
 Read the answer from the transcript. `GET /session/{id}/message` returns the
@@ -595,7 +596,7 @@ curl "$BASE/session/$SID/queue" -H "Authorization: Bearer $TOKEN"
         "delivery": "queue",
         "paused": false,
         "createdAt": "2026-11-17T12:06:42.623534+00:00",
-        "state": "admitted"
+        "pauseCause": null
       }
     ]
   }
@@ -797,7 +798,7 @@ working directory. A session saved without a directory reports `unconfigured`
 and also needs relocation. The daemon checks the directory at admission and
 again before the turn starts. If the check fails after admission, the input
 goes back to the queue paused, with the same ID and attachments, and the
-session's runtime state records the error in `lastError`. Remove the input or
+session's runtime state records the error in `error`. Remove the input or
 unpause it after fixing the directory.
 
 Either restore the original directory, or move the session:
@@ -865,8 +866,10 @@ The daemon serves its OpenAPI document at `GET /openapi.json`.
 
 ## Durable input lifecycle
 
-Check `features.inputLifecycle` in `/capabilities` before using the input routes.
-Protocol stays 2. Each input has one durable phase: `queued`, `paused`,
+Protocol 3 is current. Clients require `features.inputLifecycle`, `globalEvents`,
+`promptAdmission`, `steering` and `queueEditor` in `/capabilities`. They reject
+a missing feature or a different protocol with an upgrade and restart message.
+Each input has one durable phase: `queued`, `paused`,
 `promoted`, `running`, `settled` or `removed`. Promotion reserves a turn;
 `running` means the turn acquired capacity and can start its worker.
 
@@ -876,8 +879,7 @@ with `GET /session/{id}/input/{inputID}`. Every phase change journals
 `session.input.changed` with `inputID`, `previous`, `phase`, `cause`,
 `inputRevision`, `delivery`, `position`, `pauseCause`, `turnID`, `outcome`,
 `clientID` and `prompt`. The revision increases within the session and survives
-daemon restarts. Refresh the snapshot if you miss a revision. Legacy prompt
-and queue events still arrive in their original order.
+daemon restarts. Refresh the snapshot if you miss a revision.
 
 Stop, failed finalization and failed model selection hold the queue with a
 reason. Startup holds stranded queues with `daemon_restart`. A failed workspace
@@ -892,4 +894,4 @@ reads the receipt after wake, so it can already report promotion.
 
 The daemon also holds an idle queue with reason `manual` when a request uses
 `resume: false`. Hold changes publish `session.queue.held` with `held` and
-`inputRevision`. Holds do not change the legacy queue edit revision.
+`inputRevision`. Holds do not change the queue edit revision.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -35,32 +34,15 @@ class DaemonPromptQueue:
 
     New admissions stay dormant until the final patch has installed pause and
     delivery settings. Only the daemon promotes inputs, including CLI inputs.
-
-    Lifecycle-capable daemons determine placement from input phases. Only the
-    protocol-2 fallback hides locally started inputs while they await promotion.
     """
 
-    def __init__(
-        self,
-        connection: SessionConnection,
-        *,
-        started: Callable[[str], bool] = lambda _input_id: False,
-    ) -> None:
+    def __init__(self, connection: SessionConnection) -> None:
         self.connection = connection
-        self._started = started
 
     def load(self) -> LoadedPromptQueue:
-        return self._load()[0]
-
-    def _load(self) -> tuple[LoadedPromptQueue, list[str]]:
         data = QueueResponse.model_validate(
             self.connection.session_request("GET", "/queue")
         ).data
-        started = [
-            item.id
-            for item in data.items
-            if not self.connection.view_store.input_lifecycle and self._started(item.id)
-        ]
         prompts = [
             PendingPrompt(
                 prompt=item.prompt.text,
@@ -80,14 +62,13 @@ class DaemonPromptQueue:
                 continuation=item.prompt.continuation,
             )
             for item in data.items
-            if item.id not in started
         ]
         loaded = LoadedPromptQueue(
             prompts,
             [ImageAttachment(Path(path)) for path in data.pending_images],
             data.revision,
         )
-        return loaded, started
+        return loaded
 
     def commit(
         self,
@@ -97,7 +78,7 @@ class DaemonPromptQueue:
         expected_revision: int | None,
         resume: bool = False,
     ) -> int:
-        loaded, started = self._load()
+        loaded = self.load()
         expected = loaded.revision if expected_revision is None else expected_revision
         if expected != loaded.revision:
             raise PromptQueueRevisionConflict(
@@ -163,13 +144,6 @@ class DaemonPromptQueue:
                 operations.append(
                     QueueMoveAfterOperation(
                         op="moveAfter", id=item.id, after_id=prompts[index - 1].id
-                    )
-                )
-            elif started:
-                # Started turns keep their place at the front of the queue.
-                operations.append(
-                    QueueMoveAfterOperation(
-                        op="moveAfter", id=item.id, after_id=started[-1]
                     )
                 )
             else:

@@ -22,10 +22,11 @@ class ReceiptNative(NativeClient):
         super().__init__(url, token)
         self.interrupted = asyncio.Event()
 
-    async def stop(self, session_id: str) -> None:
-        await self.data("POST", self.path(session_id, "/interrupt"))
-        self.interrupted.set()
-        await self.drained(session_id)
+    async def cancel_input(self, session_id, input_id):
+        result = await super().cancel_input(session_id, input_id)
+        if result["phase"] != "removed":
+            self.interrupted.set()
+        return result
 
     async def events(self, queue, ready):
         # Exercise the durable receipt/wait path without an infinite SSE response
@@ -177,7 +178,11 @@ def test_acp_uploads_continues_and_loads_real_native_history(
                 restored.on_connect(connection)
                 connection.updates.clear()
                 await restored.load_session(str(tmp_path), "session-a")
-                content = [update["content"] for update in connection.updates]
+                content = [
+                    update["content"]
+                    for update in connection.updates
+                    if "content" in update
+                ]
                 replayed_image = next(
                     block for block in content if block["type"] == "image"
                 )
@@ -193,8 +198,8 @@ def test_acp_uploads_continues_and_loads_real_native_history(
                     )
                 ).stop_reason == "end_turn"
                 assert connection.updates[-1]["content"]["text"] == "answer-4"
-                with pytest.raises(RequestError, match="full-access"):
-                    await restored.set_session_mode("session-a", "plan")
+                await restored.set_session_mode("session-a", "plan")
+                assert restored.lifecycle.configs["session-a"]["mode"] == "plan"
             finally:
                 await agent.close()
 

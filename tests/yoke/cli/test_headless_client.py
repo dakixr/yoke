@@ -27,6 +27,7 @@ def invoke(root, *args):
 
 
 def test_headless_autospawns_and_prints(sandbox, monkeypatch):
+    monkeypatch.setenv("YOKE_DAEMON_PROTOCOL", "3")
     monkeypatch.setenv("YOKE_DB_PATH", str(sandbox.root / "db.sqlite"))
     monkeypatch.setenv("YOKE_DAEMON_IDLE_GRACE", "10")
     result = invoke(sandbox.root, "--headless", "--session", "saved", "hello")

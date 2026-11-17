@@ -141,6 +141,15 @@ def test_cli_auto_persists_unnamed_session_globally(
 
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == "synthetic response"
+    from tests.yoke.daemon.support import eventually
+
+    # Automatic titles are saved by a background task after turn settlement.
+    eventually(
+        lambda: any(
+            entry.title is not None
+            for entry in SessionStore().list_index_entries(root=tmp_path)
+        )
+    )
     records = [
         entry.to_record() for entry in SessionStore().list_index_entries(root=tmp_path)
     ]

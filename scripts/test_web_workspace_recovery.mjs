@@ -65,13 +65,13 @@ test("workspace absence remains backward compatible and all unavailable statuses
   }
 });
 
-test("runtime error events retain lastError without guessing workspace status from prose", () => {
+test("runtime error events retain error without guessing workspace status from prose", () => {
   reset();
   const state = reducePublicEvent(store.getState(), {
     type: "session.active.changed", sessionID: "s",
-    data: { state: "error", lastError: "Workspace unavailable" },
+    data: { state: "error", error: "Workspace unavailable" },
   });
-  assert.equal(state.active.s.lastError, "Workspace unavailable");
+  assert.equal(state.active.s.error, "Workspace unavailable");
   assert.equal(workspaceUnavailable(state.sessions.s, state.active.s), null);
 });
 
@@ -90,6 +90,7 @@ test("conflicting relocation leaves history, root caches and drafts untouched", 
 });
 
 test("missing workspace leaves transcript loading independent of failing catalogs", async (t) => {
+  t.mock.method(api, "inputs", async () => ({ data: { inputRevision: 0, inputs: [] } }));
   reset(missing);
   store.setState((state) => ({ ...state, sessionData: {} }));
   t.mock.method(api, "messages", async () => ({ data: [{ id: "history", role: "user", content: "Readable" }] }));
@@ -111,7 +112,7 @@ test("typed deletion errors update workspace even after optimistic prompt rollba
   t.mock.method(api, "queue", async () => ({ data: { revision: 0, items: [] } }));
   await assert.rejects(() => controller.submitPrompt("s", { text: "Keep this" }), { code: "session_workspace_unavailable" });
   assert.equal(store.getState().sessions.s.workspace.status, "missing");
-  assert.equal(store.getState().sessionData.s.livePrompt, null);
+  assert.deepEqual(store.getState().sessionData.s.inputs, {});
   assert.equal(store.getState().sessionData.s.messages[0].id, "historical");
 });
 

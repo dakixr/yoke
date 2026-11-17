@@ -58,10 +58,9 @@ def test_hub_refreshes_snapshots_immediately_after_resync():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("input_lifecycle", [False, True])
 @pytest.mark.parametrize("gaps", [1, 2])
 def test_prompt_resync_recovers_history_and_answer_without_readmission(
-    input_lifecycle, gaps, monkeypatch
+    gaps, monkeypatch
 ):
     async def scenario():
         class InputNative(FixtureNative):
@@ -86,7 +85,6 @@ def test_prompt_resync_recovers_history_and_answer_without_readmission(
                 return await super().respond(request)
 
         native = InputNative()
-        native.input_lifecycle = input_lifecycle
         native.hold = True
         streams = 0
 
@@ -134,9 +132,8 @@ def test_prompt_resync_recovers_history_and_answer_without_readmission(
             assert ("answer", {"messageID": "answer-id", "content": "Done."}) in emitted
             assert native.admission is not None
             assert native.admission["id"] == "input-1"
-            if input_lifecycle:
-                assert work.phase == "settled"
-                assert work.input_revision == 2
+            assert work.phase == "settled"
+            assert work.input_revision == 2
         finally:
             await native.close()
 

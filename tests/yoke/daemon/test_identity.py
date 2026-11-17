@@ -32,7 +32,7 @@ def test_windows_verifies_identity_without_disclosing_token(
     paths.ensure()
     instance.write_info(
         paths,
-        instance.DaemonInfo(123, "3.35.0", "2", "", 12345, "private-token", True, 0),
+        instance.DaemonInfo(123, "4.0.0", "3", "", 12345, "private-token", True, 0),
     )
     monkeypatch.setattr(client, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(client, "daemon_alive", lambda paths: True)

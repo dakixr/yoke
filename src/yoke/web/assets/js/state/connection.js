@@ -1,7 +1,7 @@
 // @ts-check
 
 import { errorMessage } from "../lib/errors.js";
-import { ApiError, api } from "../api/client.js";
+import { ApiError, DaemonProtocolError, api } from "../api/client.js";
 import { SseClient } from "../api/sse.js";
 import { readDone, readDrafts, readToken, writeToken } from "./local-state.js";
 import { installActiveSnapshot, reducePublicEvent } from "./reducer.js";
@@ -319,9 +319,9 @@ export class ConnectionController {
     }));
     try {
       const previouslyActive = Object.keys(store.getState().active);
-      const [active] = await Promise.all([api.activeSessions(), this.actions.refreshSessionLists()]);
+      const [active, capabilities] = await Promise.all([api.activeSessions(), api.capabilities(), this.actions.refreshSessionLists()]);
       if (this.lifecycle.epoch !== lifecycleEpoch) return;
-      store.setState((state) => installActiveSnapshot(state, active.data));
+      store.setState((state) => installActiveSnapshot({ ...state, capabilities: capabilities.data }, active.data));
       const relevant = new Set([
         ...Object.keys(store.getState().sessionData),
         ...previouslyActive,
@@ -358,8 +358,12 @@ export class ConnectionController {
       this.actions.notice(broad ? "Reconnected. State synchronized." : "Connection restored. State synchronized.");
     } catch (error) {
       if (this.lifecycle.epoch !== lifecycleEpoch) return;
-      this.drainBufferedEvents();
-      if (this.lifecycle.epoch !== lifecycleEpoch) return;
+      if (error instanceof DaemonProtocolError) {
+        this.actions.retireLifecycle({ stopStream: true });
+      } else {
+        this.drainBufferedEvents();
+        if (this.lifecycle.epoch !== lifecycleEpoch) return;
+      }
       this.fail(error);
     } finally {
       if (this.resyncEpoch === lifecycleEpoch) {
@@ -417,7 +421,7 @@ export class ConnectionController {
       this.actions.schedule("lists", SUMMARY_REFRESH_MS, () => this.actions.refreshSessionLists());
     }
     if (store.getState().sessionData[id]?.resyncPending) this.requestResync(false);
-    if (event.type.startsWith("session.prompt.") || event.type === "session.queue.updated") {
+    if (["session.input.changed", "session.queue.held", "session.queue.updated"].includes(event.type)) {
       this.actions.schedule(`queue:${id}`, SUMMARY_REFRESH_MS, () => this.actions.refreshQueue(id));
       this.actions.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.actions.refreshSessionSummary(id));
     }

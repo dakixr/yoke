@@ -28,17 +28,17 @@ export function applyInputChanged(data, event) {
   const id = event.inputID;
   if (terminal.has(event.phase)) delete inputs[id];
   else inputs[id] = input(event, inputs[id]);
-  return { ...data, ...version, inputLifecycle: true, inputs };
+  return { ...data, ...version, inputs };
 }
 
 export function applyQueueHeld(data, event) {
   const version = revision(data, event.inputRevision);
-  return version ? { ...data, ...version, inputLifecycle: true, held: event.held ?? null } : data;
+  return version ? { ...data, ...version, held: event.held ?? null } : data;
 }
 
 export function applyActiveChanged(data, event) {
   if (Number.isFinite(event.revision) && event.revision <= (data.runtime?.revision ?? -1)) return data;
-  return { ...data, runtime: { ...event, error: event.error ?? event.lastError ?? event.last_error ?? null } };
+  return { ...data, runtime: { ...event, error: event.error ?? null } };
 }
 
 export function installInputSnapshot(data, snapshot) {
@@ -48,7 +48,7 @@ export function installInputSnapshot(data, snapshot) {
     if (!terminal.has(item.phase)) inputs[item.id] = input(item, data.inputs?.[item.id]);
     else delete inputs[item.id];
   }
-  return { ...data, inputs, inputLifecycle: true, inputRevision: snapshot.inputRevision, held: snapshot.held ?? null, resyncPending: false };
+  return { ...data, inputs, inputRevision: snapshot.inputRevision, held: snapshot.held ?? null, resyncPending: false };
 }
 
 export function submittingInput(data, item) {
@@ -72,12 +72,12 @@ export function rejectSubmission(data, id) {
 }
 
 export function retireSession(data) {
-  const inputs = Object.fromEntries(Object.entries(data.inputs || {}).filter(([, item]) => item.phase !== "submitting"));
-  const queue = data.queue ? { ...data.queue, items: (data.queue.items || []).filter((item) => data.inputs?.[item.id]?.phase !== "submitting") } : data.queue;
-  return reconcileSession({ ...data, inputs, queue, livePrompt: null, pendingPrompts: data.inputLifecycle ? {} : data.pendingPrompts, failedPrompts: [], runtime: undefined });
+  if (!data.inputs) return { ...data, runtime: undefined };
+  const inputs = Object.fromEntries(Object.entries(data.inputs).filter(([, item]) => item.phase !== "submitting"));
+  return reconcileSession({ ...data, inputs, runtime: undefined });
 }
 
-export function projectSession(data) {
+export function projectSession(data = {}) {
   const inputs = Object.values(data.inputs || {});
   const timeline = inputs.filter((item) => visible.has(item.phase) && !(item.phase === "submitting" && item.delivery === "queue"));
   const items = inputs.filter((item) => queued.has(item.phase) || (item.phase === "submitting" && item.delivery === "queue"))
@@ -86,16 +86,15 @@ export function projectSession(data) {
   return { timeline, queue: { ...(data.queue || {}), items, held: data.held ?? null, inputRevision: data.inputRevision || 0 } };
 }
 
-export function timelineInputs(data) {
-  if (!data?.inputLifecycle) return [...(data?.failedPrompts || []), ...(data?.livePrompt ? [data.livePrompt] : [])];
+export function timelineInputs(data = {}) {
   const saved = new Set((data.messages || []).map((message) => message.inputID));
   return projectSession(data).timeline.filter((item) => !saved.has(item.id));
 }
 
 export function reconcileSession(data) {
-  if (!data.inputLifecycle) return data;
+  if (!data.inputs) return data;
   const { queue } = projectSession(data);
-  return { ...data, queue, livePrompt: null, pendingPrompts: {}, failedPrompts: [] };
+  return { ...data, queue };
 }
 
 export function optimisticRuntime(state, id, patch, token) {
@@ -124,5 +123,5 @@ export function queueSummary(queue) {
 }
 
 export function projectSessionSummary(session, data) {
-  return session && data?.inputLifecycle ? { ...session, queue: queueSummary(projectSession(data).queue) } : session;
+  return session && data?.inputs ? { ...session, queue: queueSummary(projectSession(data).queue) } : session;
 }

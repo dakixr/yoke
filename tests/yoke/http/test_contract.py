@@ -86,7 +86,7 @@ def test_health_is_public_and_capabilities_require_auth(
 
     health = client.get("/api/v1/health")
     assert health.status_code == 200
-    assert health.json()["data"]["protocolVersion"] == "2"
+    assert health.json()["data"]["protocolVersion"] == "3"
 
     denied = client.get("/api/v1/capabilities")
     assert denied.status_code == 401

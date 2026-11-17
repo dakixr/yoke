@@ -15,7 +15,7 @@ def test_search_wire_paging_filters_and_creation_origins(tmp_path: Path):
         HttpAppSettings(auth_token="secret", session_directory=tmp_path / "db")
     )
     with TestClient(app, headers={"Authorization": "Bearer secret"}) as client:
-        assert client.get("/api/v1/health").json()["data"]["protocolVersion"] == "2"
+        assert client.get("/api/v1/health").json()["data"]["protocolVersion"] == "3"
         for sid, extra, expected in [
             ("web", {}, "web"),
             ("cli", {"client": {"owner": "terminal", "kind": "cli"}}, "cli"),

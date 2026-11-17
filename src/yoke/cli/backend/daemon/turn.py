@@ -67,17 +67,18 @@ class DaemonSubmittedTurn:
                 payload = event["payload"]
                 if payload.get("inputID") != self.input_id:
                     continue
-                if event["type"] in {
-                    "session.prompt.admitted",
-                    "session.prompt.promoted",
-                }:
+                if event["type"].startswith("session.prompt."):
                     continue
                 if event["type"] == "session.runtime.failed":
                     self._settled["error"] = payload.get("error", "Daemon turn failed.")
                     self._settled.setdefault("outcome", "failed")
                     break
-                if event["type"] == "session.prompt.settled":
+                if event["type"] == "session.input.changed" and payload.get(
+                    "phase"
+                ) in {"settled", "removed"}:
                     self._settled.update(payload)
+                    if payload["phase"] == "removed":
+                        self._settled["outcome"] = "stopped"
                     # Failed settlement precedes the actionable runtime error.
                     # Workspace rejection leaves the input paused, unsettled.
                     if payload.get("outcome") != "failed":

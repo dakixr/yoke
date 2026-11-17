@@ -15,6 +15,9 @@ from uuid import uuid4
 
 import httpx
 
+from yoke.daemon.protocol import require_capabilities
+from yoke.daemon.client import DaemonIncompatible
+
 from yoke.cli.backend.events import EventSubscriptions, event_from_sse
 from yoke.cli.backend.connection_state import (
     ConnectionPhase,
@@ -57,13 +60,12 @@ class SessionConnection:
         self.owner = f"cli-{uuid4().hex}"
         self.events = EventSubscriptions()
         self.connection_events = EventSubscriptions()
-        self.view_store = SessionViewStore(
-            session_id, self.owner, input_lifecycle=False
-        )
+        self.view_store = SessionViewStore(session_id, self.owner)
         self._discover = discover
         self._cwd = (cwd or Path.cwd()).resolve()
         self._warning = warning
         self._handle = discover()
+        self._incompatible: DaemonIncompatible | None = None
         self._warned: set[str] = set()
         self._report_warning()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -160,6 +162,8 @@ class SessionConnection:
 
     def start(self, *, timeout: float = 10) -> None:
         """Attach and wait until the stream owns its lease and recovery is done."""
+        if self._incompatible is not None:
+            raise self._incompatible
         if self.state.closed:
             raise RuntimeError("Session connection is closed.")
         if self._worker is None:
@@ -169,6 +173,8 @@ class SessionConnection:
             self.state.wait_ready(timeout=timeout)
         except TimeoutError:
             self.close()
+            if self._incompatible is not None:
+                raise self._incompatible
             raise TimeoutError("Could not attach to Yoke daemon events.")
 
     @property
@@ -254,6 +260,11 @@ class SessionConnection:
                                 raise
                         finally:
                             self._stream_task = None
+                except DaemonIncompatible as exc:
+                    self._incompatible = exc
+                    self.events.publish("client.disconnected", {"message": str(exc)})
+                    self._enter(ConnectionPhase.CLOSED, "incompatible")
+                    return
                 except (httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
                     if self.state.snapshot.phase == ConnectionPhase.READY:
                         self.events.publish(
@@ -281,18 +292,13 @@ class SessionConnection:
             self.connection_events.close()
 
     async def _attached_stream(self, http: httpx.AsyncClient) -> None:
+        capabilities = await http.get("capabilities")
+        capabilities.raise_for_status()
+        require_capabilities(capabilities.json()["data"])
         response = await http.put(
             f"session/{self.session_id}/client", json=self.client_config()
         )
         response.raise_for_status()
-        capabilities = await http.get("capabilities")
-        capabilities.raise_for_status()
-        self.view_store.input_lifecycle = bool(
-            capabilities.json()
-            .get("data", capabilities.json())
-            .get("features", {})
-            .get("inputLifecycle", False)
-        )
         self._enter(ConnectionPhase.STREAMING, "attached")
         async with http.stream(
             "GET", "event", params={"sessionID": self.session_id, "client": self.owner}
@@ -346,16 +352,11 @@ class SessionConnection:
         active_response = await http.get("session/active")
         active_response.raise_for_status()
         active = active_response.json()["data"].get(self.session_id, {"state": "idle"})
-        if self.view_store.input_lifecycle:
-            inputs = await http.get(
-                f"session/{self.session_id}/input", params={"live": "true"}
-            )
-            inputs.raise_for_status()
-            self.view_store.install_snapshot(inputs.json()["data"], active)
-        else:
-            queue = await http.get(f"session/{self.session_id}/queue")
-            queue.raise_for_status()
-            self.view_store.install_legacy_snapshot(queue.json()["data"], active)
+        inputs = await http.get(
+            f"session/{self.session_id}/input", params={"live": "true"}
+        )
+        inputs.raise_for_status()
+        self.view_store.install_snapshot(inputs.json()["data"], active)
         self._enter(ConnectionPhase.READY, "resynced")
         self.events.publish(
             "client.resynced", {"messages": messages, "seq": self.state.snapshot.seq}

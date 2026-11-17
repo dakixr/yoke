@@ -19,7 +19,7 @@ for (const previous of ["submitting", ...phases]) {
     cases++;
   }
 }
-let acknowledged = admitSubmission(submittingInput({ inputLifecycle: true }, { id: "fast", prompt: { text: "fast" } }), { id: "fast", phase: "running" });
+let acknowledged = admitSubmission(submittingInput({}, { id: "fast", prompt: { text: "fast" } }), { id: "fast", phase: "running" });
 acknowledged = installInputSnapshot(acknowledged, { inputRevision: 3, inputs: [] });
 assert.deepEqual(acknowledged.inputs, {}, "a completed admission must not leave a submitting ghost after a live snapshot");
 let state = submittingInput({}, { id: "local", delivery: "steer", prompt: { text: "local" } });
@@ -49,7 +49,7 @@ console.log(JSON.stringify({ cases, milliseconds: performance.now() - started })
 for (const state of ["idle", "error", "running", "waiting_input", "stopping"]) {
   assert.equal(isBusy({ state }), !["idle", "error"].includes(state));
 }
-const pendingPair = submittingInput(submittingInput({ inputLifecycle: true }, { id: "first", delivery: "steer" }), { id: "second", delivery: "steer" });
+const pendingPair = submittingInput(submittingInput({}, { id: "first", delivery: "steer" }), { id: "second", delivery: "steer" });
 assert.deepEqual(projectSession(pendingPair).timeline.map((item) => item.id), ["first", "second"], "two rapid steers keep both identities");
 assert.equal(projectSession(retireSession(pendingPair)).timeline.length, 0);
 
@@ -57,3 +57,10 @@ const heldView = installInputSnapshot({}, { inputRevision: 1, held: { reason: "i
 const staleSummary = { id: "session", queue: { total: 0, revision: 1 } };
 assert.equal(projectSessionSummary(staleSummary, heldView).queue.held.reason, "interrupt", "summary refresh cannot hide the machine's hold");
 assert.equal(projectSessionSummary(staleSummary, heldView).queue.total, 1);
+
+// Unloaded sessions keep their authoritative list summary until input data arrives.
+const summaryOnly = { id: "unloaded", queue: { total: 2, paused: 1, revision: 4 } };
+assert.equal(projectSessionSummary(summaryOnly, undefined), summaryOnly);
+assert.equal(projectSessionSummary(summaryOnly, retireSession({})), summaryOnly);
+assert.equal(projectSessionSummary(summaryOnly, { runtime: { state: "running" } }), summaryOnly);
+assert.equal(projectSessionSummary(summaryOnly, { inputs: {} }).queue.total, 0);

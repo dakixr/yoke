@@ -50,8 +50,7 @@ class PromptAdmissionReceipt(ApiModel):
     session_id: str
     prompt: PromptInput
     delivery: Literal["steer", "queue"]
-    state: Literal["admitted", "promoted", "removed"]
-    phase: InputPhaseName = "queued"
+    phase: InputPhaseName
     admitted_seq: int
     promoted_seq: int | None = None
     time_created: str
@@ -68,7 +67,6 @@ class QueueItem(ApiModel):
     paused: bool
     created_at: str
     pause_cause: PauseCause | None = None
-    state: Literal["admitted"] = "admitted"
 
 
 class QueueHold(ApiModel):

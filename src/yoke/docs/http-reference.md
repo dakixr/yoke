@@ -64,7 +64,7 @@ and `admissionChanged`. The session lists name active runtime phases or retained
 workers, unpaused queues without a hold, and held queues respectively. Held
 queues never make `busy` true. In-flight mutations and a probe invalidated by a
 concurrent admission also count as busy. Legacy `busy` and `restartPending`
-remain available. Protocol stays 2.
+remain available. Protocol 3 is current.
 
 Restart returns `scheduled: "when_idle"` while exit is pending, even if the
 first work check was idle. The watcher checks admissions again before exiting.
@@ -189,11 +189,11 @@ Errors:
 
 Runtime snapshots from `/session/active` and `/wait` include `state`, `phase`,
 `revision`, `inputID`, `turnID`, `startedAt`, `operation`, `activity`, `error`
-and `lastError`. `error` and `lastError` carry the same message. `operation` is
+and `lastError`. Both error fields hold the runtime failure message. `operation` is
 `{id, kind}` for `selection` or `compaction`, or null. `phase` is `idle`,
 `turn_active`, `retiring` or `operation_active`. Revisions increase for each
 phase or activity transition within one loaded runtime. A daemon restart resets
-them. Protocol version stays 2.
+them. Protocol 3 is current.
 
 `POST /session/{id}/prompt` request:
 
@@ -207,25 +207,26 @@ them. Protocol version stays 2.
 | `resume` | true | Look for work to start right after admission. |
 | `clientID` | none | Owner of an attached client whose environment and tool policy the input uses. |
 
-The response is a receipt: `id`, `sessionID`, `prompt`, `delivery`, `state`
-(`admitted`, `promoted` or `removed`), `admittedSeq`, `promotedSeq`,
-`timeCreated` and `phase`. The daemon reads the receipt after wake. Repeating a
+The response is a receipt: `id`, `sessionID`, `prompt`, `delivery`,
+`admittedSeq`, `promotedSeq`, `timeCreated` and `phase`. The daemon reads the receipt after wake. Repeating a
 request with the same `id`, prompt and delivery returns its current receipt.
 
-Queue item: `id`, `prompt`, `delivery`, `paused`, `createdAt`,
-`state: "admitted"` and `pauseCause`, either `user`, `workspace` or null.
+Queue item: `id`, `prompt`, `delivery`, `paused`, `createdAt`
+and `pauseCause`, either `user`, `workspace` or null.
 `GET /queue` returns `{revision, items, pendingImages, held, inputRevision}`.
 `held` is null or `{reason}`. Resume clears the queue hold and preserves input
 pauses. `inputRevision` survives restarts and counts input transitions.
 `pendingImages` is draft state that the terminal client keeps with the queue.
 
-`features.inputLifecycle` advertises these additions. Protocol stays 2.
+Protocol 3 is current. `features.inputLifecycle`, `globalEvents`,
+`promptAdmission`, `steering` and `queueEditor` are required and always true.
+Clients reject a missing feature or a different protocol and request an upgrade
+and daemon restart.
 Input snapshots contain `id`, `phase`, `delivery`, `position`, `pauseCause`,
 `turnID`, `outcome`, `clientID` and `prompt`. Phases are `queued`, `paused`,
 `promoted`, `running`, `settled` and `removed`. `session.input.changed` carries
 these values with `inputID` instead of `id`, plus `previous`, `cause` and
-`inputRevision`. The event commits with the transition. Legacy events keep
-their order.
+`inputRevision`. The event commits with the transition.
 
 `PATCH /session/{id}/queue` request:
 
@@ -252,7 +253,7 @@ Queue operations:
 Runtime state (`ActiveRuntimeInfo`), returned by `/wait` and `/session/active`:
 `state` (`idle`, `running`, `stopping`, `waiting_input` or `error`),
 `turnID`, `startedAt`, `activity` (for example `Thinking`, `Running tool`,
-`Compacting`, `Waiting for a slot`) and `lastError`.
+`Compacting`, `Waiting for a slot`) and `error`.
 
 Errors:
 
@@ -574,5 +575,5 @@ must reconnect and refresh their snapshots after that event.
 
 
 Queue holds publish `session.queue.held` with `held` and `inputRevision`.
-They leave the legacy queue edit revision unchanged. An idle `resume: false`
+They leave the queue edit revision unchanged. An idle `resume: false`
 request records hold reason `manual`.

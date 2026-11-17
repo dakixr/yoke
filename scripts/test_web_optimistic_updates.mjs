@@ -57,11 +57,12 @@ globalThis.clearTimeout = (handle) => {
   nativeClearTimeout(handle);
 };
 
-const { api, ApiError } = await import("../src/yoke/web/assets/js/api/client.js");
+const { api, ApiError, requireCapabilities } = await import("../src/yoke/web/assets/js/api/client.js");
 const { AppController, controller: exportedController } = await import("../src/yoke/web/assets/js/state/controller.js");
 assert.ok(exportedController instanceof AppController);
 let controller = exportedController;
 const { installInputs, installActiveSnapshot, mergeSessionInfo, reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
+const { timelineInputs } = await import("../src/yoke/web/assets/js/state/session-machine.js");
 const { store } = await import("../src/yoke/web/assets/js/state/store.js");
 const { currentRoute } = await import("../src/yoke/web/assets/js/router/router.js");
 const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
@@ -184,6 +185,8 @@ function installSession(id, { queue = null, permissions = [], questions = [], ex
         messageSnapshotLoaded: true,
         messages: [],
         queue,
+        inputRevision: 0,
+        inputs: Object.fromEntries((queue?.items || []).map((item, position) => [item.id, { ...item, position, phase: item.paused ? "paused" : "queued" }])),
         permissions,
         questions,
         ...extraData,
@@ -274,6 +277,27 @@ function testSettingsRouteAliasesHome() {
 }
 
 function restoreApi(overrides) {
+  const snapshots = new Map();
+  overrides = { capabilities: async () => ({ data: { protocolVersion: "3", features: {
+    globalEvents: true, promptAdmission: true, inputLifecycle: true, steering: true, queueEditor: true,
+  } } }), ...overrides };
+  for (const method of ["queue", "patchQueue"]) {
+    if (!overrides[method]) continue;
+    const call = overrides[method];
+    overrides[method] = async (id, ...args) => {
+      const result = await call(id, ...args);
+      snapshots.set(id, result.data);
+      return result;
+    };
+  }
+  if (!overrides.inputs) overrides.inputs = async (id) => {
+    const data = store.getState().sessionData[id] || {};
+    const queue = snapshots.get(id);
+    const active = Object.values(data.inputs || {}).filter((item) => !["queued", "paused", "submitting"].includes(item.phase));
+    return { data: queue
+      ? { inputRevision: queue.inputRevision ?? queue.revision ?? 0, inputs: [...active, ...(queue.items || []).map((item, position) => ({ ...item, position, phase: item.paused ? "paused" : "queued" }))] }
+      : { inputRevision: data.inputRevision || 0, inputs: Object.values(data.inputs || {}).filter((item) => item.phase !== "submitting") } };
+  };
   const originals = new Map();
   for (const [name, value] of Object.entries(overrides)) {
     originals.set(name, api[name]);
@@ -328,7 +352,7 @@ async function testPromptAppearsBeforeAdmissionReturns() {
   });
   try {
     const pending = controller.submitPrompt(id, { text: "instant user row", delivery: "steer" });
-    const live = store.getState().sessionData[id].livePrompt;
+    const live = timelineInputs(store.getState().sessionData[id])[0];
     assert.equal(live.prompt.text, "instant user row");
     assert.match(live.id, /^inp_/);
     assert.equal(store.getState().sessionOrder[0], id);
@@ -345,13 +369,13 @@ async function testFailedTurnDoesNotDelayNextOptimisticPrompt() {
   installSession(id, {
     queue: { revision: 0, items: [] },
     extraData: {
-      lastError: "provider failed",
-      livePrompt: {
+      messages: [{ id: "failed-message", inputID: "inp_failed", type: "user", content: [{ type: "text", text: "failed prompt" }] }],
+      inputs: { ["inp_failed"]: { phase: "running", ...{
         id: "inp_failed",
         prompt: { text: "failed prompt", attachments: [] },
         delivery: "steer",
         timeCreated: "2026-08-27T12:00:00Z",
-      },
+      } } },
     },
   });
   const admission = deferred();
@@ -371,12 +395,12 @@ async function testFailedTurnDoesNotDelayNextOptimisticPrompt() {
   try {
     const pending = controller.submitPrompt(id, { text: "new prompt", delivery: "steer" });
     const data = store.getState().sessionData[id];
-    assert.equal(data.livePrompt.prompt.text, "new prompt");
-    assert.equal(data.failedPrompts.length, 1);
-    assert.equal(data.failedPrompts[0].prompt.text, "failed prompt");
+    assert.equal(timelineInputs(data)[0].prompt.text, "new prompt");
+    assert.equal(data.messages.length, 1);
+    assert.equal(data.messages[0].content[0].text, "failed prompt");
     assert.equal(admitBody.prompt.text, "new prompt");
     assert.equal(messageReads, 0, "next optimistic prompt must not wait for history recovery");
-    admission.resolve({ data: { id: data.livePrompt.id } });
+    admission.resolve({ data: { id: timelineInputs(data)[0].id } });
     await pending;
   } finally {
     restore();
@@ -388,12 +412,12 @@ async function testDurableMessageKeepsOptimisticPromptUntilSnapshot() {
   const inputID = "inp_handoff";
   installSession(id, {
     extraData: {
-      livePrompt: {
+      inputs: { [inputID]: { phase: "running", ...{
         id: inputID,
         prompt: { text: "stay visible", attachments: [] },
         delivery: "steer",
         timeCreated: "2026-08-27T12:00:00Z",
-      },
+      } } },
     },
   });
   store.setState((state) => reducePublicEvent(state, {
@@ -405,7 +429,7 @@ async function testDurableMessageKeepsOptimisticPromptUntilSnapshot() {
     data: { inputID },
   }));
   assert.equal(
-    store.getState().sessionData[id].livePrompt.id,
+    timelineInputs(store.getState().sessionData[id])[0].id,
     inputID,
     "terminal event must not create an empty gap before the persisted row arrives",
   );
@@ -426,7 +450,7 @@ async function testDurableMessageKeepsOptimisticPromptUntilSnapshot() {
   });
   try {
     await controller.refreshMessages(id);
-    assert.equal(store.getState().sessionData[id].livePrompt, null);
+    assert.equal(timelineInputs(store.getState().sessionData[id]).length, 0);
     assert.equal(store.getState().sessionData[id].messages.at(-1).inputID, inputID);
   } finally {
     restore();
@@ -446,11 +470,11 @@ async function testPromptRollbackOnFailure() {
   });
   try {
     const pending = controller.submitPrompt(id, { text: "will fail", delivery: "steer" });
-    assert.equal(store.getState().sessionData[id].livePrompt.prompt.text, "will fail");
+    assert.equal(timelineInputs(store.getState().sessionData[id])[0].prompt.text, "will fail");
     assert.equal(store.getState().sessionOrder[0], id);
     gate.reject(new ApiError(500, "fixture_failure", "fixture failure"));
     await assert.rejects(pending, /fixture failure/);
-    assert.equal(store.getState().sessionData[id].livePrompt, null);
+    assert.equal(timelineInputs(store.getState().sessionData[id]).length, 0);
     assert.deepEqual(store.getState().sessionOrder, previousOrder);
     assert.deepEqual(store.getState().sessions[id].time, previous.time);
   } finally {
@@ -481,8 +505,8 @@ async function testSettledPromptReopensOptimistically() {
     assert.equal(state.sessions[id].archivedAt, null);
     assert.equal(state.sessionOrder[0], id);
     assert.equal(state.archivedOrder.includes(id), false);
-    assert.equal(state.sessionData[id].livePrompt.prompt.text, "continue this");
-    gate.resolve({ data: { id: state.sessionData[id].livePrompt.id } });
+    assert.equal(timelineInputs(state.sessionData[id])[0].prompt.text, "continue this");
+    gate.resolve({ data: { id: timelineInputs(state.sessionData[id])[0].id } });
     await pending;
   } finally {
     restore();
@@ -514,7 +538,7 @@ async function testSettledPromptFailureRestoresSettledState() {
     assert.equal(state.sessions[id].archivedAt, archivedAt);
     assert.equal(state.sessionOrder.includes(id), false);
     assert.equal(state.archivedOrder[0], id);
-    assert.equal(state.sessionData[id].livePrompt, null);
+    assert.equal(timelineInputs(state.sessionData[id]).length, 0);
   } finally {
     restore();
   }
@@ -687,6 +711,9 @@ async function testServerRestartLetsEmptyQueueReplaceStaleUi() {
   controller.resync = async () => {};
   const restore = restoreApi({
     queue: async () => ({ data: { revision: 0, items: [] } }),
+    inputs: async () => ({ data: store.getState().connection.serverInstanceID === "old-server"
+      ? { inputRevision: 1, inputs: stale.items.map((item, position) => ({ ...item, position, phase: "queued" })) }
+      : { inputRevision: 2, inputs: [] } }),
     listSessions: async ({ archived }) => archived
       ? { data: [], total: 0, cursor: { next: null } }
       : {
@@ -719,7 +746,7 @@ async function testServerRestartLetsEmptyQueueReplaceStaleUi() {
       revision: 0,
     });
     await controller.refreshQueue(id);
-    assert.deepEqual(store.getState().sessionData[id].queue, { revision: 0, items: [] });
+    assert.deepEqual(store.getState().sessionData[id].queue, { revision: 0, items: [], held: null, inputRevision: 2, pendingImages: undefined });
   } finally {
     controller.resync = originalResync;
     restore();
@@ -1402,9 +1429,9 @@ async function testDraftSendPaintsSessionAndPromptBeforeAdmissionReturns() {
     assert.equal(state.ui.selectedSessionID, createdID);
     assert.equal(state.sessions[createdID].title, null);
     assert.equal(state.sessionData[createdID].messageSnapshotLoaded, false);
-    assert.equal(state.sessionData[createdID].livePrompt.prompt.text, "start immediately");
+    assert.equal(timelineInputs(state.sessionData[createdID])[0].prompt.text, "start immediately");
     assert.ok(state.drafts[draftID], "draft should survive until admission succeeds");
-    admission.resolve({ data: { id: state.sessionData[createdID].livePrompt.id } });
+    admission.resolve({ data: { id: timelineInputs(state.sessionData[createdID])[0].id } });
     await pending;
     assert.equal(store.getState().drafts[draftID], undefined);
   } finally {
@@ -1445,7 +1472,7 @@ async function testBackgroundDraftSubmitKeepsUserOnFreshDraft() {
     await tick();
     assert.ok(createdID);
     assert.equal(store.getState().ui.selectedSessionID, null);
-    admission.resolve({ data: { id: store.getState().sessionData[createdID].livePrompt.id } });
+    admission.resolve({ data: { id: timelineInputs(store.getState().sessionData[createdID])[0].id } });
     await pending;
     const state = store.getState();
     assert.equal(state.ui.selectedSessionID, null);
@@ -1694,11 +1721,11 @@ function testLateDurableEventDoesNotClearNewerOptimisticPrompt() {
     sessionData: {
       [id]: {
         messages: [],
-        livePrompt: {
+        inputs: { ["new-input"]: { phase: "running", ...{
           id: "new-input",
           prompt: { text: "new", attachments: [] },
           timeCreated: "2026-08-27T12:00:02Z",
-        },
+        } } },
       },
     },
   };
@@ -1710,29 +1737,29 @@ function testLateDurableEventDoesNotClearNewerOptimisticPrompt() {
     durable: { seq: 2 },
     data: { inputID: "old-input" },
   });
-  assert.equal(reduced.sessionData[id].livePrompt.id, "new-input");
+  assert.equal(timelineInputs(reduced.sessionData[id])[0].id, "new-input");
 }
 
 function testPromotedSsePromptAlwaysCarriesInputID() {
   const id = "sse-live-prompt-id";
   installSession(id);
   let state = reducePublicEvent(store.getState(), {
-    type: "session.prompt.admitted",
+    type: "session.input.changed",
     sessionID: id,
     time: "2026-08-27T12:00:00Z",
     data: {
-      inputID: "inp_from_sse",
+      inputID: "inp_from_sse", phase: "queued", inputRevision: 1,
       prompt: { text: "queued prompt", attachments: [] },
       delivery: "steer",
     },
   });
   state = reducePublicEvent(state, {
-    type: "session.prompt.promoted",
+    type: "session.input.changed",
     sessionID: id,
     time: "2026-08-27T12:00:01Z",
-    data: { inputID: "inp_from_sse" },
+    data: { inputID: "inp_from_sse", phase: "promoted", inputRevision: 2 },
   });
-  assert.equal(state.sessionData[id].livePrompt.id, "inp_from_sse");
+  assert.equal(timelineInputs(state.sessionData[id])[0].id, "inp_from_sse");
 }
 
 async function testCheckpointedToolCommentaryDoesNotStickAtTail() {
@@ -1889,12 +1916,12 @@ async function testBootstrapDrainsEventsThroughReconciliationOnce() {
       data: {},
     });
     controller.receiveEvent({
-      type: "session.prompt.admitted",
+      type: "session.input.changed",
       sessionID: id,
       time: "2026-08-27T12:00:00Z",
       durable: { seq: 2 },
       data: {
-        inputID: "inp_buffered",
+        inputID: "inp_buffered", phase: "queued", inputRevision: 1,
         prompt: { text: "buffered", attachments: [] },
         delivery: "queue",
       },
@@ -1917,7 +1944,7 @@ async function testBootstrapDrainsEventsThroughReconciliationOnce() {
 
     assert.equal(controller.bufferEvents, false);
     assert.deepEqual(controller.eventBuffer, []);
-    assert.deepEqual(Object.keys(store.getState().sessionData[id].pendingPrompts), ["inp_buffered"]);
+    assert.deepEqual(Object.keys(store.getState().sessionData[id].inputs), ["inp_buffered"]);
     assert.equal(store.getState().sessionData[id].latestSeq, 2, "buffered events must be reduced once");
     assert.equal(store.getState().sessionData[id].liveTimelineSequence, 1);
     assert.ok(scheduled.includes("lists"));
@@ -2092,6 +2119,8 @@ async function testReplacementDetachesTwoOperationQueueChains() {
           revision: 0,
           items: [{ id: "new-item", delivery: "queue", paused: false, prompt: { text: "new" } }],
         };
+        store.setState((state) => installInputs(state, id, { inputRevision: 1,
+          inputs: replacement.items.map((item, position) => ({ ...item, position, phase: "queued" })) }));
         controller.installQueue(id, replacement);
         if (outcome === "resolve") {
           firstGate.resolve({ data: { ...base, revision: 5 } });
@@ -2100,7 +2129,9 @@ async function testReplacementDetachesTwoOperationQueueChains() {
         }
         await Promise.all([first, second]);
         assert.equal(calls.length, 1, "queued old-lifecycle request must never be issued");
-        assert.deepEqual(store.getState().sessionData[id].queue, replacement);
+        assert.deepEqual(store.getState().sessionData[id].queue, { ...replacement,
+          items: replacement.items.map((item, position) => ({ ...item, position, phase: "queued" })),
+          inputRevision: 1, held: null, pendingImages: undefined });
         assert.equal(controller.queuePendingMutations.has(id), false);
       } finally {
         firstGate.resolve({ data: base });
@@ -2304,12 +2335,12 @@ async function testFailedResyncDrainsBufferedDurableEvent() {
     const resyncing = controller.resync(false);
     await tick();
     controller.receiveEvent({
-      type: "session.prompt.admitted",
+      type: "session.input.changed",
       sessionID: id,
       time: "2026-08-27T12:00:00Z",
       durable: { seq: 3 },
       data: {
-        inputID: "inp_failed_resync",
+        inputID: "inp_failed_resync", phase: "queued", inputRevision: 1,
         prompt: { text: "must survive", attachments: [] },
         delivery: "queue",
       },
@@ -2317,7 +2348,7 @@ async function testFailedResyncDrainsBufferedDurableEvent() {
     active.reject(new Error("resync snapshot failed"));
     await resyncing;
     assert.deepEqual(
-      Object.keys(store.getState().sessionData[id].pendingPrompts),
+      Object.keys(store.getState().sessionData[id].inputs),
       ["inp_failed_resync"],
     );
     assert.equal(store.getState().sessionData[id].latestSeq, 3);
@@ -2401,12 +2432,12 @@ async function testBufferedServerReplacementKeepsDurableSuccessor() {
       data: { serverInstanceID: "buffer-new" },
     });
     controller.receiveEvent({
-      type: "session.prompt.admitted",
+      type: "session.input.changed",
       sessionID: id,
       time: "2026-08-27T12:00:00Z",
       durable: { seq: 9 },
       data: {
-        inputID: "inp_after_replacement",
+        inputID: "inp_after_replacement", phase: "queued", inputRevision: 1,
         prompt: { text: "successor", attachments: [] },
         delivery: "queue",
       },
@@ -2420,7 +2451,7 @@ async function testBufferedServerReplacementKeepsDurableSuccessor() {
     assert.equal(store.getState().connection.serverInstanceID, "buffer-new");
     assert.equal(store.getState().sessionData[id].latestSeq, 9);
     assert.deepEqual(
-      Object.keys(store.getState().sessionData[id].pendingPrompts),
+      Object.keys(store.getState().sessionData[id].inputs),
       ["inp_after_replacement"],
     );
   } finally {
@@ -3133,7 +3164,12 @@ async function testSessionSummaryKeepsNewestQueueRevision() {
 
 async function testQueueSummarySeparatesPausedWork() {
   const id = "paused-queue-summary";
-  installSession(id);
+  const items = [
+    { id: "steer-paused", delivery: "steer", paused: true },
+    { id: "queue-paused", delivery: "queue", paused: true },
+    { id: "queue-ready", delivery: "queue", paused: false },
+  ];
+  installSession(id, { queue: { revision: 4, items } });
   controller.installQueue(id, {
     revision: 4,
     items: [
@@ -3259,7 +3295,7 @@ async function testNarrowResyncDuringResyncIsRetained() {
 
 async function testAuthoritativeInputsOwnPromptPlacementAndRetirement() {
   const id = "machine-placement";
-  installSession(id, { extraData: { inputLifecycle: true, inputs: {}, inputRevision: 0 } });
+  installSession(id, { extraData: { inputs: {}, inputRevision: 0 } });
   const gate = deferred();
   const restore = restoreApi({ admitPrompt: () => gate.promise, queue: async () => ({ data: { revision: 1, items: [] } }) });
   try {
@@ -3271,7 +3307,7 @@ async function testAuthoritativeInputsOwnPromptPlacementAndRetirement() {
     }));
     assert.equal(input.phase, "submitting");
     receive("queued", 1);
-    assert.equal(store.getState().sessionData[id].livePrompt, null);
+    assert.equal(timelineInputs(store.getState().sessionData[id]).length, 0);
     assert.deepEqual(store.getState().sessionData[id].queue.items.map((item) => item.id), [input.id]);
     receive("running", 2);
     assert.equal(store.getState().sessionData[id].queue.items.length, 0, "promotion removes queue row synchronously");
@@ -3290,13 +3326,13 @@ async function testSnapshotErrorUsesCanonicalField() {
   const id = "canonical-error";
   installSession(id);
   const error = { code: "session_workspace_unavailable", details: { directory: "/work" }, message: "Missing" };
-  const state = installActiveSnapshot(store.getState(), { [id]: { state: "error", lastError: error } });
+  const state = installActiveSnapshot(store.getState(), { [id]: { state: "error", error } });
   assert.equal(state.active[id].error, error);
 }
 
 async function testInputSnapshotCannotRestoreSettledOptimism() {
   const id = "snapshot-settlement";
-  installSession(id, { extraData: { inputLifecycle: true, inputs: {}, inputRevision: 0 } });
+  installSession(id, { extraData: { inputs: {}, inputRevision: 0 } });
   let state = installInputs(store.getState(), id, { inputRevision: 1, inputs: [{ id: "input", phase: "running", prompt: "saved" }] });
   state = reducePublicEvent(state, { type: "session.input.changed", sessionID: id, data: { inputID: "input", phase: "settled", inputRevision: 2 } });
   state = installInputs(state, id, { inputRevision: 1, inputs: [{ id: "input", phase: "running", prompt: "old" }] });
@@ -3305,7 +3341,7 @@ async function testInputSnapshotCannotRestoreSettledOptimism() {
 
 async function testHeldQueueResumeKeepsIndividualPauses() {
   const id = "held-resume";
-  installSession(id, { extraData: { inputLifecycle: true, inputs: {}, inputRevision: 0 } });
+  installSession(id, { extraData: { inputs: {}, inputRevision: 0 } });
   store.setState((state) => ({ ...state, capabilities: { features: { inputLifecycle: true } } }));
   store.setState((state) => installInputs(state, id, { inputRevision: 1, held: { reason: "interrupt" }, inputs: [
     { id: "paused", phase: "paused", prompt: "keep paused", pauseCause: "user", position: 0 },
@@ -3329,7 +3365,7 @@ async function testHeldQueueResumeKeepsIndividualPauses() {
 
 async function testReconnectRefreshesBackgroundTranscriptAfterInputMoves() {
   const id = "background-input-moved";
-  const summary = installSession(id, { extraData: { inputLifecycle: true, inputs: {}, inputRevision: 1, latestSeq: 1 } });
+  const summary = installSession(id, { extraData: { inputs: {}, inputRevision: 1, latestSeq: 1 } });
   store.setState((state) => ({ ...state, capabilities: { features: { inputLifecycle: true } }, ui: { ...state.ui, selectedSessionID: null } }));
   let messageReads = 0;
   const restore = restoreApi({
@@ -3351,7 +3387,7 @@ async function testReconnectRefreshesBackgroundTranscriptAfterInputMoves() {
 async function testSlowConsumerResyncReplacesInputStateAndPendingDeltas() {
   controller.bufferEvents = false;
   const id = "slow-consumer";
-  const summary = installSession(id, { extraData: { inputLifecycle: true, inputs: {
+  const summary = installSession(id, { extraData: { inputs: {
     old: { id: "old", phase: "running", prompt: { text: "old" } },
   }, inputRevision: 1 } });
   store.setState((state) => ({ ...state, capabilities: { features: { inputLifecycle: true } },
@@ -3393,6 +3429,7 @@ async function testSlowConsumerResyncReplacesInputStateAndPendingDeltas() {
 }
 
 const tests = [
+  testReconnectRefusesMissingCapabilitiesWithoutRetry,
   testSlowConsumerResyncReplacesInputStateAndPendingDeltas,
   testReconnectRefreshesBackgroundTranscriptAfterInputMoves,
   testHeldQueueResumeKeepsIndividualPauses,
@@ -3518,3 +3555,31 @@ for (const test of tests) {
   }
 }
 console.log(JSON.stringify({ tests: tests.length, milliseconds: performance.now() - started }));
+
+async function testReconnectRefusesMissingCapabilitiesWithoutRetry() {
+  const id = "incompatible-replacement";
+  installSession(id);
+  const before = controller.lifecycle.epoch;
+  let reads = 0;
+  let stopped = 0;
+  controller.sse = { stop() { stopped++; } };
+  const restore = restoreApi({
+    capabilities: async () => {
+      reads++;
+      requireCapabilities({ protocolVersion: "2", features: {} });
+    },
+    activeSessions: async () => ({ data: {} }),
+    listSessions: async () => ({ data: [], total: 0, cursor: { next: null } }),
+  });
+  try {
+    await controller.resync(false);
+    assert.equal(reads, 1);
+    assert.equal(stopped, 1);
+    assert.equal(controller.lifecycle.epoch, before + 1);
+    assert.equal(store.getState().connection.current, false);
+    assert.match(store.getState().connection.error, /protocol 3.*inputLifecycle.*Upgrade.*restart.*reload/);
+    assert.equal(controller.resyncing, false);
+    assert.equal(controller.resyncPending, false);
+    assert.equal(controller.broadResyncPending, false);
+  } finally { restore(); }
+}

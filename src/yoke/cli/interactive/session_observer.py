@@ -80,32 +80,18 @@ class SessionObserver:
             "renderedLocally", self.backend.owns_input(input_id)
         ):
             return
-        if self.backend.view_store.input_lifecycle:
-            if kind == "session.input.changed":
-                phase = payload["phase"]
-                if phase in {"queued", "paused", "promoted", "running"}:
-                    self._prompts[input_id] = str(payload.get("prompt", ""))
-                if phase in {"promoted", "running"}:
-                    self._begin(input_id)
-                elif phase in {"settled", "removed"}:
-                    self._finish(input_id, payload.get("outcome"))
-                elif phase == "paused":
-                    self._end(input_id)
-                return
-            if kind not in AGENT_EVENTS:
-                return
-        elif kind == "session.prompt.admitted":
-            prompt = payload.get("prompt")
-            if isinstance(prompt, dict):
-                self._prompts[input_id] = str(prompt.get("text", ""))
+        if kind == "session.input.changed":
+            phase = payload["phase"]
+            if phase in {"queued", "paused", "promoted", "running"}:
+                self._prompts[input_id] = str(payload.get("prompt", ""))
+            if phase in {"promoted", "running"}:
+                self._begin(input_id)
+            elif phase in {"settled", "removed"}:
+                self._finish(input_id, payload.get("outcome"))
+            elif phase == "paused":
+                self._end(input_id)
             return
-        elif kind == "session.prompt.promoted":
-            self._begin(input_id)
-            return
-        elif kind == "session.prompt.settled":
-            self._finish(input_id, payload.get("outcome"))
-            return
-        elif kind not in AGENT_EVENTS:
+        if kind not in AGENT_EVENTS:
             return
         renderer = self._renderers.get(input_id)
         if renderer is None:

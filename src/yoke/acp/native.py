@@ -62,7 +62,6 @@ class NativeClient:
             trust_env=False,
             follow_redirects=False,
         )
-        self.input_lifecycle = False
         self.process_monitor = ProcessMonitor(self)
         self.agent_monitor = AgentMonitor(self)
         self.event_hub = NativeEventHub(self)
@@ -137,13 +136,10 @@ class NativeClient:
             raise fail("Native workers have not drained; completion is unconfirmed")
 
     async def assert_idle(self, session_id: str) -> None:
-        """Require logical idleness and drain; old daemons also need an empty queue."""
+        """Require logical idleness and physical worker completion."""
         status = await self.data("POST", self.path(session_id, "/wait?timeoutMs=1"))
         if status["state"] not in ("idle", "error"):
             raise fail("Native session already has active work")
-        session = await self.data("GET", self.path(session_id))
-        if not self.input_lifecycle and session["queue"]["total"]:
-            raise fail("Native session has queued inputs")
         await self.drained(session_id, 1)
 
     async def skills(self, directory: str) -> list[dict[str, Any]]:
@@ -159,11 +155,6 @@ class NativeClient:
         ):
             raise fail("Native skill catalog is invalid")
         return items
-
-    async def stop(self, session_id: str) -> None:
-        """Interrupt and wait for physical completion."""
-        await self.data("POST", self.path(session_id, "/interrupt"))
-        await self.drained(session_id)
 
     async def messages(self, session_id: str) -> list[dict[str, Any]]:
         """Read all persisted native messages in chronological order."""

@@ -101,7 +101,6 @@ export class TranscriptController {
               messageSnapshotLoaded: true,
               latestSeq: Math.max(current.latestSeq || 0, messages.snapshotSeq || 0),
               messages: loadedMessages,
-              livePrompt: reconcileLivePrompt(current.livePrompt, loadedMessages),
               liveAssistants: reconcileLiveAssistants(current.liveAssistants || {}, loadedMessages, activeTurnID),
               liveTools: reconcileLiveTools(current.liveTools || {}, loadedMessages, activeTurnID),
               messageCursor: messages.cursor?.next || null,
@@ -165,16 +164,12 @@ export class TranscriptController {
                 ? Math.max(current.latestSeq || 0, page.replacementSnapshotSeq || 0)
                 : current.latestSeq,
               messages,
-              livePrompt: rebased ? reconcileLivePrompt(current.livePrompt, messages) : current.livePrompt,
               liveAssistants: rebased
                 ? reconcileLiveAssistants(current.liveAssistants || {}, messages, activeTurnID)
                 : current.liveAssistants,
               liveTools: rebased
                 ? reconcileLiveTools(current.liveTools || {}, messages, activeTurnID)
                 : current.liveTools,
-              failedPrompts: rebased
-                ? (current.failedPrompts || []).filter((prompt) => !messagesContainPrompt(messages, prompt))
-                : current.failedPrompts,
               messageCursor: page.nextCursor,
               loadingOlder: false,
             },
@@ -210,7 +205,6 @@ export class TranscriptController {
     const latest = [...response.data].reverse();
     store.setState((state) => {
       const current = state.sessionData[sessionID] || {};
-      const livePrompt = current.livePrompt;
       const messages = mergeLatestMessageSnapshot(current.messages || [], latest);
       const activeTurnID = state.active[sessionID]?.turnID ?? null;
       return {
@@ -223,10 +217,6 @@ export class TranscriptController {
             messages,
             liveAssistants: reconcileLiveAssistants(current.liveAssistants || {}, messages, activeTurnID),
             liveTools: reconcileLiveTools(current.liveTools || {}, messages, activeTurnID),
-            livePrompt: reconcileLivePrompt(livePrompt, messages),
-            failedPrompts: (current.failedPrompts || []).filter(
-              (prompt) => !messagesContainPrompt(messages, prompt),
-            ),
           },
         },
       };
@@ -283,17 +273,6 @@ export class TranscriptController {
       this.scheduleLiveReconcile(sessionID);
     });
   }
-}
-
-function messagesContainPrompt(messages, livePrompt) {
-  return Boolean(
-    livePrompt?.id &&
-    messages.some((message) => message.inputID === livePrompt.id),
-  );
-}
-
-function reconcileLivePrompt(livePrompt, messages) {
-  return livePrompt && !messagesContainPrompt(messages, livePrompt) ? livePrompt : null;
 }
 
 function mergeLatestMessageSnapshot(current, latest) {

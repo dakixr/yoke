@@ -96,6 +96,12 @@ class Native(NativeClient):
                 "location": {"directory": os.getcwd()},
                 "selection": {"provider": "fixture", "model": "model"},
             }
+        elif path.endswith("/client"):
+            data = {}
+        elif path.endswith(("/permission", "/question")) or path == "skill":
+            data = []
+        elif path.endswith("/drain"):
+            data = {"drained": True, "activeWorkers": 0}
         elif path == "session/owner/message":
             return httpx.Response(200, json={"data": [], "cursor": {"next": None}})
         else:
@@ -146,7 +152,8 @@ class AgentMonitorTests(unittest.IsolatedAsyncioTestCase):
         s.SessionNotification.model_validate(
             {"sessionId": session_id, "update": update}
         )
-        self.messages.put_nowait(update)
+        if update.get("toolCallId", "").startswith("yoke-agent:"):
+            self.messages.put_nowait(update)
 
     async def next(self) -> dict[str, Any]:
         return await asyncio.wait_for(self.messages.get(), 2)

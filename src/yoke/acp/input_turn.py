@@ -18,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class InputTurn:
-    """Keep legacy inference behind the negotiated input lifecycle boundary."""
+    """Own one input through authoritative daemon phases."""
 
     def __init__(self, native: NativeClient) -> None:
         self.native = native
@@ -43,7 +43,6 @@ class InputTurn:
         finished = False
         after = 0
         outcome: str | None = None
-        idle_without_receipt = False
 
         def observe(data: dict[str, Any]) -> None:
             nonlocal outcome
@@ -92,13 +91,8 @@ class InputTurn:
                 return  # SessionNotifications owns bidirectional client requests.
             if data.get("inputID") != input_id:
                 return
-            if not self.native.input_lifecycle and kind == "session.runtime.failed":
-                raise fail("Native runtime failed")
-            if self.native.input_lifecycle and kind == "session.input.changed":
+            if kind == "session.input.changed":
                 observe(data)
-            elif not self.native.input_lifecycle and kind == "session.prompt.settled":
-                outcome = data["outcome"]
-                work.phase = "settled"
             await emit(kind, data)
 
         async def check_stream() -> None:
@@ -117,7 +111,7 @@ class InputTurn:
                     recovered = True
                 else:
                     raise fail("Native event stream disconnected")
-            if recovered and admitted and self.native.input_lifecycle:
+            if recovered and admitted:
                 await read_input()
 
         async def receive() -> None:
@@ -130,8 +124,6 @@ class InputTurn:
             await asyncio.wait_for(ready.wait(), 30)
             if stream.done():
                 await check_stream()
-            if not self.native.input_lifecycle:
-                await self.native.assert_idle(session_id)
             while True:
                 page = await self.native.request(
                     "GET",
@@ -177,26 +169,20 @@ class InputTurn:
                 self.native.path(session_id, "/prompt"),
                 json={"id": input_id, "prompt": prompt, "delivery": "queue"},
             )
-            if receipt.get("id") != input_id or receipt.get("state") == "removed":
+            if receipt.get("id") != input_id or receipt["phase"] == "removed":
                 raise fail("Native admission receipt is invalid or removed")
             after = max(after, receipt.get("admittedSeq", after))
-            if self.native.input_lifecycle:
-                await read_input()
+            await read_input()
             while outcome is None:
                 await receive()
                 if outcome is not None:
                     break
                 if work.cancel:
-                    if self.native.input_lifecycle:
-                        observe(await self.native.cancel_input(session_id, input_id))
-                        work.wake.clear()
-                        work.cancel = False
-                        if outcome is not None:
-                            break
-                    else:
-                        await self.native.stop(session_id)
-                        finished = True
-                        return "cancelled"
+                    observe(await self.native.cancel_input(session_id, input_id))
+                    work.wake.clear()
+                    work.cancel = False
+                    if outcome is not None:
+                        break
                 page = await self.native.request(
                     "GET",
                     self.native.path(session_id, "/history"),
@@ -206,26 +192,10 @@ class InputTurn:
                     after = item["durable"]["seq"]
                     if item["data"].get("inputID") != input_id:
                         continue
-                    if (
-                        not self.native.input_lifecycle
-                        and item["type"] == "session.runtime.failed"
-                    ):
-                        raise fail("Native runtime failed")
-                    if (
-                        self.native.input_lifecycle
-                        and item["type"] == "session.input.changed"
-                    ):
+                    if item["type"] == "session.input.changed":
                         observe(item["data"])
-                    elif (
-                        not self.native.input_lifecycle
-                        and item["type"] == "session.prompt.settled"
-                    ):
-                        outcome = item["data"]["outcome"]
-                        work.phase = "settled"
                 if outcome is not None or page["hasMore"]:
                     continue
-                if idle_without_receipt:
-                    raise fail("Native workers ended without a settlement receipt")
                 incoming = asyncio.create_task(queue.get())
                 stopped = asyncio.create_task(work.wake.wait())
                 waited = asyncio.create_task(
@@ -243,23 +213,15 @@ class InputTurn:
                     if incoming in done:
                         await event(incoming.result())
                     if waited in done:
-                        state = waited.result()["state"]
-                        if self.native.input_lifecycle:
-                            await read_input()
-                        elif state in ("idle", "error"):
-                            await self.native.drained(session_id)
-                            idle_without_receipt = True
+                        waited.result()
+                        await read_input()
                 finally:
                     for task in (incoming, stopped, waited):
                         task.cancel()
                     await asyncio.gather(
                         incoming, stopped, waited, return_exceptions=True
                     )
-            if (
-                not self.native.input_lifecycle
-                or outcome == "stopped"
-                and work.phase != "removed"
-            ):
+            if outcome == "stopped" and work.phase != "removed":
                 await self.native.drained(session_id)
             finished = True
             await receive()
@@ -277,10 +239,7 @@ class InputTurn:
                 stream.cancel()
                 await asyncio.gather(stream, return_exceptions=True)
                 if admitted and not finished:
-                    if self.native.input_lifecycle:
-                        await self.native.cancel_input(session_id, input_id)
-                    else:
-                        await self.native.stop(session_id)
+                    await self.native.cancel_input(session_id, input_id)
 
             cleanup = asyncio.create_task(release())
             cancelled = False

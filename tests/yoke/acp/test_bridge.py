@@ -14,6 +14,7 @@ from acp import schema as s
 
 from yoke.acp.bridge import YokeAcpAgent
 from yoke.acp.native import NativeClient
+from yoke.http.models.capabilities import FeatureFlags
 
 
 class FixtureNative(NativeClient):
@@ -85,6 +86,11 @@ class FixtureNative(NativeClient):
                     "capabilities": {"images": False},
                 },
             ]
+        elif path == "capabilities":
+            data = {
+                "protocolVersion": "3",
+                "features": FeatureFlags().model_dump(by_alias=True),
+            }
         elif path == "openapi.json":
             return httpx.Response(
                 200,
@@ -112,6 +118,28 @@ class FixtureNative(NativeClient):
             data = session
         elif path == "session/active":
             data = {}
+        elif path.endswith("/client"):
+            data = {}
+        elif path.endswith(("/permission", "/question")):
+            data = []
+        elif path.endswith("/input"):
+            data = (
+                {
+                    "inputRevision": 1 if self.hold else 2,
+                    "inputs": [
+                        {
+                            "id": self.admission["id"],
+                            "phase": "running" if self.hold else "settled",
+                            "outcome": None if self.hold else "completed",
+                        }
+                    ],
+                }
+                if self.admission
+                else {"inputRevision": 0, "inputs": []}
+            )
+        elif path.endswith("/cancel"):
+            self.interrupted = True
+            data = {"phase": "settled", "outcome": "stopped", "inputRevision": 3}
         elif path.endswith("/selection"):
             self.selection = json.loads(request.content)
             data = {}
@@ -163,18 +191,24 @@ class FixtureNative(NativeClient):
                         "data": {"inputID": admission["id"], **values},
                     }
                 )
-            data = {"id": admission["id"], "admittedSeq": 0}
+            data = {
+                "id": admission["id"],
+                "admittedSeq": 0,
+                "phase": "running" if self.hold else "settled",
+            }
         elif path.endswith("/history"):
             events = (
                 []
                 if self.hold or self.admission is None
                 else [
                     {
-                        "type": "session.prompt.settled",
+                        "type": "session.input.changed",
                         "durable": {"seq": 1},
                         "data": {
                             "inputID": self.admission["id"],
                             "outcome": "completed",
+                            "phase": "settled",
+                            "inputRevision": 2,
                         },
                     }
                 ]
@@ -211,6 +245,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         self.updates: list[dict[str, Any]] = []
         self.agent.conn = self
         await self.agent.new_session(os.getcwd())
+        self.updates.clear()
 
     async def asyncTearDown(self) -> None:
         await self.agent.close()

@@ -60,6 +60,7 @@ class ToolActivityTurnTests(unittest.IsolatedAsyncioTestCase):
         self.updates: list[dict[str, Any]] = []
         self.agent.on_connect(self)
         await self.agent.new_session(os.getcwd())
+        self.updates.clear()
 
     async def asyncTearDown(self) -> None:
         await self.agent.close()

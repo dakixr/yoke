@@ -72,7 +72,11 @@ export class YokeApi {
     });
   }
 
-  capabilities() { return this.request("/api/v1/capabilities"); }
+  async capabilities() {
+    const response = await this.request("/api/v1/capabilities");
+    requireCapabilities(response.data);
+    return response;
+  }
   commands() { return this.request("/api/v1/command"); }
   activeSessions() { return this.request("/api/v1/session/active"); }
   recentLocations() { return this.request("/api/v1/location/recent"); }
@@ -200,3 +204,13 @@ export class YokeApi {
 }
 
 export const api = new YokeApi();
+
+export class DaemonProtocolError extends Error {}
+
+export function requireCapabilities(data) {
+  const missing = ["globalEvents", "promptAdmission", "inputLifecycle", "steering", "queueEditor"]
+    .filter((name) => data?.features?.[name] !== true);
+  if (data?.protocolVersion !== "3" || missing.length) {
+    throw new DaemonProtocolError(`Yoke requires daemon protocol 3 (received ${data?.protocolVersion ?? "unknown"}${missing.length ? `; missing required features: ${missing.join(", ")}` : ""}). Upgrade the older client or daemon, restart the daemon, and reload this page.`);
+  }
+}

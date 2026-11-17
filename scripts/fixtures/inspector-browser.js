@@ -155,6 +155,7 @@ api.patchTreeEntry = async (_id, entryID, body) => {
   revision += 1;
   return { data: { revision, entry: tree().find((entry) => entry.id === entryID) } };
 };
+api.inputs = async () => ({ data: { inputRevision: 0, inputs: [], held: null } });
 api.messages = async () => ({ data: [], cursor: { next: null } });
 api.getSession = async () => ({ data: copy(session) });
 api.processes = async () => ({ data: copy(processes) });

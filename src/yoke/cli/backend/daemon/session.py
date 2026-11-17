@@ -46,7 +46,7 @@ class DaemonSessionBackend:
         self.connection = connection
         self.events = connection.events
         self._session = DaemonActiveSession(self, SessionInfo.model_validate(data))
-        self._queue = DaemonPromptQueue(connection, started=self.owns_input)
+        self._queue = DaemonPromptQueue(connection)
         self.view_store = connection.view_store
 
     @property
@@ -183,9 +183,6 @@ class DaemonSessionBackend:
 
     def stop_input(self, input_id: str | None) -> bool:
         """Keep a stop target captured by the editor stable across HTTP delays."""
-        if not self.view_store.input_lifecycle:
-            self.interrupt()
-            return True
         if input_id is None:
             return False
         try:
@@ -198,16 +195,7 @@ class DaemonSessionBackend:
 
     def resume_queue(self) -> None:
         """Resume a held queue without unpausing individual inputs."""
-        if self.view_store.input_lifecycle:
-            self.connection.session_request("POST", "/queue/resume")
-        else:
-            loaded = self.load_queue()
-            self.commit_queue(
-                loaded.prompts,
-                loaded.pending_images,
-                expected_revision=loaded.revision,
-                resume=True,
-            )
+        self.connection.session_request("POST", "/queue/resume")
 
     def persist_metadata(self, reasoning_effort: str | None) -> None:
         if (

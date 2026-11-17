@@ -1,4 +1,4 @@
-"""ACP creation identifies its origin even without client configuration support."""
+"""ACP creation identifies its origin and attaches its client configuration."""
 
 import asyncio
 from pathlib import Path
@@ -7,7 +7,7 @@ from tests.yoke.acp.test_bridge import FixtureNative
 from yoke.acp.bridge import YokeAcpAgent
 
 
-def test_acp_without_client_configuration_still_records_origin(tmp_path: Path):
+def test_acp_creation_records_origin_and_client(tmp_path: Path):
     async def scenario():
         native = FixtureNative()
         agent = YokeAcpAgent(native)
@@ -15,7 +15,7 @@ def test_acp_without_client_configuration_still_records_origin(tmp_path: Path):
             await agent.new_session(str(tmp_path))
             assert native.session_create is not None
             assert native.session_create["origin"] == "acp"
-            assert "client" not in native.session_create
+            assert native.session_create["client"]["kind"] == "acp"
         finally:
             await agent.close()
 

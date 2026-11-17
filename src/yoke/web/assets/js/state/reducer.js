@@ -55,7 +55,7 @@ export function mergeSessionSummary(state, session, options = {}) {
 
 export function installSessionMachine(state, sessionID, data) {
   data = reconcileSession(data);
-  const sessions = data.inputLifecycle && state.sessions[sessionID]
+  const sessions = data.inputs && state.sessions[sessionID]
     ? { ...state.sessions, [sessionID]: { ...state.sessions[sessionID], queue: queueSummary(data.queue) } }
     : state.sessions;
   return { ...state, sessions, sessionData: { ...state.sessionData, [sessionID]: data } };
@@ -133,8 +133,7 @@ export function reducePublicEvent(state, event) {
     return installSessionMachine(next, sessionID, event.type === "session.input.changed"
       ? applyInputChanged(data, event.data) : applyQueueHeld(data, event.data));
   }
-  // Older daemons retain the prompt-event compatibility projection.
-  if (next.sessionData[sessionID]?.inputLifecycle && event.type.startsWith("session.prompt.")) return next;
+  if (event.type.startsWith("session.prompt.")) return next;
 
   const data = copySessionData(next, sessionID);
   if (event.type === "session.agent.updated") {
@@ -163,15 +162,6 @@ export function reducePublicEvent(state, event) {
       (item) => item.id !== event.data?.requestID,
     );
     next = withAttentionCount(next, sessionID, "questions", data.questions.length);
-  } else if (event.type === "session.runtime.failed") {
-    data.lastError = event.data?.error || "Agent execution failed.";
-    next = {
-      ...next,
-      ui: {
-        ...next.ui,
-        doneUnreviewed: { ...next.ui.doneUnreviewed, [sessionID]: false },
-      },
-    };
   } else if (event.type === "session.selection.changed") {
     data.contextUsage = null;
     const session = next.sessions[sessionID];
@@ -183,59 +173,6 @@ export function reducePublicEvent(state, event) {
           [sessionID]: { ...session, contextUsage: null },
         },
       };
-    }
-  } else if (event.type === "session.prompt.admitted") {
-    const inputID = event.data?.inputID;
-    if (inputID) {
-      data.pendingPrompts = {
-        ...(data.pendingPrompts || {}),
-        [inputID]: {
-          id: inputID,
-          prompt: event.data?.prompt || { text: "", attachments: [] },
-          delivery: event.data?.delivery || "steer",
-          timeCreated: event.time || null,
-        },
-      };
-    }
-  } else if (event.type === "session.prompt.edited") {
-    const inputID = event.data?.inputID;
-    if (inputID && data.pendingPrompts?.[inputID]) {
-      data.pendingPrompts = {
-        ...data.pendingPrompts,
-        [inputID]: {
-          ...data.pendingPrompts[inputID],
-          prompt: event.data?.prompt || data.pendingPrompts[inputID].prompt,
-          delivery: event.data?.delivery || data.pendingPrompts[inputID].delivery,
-        },
-      };
-    }
-  } else if (event.type === "session.prompt.removed") {
-    const inputID = event.data?.inputID;
-    if (inputID && data.pendingPrompts?.[inputID]) {
-      const pendingPrompts = { ...data.pendingPrompts };
-      delete pendingPrompts[inputID];
-      data.pendingPrompts = pendingPrompts;
-    }
-  } else if (event.type === "session.prompt.promoted") {
-    const inputID = event.data?.inputID;
-    const admitted = inputID ? data.pendingPrompts?.[inputID] : null;
-    if (admitted) {
-      const alreadyDurable = (data.messages || []).some(
-        (message) => message.type === "user" && message.inputID === inputID,
-      );
-      const currentTime = Date.parse(data.livePrompt?.timeCreated || "");
-      const admittedTime = Date.parse(admitted.timeCreated || "");
-      const currentIsNewer = Boolean(
-        data.livePrompt?.id !== inputID &&
-        Number.isFinite(currentTime) &&
-        Number.isFinite(admittedTime) &&
-        currentTime > admittedTime,
-      );
-      if (!alreadyDurable && !currentIsNewer) data.livePrompt = admitted;
-      data.lastError = null;
-      const pendingPrompts = { ...data.pendingPrompts };
-      delete pendingPrompts[inputID];
-      data.pendingPrompts = pendingPrompts;
     }
   } else if (event.type === "session.message.updated" && !event.durable) {
     const key = assistantEventKey(event);
@@ -253,21 +190,6 @@ export function reducePublicEvent(state, event) {
       },
     };
   } else if (event.type === "session.message.updated" && event.durable) {
-    const inputID = event.data?.inputID;
-    const promptIsDurable = Boolean(
-      inputID &&
-      data.livePrompt?.id === inputID &&
-      (data.messages || []).some(
-        (message) => message.type === "user" && message.inputID === inputID,
-      ),
-    );
-    if (promptIsDurable) data.livePrompt = null;
-    if (inputID && data.pendingPrompts?.[inputID]) {
-      const pendingPrompts = { ...data.pendingPrompts };
-      delete pendingPrompts[inputID];
-      data.pendingPrompts = pendingPrompts;
-    }
-    data.lastError = null;
     if (
       event.data?.status === "completed" &&
       next.ui.selectedSessionID !== sessionID

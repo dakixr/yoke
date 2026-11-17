@@ -75,7 +75,13 @@ def test_streamed_turn_fans_out_to_session_subscribers(tmp_path, terminal):
         assert [
             event
             for event in takewhile(
-                lambda item: item["type"] != "session.prompt.settled", stream
+                lambda item: (
+                    not (
+                        item["type"] == "session.input.changed"
+                        and item["payload"].get("phase") in {"settled", "removed"}
+                    )
+                ),
+                stream,
             )
             if event["payload"].get("inputID") == submitted.input_id
             and event["type"] not in lifecycle

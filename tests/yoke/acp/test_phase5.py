@@ -16,7 +16,6 @@ from tests.yoke.acp.test_bridge import FixtureNative
 class LifecycleNative(FixtureNative):
     def __init__(self, *, settled: bool = False) -> None:
         super().__init__()
-        self.input_lifecycle = True
         self.phase = "settled" if settled else "queued"
         self.running = True  # Another client's turn owns the runtime.
         self.cancel_calls = 0
@@ -198,7 +197,6 @@ def test_real_daemon_cancel_removes_acp_queue_without_stopping_other_client(
                 base_url="http://fixture/api/v1/",
                 headers={"Authorization": "Bearer runtime-lifetime-secret"},
             )
-            native.input_lifecycle = True
             admitted = asyncio.Event()
             original = native.data
 
@@ -330,36 +328,34 @@ def test_input_snapshot_fences_older_paused_history() -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_input_lifecycle_uses_advertised_capability_after_attach(enabled: bool) -> None:
+@pytest.mark.parametrize(
+    "feature",
+    ["globalEvents", "promptAdmission", "inputLifecycle", "steering", "queueEditor"],
+)
+@pytest.mark.parametrize("value", [False, None])
+def test_initialize_refuses_missing_required_feature(feature, value):
+    from yoke.http.models.capabilities import FeatureFlags
+
     class CapabilityNative(FixtureNative):
-        async def respond(self, request: httpx.Request) -> httpx.Response:
-            if request.url.path.endswith("/openapi.json"):
-                return httpx.Response(
-                    200,
-                    json={
-                        "paths": {
-                            "/api/v1/session/{session_id}/input": {"get": {}},
-                            "/api/v1/session/{session_id}/client": {"put": {}},
-                        }
-                    },
-                )
+        async def respond(self, request):
             if request.url.path.endswith("/capabilities"):
+                features = FeatureFlags().model_dump(by_alias=True)
+                if value is None:
+                    features.pop(feature)
+                else:
+                    features[feature] = value
                 return httpx.Response(
-                    200, json={"data": {"features": {"inputLifecycle": enabled}}}
+                    200, json={"data": {"protocolVersion": "3", "features": features}}
                 )
-            if request.url.path.endswith("/client"):
-                return httpx.Response(200, json={"data": {}})
             return await super().respond(request)
 
-    async def scenario() -> None:
+    async def scenario():
         native = CapabilityNative()
         agent = YokeAcpAgent(native)
         try:
-            await agent.initialize(1)
-            assert not native.input_lifecycle
-            await agent.lifecycle.configure("native-id", "/tmp", [], [])
-            assert native.input_lifecycle is enabled
+            with pytest.raises(RequestError, match=f"{feature}.*Upgrade"):
+                await agent.initialize(1)
+            assert not agent.lifecycle.configs
         finally:
             await agent.close()
 

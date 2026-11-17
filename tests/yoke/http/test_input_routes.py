@@ -119,7 +119,7 @@ def test_receipt_after_wake_snapshots_capability_and_explicit_resume(tmp_path):
             },
         )
         assert response.status_code == 200
-        assert response.json()["data"]["state"] == "promoted"
+        assert "state" not in response.json()["data"]
         assert response.json()["data"]["phase"] in {"promoted", "running", "settled"}
         client.post("/api/v1/session/owned/wait", params={"timeoutMs": 2000})
         assert (

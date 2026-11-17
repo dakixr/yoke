@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from yoke.daemon.build import PROTOCOL_VERSION
 from yoke.http.models.common import ApiModel
 
@@ -18,11 +20,11 @@ class HealthResponse(ApiModel):
 
 
 class FeatureFlags(ApiModel):
-    global_events: bool = True
-    prompt_admission: bool = True
-    input_lifecycle: bool = True
-    steering: bool = True
-    queue_editor: bool = True
+    global_events: Literal[True] = True
+    prompt_admission: Literal[True] = True
+    input_lifecycle: Literal[True] = True
+    steering: Literal[True] = True
+    queue_editor: Literal[True] = True
     session_tree: bool = True
     tool_inspector: bool = True
     process_inspector: bool = True

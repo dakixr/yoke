@@ -16,7 +16,8 @@ from yoke._version import __version__
 # required routes, fields or semantics. Optional additions alone need no bump.
 # v2 requires attachment environments, startup resolution and DB-path validation;
 # a v1 daemon can silently ignore these fields and execute with the wrong config.
-PROTOCOL_VERSION = "2"
+# v3 requires authoritative input lifecycle and runtime state in every client.
+PROTOCOL_VERSION = "3"
 
 # Test hooks: simulate two checkouts without building two trees.
 BUILD_ID_ENV = "YOKE_DAEMON_BUILD_ID"

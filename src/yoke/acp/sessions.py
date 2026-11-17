@@ -27,8 +27,6 @@ class SessionLifecycle:
     def __init__(self, agent: YokeAcpAgent) -> None:
         self.agent = agent
         self.owner = uuid4().hex
-        self.enabled = False
-        self.input_lifecycle = False
         self.configs: dict[str, dict[str, Any]] = {}
 
     @staticmethod
@@ -97,25 +95,16 @@ class SessionLifecycle:
         mcp_servers: list[Any] | None,
         additional_directories: list[str] | None,
     ) -> None:
-        if not self.enabled:
-            if mcp_servers or additional_directories:
-                raise fail(
-                    "Upgrade the Yoke daemon to support client MCP servers and additional directories"
-                )
-            return
         config = self.client_config(session_id, mcp_servers, additional_directories)
         await self.agent.native.data(
             "PUT", self.agent.native.path(session_id, "/client"), json=config
         )
         self.configs[session_id] = config
-        # Activate negotiated input ownership only after the client attaches.
-        # Direct NativeClient users retain its conservative legacy default.
-        self.agent.native.input_lifecycle = self.input_lifecycle
 
     async def activate(self, session_id: str) -> None:
         agent = self.agent
         await agent.native.agent_monitor.attach(session_id, agent.update)
-        if self.enabled and agent.conn is not None:
+        if agent.conn is not None:
             await agent.notifications.attach(session_id)
 
     async def new(
@@ -138,18 +127,11 @@ class SessionLifecycle:
                 "reasoningEffort": catalog[default]["defaultReasoningEffort"],
             },
         }
-        config = None
-        if self.enabled:
-            # Attach at creation so the session records an ACP origin and never
-            # runs under the daemon's default client mode.
-            config = self.client_config(None, mcp_servers, additional_directories)
-            body["client"] = config
+        config = self.client_config(None, mcp_servers, additional_directories)
+        body["client"] = config
         data = await agent.native.data("POST", "session", json=body)
         session_id = data["id"]
-        if config is None:
-            await self.configure(session_id, cwd, mcp_servers, additional_directories)
-        else:
-            self.configs[session_id] = config
+        self.configs[session_id] = config
         agent.remember(session_id, data, catalog, default)
         await self.activate(session_id)
         return s.NewSessionResponse.model_validate(
@@ -174,8 +156,7 @@ class SessionLifecycle:
                     "cwd mismatch: native session belongs to a different directory"
                 )
             catalog, default = await agent.discover(cwd)
-            if self.enabled:
-                await agent.native.drained(session_id)
+            await agent.native.drained(session_id)
             await self.configure(session_id, cwd, mcp_servers, additional_directories)
             if data.get("archivedAt") is not None:
                 await agent.native.data(
@@ -191,27 +172,19 @@ class SessionLifecycle:
 
     def state(self, session_id: str) -> dict[str, Any]:
         result: dict[str, Any] = {"configOptions": self.agent.options(session_id)}
-        if self.enabled:
-            result["modes"] = {
-                "currentModeId": self.configs.get(session_id, {}).get(
-                    "mode", "full-access"
-                ),
-                "availableModes": [
-                    {"id": key, "name": value} for key, value in MODES.items()
-                ],
-            }
+        result["modes"] = {
+            "currentModeId": self.configs.get(session_id, {}).get(
+                "mode", "full-access"
+            ),
+            "availableModes": [
+                {"id": key, "name": value} for key, value in MODES.items()
+            ],
+        }
         return result
 
     async def mode(self, session_id: str, value: str | bool) -> None:
         if value not in MODES or not isinstance(value, str):
             raise RequestError(-32602, "Unsupported session mode")
-        if not self.enabled:
-            if value != "full-access":
-                raise RequestError(
-                    -32602,
-                    "Only full-access mode is supported by this daemon; upgrade for interactive modes",
-                )
-            return
         config = {**self.configs[session_id], "mode": value}
         await self.agent.native.data(
             "PUT", self.agent.native.path(session_id, "/client"), json=config

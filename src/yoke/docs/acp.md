@@ -226,15 +226,12 @@ Yoke's records as tool activity instead of filling the Agents and Monitoring
 views. Those views need a T3-side decoder for Yoke's records. Agents that T3
 starts through its own MCP tools use T3's orchestration and views.
 
-The bridge works with older daemons that lack the session client endpoint. It
-then does not offer the session controls, approval modes or HTTP MCP support,
-and it rejects client MCP servers and additional directories with an error
-asking you to upgrade the daemon.
-
 ## Prompt ownership and cancellation
 
-When the daemon advertises `features.inputLifecycle`, attaching an ACP client
-activates input tracking. The bridge tracks each prompt's input ID and phase
+Protocol 3 is current. Initialization requires `features.inputLifecycle`,
+`globalEvents`, `promptAdmission`, `steering` and `queueEditor`. A different
+protocol or missing feature produces an upgrade and restart error.
+The bridge tracks each prompt's input ID and phase
 through queued, paused, promoted, running, settled and removed. It reads the
 input snapshot after admission, consumes `session.input.changed`, and uses
 `/wait` as a timeout guard that triggers another input read. Session idleness
@@ -250,5 +247,4 @@ that input before releasing the prompt handler.
 
 Session close cancels its prompt first, then serializes detach with other
 session operations. It removes local session and catalog state even when
-server detach fails. Older daemons retain the existing interrupt and drain
-behavior when they lack the input lifecycle feature.
+server detach fails.

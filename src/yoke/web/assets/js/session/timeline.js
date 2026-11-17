@@ -130,7 +130,6 @@ export function Timeline({ sessionID, data, runtime }) {
                 ${item.value.arguments ? html`<code>${compactArguments(item.value.arguments)}</code>` : null}
               </button>`)}
           ${chatActivity ? html`<${ActivityIndicator} startedAt=${runtime?.startedAt} activity=${chatActivity} />` : null}
-          ${data?.lastError ? html`<div class="timeline-error" role="status">${data.lastError}</div>` : null}
         </div>
       </div>
       ${!following ? html`<button class="jump-latest" onClick=${() => { followingRef.current = true; setFollowing(true); viewport.current?.scrollTo({ top: viewport.current.scrollHeight }); }}>Jump to latest ↓</button>` : null}

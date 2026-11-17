@@ -147,8 +147,14 @@ def run_headless_prompt(
                         str(payload.get("error", "Agent execution failed.")),
                     )
                     return 1
-                if event["type"] == "session.prompt.settled":
-                    outcome = payload.get("outcome")
+                if event["type"] == "session.input.changed" and payload.get(
+                    "phase"
+                ) in {"settled", "removed"}:
+                    outcome = (
+                        "stopped"
+                        if payload["phase"] == "removed"
+                        else payload.get("outcome")
+                    )
                     if outcome == "completed":
                         print_agent_output(
                             build_console(stdout), input_output(connection, input_id)

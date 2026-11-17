@@ -166,6 +166,7 @@ class ReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 agent.on_connect(conn)
                 try:
                     await agent.new_session(os.getcwd())
+                    updates.clear()
                     with patch.object(
                         native.process_monitor, "track", new=AsyncMock()
                     ) as monitor:

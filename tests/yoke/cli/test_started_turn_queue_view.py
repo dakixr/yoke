@@ -41,30 +41,39 @@ def test_started_turn_is_hidden_from_queue_and_kept_first(terminal, tmp_path: Pa
     )
     backend = terminal.backend("started", root=tmp_path)
     observer = terminal.backend("started", root=tmp_path)
-    # This retained regression covers the fallback for pre-lifecycle daemons.
-    # Capability-mode placement is covered by test_session_view_regressions.
-    backend.view_store.input_lifecycle = False
     try:
-        backend.submit("first", user_message=None)
+        first = backend.submit("first", user_message=None)
         assert provider.entered.wait(10)
-        # The daemon is busy, so the second started turn stays admitted but unpromoted.
-        backend.submit("second", user_message=None)
+        # The running input is absent from the authoritative queue in both clients.
+        assert backend.load_queue().prompts == []
+        assert observer.load_queue().prompts == []
+        loaded = backend.load_queue()
+        backend.commit_queue(
+            [PendingPrompt("second")], [], expected_revision=loaded.revision
+        )
         raw = observer.load_queue()
         assert [item.prompt for item in raw.prompts] == ["second"]
         started_id = raw.prompts[0].id
 
-        # Bug: this terminal listed its own started turn as "queued 1: second".
-        assert backend.load_queue().prompts == []
+        assert [item.prompt for item in backend.load_queue().prompts] == ["second"]
 
         # Queueing a follow-up must neither remove nor overtake the started turn.
         queued = PendingPrompt("third", kind="queued")
         loaded = backend.load_queue()
         backend.commit_queue(
-            [queued], loaded.pending_images, expected_revision=loaded.revision
+            [*loaded.prompts, queued],
+            loaded.pending_images,
+            expected_revision=loaded.revision,
         )
         after = observer.load_queue().prompts
         assert [item.prompt for item in after] == ["second", "third"]
         assert after[0].id == started_id
-        assert [item.prompt for item in backend.load_queue().prompts] == ["third"]
+        assert [item.prompt for item in backend.load_queue().prompts] == [
+            "second",
+            "third",
+        ]
+        snapshot = backend.connection.session_request("GET", "/input")["data"]
+        assert snapshot["inputs"][0]["id"] == first.input_id
+        assert snapshot["inputs"][0]["phase"] == "running"
     finally:
         provider.release.set()

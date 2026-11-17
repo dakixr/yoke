@@ -55,7 +55,6 @@ def receipt(record: AdmissionRecord) -> PromptAdmissionReceipt:
         session_id=record.session_id,
         prompt=prompt_from_admission(record),
         delivery=record.delivery,
-        state=record.state,
         phase=record.phase.kind,
         admitted_seq=record.admitted_seq,
         promoted_seq=record.promoted_seq,

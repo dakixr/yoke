@@ -22,7 +22,7 @@ class DaemonCompactor:
                 )
             ).data
             if status.state != "idle":
-                raise ValueError(status.last_error or "Compaction has not finished.")
+                raise ValueError(status.error or "Compaction has not finished.")
             for event in events:
                 if event["type"] != "session.compaction.ended":
                     continue

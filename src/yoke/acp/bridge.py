@@ -10,6 +10,8 @@ from acp import RequestError
 from acp import schema as s
 
 from yoke._version import __version__
+from yoke.daemon.protocol import require_capabilities
+from yoke.daemon.client import DaemonIncompatible
 from yoke.acp.catalog import discover
 from yoke.acp.native import NativeClient
 from yoke.acp.native import fail
@@ -59,25 +61,17 @@ class YokeAcpAgent:
         try:
             async with asyncio.timeout(10):
                 self.catalog, self.default_model = await discover(self.native)
-                spec = await self.native.request("GET", "openapi.json")
+                capabilities = await self.native.data("GET", "capabilities")
+                require_capabilities(capabilities)
                 skills = (
                     await self.native.skills(workspace)
                     if isinstance(workspace, str)
                     else []
                 )
+        except DaemonIncompatible as exc:
+            raise fail(str(exc)) from None
         except TimeoutError:
             raise fail("Native initialization timed out") from None
-        self.lifecycle.enabled = "put" in spec.get("paths", {}).get(
-            "/api/v1/session/{session_id}/client", {}
-        )
-        if "/api/v1/session/{session_id}/input" in spec.get("paths", {}):
-            capabilities = await self.native.data("GET", "capabilities")
-            self.lifecycle.input_lifecycle = (
-                capabilities.get("features", {}).get("inputLifecycle") is True
-            )
-        drain = "post" in spec.get("paths", {}).get(
-            "/api/v1/session/{session_id}/drain", {}
-        )
         return s.InitializeResponse.model_validate(
             {
                 "protocolVersion": 1,
@@ -87,25 +81,19 @@ class YokeAcpAgent:
                     "loadSession": True,
                     "sessionCapabilities": {
                         "resume": {},
-                        **(
-                            {
-                                "close": {},
-                                "list": {},
-                                "fork": {},
-                                "additionalDirectories": {},
-                            }
-                            if self.lifecycle.enabled
-                            else {}
-                        ),
+                        "close": {},
+                        "list": {},
+                        "fork": {},
+                        "additionalDirectories": {},
                     },
-                    "mcpCapabilities": {"http": self.lifecycle.enabled},
+                    "mcpCapabilities": {"http": True},
                     "promptCapabilities": {"image": True, "embeddedContext": True},
                 },
                 "_meta": {
                     "yoke": {
                         "protocol": 1,
-                        "ready": drain,
-                        "workerDrain": drain,
+                        "ready": True,
+                        "workerDrain": True,
                         "models": list(self.catalog.values()),
                         "defaultModel": self.default_model,
                         "skills": [
@@ -156,12 +144,7 @@ class YokeAcpAgent:
                     "mode", "full-access"
                 ),
                 "options": [
-                    {"value": key, "name": value}
-                    for key, value in (
-                        MODES.items()
-                        if self.lifecycle.enabled
-                        else {"full-access": "Full access"}.items()
-                    )
+                    {"value": key, "name": value} for key, value in MODES.items()
                 ],
             },
         ]
@@ -338,14 +321,13 @@ class YokeAcpAgent:
             )
         else:
             raise RequestError(-32602, "Unsupported config option or model")
-        if self.lifecycle.enabled:
-            await self.update(
-                session_id,
-                {
-                    "sessionUpdate": "config_option_update",
-                    "configOptions": self.options(session_id),
-                },
-            )
+        await self.update(
+            session_id,
+            {
+                "sessionUpdate": "config_option_update",
+                "configOptions": self.options(session_id),
+            },
+        )
         return s.SetSessionConfigOptionResponse.model_validate(
             {"configOptions": self.options(session_id)}
         )
@@ -368,20 +350,17 @@ class YokeAcpAgent:
         **kwargs: Any,
     ) -> s.PromptResponse:
         self.known(session_id)
-        if self.lifecycle.enabled:
-            from yoke.acp.commands import run_command
+        from yoke.acp.commands import run_command
 
-            response = await run_command(self, session_id, prompt)
-            if response is not None:
-                return response
+        response = await run_command(self, session_id, prompt)
+        if response is not None:
+            return response
         return await run_prompt(self, session_id, prompt, kwargs)
 
     async def cancel(self, session_id: str, **_kwargs: Any) -> None:
         if work := self.active.get(session_id):
             work.cancel = True
             work.wake.set()
-            if not self.native.input_lifecycle:
-                await self.notifications.cancel_requests(session_id)
             await work.done.wait()
 
     async def close(self) -> None:

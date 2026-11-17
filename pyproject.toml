@@ -1,6 +1,6 @@
 [project]
 name = "yoke"
-version = "3.46.2"
+version = "4.0.0"
 description = "Native Python coding agent CLI and SDK."
 readme = "README.md"
 authors = [
@@ -44,7 +44,8 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-n 6 --dist loadgroup"
+# Leave capacity for daemon subprocesses during startup tests.
+addopts = "-n 5 --dist loadgroup"
 # A test still running after 120 s dumps every thread's stack, so stalls are diagnosable.
 faulthandler_timeout = 120
 testpaths = ["tests"]

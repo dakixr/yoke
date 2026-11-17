@@ -95,11 +95,10 @@ twice, so the terminal never dequeues an item to run it locally.
 A workspace failure can pause an input without settling it. The turn reader
 ends that attempt on `session.runtime.failed`, shows the error, and leaves the
 paused input in the daemon. For settled failures it waits for the same event,
-which follows `session.prompt.settled`. Interruption keeps the terminal's
-display fence and sends `POST /session/{id}/input/{inputID}/cancel`. The editor
+which follows `session.input.changed` with `phase: "settled"`. Interruption keeps the terminal's
+display fence and sends `POST /session/{id}/input/{inputID}/cancel`. The terminal
 captures the visible input ID before scheduling HTTP, so a delayed Stop cannot
-interrupt its successor. Daemons without the lifecycle capability use
-`POST /session/{id}/interrupt`. The daemon saves the
+interrupt its successor. The daemon saves the
 interrupted turn and retires the workers. A stopped result stays a stopped
 outcome, including when the runtime raises `AgentStoppedError` before it
 returns.
@@ -122,10 +121,11 @@ Terminal inputs leave the view, so the terminal keeps no ever-growing set of
 submitted IDs. Render threads and local display counters describe rendering
 only; they do not decide whether the daemon is busy.
 
-The capability check is `features.inputLifecycle`. Without it, legacy prompt
-events supply the fallback projection and queue snapshots retain the started
-filter. That fallback is confined to the backend. It does not hide queued or
-workspace-paused inputs when the capability is present.
+Protocol 3 is current. The backend requires `features.inputLifecycle`,
+`globalEvents`, `promptAdmission`, `steering` and `queueEditor`. It refuses a
+different protocol or missing feature with an upgrade and restart message.
+Queued and workspace-paused inputs remain visible, including local submissions.
+Only promoted and running inputs leave the queue.
 
 Queue and image edits serialize on a separate queue-edit lock. Snapshot reads,
 queue commits and cancellation run outside the lock used to render the toolbar.
@@ -138,7 +138,7 @@ queue commits and cancellation run outside the lock used to render the toolbar.
 | --- | --- |
 | `submit(prompt, ..., delivery="steer" or "queue")` | `POST /session/{id}/prompt`, `GET /event?sessionID={id}`, `POST /session/{id}/wait`, `GET /session/{id}/message` |
 | `events.subscribe`, `event_from_sse` | `GET /event?sessionID={id}` |
-| `stop_running`, `stop_input` | `POST /session/{id}/input/{inputID}/cancel`; legacy fallback uses `/interrupt` |
+| `stop_running`, `stop_input` | `POST /session/{id}/input/{inputID}/cancel` |
 | `resume_queue` | `POST /session/{id}/queue/resume` |
 | `load_prompt_queue_state`, `commit_prompt_queue`, `clear_prompt_queue` | `GET` and `PATCH /session/{id}/queue` |
 | `session`, `provider_label`, `thinking` | `GET /session/{id}`, `GET /model` |

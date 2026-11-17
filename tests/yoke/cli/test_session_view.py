@@ -199,7 +199,7 @@ def test_runtime_projection_table(state, busy):
     )
 
 
-def test_hold_revision_and_live_legacy_snapshot():
+def test_hold_revision_and_restarted_runtime_snapshot():
     store = SessionViewStore("s", "ours")
     held = store.apply_event(
         {
@@ -217,14 +217,13 @@ def test_hold_revision_and_live_legacy_snapshot():
         ).held
         is None
     )
-    store.input_lifecycle = False
-    view = store.install_legacy_snapshot(
-        {"revision": 1, "items": [], "pendingImages": []},
+    view = store.install_snapshot(
+        {"inputRevision": 2, "inputs": []},
         {"state": "running", "revision": 8},
     )
     assert view.busy
     # A restarted daemon may have a lower, process-local runtime revision.
-    assert not store.install_legacy_snapshot(
-        {"revision": 1, "items": [], "pendingImages": []},
+    assert not store.install_snapshot(
+        {"inputRevision": 2, "inputs": []},
         {"state": "idle", "revision": 0},
     ).busy

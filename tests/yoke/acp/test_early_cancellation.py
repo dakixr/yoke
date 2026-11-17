@@ -37,20 +37,20 @@ def test_early_cancel_preserves_input_for_the_next_correction(
             )
             agent = YokeAcpAgent(native)
             agent.on_connect(Connection())
-            original_idle = native.assert_idle
             original_data = native.data
-
-            async def held_idle(session_id: str) -> None:
-                if stage == "preflight":
-                    entered.set()
-                    await release.wait()
-                await original_idle(session_id)
+            original_request = native.request
 
             async def held_data(method: str, path: str, **kwargs):
                 if stage == "upload" and path == "upload":
                     entered.set()
                     await release.wait()
                 return await original_data(method, path, **kwargs)
+
+            async def held_request(method, path, **kwargs):
+                if stage == "preflight" and path.endswith("/history"):
+                    entered.set()
+                    await release.wait()
+                return await original_request(method, path, **kwargs)
 
             try:
                 data = await native.data(
@@ -83,8 +83,8 @@ def test_early_cancel_preserves_input_for_the_next_correction(
                     )
                 provider.release.clear()
                 with monkeypatch.context() as patch:
-                    patch.setattr(native, "assert_idle", held_idle)
                     patch.setattr(native, "data", held_data)
+                    patch.setattr(native, "request", held_request)
                     prompt = asyncio.create_task(
                         agent.prompt(
                             "early-session",
