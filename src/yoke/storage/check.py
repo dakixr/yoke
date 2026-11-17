@@ -54,7 +54,7 @@ def check_database(path: Path, *, sample_size: int = 32) -> CheckResult:
             result.lines.append(f"Schema: {found}, supported: {supported}")
             if found != supported:
                 result.problems.append(
-                    "Schema differs; upgrade Yoke to inspect a newer schema, or use yoke db info to migrate an older one."
+                    "Schema differs; upgrade Yoke to inspect a newer schema, or run yoke db migrate with the daemon stopped for an older one."
                 )
             else:
                 _check_content(connection, result, sample_size)

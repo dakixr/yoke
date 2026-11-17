@@ -7,6 +7,7 @@ from collections import defaultdict
 from typing import Any
 
 from yoke.storage.admin import database_info
+from yoke.session.repository.rows import decode_payload_bytes
 from yoke.storage.database import Database
 
 
@@ -49,14 +50,25 @@ def database_stats(database: Database) -> list[str]:
             "SELECT name, sum(pgsize) FROM dbstat GROUP BY name ORDER BY sum(pgsize) DESC"
         ):
             lines.append(f"  {name}: {size}")
-        for kind, raw, metadata in connection.execute(
-            "SELECT e.kind, yoke_blob_data(b.sha256, b.data), "
-            "coalesce(CAST(yoke_blob_data(e.metadata_sha256, (SELECT data FROM blobs WHERE sha256 = e.metadata_sha256)) AS TEXT), e.metadata) "
-            "FROM entries e JOIN blobs b ON b.sha256 = e.message_sha256"
-        ):
-            value = json.loads(raw)
-            if metadata is not None:
-                value["metadata"] = json.loads(metadata)
+        select = (
+            "SELECT e.session_id, e.kind, e.id, e.message_sha256, b.data, "
+            "e.metadata_sha256, m.data, e.metadata FROM entries e "
+            "LEFT JOIN blobs b ON b.sha256 = e.message_sha256 "
+            "LEFT JOIN blobs m ON m.sha256 = e.metadata_sha256"
+        )
+        for session_id, kind, *payload in connection.execute(select):
+            try:
+                raw, metadata = decode_payload_bytes(
+                    connection, session_id, tuple(payload)
+                )
+                value = json.loads(raw)
+                if not isinstance(value, dict):
+                    raise ValueError(f"Invalid entry JSON: {session_id}/{payload[0]}")
+                if metadata is not None:
+                    value["metadata"] = json.loads(metadata)
+            except ValueError as exc:
+                lines.append(f"Unreadable entry: {exc}")
+                continue
             logical = json.dumps(
                 value, separators=(",", ":"), ensure_ascii=False
             ).encode()

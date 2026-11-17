@@ -95,7 +95,7 @@ def test_history_is_readable_after_deletion_and_relocation_only_appends_metadata
     old.rmdir()
     loaded = store.load("saved")
     assert loaded.messages == original.messages
-    assert store.list(root=old)[0].id == "saved"
+    assert store.list_index_entries(root=old)[0].id == "saved"
     assert stored_session_bytes(store, "saved") == before
     with pytest.raises(WorkspaceUnavailable):
         require_session_workspace(loaded)

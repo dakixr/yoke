@@ -23,7 +23,7 @@ def _saved(tmp_path: Path) -> tuple[SessionStore, Path]:
     directory = tmp_path / "sessions"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    store = SessionStore(directory)
+    store = SessionStore(directory, migrate=True)
     store.save(
         "shared", [Message.user("hello"), Message.assistant("hi")], root=workspace
     )
@@ -133,7 +133,7 @@ def test_retention_deletes_idle_unpinned_sessions_with_their_rows(
 
     store.maintain_index(force=True)
 
-    assert {entry.id for entry in store.list_index_entries(maintain=False)} == {
+    assert {entry.id for entry in store.list_index_entries()} == {
         "shared",
         "old-pinned",
     }

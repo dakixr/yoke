@@ -15,12 +15,13 @@ from yoke.session.repository.models import (
     SessionTreeConflict,
 )
 from yoke.session.repository.rows import (
+    ENTRY_PAYLOAD_SELECT,
     RECORD_COLUMNS,
     SESSION_SELECT,
     Row,
     changed_fields,
     column_values,
-    decode_entry,
+    decode_payload_row,
     encode_json,
     index_entry_from_row,
     insert_entries,
@@ -68,10 +69,9 @@ class SessionTable:
             if row is None:
                 return None
             entries = [
-                decode_entry(message, metadata)
-                for message, metadata in connection.execute(
-                    "SELECT yoke_blob_data(blobs.sha256, blobs.data), COALESCE(CAST(yoke_blob_data(entries.metadata_sha256, (SELECT data FROM blobs WHERE sha256 = entries.metadata_sha256)) AS TEXT), entries.metadata) FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
-                    "WHERE session_id = ? ORDER BY seq",
+                decode_payload_row(connection, session_id, payload)
+                for payload in connection.execute(
+                    ENTRY_PAYLOAD_SELECT + "WHERE e.session_id = ? ORDER BY e.seq",
                     (session_id,),
                 )
             ]
@@ -148,13 +148,14 @@ class SessionTable:
             for start in range(0, len(unique), _READ_CHUNK):
                 chunk = unique[start : start + _READ_CHUNK]
                 marks = ", ".join("?" for _ in chunk)
-                for entry_id, message, metadata in connection.execute(
-                    "SELECT entries.id, yoke_blob_data(blobs.sha256, blobs.data), COALESCE(CAST(yoke_blob_data(entries.metadata_sha256, (SELECT data FROM blobs WHERE sha256 = entries.metadata_sha256)) AS TEXT), entries.metadata) FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
-                    f"WHERE session_id = ? AND id IN ({marks})",
+                for payload in connection.execute(
+                    ENTRY_PAYLOAD_SELECT
+                    + f"WHERE e.session_id = ? AND e.id IN ({marks})",
                     (session_id, *chunk),
                 ):
-                    raw = raw_filter(message) if raw_filter is not None else message
-                    found[entry_id] = decode_entry(raw, metadata)
+                    found[payload[0]] = decode_payload_row(
+                        connection, session_id, payload, raw_filter=raw_filter
+                    )
         if len(found) != len(unique):
             return None
         result: list[ConversationEntry] = []
@@ -168,12 +169,11 @@ class SessionTable:
     def iter_entries(self, session_id: str) -> Generator[ConversationEntry]:
         """Decode stored entries one at a time from one read snapshot."""
         with self.database.stream_read() as connection:
-            for message, metadata in connection.execute(
-                "SELECT yoke_blob_data(blobs.sha256, blobs.data), COALESCE(CAST(yoke_blob_data(entries.metadata_sha256, (SELECT data FROM blobs WHERE sha256 = entries.metadata_sha256)) AS TEXT), entries.metadata) FROM entries JOIN blobs ON blobs.sha256 = entries.message_sha256 "
-                "WHERE session_id = ? ORDER BY seq",
+            for payload in connection.execute(
+                ENTRY_PAYLOAD_SELECT + "WHERE e.session_id = ? ORDER BY e.seq",
                 (session_id,),
             ):
-                yield decode_entry(message, metadata)
+                yield decode_payload_row(connection, session_id, payload)
 
     # Writes ----------------------------------------------------------------
 

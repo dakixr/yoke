@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 
 import threading
 from collections.abc import Callable
@@ -100,7 +101,8 @@ class McpManager:
         if first_error is not None:
             raise first_error
 
-    def _refresh_config(self) -> str | None:
+    def refresh_config(self) -> str | None:
+        """Reload configuration, returning a diagnostic without changing it on failure."""
         with self._config_lock:
             return self._refresh_config_locked()
 
@@ -180,7 +182,7 @@ class McpManager:
         include_schemas: bool = False,
     ) -> dict[str, object]:
         """Inspect configured servers and compact tool metadata."""
-        reload_error = self._refresh_config()
+        reload_error = self.refresh_config()
         if reload_error is not None:
             return {
                 "ok": False,
@@ -315,6 +317,21 @@ class McpManager:
             return tuple(self._client(config).list_tools(force=force))
         finally:
             server_lock.release()
+
+    @contextmanager
+    def server_client(
+        self, name: str, *, tool: str | None = None
+    ) -> Iterator[tuple[McpServerConfig, McpClient]]:
+        """Lease a configured client through schema validation and dispatch."""
+        config, lock, error = self._acquire_server(name)
+        if error or config is None or lock is None:
+            raise ValueError(error or "Unknown or disabled MCP server")
+        try:
+            if tool is not None and not server_supports_tool(config, tool):
+                raise ValueError(f"MCP tool is disabled: {name}/{tool}")
+            yield config, self._client(config)
+        finally:
+            lock.release()
 
     def _acquire_server(
         self, name: str

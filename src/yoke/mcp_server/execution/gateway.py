@@ -18,7 +18,7 @@ def schema_hash(schema: dict[str, Any]) -> str:
 
 
 def inspect(manager: McpManager, request: Inspect) -> dict[str, Any]:
-    error = manager._refresh_config()
+    error = manager.refresh_config()
     if error:
         raise ValueError(error)
     configs = [
@@ -106,13 +106,7 @@ def call(
     cancel_requested: Any = None,
 ) -> dict[str, Any]:
     # Validate the selected schema under the same server lease as dispatch.
-    config, lock, error = manager._acquire_server(server)
-    if error or config is None or lock is None:
-        raise ValueError(error or "Unknown or disabled MCP server")
-    try:
-        if not server_supports_tool(config, tool):
-            raise ValueError(f"MCP tool is disabled: {server}/{tool}")
-        client = manager._client(config)
+    with manager.server_client(server, tool=tool) as (config, client):
         selected = next(
             (t for t in client.list_tools(force=bool(expected_hash)) if t.name == tool),
             None,
@@ -143,5 +137,3 @@ def call(
             "tool": tool,
             **result,
         }
-    finally:
-        lock.release()

@@ -94,7 +94,9 @@ class HttpAppSettings:
 def create_app(settings: HttpAppSettings | None = None) -> FastAPI:
     """Create one process-wide Yoke API application."""
     configured = settings or HttpAppSettings(auth_token=None)
-    store = SessionStore(configured.session_directory)
+    # The daemon composition root owns schema creation and upgrades. Library
+    # readers and administration commands require an exact schema by default.
+    store = SessionStore(configured.session_directory, migrate=True)
     broker = GlobalEventBroker()
     journal = SessionEventJournal(store.directory)
     events = EventService(journal, broker)

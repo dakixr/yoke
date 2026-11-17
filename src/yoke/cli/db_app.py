@@ -16,18 +16,39 @@ db_app = typer.Typer(
 )
 
 
-def _store():  # noqa: ANN202
+def _store(*, migrate: bool = False):  # noqa: ANN202
     from yoke.session import SessionStore
     from yoke.storage.database import DatabaseError
 
     try:
-        return SessionStore()
+        return SessionStore(migrate=migrate)
     except (DatabaseError, OSError, sqlite3.Error) as exc:
         from yoke.session.repository.utils import default_database_path
         from yoke.storage.errors import database_open_error
 
         typer.echo(database_open_error(default_database_path(), exc), err=True)
         raise typer.Exit(1) from exc
+
+
+@db_app.command("migrate")
+def migrate() -> None:
+    """Create or upgrade the database while the per-user daemon is stopped."""
+    from yoke.daemon.instance import InstanceLock
+    from yoke.daemon.paths import DaemonPaths
+
+    # Hold the same public lifetime lock through the upgrade. A liveness probe
+    # alone would race a daemon starting immediately after the check.
+    lock = InstanceLock.acquire(DaemonPaths.default(), wait_seconds=0)
+    if lock is None:
+        typer.echo(
+            "Stop the running Yoke daemon before running yoke db migrate.", err=True
+        )
+        raise typer.Exit(1)
+    try:
+        store = _store(migrate=True)
+        typer.echo(f"Database migrated: {store.database_path}")
+    finally:
+        lock.release()
 
 
 @db_app.command("check")

@@ -82,7 +82,7 @@ def test_codec_exact_prefix_offsets_noncanonical_and_forgery(tmp_path: Path) -> 
 
 
 def test_runtime_reads_metadata_forks_handoff_and_gc(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     url = image_url()
     message = Message.user(
         [
@@ -155,7 +155,7 @@ def test_image_limits_alpha_and_idempotence(size, mode, color) -> None:
 
 
 def test_compactor_resume_shared_hash_usage_and_active_owner(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     record = store.save(
         "source",
         [
@@ -209,7 +209,7 @@ def test_compactor_resume_shared_hash_usage_and_active_owner(tmp_path: Path) -> 
 def test_compactor_metadata_images_and_transaction_rollback(
     tmp_path: Path, monkeypatch
 ) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     record = store.save("legacy", [Message.user("preserve text")])
     url = image_url((1600, 800))
     retained = Message.user([{"type": "local_image", "path": "/gone", "data_url": url}])
@@ -308,7 +308,7 @@ def test_import_and_full_rewrite_exclude_raw_usage_without_mutating_models(
     from yoke.session import SessionRecord
     from yoke.session.legacy.importer import verify_imported_session
 
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     message = Message(
         role="assistant",
         content="kept",
@@ -354,7 +354,7 @@ def test_codec_callback_does_not_keep_database_connections_alive(
 def test_full_rewrite_keeps_old_oversized_images_eligible_for_idle_compaction(
     tmp_path: Path,
 ) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     url = image_url((1600, 800))
     message = Message.user([{"type": "image_url", "image_url": {"url": url}}])
     record = store.save("oversized", [message])
@@ -375,7 +375,7 @@ def test_full_rewrite_keeps_old_oversized_images_eligible_for_idle_compaction(
 def test_repeated_saves_do_not_branch_on_omitted_diagnostic_usage(
     tmp_path: Path,
 ) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     messages = [
         Message.user("question"),
         Message(
@@ -413,7 +413,7 @@ def test_poison_image_is_left_inline_and_never_retried(tmp_path, monkeypatch, ki
             + raw_image[33:]
         )
     url = "data:image/png;base64," + base64.b64encode(raw_image).decode()
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     record = store.save(
         "poison", [Message.user([{"type": "image_url", "image_url": {"url": url}}])]
     )
@@ -439,7 +439,7 @@ def test_poison_image_is_left_inline_and_never_retried(tmp_path, monkeypatch, ki
             "SELECT failures FROM blob_compaction_failures"
         ).fetchall() == [(1,)]
     store.database.close()
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     assert compact_batch(store.database).processed == 0
 
 
@@ -449,7 +449,7 @@ def test_native_decoder_failure_is_contained(tmp_path, monkeypatch, failure):
     from yoke.storage import image_worker
 
     url = image_url()
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     record = store.save(
         "decoder", [Message.user([{"type": "image_url", "image_url": {"url": url}}])]
     )

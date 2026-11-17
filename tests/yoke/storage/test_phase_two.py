@@ -29,7 +29,7 @@ def test_v1_migration_preserves_raw_entry_bytes_and_mutable_metadata(
     path = tmp_path / "v1.db"
     # A real v1 schema, including a noncanonical JSON encoding. Migration must
     # hash the original bytes, never decode and re-encode them.
-    source = SessionStore(tmp_path / "source")
+    source = SessionStore(tmp_path / "source", migrate=True)
     record = source.save(
         "original", [Message.user("Unicode é  \n"), Message.assistant("ok")]
     )
@@ -76,14 +76,14 @@ def test_v1_migration_preserves_raw_entry_bytes_and_mutable_metadata(
         }
     migrated.close()
     # Reopening is idempotent; no second conversion or record changes.
-    store = SessionStore(database_path=path)
+    store = SessionStore(database_path=path, migrate=True)
     loaded = store.load(record.id)
     assert loaded.conversation_entries[0].metadata == {"label": "edited"}
     assert loaded.messages[0].display_text_content() == "Unicode é  \n"
 
 
 def test_fork_shares_blobs_and_gc_keeps_surviving_references(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     record = store.save(
         "original", [Message.user("payload" * 1000), Message.assistant("ok")]
     )
@@ -106,7 +106,7 @@ def test_fork_shares_blobs_and_gc_keeps_surviving_references(tmp_path: Path) -> 
 def test_sql_pages_fetch_only_selected_payloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     store.save("large", [Message.user(str(n)) for n in range(150)])
     selected: list[str] = []
     original_read = store.read_entries
@@ -143,7 +143,7 @@ def test_upload_bytes_survive_removed_materialization_and_dedupe(
 ) -> None:
     import shutil
 
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     store.save("owner", [Message.user("hello")])
     service = UploadService(store)
     first = asyncio.run(
@@ -161,7 +161,7 @@ def test_upload_bytes_survive_removed_materialization_and_dedupe(
         first.uri, session_id="owner", name=first.name, mime=first.mime
     )
     shutil.rmtree(service.directory)
-    restarted = UploadService(SessionStore(tmp_path))
+    restarted = UploadService(SessionStore(tmp_path, migrate=True))
     assert path.read_bytes() == b"same bytes"
     with store.database.write() as connection:
         assert (
@@ -199,7 +199,7 @@ def test_upload_bytes_survive_removed_materialization_and_dedupe(
 
 
 def test_incremental_vacuum_reclaims_only_the_idle_page_budget(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     store.save("large", [Message.user("x" * 1_000_000)])
     store.delete("large")
     store.database.maintain(pages=0)
@@ -212,7 +212,7 @@ def test_incremental_vacuum_reclaims_only_the_idle_page_budget(tmp_path: Path) -
 
 
 def test_phase_one_upload_import_preserves_bytes_and_binding(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     store.save("owner", [Message.user("hello")])
     upload_id = "upl_" + "a" * 24
     directory = tmp_path / "uploads" / upload_id
@@ -256,7 +256,7 @@ def test_phase_one_upload_import_preserves_bytes_and_binding(tmp_path: Path) -> 
 def test_idle_maintenance_skips_another_process_writer(tmp_path: Path) -> None:
     import time
 
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     with sqlite3.connect(store.database_path, isolation_level=None) as other:
         other.execute("BEGIN IMMEDIATE")
         started = time.monotonic()

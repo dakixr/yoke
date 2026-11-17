@@ -7,6 +7,7 @@ import sqlite3
 from yoke.agent.models import ConversationEntry
 from yoke.agent.tool_context import legacy_tool_context_entry_ids
 from yoke.session.repository.rows import decode_entry
+from yoke.storage.blob_codec import decode_blob
 
 
 def classify_legacy_entries(
@@ -35,23 +36,37 @@ def classify_legacy_entries(
         while current is not None and current not in seen:
             seen.add(current)
             row = connection.execute(
-                "SELECT yoke_blob_data(blobs.sha256, blobs.data), entries.metadata FROM entries JOIN blobs "
+                "SELECT blobs.sha256, blobs.data, entries.metadata FROM entries JOIN blobs "
                 "ON blobs.sha256 = entries.message_sha256 "
                 "WHERE session_id = ? AND id = ?",
                 (owner, current),
             ).fetchone()
             if row is None:
                 break
-            message, metadata = row
+            digest, data, metadata = row
+            try:
+                message = decode_blob(connection, digest, data)
+                if message is None:
+                    break
+            except ValueError:
+                # A broken historical chain cannot classify this candidate.
+                # Other candidates and migration/insert work remain independent.
+                break
             if connection.execute("PRAGMA user_version").fetchone()[0] >= 4:
                 override = connection.execute(
-                    "SELECT yoke_blob_data(b.sha256, b.data) FROM entries e "
+                    "SELECT b.sha256, b.data FROM entries e "
                     "JOIN blobs b ON b.sha256 = e.metadata_sha256 "
                     "WHERE e.session_id = ? AND e.id = ?",
                     (owner, current),
                 ).fetchone()
                 if override is not None:
-                    metadata = override[0].decode()
+                    try:
+                        expanded = decode_blob(connection, *override)
+                        metadata = (
+                            expanded.decode() if expanded is not None else metadata
+                        )
+                    except ValueError:
+                        break
             entry = decode_entry(message, metadata)
             chain.append(entry)
             if current != candidate and entry.kind == "user":

@@ -13,13 +13,15 @@ MAX_COMPACTION_IMAGE_PIXELS = 20_000_000
 IMAGE_TRANSFORM_TIMEOUT_SECONDS = 5
 
 
-def reencode_image(raw: bytes) -> str:
+def reencode_image(
+    raw: bytes, *, timeout: float = IMAGE_TRANSFORM_TIMEOUT_SECONDS
+) -> str:
     """Contain native decoder crashes and kill hung decoders after five seconds."""
     result = subprocess.run(  # noqa: S603 - fixed module in this interpreter
         [sys.executable, "-P", "-m", "yoke.storage.image_worker"],
         input=raw,
         capture_output=True,
-        timeout=IMAGE_TRANSFORM_TIMEOUT_SECONDS,
+        timeout=min(timeout, IMAGE_TRANSFORM_TIMEOUT_SECONDS),
         check=True,
     )
     return result.stdout.decode("ascii")

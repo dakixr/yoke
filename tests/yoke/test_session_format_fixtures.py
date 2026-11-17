@@ -44,7 +44,7 @@ def test_import_committed_session_formats(name: str, tmp_path: Path) -> None:
     """Every JSONL file the 6ad9e18 store wrote imports to its frozen record."""
     expected = json.loads((FIXTURES / f"{name}.records.json").read_text())
     source = _legacy_dir(tmp_path, name)
-    store = SessionStore(tmp_path / "db")
+    store = SessionStore(tmp_path / "db", migrate=True)
 
     results = {r.session_id: r for r in import_legacy_sessions(store, source)}
     assert {r.status for r in results.values()} == {"imported"}
@@ -75,7 +75,7 @@ def test_imported_session_supports_the_frozen_operations(
     monkeypatch.setattr(utils, "datetime", FrozenDatetime)
     expected = json.loads((FIXTURES / f"{name}.records.json").read_text())
     source = _legacy_dir(tmp_path, name)
-    store = SessionStore(tmp_path / "db")
+    store = SessionStore(tmp_path / "db", migrate=True)
     [result] = import_legacy_sessions(store, source, [name])
     assert result.status == "imported"
 
@@ -105,7 +105,7 @@ def test_imported_session_supports_the_frozen_operations(
 
 def test_import_is_idempotent_and_skips_existing(tmp_path: Path) -> None:
     source = _legacy_dir(tmp_path, "canonical")
-    store = SessionStore(tmp_path / "db")
+    store = SessionStore(tmp_path / "db", migrate=True)
     first = [r.status for r in import_legacy_sessions(store, source)]
     second = [r.status for r in import_legacy_sessions(store, source)]
     assert set(first) == {"imported"}
@@ -116,7 +116,7 @@ def test_import_reports_unreadable_sessions(tmp_path: Path) -> None:
     source = tmp_path / "legacy"
     source.mkdir()
     (source / "broken.jsonl").write_text("not json\n", encoding="utf-8")
-    store = SessionStore(tmp_path / "db")
+    store = SessionStore(tmp_path / "db", migrate=True)
     [result] = import_legacy_sessions(store, source)
     assert result.status == "failed"
     assert not store.exists("broken")
@@ -126,7 +126,7 @@ def test_import_mismatch_rolls_back_without_deleting_newer_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = _legacy_dir(tmp_path, "canonical")
-    store = SessionStore(tmp_path / "db")
+    store = SessionStore(tmp_path / "db", migrate=True)
     monkeypatch.setattr(importer, "verify_imported_session", lambda *_: "mismatch")
 
     [result] = import_legacy_sessions(store, source, ["canonical"])

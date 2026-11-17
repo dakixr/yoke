@@ -81,7 +81,7 @@ def test_backup_failure_prevents_migration(tmp_path: Path, monkeypatch) -> None:
 def test_db_check_reports_codec_and_orphan_failures(
     tmp_path: Path, monkeypatch
 ) -> None:
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     store.save("saved", [])
     monkeypatch.setenv("YOKE_DB_PATH", str(store.database_path))
     result = CliRunner().invoke(db_app, ["check"])
@@ -127,7 +127,7 @@ def test_sqlite_full_rolls_back_append_and_retained_index(tmp_path, monkeypatch)
     from yoke.agent.models import ConversationEntry, Message
     from yoke.session import SessionTreeIndex
 
-    store = SessionStore(tmp_path)
+    store = SessionStore(tmp_path, migrate=True)
     record = store.save("s", [Message.user("saved")])
     index = SessionTreeIndex(record.conversation_entries, record.leaf_id)
     before = record.model_copy(deep=True)

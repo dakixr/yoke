@@ -4,20 +4,61 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, cast
 
 from pydantic_core import from_json
 
 from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import ConversationEntry
-from yoke.storage.blob_codec import prepare_blob
+from yoke.storage.blob_codec import decode_blob, prepare_blob
 from yoke.storage.entry_transform import strip_usage_raw
 from yoke.session.repository.models import (
     SESSION_INDEX_SUMMARY_VERSION,
     SessionIndexEntry,
     SessionRecord,
 )
+
+ENTRY_PAYLOAD_SELECT = (
+    "SELECT e.id, e.message_sha256, b.data, e.metadata_sha256, m.data, e.metadata "
+    "FROM entries e LEFT JOIN blobs b ON b.sha256 = e.message_sha256 "
+    "LEFT JOIN blobs m ON m.sha256 = e.metadata_sha256 "
+)
+
+
+def decode_payload_row(
+    connection: sqlite3.Connection,
+    session_id: str,
+    row: tuple,
+    *,
+    raw_filter: Callable[[bytes], bytes] | None = None,
+) -> ConversationEntry:
+    """Expand one selected payload with its entry identity in corruption errors."""
+    raw, metadata = decode_payload_bytes(connection, session_id, row)
+    try:
+        return decode_entry(raw_filter(raw) if raw_filter else raw, metadata)
+    except ValueError as exc:
+        raise ValueError(f"Session {session_id} entry {row[0]}: {exc}") from exc
+
+
+def decode_payload_bytes(
+    connection: sqlite3.Connection, session_id: str, row: tuple
+) -> tuple[bytes, str | None]:
+    """Expand message and override blobs without materializing model defaults."""
+    entry_id, digest, data, metadata_sha, metadata_data, metadata = row
+    try:
+        raw = decode_blob(connection, digest, data)
+        if raw is None:
+            raise ValueError(f"Missing entry blob: {digest}")
+        if metadata_sha is not None:
+            override = decode_blob(connection, metadata_sha, metadata_data)
+            if override is None:
+                raise ValueError(f"Missing metadata blob: {metadata_sha}")
+            metadata = override.decode()
+        return raw, metadata
+    except ValueError as exc:
+        raise ValueError(f"Session {session_id} entry {entry_id}: {exc}") from exc
+
 
 # SessionRecord field -> sessions column. Every persisted record field is here.
 RECORD_COLUMNS: dict[str, str] = {
