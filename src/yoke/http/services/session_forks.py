@@ -89,6 +89,7 @@ class SessionForks:
             active_skills=source.active_skills,
             skill_dirs=source.skill_dirs if source.root == str(target) else [],
             root=target,
+            origin=source.origin,
             title=request.title or fork_session_title(source.title),
             provider_name=source.provider_name,
             model_id=source.model_id,

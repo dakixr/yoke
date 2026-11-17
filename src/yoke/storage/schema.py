@@ -103,6 +103,12 @@ def migrate_schema(connection: sqlite3.Connection, path: Path) -> None:
                     )
 
                     classify_legacy_entries(connection)
+                if version == 7:
+                    from yoke.storage.search import backfill
+                    from yoke.session.origins import repair_origins
+
+                    backfill(connection)
+                    repair_origins(connection)
                 connection.execute(f"PRAGMA user_version={version}")
             connection.execute("COMMIT")
         except BaseException:

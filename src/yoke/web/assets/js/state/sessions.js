@@ -180,7 +180,7 @@ export class SessionController {
     }
     let response;
     try {
-      response = await api.listSessions({ search: value, limit: 100, order: "lastUserDesc" });
+      response = await api.listSessions({ search: value, limit: 100 });
     } catch (error) {
       if (
         this.lifecycle.owns(lifecycleEpoch)

@@ -96,19 +96,29 @@ shutdown.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `directory` | none | Only sessions in this directory. |
-| `search` | none | Case-insensitive substring match on session ID, title and directory. |
+| `search` | none | FTS5 word search over titles and user/assistant text, ranked by relevance. ID and directory substring matches remain available. |
+| `origin` | none | `cli`, `web`, `acp`, `sdk` or `unknown`. |
 | `pinned`, `archived` | none | Filter by flag. |
 | `order` | `updatedDesc` | `updatedDesc`, `updatedAsc`, `createdDesc`, `createdAsc`, `lastUserDesc`, `lastUserAsc`. |
 | `limit` | 50 | 1 to 200. |
 | `cursor` | none | From `cursor.next`. |
 
-`total` counts every session matching the filters, across all pages.
+`total` counts every session matching the filters, across all pages. With
+`search`, the best matching title or message determines relevance; titles have
+higher weight. `order` breaks ties. Every query word must match that document.
+Punctuation and FTS operators are treated as literal input, so quotes and `*`
+do not add query syntax. Search excludes tool output, reasoning, image data and
+metadata, and includes retained branches. Cursor queries keep the same filters.
+Changing the index between pages can change relevance, as activity edits can
+change the order of ordinary session pages.
 
 Session object (`SessionInfo`):
 
 | Field | Meaning |
 | --- | --- |
 | `id`, `title`, `pinned`, `archivedAt` | Identity and organization. `archivedAt` is null unless archived. |
+| `origin` | Creating client: `cli`, `web`, `acp`, `sdk` or `unknown`. Later attachments do not change it. |
+| `searchSnippet` | Nullable excerpt for a text match, up to 32 tokens and 280 characters. `<mark>` and `</mark>` delimit matching words. Render other content as text, never as HTML. Null for ordinary lists and ID/directory-only matches. |
 | `location.directory` | Saved working directory. |
 | `workspace` | `{status, message}` observed now. Status is `available`, `missing`, `not_directory`, `unreadable`, `unconfigured` or `invalid`. |
 | `selection` | `{provider, model, reasoningEffort}`, each nullable. |
@@ -129,7 +139,8 @@ Session object (`SessionInfo`):
 | `startup` | Run the CLI startup resolver and return a `startup` report. Default false. |
 | `skills` | Skill names to activate. Implies `startup`. |
 | `headless` | With startup, reject an unknown saved model instead of recovering. Default false. |
-| `client` | Attach a client in the same request. See [daemon-client.md](daemon-client.md). |
+| `client` | Attach a client in the same request. See [daemon-client.md](daemon-client.md). Its kind sets the session origin. |
+| `origin` | Optional creating-client label when no `client` is supplied. Defaults to `web`. Accepts `cli`, `web`, `acp`, `sdk` or `unknown`. |
 
 The response is `{data: SessionInfo, startup}`. `startup` is null unless
 startup ran, and then has `warnings`, `activeSkills`, `modelSource` and

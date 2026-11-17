@@ -131,7 +131,7 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
         ${visibleSearch ? html`
           <div class="inbox-list" role="list" aria-label="Search results">
             ${visibleSearch.length ? visibleSearch.map((session) => html`
-              <${SessionRow} key=${session.id} session=${session} active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} settleSupported=${capabilities?.features?.sessionArchive} connected=${connected} onOpenMenu=${openSessionMenu} />
+              <${SessionRow} key=${session.id} session=${session} searchResult active=${active[session.id]} attention=${attention[session.id]} selected=${selectedID === session.id} done=${done[session.id]} locations=${locations} settleSupported=${capabilities?.features?.sessionArchive} connected=${connected} onOpenMenu=${openSessionMenu} />
             `) : html`<div class="sidebar-empty">No sessions found</div>`}
           </div>
         ` : html`
@@ -180,7 +180,7 @@ export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave
   `;
 }
 
-function SessionRow({ session, active, attention, selected, done, locations, pinned = false, settled = false, outsideScope = false, settleSupported = false, connected = true, onOpenMenu }) {
+function SessionRow({ searchResult = false, session, active, attention, selected, done, locations, pinned = false, settled = false, outsideScope = false, settleSupported = false, connected = true, onOpenMenu }) {
   const directory = session.location?.directory || "";
   const location = locations[directory];
   const projectName = location?.name || compactPath(directory);
@@ -228,6 +228,7 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
           <span class="session-card__status-slot" title=${ageTitle}><${SessionStatus} runtime=${active} attention=${attention} done=${done} queue=${session.queue} age=${age} /></span>
         </span>
         <span class="session-row__title">${session.title || session.id}</span>
+        ${searchResult && session.searchSnippet ? html`<span class="muted tiny">${session.searchSnippet.split(/(<mark>[\s\S]*?<\/mark>)/g).map((part, index) => index % 2 ? html`<mark>${part.slice(6, -7)}</mark>` : part)}</span>` : null}
         <span class="session-card__bottom">
           ${isSettled ? html`<span class="session-settled-label" title=${ageTitle}>Settled</span>` : null}
           <span class="session-card__branch" title=${directory}>${outsideScope ? `Current · ${branch}` : branch}</span>

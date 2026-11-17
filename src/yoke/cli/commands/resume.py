@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Annotated
 
@@ -18,6 +19,13 @@ def register_resume_command(app: typer.Typer) -> None:
         session_id: Annotated[
             str | None,
             typer.Argument(help="Session id to resume. Omit to choose from this root."),
+        ] = None,
+        search: Annotated[
+            str | None,
+            typer.Option(
+                "--search",
+                help="Search saved titles and messages when choosing a session.",
+            ),
         ] = None,
         all_sessions: Annotated[
             bool,
@@ -77,6 +85,12 @@ def register_resume_command(app: typer.Typer) -> None:
             ),
         ] = None,
     ) -> None:
+        if search is not None and (
+            session_id is not None or headless or prompt is not None
+        ):
+            raise typer.BadParameter(
+                "--search requires the interactive session chooser."
+            )
         if headless or prompt is not None:
             from yoke.cli.backend.startup import run_daemon_headless
 
@@ -101,8 +115,13 @@ def register_resume_command(app: typer.Typer) -> None:
         if session_id is None:
             from yoke.cli.backend.startup import run_daemon_interactive
 
+            choose = (
+                partial(run_daemon_interactive, search=search)
+                if search is not None
+                else run_daemon_interactive
+            )
             raise typer.Exit(
-                run_daemon_interactive(
+                choose(
                     build_cli_args(model=model, root=root),
                     picker=True,
                     all_sessions=all_sessions,

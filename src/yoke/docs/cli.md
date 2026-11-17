@@ -377,7 +377,7 @@ These options apply when `yoke` runs without a subcommand.
 | Command | Purpose |
 | --- | --- |
 | `yoke version` | Print the version. |
-| `yoke resume [ID]` | Resume a session. See [Sessions](sessions.md). |
+| `yoke resume [ID]` | Resume a session. Without an ID, `--search TEXT` searches titles and message text, with highlighted excerpts. Add `--all` for all workspaces. See [Sessions](sessions.md). |
 | `yoke session-handoff ID` | Print a portable summary of a session. See [Sessions](sessions.md#hand-off-a-session). |
 | `yoke db ...` | Inspect, back up and maintain the session database. See [Sessions](sessions.md#maintain-the-database). |
 | `yoke daemon status\|restart\|stop` | Manage the shared daemon. |

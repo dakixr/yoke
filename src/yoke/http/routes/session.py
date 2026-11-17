@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from yoke.agent.provider_transition import ContextWindowTooSmallError
 from yoke.http.auth import require_auth
+from yoke.session.origins import SessionOrigin
 from yoke.http.errors import ApiError
 from yoke.http.models.session import (
     ContextResponse,
@@ -53,6 +54,7 @@ def list_sessions(
     request: Request,
     directory: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    origin: SessionOrigin | None = Query(default=None),
     pinned: bool | None = Query(default=None),
     archived: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
@@ -69,6 +71,7 @@ def list_sessions(
     return _service(request).list_sessions(
         directory=directory,
         search=search,
+        origin=origin,
         pinned=pinned,
         archived=archived,
         limit=limit,

@@ -8,11 +8,13 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Iterator
 from io import StringIO
+from typing import cast
 
 from pydantic_core import from_json
 
 from yoke.agent.models import ConversationEntry
 from yoke.session.repository.models import SessionRecord
+from yoke.session.origins import infer_origin
 
 SESSION_JSONL_HEADER_TYPE = "yoke_session"
 SESSION_JSONL_HEADER_VERSION = 2
@@ -34,14 +36,14 @@ def decode_legacy_session_record(raw_text: str) -> SessionRecord:
     if stripped.startswith('{"type":"session_stream"'):
         return _decode_legacy_event_stream(raw_text)
     if stripped.startswith('{"type":"session_record"'):
-        return SessionRecord.model_validate_json(_json_object_from_jsonl(raw_text))
+        return _record(from_json(_json_object_from_jsonl(raw_text)))
     if stripped.startswith("{"):
         try:
-            return SessionRecord.model_validate_json(raw_text)
+            return _record(from_json(raw_text))
         except ValueError:
             return _decode_legacy_event_stream(raw_text)
     try:
-        return SessionRecord.model_validate_json(_json_object_from_jsonl(raw_text))
+        return _record(from_json(_json_object_from_jsonl(raw_text)))
     except ValueError:
         return _decode_legacy_event_stream(raw_text)
 
@@ -106,7 +108,7 @@ def decode_session_record_lines(lines: Iterable[str]) -> SessionRecord:
     if "id" not in metadata:
         raise ValueError("Session JSONL event stream is missing metadata.")
     metadata["conversation_entries"] = [entry for entry in entries if entry is not None]
-    return SessionRecord.model_validate(metadata)
+    return _record(metadata)
 
 
 def _decode_legacy_event_stream(raw_text: str) -> SessionRecord:
@@ -151,7 +153,7 @@ def _decode_legacy_event_stream(raw_text: str) -> SessionRecord:
     metadata.setdefault("id", "legacy-session")
     if entries and not metadata.get("leaf_id"):
         metadata["leaf_id"] = entries[-1].id
-    return SessionRecord.model_validate(metadata)
+    return _record(metadata)
 
 
 def _json_object_from_jsonl(raw_text: str) -> str:
@@ -170,3 +172,11 @@ def _jsonl_objects(lines: Iterable[str]) -> Iterator[dict[str, object]]:
         if not isinstance(payload, dict):
             continue
         yield payload
+
+
+def _record(metadata: object) -> SessionRecord:
+    if not isinstance(metadata, dict):
+        raise ValueError("Session metadata must be an object.")
+    return SessionRecord.model_validate(
+        {**metadata, "origin": infer_origin(cast(dict[str, object], metadata))}
+    )

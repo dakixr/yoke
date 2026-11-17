@@ -35,6 +35,9 @@ by six random hex digits.
 # Choose from this workspace's sessions
 yoke resume
 
+# Search titles and user/assistant messages across workspaces
+yoke resume --all --search "SQLite migration"
+
 # Resume one session by ID
 yoke resume 20261117-143022-a1b2c3
 
@@ -49,6 +52,21 @@ Without an ID, `yoke resume` prints a numbered list of up to 50 sessions whose
 workspace is the current directory, or the directory given by `--root`, and asks
 for a number. `--root` only filters this list. It never moves a session.
 `yoke resume --all` lists the latest sessions from every workspace instead.
+
+`--search TEXT` filters the chooser by words in session titles and user or
+assistant messages. Results show a short highlighted excerpt and put the best
+matches first. All query words must match one title or message. Tool output,
+reasoning, image data and metadata are excluded. Search includes retained
+branches, including messages kept after compaction. ID and workspace substring
+lookups still work. Add `--all` to search outside the selected workspace.
+
+Sessions record their creating client as `cli`, `web`, `acp` or `sdk`. Headless
+terminal sessions are `cli`. Later attachments do not change this origin;
+forks inherit it. The in-process SDK keeps portable snapshots and usage rows,
+without creating daemon sessions. HTTP SDK clients can create with `origin: "sdk"`.
+Legacy imports use explicit origin or creating-client metadata when available.
+Missing or conflicting evidence becomes `unknown`; titles do not determine
+origin. The HTTP list route can filter on any of these five values.
 
 A resumed session runs in its saved workspace, whatever your current directory
 is. Yoke prints the saved history, then waits for your next prompt.
@@ -306,3 +324,15 @@ readers report the required migration without changing the database.
 The daemon also holds an idle queue with reason `manual` when a request uses
 `resume: false`. Hold changes publish `session.queue.held` with `held` and
 `inputRevision`. Holds do not change the legacy queue edit revision.
+
+## Search migration
+
+Schema v7 adds an FTS5 index of extracted message text and titles. The daemon
+backfills it at startup, or you can run `yoke db migrate` with the daemon
+stopped. The migration takes a backup first and commits the index, origin
+repair and schema version together. An interruption rolls back the upgrade;
+rerun migration to retry. Other clients only check the schema.
+
+Existing imports whose client metadata was lost become `unknown`. Native
+daemon origins stay unchanged. New imports inspect both JSONL metadata and
+index metadata for an explicit origin or creating-client kind.

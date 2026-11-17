@@ -130,6 +130,7 @@ class SessionLifecycle:
         catalog, default = await agent.discover(cwd)
         provider, model = default.split(":", 1)
         body: dict[str, Any] = {
+            "origin": "acp",
             "location": {"directory": cwd},
             "selection": {
                 "provider": provider,

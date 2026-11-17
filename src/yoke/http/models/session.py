@@ -12,6 +12,7 @@ from yoke.http.models.common import ApiModel
 from yoke.http.models.common import CursorInfo
 from yoke.http.models.common import LocationInfo
 from yoke.session.workspace import WorkspaceStatus
+from yoke.session.origins import SessionOrigin
 
 
 class SessionSelection(ApiModel):
@@ -69,6 +70,8 @@ class SessionQueueSummary(ApiModel):
 
 class SessionInfo(ApiModel):
     id: str
+    origin: SessionOrigin = "unknown"
+    search_snippet: str | None = None
     title: str | None = None
     pinned: bool = False
     archived_at: str | None = None
@@ -111,6 +114,7 @@ class SessionCreateResponse(SessionResponse):
 
 
 class SessionCreateRequest(ApiModel):
+    origin: SessionOrigin | None = None
     id: str | None = None
     location: LocationInfo
     title: str | None = None

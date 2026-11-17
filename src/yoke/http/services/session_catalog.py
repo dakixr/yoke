@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
+from yoke.session.origins import infer_origin
 
 from yoke.session.repository.models import SessionIndexEntry
 from yoke.http.errors import ApiError, session_not_found
@@ -77,8 +78,10 @@ class SessionCatalog:
         limit: int,
         order: SessionOrder,
         cursor: str | None,
+        origin: str | None = None,
     ) -> SessionListResponse:
-        fingerprint = query_fingerprint((directory, search, pinned, archived, order))
+        query = (directory, search, pinned, archived, order)
+        fingerprint = query_fingerprint(query if origin is None else (*query, origin))
         anchor = (
             decode_cursor(cursor, expected_query=fingerprint)
             if cursor is not None
@@ -92,6 +95,7 @@ class SessionCatalog:
             order=order,
             limit=limit,
             anchor_id=anchor,
+            origin=origin,
         )
         queue_snapshots = load_prompt_queue_snapshots(
             self.store.directory,
@@ -149,7 +153,7 @@ class SessionCatalog:
             session_id,
             [],
             root=root,
-            origin=request.client.kind if request.client else "web",
+            origin=request.client.kind if request.client else request.origin or "web",
             title=request.title,
             provider_name=selection.provider if selection is not None else None,
             model_id=selection.model if selection is not None else None,
@@ -235,6 +239,10 @@ class SessionCatalog:
         """Build a list-card projection without loading conversation history."""
         return SessionInfo(
             id=entry.id,
+            origin=infer_origin({"origin": entry.origin}),
+            search_snippet=entry.search_snippet
+            if isinstance(entry, SessionIndexEntry)
+            else None,
             title=entry.title,
             pinned=entry.pinned,
             archived_at=entry.archived_at,

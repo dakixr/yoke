@@ -31,6 +31,7 @@ from yoke.session.repository.rows import (
 )
 from yoke.session.repository.utils import parse_timestamp
 from yoke.storage import Database
+from yoke.storage import search
 from yoke.storage.blob_codec import prepare_blob
 from yoke.storage.entry_transform import strip_usage_raw
 
@@ -221,6 +222,7 @@ class SessionTable:
                 new = record.conversation_entries[len(existing.conversation_entries) :]
             updates: dict[str, object] = {}
             if new is None:
+                search.delete_entries(connection, record.id)
                 connection.execute(
                     "DELETE FROM entries WHERE session_id = ?", (record.id,)
                 )
@@ -370,6 +372,7 @@ class SessionTable:
                 "message_sha256, metadata, metadata_sha256, 1 FROM entries WHERE session_id = ?",
                 (record.id, source_id),
             )
+            search.fork_entries(connection, source_id, record.id)
             return True
 
     def prune(self, retention_days: int) -> list[str]:
@@ -396,6 +399,7 @@ class SessionTable:
 
 def delete_session_rows(connection: sqlite3.Connection, session_id: str) -> None:
     """Delete a session and every row keyed by it."""
+    search.delete_session(connection, session_id)
     for table in ("events", "inputs", "session_queues"):
         connection.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))
     connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
@@ -445,6 +449,7 @@ def _insert_session(connection: sqlite3.Connection, columns: dict[str, object]) 
     connection.execute(
         f"INSERT INTO sessions ({names}) VALUES ({marks})", tuple(columns.values())
     )
+    search.set_title(connection, str(columns["id"]), columns.get("title"))
 
 
 def _update_session(
@@ -457,6 +462,8 @@ def _update_session(
         f"UPDATE sessions SET {assignments} WHERE id = ?",
         (*updates.values(), session_id),
     )
+    if "title" in updates:
+        search.set_title(connection, session_id, updates["title"])
 
 
 def _extends(

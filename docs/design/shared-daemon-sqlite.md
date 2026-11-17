@@ -119,7 +119,36 @@ Image compaction uses a disposable subprocess with a five-second timeout and a
 20-million-pixel limit. Failed blobs stay inline and receive persistent completion
 and failure markers, so decoder crashes and hangs cannot poison daemon restarts.
 
-**Search.** FTS5 over user and assistant text plus titles, after cutover.
+**Search.** Schema v7 stores extracted user/assistant text and titles in FTS5.
+Each title and message is a separate document. Explicit maintenance joins the
+entry/title write transaction; forks copy text documents and deletion/retention
+remove them. Rewrites rebuild their transcript documents, including runtime
+compaction. Image storage compaction preserves text, so its existing documents
+stay valid. Backfill reads valid JSON blob templates and skips image carriers;
+it does not reconstruct base64 images or index tool output. The migration
+backup, backfill, origin repair and schema version follow the existing atomic
+upgrade rules.
+
+Session search matches all literal query words within a title or message and
+ranks each session by its best BM25 document, with titles weighted higher.
+Existing order values break ties; cursor paging and catalog filters still
+apply. ID and workspace substring lookup remain available. The response adds
+`searchSnippet` and `origin`, and the list route adds `origin` filtering.
+Protocol stays 2. The CLI chooser accepts `resume --search TEXT`; the sidebar
+uses the same route.
+
+**Origins.** New imports inspect explicit origin and creating-client kind in
+JSONL and index metadata. Conflicts or absent evidence become `unknown`.
+Titles and model/workspace heuristics are not evidence. Old SQLite imports
+lost arbitrary JSONL metadata; v7 repairs their default `cli` label to
+`unknown` unless explicit creating-client evidence remains. `import_hold`
+identifies untouched imports; a `cli` row without a native `session.created`
+event also covers imports resumed since cutover. Native daemon origins stay
+unchanged. ACP sends its origin even when client configuration is disabled.
+Creation uses `client.kind` if present, otherwise an explicit `origin`, otherwise
+`web`. Terminal and headless creation attach as `cli`. In-process SDK snapshots
+remain files, without creating session rows; HTTP SDK clients can set `sdk`.
+Later attachments leave the creating origin unchanged and forks inherit it.
 
 **Deletable once SQLite is in.**
 - `http/services/session_message_index/**` and the session read cache.

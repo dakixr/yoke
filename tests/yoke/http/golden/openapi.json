@@ -3736,6 +3736,16 @@
           "location": {
             "$ref": "#/components/schemas/LocationInfo"
           },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "selection": {
             "anyOf": [
               {
@@ -3944,6 +3954,10 @@
           "location": {
             "$ref": "#/components/schemas/LocationInfo"
           },
+          "origin": {
+            "$ref": "#/components/schemas/SessionOrigin",
+            "default": "unknown"
+          },
           "pinned": {
             "default": false,
             "title": "Pinned",
@@ -3951,6 +3965,17 @@
           },
           "queue": {
             "$ref": "#/components/schemas/SessionQueueSummary"
+          },
+          "searchSnippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Searchsnippet"
           },
           "selection": {
             "$ref": "#/components/schemas/SessionSelection"
@@ -4058,6 +4083,16 @@
         ],
         "title": "SessionListResponse",
         "type": "object"
+      },
+      "SessionOrigin": {
+        "enum": [
+          "cli",
+          "web",
+          "acp",
+          "sdk",
+          "unknown"
+        ],
+        "type": "string"
       },
       "SessionPatchRequest": {
         "additionalProperties": false,
@@ -6872,6 +6907,22 @@
                 }
               ],
               "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SessionOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin"
             }
           },
           {

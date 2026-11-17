@@ -364,3 +364,13 @@ Run the session reducer transition table with the other Node suites:
 ```bash
 node --experimental-default-type=module scripts/test_web_session_machine.mjs
 ```
+
+## Search saved conversations
+
+The sidebar search uses the daemon's full-text session search. It searches
+titles and user/assistant messages across retained branches and ranks the best
+matches first. Results show an excerpt with matching words highlighted. Tool
+output, images and reasoning are excluded. All typed words must match a title
+or one message. Quotes and `*` do not add search operators. Session IDs and
+workspace paths still work as substring lookups. The project filter also
+applies to search results. Search includes settled sessions.

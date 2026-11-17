@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from yoke.storage.database import Database, DatabaseError, migrations
+from yoke.storage.database import Database, DatabaseError, migrations, schema_version
 from yoke.session.admissions import AdmissionRecord
 
 
@@ -106,7 +106,9 @@ def test_v5_backfill_backup_and_readers_do_not_migrate(v5_database):
     assert not list(v5_database.parent.glob("*.pre-v*"))
     database = Database(v5_database, migrate=True)
     with database.read() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (
+            schema_version(),
+        )
         rows = connection.execute(
             "SELECT id,phase,admission FROM inputs ORDER BY id"
         ).fetchall()
@@ -140,7 +142,9 @@ def test_v5_backfill_backup_and_readers_do_not_migrate(v5_database):
             row[1] for row in connection.execute("PRAGMA index_list(inputs)")
         }
     database.close()
-    with sqlite3.connect(v5_database.with_name("v5.db.pre-v6")) as backup:
+    with sqlite3.connect(
+        v5_database.with_name(f"v5.db.pre-v{schema_version()}")
+    ) as backup:
         assert backup.execute("PRAGMA user_version").fetchone() == (5,)
         assert backup.execute("SELECT count(*) FROM inputs").fetchone() == (7,)
         assert "phase" not in {

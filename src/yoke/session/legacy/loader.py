@@ -11,6 +11,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from pydantic import ValidationError
+from pydantic_core import from_json
+from yoke.session.origins import infer_origin
 
 from yoke.session.legacy.jsonl import (
     decode_legacy_session_record,
@@ -57,8 +59,12 @@ def read_legacy_index(directory: Path) -> SessionIndex:
     except OSError:
         return SessionIndex()
     try:
-        return SessionIndex.model_validate_json(raw)
-    except ValidationError:
+        payload = from_json(raw)
+        index = SessionIndex.model_validate(payload)
+        for session_id, entry in index.sessions.items():
+            entry.origin = infer_origin(payload["sessions"][session_id])
+        return index
+    except (ValidationError, ValueError):
         return SessionIndex()
 
 
@@ -110,7 +116,12 @@ def _load_existing_record(
         record = record.model_copy(update={"version": current_schema_version})
     if index_entry is None:
         return record
-    changes: dict[str, object] = {}
+    evidence = {
+        value for value in (record.origin, index_entry.origin) if value != "unknown"
+    }
+    changes: dict[str, object] = {
+        "origin": evidence.pop() if len(evidence) == 1 else "unknown"
+    }
     if _index_is_newer(index_entry, record):
         changes.update(_index_metadata_changes(index_entry, record))
     if (

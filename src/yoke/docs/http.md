@@ -117,6 +117,29 @@ with the token in the URL fragment, which browsers do not send to the server.
 The `/daemon` endpoints return `404 daemon_mode_required` on a standalone
 server. Everything else in this guide works the same way.
 
+### Find saved sessions
+
+`GET /api/v1/session?search=SQLite%20migration&archived=false` searches titles
+and user/assistant text with FTS5. Results come in relevance order with a short
+`searchSnippet`; `<mark>` delimiters identify matching words. Render the rest
+as plain text. Tool output and images are excluded. Retained branches are
+searchable. All words must match one message or title. Quotes, asterisks and
+other punctuation do not activate FTS query syntax. ID and directory substring
+lookups remain available.
+
+Keep `directory`, `archived`, `pinned`, `origin` and `search` unchanged when
+following `cursor.next`. `total` counts all filtered matches. Without search,
+`order` controls the list; with search it breaks relevance ties.
+
+Session responses include `origin`, the creating client. Filter with
+`origin=cli`, `web`, `acp`, `sdk` or `unknown`. Headless terminal sessions use
+`cli`. Old imports without reliable creating-client metadata use `unknown`.
+Later attachments do not change origin. On creation, `client.kind` wins;
+without a client, `origin` may be supplied and otherwise defaults to `web`.
+In-process SDK agents keep file snapshots and usage rows, without creating
+session rows. An SDK client using this HTTP API can supply `origin: "sdk"`.
+Protocol version remains 2.
+
 ### Authentication
 
 Requests on the Unix socket need no credentials. Requests over TCP need this

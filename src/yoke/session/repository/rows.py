@@ -13,6 +13,7 @@ from yoke.agent.message_sanitizer import sanitize_json_surrogates
 from yoke.agent.models import ConversationEntry
 from yoke.storage.blob_codec import decode_blob, prepare_blob
 from yoke.storage.entry_transform import strip_usage_raw
+from yoke.storage.search import insert_entry, discard_tool_context
 from yoke.session.repository.models import (
     SESSION_INDEX_SUMMARY_VERSION,
     SessionIndexEntry,
@@ -153,6 +154,7 @@ def insert_entries(
             totals[0] += 1
             raw = row[8]
             totals[1] += len(raw)
+            insert_entry(connection, session_id, entry.id, raw)
             prepared = prepare_blob(raw)
             digest = prepared.insert(connection)
             if not prepared.refs:
@@ -166,6 +168,7 @@ def insert_entries(
         from yoke.session.repository.provenance import classify_legacy_entries
 
         classify_legacy_entries(connection, session_id=session_id, first_seq=first_seq)
+        discard_tool_context(connection, session_id, first_seq)
     return totals[0], totals[1]
 
 

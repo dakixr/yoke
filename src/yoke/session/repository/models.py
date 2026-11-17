@@ -103,6 +103,7 @@ class SessionIndexEntry(BaseModel):
     entry_count: int | None = None
     file_size: int | None = None
     file_mtime_ns: int | None = None
+    search_snippet: str | None = Field(default=None, exclude=True)
     summary_version: int = 0
 
     def to_record(self) -> SessionRecord:

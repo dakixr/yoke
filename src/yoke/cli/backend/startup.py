@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -198,6 +199,7 @@ def run_daemon_interactive(
     resume_id: str | None = None,
     picker: bool = False,
     all_sessions: bool = False,
+    search: str | None = None,
     relocate: Path | str | None = None,
 ) -> int:
     """Run basic or prompt-toolkit mode entirely through the daemon."""
@@ -225,6 +227,7 @@ def run_daemon_interactive(
                 "session",
                 params={
                     "limit": 50,
+                    **({"search": search} if search else {}),
                     **({} if all_sessions else {"directory": str(root)}),
                 },
             ).get("data", [])
@@ -238,8 +241,20 @@ def run_daemon_interactive(
             output_console.print("Sessions:")
             for index, item in enumerate(sessions, 1):
                 output_console.print(
-                    f"{index}. {item.get('title') or 'Untitled session'} ({item.get('id')})"
+                    Text(
+                        f"{index}. {item.get('title') or 'Untitled session'} ({item.get('id')})"
+                    )
                 )
+                if snippet := item.get("searchSnippet"):
+                    preview = Text("   ")
+                    for match_index, part in enumerate(
+                        re.split(r"(<mark>.*?</mark>)", snippet, flags=re.DOTALL)
+                    ):
+                        preview.append(
+                            part[6:-7] if match_index % 2 else part,
+                            style="bold" if match_index % 2 else "dim",
+                        )
+                    output_console.print(preview)
             choice = input_func("Resume session: ").strip()
             try:
                 session_id = sessions[int(choice) - 1]["id"]

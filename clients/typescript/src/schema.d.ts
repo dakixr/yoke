@@ -2483,6 +2483,7 @@ export interface components {
             /** Id */
             id?: string | null;
             location: components["schemas"]["LocationInfo"];
+            origin?: components["schemas"]["SessionOrigin"] | null;
             selection?: components["schemas"]["SessionCreateSelection"] | null;
             /** Skills */
             skills?: string[];
@@ -2533,12 +2534,16 @@ export interface components {
             /** Id */
             id: string;
             location: components["schemas"]["LocationInfo"];
+            /** @default unknown */
+            origin: components["schemas"]["SessionOrigin"];
             /**
              * Pinned
              * @default false
              */
             pinned: boolean;
             queue: components["schemas"]["SessionQueueSummary"];
+            /** Searchsnippet */
+            searchSnippet?: string | null;
             selection: components["schemas"]["SessionSelection"];
             time: components["schemas"]["SessionTime"];
             /** Title */
@@ -2566,6 +2571,8 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** @enum {string} */
+        SessionOrigin: "cli" | "web" | "acp" | "sdk" | "unknown";
         /** SessionPatchRequest */
         SessionPatchRequest: {
             /** Archived */
@@ -3870,6 +3877,7 @@ export interface operations {
             query?: {
                 directory?: string | null;
                 search?: string | null;
+                origin?: components["schemas"]["SessionOrigin"] | null;
                 pinned?: boolean | null;
                 archived?: boolean | null;
                 limit?: number;
