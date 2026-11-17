@@ -48,8 +48,8 @@ root adds more variables. Shell values win over `.env` values.
 
 | Selection | Context window | Thinking efforts | Default effort |
 | --- | --- | --- | --- |
+| `codex:gpt-6.2-sol` | 400,000 | `low` `medium` `high` `xhigh` `max` | `medium` |
 | `codex:gpt-6.1-sol` | 400,000 | `low` `medium` `high` `xhigh` `max` | `medium` |
-| `codex:gpt-6-astra` | 400,000 | `low` `medium` `high` `xhigh` `max` | `medium` |
 | `codex:gpt-6.1-terra` | 400,000 | `none` `low` `medium` `high` `xhigh` `max` | `medium` |
 | `codex:gpt-6-luna` | 400,000 | `none` `low` `medium` `high` `xhigh` `max` | `medium` |
 | `opencode-go:deepseek-v4.1-flash` | 400,000 | `low` `high` `max` | `high` |

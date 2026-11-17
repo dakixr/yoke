@@ -15,14 +15,14 @@ from yoke.ai.sdk.providers import build_builtin_provider
 
 def test_codex_catalog_advertises_current_models() -> None:
     assert [model.id for model in list_provider_models(None)] == [
-        "gpt-6-astra",
+        "gpt-6.2-sol",
         "gpt-6.1-sol",
         "gpt-6.1-terra",
         "gpt-6-luna",
     ]
 
 
-@pytest.mark.parametrize("retired", ["gpt-5.6-sol", "gpt-6-sol"])
+@pytest.mark.parametrize("retired", ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-astra"])
 def test_codex_rejects_retired_selection(tmp_path: Path, retired: str) -> None:
     provider = build_builtin_provider(
         "codex:gpt-6.1-sol:medium",
@@ -38,7 +38,7 @@ def test_codex_rejects_retired_selection(tmp_path: Path, retired: str) -> None:
 
 
 MODELS = {
-    "gpt-6-astra": ("low", "medium", "high", "xhigh", "max"),
+    "gpt-6.2-sol": ("low", "medium", "high", "xhigh", "max"),
     "gpt-6.1-sol": ("low", "medium", "high", "xhigh", "max"),
     "gpt-6.1-terra": ("none", "low", "medium", "high", "xhigh", "max"),
     "gpt-6-luna": ("none", "low", "medium", "high", "xhigh", "max"),

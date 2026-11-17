@@ -30,8 +30,8 @@ DEFAULT_YOKE_ORIGINATOR = "yoke"
 CODEX_CLI_ORIGINATOR = "codex_cli_rs"
 MODEL_CATALOG = (
     ProviderModelInfo(
-        id="gpt-6-astra",
-        display_name="GPT-6 Astra",
+        id="gpt-6.2-sol",
+        display_name="GPT-6.2 Sol",
         context_window_tokens=400_000,
         thinking_levels=("low", "medium", "high", "xhigh", "max"),
         default_thinking_level="medium",
