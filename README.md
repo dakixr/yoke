@@ -54,7 +54,7 @@ Other entry points:
 | To | Run |
 | --- | --- |
 | See or manage the daemon | `yoke daemon status`, `yoke daemon restart`, `yoke daemon stop` |
-| Open the browser UI | Use the `http` address from `yoke daemon status` with the token in `~/.yoke/daemon.json` |
+| Open the web UI in your browser | `yoke serve --open` (a standalone server on `127.0.0.1:8765`), or the daemon's `http` address from `yoke daemon status` with the token in `~/.yoke/daemon.json` |
 | Use Yoke from an ACP client | `yoke acp` (see [ACP](src/yoke/docs/acp.md)) |
 | Serve only Yoke's tools to another agent | `yoke-mcp --root /path/to/project` (see [MCP server](src/yoke/docs/mcp-server.md)) |
 | Check or maintain the session database | `yoke db check`, `yoke db stats`, `yoke db compact` |
