@@ -77,7 +77,7 @@ The final assistant message goes to stdout. Progress and errors go to stderr.
 | 1 | The turn failed or stopped, or startup failed. |
 | 130 | You pressed `Ctrl+C`. Yoke asks the daemon to interrupt the turn. |
 
-When the prompt comes from stdin, Yoke reads only the first line.
+When the prompt comes from stdin, Yoke reads all of it, including blank lines.
 
 Headless runs are strict about models. An unknown model or an unsupported
 thinking effort is an error, and Yoke never substitutes another model. See

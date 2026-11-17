@@ -36,7 +36,14 @@ these variables:
 - `HOME`, `USERPROFILE`, `PATH`, `LANG`, `LC_*`, `TMPDIR`, `TEMP`, `TMP`,
   `XDG_RUNTIME_DIR`, `SYSTEMROOT` and `COMSPEC`.
 - `YOKE_DB_PATH`, `YOKE_SESSION_DIR`, `YOKE_HTTP_SESSION_DIR`,
-  `YOKE_DAEMON_PORT` and `YOKE_DAEMON_IDLE_GRACE`.
+  `YOKE_DAEMON_PORT` and `YOKE_DAEMON_IDLE_GRACE`. The spawner resolves the
+  three path variables against your current directory, because the daemon runs
+  in `~/.yoke`.
+- `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`,
+  `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE` and `YOKE_DISABLE_TLS`, in upper or
+  lower case. Provider connections read these from the daemon's own
+  environment, so a daemon started behind a proxy or a private CA keeps
+  working.
 - `YOKE_DAEMON_BUILD_ID` and `YOKE_DAEMON_PROTOCOL`, which tests use to
   simulate skew.
 
@@ -45,36 +52,53 @@ directories from `PATH`. Provider API keys, `YOKE_HTTP_TOKEN` and any other
 `YOKE_*` variable stay behind. Each client passes its own environment when it
 attaches, as described below.
 
+`GET /daemon` reports the database path the daemon uses. If your client asks
+for a different database, through `YOKE_DB_PATH` or `YOKE_SESSION_DIR`,
+discovery fails with an error that names both paths instead of attaching to the
+wrong database. Stop the running daemon or unset the variable.
+
 ## Version skew and restarts
 
 Every process computes a build ID when it starts and keeps it. For a release
 it is the version, such as `3.34.1`. For a git checkout it adds the commit and,
 when the tree has changes, a hash of the tracked diff and untracked file
 contents, for example `3.34.1+g8bc4e1d31613.dirty.5c1e0a9b2d4f7e31`. Two
-different sets of edits produce different IDs. The protocol version is `1`
-and changes only when an older client can no longer drive the daemon.
+different sets of edits produce different IDs. The hash is only computed when
+the git checkout actually contains this Yoke package, so Yoke installed in
+another project's virtualenv reports its plain version. The protocol version is
+`2`. It changes whenever a client and daemon on either side of the change would
+disagree about the wire format or required fields.
 
-During discovery the client also computes the build that a newly started daemon
-would load from disk right now. Then it decides:
+During discovery the client also reads the version that a newly started daemon
+would load from disk right now, cached for two seconds. Then it decides:
 
 | Situation | Action |
 | --- | --- |
 | Same build and protocol | Attach. |
-| Daemon idle, and its build differs from the build on disk | Restart the daemon once, then attach to the replacement. |
+| Daemon idle, and the version on disk is a newer release than the daemon's | Restart the daemon once, then attach to the replacement. |
 | Otherwise, same protocol | Attach and show one warning. |
 | Otherwise, different protocol | Refuse to attach. |
+
+Only a strictly newer release version triggers a restart. Two checkouts at the
+same version with different commits or edits never restart each other's daemon;
+they attach with a warning. After editing Yoke without bumping its version, run
+`yoke daemon restart` to load your changes.
 
 The client restarts with `POST /daemon/restart`, waits for the old pid to exit,
 and starts a new daemon if no other client has. Each discovery restarts at most
 once. If a turn was admitted between the status read and the restart, the
 daemon refuses with `409 daemon_busy` and the client falls back to the warn or
-refuse rule. The comparison is with the build on disk, so an old client does
-not restart a daemon that already runs the current code.
+refuse rule.
 
 Skew handling never interrupts another client's turn, and a client that
 attaches with a warning does not schedule a restart. Run
 `yoke daemon restart --when-idle` to restart once work drains. Open leases do
 not block a restart, and paused inputs do not count as work.
+
+On Windows, a client checks that the daemon recorded in `daemon.json` is alive
+and makes it prove its identity, bound to a fresh nonce and the recorded port,
+before sending the bearer token. A stale record therefore never leaks the
+token to another program on that port.
 
 ## Hold a lease
 

@@ -203,10 +203,11 @@ fork is retired, and the runtime state still matches the saved branch.
 
 `Database(path, *, migrate=False, synchronous="NORMAL")` and
 `open_database(path, *, migrate=False)` in `storage/database.py` attach to an
-existing database at the exact schema version. Only the daemon's store and the
-`yoke db` commands pass `migrate=True`. Queue, admission, event and SDK usage
-helpers only attach, and the SDK handoff reader uses
-`SessionStore(migrate=False)`. `synchronous="OFF"` is for disposable databases.
+existing database at the exact schema version. `SessionStore` also defaults to
+`migrate=False`. Only the daemon's startup store and `yoke db migrate` pass
+`migrate=True`, and `yoke db migrate` holds the daemon lifetime lock while it
+runs, so it refuses while a daemon is alive. Queue, admission, event and SDK
+usage helpers, the CLI and the read-only `yoke db` commands only attach. `synchronous="OFF"` is for disposable databases.
 The non-storage test fixture uses it for its schema copies.
 
 A schema upgrade holds `BEGIN IMMEDIATE` while a second connection copies the

@@ -48,6 +48,7 @@ yoke resume 20261117-143022-a1b2c3 -p "summarize what changed"
 Without an ID, `yoke resume` prints a numbered list of up to 50 sessions whose
 workspace is the current directory, or the directory given by `--root`, and asks
 for a number. `--root` only filters this list. It never moves a session.
+`yoke resume --all` lists the latest sessions from every workspace instead.
 
 A resumed session runs in its saved workspace, whatever your current directory
 is. Yoke prints the saved history, then waits for your next prompt.
@@ -200,6 +201,7 @@ find their workspace and model before continuing them.
 ```bash
 yoke db info                       # path, schema version, sizes and row counts
 yoke db check                      # read-only integrity check
+yoke db migrate                    # create or upgrade the schema, with the daemon stopped
 yoke db stats                      # table sizes and entry field sizes
 yoke db compact                    # finish image compaction, collect garbage, VACUUM
 yoke db backup ~/yoke-backup.db    # consistent copy with VACUUM INTO
@@ -207,20 +209,29 @@ yoke db backup ~/yoke-backup.db    # consistent copy with VACUUM INTO
 
 | Command | Notes |
 | --- | --- |
-| `yoke db info` | Creates or upgrades the database if needed. |
+| `yoke db info` | Reads only. Reports an older schema and tells you to upgrade instead of changing it. |
+| `yoke db migrate` | Creates the database or upgrades its schema. Refuses while a daemon is running, and holds the daemon's lock until it finishes. |
 | `yoke db check` | Opens the database read only. Runs SQLite `quick_check` and foreign key checks, decodes a sample of 32 stored blobs and looks for orphan references. Exits 1 on any problem or on a schema version this release cannot read. Never creates or upgrades a database. |
-| `yoke db stats` | Shows table and index pages, plus logical entry bytes split into images, usage and other JSON. Logical totals count shared entries once per reference. |
-| `yoke db compact` | Shrinks old inline images in quiet sessions, deletes unreferenced blobs and runs `VACUUM`. Skips sessions that are active or were used in the last 10 minutes. Prints sizes before and after. |
+| `yoke db stats` | Reads only. Shows table and index pages, plus logical entry bytes split into images, usage and other JSON. Logical totals count shared entries once per reference. Damaged entries are counted as unreadable and skipped. |
+| `yoke db compact` | Shrinks old inline images in quiet sessions, deletes unreferenced blobs and runs `VACUUM`. Skips sessions that are active or were used in the last 10 minutes. Prints sizes before and after. Needs a database at the current schema. |
 | `yoke db backup PATH` | Fails if `PATH` exists. |
 
 The daemon does the same work in the background. It periodically deletes
 expired sessions and unreferenced blobs, and compacts old images in small
-batches while sessions are idle.
+batches while sessions are idle. Each background pass has a short time budget,
+so a session with many large images may need `yoke db compact` to finish.
+
+Compaction records an entry it cannot decode, for example a corrupt or missing
+image blob, once and then skips it. The damaged data stays in place for
+diagnosis. Reading that entry later fails with an error that names the
+session, the entry and the image.
 
 ### Upgrades and backups
 
-The daemon and the `yoke db` commands other than `check` upgrade an older schema
-when they open the database. Before an upgrade, Yoke writes a consistent copy
+Only two things upgrade the schema: the daemon when it starts, and
+`yoke db migrate` while no daemon runs. The CLI and the read-only `yoke db`
+commands never change it, so a newer checkout cannot upgrade the database under
+an older running daemon. Before an upgrade, Yoke writes a consistent copy
 to `yoke.db.pre-v<N>` next to the database, where `N` is the new schema version.
 It keeps only the latest such backup. If the backup fails, the upgrade does not
 start. The SDK and `yoke session-handoff` never upgrade the database.
