@@ -90,3 +90,12 @@ def test_unknown_paths_are_not_echoed(path: str) -> None:
     )
     assert "private" not in str(error)
     assert "after 1.2s" in str(error)
+
+
+def test_pooled_connections_expire_before_the_server_closes_them() -> None:
+    # A pooled connection kept past the server's keep-alive timeout fails on
+    # reuse, so the client must always drop idle connections first.
+    from yoke.acp.native import NATIVE_KEEPALIVE_EXPIRY_SECONDS
+    from yoke.http.server import KEEPALIVE_TIMEOUT_SECONDS
+
+    assert NATIVE_KEEPALIVE_EXPIRY_SECONDS < KEEPALIVE_TIMEOUT_SECONDS
