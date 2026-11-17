@@ -10,7 +10,7 @@ from threading import Lock, Thread
 from yoke.agent.models import Message
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.commands import find_command, handle_slash_command
-from yoke.cli.interactive.common import PendingPrompt, PromptCliState
+from yoke.cli.interactive.common import PendingPrompt, PromptCliState, session_busy
 from yoke.cli.interactive.completion.layout import (
     configure_prompt_session_completion_menu,
 )
@@ -92,7 +92,7 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     item = find_command(prompt)
     if item is not None and item.changes_session:
         with state_lock:
-            active_work = state.worker is not None or state.turn_handoff_active
+            active_work = session_busy(state)
         if active_work:
             print_scrollback_notice(
                 scrollback_console,
@@ -101,7 +101,9 @@ def process_prompt_toolkit_prompt(  # noqa: C901
             return active_session
     if action == "queue" and is_skill_command(prompt):
         with state_lock:
-            must_wait = state.worker is not None or bool(state.pending_prompts)
+            must_wait = session_busy(state) or bool(
+                state.view.queue if state.view else state.pending_prompts
+            )
         if must_wait:
             submit_prompt_toolkit_prompt(
                 prompt,
@@ -118,6 +120,9 @@ def process_prompt_toolkit_prompt(  # noqa: C901
         request_exit()
         return active_session
     if prompt.strip().lower() == "/queue":
+        # Edit metadata is fetched without blocking toolbar rendering.
+        with state.queue_lock:
+            queue_reload(state, active_session)
         with state_lock:
             manager_prompts = [
                 pending.copy_for_queue() for pending in state.pending_prompts
@@ -154,7 +159,7 @@ def process_prompt_toolkit_prompt(  # noqa: C901
             invalidate_prompt()
             if manager_save_conflicted:
                 return updated_session
-            with state_lock:
+            with state.queue_lock:
                 queue_reload(state, updated_session)
             return updated_session
 
@@ -163,7 +168,7 @@ def process_prompt_toolkit_prompt(  # noqa: C901
     def try_start_compaction() -> bool:
         nonlocal command_deferred
         with state_lock:
-            idle = state.worker is None and not state.pending_prompts
+            idle = not session_busy(state)
         if idle and start_compaction is not None:
             command_deferred = True
             start_compaction()

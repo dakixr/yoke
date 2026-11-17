@@ -85,7 +85,13 @@ class DaemonSubmittedTurn:
                 yield event
         finally:
             self._unsubscribe()
+            self.connection.view_store.forget_local(self.input_id)
             self._done.set()
+
+    def close(self) -> None:
+        """Detach this renderer without cancelling its durable daemon input."""
+        self._unsubscribe()
+        self.connection.view_store.forget_local(self.input_id)
 
     def result(self) -> TurnSuccess | TurnFailure | TurnStopped:
         self._done.wait()

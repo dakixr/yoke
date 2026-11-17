@@ -91,6 +91,10 @@ def _append_pending_lines(fragments, pending_prompts, pending_images) -> None:
         if isinstance(prompt, PendingPrompt):
             prompt_text = prompt.prompt
             prompt_label = "steering" if prompt.kind == "steering" else "queued"
+            if prompt.paused:
+                prompt_label = (
+                    f"paused ({prompt.pause_cause})" if prompt.pause_cause else "paused"
+                )
         else:
             prompt_text = prompt
             prompt_label = "queued"

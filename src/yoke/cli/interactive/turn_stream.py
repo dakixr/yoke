@@ -14,6 +14,8 @@ def render_turn_events(events: Iterable[BackendEvent], renderer: EventRenderer) 
     with ExitStack() as lifetime:
         entered = False
         for event in events:
+            if event["type"] in {"session.input.changed", "session.active.changed"}:
+                continue
             if not entered:
                 lifetime.enter_context(renderer)
                 entered = True

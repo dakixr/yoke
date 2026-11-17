@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import partial
 from io import StringIO
 from threading import Event, Lock, Thread
+from typing import Literal
 
 from yoke.agent.models import Message
 from yoke.cli.interactive.command_host import CommandCallbacks
@@ -21,6 +22,7 @@ from yoke.cli.interactive.common import (
     TurnStopped,
     TurnSuccess,
     session_resume_notice,
+    session_busy,
 )
 from yoke.cli.interactive.prompt.cancellation import (
     retire_active_turn,
@@ -51,6 +53,7 @@ class PromptToolkitControl:
 
     start_turn: Callable[[str, Message | None], Thread]
     start_pending_prompt: Callable[[PendingPrompt | None, bool], None]
+    resume_queue: Callable[[], None]
     start_compaction: Callable[[], Thread]
     request_exit: Callable[[], None]
     stop_active_turn: Callable[[], bool]
@@ -98,6 +101,7 @@ def create_prompt_toolkit_control(  # noqa: C901
         user_message: Message | None = None,
         *,
         continuation: bool = False,
+        delivery: Literal["queue", "steer"] = "queue",
     ) -> Thread:
         stop_event = Event()
         active_user_message = user_message or Message.user(prompt)
@@ -114,6 +118,16 @@ def create_prompt_toolkit_control(  # noqa: C901
                     state.turn_output_tokens = None
                     state.turn_reasoning_tokens = None
 
+        def submitted(input_id: str) -> None:
+            with state_lock:
+                state.rendering_inputs[turn_id] = input_id
+
+        def finished(input_id: str) -> None:
+            with state_lock:
+                state.rendering_inputs.pop(turn_id, None)
+                state.fenced_inputs.discard(input_id)
+                state.abandoned_turn_ids.discard(turn_id)
+
         def run_turn() -> None:
             run_prompt_turn(
                 turn_id=turn_id,
@@ -122,6 +136,9 @@ def create_prompt_toolkit_control(  # noqa: C901
                 user_message=active_user_message,
                 handle_outcome=handle_outcome,
                 turn_renderer_factory=turn_renderer_factory,
+                delivery=delivery,
+                on_submitted=submitted,
+                on_finished=finished,
             )
 
         thread = Thread(target=run_turn, daemon=True)
@@ -198,6 +215,9 @@ def create_prompt_toolkit_control(  # noqa: C901
             is None
         ):
             return
+        with state_lock:
+            if turn_id != state.active_turn_id:
+                return
         pending, should_finish = finish_prompt_turn(
             state=state,
             state_lock=state_lock,
@@ -209,20 +229,42 @@ def create_prompt_toolkit_control(  # noqa: C901
     def stop_active_turn() -> bool:
         with state_lock:
             stop_event = state.active_stop_request
-            current_worker = state.worker
-            if current_worker is None or stop_event is None or stop_event.is_set():
+            if not session_busy(state) and not (state.view and state.view.running):
+                return False
+            view = state.view
+            input_id = (
+                (view.running.id if view.running else view.runtime.input_id)
+                if view
+                else None
+            )
+            if view is not None and input_id is None:
                 return False
             turn_start = state.turn_start_time
             turn_tools = state.turn_tool_count
             turn_in_tok = state.turn_input_tokens
             turn_out_tok = state.turn_output_tokens
-            retire_active_turn(
-                state=state,
-                active_session=active_session_ref.value,
-                stop_event=stop_event,
-                status_message="",
-                retire_tool_traces=retire_traces,
-            )
+            if stop_event is not None and (
+                view is None
+                or state.rendering_inputs.get(state.active_turn_id) == input_id
+            ):
+                if input_id is not None:
+                    state.fenced_inputs.add(input_id)
+                retire_active_turn(
+                    state=state,
+                    active_session=active_session_ref.value,
+                    stop_event=stop_event,
+                    status_message="",
+                    retire_tool_traces=retire_traces,
+                )
+        # Key handlers must return immediately even on a slow daemon.
+        if view is None:
+            agent.interrupt()
+        else:
+            Thread(
+                target=lambda: agent.stop_input(input_id),
+                daemon=True,
+                name="yoke-cli-stop",
+            ).start()
 
         scrollback.emit(
             "notice",
@@ -241,28 +283,38 @@ def create_prompt_toolkit_control(  # noqa: C901
 
     def steer_active_turn(prompt: str, user_message: Message | None = None) -> bool:
         with state_lock:
-            stop_event = state.active_stop_request
-            current_worker = state.worker
-            if current_worker is None or stop_event is None or stop_event.is_set():
+            if not session_busy(state):
                 return False
-            retire_active_turn(
-                state=state,
-                active_session=active_session_ref.value,
-                stop_event=stop_event,
-                status_message="Steering",
-                retire_tool_traces=retire_traces,
+            view = state.view
+            input_id = (
+                (view.running.id if view.running else view.runtime.input_id)
+                if view
+                else None
             )
-        start_turn(
-            prompt,
-            user_message,
-            continuation=True,
-        )
+            stop_event = state.active_stop_request
+            if stop_event is not None and (
+                view is None
+                or state.rendering_inputs.get(state.active_turn_id) == input_id
+            ):
+                if input_id is not None:
+                    state.fenced_inputs.add(input_id)
+                retire_active_turn(
+                    state=state,
+                    active_session=active_session_ref.value,
+                    stop_event=stop_event,
+                    status_message="Steering",
+                    retire_tool_traces=retire_traces,
+                )
+        start_turn(prompt, user_message, continuation=True, delivery="steer")
         scrollback.emit("notice", "Model steered.")
         invalidate_prompt()
         return True
 
     return PromptToolkitControl(
         start_turn=start_turn,
+        resume_queue=lambda: Thread(
+            target=agent.resume_queue, daemon=True, name="yoke-cli-resume"
+        ).start(),
         start_pending_prompt=start_pending_prompt,
         start_compaction=partial(
             start_prompt_compaction,

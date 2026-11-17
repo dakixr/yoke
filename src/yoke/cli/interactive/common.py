@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 from typing import Protocol
 
 from yoke.agent.models import ConversationEntry, Message
+from yoke.cli.backend.session_view import SessionView
 from yoke.cli.image_input import ImageAttachment
 from yoke.cli.backend.models import (
     PendingPrompt as PendingPrompt,
@@ -44,10 +45,13 @@ class BasicCliState:
 
     messages: list[Message]
     pending_prompts: list[PendingPrompt]
+    view: SessionView | None = None
     pending_images: list[ImageAttachment] = field(default_factory=list)
     worker: Thread | None = None
     active_stop_request: Event | None = None
     shutdown_requested: bool = False
+    rendering: dict[str, Callable[[], None]] = field(default_factory=dict, repr=False)
+    pending_results: int = 0
     wakeup: Event = field(default_factory=Event, repr=False)
     input_closed: bool = False
     exit_notice_emitted: bool = False
@@ -59,14 +63,20 @@ class PromptCliState:
 
     messages: list[Message]
     pending_prompts: list[PendingPrompt]
+    view: SessionView | None = None
     pending_images: list[ImageAttachment] = field(default_factory=list)
+    queue_lock: RLock = field(default_factory=RLock, repr=False)
     queue_revision: int = 0
     queue_session_id: str | None = None
     worker: Thread | None = None
     turn_handoff_active: bool = False
     active_stop_request: Event | None = None
     active_user_message: Message | None = None
+    # Rendering identities remain compatible with existing render integrations.
+    # Daemon input IDs own modern display fences; neither determines busy.
     active_turn_id: int = 0
+    rendering_inputs: dict[int, str] = field(default_factory=dict)
+    fenced_inputs: set[str] = field(default_factory=set)
     abandoned_turn_ids: set[int] = field(default_factory=set)
     steered_turn_ids: set[int] = field(default_factory=set)
     shutdown_requested: bool = False
@@ -87,6 +97,11 @@ class PromptCliState:
     spinner_index: int = 0
     thinking_effort: str | None = None
     next_editor_text: str | None = None
+
+
+def session_busy(state: PromptCliState | BasicCliState) -> bool:
+    """Read daemon activity; legacy callers without a view retain local rendering."""
+    return state.view.busy if state.view is not None else state.worker is not None
 
 
 def format_pending_summary(

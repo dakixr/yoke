@@ -195,3 +195,24 @@ def test_enter_inserts_skill_mention_without_submitting(monkeypatch) -> None:
     key_bindings.handlers[("enter",)](event)
 
     assert buffer.text == "Use $review "
+
+
+def test_resume_binding_is_registered_and_described():
+    from yoke.cli.interactive.prompt.keys import BINDINGS, shortcut_notice
+
+    bindings = _KeyBindings()
+    resumed = []
+    register_prompt_toolkit_key_bindings(
+        bindings,
+        state=PromptCliState(messages=[], pending_prompts=[]),
+        stop_active_turn=lambda: False,
+        remove_last_image=lambda: None,
+        cycle_thinking_effort=lambda: None,
+        update_status=lambda _: None,
+        request_clipboard_paste=lambda *_: None,
+        resume_queue=lambda: resumed.append(True),
+    )
+    assert BINDINGS["resume"].sequences == (("c-r",),)
+    bindings.handlers[("c-r",)](_Event())
+    assert resumed == [True]
+    assert BINDINGS["resume"].help in shortcut_notice()

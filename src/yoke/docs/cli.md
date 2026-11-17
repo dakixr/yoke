@@ -174,15 +174,25 @@ While a turn runs, you can keep typing.
 
 | Action | Key |
 | --- | --- |
-| Stop the turn and send this prompt instead | `Enter` |
+| Steer the current turn with this prompt | `Enter` |
 | Queue the prompt to run after the current turn | `Tab` |
 | Stop the turn | `Esc` `Esc` |
+| Resume a held queue | `Ctrl+R` |
 | Open the queue manager | `Ctrl+X` then `Q`, or `/queue` |
 
 Stopping or steering keeps everything up to the last completed tool result.
 Yoke records your prompt and an interruption marker, and the next turn starts
 from there. Yoke marks tool calls that were still running as cancelled. Command
 timeouts kill the whole process tree.
+
+The toolbar follows the daemon's session state, including turns started from
+the queue or another terminal. The spinner and stop key follow whichever input
+is actually active. Steering runs before earlier ordinary queued prompts.
+
+After Stop, the queue stays held. The toolbar shows the reason and `Ctrl+R`
+resumes eligible work. A new prompt also resumes the queue. Paused inputs stay
+paused until you change them in the queue manager. Queue edits alone do not
+resume a held queue.
 
 The queue manager lets you edit, delete, reorder, pause and promote queued
 prompts, and mark a prompt as a steering prompt. Steering prompts run before
@@ -415,7 +425,8 @@ Full-screen mode:
 | --- | --- |
 | `Enter` | Send. During a turn, stop it and send this prompt. |
 | `Tab` | Queue behind the current turn. Inserts the selected completion when one is open. |
-| `Esc` `Esc` | Stop the current turn. |
+| `Esc` `Esc` | Stop the current turn, including a turn started from the queue. |
+| `Ctrl+R` | Resume a held queue. |
 | `Shift+Tab` | Cycle thinking effort. |
 | `Ctrl+J`, or `Shift+Enter` where the terminal supports it, otherwise `Esc` then `Enter` | Insert a newline. |
 | `Ctrl+V`, `Alt+V` | Paste text or attach a clipboard image. |

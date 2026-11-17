@@ -8,7 +8,7 @@ from typing import cast
 
 from yoke.agent.models import Message
 from yoke.cli.image_input import format_attachment_lines
-from yoke.cli.interactive.common import PromptCliState
+from yoke.cli.interactive.common import PendingPrompt, PromptCliState, session_busy
 from yoke.cli.interactive.renderer import format_bottom_toolbar
 from yoke.cli.interactive.seeding import seed_session
 from yoke.cli.render import print_version_banner
@@ -51,10 +51,31 @@ def build_prompt_toolbar(
             stop_pending = bool(
                 state.active_stop_request and state.active_stop_request.is_set()
             )
-            current_worker = state.worker
-            queued_prompts = list(state.pending_prompts)
+            active = session_busy(state)
+            view = state.view
+            queued_prompts = (
+                [
+                    PendingPrompt(
+                        item.prompt,
+                        id=item.id,
+                        paused=item.phase == "paused",
+                        pause_cause=item.pause_cause,
+                        kind="steering" if item.delivery == "steer" else "queued",
+                    )
+                    for item in view.queue
+                ]
+                if view is not None
+                else list(state.pending_prompts)
+            )
             pending_images = list(state.pending_images)
             current_status = state.status_message
+            if view is not None:
+                stop_pending = view.runtime.state == "stopping"
+                current_status = (
+                    f"Queue held: {view.held} · Ctrl+R to resume"
+                    if view.held
+                    else view.runtime.activity or ""
+                )
             current_context_usage = state.context_usage_text
             current_usage_percent = state.context_usage_percent
             current_input_tokens = state.context_input_tokens
@@ -66,7 +87,7 @@ def build_prompt_toolbar(
             turn_reason_tok = state.turn_reasoning_tokens
             turn_num = state.active_turn_id
         frame = None
-        if current_worker is not None and not stop_pending:
+        if active and not stop_pending:
             frame = spinner_frames[state.spinner_index % len(spinner_frames)]
             state.spinner_index += 1
         current_provider_model_text: str | None
@@ -82,12 +103,21 @@ def build_prompt_toolbar(
         else:
             current_session_title_text = session_title_text
         elapsed = None
-        if turn_start is not None and current_worker is not None and not stop_pending:
+        if turn_start is not None and active and not stop_pending:
             import time
 
             elapsed = time.monotonic() - turn_start
+        if view is not None and view.runtime.started_at and active:
+            from datetime import UTC, datetime
+
+            elapsed = max(
+                0.0,
+                (
+                    datetime.now(UTC) - datetime.fromisoformat(view.runtime.started_at)
+                ).total_seconds(),
+            )
         return format_bottom_toolbar(
-            worker_active=current_worker is not None,
+            worker_active=active,
             stop_pending=stop_pending,
             status_message=current_status,
             pending_prompts=list(queued_prompts),

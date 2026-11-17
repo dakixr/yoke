@@ -36,9 +36,8 @@ class DaemonPromptQueue:
     New admissions stay dormant until the final patch has installed pause and
     delivery settings. Only the daemon promotes inputs, including CLI inputs.
 
-    A prompt this terminal submitted as a turn sits in the daemon queue until the
-    daemon promotes it. It is already running from the user's point of view, so
-    snapshots leave it out, and edits keep it ahead of the visible items.
+    Lifecycle-capable daemons determine placement from input phases. Only the
+    protocol-2 fallback hides locally started inputs while they await promotion.
     """
 
     def __init__(
@@ -57,7 +56,11 @@ class DaemonPromptQueue:
         data = QueueResponse.model_validate(
             self.connection.session_request("GET", "/queue")
         ).data
-        started = [item.id for item in data.items if self._started(item.id)]
+        started = [
+            item.id
+            for item in data.items
+            if not self.connection.view_store.input_lifecycle and self._started(item.id)
+        ]
         prompts = [
             PendingPrompt(
                 prompt=item.prompt.text,
@@ -65,6 +68,7 @@ class DaemonPromptQueue:
                 id=item.id,
                 created_at=item.created_at,
                 paused=item.paused,
+                pause_cause=item.pause_cause,
                 attachments=[
                     {
                         key: value
@@ -91,6 +95,7 @@ class DaemonPromptQueue:
         pending_images: list[ImageAttachment],
         *,
         expected_revision: int | None,
+        resume: bool = False,
     ) -> int:
         loaded, started = self._load()
         expected = loaded.revision if expected_revision is None else expected_revision
@@ -118,7 +123,7 @@ class DaemonPromptQueue:
             and (left.user_message is None or not left.user_message.has_image_inputs())
             for left, right in zip(prompts, loaded.prompts, strict=True)
         )
-        if same_prompts and pending_images == loaded.pending_images:
+        if same_prompts and pending_images == loaded.pending_images and not resume:
             return expected
         admissions: list[PromptAdmissionRequest] = []
         existing = {item.id: item for item in loaded.prompts}
@@ -195,7 +200,7 @@ class DaemonPromptQueue:
                             pending_images=[
                                 str(image.path) for image in pending_images
                             ],
-                            resume=False,
+                            resume=resume,
                         ).model_dump(by_alias=True),
                     )
                 ).data
@@ -247,9 +252,13 @@ def commit_prompt_queue(
     pending_images: list[ImageAttachment] | None = None,
     *,
     expected_revision: int | None = None,
+    resume: bool = False,
 ) -> int:
     return active_session.backend.commit_queue(
-        prompts, pending_images or [], expected_revision=expected_revision
+        prompts,
+        pending_images or [],
+        expected_revision=expected_revision,
+        resume=resume,
     )
 
 

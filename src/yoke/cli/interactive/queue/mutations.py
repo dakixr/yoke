@@ -6,7 +6,7 @@ from __future__ import annotations
 from threading import Lock
 
 from yoke.cli.image_input import ImageAttachment
-from yoke.cli.interactive.common import PendingPrompt, PromptCliState
+from yoke.cli.interactive.common import PendingPrompt, PromptCliState, session_busy
 from yoke.cli.interactive.queue.images import (
     attach_pending_image as attach_pending_image,
 )
@@ -45,7 +45,7 @@ def replace_prompt_queue(
     expected_revision: int,
 ) -> bool:
     """Save a manager replacement, rejecting any concurrent queue change."""
-    with state_lock:
+    with state.queue_lock:
         queue_ensure_session(state, active_session)
         if state.queue_revision != expected_revision:
             queue_reload(state, active_session)
@@ -75,7 +75,7 @@ def queue_prompt_submission(
     consumed_images: list[ImageAttachment],
 ) -> bool:
     """Commit one submitted prompt and its consumed images together."""
-    with state_lock:
+    with state.queue_lock:
         queue_ensure_session(state, active_session)
         consumed_paths = [image.path for image in consumed_images]
         while True:
@@ -94,6 +94,7 @@ def queue_prompt_submission(
                             state.pending_prompts,
                             images,
                             expected_revision=state.queue_revision,
+                            resume=state.view is not None,
                         )
                     except PromptQueueRevisionConflict:
                         queue_reload(state, active_session)
@@ -115,6 +116,7 @@ def queue_prompt_submission(
                     replacement,
                     images,
                     expected_revision=state.queue_revision,
+                    resume=state.view is not None,
                 )
             except PromptQueueRevisionConflict:
                 queue_reload(state, active_session)
@@ -132,10 +134,12 @@ def observe_prompt_submission(
     active_session: DaemonActiveSession,
 ) -> tuple[list[ImageAttachment], bool]:
     """Return stable images and idleness after observing the current revision."""
-    with state_lock:
+    with state.queue_lock:
         queue_ensure_session(state, active_session)
         queue_refresh_if_changed(state, active_session)
-        idle = state.worker is None and not state.pending_prompts
+        idle = not session_busy(state) and (
+            state.view is not None or not state.pending_prompts
+        )
         return list(state.pending_images), idle
 
 
@@ -148,7 +152,7 @@ def dequeue_prompt(
 ) -> PendingPrompt | None:
     """Remove and return the next eligible item from authoritative state."""
     # Promotion belongs to the daemon. Refresh without removing an admission.
-    with state_lock:
+    with state.queue_lock:
         queue_reload(state, active_session)
     return None
 

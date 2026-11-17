@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from queue import Empty, Queue
+from copy import copy
 from threading import Event, Thread
 
 from yoke.cli.backend.daemon import DaemonSessionBackend
@@ -16,11 +17,11 @@ from yoke.cli.interactive.common import (
     BasicCliState,
     InputFunc,
     InputInterrupted,
-    PendingPrompt,
     TurnFailure,
     TurnStopped,
     TurnSuccess,
     session_resume_notice,
+    session_busy,
 )
 from yoke.cli.interactive.events import WakeQueue, start_basic_input_reader
 from yoke.cli.interactive.seeding import seed_session
@@ -49,7 +50,9 @@ def run_basic_interactive_cli(
     replay_notice: str | None = None,
 ) -> int:
     """Run the fallback interactive CLI without prompt-toolkit."""
-    state = BasicCliState(messages=list(session_messages), pending_prompts=[])
+    state = BasicCliState(
+        messages=list(session_messages), pending_prompts=[], view=agent.view_store.view
+    )
     stdout_console = build_console(stdout)
     renderer = InteractiveRenderer(stdout)
     input_queue: Queue[str | None | InputInterrupted] = WakeQueue(state.wakeup)
@@ -59,6 +62,12 @@ def run_basic_interactive_cli(
     start_basic_input_reader(input_func, input_queue)
     if stdout_console.is_terminal:
         renderer.print_intro()
+
+    def update_view(view) -> None:
+        state.view = view
+        state.wakeup.set()
+
+    unsubscribe_view = agent.view_store.subscribe(update_view)
     with SessionObserver(
         agent,
         renderer=renderer,
@@ -111,11 +120,12 @@ def run_basic_interactive_cli(
                 pass
             if (
                 state.shutdown_requested
-                and state.worker is None
-                and not state.pending_prompts
+                and not session_busy(state)
+                and state.pending_results == 0
             ):
                 if state.input_closed:
                     stdout_console.print()
+                unsubscribe_view()
                 return 0
             if input_queue.empty() and result_queue.empty():
                 state.wakeup.wait()
@@ -127,7 +137,11 @@ def _request_basic_exit(
     state.shutdown_requested = True
     if state.active_stop_request is not None:
         state.active_stop_request.set()
-        active_session.backend.interrupt()
+        active_session.backend.stop_running()
+    if state.active_stop_request is None and session_busy(state):
+        active_session.backend.stop_running()
+    for detach in tuple(state.rendering.values()):
+        detach()
     worker = state.worker
     if worker is not None:
 
@@ -161,11 +175,18 @@ def _start_basic_turn(
     stop_event = Event()
     state.active_stop_request = stop_event
     backend = agent
+    # Admit on the input owner so rapid lines retain FIFO order. The worker
+    # owns rendering only; daemon execution remains asynchronous.
+    submitted = backend.submit(prompt, user_message=user_message)
+    state.pending_results += 1
+    state.rendering[submitted.input_id] = submitted.close
 
     def run_turn() -> None:
-        submitted = backend.submit(prompt, user_message=user_message)
-        render_turn_events(submitted, renderer)
-        result_queue.put(submitted.result())
+        render_turn_events(submitted, copy(renderer))
+        state.rendering.pop(submitted.input_id, None)
+        result_queue.put(
+            TurnStopped() if state.shutdown_requested else submitted.result()
+        )
 
     thread = Thread(target=run_turn, daemon=True)
     thread.start()
@@ -216,35 +237,23 @@ def _drain_basic_input_queue(
             if not submitted_prompts:
                 continue
             prompt = submitted_prompts[0]
-        if state.worker is None and not state.pending_prompts:
-            print_user_prompt(console, prompt)
-            pending_images = [image.path for image in state.pending_images]
-            state.pending_images.clear()
-            state.worker = _start_basic_turn(
-                prompt,
-                state=state,
-                active_session=active_session,
-                agent=agent,
-                stderr=stderr,
-                renderer=renderer,
-                result_queue=result_queue,
-                user_message=build_user_message(
-                    prompt,
-                    image_paths=pending_images,
-                ),
-            )
-            return active_session
+        print_user_prompt(console, prompt)
         pending_images = [image.path for image in state.pending_images]
         state.pending_images.clear()
-        state.pending_prompts.append(
-            PendingPrompt(
+        state.worker = _start_basic_turn(
+            prompt,
+            state=state,
+            active_session=active_session,
+            agent=agent,
+            stderr=stderr,
+            renderer=renderer,
+            result_queue=result_queue,
+            user_message=build_user_message(
                 prompt,
-                user_message=build_user_message(
-                    prompt,
-                    image_paths=pending_images,
-                ),
-            )
+                image_paths=pending_images,
+            ),
         )
+        return active_session
 
 
 def _handle_basic_outcome(
@@ -258,8 +267,15 @@ def _handle_basic_outcome(
     renderer: InteractiveRenderer,
     result_queue: Queue[TurnSuccess | TurnFailure | TurnStopped],
 ) -> None:
+    state.pending_results -= 1
     state.worker = None
     state.active_stop_request = None
+    if (
+        state.shutdown_requested
+        and isinstance(outcome, TurnStopped)
+        and outcome.result is None
+    ):
+        return
     if isinstance(outcome, TurnFailure):
         if outcome.messages is not None:
             state.messages = outcome.messages
@@ -278,21 +294,6 @@ def _handle_basic_outcome(
         state.messages = outcome.result.messages
         print_agent_output(console, outcome.result.output)
         print("\a", end="", flush=True)
-    if not state.pending_prompts:
-        return
-    pending = state.pending_prompts.pop(0)
-    next_prompt = pending.prompt
-    print_user_prompt(console, next_prompt)
-    state.worker = _start_basic_turn(
-        next_prompt,
-        state=state,
-        active_session=active_session,
-        agent=agent,
-        stderr=stderr,
-        renderer=renderer,
-        result_queue=result_queue,
-        user_message=pending.user_message,
-    )
 
 
 def _seed_basic_session_if_needed(

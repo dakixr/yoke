@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from threading import Lock
+from typing import Literal
 
 from yoke.cli.backend.daemon import DaemonSessionBackend
 from yoke.cli.interactive.turn_stream import render_turn_events
@@ -36,11 +37,18 @@ def run_prompt_turn(
     user_message: Message | None,
     handle_outcome: Callable[[int, TurnSuccess | TurnFailure | TurnStopped], None],
     turn_renderer_factory: Callable[[int], EventRenderer],
+    delivery: Literal["queue", "steer"] = "queue",
+    on_submitted: Callable[[str], None] = lambda _: None,
+    on_finished: Callable[[str], None] = lambda _: None,
 ) -> None:
     """Execute one prompt-toolkit turn in a worker thread."""
-    submitted = agent.submit(prompt, user_message=user_message)
-    render_turn_events(submitted, turn_renderer_factory(turn_id))
-    handle_outcome(turn_id, submitted.result())
+    submitted = agent.submit(prompt, user_message=user_message, delivery=delivery)
+    on_submitted(submitted.input_id)
+    try:
+        render_turn_events(submitted, turn_renderer_factory(turn_id))
+        handle_outcome(turn_id, submitted.result())
+    finally:
+        on_finished(submitted.input_id)
 
 
 def handle_prompt_turn_outcome(
@@ -60,7 +68,13 @@ def handle_prompt_turn_outcome(
             state.abandoned_turn_ids,
             state.steered_turn_ids,
         )
-        if turn_id != state.active_turn_id or turn_id in abandoned_turn_ids:
+        input_id = state.rendering_inputs.get(turn_id)
+        fenced = (
+            input_id in state.fenced_inputs
+            if input_id
+            else turn_id in abandoned_turn_ids
+        )
+        if fenced or (state.view is None and turn_id != state.active_turn_id):
             abandoned_turn_ids.discard(turn_id)
             steered_turn_ids.discard(turn_id)
             return None

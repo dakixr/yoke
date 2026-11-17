@@ -245,7 +245,7 @@ def run_daemon_interactive(
                 session_id = sessions[int(choice) - 1]["id"]
             except (ValueError, IndexError, KeyError) as exc:
                 raise ValueError("Invalid session selection.") from exc
-            connection.session_id = session_id
+            connection.select_session(session_id)
         if relocate is not None:
             connection.session_request(
                 "POST", "/relocate", json={"directory": str(Path(relocate).resolve())}

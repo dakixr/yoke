@@ -15,6 +15,8 @@ in-process for library users, but the CLI never constructs one.
 
 | Module | Owns |
 | --- | --- |
+| `cli/backend/session_view.py` | Immutable input and runtime views, event reduction and revision gaps. |
+| `cli/backend/connection_state.py` | Connection phase, attachment generation and the session-scoped cursor. |
 | `cli/backend/connection.py` | `SessionConnection`: HTTP over the discovered endpoint, the attachment and the filtered SSE subscription. |
 | `cli/backend/startup.py`, `cli/backend/headless.py` | Headless and interactive startup through the daemon. |
 | `cli/backend/daemon/session.py` | `DaemonSessionBackend`, the object the UIs drive. |
@@ -43,7 +45,17 @@ after `server.resyncRequired`, it:
 1. opens the filtered stream `GET /event?sessionID={id}&client={owner}`,
 2. reads every newer history page and the active transcript,
 3. drops durable events it has already seen, by sequence,
-4. publishes the local `client.resynced` event with the recovered messages.
+4. reads `GET /session/{id}/input?live=true` and `GET /session/active`,
+5. installs both snapshots before marking the connection ready,
+6. publishes the local `client.resynced` event with the recovered messages.
+
+`ConnectionState` owns discovery, attachment, streaming, syncing, readiness,
+disconnection and closure. Each completed sync advances its generation. A
+session switch resets the cursor and advances a separate identity epoch in one
+operation. GET recovery refuses to retry across an identity change. Mutations
+are never retried implicitly. `connection_events` publishes
+`client.connection {phase, generation}` separately from the retained session
+feed, whose `client.disconnected` and `client.resynced` aliases keep their order.
 
 When the stream drops, it repeats discovery, the skew check and attachment with
 a new environment copy. It counts completed reattachments. After an uncertain
@@ -55,8 +67,9 @@ reader, detaches only its own owner and closes its subscriptions.
 `{type, payload}` dictionaries, then reads the result. `event_from_sse` builds
 those dictionaries from an SSE envelope's `type` and `data`. `agent_event`
 translates daemon event names back to the renderer's callback names, using the
-table in [daemon-client.md](daemon-client.md#event-names). Payloads and order
-are unchanged. A session subscription can watch the same stream independently
+table in [daemon-client.md](daemon-client.md#event-names). The connection adds
+a local `renderedLocally` annotation before fan-out. Provider events and their
+order are unchanged. A session subscription can watch the same stream independently
 and has an explicit unsubscribe callback.
 
 Rendering runs in the UI's turn worker after admission succeeds. The daemon
@@ -69,8 +82,11 @@ The terminal registers each locally submitted input ID before it sends the
 admission. The submitting worker renders that input's live events and its final
 answer. `SessionObserver` renders everything else, meaning inputs the daemon promotes
 from the queue and turns that other clients started. It skips the registered
-IDs. Durable sequence deduplication and settled input IDs stop replays after a
-reconnect.
+IDs for that rendering attempt. Durable sequence deduplication stops replays
+after a reconnect. Terminal input phases discard ownership, and a failed
+workspace attempt releases ownership so a later queue resume can render it.
+Each observed input has its own renderer lifetime. Settlement and workspace
+pauses close only that input's renderer; failures are reported as failures.
 
 The daemon alone promotes queued inputs. Queue snapshots in the terminal are
 presentation state. Admitting a stale snapshot entry again would run the turn
@@ -80,10 +96,39 @@ A workspace failure can pause an input without settling it. The turn reader
 ends that attempt on `session.runtime.failed`, shows the error, and leaves the
 paused input in the daemon. For settled failures it waits for the same event,
 which follows `session.prompt.settled`. Interruption keeps the terminal's
-display fence and sends `POST /session/{id}/interrupt`. The daemon saves the
+display fence and sends `POST /session/{id}/input/{inputID}/cancel`. The editor
+captures the visible input ID before scheduling HTTP, so a delayed Stop cannot
+interrupt its successor. Daemons without the lifecycle capability use
+`POST /session/{id}/interrupt`. The daemon saves the
 interrupted turn and retires the workers. A stopped result stays a stopped
 outcome, including when the runtime raises `AgentStoppedError` before it
 returns.
+
+## Session view
+
+`SessionViewStore` performs no I/O. It reduces `session.input.changed`,
+`session.queue.held` and `session.active.changed` into immutable snapshots.
+Queued and paused inputs form the queue in position order. Promoted and running
+inputs identify the active input. Busy means the runtime state is neither idle
+nor error, including operations and waiting for human input. Runtime start time
+drives elapsed time. The toolbar, spinner, submission choice and stop key read
+this view in both interactive modes.
+
+Duplicate input revisions are ignored. A gap latches a resync request until
+the connection worker installs a fresh snapshot. Runtime events at or below
+the installed runtime revision are ignored. Reconnection installs the new
+runtime snapshot even when a restarted daemon has reset its runtime revision.
+Terminal inputs leave the view, so the terminal keeps no ever-growing set of
+submitted IDs. Render threads and local display counters describe rendering
+only; they do not decide whether the daemon is busy.
+
+The capability check is `features.inputLifecycle`. Without it, legacy prompt
+events supply the fallback projection and queue snapshots retain the started
+filter. That fallback is confined to the backend. It does not hide queued or
+workspace-paused inputs when the capability is present.
+
+Queue and image edits serialize on a separate queue-edit lock. Snapshot reads,
+queue commits and cancellation run outside the lock used to render the toolbar.
 
 ## Route mapping
 
@@ -93,7 +138,8 @@ returns.
 | --- | --- |
 | `submit(prompt, ..., delivery="steer" or "queue")` | `POST /session/{id}/prompt`, `GET /event?sessionID={id}`, `POST /session/{id}/wait`, `GET /session/{id}/message` |
 | `events.subscribe`, `event_from_sse` | `GET /event?sessionID={id}` |
-| `interrupt` | `POST /session/{id}/interrupt` |
+| `stop_running`, `stop_input` | `POST /session/{id}/input/{inputID}/cancel`; legacy fallback uses `/interrupt` |
+| `resume_queue` | `POST /session/{id}/queue/resume` |
 | `load_prompt_queue_state`, `commit_prompt_queue`, `clear_prompt_queue` | `GET` and `PATCH /session/{id}/queue` |
 | `session`, `provider_label`, `thinking` | `GET /session/{id}`, `GET /model` |
 | `set_thinking`, `persist_metadata`, `switch_model` | `POST /session/{id}/selection` |
@@ -134,7 +180,9 @@ Notes on specific commands:
 
 The terminal installs new inputs, queue edits and image-draft changes in one
 `PATCH /session/{id}/queue` against one `expectedRevision`, using `admissions`,
-`pendingImages` and `resume: false`. A failed patch rolls back the admissions,
+`pendingImages`. Submitting a new queued prompt sets `resume: true`, including
+when the daemon became idle just before admission. Queue-manager and image
+edits use `resume: false`. A failed patch rolls back the admissions,
 upload pins and events together. `pendingImages` holds draft image paths and
 comes back on `GET /queue`, including after reconnect. Submitted images use
 durable upload references instead. If the patch conflicts, the queue manager
@@ -150,7 +198,15 @@ the model as text. Queue edits and admission replays keep the tag in the
 input's fingerprint.
 
 A promoted input that the daemon blocks returns to the queue paused at its
-original position, so earlier paused items keep their order.
+original position, so earlier paused items keep their order. The toolbar shows
+queue holds with their reason. `Ctrl+R` calls the queue resume route, which
+clears the hold without unpausing individual inputs.
+
+Enter during an active turn admits with `delivery: "steer"` and `resume: true`.
+It does not send a separate interrupt. The daemon retires and promotes under
+its gate, ahead of ordinary queued inputs. The steering differential test
+compares this path with interrupt then queue, including serialized provider
+requests, cache identity and the stored tree.
 
 ## Images
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from threading import Lock
 from typing import Literal
 from uuid import uuid4
 
@@ -48,8 +47,7 @@ class DaemonSessionBackend:
         self.events = connection.events
         self._session = DaemonActiveSession(self, SessionInfo.model_validate(data))
         self._queue = DaemonPromptQueue(connection, started=self.owns_input)
-        self._local_inputs: set[str] = set()
-        self._input_lock = Lock()
+        self.view_store = connection.view_store
 
     @property
     def session(self) -> DaemonActiveSession:
@@ -106,9 +104,10 @@ class DaemonSessionBackend:
         pending_images: list[ImageAttachment],
         *,
         expected_revision: int | None,
+        resume: bool = False,
     ) -> int:
         return self._queue.commit(
-            prompts, pending_images, expected_revision=expected_revision
+            prompts, pending_images, expected_revision=expected_revision, resume=resume
         )
 
     def clear_queue(self, *, expected_revision: int | None) -> None:
@@ -132,8 +131,7 @@ class DaemonSessionBackend:
         )
 
     def owns_input(self, input_id: str) -> bool:
-        with self._input_lock:
-            return input_id in self._local_inputs
+        return self.view_store.owns_input(input_id)
 
     def submit(
         self,
@@ -146,14 +144,14 @@ class DaemonSessionBackend:
 
         input_id = f"inp_{uuid4().hex}"
         # Register before admission: the SSE echo may arrive before POST returns.
-        with self._input_lock:
-            self._local_inputs.add(input_id)
+        self.view_store.mark_local(input_id)
         attachments = upload_message_images(self.connection, user_message)
         stream, unsubscribe = self.events.subscribe()
         admission = {
             "id": input_id,
             "clientID": self.connection.owner,
             "delivery": delivery,
+            "resume": True,
             "prompt": {
                 "text": prompt,
                 "attachments": attachments,
@@ -170,11 +168,46 @@ class DaemonSessionBackend:
                 self.connection.session_request("POST", "/prompt", json=admission)
         except (DaemonRequestError, httpx.HTTPError, OSError, TimeoutError) as exc:
             unsubscribe()
+            self.view_store.forget_local(input_id)
             return DaemonSubmittedTurn.failed(self.connection, input_id, exc)
         return DaemonSubmittedTurn(self.connection, input_id, stream, unsubscribe)
 
     def interrupt(self) -> None:
         self.connection.session_request("POST", "/interrupt")
+
+    def stop_running(self) -> bool:
+        """Stop the input the view displays, including daemon-promoted work."""
+        view = self.view_store.view
+        running = view.running
+        return self.stop_input(running.id if running else view.runtime.input_id)
+
+    def stop_input(self, input_id: str | None) -> bool:
+        """Keep a stop target captured by the editor stable across HTTP delays."""
+        if not self.view_store.input_lifecycle:
+            self.interrupt()
+            return True
+        if input_id is None:
+            return False
+        try:
+            self.connection.session_request("POST", f"/input/{input_id}/cancel")
+        except DaemonRequestError as error:
+            if error.status != 409:
+                raise
+            return False
+        return True
+
+    def resume_queue(self) -> None:
+        """Resume a held queue without unpausing individual inputs."""
+        if self.view_store.input_lifecycle:
+            self.connection.session_request("POST", "/queue/resume")
+        else:
+            loaded = self.load_queue()
+            self.commit_queue(
+                loaded.prompts,
+                loaded.pending_images,
+                expected_revision=loaded.revision,
+                resume=True,
+            )
 
     def persist_metadata(self, reasoning_effort: str | None) -> None:
         if (

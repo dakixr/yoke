@@ -1,16 +1,17 @@
-"""Render daemon-owned inputs without echoing locally rendered turns."""
+"""Render daemon-owned inputs with one presentation lifetime per input."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from copy import copy
 from threading import Thread
 
 import httpx
 
 from yoke.agent.models import Message
 from yoke.cli.backend.daemon import DaemonSessionBackend
-from yoke.cli.backend.events import BackendEvent, agent_event
+from yoke.cli.backend.events import BackendEvent, agent_event, AGENT_EVENTS
 from yoke.cli.backend.headless import input_output
 from yoke.cli.backend.values import EventRenderer
 
@@ -18,12 +19,11 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SessionObserver:
-    """Own a session subscription for turns admitted outside the UI worker.
+    """Observe queue promotions as well as inputs admitted by other terminals.
 
-    Local input IDs are claimed before POST, so an early admission echo cannot
-    win a rendering race. Daemon queue items are observed here too; the UI must
-    never dequeue and re-admit them. Durable replay is already deduplicated by
-    SessionConnection. Settlement IDs fence repeats across reconnects.
+    The connection reduces authoritative phases before publishing each event.
+    Render ownership is captured before terminal phases discard the live input.
+    Each input ends its own renderer on settlement or a workspace pause.
     """
 
     def __init__(
@@ -43,8 +43,7 @@ class SessionObserver:
         self.notice = notice
         self.messages = messages
         self._prompts: dict[str, str] = {}
-        self._rendered: set[str] = set()
-        self._settled: set[str] = set()
+        self._renderers: dict[str, EventRenderer] = {}
         self._worker: Thread | None = None
         self._unsubscribe: Callable[[], None] = lambda: None
 
@@ -62,51 +61,85 @@ class SessionObserver:
         self._unsubscribe()
         if self._worker is not None:
             self._worker.join(timeout=10)
+        for renderer in self._renderers.values():
+            renderer.__exit__(None, None, None)
+        self._renderers.clear()
 
     def _observe(self, events: Iterable[BackendEvent]) -> None:
-        backend = self.backend
         for event in events:
             try:
-                payload = event["payload"]
-                input_id = payload.get("inputID")
-                if (
-                    not isinstance(input_id, str)
-                    or backend.owns_input(input_id)
-                    or input_id in self._settled
-                ):
-                    continue
-                kind = event["type"]
-                if kind == "session.prompt.admitted":
-                    prompt = payload.get("prompt")
-                    if isinstance(prompt, dict):
-                        text = prompt.get("text")
-                        if isinstance(text, str):
-                            self._prompts[input_id] = text
-                elif kind == "session.prompt.promoted":
-                    self._begin(input_id)
-                elif kind == "session.prompt.settled":
-                    self._begin(input_id)
-                    self._settled.add(input_id)
-                    if payload.get("outcome") == "completed":
-                        self.output(input_output(backend.connection, input_id))
-                    else:
-                        self.notice(
-                            "Stopped current turn. Send a correction to continue from here."
-                        )
-                    self.renderer.__exit__(None, None, None)
-                    self.messages(backend.messages())
-                else:
-                    self._begin(input_id)
-                    self.renderer.handle_event(*agent_event(event))
+                self._event(event)
             except (httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
                 LOGGER.warning("Could not render daemon session event: %s", exc)
                 self.notice(f"Could not refresh daemon output: {exc}")
 
-    def _begin(self, input_id: str) -> None:
-        if input_id in self._rendered:
+    def _event(self, event: BackendEvent) -> None:
+        payload, kind = event["payload"], event["type"]
+        input_id = payload.get("inputID")
+        if not isinstance(input_id, str) or payload.get(
+            "renderedLocally", self.backend.owns_input(input_id)
+        ):
             return
-        self._rendered.add(input_id)
-        prompt = self._prompts.pop(input_id, None)
-        if prompt is not None:
-            self.user(prompt)
-        self.renderer.__enter__()
+        if self.backend.view_store.input_lifecycle:
+            if kind == "session.input.changed":
+                phase = payload["phase"]
+                if phase in {"queued", "paused", "promoted", "running"}:
+                    self._prompts[input_id] = str(payload.get("prompt", ""))
+                if phase in {"promoted", "running"}:
+                    self._begin(input_id)
+                elif phase in {"settled", "removed"}:
+                    self._finish(input_id, payload.get("outcome"))
+                elif phase == "paused":
+                    self._end(input_id)
+                return
+            if kind not in AGENT_EVENTS:
+                return
+        elif kind == "session.prompt.admitted":
+            prompt = payload.get("prompt")
+            if isinstance(prompt, dict):
+                self._prompts[input_id] = str(prompt.get("text", ""))
+            return
+        elif kind == "session.prompt.promoted":
+            self._begin(input_id)
+            return
+        elif kind == "session.prompt.settled":
+            self._finish(input_id, payload.get("outcome"))
+            return
+        elif kind not in AGENT_EVENTS:
+            return
+        renderer = self._renderers.get(input_id)
+        if renderer is None:
+            view = self.backend.view_store.view.inputs.get(input_id)
+            if view is not None and view.phase in {"queued", "paused"}:
+                return
+            renderer = self._begin(input_id)
+        renderer.handle_event(*agent_event(event))
+
+    def _begin(self, input_id: str) -> EventRenderer:
+        if input_id not in self._renderers:
+            prompt = self._prompts.pop(input_id, None)
+            if prompt is not None:
+                self.user(prompt)
+            renderer = copy(self.renderer)
+            renderer.__enter__()
+            self._renderers[input_id] = renderer
+        return self._renderers[input_id]
+
+    def _end(self, input_id: str) -> None:
+        renderer = self._renderers.pop(input_id, None)
+        if renderer is not None:
+            renderer.__exit__(None, None, None)
+        self._prompts.pop(input_id, None)
+
+    def _finish(self, input_id: str, outcome: object) -> None:
+        self._end(input_id)
+        if outcome == "completed":
+            self.output(input_output(self.backend.connection, input_id))
+        elif outcome == "failed":
+            self.notice("Current turn failed. Check the daemon error for details.")
+        elif outcome in {"stopped", "recovered"}:
+            self.notice(
+                "Stopped current turn. Send a correction to continue from here."
+            )
+        if outcome is not None:
+            self.messages(self.backend.messages())

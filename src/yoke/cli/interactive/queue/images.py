@@ -28,7 +28,7 @@ def attach_pending_image(
     attachment: ImageAttachment,
 ) -> None:
     """Persist one image append without replacing stale prompt values."""
-    with state_lock:
+    with state.queue_lock:
         queue_ensure_session(state, active_session)
         while True:
             images = [*state.pending_images, attachment]
@@ -46,7 +46,7 @@ def remove_pending_image(
     index: int = -1,
 ) -> ImageAttachment | None:
     """Persist removal of the selected image while preserving queue items."""
-    with state_lock:
+    with state.queue_lock:
         queue_ensure_session(state, active_session)
         queue_refresh_if_changed(state, active_session)
         if not state.pending_images:
@@ -86,7 +86,7 @@ def consume_pending_images(
     images: list[ImageAttachment] | None = None,
 ) -> list[ImageAttachment]:
     """Persist consumption of one submission's stable image snapshot."""
-    with state_lock:
+    with state.queue_lock:
         queue_ensure_session(state, active_session)
         queue_refresh_if_changed(state, active_session)
         consumed = list(state.pending_images if images is None else images)

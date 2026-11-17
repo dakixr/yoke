@@ -88,6 +88,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
     provider_effort, _levels = agent.thinking()
     state = PromptCliState(
         messages=list(session_messages),
+        view=agent.view_store.view,
         pending_prompts=restored_queue.prompts,
         pending_images=restored_queue.pending_images,
         queue_revision=restored_queue.revision,
@@ -306,6 +307,7 @@ def run_prompt_toolkit_cli(  # noqa: C901
         open_tree_selector=preserve_editor_text,
         open_queue_manager=preserve_editor_text,
         update_status=update_status,
+        resume_queue=lambda: control.resume_queue(),
     )
 
     def remote_messages(messages: list[Message]) -> None:
@@ -313,6 +315,12 @@ def run_prompt_toolkit_cli(  # noqa: C901
             state.messages = messages
         invalidate_prompt()
 
+    def update_view(view) -> None:
+        with state_lock:
+            state.view = view
+        invalidate_prompt()
+
+    unsubscribe_view = agent.view_store.subscribe(update_view)
     with SessionObserver(
         agent,
         renderer=renderer,
@@ -329,30 +337,33 @@ def run_prompt_toolkit_cli(  # noqa: C901
             scrollback_console=scrollback_console,
             start_turn=control.start_turn,
         )
-        return run_prompt_toolkit_event_loop(
-            state=state,
-            active_session_ref=session_ref,
-            agent=agent,
-            prompt_session=prompt_session,
-            completer=SlashCommandCompleter(
-                skill_provider=agent.available_skills,
-            ),
-            key_bindings=key_bindings,
-            state_lock=state_lock,
-            scrollback_console=scrollback_console,
-            provider_model_text=refresh_provider_model_text,
-            session_title_text=refresh_session_title_text,
-            spinner_frames=spinner_frames,
-            root_label=root_label,
-            request_exit=control.request_exit,
-            update_status=update_status,
-            invalidate_prompt=invalidate_prompt,
-            start_turn=control.start_turn,
-            start_pending_prompt=control.start_pending_prompt,
-            start_compaction=control.start_compaction,
-            steer_active_turn=control.steer_active_turn,
-            open_process_inspector=show_process_inspector,
-            format_context_usage_text=format_context_usage_text,
-            request_context_usage=context_usage_worker.submit,
-            scrollback=scrollback,
-        )
+        try:
+            return run_prompt_toolkit_event_loop(
+                state=state,
+                active_session_ref=session_ref,
+                agent=agent,
+                prompt_session=prompt_session,
+                completer=SlashCommandCompleter(
+                    skill_provider=agent.available_skills,
+                ),
+                key_bindings=key_bindings,
+                state_lock=state_lock,
+                scrollback_console=scrollback_console,
+                provider_model_text=refresh_provider_model_text,
+                session_title_text=refresh_session_title_text,
+                spinner_frames=spinner_frames,
+                root_label=root_label,
+                request_exit=control.request_exit,
+                update_status=update_status,
+                invalidate_prompt=invalidate_prompt,
+                start_turn=control.start_turn,
+                start_pending_prompt=control.start_pending_prompt,
+                start_compaction=control.start_compaction,
+                steer_active_turn=control.steer_active_turn,
+                open_process_inspector=show_process_inspector,
+                format_context_usage_text=format_context_usage_text,
+                request_context_usage=context_usage_worker.submit,
+                scrollback=scrollback,
+            )
+        finally:
+            unsubscribe_view()

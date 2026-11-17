@@ -41,6 +41,9 @@ def test_started_turn_is_hidden_from_queue_and_kept_first(terminal, tmp_path: Pa
     )
     backend = terminal.backend("started", root=tmp_path)
     observer = terminal.backend("started", root=tmp_path)
+    # This retained regression covers the fallback for pre-lifecycle daemons.
+    # Capability-mode placement is covered by test_session_view_regressions.
+    backend.view_store.input_lifecycle = False
     try:
         backend.submit("first", user_message=None)
         assert provider.entered.wait(10)

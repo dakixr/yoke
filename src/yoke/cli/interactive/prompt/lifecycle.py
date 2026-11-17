@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-from yoke.cli.interactive.common import PromptCliState
+from yoke.cli.interactive.common import PromptCliState, session_busy
 from yoke.cli.interactive.completion.menu import COMPLETION_MENU_STYLE
 from yoke.cli.interactive.prompt.scrollback import BatchedScrollback
 
@@ -185,7 +185,7 @@ class PersistentPromptLifecycle:
         if self._animation_task is not None and not self._animation_task.done():
             return
         with self._config.state_lock:
-            active = self._config.state.worker is not None
+            active = session_busy(self._config.state)
         if active:
             self._animation_task = (
                 self._config.prompt_session.app.create_background_task(
@@ -197,7 +197,7 @@ class PersistentPromptLifecycle:
         while True:
             await asyncio.sleep(0.2)
             with self._config.state_lock:
-                active = self._config.state.worker is not None
+                active = session_busy(self._config.state)
             if not active:
                 return
             self._config.prompt_session.app.invalidate()
@@ -206,10 +206,10 @@ class PersistentPromptLifecycle:
         while True:
             await asyncio.sleep(0.05)
             queue = self._queue
+            self._ensure_animation()
             with self._config.state_lock:
-                ready = (
-                    self._config.state.shutdown_requested
-                    and self._config.state.worker is None
+                ready = self._config.state.shutdown_requested and not session_busy(
+                    self._config.state
                 )
             if not ready or self._submission_active or (queue and not queue.empty()):
                 continue

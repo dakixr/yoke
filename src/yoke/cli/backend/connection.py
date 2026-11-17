@@ -9,13 +9,19 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Condition, Event, Thread
+from threading import Thread
 from typing import Any
 from uuid import uuid4
 
 import httpx
 
 from yoke.cli.backend.events import EventSubscriptions, event_from_sse
+from yoke.cli.backend.connection_state import (
+    ConnectionPhase,
+    ConnectionSnapshot,
+    ConnectionState,
+)
+from yoke.cli.backend.session_view import SessionViewStore
 from yoke.daemon.client import DaemonHandle, connect_or_spawn, unix_client
 from yoke.daemon.transport import async_client
 from yoke.daemon.uds import ignore_cancelled_socket_wakeups
@@ -47,20 +53,19 @@ class SessionConnection:
         cwd: Path | None = None,
         warning: Callable[[str], None] | None = None,
     ) -> None:
-        self.session_id = session_id
+        self.state = ConnectionState(session_id)
         self.owner = f"cli-{uuid4().hex}"
         self.events = EventSubscriptions()
+        self.connection_events = EventSubscriptions()
+        self.view_store = SessionViewStore(
+            session_id, self.owner, input_lifecycle=False
+        )
         self._discover = discover
         self._cwd = (cwd or Path.cwd()).resolve()
         self._warning = warning
         self._handle = discover()
         self._warned: set[str] = set()
         self._report_warning()
-        self._state = Condition()
-        self._generation = 0
-        self._seq = 0
-        self._ready = Event()
-        self._closed = Event()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[None] | None = None
         self._stream_task: asyncio.Task[None] | None = None
@@ -75,7 +80,8 @@ class SessionConnection:
         if session_id == self.session_id:
             return
         if self._loop is None:
-            self.session_id = session_id
+            self.state.switch_session(session_id)
+            self.view_store.select_session(session_id)
             return
 
         async def change() -> None:
@@ -87,9 +93,8 @@ class SessionConnection:
                     f"session/{self.session_id}/client", params={"owner": self.owner}
                 )
                 response.raise_for_status()
-            self.session_id = session_id
-            self._seq = 0
-            self._ready.clear()
+            self.state.switch_session(session_id)
+            self.view_store.select_session(session_id)
             if self._stream_task is not None:
                 self._stream_task.cancel()
 
@@ -106,16 +111,24 @@ class SessionConnection:
             "cwd": str(self._cwd),
         }
 
-    def request(self, method: str, route: str, **kwargs: Any) -> dict[str, Any]:
+    def request(
+        self,
+        method: str,
+        route: str,
+        *,
+        _identity: ConnectionSnapshot | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Perform one request. In particular, do not replay ambiguous writes."""
-        generation = self.generation
+        identity = _identity or self.state.snapshot
+        handle = self._handle
         try:
-            with unix_client(self._handle.socket, timeout=310) as client:
+            with unix_client(handle.socket, timeout=310) as client:
                 response = client.request(method, route, **kwargs)
         except httpx.TransportError:
             if method != "GET" or self._worker is None:
                 raise
-            self.wait_for_recovery(generation)
+            self.state.wait_ready(identity.generation, epoch=identity.epoch)
             with unix_client(self._handle.socket, timeout=310) as client:
                 response = client.request(method, route, **kwargs)
         if response.is_error:
@@ -125,7 +138,13 @@ class SessionConnection:
     def session_request(
         self, method: str, suffix: str = "", **kwargs: Any
     ) -> dict[str, Any]:
-        return self.request(method, f"session/{self.session_id}{suffix}", **kwargs)
+        identity = self.state.snapshot
+        return self.request(
+            method,
+            f"session/{identity.session_id}{suffix}",
+            _identity=identity,
+            **kwargs,
+        )
 
     @contextmanager
     def startup_lease(self) -> Iterator[None]:
@@ -141,32 +160,52 @@ class SessionConnection:
 
     def start(self, *, timeout: float = 10) -> None:
         """Attach and wait until the stream owns its lease and recovery is done."""
-        if self._closed.is_set():
+        if self.state.closed:
             raise RuntimeError("Session connection is closed.")
         if self._worker is None:
             self._worker = Thread(target=self._run, daemon=True, name="yoke-cli-events")
             self._worker.start()
-        if not self._ready.wait(timeout):
+        try:
+            self.state.wait_ready(timeout=timeout)
+        except TimeoutError:
             self.close()
             raise TimeoutError("Could not attach to Yoke daemon events.")
 
     @property
+    def session_id(self) -> str:
+        return self.state.snapshot.session_id
+
+    @session_id.setter
+    def session_id(self, value: str) -> None:
+        self.select_session(value)
+
+    @property
+    def _closed(self) -> ConnectionState:
+        """Read-only compatibility alias; ConnectionState owns closure."""
+        return self.state
+
+    @property
     def generation(self) -> int:
-        with self._state:
-            return self._generation
+        return self.state.snapshot.generation
 
     def wait_for_recovery(self, after: int, *, timeout: float = 10) -> None:
-        """Wait for reattachment after an uncertain request without racing SSE."""
-        with self._state:
-            recovered = self._state.wait_for(
-                lambda: self._generation > after or self._closed.is_set(), timeout
-            )
-            if not recovered or self._closed.is_set():
-                raise TimeoutError("Could not reattach to Yoke daemon.")
+        """Wait for a complete reattachment, including its authoritative view."""
+        self.state.wait_ready(after, timeout=timeout)
+
+    def _enter(self, phase: ConnectionPhase, cause: str) -> None:
+        if self.state.closed:
+            return
+        value = self.state.enter(phase, cause=cause)
+        payload: dict[str, object] = {
+            "phase": value.phase.value,
+            "generation": value.generation,
+        }
+        self.view_store.apply_event({"type": "client.connection", "payload": payload})
+        self.connection_events.publish("client.connection", payload)
 
     def close(self) -> None:
         """Release only this client's attachment and stream lease."""
-        self._closed.set()
+        self._enter(ConnectionPhase.CLOSED, "close")
         loop, task = self._loop, self._task
         if loop is not None and task is not None and not loop.is_closed():
             loop.call_soon_threadsafe(task.cancel)
@@ -188,8 +227,9 @@ class SessionConnection:
         ignore_cancelled_socket_wakeups(self._loop)
         self._task = asyncio.current_task()
         try:
-            while not self._closed.is_set():
+            while not self.state.closed:
                 try:
+                    self._enter(ConnectionPhase.DISCOVERING, "discover")
                     discovery = asyncio.create_task(asyncio.to_thread(self._discover))
                     try:
                         self._handle = await asyncio.shield(discovery)
@@ -199,6 +239,7 @@ class SessionConnection:
                         self._handle = await discovery
                         raise
                     self._report_warning()
+                    self._enter(ConnectionPhase.ATTACHING, "discovered")
                     async with async_client(
                         self._handle.socket,
                         timeout=httpx.Timeout(10, read=None),
@@ -209,17 +250,17 @@ class SessionConnection:
                         try:
                             await self._stream_task
                         except asyncio.CancelledError:
-                            if self._closed.is_set():
+                            if self.state.closed:
                                 raise
                         finally:
                             self._stream_task = None
                 except (httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
-                    if self._ready.is_set():
+                    if self.state.snapshot.phase == ConnectionPhase.READY:
                         self.events.publish(
                             "client.disconnected", {"message": str(exc)}
                         )
-                self._ready.clear()
-                if not self._closed.is_set():
+                self._enter(ConnectionPhase.DISCONNECTED, "stream_ended")
+                if not self.state.closed:
                     await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             pass
@@ -237,12 +278,22 @@ class SessionConnection:
             except (httpx.HTTPError, OSError, ValueError):
                 pass
             self.events.close()
+            self.connection_events.close()
 
     async def _attached_stream(self, http: httpx.AsyncClient) -> None:
         response = await http.put(
             f"session/{self.session_id}/client", json=self.client_config()
         )
         response.raise_for_status()
+        capabilities = await http.get("capabilities")
+        capabilities.raise_for_status()
+        self.view_store.input_lifecycle = bool(
+            capabilities.json()
+            .get("data", capabilities.json())
+            .get("features", {})
+            .get("inputLifecycle", False)
+        )
+        self._enter(ConnectionPhase.STREAMING, "attached")
         async with http.stream(
             "GET", "event", params={"sessionID": self.session_id, "client": self.owner}
         ) as stream:
@@ -259,18 +310,17 @@ class SessionConnection:
                         "server.resyncRequired",
                     }:
                         await self._resync(http)
-                        with self._state:
-                            self._generation += 1
-                            self._ready.set()
-                            self._state.notify_all()
                     else:
                         self._publish(envelope)
+                        if self.view_store.view.resync_pending:
+                            await self._resync(http)
 
     async def _resync(self, http: httpx.AsyncClient) -> None:
+        self._enter(ConnectionPhase.SYNCING, "resync")
         while True:
             response = await http.get(
                 f"session/{self.session_id}/history",
-                params={"after": self._seq, "limit": 200},
+                params={"after": self.state.snapshot.seq, "limit": 200},
             )
             response.raise_for_status()
             page = response.json()
@@ -293,14 +343,34 @@ class SessionConnection:
             cursor = page["cursor"].get("next")
             if not cursor:
                 break
-        self.events.publish("client.resynced", {"messages": messages, "seq": self._seq})
+        active_response = await http.get("session/active")
+        active_response.raise_for_status()
+        active = active_response.json()["data"].get(self.session_id, {"state": "idle"})
+        if self.view_store.input_lifecycle:
+            inputs = await http.get(
+                f"session/{self.session_id}/input", params={"live": "true"}
+            )
+            inputs.raise_for_status()
+            self.view_store.install_snapshot(inputs.json()["data"], active)
+        else:
+            queue = await http.get(f"session/{self.session_id}/queue")
+            queue.raise_for_status()
+            self.view_store.install_legacy_snapshot(queue.json()["data"], active)
+        self._enter(ConnectionPhase.READY, "resynced")
+        self.events.publish(
+            "client.resynced", {"messages": messages, "seq": self.state.snapshot.seq}
+        )
 
     def _publish(self, envelope: dict[str, Any]) -> None:
         durable = envelope.get("durable")
         if durable:
             seq = int(durable["seq"])
-            if seq <= self._seq:
+            if not self.state.advance(self.session_id, seq):
                 return
-            self._seq = seq
         event = event_from_sse(envelope)
+        rendered_locally = self.view_store.owns_input(
+            str(event["payload"].get("inputID", ""))
+        )
+        self.view_store.apply_event(event)
+        event["payload"]["renderedLocally"] = rendered_locally
         self.events.publish(event["type"], event["payload"])

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from yoke.cli.image_input import ImageAttachment, format_attachment_reference
-from yoke.cli.interactive.common import PromptCliState
+from yoke.cli.interactive.common import PromptCliState, session_busy
 from yoke.cli.interactive.completion.menu import (
     apply_completion,
     register_completion_menu_key_bindings,
@@ -46,6 +46,7 @@ BINDINGS = {
         (("enter",),), "Press `Enter` to send, or to steer during a turn."
     ),
     "queue": Binding((("tab",),), "Press `Tab` to queue behind the current turn."),
+    "resume": Binding((("c-r",),), "Press `Ctrl+R` to resume a held queue."),
     "effort": Binding(
         (("escape", "tab"), ("s-tab",)), "Press `Shift+Tab` to cycle thinking effort."
     ),
@@ -129,6 +130,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     open_model_selector: Callable[[str], None] | None = None,
     open_tree_selector: Callable[[str], None] | None = None,
     open_queue_manager: Callable[[str], None] | None = None,
+    resume_queue: Callable[[], None] | None = None,
 ) -> None:
     """Register prompt-toolkit key bindings."""
     register_completion_menu_key_bindings(key_bindings)
@@ -169,12 +171,18 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         state.submit_action = "queue"
         event.current_buffer.validate_and_handle()
 
+    @bind("resume")
+    def _resume_queue(event) -> None:
+        del event
+        if resume_queue is not None:
+            resume_queue()
+
     @bind("effort")
     def _cycle_thinking_effort(event) -> None:
         del event
         effort = cycle_thinking_effort()
         state.thinking_effort = effort
-        if state.worker is None:
+        if not session_busy(state):
             return
         if effort is None:
             update_status("Thinking effort: default")
