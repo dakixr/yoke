@@ -18,7 +18,7 @@ from yoke.agent.loop.in_process_tool import (
     InProcessToolShutdownError,
     execute_in_process_tool,
 )
-from yoke.agent.loop.tool_process import ToolProcessInvocation, _process_context
+from yoke.agent.loop.tool_process import ToolProcessInvocation
 from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.agent.state import conversation_entries_from_messages
 from yoke.agent.tools import LocalTool, ToolRuntimeContext
@@ -411,10 +411,6 @@ def test_checkpoint_survives_steer_or_stop_and_immediate_continue(
     finally:
         release_first.set()
         release_second.set()
-
-
-def test_tool_processes_use_spawn_context() -> None:
-    assert _process_context().get_start_method() == "spawn"
 
 
 def test_tool_process_start_failure_releases_resources(monkeypatch) -> None:

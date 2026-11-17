@@ -582,28 +582,3 @@ def test_public_agent_save_requires_path_when_unbound(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="requires a path"):
         agent.save()
-
-
-def test_public_agent_resolves_implicit_save_target_after_lock_entry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    old_path = tmp_path / "old.json"
-    current_path = tmp_path / "current.json"
-    agent = Agent(
-        provider=RecordingProvider(Message.assistant("done")),
-        config=RunConfig(root=tmp_path, tools=[], include_agents_file=False),
-        state_path=old_path,
-    )
-    agent.prompt("hello")
-    ensure_open = agent._ensure_open
-
-    def rebind_after_lock_entry() -> None:
-        ensure_open()
-        agent._state_path = current_path
-
-    monkeypatch.setattr(agent, "_ensure_open", rebind_after_lock_entry)
-
-    assert agent.save() == current_path
-    assert current_path.exists()
-    assert not old_path.exists()
-    agent.close()

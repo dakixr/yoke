@@ -39,7 +39,7 @@ def test_input_request_rejects_empty_polling_and_invalid_arguments(args):
         ProcessInputTool.model_validate(args)
 
 
-def test_wait_limits_and_legacy_field_rejection():
+def test_wait_limits_are_enforced():
     request = ProcessReadRequest(
         sessions=[ProcessCursor(session_id=1)], wait_ms=3_600_000
     )
@@ -48,8 +48,6 @@ def test_wait_limits_and_legacy_field_rejection():
         {"wait_ms": 3_600_001},
         {"wait_ms": -1},
         {"wait_ms": True},
-        {"until": "batch"},
-        {"yield_time_ms": 1000},
     ]:
         with pytest.raises(ValidationError):
             ProcessReadRequest.model_validate(

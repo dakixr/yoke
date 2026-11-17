@@ -27,9 +27,12 @@ from yoke.ai.providers.codex.subscription import (
 )
 from yoke.ai.providers.codex.websocket.config import CodexWebSocketTimeoutError
 
-from tests.yoke.ai.providers.transport_support import HTTP_KINDS, _provider, _response
+from tests.yoke.ai.providers.transport_support import _provider, _response
 
-KINDS = (*HTTP_KINDS, "codex-ws")
+# Shared HTTP retry policy and its per-provider wrappers are covered by
+# test_shared_transport; these traces keep one representative HTTP transport,
+# the SSE transport and the websocket transport.
+KINDS = ("openai", "codex-http", "codex-ws")
 SCENARIOS = (
     "429",
     "429-zero",

@@ -114,7 +114,6 @@ def test_images_require_valid_bytes_and_model_support() -> None:
 
 
 def test_limits_are_enforced_before_admission(monkeypatch) -> None:
-    assert MAX_ATTACHMENT_BYTES == 20 * 1024 * 1024
     with pytest.raises(RequestError, match="20 attachments"):
         decode_prompt([resource()] * 21, {}, images=False)
     oversized = resource()

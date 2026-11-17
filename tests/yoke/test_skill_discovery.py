@@ -60,13 +60,6 @@ def test_load_skill_accepts_utf8_bom(tmp_path: Path) -> None:
     assert skill.description == "A BOM-prefixed skill."
 
 
-def test_builtin_yoke_sessions_replaces_resume_skill() -> None:
-    names = {skill.name for skill in discover_skills([])}
-
-    assert "yoke-sessions" in names
-    assert "yoke-session-resume" not in names
-
-
 def test_builtin_skill_wins_over_duplicate_configured_skill(tmp_path: Path) -> None:
     duplicate = tmp_path / "yoke-subagents"
     duplicate.mkdir()

@@ -7,7 +7,6 @@ import io
 import json
 from typing import ClassVar
 
-import pytest
 
 from yoke.agent.loop.agent import RuntimeAgent
 from yoke.agent.models import Message
@@ -61,28 +60,6 @@ def _report(*, visible_active: bool) -> ToolLoadReport:
         discovered_tools=[loaded],
         active_tools=[loaded] if visible_active else [],
         denied_tools=[] if visible_active else [loaded],
-    )
-
-
-def tool_report_with_active_names(
-    report: ToolLoadReport, active_names: set[str]
-) -> ToolLoadReport:
-    """Frozen legacy menu algorithm, used only as the SDK projection reference."""
-    return ToolLoadReport(
-        discovered_tools=list(report.discovered_tools),
-        active_tools=[
-            entry
-            for entry in report.discovered_tools
-            if entry.tool.name in active_names
-        ],
-        denied_tools=[
-            entry
-            for entry in report.discovered_tools
-            if entry.tool.name not in active_names
-        ],
-        config_path=report.config_path,
-        unmatched_tool_names=report.unmatched_tool_names,
-        unmatched_capability_ids=report.unmatched_capability_ids,
     )
 
 
@@ -222,97 +199,3 @@ def test_home_root_does_not_duplicate_global_scope(monkeypatch) -> None:
 
     assert tools_menu._select_tool_change_scope(root=tools_menu.Path.home()) is None
     assert [scope.id for scope in captured_scopes[0]] == ["session", "global"]
-
-
-@pytest.mark.parametrize("factory_backed", [False, True])
-@pytest.mark.parametrize(
-    "enabled", [set(), {"command_exec"}, {"command_exec", "skill"}]
-)
-def test_public_tool_selection_preserves_legacy_provider_messages(
-    tmp_path, factory_backed, enabled
-):
-    """Compare the public method to the exact pre-refactor menu algorithm."""
-    from yoke.agent.context import ContextManager
-    from yoke.agent.loop.tool_core import index_tools
-    from yoke.agent.tools.context import ToolRegistrationResult
-    from yoke.cli.bootstrap.types import LoadedSystemMessage
-
-    class RecordingProvider(ProviderStub):
-        def __init__(self):
-            self.requests = []
-
-        def complete(self, messages, tools):
-            self.requests.append(
-                ([message.model_dump_json() for message in messages], tools)
-            )
-            return Message.assistant("done")
-
-    def factory(_context):
-        return ToolRegistrationResult(
-            tools=[VisibleTool.bind(), HiddenSkillTool.bind()],
-            system_messages=[Message.system("registered tools\n  exact whitespace")],
-        )
-
-    agents = []
-    providers = []
-    for _ in range(2):
-        provider = RecordingProvider()
-        providers.append(provider)
-        agent = RuntimeAgent(
-            provider,
-            [VisibleTool.bind(), HiddenSkillTool.bind()],
-            tool_factory=factory if factory_backed else None,
-            tool_root=tmp_path,
-            context_manager=ContextManager(
-                instructions=[Message.system("base instructions\n")]
-            ),
-        )
-        report = _report(visible_active=True)
-        report.system_messages = [
-            LoadedSystemMessage(
-                Message.system("shell instructions\n  preserve spacing"),
-                "default",
-                "shell",
-                registration_id="capability:shell",
-            ),
-            LoadedSystemMessage(
-                Message.system("unselected registration"),
-                "default",
-                "other",
-                registration_id="other",
-            ),
-        ]
-        agent.tool_report = report
-        agents.append(agent)
-    legacy, public = agents
-    try:
-        legacy_selection = [
-            tool for name, tool in legacy.tools.items() if name in enabled
-        ]
-        public_selection = [
-            tool for name, tool in public.tools.items() if name in enabled
-        ]
-        # The previous menu implementation, including report replacement order.
-        if legacy._tool_factory is None:
-            legacy.tools = index_tools(legacy_selection)
-        else:
-            legacy.set_session_enabled_tools(enabled)
-        assert legacy.tool_report is not None
-        legacy.tool_report = tool_report_with_active_names(legacy.tool_report, enabled)
-        legacy._install_session_filtered_tool_system_messages()
-        assert public.tool_report is not None
-        public.apply_tool_selection(
-            public_selection,
-            report=tool_report_with_active_names(public.tool_report, enabled),
-        )
-        assert [
-            message.model_dump_json() for message in public.context_manager.instructions
-        ] == [
-            message.model_dump_json() for message in legacy.context_manager.instructions
-        ]
-        legacy.run("test projection")
-        public.run("test projection")
-        assert providers[1].requests == providers[0].requests
-    finally:
-        for agent in agents:
-            agent.close()

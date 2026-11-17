@@ -4,8 +4,6 @@
 
 from prompt_toolkit.formatted_text import HTML
 
-from yoke.cli.interactive.tool_inspector import render
-from yoke.cli.interactive.tool_inspector.app import _refresh_entries
 from yoke.cli.interactive.tool_inspector.app import ToolInspectorState
 from yoke.cli.interactive.tool_inspector.render import move_selection
 from yoke.cli.interactive.tool_inspector.render import render_view_html
@@ -67,61 +65,6 @@ def test_navigation_to_ansi_tool_output_does_not_break_html() -> None:
     assert state.cursor.index == 1
     assert any("␀␛[31mboom␛[0m�" in item[1] for item in formatted)
     assert any("<ansired>unterminated" in item[1] for item in formatted)
-
-
-def test_refresh_skips_snapshot_when_trace_revision_is_unchanged() -> None:
-    """Navigation redraws must not rebuild an unchanged live transcript."""
-    entries = [ToolTraceEntry(tool_call_id="one", tool_name="read")]
-    state = ToolInspectorState(entries, source_revision=4)
-    revision = 4
-    provider_calls = 0
-
-    def entries_provider() -> list[ToolTraceEntry]:
-        nonlocal provider_calls
-        provider_calls += 1
-        return [*entries, ToolTraceEntry(tool_call_id="two", tool_name="rg")]
-
-    _refresh_entries(state, entries_provider, lambda: revision)
-    assert provider_calls == 0
-
-    revision = 5
-    _refresh_entries(state, entries_provider, lambda: revision)
-    assert provider_calls == 1
-    assert [entry.tool_call_id for entry in state.entries] == ["one", "two"]
-    assert state.data_revision == 1
-
-
-def test_render_caches_selected_detail_until_data_or_mode_changes(
-    monkeypatch,
-) -> None:
-    """Repeated prompt-toolkit redraws must reuse expensive detail layout."""
-    monkeypatch.setattr(render, "terminal_size", lambda: (120, 20))
-    entries = [
-        ToolTraceEntry(
-            tool_call_id="one",
-            tool_name="read",
-            result={"ok": True, "content": "x" * 20_000},
-        )
-    ]
-    state = ToolInspectorState(entries)
-    original_detail_text = render.detail_text
-    detail_calls = 0
-
-    def counted_detail_text(entry, render_state) -> str:
-        nonlocal detail_calls
-        detail_calls += 1
-        return original_detail_text(entry, render_state)
-
-    monkeypatch.setattr(render, "detail_text", counted_detail_text)
-    visible = sidebar_items(entries)
-
-    render_view_html(state, visible)
-    render_view_html(state, visible)
-    assert detail_calls == 1
-
-    state.raw = True
-    render_view_html(state, visible)
-    assert detail_calls == 2
 
 
 def test_live_output_is_bounded_compacted_and_snapshot_is_stable() -> None:

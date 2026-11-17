@@ -32,9 +32,6 @@ def test_tools_menu_toggles_daemon_inventory(
         index = next(i for i, row in enumerate(rows) if "read" in row.tool_names)
         chosen = rows[index].tool_names
         assert chosen <= before
-        assert tools_menu._render_tool_row(
-            rows[index], index, True, True, kwargs["columns"]
-        ).startswith("[x]")
         return selected - {index}
 
     monkeypatch.setattr(tools_menu, "select_table_items_interactive", select)

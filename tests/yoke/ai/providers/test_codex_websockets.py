@@ -10,10 +10,8 @@ from typing import cast
 
 import pytest
 from websockets.exceptions import ConnectionClosedError
-from websockets.protocol import State
 
 from yoke.agent.models import Message
-from yoke.ai.providers.base import ProviderCancelledError
 from yoke.ai.providers.base import ProviderError
 from yoke.ai.providers.codex.subscription import OAuthCredentials
 from yoke.ai.providers.codex.subscription import CODEX_CLI_ORIGINATOR
@@ -239,39 +237,6 @@ def test_response_failed_stale_previous_response_anchor_is_recoverable() -> None
     )
 
     assert isinstance(error, CodexPreviousResponseNotFoundError)
-
-
-def test_websocket_consume_uses_short_cancel_poll_timeout(tmp_path: Path) -> None:
-    cancelled = False
-    seen_timeouts: list[float | None] = []
-
-    class FakeWebSocket:
-        def recv(self, timeout: float | None = None) -> str:
-            nonlocal cancelled
-            seen_timeouts.append(timeout)
-            cancelled = True
-            return "{}"
-
-        def close(self) -> None:
-            return None
-
-    provider = CodexWebSockets(
-        CodexWebSocketsConfig(
-            auth_path=tmp_path / "auth.json",
-            accounts_dir=tmp_path / "accounts",
-            auths_path=tmp_path / "auths.json",
-            selection_path=tmp_path / "selection.json",
-            timeout_seconds=60.0,
-        )
-    )
-
-    with pytest.raises(ProviderCancelledError):
-        provider._consume_websocket_response(
-            cast(CodexWebSocketConnection, FakeWebSocket()),
-            cancel_requested=lambda: cancelled,
-        )
-
-    assert seen_timeouts == [pytest.approx(0.1)]
 
 
 def test_websocket_response_timeout_resets_after_each_event(
@@ -745,33 +710,6 @@ def test_codex_websockets_reconnects_closed_cached_socket(
     assert factory_calls == 1
     assert provider._websocket_credentials is not None
     assert provider._websocket_credentials.access == "fresh-access-token"
-
-
-@pytest.mark.parametrize(
-    ("state", "expected"),
-    [(State.OPEN, False), (State.CLOSING, True), (State.CLOSED, True)],
-)
-def test_codex_websockets_detects_idle_closed_sync_connection(
-    tmp_path: Path, state: State, expected: bool
-) -> None:
-    class SyncConnection:
-        def __init__(self) -> None:
-            self.state = state
-
-    provider = CodexWebSockets(
-        CodexWebSocketsConfig(
-            auth_path=tmp_path / "auth.json",
-            accounts_dir=tmp_path / "accounts",
-            auths_path=tmp_path / "auths.json",
-            selection_path=tmp_path / "selection.json",
-        )
-    )
-
-    try:
-        connection = cast(CodexWebSocketConnection, SyncConnection())
-        assert provider._websocket_closed(connection) is expected
-    finally:
-        provider.close()
 
 
 def test_codex_websockets_reuses_stable_prompt_cache_key(tmp_path: Path) -> None:

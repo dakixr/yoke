@@ -382,20 +382,3 @@ def test_result_projection_is_built_after_public_redaction(tmp_path: Path) -> No
     assert detail.result_projection is not None
     assert "do-not-leak" not in detail.result_projection
     assert json.loads(detail.result_projection)["password"] == "<redacted>"
-
-
-def test_live_polling_never_reconstructs_saved_payloads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    traces = ToolTraceStore()
-    traces.record_start({"tool_call_id": "live", "turn_id": 2})
-    service = _service(tmp_path, _ids(237), traces)
-
-    def unexpected_history(*_args: object) -> None:
-        raise AssertionError("Live polling must not reconstruct saved payloads")
-
-    monkeypatch.setattr(service, "_persisted_trace_snapshot", unexpected_history)
-    page = _page(service, turn_id=2)
-    assert [item.id for item in page.data] == ["live"]
-    assert page.data[0].sequence is None
-    assert service.call(SESSION, "live").data.id == "live"

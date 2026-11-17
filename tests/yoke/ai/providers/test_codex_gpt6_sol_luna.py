@@ -37,13 +37,18 @@ def test_codex_rejects_retired_selection(tmp_path: Path, retired: str) -> None:
         provider.close()
 
 
-@pytest.mark.parametrize("model_id", ["gpt-6.1-terra", "gpt-6-luna"])
-@pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh", "max"])
-def test_gpt6_selection_and_request_preserve_reasoning(
-    tmp_path: Path, model_id: str, effort: str
-) -> None:
+MODELS = {
+    "gpt-6-astra": ("low", "medium", "high", "xhigh", "max"),
+    "gpt-6.1-sol": ("low", "medium", "high", "xhigh", "max"),
+    "gpt-6.1-terra": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-6-luna": ("none", "low", "medium", "high", "xhigh", "max"),
+}
+
+
+@pytest.mark.parametrize("model_id", MODELS)
+def test_codex_models_advertise_current_metadata(tmp_path: Path, model_id: str) -> None:
     provider = build_builtin_provider(
-        f"codex:{model_id}:{effort}",
+        f"codex:{model_id}:medium",
         env={"YOKE_CODEX_API_KEY": "test-key"},
         home=tmp_path,
     )
@@ -55,57 +60,35 @@ def test_gpt6_selection_and_request_preserve_reasoning(
         assert model.context_window_tokens == 400_000
         assert model.supports_image_inputs
         assert model.default_thinking_level == "medium"
-        assert model.thinking_levels == (
-            "none",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max",
-        )
-        payload = provider._request_payload([Message.user("hello")], [])
-        assert payload["model"] == model_id
-        reasoning = payload["reasoning"]
-        assert isinstance(reasoning, dict)
-        assert cast(dict[str, object], reasoning)["effort"] == effort
+        assert model.thinking_levels == MODELS[model_id]
     finally:
         provider.close()
 
 
-@pytest.mark.parametrize("model_id", ["gpt-6.1-terra", "gpt-6-luna"])
-@pytest.mark.parametrize("effort", ["minimal", "invalid"])
-def test_gpt6_unsupported_reasoning_defaults_to_medium(
-    model_id: str, effort: str
-) -> None:
-    assert clamp_reasoning_effort(model_id, effort) == "medium"
-
-
-@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
-def test_gpt61_sol_selection_and_request_preserve_reasoning(
-    tmp_path: Path, effort: str
-) -> None:
+@pytest.mark.parametrize("model_id", MODELS)
+def test_codex_request_preserves_selected_effort(tmp_path: Path, model_id: str) -> None:
     provider = build_builtin_provider(
-        f"codex:gpt-6.1-sol:{effort}",
+        f"codex:{model_id}:high",
         env={"YOKE_CODEX_API_KEY": "test-key"},
         home=tmp_path,
     )
     assert isinstance(provider, CodexProvider)
     try:
-        model = provider.current_model_info()
-        assert model is not None
-        assert model.context_window_tokens == 400_000
-        assert model.supports_image_inputs
-        assert model.default_thinking_level == "medium"
-        assert model.thinking_levels == ("low", "medium", "high", "xhigh", "max")
         payload = provider._request_payload([Message.user("hello")], [])
-        assert payload["model"] == "gpt-6.1-sol"
+        assert payload["model"] == model_id
         reasoning = payload["reasoning"]
         assert isinstance(reasoning, dict)
-        assert cast(dict[str, object], reasoning)["effort"] == effort
+        assert cast(dict[str, object], reasoning)["effort"] == "high"
     finally:
         provider.close()
 
 
+@pytest.mark.parametrize("model_id", MODELS)
 @pytest.mark.parametrize("effort", ["none", "minimal", "invalid"])
-def test_gpt61_sol_unsupported_reasoning_defaults_to_medium(effort: str) -> None:
-    assert clamp_reasoning_effort("gpt-6.1-sol", effort) == "medium"
+def test_codex_unsupported_reasoning_defaults_to_medium(
+    model_id: str, effort: str
+) -> None:
+    expected = "medium"
+    if effort == "none" and "none" in MODELS[model_id]:
+        expected = "none"
+    assert clamp_reasoning_effort(model_id, effort) == expected

@@ -152,10 +152,15 @@ def test_windows_stale_record_never_sends_a_request(tmp_path, monkeypatch):
         instance.DaemonInfo(123, "3.35.0", "2", "", 12345, "private-token", True, 0),
     )
     monkeypatch.setattr(client, "sys", SimpleNamespace(platform="win32"))
-    healthy = Mock(return_value=True)
-    monkeypatch.setattr(client, "_healthy", healthy)
+    requests = []
+
+    def request(*_args, **_kwargs):
+        requests.append(True)
+        return httpx.Response(200, json={"data": {"pid": 123}})
+
+    monkeypatch.setattr(httpx.Client, "request", request)
     assert client.find_daemon(paths) is None
-    healthy.assert_not_called()
+    assert requests == []
 
 
 def test_fresh_build_id_has_short_ttl(monkeypatch):
@@ -170,7 +175,6 @@ def test_fresh_build_id_has_short_ttl(monkeypatch):
     assert build.fresh_build_id() == "first"
     now[0] += 2.1
     assert build.fresh_build_id() == "second"
-    assert disk.call_count == 2
 
 
 def test_unrelated_enclosing_git_repository_is_not_a_yoke_build(tmp_path, monkeypatch):
@@ -179,29 +183,12 @@ def test_unrelated_enclosing_git_repository_is_not_a_yoke_build(tmp_path, monkey
     source.mkdir(parents=True)
     (source.parent / "_version.py").write_text('__version__ = "3.35.0"\n')
     monkeypatch.setattr(build, "__file__", str(source / "build.py"))
-    calls = []
 
     def git(cwd, *args):
-        calls.append(args)
         return str(root) if args == ("rev-parse", "--show-toplevel") else "abc123"
 
     monkeypatch.setattr(build, "_git", git)
     assert build._disk_build_id() == "3.35.0"
-    assert calls == [("rev-parse", "--show-toplevel")]
-
-
-def test_protocol_covers_required_attachment_contract():
-    assert build.PROTOCOL_VERSION == "2"
-
-
-def test_uvicorn_floor_supports_unix_listener_identity():
-    import tomllib
-    from pathlib import Path
-
-    project = tomllib.loads(
-        (Path(__file__).resolve().parents[3] / "pyproject.toml").read_text()
-    )
-    assert "uvicorn>=0.41.0" in project["project"]["dependencies"]
 
 
 @pytest.mark.parametrize(

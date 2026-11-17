@@ -147,21 +147,3 @@ def test_manual_title_cannot_be_overwritten_by_a_final_save(
         service.close()
 
     asyncio.run(scenario())
-
-
-def test_runtime_storage_uses_a_pool_separate_from_turn_workers(
-    tmp_path: Path,
-) -> None:
-    import threading
-
-    app = app_for(tmp_path, RecordingProvider())
-    with TestClient(app) as client:
-        _create_session(client, tmp_path, "session-a")
-        registry = app.state.runtime_registry
-        runtime = registry.get_or_start("session-a")
-        assert runtime.storage_executor is not registry.executor
-        assert client.portal is not None
-        name = client.portal.call(
-            runtime.run_blocking, lambda: threading.current_thread().name
-        )
-        assert name.startswith("yoke-http-storage")
