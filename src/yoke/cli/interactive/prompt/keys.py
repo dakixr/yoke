@@ -46,7 +46,10 @@ BINDINGS = {
         (("enter",),), "Press `Enter` to send, or to steer during a turn."
     ),
     "queue": Binding((("tab",),), "Press `Tab` to queue behind the current turn."),
-    "resume": Binding((("c-r",),), "Press `Ctrl+R` to resume a held queue."),
+    "resume": Binding(
+        (("c-r",),),
+        "Press `Ctrl+R` to resume a held queue. Otherwise it searches history.",
+    ),
     "effort": Binding(
         (("escape", "tab"), ("s-tab",)), "Press `Shift+Tab` to cycle thinking effort."
     ),
@@ -135,13 +138,24 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
     """Register prompt-toolkit key bindings."""
     register_completion_menu_key_bindings(key_bindings)
 
-    def bind(name: str):
+    def bind(name: str, *, when: Callable[[], bool] | None = None):
         def register(handler):
+            from prompt_toolkit.filters import Condition
+
+            active = Condition(when) if when is not None else True
             for sequence in BINDINGS[name].sequences:
-                key_bindings.add(*sequence)(handler)
+                key_bindings.add(*sequence, filter=active)(handler)
             return handler
 
         return register
+
+    def queue_held() -> bool:
+        # Only claim Ctrl+R while a queue is held, so it stays history search.
+        return (
+            resume_queue is not None
+            and state.view is not None
+            and (state.view.held is not None)
+        )
 
     @bind("stop")
     def _stop_current_turn(event) -> None:
@@ -171,7 +185,7 @@ def register_prompt_toolkit_key_bindings(  # noqa: C901
         state.submit_action = "queue"
         event.current_buffer.validate_and_handle()
 
-    @bind("resume")
+    @bind("resume", when=queue_held)
     def _resume_queue(event) -> None:
         del event
         if resume_queue is not None:

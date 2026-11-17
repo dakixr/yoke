@@ -61,15 +61,18 @@ class _Event:
 class _KeyBindings:
     def __init__(self) -> None:
         self.handlers: dict[tuple[str, ...], Callable[[_Event], None]] = {}
+        self.filters: dict[tuple[str, ...], Callable[[], object] | bool] = {}
 
     def add(
         self,
         *keys: str,
+        filter: Callable[[], object] | bool = True,
     ) -> Callable[[Callable[[_Event], None]], Callable[[_Event], None]]:
         def decorator(
             handler: Callable[[_Event], None],
         ) -> Callable[[_Event], None]:
             self.handlers[keys] = handler
+            self.filters[keys] = filter
             return handler
 
         return decorator
@@ -200,11 +203,17 @@ def test_enter_inserts_skill_mention_without_submitting(monkeypatch) -> None:
 def test_resume_binding_is_registered_and_described():
     from yoke.cli.interactive.prompt.keys import BINDINGS, shortcut_notice
 
+    from dataclasses import replace
+
+    from yoke.cli.backend.session_view import SessionView
+
     bindings = _KeyBindings()
     resumed = []
+    state = PromptCliState(messages=[], pending_prompts=[])
+    state.view = SessionView(session_id="keys")
     register_prompt_toolkit_key_bindings(
         bindings,
-        state=PromptCliState(messages=[], pending_prompts=[]),
+        state=state,
         stop_active_turn=lambda: False,
         remove_last_image=lambda: None,
         cycle_thinking_effort=lambda: None,
@@ -213,6 +222,12 @@ def test_resume_binding_is_registered_and_described():
         resume_queue=lambda: resumed.append(True),
     )
     assert BINDINGS["resume"].sequences == (("c-r",),)
+    claimed = bindings.filters[("c-r",)]
+    assert callable(claimed)
+    # Without a held queue, Ctrl+R stays prompt-toolkit's history search.
+    assert not claimed()
+    state.view = replace(state.view, held="interrupted")
+    assert claimed()
     bindings.handlers[("c-r",)](_Event())
     assert resumed == [True]
     assert BINDINGS["resume"].help in shortcut_notice()
