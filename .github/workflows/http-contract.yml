@@ -38,6 +38,8 @@ jobs:
 
   web-client:
     runs-on: ubuntu-latest
+    env:
+      YOKE_BROWSER_TEST_OUTPUT: ${{ github.workspace }}/.agents_local/browser-tests
     steps:
       - uses: actions/checkout@v4
 
@@ -47,22 +49,26 @@ jobs:
           cache: npm
           cache-dependency-path: clients/typescript/package-lock.json
 
-      - name: Validate browser behavior
-        run: |
-          node --experimental-default-type=module scripts/test_web_markdown_math.mjs
-          node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs
-          node --experimental-default-type=module scripts/test_web_workspace_races.mjs
-          node --experimental-default-type=module scripts/test_web_controller_modules.mjs
-          node --experimental-default-type=module scripts/test_web_session_machine.mjs
-          node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
-          node --experimental-default-type=module scripts/test_web_inspector_state.mjs
-          node --experimental-default-type=module scripts/test_web_tool_activity.mjs
-          node --experimental-default-type=module scripts/test_web_agent_runs.mjs
-          node --experimental-default-type=module scripts/test_web_tree_navigation.mjs
-          node --experimental-default-type=module scripts/test_web_inspector_support.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Validate assembled inspector views
-        run: node --experimental-default-type=module scripts/test_web_inspector_browser.mjs
+      - name: Install uv and Python browser dependencies
+        run: |
+          python -m pip install uv
+          uv sync --group dev
+
+      - name: Validate every Node web script, including assembled inspector views
+        run: |
+          for script in scripts/test_web_*.mjs; do
+            node --experimental-default-type=module "$script"
+          done
+
+      - name: Validate Python Chrome fixtures
+        run: |
+          for script in scripts/test_web_*_browser.py; do
+            uv run python "$script"
+          done
 
       - name: Validate TypeScript contract
         working-directory: clients/typescript

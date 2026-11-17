@@ -6,6 +6,7 @@ Uses installed Chrome and the packaged browser assets, never live sessions.
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from importlib import import_module
+import os
 from pathlib import Path
 from threading import Thread
 
@@ -14,6 +15,7 @@ expect = playwright_api.expect
 sync_playwright = playwright_api.sync_playwright
 
 ASSETS = Path(__file__).resolve().parents[1] / "src/yoke/web/assets"
+OUTPUT = Path(os.environ.get("YOKE_BROWSER_TEST_OUTPUT", "/tmp"))
 
 FIXTURE = r"""async () => {
   const {markdownHTML, renderMarkdownMath} = await import('/js/session/markdown.js');
@@ -194,8 +196,9 @@ def main() -> None:
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
+                OUTPUT.mkdir(parents=True, exist_ok=True)
                 page.screenshot(
-                    path=f"/tmp/yoke-inline-math-{name}.png", full_page=True
+                    path=str(OUTPUT / f"yoke-inline-math-{name}.png"), full_page=True
                 )
                 page.close()
                 print(

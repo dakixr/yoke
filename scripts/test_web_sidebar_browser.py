@@ -6,6 +6,7 @@ Uses installed Chrome and isolated in-browser fixtures, never live sessions.
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from importlib import import_module
+import os
 from pathlib import Path
 from threading import Thread
 
@@ -14,6 +15,7 @@ expect = playwright_api.expect
 sync_playwright = playwright_api.sync_playwright
 
 ASSETS = Path(__file__).resolve().parents[1] / "src/yoke/web/assets"
+OUTPUT = Path(os.environ.get("YOKE_BROWSER_TEST_OUTPUT", "/tmp"))
 
 FIXTURE = """async () => {
   const {html, render} = await import('/vendor/htm-preact.js');
@@ -46,6 +48,7 @@ FIXTURE = """async () => {
 
 
 def main():
+    OUTPUT.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(ASSETS))
     )
@@ -120,7 +123,7 @@ def main():
                 "audit.store.setState(s => ({...s, connection: {...s.connection, current: false}}))"
             )
             expect(undo).to_be_disabled()
-            page.screenshot(path="/tmp/yoke-sidebar-fixed-search.png")
+            page.screenshot(path=str(OUTPUT / "yoke-sidebar-fixed-search.png"))
             assert page.evaluate("audit.patches") == [
                 {"id": "settled", "patch": {"archived": False}},
                 {"id": "settled", "patch": {"archived": True}},
@@ -146,7 +149,7 @@ def main():
                 "button", name="Unsettle settled", exact=True
             )
             assert mobile_undo.evaluate("el => getComputedStyle(el).opacity") == "1"
-            mobile.screenshot(path="/tmp/yoke-sidebar-fixed-mobile.png")
+            mobile.screenshot(path=str(OUTPUT / "yoke-sidebar-fixed-mobile.png"))
             mobile_undo.tap()
             expect(mobile.locator(".is-settled")).to_have_count(0)
             assert mobile.evaluate("audit.patches[0].patch.archived") is False

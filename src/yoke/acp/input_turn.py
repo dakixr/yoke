@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from yoke.acp.prompting import InlineAttachment
 from yoke.acp.state import ActiveTurn
-from yoke.acp.native import fail
+from yoke.acp.native import NativeStreamResync, fail
 
 if TYPE_CHECKING:
     from yoke.acp.native import Emit, NativeClient
@@ -101,16 +101,35 @@ class InputTurn:
                 work.phase = "settled"
             await emit(kind, data)
 
+        async def check_stream() -> None:
+            nonlocal stream, queue, ready
+            recovered = False
+            while stream.done():
+                try:
+                    await stream
+                except NativeStreamResync:
+                    # Reopen before history/input reads. Another overflow during
+                    # catch-up repeats recovery without readmitting the prompt.
+                    queue = asyncio.Queue(maxsize=1024)
+                    ready = asyncio.Event()
+                    stream = asyncio.create_task(self.native.events(queue, ready))
+                    await asyncio.wait_for(ready.wait(), 30)
+                    recovered = True
+                else:
+                    raise fail("Native event stream disconnected")
+            if recovered and admitted and self.native.input_lifecycle:
+                await read_input()
+
         async def receive() -> None:
             if stream.done():
-                await stream
+                await check_stream()
             while not queue.empty():
                 await event(queue.get_nowait())
 
         try:
             await asyncio.wait_for(ready.wait(), 30)
             if stream.done():
-                await stream
+                await check_stream()
             if not self.native.input_lifecycle:
                 await self.native.assert_idle(session_id)
             while True:
@@ -220,7 +239,7 @@ class InputTurn:
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if stream in done:
-                        await stream
+                        await check_stream()
                     if incoming in done:
                         await event(incoming.result())
                     if waited in done:

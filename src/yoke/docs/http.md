@@ -5,7 +5,7 @@ explains how the per-user daemon, sessions, turns and events work, then walks
 through the common tasks with real requests. The
 [HTTP API reference](http-reference.md) lists every endpoint with its fields
 and error codes. [Writing a daemon client](daemon-client.md) covers what a
-long-lived client such as a terminal or editor adds on top: discovery,
+long-lived client such as a terminal or browser adds on top: discovery,
 attachments, per-client environments and version skew.
 
 All paths below have the `/api/v1` prefix. Field names are camelCase.
@@ -254,11 +254,9 @@ your stream.
 
 Each stream has a queue of 512 events. Delivery follows these rules:
 
-- If the queue is full, the daemon drops new live events for that stream
-  without telling you.
-- If a durable event does not fit, the daemon empties the queue, sends
+- If any event does not fit, including live progress, the daemon empties the queue, sends
   `server.resyncRequired` with `{"reason":"slow_consumer"}`, and closes the
-  stream.
+  stream. No event after the gap reaches that stream before the notice.
 - The stream does not replay missed events on reconnect. `Last-Event-ID` is
   ignored. Use `/history` instead.
 
@@ -532,8 +530,11 @@ after `server.resyncRequired`:
 4. Apply the buffered stream events, skipping durable events whose `seq` you
    have already applied.
 
-Live events missed during a disconnect are gone. The next durable event or a
-REST read gives you the settled state.
+Live events missed during a disconnect are gone. Discard pending live deltas
+when resynchronizing. Reopen the stream before reading snapshots, and refresh
+pending permissions, questions, plans and tool calls as well as saved messages
+and inputs. Tool output cursors can recover output the daemon still retains.
+The next durable event or a REST read gives you the settled state.
 
 Agent progress events keep their payload keys in snake_case, and each carries
 `turnID` and `inputID`. [Writing a daemon client](daemon-client.md#event-names)

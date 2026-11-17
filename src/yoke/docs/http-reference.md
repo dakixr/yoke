@@ -471,8 +471,8 @@ Errors: 404 `permission_not_found`, 400 `invalid_permission_reply`,
 | `mode` | `full-access` | `full-access`, `approval-required`, `auto-accept-edits` or `plan`. |
 | `env` | none | Full environment for this client's turns. Kept in memory only. |
 | `cwd` | none | Absolute existing directory for commands. |
-| `mcpServers` | `[]` | Up to 64 `{name, transport, command, args, env, envVars, url, headers}`. Names must be unique. |
-| `additionalDirectories` | `[]` | Up to 32 absolute existing directories. |
+| `mcpServers` | `[]` | Every kind. Up to 64 `{name, transport, command, args, env, envVars, url, headers}`. Names must be unique. |
+| `additionalDirectories` | `[]` | Every kind. Up to 32 absolute existing directories, resolved and deduplicated. |
 
 The `PUT` response contains only `mode`, `additionalDirectories` and the MCP
 server names. Attaching and detaching work while a turn runs. See [daemon-client.md](daemon-client.md)

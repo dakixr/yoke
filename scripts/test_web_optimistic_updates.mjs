@@ -3348,7 +3348,52 @@ async function testReconnectRefreshesBackgroundTranscriptAfterInputMoves() {
   } finally { controller.refreshProcessLocalState = original; restore(); }
 }
 
+async function testSlowConsumerResyncReplacesInputStateAndPendingDeltas() {
+  controller.bufferEvents = false;
+  const id = "slow-consumer";
+  const summary = installSession(id, { extraData: { inputLifecycle: true, inputs: {
+    old: { id: "old", phase: "running", prompt: { text: "old" } },
+  }, inputRevision: 1 } });
+  store.setState((state) => ({ ...state, capabilities: { features: { inputLifecycle: true } },
+    connection: { ...state.connection, current: true }, ui: { ...state.ui, selectedSessionID: null } }));
+  const restore = restoreApi({
+    activeSessions: async () => ({ data: {} }),
+    listSessions: async ({ archived }) => ({ data: archived ? [] : [summary], cursor: { next: null } }),
+    inputs: async () => ({ data: { inputRevision: 3, held: { reason: "manual" }, inputs: [
+      { id: "saved", phase: "paused", prompt: "recovered", position: 0 },
+    ] } }),
+    history: async () => ({ data: [], hasMore: false }),
+    queue: async () => ({ data: { revision: 1, items: [] } }),
+    tree: async () => ({ data: { entries: [], revision: 1 }, cursor: { next: null } }),
+    processes: async () => ({ data: [] }),
+    messages: async () => ({ data: [{ id: "saved-answer", type: "assistant" }], cursor: { next: null } }),
+  });
+  const originalProcess = controller.refreshProcessLocalState;
+  const originalResync = controller.resync;
+  let recovery;
+  controller.refreshProcessLocalState = async () => {};
+  controller.resync = (broad) => { assert.equal(broad, true); recovery = originalResync.call(controller, broad); return recovery; };
+  try {
+    controller.receiveEvent({ type: "session.context.updated", sessionID: id, durable: null, data: { input_tokens: 1 } });
+    assert.equal(animationFrames.size, 1);
+    controller.receiveEvent({ type: "server.resyncRequired", durable: null, data: { reason: "slow_consumer" } });
+    await recovery;
+    assert.equal(animationFrames.size, 0, "pre-gap coalesced deltas must not overwrite snapshots");
+    const data = store.getState().sessionData[id];
+    assert.deepEqual(Object.keys(data.inputs), ["saved"]);
+    assert.equal(data.queue.items[0].prompt.text, "recovered");
+    assert.equal(data.queue.held.reason, "manual");
+    assert.equal(data.resyncPending, false);
+    assert.equal(store.getState().connection.current, true);
+  } finally {
+    controller.refreshProcessLocalState = originalProcess;
+    controller.resync = originalResync;
+    restore();
+  }
+}
+
 const tests = [
+  testSlowConsumerResyncReplacesInputStateAndPendingDeltas,
   testReconnectRefreshesBackgroundTranscriptAfterInputMoves,
   testHeldQueueResumeKeepsIndividualPauses,
   testSnapshotErrorUsesCanonicalField,

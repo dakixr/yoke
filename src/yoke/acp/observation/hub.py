@@ -40,12 +40,14 @@ class NativeEventHub:
             self._task = None
 
     async def _watch(self) -> None:
+        reconnecting = False
         while self._callbacks and not self._closed:
             # Every event must reach subscribers in order; coalescing here
             # would drop catalog.updated (no sessionID) and same-session
             # events such as plan or permission requests.
             queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=1024)
             ready = self.ready
+            ready.clear()
             stream = asyncio.create_task(self.native.events(queue, ready))
             tick = asyncio.create_task(asyncio.sleep(15))
             incoming: asyncio.Task[dict[str, object]] | None = None
@@ -54,6 +56,10 @@ class NativeEventHub:
                 if stream.done():
                     await stream
                     raise RuntimeError("Native event stream ended")
+                # Reconcile after reopening. Waiting for the
+                # periodic tick can leave missed questions or plans invisible.
+                if reconnecting:
+                    await self._publish(None)
                 while self._callbacks:
                     incoming = asyncio.create_task(queue.get())
                     done, _ = await asyncio.wait(
@@ -72,6 +78,7 @@ class NativeEventHub:
                 raise
             except Exception:  # noqa: BLE001 - reconnect policy owns stream failures
                 LOGGER.warning("Native observation stream disconnected; reconnecting")
+                reconnecting = True
                 await self._publish({"type": "__disconnected__"})
                 await asyncio.sleep(1)
             finally:

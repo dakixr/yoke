@@ -105,8 +105,7 @@ class GlobalEventBroker:
             subscription.queue.put_nowait(event)
             return
         except asyncio.QueueFull:
-            if ephemeral:
-                return
+            pass
         subscription.closed = True
         while not subscription.queue.empty():
             subscription.queue.get_nowait()

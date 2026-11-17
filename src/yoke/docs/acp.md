@@ -155,9 +155,21 @@ ACP sessions also get two tools:
   text, a single choice or several choices. A client that cannot show the form
   declines the question.
 
+These two tools require the bridge's plan notifications and question forms,
+so CLI and web attachments do not get them. Client MCP servers and additional
+directories work for every attachment kind under the rules in
+[daemon-client.md](daemon-client.md#attach-a-client).
+
 Interrupting a turn rejects its pending question and waits for the worker to
 exit. After the bridge reconnects to the daemon's event stream, it reconciles
 pending permission requests, questions and the latest plan.
+
+If the daemon's bounded event queue fills, it sends `server.resyncRequired`
+and closes that stream, including when the missed event was a live delta.
+The bridge reopens the prompt stream and catches up from saved history and
+the input snapshot without cancelling or readmitting the prompt. The shared
+observer stream refreshes its snapshots as soon as it reconnects, so missed
+plans, permissions and questions do not wait for the periodic refresh.
 
 ## T3 thread settlement
 

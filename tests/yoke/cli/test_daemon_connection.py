@@ -93,6 +93,78 @@ def test_rejected_mutation_is_not_retried(tmp_path):
             raise AssertionError("Missing session mutation succeeded")
 
 
+def test_live_overflow_recovers_the_session_view(tmp_path, monkeypatch):
+    app = create_app(
+        HttpAppSettings(auth_token=None, session_directory=tmp_path / "db")
+    )
+    with serve_app(app) as handle:
+        connection = SessionConnection(
+            "overflow", discover=lambda: handle, cwd=tmp_path
+        )
+        connection.request(
+            "POST",
+            "session",
+            json={
+                "id": "overflow",
+                "location": {"directory": str(tmp_path)},
+            },
+        )
+        stream, unsubscribe = connection.events.subscribe()
+        try:
+            connection.start()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                iterator = iter(stream)
+
+                def snapshot():
+                    return next(
+                        event
+                        for event in iterator
+                        if event["type"] == "client.resynced"
+                    )
+
+                pool.submit(snapshot).result(timeout=5)
+                initial_generation = connection.generation
+                # Save an input while its events are missed, then overflow only
+                # live deltas. Recovery must replace the view from a snapshot.
+                broker = app.state.event_broker
+                with monkeypatch.context() as patch:
+                    patch.setattr(broker, "publish", lambda *args, **kwargs: None)
+                    connection.session_request(
+                        "POST",
+                        "/prompt",
+                        json={
+                            "id": "missed-input",
+                            "prompt": {"text": "saved while behind"},
+                            "resume": False,
+                        },
+                    )
+                assert connection.view_store.view.queue == []
+                subscription = next(iter(broker._subscriptions.values()))
+
+                def flood():
+                    for index in range(broker.queue_size + 2):
+                        broker.publish(
+                            live_event(
+                                "session.tool.delta",
+                                {"index": index},
+                                session_id="overflow",
+                            ),
+                            ephemeral=True,
+                        )
+
+                subscription.loop.call_soon_threadsafe(flood)
+                pool.submit(snapshot).result(timeout=5)
+                view = connection.view_store.view
+                assert [item.id for item in view.queue] == ["missed-input"]
+                assert view.queue[0].prompt == "saved while behind"
+                assert view.held == "manual"
+                assert not view.resync_pending
+                connection.wait_for_recovery(initial_generation + 1, timeout=5)
+        finally:
+            unsubscribe()
+            connection.close()
+
+
 def test_connection_reattaches_and_resyncs_after_app_restart(tmp_path, monkeypatch):
     """A new app loses private attachments, but durable recovery survives."""
     from yoke.daemon.client import DaemonUnavailable, unix_client

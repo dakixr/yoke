@@ -32,11 +32,15 @@ def client_tool_factory(
             original(context) if original else initial_tools
         )
         client = context.session.client_session
-        if client is None or client.config.kind != "acp":
+        if client is None:
             return base
         tools = list(base.tools)
         names = {tool.name for tool in tools}
-        extras = list(client_tools(client.turn_actions()))
+        extras = (
+            list(client_tools(client.turn_actions()))
+            if client.config.kind == "acp"
+            else []
+        )
         policy = context.session.mcp_policy
         if policy is not None and policy.injected_servers:
             extras.extend(
@@ -51,7 +55,7 @@ def client_tool_factory(
             )
         tools.extend(tool for tool in extras if tool.name not in names)
         instructions = list(base.system_messages)
-        if client.config.mode == "plan":
+        if client.config.kind == "acp" and client.config.mode == "plan":
             instructions.append(
                 Message.system(
                     "The client selected plan mode. Inspect files and develop a plan. File mutations, command execution, and unclassified MCP calls are blocked until the client switches mode."

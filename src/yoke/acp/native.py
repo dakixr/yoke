@@ -37,6 +37,13 @@ def fail(message: str) -> RequestError:
     return RequestError(-32001, message)
 
 
+class NativeStreamResync(RequestError):
+    """The bounded event stream has a gap and must reopen before catch-up."""
+
+    def __init__(self) -> None:
+        super().__init__(-32001, "Native event stream requires resync")
+
+
 class NativeClient:
     """Small client for the native Yoke HTTP session API."""
 
@@ -198,7 +205,7 @@ class NativeClient:
                         if event["type"] == "server.connected":
                             ready.set()
                         elif event["type"] == "server.resyncRequired":
-                            raise fail("Native event stream requires resync")
+                            raise NativeStreamResync()
                         else:
                             queue.put_nowait(event)
             raise fail("Native event stream disconnected")
@@ -206,6 +213,8 @@ class NativeClient:
             raise
         except RequestError:
             raise
+        except asyncio.QueueFull:
+            raise NativeStreamResync() from None
         except Exception:  # noqa: BLE001 - sanitize untrusted SSE payload failures
             raise fail(
                 "Native event stream disconnected, invalid, or overflowed"

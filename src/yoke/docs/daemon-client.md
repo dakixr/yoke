@@ -1,7 +1,7 @@
 # Writing a daemon client
 
 This page is for developers building a long-lived client of the Yoke daemon,
-such as a terminal UI, an editor plugin or a bridge like `yoke acp`. It covers
+such as a terminal UI, a browser or a bridge like `yoke acp`. It covers
 what such a client does beyond the requests in the [HTTP API guide](http.md):
 finding or starting the daemon, handling version skew, attaching with its own
 environment and tool policy, rendering events and reconnecting. Yoke's CLI and
@@ -166,17 +166,24 @@ environment and tool policy. Send it with `PUT /session/{id}/client`, or as
 | `mode` | Tool policy. Defaults to `full-access`. |
 | `env` | The complete environment for this client's turns. |
 | `cwd` | Absolute existing directory where commands start. Defaults to the session directory. |
-| `mcpServers` | MCP servers to add to this session, used by `acp` attachments. |
-| `additionalDirectories` | Extra absolute directories the client authorizes, used by `acp` attachments. |
+| `mcpServers` | MCP servers to add for this client's turns, for every kind. |
+| `additionalDirectories` | Extra absolute existing directories the client authorizes, for every kind. |
 
-`kind` changes what the model gets. An `acp` attachment adds the
-`update_plan` and `request_user_input` tools, registers MCP tools for its
-`mcpServers` even when the user's MCP configuration does not enable MCP, and
-adds system instructions for plan mode and for `additionalDirectories`. `cli`
-and `web` attachments keep the ordinary tool set and instructions. The kind
-given at session creation is saved as the session's origin. Creating a session
-without `client` records `web`. Usage records carry the kind of the attachment
-that admitted each input.
+Every kind registers tools for its `mcpServers`, even when the user's MCP
+configuration does not enable MCP. Client servers replace saved servers with
+the same name. Additional directories add a system instruction listing the
+authorized paths. They must be absolute existing directories; the daemon
+resolves them and removes duplicates. These fields stay in memory and follow
+the input's admitting attachment.
+
+An `acp` attachment also adds `update_plan` and `request_user_input`, plus a
+system instruction in plan mode. These tools stay ACP-only because the bridge
+delivers plan notifications and question forms to the client. The CLI and web
+client do not provide that interaction contract. Attachments that omit
+`mcpServers` and `additionalDirectories` keep their existing tools, ordering and
+instructions. The kind given at session creation is saved as the session's
+origin. Creating a session without `client` records `web`. Usage records carry
+the kind of the attachment that admitted each input.
 
 `mode` applies to every kind:
 
@@ -243,7 +250,12 @@ Where the environment is used:
   of the environment. Python interpreter selection reads that environment's
   virtualenv.
 - MCP servers inherit the permitted base names and any names listed in
-  `envVars` from the client environment, then apply their own `env`.
+  `envVars` from the client environment, then apply their own `env`. Other
+  client credentials and the daemon's private environment are not inherited.
+  HTTP MCP servers send only their supplied `headers` and the MCP protocol
+  headers, including the negotiated `MCP-Protocol-Version`. Server environment
+  values and headers never appear in attachment status responses or saved
+  attachment configuration. Tool output remains transcript content.
 - Provider construction, model catalogs, model switching and automatic titles
   resolve credentials from the client environment. Credentials saved with
   Yoke's provider login commands fill in missing values. The daemon's own
@@ -342,6 +354,11 @@ connect and after `server.resyncRequired`. When the stream drops:
 2. Attach again with a fresh copy of your environment.
 3. Open the filtered event stream, then catch up from history and the
    transcript, deduplicating durable events by `seq`.
+
+Any full stream queue, including a live-delta overflow, sends
+`server.resyncRequired` and closes. Refresh the input and runtime snapshots to
+replace stale queue and activity state. Discard pending live deltas before
+applying those snapshots.
 
 Never retry an ambiguous write automatically. If a prompt admission timed out,
 retry it only with the same input ID, so the daemon can return the original

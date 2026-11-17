@@ -307,6 +307,7 @@ export class ConnectionController {
       if (broad) this.broadResyncPending = true;
       return;
     }
+    this.retire();
     const lifecycleEpoch = this.lifecycle.epoch;
     this.resyncing = true;
     this.resyncEpoch = lifecycleEpoch;
