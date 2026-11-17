@@ -9,6 +9,10 @@ from yoke.agent.conversation import (
     parse_memory_message,
     project_conversation,
 )
+from yoke.agent.interruptions import (
+    INTERRUPTED_TURN_NOTICE as INTERRUPTED_TURN_NOTICE,
+    is_interruption_notice,
+)
 from yoke.agent.models import (
     AgentContext,
     ConversationEntry,
@@ -124,7 +128,7 @@ def resolve_instructions(
         return [message.model_copy(deep=True) for message in instructions]
     leading_system: list[Message] = []
     for message in messages:
-        if message.role != "system":
+        if message.role != "system" or is_interruption_notice(message):
             break
         leading_system.append(message.model_copy(deep=True))
     if leading_system:
@@ -160,17 +164,14 @@ def build_conversation_log_from_entries(
 
 def entry_kind_for_message(message: Message) -> ConversationEntryKind:
     """Map a transcript message to a persisted entry kind."""
+    if is_interruption_notice(message):
+        return "control"
     if message.role == "user":
         return "user"
     if message.role == "tool":
         return "tool_result"
     if message.role == "assistant" and message.tool_calls:
         return "assistant_tool_calls"
-    if (
-        message.role == "assistant"
-        and message.plain_text_content == INTERRUPTED_TURN_NOTICE
-    ):
-        return "control"
     if message.role == "assistant":
         return "assistant"
     return "instruction"
@@ -225,9 +226,3 @@ def normalize_instructions(
             raise ValueError("Instructions must all have role='system'")
         normalized.append(message.model_copy(deep=True))
     return normalized
-
-
-INTERRUPTED_TURN_NOTICE = (
-    "The previous turn was interrupted by the user before completion. Continue "
-    "from the current state and follow the user's next instruction."
-)

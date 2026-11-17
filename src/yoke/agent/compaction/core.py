@@ -12,7 +12,6 @@ from urllib.parse import urlparse
 from PIL import Image
 
 from yoke.agent.compaction.render import (
-    is_real_user_message,
     truncate_message_to_token_budget,
 )
 from yoke.agent.compaction.types import (
@@ -46,6 +45,7 @@ from yoke.agent.compaction.types import CompactionPreparation as CompactionPrepa
 from yoke.agent.compaction.types import CompactionResult as CompactionResult
 from yoke.agent.compaction.types import TokenEstimate as TokenEstimate
 from yoke.agent.models import (
+    ConversationEntry,
     Message,
     MessageImageURLContentPart,
     MessageLocalImageContentPart,
@@ -98,16 +98,17 @@ class Compactor:
 
     def collect_recent_user_messages(
         self,
-        messages: Sequence[Message],
+        entries: Sequence[ConversationEntry],
         *,
         token_budget: int,
     ) -> list[Message]:
         """Collect recent user messages that fit within the token budget."""
         selected: list[Message] = []
         used_tokens = 0
-        for message in reversed(messages):
-            if not is_real_user_message(message):
+        for entry in reversed(entries):
+            if entry.kind != "user" or entry.message is None:
                 continue
+            message = entry.message
             message_tokens = self.estimate_tokens(
                 [message], reserve_tokens=0
             ).input_tokens

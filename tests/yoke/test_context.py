@@ -7,7 +7,7 @@ from yoke.agent.context import ContextManager
 from yoke.ai.providers.openai_compat import (
     normalize_openai_request_messages,
 )
-from yoke.agent.models import Message, ToolCall, ToolFunction
+from yoke.agent.models import ConversationEntry, Message, ToolCall, ToolFunction
 
 
 def test_append_tool_result_uses_compact_json() -> None:
@@ -80,8 +80,10 @@ def test_retained_user_messages_obey_strict_token_budget() -> None:
     manager = ContextManager()
     retained = manager.compactor.collect_recent_user_messages(
         [
-            Message.user("old intent " + ("alpha " * 100)),
-            Message.user("latest intent"),
+            ConversationEntry(
+                kind="user", message=Message.user("old intent " + ("alpha " * 100))
+            ),
+            ConversationEntry(kind="user", message=Message.user("latest intent")),
         ],
         token_budget=32,
     )

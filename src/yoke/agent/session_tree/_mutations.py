@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from copy import deepcopy
 
 from yoke.agent.compaction.types import CompactionBoundary, CompactionReason
+from yoke.agent.interruptions import is_interruption_notice
 from yoke.agent.models import (
     CompactionHandoff,
     ConversationEntry,
@@ -279,6 +280,8 @@ class SessionTreeMutations:
 
 
 def _kind_for_message(message: Message) -> ConversationEntryKind:
+    if is_interruption_notice(message):
+        return "control"
     if message.role == "user":
         return "user"
     if message.role == "tool":

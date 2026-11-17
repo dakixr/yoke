@@ -9,7 +9,8 @@ from threading import Event
 from fastapi.testclient import TestClient
 
 from tests.yoke.loop.test_runtime_request_differential import EchoTool, _calls
-from yoke.agent.loop import INTERRUPTED_TURN_NOTICE, RuntimeAgent
+from yoke.agent.interruptions import INTERRUPTED_RESPONSE_NOTE
+from yoke.agent.loop import RuntimeAgent
 from yoke.ai.providers.base import ProviderError
 from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.models.prompt import PromptAdmissionRequest, PromptInput
@@ -104,7 +105,7 @@ def test_checkpointed_turn_recovers_once_without_provider_replay(tmp_path):
             restored = reopened.state.session_service.store.load("crash")
             assert (
                 sum(
-                    m.plain_text_content == INTERRUPTED_TURN_NOTICE
+                    m.plain_text_content == INTERRUPTED_RESPONSE_NOTE
                     for m in restored.messages
                 )
                 == 1

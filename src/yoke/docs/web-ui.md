@@ -7,6 +7,10 @@ optimistic updates, the transcript and workspace recovery, plus how to test
 them. The inspector modal has its own page, [web-inspectors.md](web-inspectors.md).
 The HTTP API the app uses is in [http.md](http.md).
 
+The transcript shows a small `Interrupted` marker for interrupted responses.
+It uses the HTTP control projection for both current and legacy notices, so
+these events do not appear as assistant replies.
+
 ## Shell and assets
 
 The app is a no-build Preact and HTM application under `src/yoke/web`. The

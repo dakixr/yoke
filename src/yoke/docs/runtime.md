@@ -88,8 +88,14 @@ request-wide image limit.
 Compaction appends a synthetic handoff instruction to the current provider
 context and stores the assistant's answer as a checkpoint. It then starts a
 smaller context with the stable instructions, earlier real user prompts, the
-newest handoff and the messages after the checkpoint. The canonical session is
-append only and keeps everything.
+newest handoff and the messages after the checkpoint. Active skill instructions
+stay before the retained prompts. Retention selects `user` entries from the
+active branch, so command completion notices, branch summaries and tool context
+are summarized but do not become retained user prompts. SDK structured-output
+correction prompts also use control entries; schema instructions attached to
+the original user prompt stay with that prompt. Repeated compaction
+keeps the checkpoint's retained values, including truncated prompts. The
+canonical session is append only and keeps everything.
 
 For a 400,000-token window, pre-handoff user prompts are capped at 20,000 tokens,
 newest first, and the handoff prompt asks for at most 12,000 tokens. Smaller
@@ -122,6 +128,13 @@ to exit. Retired generations are fenced, so late output cannot replace the
 accepted conversation or render into the active turn. The 100 ms target is a
 logical handoff. It does not mean every remote request, thread or process has
 exited.
+
+Interruption markers are stored as `control` entries. The provider receives
+one system note, "The previous response was interrupted by the user.", before
+the next user message. Further interruptions without assistant output share
+that note. Resuming without a new user message places the note at the end of
+the context. Exact legacy assistant notices receive the same projection on
+load without changing stored entries. Terminal scrollback shows `Interrupted`.
 
 Runtime shutdown signals the remaining in-process tools and waits for a bounded
 cleanup window. If a tool outlives it, `close()` raises and leaves the runtime

@@ -15,6 +15,7 @@ from yoke.agent.compaction import (
 from yoke.agent.context.accounting import latest_log_usage, latest_message_usage
 from yoke.agent.context.compaction_projection import (
     compacted_runtime_messages,
+    compaction_user_entries,
     next_compaction_generation_from_active_path,
 )
 from yoke.agent.context.helpers import (
@@ -208,7 +209,7 @@ class ContextManager:
         ):
             return None
         recent_user_messages = self.compactor.collect_recent_user_messages(
-            context.messages,
+            compaction_user_entries(context),
             token_budget=self.compaction_policy.recent_user_tokens,
         )
         return CompactionPreparation(

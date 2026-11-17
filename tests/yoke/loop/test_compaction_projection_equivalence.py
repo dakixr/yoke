@@ -179,7 +179,11 @@ def test_fast_recent_user_selection_matches_established_projection(
 ) -> None:
     manager, context = _context(scenario())
     expected = manager.compactor.collect_recent_user_messages(
-        recent_log_messages(context),
+        [
+            ConversationEntry(kind="user", message=m)
+            for m in recent_log_messages(context)
+            if m.role == "user"
+        ],
         token_budget=manager.compaction_policy.recent_user_tokens,
     )
 

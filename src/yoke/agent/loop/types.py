@@ -8,6 +8,7 @@ from typing import Literal
 
 from yoke.agent.compaction import CompactionPreparation
 from yoke.agent.compaction import CompactionResult
+from yoke.agent.interruptions import INTERRUPTED_TURN_NOTICE as INTERRUPTED_TURN_NOTICE
 from yoke.agent.models import AgentContext
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
@@ -91,10 +92,6 @@ class AgentStoppedError(RuntimeError):
     """Raised when the agent is stopped via the stop_requested callback."""
 
 
-INTERRUPTED_TURN_NOTICE = (
-    "The previous turn was interrupted by the user before completion. Continue "
-    "from the current state and follow the user's next instruction."
-)
 AgentEventHandler = Callable[[str, dict[str, object]], None]
 BeforeToolCallHook = Callable[[BeforeToolCallContext], BeforeToolCallResult | None]
 AfterToolCallHook = Callable[[AfterToolCallContext], AfterToolCallResult | None]

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from yoke.agent.interruptions import INTERRUPTED_RESPONSE_NOTE
 from yoke.agent.models import (
     Message,
     MessageImageURL,
@@ -57,6 +58,8 @@ def projected_message(value: dict[str, Any]) -> Message | None:
     """Restore presentation values from a public transcript, never provider state."""
     kind = value["type"]
     if kind == "control":
+        if value.get("control") == "interrupted":
+            return Message.system(INTERRUPTED_RESPONSE_NOTE)
         return None
     if kind == "tool":
         return Message(

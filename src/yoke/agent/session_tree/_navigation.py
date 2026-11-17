@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from yoke.agent.interruptions import INTERRUPTED_RESPONSE_NOTE, INTERRUPTED_TURN_NOTICE
 from yoke.agent.models import Message
 
 from .errors import InvalidMessageError
@@ -145,7 +146,14 @@ class SessionTreeNavigation:
             _validate_role_tool_fields(user_message)
             appended.append(self._append_entry("user", message=user_message))
         appended.append(
-            self._append_entry("assistant", message=Message.assistant(notice))
+            self._append_entry(
+                "control",
+                message=Message.system(
+                    INTERRUPTED_RESPONSE_NOTE
+                    if notice == INTERRUPTED_TURN_NOTICE
+                    else notice
+                ),
+            )
         )
         return tuple(appended)
 
