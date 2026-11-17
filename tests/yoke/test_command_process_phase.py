@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -183,3 +185,64 @@ def test_failed_cleanup_keeps_agent_run_authority_open_until_retry() -> None:
     manager.close()
     with pytest.raises(RuntimeError, match="closed"):
         manager.agent_runs.capability(Owner("owner"))
+
+
+class RunningProcess:
+    pid = 2_000_000_401
+    stdin = None
+    stdout = None
+    stderr = None
+
+    def poll(self) -> None:
+        return None
+
+
+def test_reading_phase_and_snapshots_never_changes_lifecycle_state(caplog) -> None:
+    managed = _ManagedCommandProcess(
+        session_id=1_402,
+        command="TEST-OWNED read-only phase",
+        cwd=Path.cwd(),
+        process=cast(subprocess.Popen[bytes], RunningProcess()),
+        tty=False,
+        master_fd=None,
+        on_change=lambda: None,
+    )
+    caplog.set_level(logging.DEBUG, logger="yoke.agent.tools.command_process.process")
+
+    assert managed.phase is ProcessPhase.STARTING
+    before = managed.snapshot()
+    after = managed.snapshot()
+
+    assert managed.phase is ProcessPhase.STARTING
+    assert replace(before, elapsed_seconds=0.0) == replace(after, elapsed_seconds=0.0)
+    assert managed.finished is False
+    assert managed.closed is False
+    assert managed.finished_monotonic is None
+    assert not [
+        record
+        for record in caplog.records
+        if "machine=command_process" in record.getMessage()
+    ]
+
+
+def test_lifecycle_flags_are_derived_from_the_phase() -> None:
+    managed = make_process()
+
+    assert isinstance(vars(_ManagedCommandProcess)["finished"], property)
+    assert isinstance(vars(_ManagedCommandProcess)["closed"], property)
+    assert "_effective_phase_locked" not in vars(_ManagedCommandProcess)
+    assert "_mark_finished_locked" not in vars(_ManagedCommandProcess)
+    assert "_tree_cleanup_complete" not in vars(managed)
+    assert "_local_cleanup_complete" not in vars(managed)
+    assert "finished" not in vars(managed)
+    assert "closed" not in vars(managed)
+
+    assert managed.phase is ProcessPhase.EXITED
+    assert managed.finished is True
+    assert managed.finished_monotonic is not None
+    assert managed.closed is False
+
+    managed.close()
+    assert managed.phase is ProcessPhase.EXITED
+    assert managed.finished is True
+    assert managed.closed is True

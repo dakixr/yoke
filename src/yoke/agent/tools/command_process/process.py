@@ -24,6 +24,7 @@ from yoke.agent.tools.command_process.output import (
     command_decoder,
 )
 from yoke.agent.tools.command_process.phase import (
+    TERMINAL as TERMINAL_PHASES,
     ProcessEvent,
     ProcessPhase,
     next_process_phase,
@@ -84,10 +85,11 @@ class _ManagedCommandProcess:
         self._lifecycle_lock = threading.RLock()
         self._process_group_id = process.pid
         self._accepting_output = True
-        self._tree_cleanup_complete = False
-        self._local_cleanup_complete = False
+        # Local descriptor release is orthogonal to the lifecycle: an EXITED or
+        # CLEANUP_FAILED process can still hold local resources, and releasing
+        # them does not by itself finish the lifecycle. It stays plain data.
+        self._local_resources_released = False
         self._phase = ProcessPhase.STARTING
-        self.closed = False
 
     def start_readers(self) -> None:
         if self._phase is ProcessPhase.STARTING:
@@ -157,7 +159,7 @@ class _ManagedCommandProcess:
     def _reader_finished(self) -> None:
         with self.condition:
             self.open_readers = max(0, self.open_readers - 1)
-            self._mark_finished_locked()
+            self._observe_exit_locked()
             self.condition.notify_all()
         self.on_change()
 
@@ -174,7 +176,7 @@ class _ManagedCommandProcess:
         with self.condition:
             while self.open_readers:
                 self.condition.wait(timeout=0.05)
-            self._mark_finished_locked()
+            self._observe_exit_locked()
             self.condition.notify_all()
         self.on_change()
 
@@ -182,12 +184,12 @@ class _ManagedCommandProcess:
         assert self.timeout_seconds is not None
         deadline = self.started_monotonic + self.timeout_seconds
         with self.condition:
-            while not self.finished:
+            while not self._finished_locked():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 self.condition.wait(timeout=min(remaining, 0.05))
-            if self.finished:
+            if self._finished_locked():
                 return
             self.timed_out = True
         try:
@@ -240,8 +242,8 @@ class _ManagedCommandProcess:
     def _snapshot_locked(
         self, *, include_output: bool = True
     ) -> CommandProcessSnapshot:
-        self._mark_finished_locked()
-        phase = self._effective_phase_locked()
+        self._observe_exit_locked()
+        phase = self._phase
         exit_code = self.process.poll()
         return CommandProcessSnapshot(
             session_id=self.session_id,
@@ -275,34 +277,25 @@ class _ManagedCommandProcess:
 
     @property
     def phase(self) -> ProcessPhase:
-        """Return the owned lifecycle phase, not a value derived from poll()."""
+        """Return the owned lifecycle phase."""
         with self.condition:
-            self._mark_finished_locked()
+            self._observe_exit_locked()
             return self._phase
-
-    def _effective_phase_locked(self) -> ProcessPhase:
-        """Recognize a reaped child even before a reader records the exit."""
-        if self._phase in {ProcessPhase.EXITED, ProcessPhase.CLEANUP_FAILED}:
-            return self._phase
-        if (
-            self._phase is not ProcessPhase.EXITING
-            and self.process.poll() is not None
-            and self.open_readers == 0
-        ):
-            return ProcessPhase.EXITED
-        return self._phase
 
     def _finished_locked(self) -> bool:
-        return self._effective_phase_locked() in {
-            ProcessPhase.EXITED,
-            ProcessPhase.CLEANUP_FAILED,
-        }
+        self._observe_exit_locked()
+        return self._phase in TERMINAL_PHASES
 
     @property
     def finished(self) -> bool:
         with self.condition:
-            self._mark_finished_locked()
             return self._finished_locked()
+
+    @property
+    def closed(self) -> bool:
+        """Whether local resources are released; tracked outside the phase."""
+        with self.condition:
+            return self._local_resources_released
 
     def _enter(self, event: ProcessEvent) -> ProcessPhase:
         with self.condition:
@@ -312,6 +305,8 @@ class _ManagedCommandProcess:
         previous = self._phase
         current = next_process_phase(previous, event)
         if current is not previous:
+            if current is ProcessPhase.EXITED and self.finished_monotonic is None:
+                self.finished_monotonic = time.monotonic()
             LOGGER.debug(
                 "machine=command_process id=%s from=%s to=%s cause=%s",
                 self.session_id,
@@ -365,7 +360,8 @@ class _ManagedCommandProcess:
                     if self._phase is ProcessPhase.CLEANUP_FAILED
                     else ProcessEvent.SHUTDOWN
                 )
-            if not self._tree_cleanup_complete:
+                already_exited = self._phase is ProcessPhase.EXITED
+            if not already_exited:
                 try:
                     terminate_owned_process_tree(
                         self.process,
@@ -373,8 +369,6 @@ class _ManagedCommandProcess:
                     )
                 except BaseException as exc:
                     first_error = exc
-                else:
-                    self._tree_cleanup_complete = True
             try:
                 self._close_local_resources()
             except BaseException as exc:
@@ -390,7 +384,7 @@ class _ManagedCommandProcess:
             raise first_error
 
     def _close_local_resources(self) -> None:
-        if self._local_cleanup_complete:
+        if self._local_resources_released:
             return
         deadline = time.monotonic() + FINAL_DRAIN_SECONDS
         drain_deadline = deadline - READER_JOIN_RESERVE_SECONDS
@@ -414,15 +408,14 @@ class _ManagedCommandProcess:
             self._accepting_output = False
             if live_readers:
                 self.open_readers = 0
-            self._mark_finished_locked()
+            self._observe_exit_locked()
             self.condition.notify_all()
         if live_readers and first_error is None:
             first_error = RuntimeError(
                 f"Timed out draining command session {self.session_id} output"
             )
         if first_error is None:
-            self._local_cleanup_complete = True
-            self.closed = True
+            self._local_resources_released = True
         if first_error is not None:
             raise first_error
 
@@ -446,16 +439,15 @@ class _ManagedCommandProcess:
             self.master_fd = None
         return first_error
 
-    def _mark_finished_locked(self) -> None:
-        if (
-            self.finished_monotonic is None
-            and self.process.poll() is not None
-            and self.open_readers == 0
-        ):
-            self.finished_monotonic = time.monotonic()
+    def _observe_exit_locked(self) -> None:
+        """Record a reaped child once every reader has drained.
+
+        Idempotent. Reader and watcher threads call it when they see the child
+        go, and read paths call it so a reaped child is never missed.
+        """
         if (
             self._phase in {ProcessPhase.STARTING, ProcessPhase.RUNNING}
-            and self.process.poll() is not None
             and self.open_readers == 0
+            and self.process.poll() is not None
         ):
             self._enter_locked(ProcessEvent.EXIT)
