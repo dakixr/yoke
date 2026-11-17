@@ -1,46 +1,18 @@
 # ACP and T3 Code
 
-`yoke acp` is a stdio ACP agent backed by the per-user Yoke daemon.
-With no URL, it discovers the local daemon or starts a detached
-`yoke serve --daemon`, then holds a named event-stream lease until ACP closes.
-The daemon owns durable conversations and execution. Closing ACP releases its
-client tool configuration and prompt observers. Saved sessions remain available.
+This page is for people who use Yoke from an Agent Client Protocol (ACP)
+client such as T3 Code. It covers setup, what the ACP bridge supports, how
+approval modes work, and how T3 thread settlement reaches Yoke.
 
-## T3 Code setup
+`yoke acp` is an ACP agent on stdio. It does not run turns itself. It forwards
+each ACP session to the per-user Yoke daemon described in [http.md](http.md),
+which owns saved conversations and execution. Closing the ACP connection drops
+its client configuration and observers. Saved sessions stay in the daemon.
 
-Use `yoke acp` as the local command. No URL or bearer token is needed for the
-local Unix socket, which authenticates the peer's uid. On Windows it uses the
-loopback TCP port and bearer token from the user-private `daemon.json`.
-Discovery waits up to five seconds for startup; daemon output goes to `~/.yoke/run/daemon.log`.
-`yoke daemon status`, `restart`, and `stop` inspect or control it.
+## Set up T3 Code
 
-An explicit `--url` or `YOKE_ACP_URL` selects an existing HTTP server instead.
-That mode requires `--token` or `YOKE_ACP_TOKEN`. It holds a daemon lease
-over the same authenticated HTTP connection settings as session requests. It
-does not discover or spawn a local daemon. Existing launchers with both
-environment variables continue using their configured server.
-
-Provider credentials and settings must be available to the daemon. An
-auto-spawned daemon inherits the first client's environment. Later clients do
-not replace that environment in this phase. A systemd daemon needs its provider
-environment in a protected environment file, or credentials saved with Yoke's
-provider login commands. See [the sample user unit](../../../docs/yoke-daemon.service).
-No running host service is changed by installing this code.
-
-Different client and daemon builds trigger an idle restart. A busy daemon with
-a compatible protocol accepts the client with one warning and restarts after
-its work drains. An incompatible busy daemon refuses attachment without
-interrupting its turns. ACP reconnects its lease after a restart; individual
-session requests are not retried because they might already be admitted.
-
-ACP no longer creates per-session ownership files. Each peer serializes its
-own operations; independent daemon client attachments coexist by owner. The
-daemon handles admission, queue revisions, interruption and workspace leases.
-
-In T3's provider settings, add an ACP provider using a local command. Use
-`yoke acp` if T3 already inherits the required environment. Otherwise point it
-at an executable launcher that loads that environment and runs `yoke acp`.
-The corresponding provider instance configuration is:
+In T3's provider settings, add an ACP provider that runs a local command. The
+provider instance configuration looks like this:
 
 ```json
 {
@@ -55,131 +27,177 @@ The corresponding provider instance configuration is:
 }
 ```
 
-T3 discovers ready models and their reasoning controls from ACP configuration
-options. Workspace skills arrive through `available_commands_update` as `$name`
-commands, which T3 displays in its skills menu. Catalog discovery creates a
-native session but performs no model inference. The generic T3 route requires
-no Yoke-specific provider driver. The launcher already authenticates to the
-daemon, so ACP advertises no additional sign-in methods.
+`commandPath` can be `yoke` with `commandArgs: ["acp"]`, or a launcher script
+that sets up `PATH` and then runs `yoke acp`. No URL or token is needed.
+`yoke acp` finds the local daemon, or starts `yoke serve --daemon` and waits up
+to five seconds for it. It then holds a daemon lease named `acp` until the ACP
+connection closes. On Linux and macOS it talks to the daemon over the Unix
+socket. On Windows it uses the loopback port and token from
+`~/.yoke/daemon.json`. The daemon logs to `~/.yoke/run/daemon.log`, and
+`yoke daemon status` shows whether it runs.
 
-The model picker includes every model from every ready Yoke provider. Compare
-`GET /api/v1/provider` and `GET /api/v1/model` on the daemon with `yoke models
-list` when entries are missing. Credentials must reach the daemon, even if the
-ACP launcher already has them. Restart the daemon after changing its service
-environment, then refresh Yoke in T3's provider settings. Matching model names
-include their provider so same-named models from different providers remain
-distinguishable. New ACP
-sessions use the workspace's configured default model and reasoning effort;
-switching models uses that model's supported reasoning choices and default.
+To use a daemon somewhere else, pass `--url` or set `YOKE_ACP_URL`. That mode
+requires `--token` or `YOKE_ACP_TOKEN` and does not discover or start a local
+daemon. Prefer the environment variable for the token.
 
-## Session behavior
+### Provider credentials
 
-| Feature | Behavior |
+ACP sessions run with the daemon's environment, not the launcher's. The bridge
+sends no environment when it attaches. A daemon started on demand inherits only
+a short list of system and Yoke variables, so provider API keys exported in the
+launcher do not reach it. Give the daemon credentials in one of these ways:
+
+- Save them with Yoke's provider login commands.
+- Put them in the project's `.env`, which the daemon loads for that directory.
+- Run the daemon under a service manager with an `EnvironmentFile`. The sample
+  unit is [`docs/yoke-daemon.service`](../../../docs/yoke-daemon.service).
+
+After changing the daemon's service environment, restart it with
+`yoke daemon restart` and refresh Yoke in T3's provider settings.
+
+### Models and skills
+
+At startup the bridge reads the daemon's model catalog and offers every model
+from every ready provider as an ACP configuration option, with that model's
+reasoning efforts. Names include the provider, so models with the same name
+from different providers stay distinct. New sessions use the directory's
+configured default model and reasoning effort. Switching models resets the
+effort to the new model's default.
+
+If a model is missing, compare `GET /api/v1/provider` and `GET /api/v1/model`
+on the daemon with `yoke models list`. The daemon, not the launcher, needs the
+credentials.
+
+Workspace skills arrive through `available_commands_update` as `$name`
+commands, which T3 shows in its skills menu. Reading the catalog creates a
+session but runs no model inference. ACP advertises no sign-in methods.
+
+## What the bridge supports
+
+| Area | Support |
 | --- | --- |
-| Sessions | Create, load with history replay, resume without replay, list with cursor and cwd filtering, fork, and close |
-| Models | Native ready catalog, per-session model and reasoning selection, config change notifications |
-| Content | Text, inline images, embedded resources, attachment-only prompts |
-| Tools | Standard lifecycle, readable output, action labels, file locations, structured results |
-| Metadata | Session title, context usage, task plans, and compaction lifecycle notifications |
-| MCP | Client-injected stdio and HTTP servers, including T3's `t3-code` server |
-| Interaction | ACP permission requests and form elicitation for user questions |
-| Steering | Cancel, wait for physical drain, then send the corrected prompt in the same session |
+| Sessions | Create, load with history replay, resume without replay, list with cursor and directory filter, fork, close |
+| Models | Ready catalog, per-session model and reasoning effort, configuration change notifications |
+| Content | Text, inline images, embedded resources, prompts with only attachments |
+| Tools | Standard tool-call lifecycle, readable output, action labels, file locations, structured results |
+| Metadata | Session title, context usage, task plans, compaction progress |
+| MCP | Client-supplied stdio and HTTP servers, including T3's `t3-code` server |
+| Interaction | Permission requests and form elicitation for questions |
+| Steering | Cancel, wait for the turn's workers to exit, then send the corrected prompt in the same session |
 
-ACP protocol version 1 is negotiated even when the client offers version 2.
-The installed Python ACP SDK supports the standard and unstable methods used
-here. SSE MCP and MCP-over-ACP transports are not advertised or accepted.
+The bridge negotiates ACP protocol version 1, even when the client offers
+version 2. It does not accept SSE MCP servers or MCP over ACP.
 
-History replay includes each saved native entry's `messageId` on all of its
-content chunks. Consecutive messages remain separate even when they have the
-same role or identical text. Live final replies use the same saved IDs as
-replay. Live commentary uses IDs scoped to the admitted input and model
-iteration, since its native entry has not yet been persisted. Message
-boundaries do not depend on intervening tool updates.
+On load, history replay sets each saved entry's `messageId` on all of its
+content chunks. Consecutive messages stay separate even with the same role or
+text. A live final reply uses the same ID it will have on replay. Live
+commentary uses an ID derived from the input and model iteration, because its
+entry is not saved yet.
 
-These IDs preserve transcript boundaries through ACP reloads. T3 retains its
-own timeline and controls mobile caching and work folding. Updating the peer
-does not rewrite existing T3 rows or establish that every disappearing-view
-report has the same cause.
+The bridge does not retry a failed request to the daemon, because a prompt may
+already have been admitted. A failed turn still interrupts admitted work and
+waits for its workers to exit. Errors name the failure, the request and the
+elapsed time, for example
+`Native HTTP read timeout during POST session/wait after 35.0s`. That message
+describes the bridge's request to the daemon, not the model provider. It
+omits session IDs, query values, credentials and response bodies. The bridge
+closes idle pooled connections after two seconds, before the daemon's
+five-second keep-alive timeout.
 
-Injected MCP configuration takes precedence over a persisted server with the
-same name. It lives only in the daemon's session runtime. Credentials are not
-written into Yoke configuration, saved sessions, or client-status responses.
-Load and resume replace the injected servers with the client's current values.
-Closing the owning connection removes them. A different session cannot see
-them. The model uses `mcp_inspect` and `mcp_call` to discover and call these
-tools even when the ordinary CLI configuration does not enable MCP.
+When the daemon restarts, the bridge reopens its lease against the new daemon.
+`yoke daemon stop` ends that reconnect loop.
 
-### T3 settlement
+### Commands
 
-T3 sends ACP `session/close` both when settling a thread and when releasing
-an ordinary idle session. The message carries no reason. Yoke therefore reads
-the thread's durable `settled` state through T3's injected, scoped MCP service.
-A confirmed settlement archives the corresponding native Yoke session after
-its workers and queued prompts drain. Ordinary closes and failed state reads
-leave the session active. Loading or resuming an archived session reactivates it.
-Unsettling a thread in T3 also reactivates its Yoke session on the next check,
-without a new message or ACP connection. This only undoes archives applied by
-the settlement observer. It preserves sessions that were already archived
-independently in Yoke.
+The bridge advertises `/compact`, `/info`, `/title`, `/model`, `/skill`, `/ps`,
+`/agents`, `/mcp` and `/shortcuts`. A prompt that consists of exactly one of
+these commands runs the matching daemon operation. Any other prompt goes to the
+model. Compaction progress appears as a `think` tool call, because ACP has no
+compaction notification. If compaction fails or leaves work undone, the result
+says so instead of reporting success.
 
-The daemon checks on client detach and every 15 seconds. Its settlement
-observer survives an ACP disconnect, so settling an already idle T3 thread
-still reaches Yoke. The observer retains only its scoped MCP credential in
-memory, separate from the model's tools, until credential revocation,
-replacement by another client, or daemon shutdown. It continues observing
-settled threads so Unsettle can reach Yoke. No credential is persisted.
-After restarting the daemon, load or resume the T3 thread to
-reattach this observer. Loading or resuming also reactivates Yoke immediately.
-This synchronization runs from T3 to Yoke. Archiving directly in Yoke does not
-settle T3. T3 archive actions that revoke MCP access before
-Yoke can read state cannot be inferred safely from the resulting authorization
-failure.
+### Client MCP servers
 
-HTTP MCP connections send the server's negotiated `MCP-Protocol-Version`
-header after initialization. T3 requires this header for subsequent requests.
+MCP servers that the client sends with a session take precedence over a saved
+server with the same name. They exist only in the daemon's memory for that
+session. The daemon never writes their credentials to Yoke configuration,
+saved sessions or status responses. Load and resume replace them with the
+client's current list, and closing the connection removes them. Other sessions
+cannot see them. The model reaches them through `mcp_inspect` and `mcp_call`,
+even when the user's MCP configuration does not enable MCP.
 
-## Modes and interactive tools
+After initialization, HTTP MCP requests send the negotiated
+`MCP-Protocol-Version` header, which T3 requires.
 
-New ACP sessions default to `approval-required`. This routes mutations,
-execution, and unclassified MCP/plugin calls through the client's permission
-policy. A full-access T3 thread can approve these automatically; a thread
-requiring approval can display them. File targets accompany permission requests
-so the client can evaluate workspace write policy.
+## Approval modes
 
-- `approval-required` permits known read tools and asks for other tools.
-- `auto-accept-edits` also permits native file edit tools without asking.
-- `full-access` executes tools without the ACP permission gate.
-- `plan` permits known read tools and blocks changes, execution, and unclassified
-  tools. Switching mode is required before those calls can run.
+New ACP sessions start in `approval-required`. T3 can switch the mode from the
+session's configuration options.
 
-These are tool policies, not an operating-system sandbox. They apply to new
-tool calls, and do not revoke background work already started. Native CLI and
-SDK sessions without attached client configuration keep their existing behavior.
+| Mode | Behaviour |
+| --- | --- |
+| `approval-required` | Run read-only tools. Ask the client before anything else. |
+| `auto-accept-edits` | Also run Yoke's file edit tools without asking. |
+| `full-access` | Run every tool without asking. |
+| `plan` | Run read-only tools. Block edits, commands and unclassified tools until the mode changes. |
 
-Attached sessions gain `update_plan` and `request_user_input` tools. Plans use
-standard ACP plan notifications. Questions use form elicitation with free text,
-a single choice, or multiple choices. A client unable to handle the form declines
-the question. Interrupting a question rejects it and waits for its worker to
-finish. Pending permissions/questions and the latest in-memory plan are
-reconciled after event-stream reconnects.
+The daemon sends permission requests through ACP with the tool's kind and file
+targets, so a full-access T3 thread can approve them automatically and an
+approval thread can show them. Modes are a tool policy, not an operating-system
+sandbox. A mode change applies to new tool calls and does not stop background
+work that already started. [daemon-client.md](daemon-client.md#attach-a-client)
+lists the tools each mode allows.
 
-The peer advertises `/compact`, `/info`, `/title`, `/model`, `/skill`, `/ps`,
-`/agents`, `/mcp`, and `/shortcuts`. A prompt containing exactly one of these
-commands runs the corresponding native operation. Other prompts pass to the
-model normally. Compaction reports failure or continued work without claiming
-that summarization succeeded. Compaction progress uses a standard `think` tool
-lifecycle because this SDK has no dedicated ACP compaction notification.
+ACP sessions also get two tools:
+
+- `update_plan` sends standard ACP plan notifications.
+- `request_user_input` asks a question through form elicitation, with free
+  text, a single choice or several choices. A client that cannot show the form
+  declines the question.
+
+Interrupting a turn rejects its pending question and waits for the worker to
+exit. After the bridge reconnects to the daemon's event stream, it reconciles
+pending permission requests, questions and the latest plan.
+
+## T3 thread settlement
+
+T3 sends ACP `session/close` both when the user settles a thread and when it
+releases an idle session, and the message carries no reason. To tell them
+apart, the daemon reads the thread's `settled` state through T3's injected
+`t3-code` MCP server:
+
+- If T3 reports the thread settled, the daemon archives the matching Yoke
+  session once its workers and queued inputs finish.
+- If the thread is not settled, or the state cannot be read, the session stays
+  active.
+- If the user unsettles the thread in T3, the daemon unarchives the session on
+  its next check, without a new message or connection. It only reverses
+  archives that this observer made, and leaves sessions archived directly in
+  Yoke alone.
+- Loading or resuming an archived session unarchives it at once.
+
+The daemon checks when the client detaches and every 15 seconds after that. The
+observer keeps running after the ACP connection closes, so settling an idle
+thread still reaches Yoke. It holds T3's scoped MCP credential in memory,
+separate from the model's tools, until T3 revokes it, another client replaces
+it, or the daemon exits. The daemon never saves that credential. After a daemon
+restart, load or resume the T3 thread to start observing again.
+
+Settlement flows from T3 to Yoke only. Archiving a session in Yoke does not
+settle the T3 thread. If T3 revokes MCP access before the daemon reads the
+state, the daemon cannot tell a settled thread from a revoked one, and leaves
+the session active.
 
 ## Generic T3 presentation limits
 
-Yoke's native SDK-agent and managed-process observers retain their structured
-records in tool updates. T3's generic ACP driver currently decodes dedicated
-subagent/background extensions only for selected other agents. It therefore
-shows Yoke-native observations as tool activity, rather than populating the
-specialized Agents and Monitoring views. Those views require a T3-side decoder
-for Yoke's extensions. T3-owned agents invoked through its injected MCP tools
-use T3's own orchestration and presentation.
+The bridge sends Yoke's SDK agent runs and managed processes as structured
+records inside tool updates. T3's generic ACP driver decodes its dedicated
+subagent and background-process views only for some other agents. It shows
+Yoke's records as tool activity instead of filling the Agents and Monitoring
+views. Those views need a T3-side decoder for Yoke's records. Agents that T3
+starts through its own MCP tools use T3's orchestration and views.
 
-Older Yoke daemons continue to support the existing ACP operations. The peer
-advertises the new session controls, interactive modes, and HTTP MCP support
-only when the daemon exposes the session-client endpoint.
+The bridge works with older daemons that lack the session client endpoint. It
+then does not offer the session controls, approval modes or HTTP MCP support,
+and it rejects client MCP servers and additional directories with an error
+asking you to upgrade the daemon.

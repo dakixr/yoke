@@ -1,37 +1,30 @@
 # Composed MCP work
 
-The ChatGPT-facing MCP server supports bounded batches, Python composition,
-repeatable process observation, binary transfer, and versioned workspace
-recipes. These tools do not start a Yoke agent. Yoke's agent SDK, provider
-messages, skill instructions, and existing agent-side MCP projection are
-unchanged.
+This page is for people who drive `yoke-mcp` from ChatGPT or another MCP client
+and want fewer round trips. It covers the batch, Python composition, result
+handle, recipe and file-transfer tools, with their limits. Start with
+[mcp-server.md](mcp-server.md) for setup, the full tool list and security.
+None of these tools start a Yoke agent, and they do not change how Yoke's own
+agents see MCP.
 
 ## Choose a tool
 
 | Job | Tool |
 | --- | --- |
-| One local read, search, command, or patch | Existing direct tools |
-| Several independent local reads or searches | `batch_read` |
-| Dependent reads, downstream calls, or local filtering | `python_exec` with `yoke_mcp` |
-| Discover downstream contracts | `mcp_inspect` |
-| Retrieve retained output | `result_read` |
-| Observe several running commands | `process_read` |
-| Write terminal input | `process_input` |
-| Stop a process and its managed dispatch | `process_cancel` |
+| One read, search, command or patch | The direct tools |
+| Several independent reads or searches | `batch_read` |
+| Dependent reads, downstream calls or local filtering | `python_exec` with `yoke_mcp` |
+| Discover downstream tools and schemas | `mcp_inspect` |
+| Page through a large retained result | `result_read` |
+| Wait on or page several running commands | `process_read` |
+| Send terminal input | `process_input` |
+| Stop a process and its managed calls | `process_cancel` |
 | Search and fetch match windows | `search_then_read` |
 | Git status, root instructions, known paths, optional search | `workspace_snapshot` |
-| Explicit patch followed by exact checks | `check_patch` |
-| Import native ChatGPT file parameters | `import_files` |
+| Apply a patch, then run exact checks | `check_patch` |
+| Import files ChatGPT passes as file parameters | `import_files` |
 | Upload bytes from another program | `write_binary_file` |
-| Export exact byte pages to another program | `export_file` |
-
-Process names now match native Yoke. Migrate removed names and wait arguments
-using the [process migration table](process-tools.md#breaking-migration).
-New results advertise output schemas and use `structuredContent` with a short
-text acknowledgement. Set
-`YOKE_MCP_LEGACY_RESULT_TEXT=true` for clients that also require the full JSON
-serialized into text. This compatibility setting does not affect Yoke agents.
-The MCP command descriptor advertises its effective non-login-shell default.
+| Export exact bytes to another program | `export_file` |
 
 ## Independent reads
 
@@ -47,34 +40,31 @@ The MCP command descriptor advertises its effective non-login-shell default.
 }
 ```
 
-`batch_read` accepts 1–16 typed `read_file`, `rg`, or `fd` operations. It validates
-the entire request before starting, rejects duplicate IDs, and returns outcomes
-in input order. Search tools expose search semantics rather than native shell
-argument strings, so subprocess switches and pipelines are not representable.
-A missing file does not discard successful siblings. No nested batch, shell,
-Python, or generic downstream call is accepted in this tool.
+`batch_read` takes 1 to 16 `read_file`, `rg` or `fd` operations. It validates
+the whole request before starting, rejects duplicate IDs, and returns results
+in input order. One failed item, such as a missing file, does not discard the
+others. It accepts no nested batches, shell, Python or downstream calls.
 
-The batch allows at most four concurrent operations and shares the service's
-operation limit. Each item receives a separate output allowance, so a noisy
-search cannot hide another item's status. The approximate token budget is four
-ASCII JSON bytes per token, capped at 64,000 bytes. Requests must reserve 512
-bytes per item, the actual ASCII JSON encoding of each ID, and 1,024 bytes
-for the envelope. Oversized payloads become retained-result receipts within
-individual items; the batch always preserves its run ID, item IDs and statuses,
-operation count, and elapsed time. This is a byte heuristic, not
-a measurement of tokens consumed by ChatGPT.
+At most four items run at once, and they share the server's operation limit.
+`max_output_tokens` accepts 512 to 16,000. The server converts it to bytes at
+four ASCII JSON bytes per token, capped at 64,000 bytes. The budget must cover
+1,024 bytes for the envelope plus, for each item, 512 bytes and the encoded
+length of its ID. Each item gets its own share, so one noisy search cannot hide
+another item's status. An item whose output does not fit becomes a retained
+result handle. The response always keeps the run ID, item IDs and statuses, the
+operation count and the elapsed time. The budget is a byte estimate, not a
+count of the tokens the client will spend.
 
-The deadline stops queued work and cancels unfinished items. Composed searches
-disable ripgrep configuration hooks, poll cancellation, and cap captured data
-at 4 MiB. Internal file reads reject files larger than 4 MiB and return clean
-text, source offset, total line count, completeness, and continuation offset.
-These limits do not change the direct agent `ReadTool`.
+The deadline cancels unfinished items. Searches inside a batch ignore ripgrep
+configuration and capture at most 4 MiB. Reads reject files over 4 MiB and
+return text, source offset, total line count, a completeness flag and a
+continuation offset.
 
 ## Python composition
 
-`python_exec` injects `yoke_mcp` into its fresh Python subprocess. Ordinary
-Python and shell access retain their existing OS permissions. The helper is
-not a sandbox and is not advertised as read-only.
+`python_exec` makes a `yoke_mcp` module available in its fresh Python
+subprocess. The subprocess has the account's normal OS permissions. It is not
+a sandbox and is not read-only.
 
 ```python
 import asyncio
@@ -91,17 +81,18 @@ async def main():
 asyncio.run(main())
 ```
 
-`tools.call` permits local `read_file`, `rg`, `fd`, `skill`, and `result_read`.
-`tools.gather([...])` awaits independent calls. Results expose `.status`,
-`.data`, and `.error`; malformed requests or denied dispatch raise an exception.
-`output.emit(value)` retains the complete JSON value and prints a compact
-receipt containing `result_ref` and selected output. Large intermediate values
-remain in the subprocess instead of passing through ChatGPT.
+`tools.call` can run `read_file`, `rg`, `fd`, `skill` and `result_read`.
+`tools.gather([...])` awaits independent calls. Results have `.status`,
+`.data` and `.error`. A malformed request or a denied call raises an exception.
+`output.emit(value)` retains the complete JSON value and prints a short receipt
+with its `result_ref` and the selected output, so large intermediate values stay
+in the subprocess instead of passing through the chat.
 
-`tools.mcp(server, tool, arguments, schema_hash=...)` uses the parent's existing
-downstream client. Discovery remains explicit. For downstream calls, either
-configure a reviewed, schema-pinned read wrapper or include an exact
-`managed_calls` manifest in the outer `python_exec` request:
+`tools.mcp(server, tool, arguments, schema_hash=...)` calls a downstream tool
+through the server's existing client. Discover schemas with `mcp_inspect`
+first. A downstream call from Python is allowed only through a reviewed
+read-only wrapper, or when the outer `python_exec` request lists it exactly in
+`managed_calls`:
 
 ```json
 {
@@ -118,199 +109,156 @@ configure a reviewed, schema-pinned read wrapper or include an exact
 }
 ```
 
-The manifest is part of the outer execution action visible to the client. It
-does not create a separate confirmation flow or grant authorization beyond that
-action. If a write's arguments depend on fresh judgment, return evidence and
-make a separate explicit write call. The bridge cannot add new manifest entries
-or retry an exhausted entry. Retrieved text never grants capabilities.
+The manifest is part of the action the client approves. It adds no separate
+confirmation and grants nothing beyond that action. The script cannot add
+entries or reuse an exhausted entry, and text it reads never grants new
+capabilities. If a write depends on judgment made after reading, return the
+evidence and make a separate write call.
 
-The private Unix socket has one unpredictable capability per execution. Tokens
-expire with the Python timeout and are revoked on completion or cancellation.
-Each execution has a default budget of 32 bridge requests, configurable up to
-64, and a 16 MiB aggregate IPC byte budget. Individual IPC requests are capped
-at 4 MiB and replies at 8 MiB. Python admission is separate from child operation
-slots, avoiding parent/child slot starvation. Shared runtime process limits
-still apply. The optional alternate Python interpreter must be able to import
-the installed `yoke` package to use the helper.
+Each execution gets one unguessable capability for the bridge, over a private
+Unix socket, or loopback TCP on Windows. The capability expires with the Python
+timeout and is revoked when the script finishes or is cancelled. Limits per
+execution:
 
-Python execution accepts the shared semantic `mode` field. Auto mode uses the
-configured host-owned initial completion window; background mode returns
-without waiting. Its `timeout` is an execution deadline in seconds, separate
-from any read wait. Use `process_read(wait_ms=...)` for longer waits after a
-handle exists. A read deadline leaves Python and its managed operations
-running. `process_cancel` terminates the process tree, revokes its bridge
-token, and cancels managed child operations while preserving final output.
+| Limit | Value |
+| --- | --- |
+| Bridge requests | 32 by default, configurable up to 64 |
+| Total bridge traffic | 16 MiB |
+| One request | 4 MiB |
+| One reply | 8 MiB |
 
-## Discovery, results, and media
+Python admission does not take a child operation slot, so a script cannot
+starve its own calls. The server's process limits still apply. An alternate
+interpreter must be able to import the installed `yoke` package to use the
+helper.
 
-`mcp_inspect` accepts `server`, exact `tools`, `query`, multiple `queries`,
-`include_schemas`, `refresh`, `limit`, and `cursor`. `refresh: true` requests
-a fresh downstream catalog. The `servers` array contains the page's
-tools. It preserves complete selected JSON schemas, including `$defs`, `$ref`,
-and composition constraints. Each tool includes `schema_hash`, any advertised
-output schema and annotations, and an explicit unknown-effects marker when
-annotations are absent. A catalog change invalidates continuation cursors.
+`timeout` is the script's execution deadline in seconds. It is separate from
+any wait. A `process_read` deadline leaves the script and its calls running.
+`process_cancel` terminates the process tree, revokes the capability and
+cancels managed calls, and keeps the final output.
 
-Use `schema_hash` on `mcp_call` to reject a changed contract before dispatch.
-Pinned calls refresh downstream schemas and validate arguments under the same
-server lease used for execution. This adds a backend catalog request, but no
-extra model turn. Calls
-to one server serialize; waiting for that server does not hold the global
-configuration lock. Existing config hot reload and tool allowlists still apply.
-The MCP server reads raw downstream results before its own output projection.
-Agent-side discovery and result formatting retain their established contracts.
+## Discovery, results and media
 
-Oversized results receive an unguessable handle, expiry, byte count, and bounded
-preview. `result_read` retrieves ASCII JSON ranges with `cursor` and `limit`, or
-selects top-level `fields`. Keep the field selection unchanged while paging.
-Handles expire after 15 minutes, and the store caps retained JSON at 64 MiB.
-It rejects new retention when full instead of silently evicting live handles.
+`mcp_inspect` accepts `server`, exact `tools`, `query`, several `queries`,
+`include_schemas`, `refresh`, `limit` and `cursor`. `refresh: true` fetches a
+fresh downstream catalog. The `servers` array holds the page's tools with their
+complete JSON schemas, including `$defs`, `$ref` and composition keywords. Each
+tool has a `schema_hash`, any output schema and annotations, and an explicit
+unknown-effects marker when the server gave no annotations. A catalog change
+invalidates continuation cursors.
 
-The present authentication model represents one owner. All authenticated
-clients share that owner's handles and processes. A chat ID or process ID is
-not an ownership credential. Restarting the service invalidates all ephemeral
-handles. Multi-user and per-chat isolation are separate features.
+Pass `schema_hash` to `mcp_call` to reject a changed contract before dispatch.
+A pinned call refreshes the downstream schema and validates the arguments under
+the same server lease as the call. That costs one extra backend request and no
+extra model turn. Waiting for a busy server does not block configuration
+reloads.
 
-Downstream PNG, JPEG, GIF, and WebP image blocks are decoded and validated, then
-forwarded as native MCP images without re-encoding their bytes. MIME mismatches,
-oversized images, and decode limits fail explicitly. The total compressed image
-budget matches `view_image`. Audio remains in its downstream representation;
-this release does not add an audio decoder or an in-chat HTML widget.
+An oversized result returns an unguessable handle, its expiry, its byte count
+and a preview. `result_read` returns ASCII JSON ranges with `cursor` and
+`limit`, or selected top-level `fields`. Keep the same `fields` while paging.
+Handles expire after 15 minutes. The store holds at most 64 MiB and refuses new
+results when full instead of evicting live handles.
 
-## Process observation and recipes
+Downstream PNG, JPEG, GIF and WebP image blocks are decoded, validated and
+forwarded as native MCP images without re-encoding. MIME mismatches, oversized
+images and decode limits fail with an error. The total image budget matches
+`view_image`. Audio stays in its downstream form.
 
-MCP and native Yoke share the [process interface](process-tools.md).
-`process_read` takes 1 to 16 `sessions` with unique session IDs. Pass each
-returned opaque `cursor` back unchanged alongside its `session_id`. Omit the
-cursor to start from the earliest retained output. Reads do not consume output. The total `max_bytes`
-budget defaults to 32,000 and accepts 1,024 through 64,000 across the batch.
+## Processes
 
-The default `until="completion"` waits for all requested sessions, with one
-60,000 ms deadline for the batch. Ordinary output and output limits do not
-end that wait. `until="output_or_completion"` returns on any unread output
-or terminal session. `wait_ms=0` takes a snapshot. Invalid cursors and session
-errors return promptly, with items in request order. MCP's configured remote
-wait cap is at most 240,000 ms, not native Yoke's 3,600,000 ms maximum.
-Wait expiry never kills a process.
+MCP uses the shared [process tools](process-tools.md). The differences from
+native Yoke:
 
-Read results contain `ok`, `reason`, and `items`. A read can succeed even when
-a process exits nonzero; inspect `exit_code`. Continue paging while
-`has_more_output` is true, including after exit or cancellation. `gap` and
-the returned cursor report lost retention history without exposing the internal
-retention boundary. Finished histories keep their cursors until bounded eviction.
-For terminal writes, `process_input` requires nonempty `chars` and accepts an
-optional cursor identifying already-read output. Without a cursor, it starts
-at the earliest retained output. Empty-input polling is invalid.
-`process_cancel` does not create a new output cursor; use the last cursor you
-already have if you need final output after cancellation.
+- `process_read` waits at most the server's `--max-remote-wait-ms`, never more
+  than 240,000 ms, instead of native Yoke's 3,600,000 ms.
+- Execution's auto mode waits for the server's `--default-yield-ms`.
+- There are no completion notices. Read explicitly.
+- The reader decodes UTF-8 incrementally, so a chunk boundary never splits a
+  character. Invalid bytes become replacement characters.
 
-The MCP reader decodes UTF-8 incrementally so pipe boundaries cannot split
-characters; invalid UTF-8 uses replacement characters. Final-lease shutdown
-and capacity pruning drain output readers without holding the manager
-notification lock. Processes are ephemeral.
+## Recipes
 
-`search_then_read` selects the first match window from each of at most 16 files.
-It does not claim semantic relevance. `workspace_snapshot` reads the root's
-`AGENTS.md`, explicit paths, Git status, and optional match windows. Use the
-returned paths to load any additional instructions relevant to the task.
+The three recipe tools report `recipe_version: 1`.
 
-`check_patch` takes the exact patch, `expected_hashes` for every touched source
-and destination, and named `checks` with exact argv arrays. A null hash means a
-path must not exist. Preconditions and patch application share the MCP patch
-mutex. This does not lock external editors or make a multi-file transaction.
-Patch failure prevents all checks; a failed or timed-out check skips later
-checks. No rollback resets the working tree.
+`search_then_read` returns the first match window from each of at most 16
+files. It makes no claim about relevance.
 
-Snapshots and check specifications live in a private temporary job file, so
-large source files do not expand command-line arguments. The managed Python
-runner must acknowledge readiness before the patch is applied. File hashes
-are checked again after startup. Failed startup leaves the patch unapplied;
-failed patch application cancels the waiting runner. Temporary jobs are removed
-after completion or cancellation.
+`workspace_snapshot` returns the root's `AGENTS.md`, Git status, up to 16
+explicit paths and optional match windows. Read any further instructions the
+returned paths point to.
 
-Checks run in that managed job. The response contains its process session;
-observe it with `process_read`. The child emits a final retained
-report with individual check outcomes, final diff, and file hashes. A timeout
-can leave check side effects unknown. Do not repeat writes automatically.
-All three recipes report `recipe_version: 1`.
+`check_patch` takes the exact patch, `expected_hashes` for every source and
+destination it touches, and named `checks` with exact argv arrays. A null hash
+means the path must not exist. The steps:
+
+1. The server writes the file snapshot and check list to a private temporary
+   job file and starts the managed Python runner.
+2. Once the runner reports ready, the server checks the hashes again and
+   applies the patch, holding the MCP patch lock.
+3. The runner runs the checks in order and emits a final report with each
+   check's outcome, the final diff and file hashes.
+
+If the runner fails to start, the patch is not applied. If the patch fails,
+no checks run. A failed or timed-out check skips the remaining checks. Nothing
+is rolled back. The patch lock does not stop external editors, and a
+multi-file patch is not a transaction. The response contains the runner's
+process session. Follow it with `process_read`. A timeout can leave a check's
+side effects unknown, so do not repeat writes automatically.
 
 ## File transfer
 
-`import_files` advertises `_meta["openai/fileParams"] = ["files"]`. Each top-level
-file-array item declares `download_url`, `file_id`, optional `mime_type`, and
-optional `file_name`; only the first two are required. A matching `destinations`
-array supplies explicit paths, optional source SHA-256 digests, and optional
-`expected_sha256` overwrite preconditions.
+`import_files` declares `_meta["openai/fileParams"] = ["files"]`. Each item in
+`files` has `download_url` and `file_id`, plus optional `mime_type` and
+`file_name`. A matching `destinations` array gives each file's path, an
+optional source SHA-256 and an optional `expected_sha256` precondition for
+overwriting.
 
-Downloads require direct HTTPS URLs resolving to public addresses. The
-connection pins a validated address while retaining TLS hostname verification
-unless `YOKE_DISABLE_TLS` disables verification process-wide. Redirects, URL
-credentials, and environment proxies are disabled. Each download has a 64 MiB
-cap, network timeouts, and a 60-second streaming deadline. Signed
-URLs never appear in result messages or logs. Temporary sibling files are
-committed atomically. Create-only is the default; replacing a file requires its
-expected digest. Imports return individual outcomes and are not a transaction.
+Downloads must be direct HTTPS URLs that resolve to public addresses. The
+connection pins the validated address and still verifies the TLS hostname,
+unless `YOKE_DISABLE_TLS` turns verification off for the whole process.
+Redirects, URL credentials and proxy environment variables are refused. Each
+download is capped at 64 MiB and must finish within 60 seconds. Signed URLs
+never appear in results or logs. The server writes to a temporary sibling and
+renames it into place. Creating is the default, and replacing a file requires
+its expected digest. Each file reports its own outcome. Imports are not a
+transaction. Whether ChatGPT supplies a download URL for a given file is up to
+ChatGPT.
 
-The schema and HTTP transport are tested. Whether ChatGPT supplies a download
-URL for a particular generated or uploaded file remains a client capability;
-the metadata cannot make an inaccessible file available.
+`write_binary_file` uploads from another program. Start at offset 0, keep the
+returned `transfer_id`, and send each next chunk at `next_offset`. A repeated
+identical chunk is accepted. Gaps and conflicting chunks fail. Finish with
+`final: true`, preferably with `sha256`. Limits:
 
-`write_binary_file` is the programmatic fallback. Start at offset zero, retain
-the returned `transfer_id`, and send subsequent chunks at `next_offset`.
-Matching retries are accepted; gaps and conflicting retries fail. Finalize with
-`final: true` and preferably `sha256`. Chunks contain at most 2 MiB decoded data,
-files at most 64 MiB, and the service permits eight staged transfers. Handles
-expire after 15 minutes; normal service shutdown cleans staged files. A failed
-final commit or digest check removes its staged file and releases its slot.
-Restart a failed finalized upload from offset zero; successful final retries
-remain supported. A crash
-can leave hidden `.yoke-upload-*` or `.yoke-import-*` sibling files for cleanup.
+| Limit | Value |
+| --- | --- |
+| Decoded chunk | 2 MiB |
+| File | 64 MiB |
+| Staged transfers | 8 |
+| Transfer handle lifetime | 15 minutes |
 
-`export_file` returns bounded base64 pages, SHA-256, size, and `next_offset`.
-Pin `expected_sha256` after the first page to detect edits. This is an API for
-programmatic byte transport, not a request for the language model to reproduce
-base64 or a promise of a ChatGPT attachment.
+A failed final commit or digest check deletes the staged file and frees the
+slot. Restart that upload from offset 0. Repeating a successful final chunk is
+accepted. Normal shutdown removes staged files. A crash can leave hidden
+`.yoke-upload-*` or `.yoke-import-*` files next to the destination.
+
+`export_file` returns base64 pages with the SHA-256, size and `next_offset`.
+Pass `expected_sha256` after the first page to detect changes. It is for
+programs moving bytes, not for the model to reproduce base64, and it does not
+create a ChatGPT attachment.
 
 ## Curated downstream wrappers
 
-Set `YOKE_MCP_WRAPPERS_FILE` to a reviewed JSON list, then restart the MCP
-service. Each entry supplies `name`, `server`, `tool`, `description`,
-`input_schema`, optional `output_schema`, and `read_only`, defaulting to false.
-Names must start with `downstream_`; at most 32 entries are accepted. No
-downstream actions are exported automatically. Embedded output schemas keep
-their own reference scope, including local `$defs`, anchors, recursive
-references, and nested schema IDs.
+Set `YOKE_MCP_WRAPPERS_FILE` to a reviewed JSON list and restart the server.
+Each entry has `name`, `server`, `tool`, `description`, `input_schema`,
+optional `output_schema`, and `read_only`, which defaults to false. Names must
+start with `downstream_`, and the file may hold at most 32 entries. The server
+never exports downstream actions on its own. Output schemas keep their own
+reference scope, including local `$defs`, anchors, recursive references and
+nested IDs.
 
-The declared input schema pins the downstream schema hash. A changed contract
-fails before execution. `read_only: true` is a server-owner policy assertion
-and also enables that pinned operation through `tools.mcp` without an exact
-manifest. Review the implementation and effects before setting it. The generic
-gateway and arbitrary Python retain conservative execution annotations.
-
-## Validation
-
-Tests cover the expanded catalog, schemas, partial batches, result budgets,
-retention expiry, repeatable process cursors, cancellation, dependent Python
-reads with one operation slot, shared downstream clients, manifest rejection,
-stale schemas and catalogs, binary retries, create-only commits, digest
-failures, signed-URL redaction, and native images. Differential fixtures freeze
-the prior agent MCP projection across text, skills, checkpoints, images,
-resources, errors, and oversized results.
-
-Measure complete tasks when evaluating performance. Count outer calls,
-sequential model turns, backend operations, bytes, actual client-visible tokens,
-latency distributions, success, and confirmation behavior separately. Six
-independent reads in one envelope still perform six reads, and a client may
-already execute direct calls in parallel.
-
-A 20-run in-memory MCP SDK sample on Mooncake compared six parallel direct reads
-with one batch over the same six small files:
-
-| Mode | Outer calls | File reads | Median response bytes | p50 | p95 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Parallel direct | 6 | 6 | 5,964 | 9.848 ms | 147.256 ms |
-| Batch | 1 | 6 | 3,402 | 4.402 ms | 60.438 ms |
-
-These are local transport measurements, including initialization effects in the
-sample. They do not measure ChatGPT latency or token consumption. Reproduce
-with `uv run python scripts/benchmark_mcp_composition.py --repeats 20`.
+The declared input schema pins the downstream schema hash, so a changed
+contract fails before execution. `read_only: true` is your assertion as the
+server owner, and it also lets `tools.mcp` call that wrapper from Python
+without a `managed_calls` entry. Review the downstream implementation before
+setting it. `mcp_call` and arbitrary Python keep their conservative
+annotations.

@@ -1,235 +1,219 @@
 # Shared process tools
 
-Native Yoke and the tool-only MCP server use the same process tool names and
-cursor contract. Process handles belong to the live runtime, not to persisted
-Yoke conversations. Restarting that runtime loses the handles and terminates
-its live processes.
+This is the reference for Yoke's process tools, for anyone writing prompts,
+skills or clients that start and watch commands. Native Yoke agents and the
+tool-only MCP server ([mcp-server.md](mcp-server.md)) use the same tool names,
+fields and cursor rules. Differences between the two are called out where they
+apply.
+
+Process handles belong to the running agent runtime or MCP server, not to the
+saved conversation. Restarting that runtime terminates its live processes and
+invalidates their handles.
 
 | Tool | Purpose |
 | --- | --- |
-| `command_exec` | Launch shell text with `cmd` or a direct process with `argv`. |
+| `command_exec` | Launch shell text with `cmd`, or a process without a shell with `argv`. |
 | `python_exec` | Run Python in a managed subprocess. |
-| `process_input` | Write nonempty input and collect a short response. |
+| `process_input` | Write non-empty input and collect a short response. |
 | `process_read` | Wait for or page output from one or more processes. |
-| `process_cancel` | Terminate an owned process tree while retaining final output. |
+| `process_cancel` | Terminate a process tree and keep its final output. |
 
 ## Launch and wait budgets
 
-Both execution tools accept `mode="auto"` or `mode="background"`, with `auto`
-as the default. Auto uses a host-owned initial completion window, 30,000 ms
-natively and the MCP server's configured default remotely. Background returns
-immediately. A process that finishes within the initial wait returns immediately;
-otherwise it keeps running under its returned `session_id`.
+Both execution tools take `mode: "auto"`, the default, or
+`mode: "background"`. Auto waits for an initial window that the host sets. The
+window is 30,000 ms in native Yoke and the server's `--default-yield-ms` on MCP.
+Background returns at once. A process that finishes inside the window returns
+its result immediately. Otherwise it keeps running under the returned
+`session_id`, and you follow it with `process_read`.
 
 | Operation | Default wait | Native maximum | MCP maximum |
 | --- | --- | --- | --- |
-| `command_exec`, `python_exec` in auto mode | 30,000 ms native; configured default on MCP | Host-owned | Host-owned, capped by server configuration |
-| `process_read` | 60,000 ms | 3,600,000 ms, one hour | Configured `max_remote_wait_ms`, at most 240,000 ms |
+| `command_exec`, `python_exec` in auto mode | 30,000 ms native, configured on MCP | set by the host | set by the host, capped by server configuration |
+| `process_read` | 60,000 ms | 3,600,000 ms | `--max-remote-wait-ms`, at most 240,000 ms |
 | `process_input` | 250 ms | 5,000 ms | 5,000 ms |
 
-`process_read` and `process_input` waits accept zero; negative waits are invalid.
-MCP's remote read cap may be configured lower than 240 seconds; consult the
-active tool schema and server configuration. The existing MCP
-`--default-yield-ms` setting controls the host-owned auto execution window. It
-is server configuration, not a model-facing execution argument.
+`process_read` and `process_input` accept a wait of zero. Negative waits are
+invalid. The MCP server may set its read cap below 240,000 ms, so check the tool
+schema. Execution calls have no wait field. Pick a longer wait on the next
+`process_read` instead.
 
-`python_exec.timeout` is a separate execution deadline, measured in seconds.
-It can terminate Python even while a read is waiting. Expiry of an execution
-tool's initial wait or a `process_read.wait_ms` budget never kills the process.
-A read returning `reason="deadline"` is not a Python timeout; inspect
-`timed_out`, `running`, and `exit_code` for the process outcome.
+`python_exec.timeout` is an execution deadline in seconds. It can terminate
+Python while a read is waiting. Running out of an initial wait or a
+`process_read` wait never kills a process. A read that returns
+`reason: "deadline"` is not a Python timeout. Check `timed_out`, `running` and
+`exit_code` for the process's state.
 
-Launch in the background with `command_exec`:
-
-```json
-{"argv":["uv","run","python","job.py"],"mode":"background"}
-```
-
-Or use auto mode and let the host own the initial wait:
+Launch in the background:
 
 ```json
-{"code":"print('ready', flush=True)","mode":"auto","timeout":180}
+{"argv": ["uv", "run", "python", "job.py"], "mode": "background"}
 ```
 
-If the process is still running, choose a longer follow-up wait with
-`process_read(wait_ms=...)` rather than tuning launch timing.
+Or let the host own the first wait:
 
-## Read until completion, output, or a snapshot
+```json
+{"code": "print('ready', flush=True)", "mode": "auto", "timeout": 180}
+```
+
+## Read until completion, output or a snapshot
 
 `process_read` takes these fields:
 
-| Field | Contract |
+| Field | Meaning |
 | --- | --- |
-| `sessions` | Required list of 1 to 16 `{session_id, cursor?}` entries with unique session IDs. |
-| `until` | `"completion"` by default, or `"output_or_completion"`. |
-| `wait_ms` | 60,000 by default, bounded by the host maximum above. |
-| `max_bytes` | 32,000 by default; 1,024 to 64,000 total across the batch, not per session. |
+| `sessions` | Required list of 1 to 16 `{session_id, cursor?}` entries with distinct session IDs. |
+| `until` | `"completion"` (default) or `"output_or_completion"`. |
+| `wait_ms` | 60,000 by default, up to the host maximum. |
+| `max_bytes` | 32,000 by default. 1,024 to 64,000 for the whole batch, not per session. |
 
-Completion mode waits for **all** requested sessions to become terminal or for
-the single batch deadline to expire. Ordinary output and a full response
-budget do not end this wait. Output-oriented mode returns on **any** unread
-output or terminal session. It is useful when an interactive program needs
-input before it can finish. Errors, including unknown sessions and invalid
-cursors, return promptly rather than waiting for the deadline. Items and
-errors preserve request order.
+In completion mode the read waits until every requested session has finished,
+or until the single batch deadline passes. New output and a full byte budget do
+not end the wait. In `output_or_completion` mode the read returns as soon as any
+session has unread output or finishes. Use it when a program needs input before
+it can finish. Errors such as unknown sessions or bad cursors return at once.
+Items and errors keep the request order.
 
-Use the actual `cursor` from each preceding result in a read:
+Pass back the `cursor` from each previous result:
 
 ```json
 {
   "sessions": [
-    {"session_id":12345,"cursor":"pc1_AAAAAAAAMDkAAAAAAAAAAwAAAAAAAAAA"},
-    {"session_id":23456,"cursor":"pc1_AAAAAAAAWqAAAAAAAAAAAQAAAAAAAAAM"}
+    {"session_id": 12345, "cursor": "pc1_AAAAAAAAMDkAAAAAAAAAAwAAAAAAAAAA"},
+    {"session_id": 23456, "cursor": "pc1_AAAAAAAAWqAAAAAAAAAAAQAAAAAAAAAM"}
   ],
-  "until":"completion",
-  "wait_ms":60000,
-  "max_bytes":32000
+  "until": "completion",
+  "wait_ms": 60000,
+  "max_bytes": 32000
 }
 ```
 
-These cursor values are illustrative. Cursors are opaque continuation tokens.
-Copy them unchanged rather than decoding, editing, or constructing them. Omit a
-cursor to read from the earliest retained output for that session. To inspect available output without
-waiting, set `wait_ms=0`. This is a snapshot in either mode, even when the
-process is already finished. After a read deadline, continue with the returned
-cursors rather than launching the command again.
+These cursor values are examples. Cursors are opaque. Copy them unchanged and
+never decode, edit or build them. Omit a cursor to read from the earliest output
+still retained. `wait_ms: 0` takes a snapshot in either mode, even for a
+finished process. After a deadline, keep reading with the returned cursors.
+Never relaunch the command to see its output.
 
-The read envelope is `{ok, reason, items}`. Normal reasons are:
+The result is `{ok, reason, items}`. The normal reasons are:
 
-- `completed`: all requested sessions are terminal in completion mode; any
-  terminal session can trigger this in output-oriented mode.
-- `output`: unread output triggered an output-oriented read.
-- `deadline`: the read's wait budget expired before its condition was met.
-- `snapshot`: a zero-wait observation, except when an explicit error applies.
+| `reason` | Meaning |
+| --- | --- |
+| `completed` | In completion mode, every session finished. In output mode, at least one did. |
+| `output` | Unread output ended an output-mode read. |
+| `deadline` | The wait ran out first. |
+| `snapshot` | A zero-wait read. |
 
-`error` and `cancelled` are exceptional reasons. This interface uses explicit
-reads; it does not promise runtime push delivery or output batching thresholds.
+`error` and `cancelled` are the exceptional reasons. The tools do not push
+output. You read it explicitly.
 
-## Automatic completion notices
+## Completion notices
 
-The native agent adds a status-only notice before its next model call when a
-background command finishes. Notices batch completed sessions and include their
-session IDs, statuses, exit codes, elapsed times, commands, and working directories.
-They do not include command output or advance output cursors. Output remains in
-the process tools, so a notice cannot replay logs from an earlier read.
+Native agents get a status notice before their next model call when a
+background command finishes. A notice can cover several sessions and lists each
+one's session ID, status, exit code, elapsed time, command and working
+directory. It contains no output and does not move any cursor, so it cannot
+replay logs you already read.
 
-Use `process_read` with the last returned cursor for each session when its output
-is needed. A read that reports the session as terminal suppresses a later notice
-for that completion. A read made while the session is still running does not
-suppress its eventual completion notice. Notices also report
-`older_events_dropped` when the bounded completion queue evicts older events.
+Read the output with `process_read` and the last cursor for each session. A
+read that sees the session finished suppresses its later notice. A read made
+while the session still runs does not. When the notice queue overflows, notices
+report `older_events_dropped`.
 
-These notices are native agent context messages, not an MCP push-delivery
-contract. MCP clients continue to use explicit process reads.
+MCP clients get no notices and must read explicitly.
 
 ## Input and cancellation
 
-`process_input` requires `session_id` and nonempty `chars`. It also accepts
-`wait_ms`, defaulting to 250 and bounded to 0 through 5,000, optional
-`max_output_tokens`, and optional `cursor`.
-
-The cursor describes output already read, not where to write stdin. When
-provided, it must have been returned for the target session. Yoke validates that
-before any input is written.
-Without a cursor, the response starts at the earliest retained output, so it
-may repeat text from an earlier read. It never skips unread output silently.
-After writing, the call collects output for the short wait window or until
-completion. A call cancelled before the write does not write anything.
-
-`input_written` is true once the write succeeds, false when it was not attempted,
-or null when an OS error leaves delivery uncertain. A failed response read does
-not undo input. Never resend input just because its response read failed; inspect
-the process with `process_read` first.
-
-Writes retry partial OS writes and observe cancellation while queued or blocked
-by stdin backpressure. Delivery has a separate five-second safety limit before
-the short response window. On interrupted delivery, `input_bytes_written` gives
-the known byte count accepted by the OS; input is not resent automatically.
+`process_input` requires `session_id` and non-empty `chars`. It also takes
+`wait_ms` (default 250, 0 to 5,000), `max_output_tokens` and `cursor`.
 
 ```json
 {
-  "session_id":12345,
-  "chars":"yes\n",
-  "cursor":"pc1_AAAAAAAAMDkAAAAAAAAAAwAAAAAAAAAA",
-  "wait_ms":250
+  "session_id": 12345,
+  "chars": "yes\n",
+  "cursor": "pc1_AAAAAAAAMDkAAAAAAAAAAwAAAAAAAAAA",
+  "wait_ms": 250
 }
 ```
 
-Use `process_read` to poll. Empty `chars` is invalid, not a polling shortcut.
-For a program awaiting further input, use `until="output_or_completion"` or
-a zero-wait snapshot instead of waiting for completion.
+The cursor marks output you have already read. It has nothing to do with where
+input goes. Yoke checks that the cursor belongs to the target session before
+writing anything. Without a cursor the response starts at the earliest retained
+output, so it may repeat text you saw. It never skips unread output. After
+writing, the call collects output for the short wait or until the process
+exits. A call cancelled before the write writes nothing.
 
-`process_cancel` takes `session_id` and terminates that owned process tree.
-It is safe to call on a retained finished session and preserves pageable final
-output. On MCP it also revokes the Python bridge capability token and cancels
-its managed child operations. Cancellation is a lifecycle operation, so its
-result does not create or reset an output cursor. Read retained final output
-with the last cursor you already had. Cancellation does not erase cursor history.
+`input_written` is true once the write succeeds, false if Yoke did not try, and
+null if an OS error leaves delivery uncertain. A failed response read does not
+undo the input. Never resend input because the response read failed. Check the
+process with `process_read` first. Yoke retries partial OS writes and stops on
+cancellation while the write waits on a full stdin pipe. Delivery has its own
+five-second limit before the response window starts. If delivery is cut short,
+`input_bytes_written` reports how many bytes the OS accepted. Yoke does not
+resend the rest.
 
-At runtime process capacity, a new launch fails rather than terminating existing
-work. Finish or explicitly cancel a process to make room. Retired session IDs are
-not reused within the same runtime. Cancelling queued work prevents it from
-starting once admission becomes available.
+Empty `chars` is invalid. To poll, use `process_read`. For a program waiting
+on more input, read with `until: "output_or_completion"` or take a snapshot
+instead of waiting for completion.
 
-## Results, paging, and retention gaps
+`process_cancel` takes `session_id` and terminates that process tree. It is
+safe on a session that already finished, and the final output stays readable.
+On MCP it also revokes the Python bridge capability and cancels the script's
+managed calls. Cancelling returns no new cursor and erases no output. Read the
+final output with the last cursor you had.
 
-Execution's `ok` describes the process outcome. For input and reads, `ok`
-describes the operation, so a successful read can contain a nonzero exit code.
-Always inspect `exit_code`, which is present even when its value is null for
-a running process.
+When the runtime is at its process limit, a new launch fails. Yoke never
+terminates existing work to make room. Finish or cancel a process first.
+Session IDs are not reused within one runtime. Cancelling a launch that is
+still waiting for a slot stops it from starting.
 
-Successful process items retain `session_id` after exit and include `running`,
-`exit_code`, `timed_out`, `output`, `elapsed_seconds`, `cursor`,
-`has_more_output`, and `gap`. Paging preserves
-decoded terminal text, including carriage returns and final newlines. Legacy
-inspector tails and low-level consuming reads retain their normalized display;
-the new process tools do not normalize line endings. Initial execution and input return
-their single process item plus `reason`. `next_tool` can be `process_read`
-while the process is running or has more output; there is no
-`recommended_wait_ms` field.
+## Results, paging and retention gaps
 
-A cursor is a short versioned opaque string such as `pc1_...`. Internally Yoke
-tracks the retained-output record and byte position, but those details are not
-part of the public interface. Reads are non-consuming and repeatable while the
-referenced history is retained. Advance with the returned `cursor` to collect
-the next page. Reusing an old cursor can repeat output; it does not acknowledge
-or consume a stream. A malformed cursor or one from another session is an error.
+For execution, `ok` describes the process outcome. For reads and input, `ok`
+describes the operation, so a successful read can report a nonzero exit code.
+Always check `exit_code`. It is present on every item and null while the
+process runs.
 
-`has_more_output` is independent of `running`. Even after exit, timeout, or
-cancellation, keep reading with the returned cursor until all needed output
-has been collected. A completed result may still need several snapshot pages.
-Initial output limits, input responses, and completion reads all preserve the
-cursor needed to retrieve undisplayed retained output.
+A process item has `session_id`, `running`, `exit_code`, `timed_out`,
+`output`, `elapsed_seconds`, `cursor`, `has_more_output` and `gap`. Output is
+decoded terminal text with carriage returns and final newlines kept as they
+were. Execution and input results return one item plus `reason`. `next_tool`
+is `process_read` while the process runs or has more output.
 
-Retention is bounded. `gap` reports discarded history. The cursor advances
-across lost history only with that explicit gap report. Report the loss when it
-affects the answer; a gap is not proof that the missing output was empty.
-Completed histories remain pageable until eviction. After a session itself
-has been evicted, its handle returns an error rather than restarting work.
+A cursor is a short versioned string such as `pc1_...`. Reads do not consume
+output and can be repeated while the history is retained. Advance with the
+returned `cursor` to get the next page. Reusing an old cursor repeats output.
+A malformed cursor, or one from another session, is an error.
 
-New model-facing results preserve cursors, gaps, `has_more_output`, and exit
-codes. Legacy saved results retain their established provider projection;
-resuming a conversation does not rewrite old tool results into this contract.
-MCP process results include the complete page as JSON text as well as structured
-content, even when `legacy_result_text=False`, so clients retain cursor visibility.
+`has_more_output` is independent of `running`. After exit, timeout or
+cancellation, keep reading with the returned cursor until you have the output
+you need. A finished process can still take several snapshot pages.
+
+Retention is bounded. When Yoke discards old output, the next read reports it
+in `gap`, and the cursor moves past the lost range only with that report.
+Mention the loss when it matters. A gap does not mean the missing output was
+empty. Finished histories stay readable until the runtime evicts them. After
+that, the handle returns an error and never restarts work.
+
+Saved results from before this contract keep their original form for the
+model. Resuming a conversation does not rewrite old tool results.
 
 ## Breaking migration
 
-Update tool allowlists, callers, and generated requests on both native Yoke and
-MCP. The old model-facing names are neither advertised nor callable aliases.
+The old tool names are not advertised and do not work as aliases, in native
+Yoke or on MCP. Update allowlists, callers and generated requests:
 
 | Old interface | Replacement |
 | --- | --- |
 | `exec_command` | `command_exec` |
 | `exec_python` | `python_exec` |
-| `write_stdin` or `process_io` with input | `process_input` with nonempty `chars` |
-| Empty-input polling through `write_stdin` or `process_io` | `process_read` with a `sessions` cursor list |
-| Execution `yield-time_ms` or `wait_ms` | Use semantic `mode`; choose longer waits on `process_read(wait_ms=...)` after launch |
+| `write_stdin` or `process_io` with input | `process_input` with non-empty `chars` |
+| Polling with empty input through `write_stdin` or `process_io` | `process_read` with a `sessions` list |
+| `yield_time_ms` or `wait_ms` on execution | `mode` on launch, then `process_read` with `wait_ms` |
 | `next_cursor` from the old MCP reader | `cursor` on each process item |
-| Structured process cursor fields such as `after_seq` and `offset` | Opaque `cursor` string copied unchanged with its `session_id` |
-| `recommended_wait_ms` | Choose an explicit `wait_ms` within the host limit, or use its default |
+| Structured cursor fields such as `after_seq` and `offset` | The opaque `cursor` string, copied with its `session_id` |
+| `recommended_wait_ms` | An explicit `wait_ms` within the host limit, or the default |
 
-Existing Python imports such as `ExecCommandTool`, `CommandTool`, and
-`PythonExecTool` remain usable; `CommandExecTool` is the command class alias.
-Import names do not restore the removed public tool names. See the
-[SDK tool reference](sdk.md#built-in-tools) for the process tool classes.
+The Python classes `ExecCommandTool`, `CommandTool` and `PythonExecTool` still
+exist, and `CommandExecTool` is an alias of the command class. Importing them
+does not bring back the old tool names. See [sdk.md](sdk.md) for the tool
+classes.
