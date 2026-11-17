@@ -1,5 +1,7 @@
 // @ts-check
 
+export { queueSummary } from "./session-machine.js";
+import { submittingInput, rejectSubmission, reconcileSession } from "./session-machine.js";
 import { mergeSessionInfo } from "./reducer.js";
 
 export function optimisticSessionPatch(session, patch) {
@@ -123,13 +125,19 @@ export function applyQueueOperations(queue, operations) {
   return { ...queue, items };
 }
 
-export function queueSummary(queue) {
-  const items = queue?.items || [];
-  return {
-    total: items.length,
-    steering: items.filter((item) => item.delivery === "steer" && !item.paused).length,
-    queued: items.filter((item) => item.delivery === "queue" && !item.paused).length,
-    paused: items.filter((item) => item.paused).length,
-    revision: queue?.revision || 0,
-  };
+
+export function projectSubmission(data, item) {
+  const next = submittingInput(data, item);
+  if (data.inputLifecycle) return reconcileSession(next);
+  if (item.delivery === "queue") return { ...next, queue: { ...data.queue, items: [...(data.queue?.items || []), { ...item, paused: false, state: "admitted" }] } };
+  const failedPrompts = data.failedPrompts || [];
+  const failed = data.lastError && data.livePrompt;
+  return { ...next, livePrompt: item, lastError: null, failedPrompts: failed && !failedPrompts.some((entry) => entry.id === failed.id) ? [...failedPrompts, failed] : failedPrompts };
+}
+
+export function rollbackSubmission(data, id) {
+  const next = rejectSubmission(data, id);
+  if (data.inputLifecycle) return reconcileSession(next);
+  return { ...next, livePrompt: data.livePrompt?.id === id ? null : data.livePrompt,
+    queue: data.queue ? { ...data.queue, items: data.queue.items.filter((item) => item.id !== id) } : data.queue };
 }

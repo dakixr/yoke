@@ -1,5 +1,6 @@
 // @ts-check
 
+import { isBusy, queueSummary, applyInputChanged, applyActiveChanged, applyQueueHeld, installInputSnapshot, reconcileSession } from "./session-machine.js";
 import { callOutcome } from "../lib/tool-outcome.js";
 
 function copySessionData(state, sessionID) {
@@ -52,16 +53,35 @@ export function mergeSessionSummary(state, session, options = {}) {
   };
 }
 
-export function installActiveSnapshot(state, active) {
+export function installSessionMachine(state, sessionID, data) {
+  data = reconcileSession(data);
+  const sessions = data.inputLifecycle && state.sessions[sessionID]
+    ? { ...state.sessions, [sessionID]: { ...state.sessions[sessionID], queue: queueSummary(data.queue) } }
+    : state.sessions;
+  return { ...state, sessions, sessionData: { ...state.sessionData, [sessionID]: data } };
+}
+
+export function installInputs(state, sessionID, snapshot) {
+  return installSessionMachine(state, sessionID, installInputSnapshot(state.sessionData[sessionID] || {}, snapshot));
+}
+
+export function installActiveSnapshot(state, incoming) {
   const done = { ...state.ui.doneUnreviewed };
-  for (const [sessionID, current] of Object.entries(active)) {
-    if (current?.state && current.state !== "idle") done[sessionID] = false;
+  const active = {};
+  const sessionData = { ...state.sessionData };
+  for (const id of new Set([...Object.keys(state.sessionData), ...Object.keys(state.active), ...Object.keys(incoming)])) {
+    const data = state.sessionData[id] || {};
+    // The active endpoint omits idle runtimes. Keep their last revision fence
+    // while clearing their display, so buffered older events cannot revive work.
+    const next = incoming[id] ? applyActiveChanged(data, incoming[id])
+      : { ...data, runtime: { state: "idle", revision: data.runtime?.revision ?? -1, error: null } };
+    sessionData[id] = next;
+    if (incoming[id] || next.runtime.state !== "idle") {
+      active[id] = next.runtime;
+      if (isBusy(next.runtime)) done[id] = false;
+    }
   }
-  return {
-    ...state,
-    active,
-    ui: { ...state.ui, doneUnreviewed: done },
-  };
+  return { ...state, active, sessionData, ui: { ...state.ui, doneUnreviewed: done } };
 }
 
 export function reducePublicEvent(state, event) {
@@ -89,14 +109,10 @@ export function reducePublicEvent(state, event) {
   if (!sessionID) return next;
 
   if (event.type === "session.active.changed") {
-    const current = {
-      state: event.data?.state || "idle",
-      turnID: event.data?.turnID ?? null,
-      startedAt: event.data?.startedAt ?? null,
-      error: event.data?.error ?? null,
-      lastError: event.data?.lastError ?? null,
-      activity: event.data?.activity ?? null,
-    };
+    const previous = next.sessionData[sessionID] || {};
+    const data = applyActiveChanged(previous, event.data || { state: "idle" });
+    if (data === previous) return next;
+    const current = data.runtime;
     const done = { ...next.ui.doneUnreviewed };
     const active = { ...next.active };
     if (current.state === "idle") {
@@ -106,11 +122,19 @@ export function reducePublicEvent(state, event) {
       done[sessionID] = false;
     }
     return {
-      ...next,
+      ...installSessionMachine(next, sessionID, data),
       active,
       ui: { ...next.ui, doneUnreviewed: done },
     };
   }
+
+  if (event.type === "session.input.changed" || event.type === "session.queue.held") {
+    const data = next.sessionData[sessionID] || {};
+    return installSessionMachine(next, sessionID, event.type === "session.input.changed"
+      ? applyInputChanged(data, event.data) : applyQueueHeld(data, event.data));
+  }
+  // Older daemons retain the prompt-event compatibility projection.
+  if (next.sessionData[sessionID]?.inputLifecycle && event.type.startsWith("session.prompt.")) return next;
 
   const data = copySessionData(next, sessionID);
   if (event.type === "session.agent.updated") {

@@ -70,6 +70,11 @@ class YokeAcpAgent:
         self.lifecycle.enabled = "put" in spec.get("paths", {}).get(
             "/api/v1/session/{session_id}/client", {}
         )
+        if "/api/v1/session/{session_id}/input" in spec.get("paths", {}):
+            capabilities = await self.native.data("GET", "capabilities")
+            self.lifecycle.input_lifecycle = (
+                capabilities.get("features", {}).get("inputLifecycle") is True
+            )
         drain = "post" in spec.get("paths", {}).get(
             "/api/v1/session/{session_id}/drain", {}
         )
@@ -375,7 +380,8 @@ class YokeAcpAgent:
         if work := self.active.get(session_id):
             work.cancel = True
             work.wake.set()
-            await self.notifications.cancel_requests(session_id)
+            if not self.native.input_lifecycle:
+                await self.notifications.cancel_requests(session_id)
             await work.done.wait()
 
     async def close(self) -> None:

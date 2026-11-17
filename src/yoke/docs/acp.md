@@ -201,3 +201,25 @@ The bridge works with older daemons that lack the session client endpoint. It
 then does not offer the session controls, approval modes or HTTP MCP support,
 and it rejects client MCP servers and additional directories with an error
 asking you to upgrade the daemon.
+
+## Prompt ownership and cancellation
+
+When the daemon advertises `features.inputLifecycle`, attaching an ACP client
+activates input tracking. The bridge tracks each prompt's input ID and phase
+through queued, paused, promoted, running, settled and removed. It reads the
+input snapshot after admission, consumes `session.input.changed`, and uses
+`/wait` as a timeout guard that triggers another input read. Session idleness
+does not settle a queued ACP prompt.
+
+ACP cancel calls `POST /session/{id}/input/{inputID}/cancel`. It removes a
+queued input or stops that input's active turn. Another client's turn keeps
+running. A cancel that races settlement reads the input's terminal result and
+returns its real outcome. A completed answer remains visible even if cancel
+arrives during finalization. Stopped turns still wait for physical worker
+cleanup. A paused input produces an error naming its ID, and the bridge cancels
+that input before releasing the prompt handler.
+
+Session close cancels its prompt first, then serializes detach with other
+session operations. It removes local session and catalog state even when
+server detach fails. Older daemons retain the existing interrupt and drain
+behavior when they lack the input lifecycle feature.

@@ -28,6 +28,7 @@ class SessionLifecycle:
         self.agent = agent
         self.owner = uuid4().hex
         self.enabled = False
+        self.input_lifecycle = False
         self.configs: dict[str, dict[str, Any]] = {}
 
     @staticmethod
@@ -107,6 +108,9 @@ class SessionLifecycle:
             "PUT", self.agent.native.path(session_id, "/client"), json=config
         )
         self.configs[session_id] = config
+        # Activate negotiated input ownership only after the client attaches.
+        # Direct NativeClient users retain its conservative legacy default.
+        self.agent.native.input_lifecycle = self.input_lifecycle
 
     async def activate(self, session_id: str) -> None:
         agent = self.agent
@@ -274,14 +278,17 @@ class SessionLifecycle:
             work.cancel = True
             work.wake.set()
             await work.done.wait()
-        await agent.notifications.detach(session_id)
-        await agent.native.agent_monitor.detach(session_id)
-        if session_id in self.configs:
-            await agent.native.data(
-                "DELETE",
-                agent.native.path(session_id, "/client"),
-                params={"owner": self.owner},
-            )
-            self.configs.pop(session_id, None)
-        agent.sessions.pop(session_id, None)
-        agent.catalogs.pop(session_id, None)
+        async with agent.exclusive(session_id):
+            try:
+                await agent.notifications.detach(session_id)
+                await agent.native.agent_monitor.detach(session_id)
+                if session_id in self.configs:
+                    await agent.native.data(
+                        "DELETE",
+                        agent.native.path(session_id, "/client"),
+                        params={"owner": self.owner},
+                    )
+            finally:
+                self.configs.pop(session_id, None)
+                agent.sessions.pop(session_id, None)
+                agent.catalogs.pop(session_id, None)

@@ -70,8 +70,8 @@ export class WorkspaceController {
     if (session.workspace?.status === "available") {
       store.setState((state) => {
         const runtime = state.active[sessionID];
-        if (runtime?.lastError?.code !== "session_workspace_unavailable") return state;
-        return { ...state, active: { ...state.active, [sessionID]: { ...runtime, lastError: null } } };
+        if (runtime?.error?.code !== "session_workspace_unavailable") return state;
+        return { ...state, active: { ...state.active, [sessionID]: { ...runtime, error: null } } };
       });
     }
     const previous = store.getState().sessions[sessionID];
@@ -136,7 +136,7 @@ export class WorkspaceController {
     this.invalidate(sessionID, [oldDirectory, session.location.directory].filter(Boolean));
     store.setState((state) => {
       const active = { ...state.active };
-      if (active[sessionID]?.lastError?.code === "session_workspace_unavailable") delete active[sessionID];
+      if (active[sessionID]?.error?.code === "session_workspace_unavailable") delete active[sessionID];
       return { ...mergeSessionSummary(state, session), active };
     });
     // Relocation has succeeded even if one of these catalogs cannot be read.

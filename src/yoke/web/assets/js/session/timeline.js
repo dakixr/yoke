@@ -1,3 +1,4 @@
+import { timelineInputs } from "../state/session-machine.js";
 import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { callOutcome } from "../lib/tool-outcome.js";
 import { workingDuration } from "../lib/duration.js";
@@ -16,8 +17,9 @@ export function Timeline({ sessionID, data, runtime }) {
   const suppressScroll = useRef(false);
   const [following, setFollowing] = useState(true);
   const messages = data?.messages || [];
-  const livePrompt = data?.livePrompt;
-  const failedPrompts = data?.failedPrompts || [];
+  const prompts = timelineInputs(data);
+  const livePrompt = prompts.at(-1);
+  const failedPrompts = prompts.slice(0, -1);
   const liveAssistants = useMemo(
     () => orderedLiveValues(data?.liveAssistants),
     [data?.liveAssistants],

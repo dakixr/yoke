@@ -18,8 +18,9 @@ import {
   writeToken,
 } from "./local-state.js";
 import { fetchOlderMessagePage } from "./message-pagination.js";
+import { admitSubmission, optimisticRuntime, rollbackRuntime, isBusy } from "./session-machine.js";
 import { BrowserLifecycle } from "./lifecycle.js";
-import { installActiveSnapshot, mergeSessionSummary, reducePublicEvent } from "./reducer.js";
+import { installInputs, installSessionMachine, installActiveSnapshot, mergeSessionSummary, reducePublicEvent } from "./reducer.js";
 import {
   applyQueueOperations,
   installSessionLists,
@@ -27,6 +28,8 @@ import {
   mergeServerSessionSummary,
   optimisticSessionPatch,
   queueSummary,
+  projectSubmission,
+  rollbackSubmission,
   restoreSessionSummary,
 } from "./optimistic-projections.js";
 import { adjacentVisualSessionID } from "./session-order.js";
@@ -47,6 +50,7 @@ export class AppController {
     this.bootstrapEpoch = null;
     this.resyncEpoch = null;
     this.broadResyncPending = false;
+    this.resyncPending = false;
     this.messageRefreshGeneration = new Map();
     this.liveToolRefreshGeneration = new Map();
     this.optimisticSessionGeneration = new Map();
@@ -320,6 +324,7 @@ export class AppController {
 
   requestResync(broad) {
     if (this.bootstrapping || this.resyncing) {
+      this.resyncPending = true;
       if (broad) this.broadResyncPending = true;
       return;
     }
@@ -327,9 +332,11 @@ export class AppController {
   }
 
   startPendingBroadResync() {
-    if (!this.broadResyncPending || this.bootstrapping || this.resyncing) return;
+    if ((!this.resyncPending && !this.broadResyncPending) || this.bootstrapping || this.resyncing) return;
+    const broad = this.broadResyncPending;
+    this.resyncPending = false;
     this.broadResyncPending = false;
-    void this.resync(true);
+    void this.resync(broad);
   }
 
   scheduleEventRefresh(event) {
@@ -342,6 +349,7 @@ export class AppController {
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
       this.schedule("lists", SUMMARY_REFRESH_MS, () => this.refreshSessionLists());
     }
+    if (store.getState().sessionData[id]?.resyncPending) this.requestResync(false);
     if (event.type.startsWith("session.prompt.") || event.type === "session.queue.updated") {
       this.schedule(`queue:${id}`, SUMMARY_REFRESH_MS, () => this.refreshQueue(id));
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
@@ -381,7 +389,7 @@ export class AppController {
       this.schedule(`messages:${id}`, MESSAGE_REFRESH_MS, () => this.refreshMessages(id));
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
     }
-    if (event.type === "session.active.changed" && (event.data?.lastError || event.data?.state === "error")) {
+    if (event.type === "session.active.changed" && (event.data?.error || event.data?.state === "error")) {
       this.schedule(`summary:${id}`, SUMMARY_REFRESH_MS, () => this.refreshSessionSummary(id));
     }
     if (event.type === "session.tree.updated") {
@@ -444,6 +452,7 @@ export class AppController {
 
   async resync(broad = false) {
     if (this.resyncing || this.bootstrapping) {
+      this.resyncPending = true;
       if (broad) this.broadResyncPending = true;
       return;
     }
@@ -514,6 +523,7 @@ export class AppController {
   async catchUpHistory(sessionID) {
     const lifecycleEpoch = this.lifecycleEpoch;
     let after = store.getState().sessionData[sessionID]?.latestSeq || 0;
+    const beforeRevision = store.getState().sessionData[sessionID]?.inputRevision || 0;
     while (true) {
       let response;
       try { response = await api.history(sessionID, after, 200); }
@@ -522,14 +532,18 @@ export class AppController {
         throw error;
       }
       if (this.lifecycleEpoch !== lifecycleEpoch) return;
-      if (!response.data.length && !response.hasMore) return;
+      if (!response.data.length && !response.hasMore) break;
       store.setState((state) => {
         let next = state;
         for (const event of response.data) next = reducePublicEvent(next, event);
         return next;
       });
       after = response.data.at(-1)?.durable?.seq || after;
-      if (!response.hasMore) return;
+      if (!response.hasMore) break;
+    }
+    await this.refreshInputs(sessionID);
+    if ((store.getState().sessionData[sessionID]?.inputRevision || 0) !== beforeRevision) {
+      await this.refreshMessages(sessionID);
     }
   }
 
@@ -834,6 +848,8 @@ export class AppController {
       sessionData: { ...state.sessionData, [sessionID]: { ...state.sessionData[sessionID], loading: true } },
     }));
     try {
+      await this.refreshInputs(sessionID);
+      if (!this.ownsLifecycle(lifecycleEpoch)) return;
       const cachedSession = store.getState().sessions[sessionID] || null;
       const sessionPromise = cachedSession
         ? Promise.resolve({ data: cachedSession })
@@ -1044,11 +1060,26 @@ export class AppController {
     });
   }
 
+  async refreshInputs(sessionID) {
+    if (!store.getState().capabilities?.features?.inputLifecycle) return;
+    const epoch = this.lifecycleEpoch;
+    const response = await api.inputs(sessionID);
+    if (this.ownsLifecycle(epoch)) store.setState((state) => installInputs(state, sessionID, response.data));
+  }
+
+  async resumeQueue(sessionID) {
+    const epoch = this.lifecycleEpoch;
+    await api.resumeQueue(sessionID);
+    if (this.ownsLifecycle(epoch)) await this.refreshInputs(sessionID);
+  }
+
   async refreshQueue(sessionID) {
     if (!store.getState().sessionData[sessionID]?.loaded) return;
     const generation = this.queueMutationGeneration.get(sessionID) || 0;
     const lifecycleEpoch = this.lifecycleEpoch;
     const response = await api.queue(sessionID);
+    if (!this.ownsLifecycle(lifecycleEpoch)) return;
+    await this.refreshInputs(sessionID);
     if (this.lifecycleEpoch !== lifecycleEpoch) return;
     this.installAuthoritativeQueue(sessionID, response.data, generation);
   }
@@ -1138,19 +1169,23 @@ export class AppController {
 
   installQueue(sessionID, queue, { authoritative = true } = {}) {
     if (authoritative) this.queueServerRevisions.set(sessionID, queue.revision || 0);
-    store.setState((state) => ({
-      ...state,
-      sessions: state.sessions[sessionID]
-        ? {
-            ...state.sessions,
-            [sessionID]: { ...state.sessions[sessionID], queue: queueSummary(queue) },
+    store.setState((state) => {
+      const current = state.sessionData[sessionID] || {};
+      if (current.inputLifecycle) {
+        const inputs = { ...current.inputs };
+        if (queue.inputRevision === current.inputRevision) {
+          for (const item of queue.items || []) {
+            if (inputs[item.id]) inputs[item.id] = { ...inputs[item.id], prompt: item.prompt };
           }
-        : state.sessions,
-      sessionData: {
-        ...state.sessionData,
-        [sessionID]: { ...state.sessionData[sessionID], queue },
-      },
-    }));
+        }
+        return installSessionMachine(state, sessionID, { ...current, inputs,
+          queue: { ...current.queue, revision: queue.revision, pendingImages: queue.pendingImages } });
+      }
+      return { ...state,
+        sessions: state.sessions[sessionID] ? { ...state.sessions, [sessionID]: { ...state.sessions[sessionID], queue: queueSummary(queue) } } : state.sessions,
+        sessionData: { ...state.sessionData, [sessionID]: { ...current, queue } },
+      };
+    });
   }
 
   installAuthoritativeQueue(sessionID, queue, requestGeneration = null) {
@@ -1485,95 +1520,30 @@ export class AppController {
         );
       });
     }
-    if (delivery === "steer") {
-      store.setState((state) => {
-        let next = state;
-        const session = state.sessions[sessionID];
-        if (session) {
-          next = installSessionSummary(
-            state,
-            {
-              ...session,
-              time: { ...session.time, lastUserMessage: optimistic.timeCreated },
-            },
-            { moveToFront: true },
-          );
-        }
-        const current = next.sessionData[sessionID] || {};
-        const failedPrompts = current.failedPrompts || [];
-        const failed = current.lastError && current.livePrompt
-          ? current.livePrompt
-          : null;
-        return {
-          ...next,
-          sessionData: {
-            ...next.sessionData,
-            [sessionID]: {
-              ...current,
-              failedPrompts:
-                failed && !failedPrompts.some((item) => item.id === failed.id)
-                  ? [...failedPrompts, failed]
-                  : failedPrompts,
-              livePrompt: optimistic,
-              lastError: null,
-            },
-          },
-        };
-      });
-    } else {
-      const queue = store.getState().sessionData[sessionID]?.queue;
-      if (queue) {
-        this.installQueue(
-          sessionID,
-          {
-            ...queue,
-            items: [
-              ...queue.items,
-              {
-                id: inputID,
-                prompt,
-                delivery,
-                paused: false,
-                createdAt: optimistic.timeCreated,
-                state: "admitted",
-              },
-            ],
-          },
-          { authoritative: false },
-        );
-      }
-    }
+    store.setState((state) => {
+      const session = state.sessions[sessionID];
+      const next = delivery === "steer" && session
+        ? installSessionSummary(state, { ...session, time: { ...session.time, lastUserMessage: optimistic.timeCreated } }, { moveToFront: true })
+        : state;
+      return installSessionMachine(next, sessionID, projectSubmission(next.sessionData[sessionID] || {}, optimistic));
+    });
     try {
-      await api.admitPrompt(sessionID, {
+      const receipt = await api.admitPrompt(sessionID, {
         id: inputID,
         prompt,
         delivery,
         resume: true,
       });
       if (!this.ownsLifecycle(lifecycleEpoch)) return null;
+      store.setState((state) => installSessionMachine(state, sessionID, admitSubmission(state.sessionData[sessionID] || {}, receipt.data)));
+      await this.refreshInputs(sessionID);
+      if (!this.ownsLifecycle(lifecycleEpoch)) return null;
       this.schedule(`queue:${sessionID}`, SUMMARY_REFRESH_MS, () => this.refreshQueue(sessionID));
     } catch (error) {
       if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-      const queued = store.getState().sessionData[sessionID]?.queue;
-      if (queued?.items?.some((item) => item.id === inputID)) {
-        this.installQueue(
-          sessionID,
-          { ...queued, items: queued.items.filter((item) => item.id !== inputID) },
-          { authoritative: false },
-        );
-      }
       store.setState((state) => {
         const current = state.sessionData[sessionID] || {};
-        let next = {
-          ...state,
-          sessionData: {
-            ...state.sessionData,
-            [sessionID]: {
-              ...current,
-              livePrompt: current.livePrompt?.id === inputID ? null : current.livePrompt,
-            },
-          },
-        };
+        let next = installSessionMachine(state, sessionID, rollbackSubmission(current, inputID));
         if (previousSession && (delivery === "steer" || previousSession.archivedAt)) {
           next = restoreSessionSummary(
             next,
@@ -1593,33 +1563,16 @@ export class AppController {
   async interrupt(sessionID) {
     const lifecycleEpoch = this.lifecycleEpoch;
     const prior = store.getState().active[sessionID] || null;
-    if (prior?.state && prior.state !== "idle") {
-      store.setState((state) => ({
-        ...state,
-        active: {
-          ...state.active,
-          [sessionID]: { ...state.active[sessionID], state: "stopping" },
-        },
-      }));
-    }
+    const token = {};
+    if (isBusy(prior)) store.setState((state) => optimisticRuntime(state, sessionID, { state: "stopping" }, token));
     try {
       const response = await api.interrupt(sessionID);
       if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-      if (!response.data?.interrupted && prior) {
-        store.setState((state) => ({
-          ...state,
-          active: { ...state.active, [sessionID]: prior },
-        }));
-      }
+      if (!response.data?.interrupted) store.setState((state) => rollbackRuntime(state, sessionID, token, prior));
       return response.data;
     } catch (error) {
       if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-      if (prior) {
-        store.setState((state) => ({
-          ...state,
-          active: { ...state.active, [sessionID]: prior },
-        }));
-      }
+      store.setState((state) => rollbackRuntime(state, sessionID, token, prior));
       throw error;
     }
   }
@@ -1638,31 +1591,14 @@ export class AppController {
     const lifecycleEpoch = this.lifecycleEpoch;
     const previous = store.getState().active[sessionID] || null;
     const startedAt = new Date().toISOString();
-    store.setState((state) => ({
-      ...state,
-      active: {
-        ...state.active,
-        [sessionID]: {
-          state: "running",
-          turnID: null,
-          startedAt,
-          activity: "Compacting",
-        },
-      },
-    }));
+    const token = {};
+    store.setState((state) => optimisticRuntime(state, sessionID, { state: "running", turnID: null, startedAt, activity: "Compacting" }, token));
     try {
       const response = await api.compact(sessionID);
       return this.ownsLifecycle(lifecycleEpoch) ? response : null;
     } catch (error) {
       if (!this.ownsLifecycle(lifecycleEpoch)) return null;
-      store.setState((state) => {
-        const current = state.active[sessionID];
-        if (current?.startedAt !== startedAt || current?.activity !== "Compacting") return state;
-        const active = { ...state.active };
-        if (previous) active[sessionID] = previous;
-        else delete active[sessionID];
-        return { ...state, active };
-      });
+      store.setState((state) => rollbackRuntime(state, sessionID, token, previous));
       throw error;
     }
   }
@@ -2082,7 +2018,7 @@ export class AppController {
       const session = state.sessions[sessionID];
       if (!session) return false;
       const runtime = state.active[sessionID];
-      if (runtime?.state && runtime.state !== "idle" && runtime.state !== "error") {
+      if (isBusy(runtime)) {
         this.notice("Thinking effort can be changed when the current turn settles.");
         return false;
       }

@@ -1,3 +1,4 @@
+import { projectSessionSummary, isBusy } from "../state/session-machine.js";
 import { html, useEffect, useMemo, useState } from "../../vendor/htm-preact.js";
 import { workingDuration, shortAge } from "../lib/duration.js";
 import { currentRoute, draftPath, navigate } from "../router/router.js";
@@ -9,7 +10,11 @@ import { connectionStatusDescriptor, hasPendingQueue, sessionStatusDescriptor } 
 
 export function Sidebar({ peeking = false, onPointerEnter = null, onPointerLeave = null, onTransientClose = null }) {
   const open = useStore((state) => state.ui.sidebarOpen);
-  const sessions = useStore((state) => state.sessions);
+  const summaries = useStore((state) => state.sessions);
+  const sessionData = useStore((state) => state.sessionData);
+  const sessions = useMemo(() => Object.fromEntries(Object.entries(summaries).map(
+    ([id, session]) => [id, projectSessionSummary(session, sessionData[id])],
+  )), [summaries, sessionData]);
   const order = useStore((state) => state.sessionOrder);
   const archivedOrder = useStore((state) => state.archivedOrder);
   const archivedTotal = useStore((state) => state.archivedTotal);
@@ -185,8 +190,8 @@ function SessionRow({ session, active, attention, selected, done, locations, pin
   const ageTime = isSettled ? session.archivedAt : session.time?.lastUserMessage || session.time?.created || session.time?.updated;
   const age = shortAge(ageTime);
   const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
-  const working = active?.state === "running" && attentionCount === 0;
-  const busy = active?.state && active.state !== "idle" && active.state !== "error";
+  const working = isBusy(active) && active.state !== "stopping" && attentionCount === 0;
+  const busy = isBusy(active);
   const quickSettle = Boolean(settleSupported && !busy && (isSettled || !hasPendingQueue(session.queue)));
   const ageKind = isSettled ? "Settled" : session.time?.lastUserMessage ? "Last message" : "Session created";
   const ageTitle = ageTime ? `${ageKind}: ${new Date(ageTime).toLocaleString()}` : "";

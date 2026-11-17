@@ -171,7 +171,9 @@ async def prompt(
         finally:
             try:
                 for update in tools.finish(
-                    interrupted=reason == "cancelled" or work.cancel
+                    interrupted=reason == "cancelled"
+                    or reason != "end_turn"
+                    and work.cancel
                 ):
                     try:
                         await agent.update(session_id, update)

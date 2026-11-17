@@ -55,6 +55,7 @@ class NativeClient:
             trust_env=False,
             follow_redirects=False,
         )
+        self.input_lifecycle = False
         self.process_monitor = ProcessMonitor(self)
         self.agent_monitor = AgentMonitor(self)
         self.event_hub = NativeEventHub(self)
@@ -129,12 +130,12 @@ class NativeClient:
             raise fail("Native workers have not drained; completion is unconfirmed")
 
     async def assert_idle(self, session_id: str) -> None:
-        """Require logical idleness, an empty queue, and physical drain."""
+        """Require logical idleness and drain; old daemons also need an empty queue."""
         status = await self.data("POST", self.path(session_id, "/wait?timeoutMs=1"))
         if status["state"] not in ("idle", "error"):
             raise fail("Native session already has active work")
         session = await self.data("GET", self.path(session_id))
-        if session["queue"]["total"]:
+        if not self.input_lifecycle and session["queue"]["total"]:
             raise fail("Native session has queued inputs")
         await self.drained(session_id, 1)
 
@@ -244,7 +245,17 @@ class NativeClient:
         for message_id, text in answers:
             await emit("answer", {"messageID": message_id, "content": text})
 
-    async def turn(  # noqa: C901 - lifecycle state machine kept linear for wire ordering
+    async def cancel_input(self, session_id: str, input_id: str) -> dict[str, Any]:
+        """Cancel only this input; settlement wins a simultaneous cancel."""
+        path = self.path(session_id, "/input/" + quote(input_id, safe=""))
+        try:
+            return await self.data("POST", path + "/cancel")
+        except NativeHttpError as error:
+            if error.status != 409:
+                raise
+            return await self.data("GET", path)
+
+    async def turn(
         self,
         session_id: str,
         text: str,
@@ -255,164 +266,14 @@ class NativeClient:
         attachments: list[InlineAttachment] | None = None,
         continuation: bool = False,
     ) -> str:
-        """Admit one prompt and bridge native lifecycle events until settlement."""
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1024)
-        ready = asyncio.Event()
-        stream = asyncio.create_task(self.events(queue, ready))
-        admitted = False
-        finished = False
-        after = 0
-        outcome: str | None = None
-        idle_without_receipt = False
+        from yoke.acp.input_turn import InputTurn
 
-        async def event(item: dict[str, Any]) -> None:
-            nonlocal outcome
-            if item.get("sessionID") != session_id:
-                return
-            kind, data = item["type"], item["data"]
-            if "permission" in kind or "question" in kind:
-                return  # SessionNotifications owns bidirectional client requests.
-            if data.get("inputID") != input_id:
-                return
-            if kind == "session.runtime.failed":
-                raise fail("Native runtime failed")
-            if kind == "session.prompt.settled":
-                outcome = data["outcome"]
-            await emit(kind, data)
-
-        async def receive() -> None:
-            if stream.done():
-                await stream
-            while not queue.empty():
-                await event(queue.get_nowait())
-
-        try:
-            await asyncio.wait_for(ready.wait(), 30)
-            if stream.done():
-                await stream
-            await self.assert_idle(session_id)
-            while True:
-                page = await self.request(
-                    "GET",
-                    self.path(session_id, "/history"),
-                    params={"after": after, "limit": 200},
-                )
-                for item in page["data"]:
-                    after = item["durable"]["seq"]
-                    if item["data"].get("inputID") == input_id:
-                        raise fail(
-                            "Input ID already exists; resume native history instead of retrying the prompt"
-                        )
-                if not page["hasMore"]:
-                    break
-            # A valid ACP prompt has already been accepted by the client. Even
-            # when cancellation wins during setup, admit its input before stop
-            # checkpoints it; otherwise rapid steering silently loses messages.
-            prompt: dict[str, Any] = {"text": text}
-            if continuation:
-                prompt["continuation"] = True
-            if attachments:
-                prompt["attachments"] = []
-                for attachment in attachments:
-                    uploaded = await self.data(
-                        "POST",
-                        "upload",
-                        params={"sessionID": session_id},
-                        files={
-                            "file": (attachment.name, attachment.data, attachment.mime)
-                        },
-                    )
-                    prompt["attachments"].append(
-                        {
-                            "type": "file",
-                            "uri": uploaded["uri"],
-                            "name": uploaded["name"],
-                            "mime": uploaded["mime"],
-                        }
-                    )
-            admitted = True
-            receipt = await self.data(
-                "POST",
-                self.path(session_id, "/prompt"),
-                json={"id": input_id, "prompt": prompt, "delivery": "queue"},
-            )
-            if receipt.get("id") != input_id or receipt.get("state") == "removed":
-                raise fail("Native admission receipt is invalid or removed")
-            after = max(after, receipt.get("admittedSeq", after))
-            while outcome is None:
-                if work.cancel:
-                    await self.stop(session_id)
-                    finished = True
-                    return "cancelled"
-                await receive()
-                page = await self.request(
-                    "GET",
-                    self.path(session_id, "/history"),
-                    params={"after": after, "limit": 200},
-                )
-                for item in page["data"]:
-                    after = item["durable"]["seq"]
-                    if item["data"].get("inputID") != input_id:
-                        continue
-                    if item["type"] == "session.runtime.failed":
-                        raise fail("Native runtime failed")
-                    if item["type"] == "session.prompt.settled":
-                        outcome = item["data"]["outcome"]
-                if outcome is not None or page["hasMore"]:
-                    continue
-                if idle_without_receipt:
-                    raise fail("Native workers ended without a settlement receipt")
-                incoming = asyncio.create_task(queue.get())
-                stopped = asyncio.create_task(work.wake.wait())
-                waited = asyncio.create_task(
-                    self.data("POST", self.path(session_id, "/wait?timeoutMs=1000"))
-                )
-                try:
-                    done, _ = await asyncio.wait(
-                        [incoming, stopped, waited, stream],
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if stream in done:
-                        await stream
-                    if incoming in done:
-                        await event(incoming.result())
-                    if waited in done:
-                        state = waited.result()["state"]
-                        if state in ("idle", "error"):
-                            await self.drained(session_id)
-                            idle_without_receipt = True
-                finally:
-                    for task in (incoming, stopped, waited):
-                        task.cancel()
-                    await asyncio.gather(
-                        incoming, stopped, waited, return_exceptions=True
-                    )
-            await self.drained(session_id)
-            finished = True
-            await receive()
-            if outcome == "stopped" or work.cancel:
-                return "cancelled"
-            if outcome != "completed":
-                raise fail("Native runtime failed")
-            await self.final_answer(
-                session_id, input_id, emit, continuation=continuation
-            )
-            return "end_turn"
-        finally:
-
-            async def release() -> None:
-                stream.cancel()
-                await asyncio.gather(stream, return_exceptions=True)
-                if admitted and not finished:
-                    await self.stop(session_id)
-
-            cleanup = asyncio.create_task(release())
-            cancelled = False
-            while not cleanup.done():
-                try:
-                    await asyncio.shield(cleanup)
-                except asyncio.CancelledError:
-                    cancelled = True
-            cleanup.result()
-            if cancelled:
-                raise asyncio.CancelledError
+        return await InputTurn(self).run(
+            session_id,
+            text,
+            input_id,
+            work,
+            emit,
+            attachments=attachments,
+            continuation=continuation,
+        )

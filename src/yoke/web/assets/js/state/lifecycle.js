@@ -1,5 +1,7 @@
 // @ts-check
 
+import { retireSession } from "./session-machine.js";
+import { store } from "./store.js";
 import { ApiError } from "../api/client.js";
 
 export class BrowserLifecycle {
@@ -23,6 +25,12 @@ export class BrowserLifecycle {
     controller.bootstrapEpoch = null;
     controller.resyncEpoch = null;
     controller.broadResyncPending = false;
+    controller.resyncPending = false;
+    store.setState((state) => ({ ...state,
+      active: Object.fromEntries(Object.entries(state.active).filter(([, runtime]) => !runtime.optimistic)),
+      sessionData: Object.fromEntries(
+      Object.entries(state.sessionData).map(([id, data]) => [id, retireSession(data)]),
+    ) }));
     controller.bufferEvents = false;
     controller.eventBuffer = [];
     this.scheduler.cancel();

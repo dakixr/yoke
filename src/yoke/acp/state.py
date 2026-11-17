@@ -27,6 +27,10 @@ class ActiveTurn:
     done: asyncio.Event
     task: asyncio.Task[object] | None
 
+    input_id: str | None = None
+    phase: str = "submitting"
+    input_revision: int = -1
+
     @overload
     def __getitem__(self, key: Literal["wake", "done"]) -> asyncio.Event: ...
 

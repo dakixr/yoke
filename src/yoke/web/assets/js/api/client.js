@@ -134,6 +134,8 @@ export class YokeApi {
   replyQuestion(id, requestID, answers) {
     return this.json(`/api/v1/session/${encodeURIComponent(id)}/question/${encodeURIComponent(requestID)}/reply`, "POST", { answers });
   }
+  inputs(id) { return this.request(`/api/v1/session/${encodeURIComponent(id)}/input`); }
+  resumeQueue(id) { return this.json(`/api/v1/session/${encodeURIComponent(id)}/queue/resume`, "POST", {}); }
   rejectQuestion(id, requestID) {
     return this.json(`/api/v1/session/${encodeURIComponent(id)}/question/${encodeURIComponent(requestID)}/reject`, "POST", {});
   }

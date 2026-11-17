@@ -1,3 +1,4 @@
+import { isBusy } from "../state/session-machine.js";
 import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { useStore } from "../state/hooks.js";
@@ -71,7 +72,7 @@ export function SessionComposer({ sessionID, session, runtime, data, attentionCo
   });
 
   const hasContent = Boolean(text.trim() || attachments.length);
-  const running = runtime?.state === "running" || runtime?.state === "stopping" || runtime?.state === "waiting_input";
+  const running = isBusy(runtime);
   const canSteer = Boolean(capabilities?.features?.steering);
   const slashMenu = useSlashCompletions({
     text,

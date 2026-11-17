@@ -3,7 +3,7 @@ import { ApiError } from "../../api/client.js";
 // Older daemons omit workspace. Do not disable their existing workflows.
 export function workspaceUnavailable(session, runtime = null) {
   if (session?.workspace && session.workspace.status !== "available") return session.workspace;
-  const error = runtime?.lastError;
+  const error = runtime?.error;
   if (error?.code !== "session_workspace_unavailable") return null;
   if (error.details?.directory && error.details.directory !== session?.location?.directory) return null;
   return { status: error.details?.status || "missing", message: error.message };

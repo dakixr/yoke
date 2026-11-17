@@ -1,3 +1,4 @@
+import { isBusy } from "../state/session-machine.js";
 import { html, useEffect, useRef } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 import { copyText } from "../lib/clipboard.js";
@@ -10,7 +11,7 @@ export function SessionContextMenu({ session, location, runtime, capabilities, p
   const menuRef = useRef(null);
   const connected = useStore((state) => state.connection.current);
   const unread = useStore((state) => Boolean(state.ui.doneUnreviewed[session.id]));
-  const busy = runtime?.state && runtime.state !== "idle" && runtime.state !== "error";
+  const busy = isBusy(runtime);
   const pending = hasPendingQueue(session.queue);
   const directory = session.location?.directory || "";
   const branch = location?.git?.branch || null;

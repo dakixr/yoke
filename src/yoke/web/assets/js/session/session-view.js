@@ -1,3 +1,4 @@
+import { projectSessionSummary, isBusy } from "../state/session-machine.js";
 import { html, useEffect, useRef, useState } from "../../vendor/htm-preact.js";
 import { currentRoute } from "../router/router.js";
 import { controller } from "../state/controller.js";
@@ -29,9 +30,10 @@ function NewSessionView() {
 
 function SessionView() {
   const sessionID = useStore((state) => state.ui.selectedSessionID);
-  const session = useStore((state) => sessionID ? state.sessions[sessionID] : null);
+  const summary = useStore((state) => sessionID ? state.sessions[sessionID] : null);
   const runtime = useStore((state) => sessionID ? state.active[sessionID] : null);
   const data = useStore((state) => sessionID ? state.sessionData[sessionID] : null);
+  const session = projectSessionSummary(summary, data);
   if (!sessionID) return html`<main class="main-view"><div class="content-loading">Choose a session.</div></main>`;
   if (!session || (data?.loading && !data?.loaded)) return html`<main class="main-view"><div class="content-loading">Loading session…</div></main>`;
   if (data?.loadError && !data?.loaded) return html`<main class="main-view"><div class="content-error">${data.loadError}</div></main>`;
@@ -57,7 +59,7 @@ function SessionHeader({ session, runtime, attentionCount = 0 }) {
   const location = useStore((state) => state.locations[session.location.directory]);
   const [compacting, setCompacting] = useState(false);
   const unavailable = Boolean(workspaceUnavailable(session, runtime));
-  const busy = runtime?.state && runtime.state !== "idle" && runtime.state !== "error";
+  const busy = isBusy(runtime);
   const settleDisabled = !connected || Boolean(busy) || (!session.archivedAt && hasPendingQueue(session.queue));
   const rename = async () => {
     const title = window.prompt("Session title", session.title || "");

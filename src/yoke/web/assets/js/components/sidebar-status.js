@@ -1,3 +1,4 @@
+import { isBusy } from "../state/session-machine.js";
 export function sessionStatusDescriptor({ runtime, attention, done, queue, age }) {
   const attentionCount = (attention?.permissions || 0) + (attention?.questions || 0);
   if (attentionCount) {
@@ -9,7 +10,7 @@ export function sessionStatusDescriptor({ runtime, attention, done, queue, age }
   if (runtime?.state === "waiting_input") return { kind: "attention", label: "Waiting for you" };
   if (runtime?.state === "error") return { kind: "error", label: "Error" };
   if (runtime?.state === "stopping") return { kind: "quiet", label: "Stopping" };
-  if (runtime?.state === "running") return { kind: "working", label: "Working" };
+  if (isBusy(runtime)) return { kind: "working", label: "Working" };
   const pending = queueStatusLabel(queue);
   if (pending) return { kind: "quiet", label: pending };
   if (done) return { kind: "done", label: "Done" };
@@ -17,7 +18,7 @@ export function sessionStatusDescriptor({ runtime, attention, done, queue, age }
 }
 
 export function queueStatusLabel(queue) {
-  const parts = [];
+  const parts = queue?.held ? ["Queue held"] : [];
   const steering = Math.max(0, Number(queue?.steering) || 0);
   const queued = Math.max(0, Number(queue?.queued) || 0);
   const paused = Math.max(0, Number(queue?.paused) || 0);

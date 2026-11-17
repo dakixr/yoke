@@ -299,3 +299,32 @@ sessions. CI does not run them. Run each with `uv run python scripts/<name>.py`:
 | `test_web_sidebar_browser.py` | The sessions sidebar. |
 
 The inspector suites are listed in [web-inspectors.md](web-inspectors.md#tests).
+
+## Session state
+
+`state/session-machine.js` owns the browser's session projection. It reduces
+`session.input.changed`, `session.queue.held` and `session.active.changed`, and
+installs `GET /session/{id}/input` snapshots. Input revisions order durable
+changes. Runtime revisions order activity changes within one daemon lifetime.
+The reducer ignores duplicates and requests resync after an input revision gap.
+A resync requested during another resync runs afterward, including narrow
+requests. Reconnect also refreshes background sessions whose inputs changed.
+
+Each input has one ID and one phase. Queued and paused inputs appear in Pending
+work. Promoted and running inputs appear in the timeline until their saved user
+message arrives. A local submission appears immediately, then its authoritative
+phase replaces that projection. Settlement, removal and connection retirement
+clear local projections. Stop and compaction roll back only their own pending
+runtime projection, so a late HTTP response cannot restore an older turn.
+Older daemons use the prompt-event compatibility projection.
+
+A held queue shows **Queue held** in Pending work and in the sidebar. Choose
+**Resume queue** to let the daemon promote eligible inputs. Resume leaves
+individually paused inputs paused. Runtime errors use the same `error` field
+for snapshots and events.
+
+Run the session reducer transition table with the other Node suites:
+
+```bash
+node --experimental-default-type=module scripts/test_web_session_machine.mjs
+```

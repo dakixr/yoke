@@ -2,9 +2,9 @@ import { html, useEffect, useState } from "../../vendor/htm-preact.js";
 import { controller } from "../state/controller.js";
 
 export function QueueEditor({ sessionID, queue, unavailable = false }) {
-  if (!queue?.items?.length) return null;
+  if (!queue || (!queue.items?.length && !queue.held)) return null;
   return html`<section class="queue-editor" aria-label="Pending work">
-    <div class="queue-editor__heading"><span>Pending work</span><span class="muted" title=${`Queue revision ${queue.revision}`}>${queue.items.length} pending</span></div>
+    <div class="queue-editor__heading"><span>${queue.held ? "Queue held" : "Pending work"}</span>${queue.held ? html`<button disabled=${unavailable} onClick=${() => controller.resumeQueue(sessionID).catch((error) => controller.notice(error.message))}>Resume queue</button>` : null}<span class="muted" title=${`Queue revision ${queue.revision}`}>${queue.items.length} pending</span></div>
     <div class="queue-editor__items">
       ${queue.items.map((item, index) => html`<${QueueItem} key=${item.id} sessionID=${sessionID} queue=${queue} item=${item} index=${index} unavailable=${unavailable} />`)}
     </div>

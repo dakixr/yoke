@@ -61,7 +61,7 @@ const { api, ApiError } = await import("../src/yoke/web/assets/js/api/client.js"
 const { AppController, controller: exportedController } = await import("../src/yoke/web/assets/js/state/controller.js");
 assert.ok(exportedController instanceof AppController);
 let controller = exportedController;
-const { installActiveSnapshot, mergeSessionInfo, reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
+const { installInputs, installActiveSnapshot, mergeSessionInfo, reducePublicEvent } = await import("../src/yoke/web/assets/js/state/reducer.js");
 const { store } = await import("../src/yoke/web/assets/js/state/store.js");
 const { currentRoute } = await import("../src/yoke/web/assets/js/router/router.js");
 const { chatActivityForRuntime } = await import("../src/yoke/web/assets/js/session/activity.js");
@@ -3224,7 +3224,138 @@ async function testModelSelectionContextErrorStaysSpecific() {
   );
 }
 
+async function testLateStopCannotRestoreWorking() {
+  for (const rejected of [false, true]) {
+    const id = `late-stop-${rejected}`;
+    installSession(id);
+    store.setState((state) => ({ ...state, active: { [id]: { state: "running", revision: 7, turnID: 1 } } }));
+    const gate = deferred();
+    const restore = restoreApi({ interrupt: () => gate.promise });
+    try {
+      const pending = controller.interrupt(id).catch(() => {});
+      store.setState((state) => reducePublicEvent(state, {
+        type: "session.active.changed", sessionID: id, data: { state: "idle", revision: 8 },
+      }));
+      if (rejected) gate.reject(new Error("late failure"));
+      else gate.resolve({ data: { interrupted: false } });
+      await pending;
+      assert.equal(store.getState().active[id], undefined, "late stop must not restore Working");
+    } finally { restore(); }
+  }
+}
+
+async function testNarrowResyncDuringResyncIsRetained() {
+  controller.resyncing = true;
+  controller.requestResync(false);
+  controller.resyncing = false;
+  const calls = [];
+  const original = controller.resync;
+  controller.resync = async (broad) => { calls.push(broad); };
+  try {
+    controller.startPendingBroadResync();
+    assert.deepEqual(calls, [false]);
+  } finally { controller.resync = original; }
+}
+
+async function testAuthoritativeInputsOwnPromptPlacementAndRetirement() {
+  const id = "machine-placement";
+  installSession(id, { extraData: { inputLifecycle: true, inputs: {}, inputRevision: 0 } });
+  const gate = deferred();
+  const restore = restoreApi({ admitPrompt: () => gate.promise, queue: async () => ({ data: { revision: 1, items: [] } }) });
+  try {
+    const pending = controller.submitPrompt(id, { text: "steer" });
+    const input = Object.values(store.getState().sessionData[id].inputs)[0];
+    const receive = (phase, inputRevision) => store.setState((state) => reducePublicEvent(state, {
+      type: "session.input.changed", sessionID: id,
+      data: { inputID: input.id, phase, inputRevision, prompt: "steer", position: 0, delivery: "steer" },
+    }));
+    assert.equal(input.phase, "submitting");
+    receive("queued", 1);
+    assert.equal(store.getState().sessionData[id].livePrompt, null);
+    assert.deepEqual(store.getState().sessionData[id].queue.items.map((item) => item.id), [input.id]);
+    receive("running", 2);
+    assert.equal(store.getState().sessionData[id].queue.items.length, 0, "promotion removes queue row synchronously");
+    receive("settled", 3);
+    gate.reject(new Error("late admission transport failure"));
+    await pending.catch(() => {});
+    assert.equal(store.getState().sessionData[id].inputs[input.id], undefined);
+    const ghost = controller.submitPrompt(id, { text: "ghost" }).catch(() => {});
+    controller.retireLifecycle();
+    assert.deepEqual(store.getState().sessionData[id].inputs, {});
+    await ghost;
+  } finally { restore(); }
+}
+
+async function testSnapshotErrorUsesCanonicalField() {
+  const id = "canonical-error";
+  installSession(id);
+  const error = { code: "session_workspace_unavailable", details: { directory: "/work" }, message: "Missing" };
+  const state = installActiveSnapshot(store.getState(), { [id]: { state: "error", lastError: error } });
+  assert.equal(state.active[id].error, error);
+}
+
+async function testInputSnapshotCannotRestoreSettledOptimism() {
+  const id = "snapshot-settlement";
+  installSession(id, { extraData: { inputLifecycle: true, inputs: {}, inputRevision: 0 } });
+  let state = installInputs(store.getState(), id, { inputRevision: 1, inputs: [{ id: "input", phase: "running", prompt: "saved" }] });
+  state = reducePublicEvent(state, { type: "session.input.changed", sessionID: id, data: { inputID: "input", phase: "settled", inputRevision: 2 } });
+  state = installInputs(state, id, { inputRevision: 1, inputs: [{ id: "input", phase: "running", prompt: "old" }] });
+  assert.deepEqual(state.sessionData[id].inputs, {});
+}
+
+async function testHeldQueueResumeKeepsIndividualPauses() {
+  const id = "held-resume";
+  installSession(id, { extraData: { inputLifecycle: true, inputs: {}, inputRevision: 0 } });
+  store.setState((state) => ({ ...state, capabilities: { features: { inputLifecycle: true } } }));
+  store.setState((state) => installInputs(state, id, { inputRevision: 1, held: { reason: "interrupt" }, inputs: [
+    { id: "paused", phase: "paused", prompt: "keep paused", pauseCause: "user", position: 0 },
+  ] }));
+  assert.equal(store.getState().sessions[id].queue.held.reason, "interrupt");
+  assert.match(queueStatusLabel(store.getState().sessions[id].queue), /Queue held/);
+  let resumed = 0;
+  const restore = restoreApi({
+    resumeQueue: async (sessionID) => { assert.equal(sessionID, id); resumed++; return { data: {} }; },
+    inputs: async () => ({ data: { inputRevision: 2, held: null, inputs: [
+      { id: "paused", phase: "paused", prompt: "keep paused", pauseCause: "user", position: 0 },
+    ] } }),
+  });
+  try {
+    await controller.resumeQueue(id);
+    assert.equal(resumed, 1);
+    assert.equal(store.getState().sessionData[id].queue.held, null);
+    assert.equal(store.getState().sessionData[id].queue.items[0].paused, true);
+  } finally { restore(); }
+}
+
+async function testReconnectRefreshesBackgroundTranscriptAfterInputMoves() {
+  const id = "background-input-moved";
+  const summary = installSession(id, { extraData: { inputLifecycle: true, inputs: {}, inputRevision: 1, latestSeq: 1 } });
+  store.setState((state) => ({ ...state, capabilities: { features: { inputLifecycle: true } }, ui: { ...state.ui, selectedSessionID: null } }));
+  let messageReads = 0;
+  const restore = restoreApi({
+    activeSessions: async () => ({ data: {} }),
+    listSessions: async ({ archived }) => ({ data: archived ? [] : [summary], cursor: { next: null } }),
+    inputs: async () => ({ data: { inputRevision: 2, inputs: [] } }),
+    history: async () => ({ data: [{ type: "session.input.changed", sessionID: id, durable: { seq: 2 }, data: { inputID: "remote", phase: "settled", inputRevision: 2 } }], hasMore: false }),
+    messages: async () => { messageReads++; return { data: [{ id: "remote-answer", type: "assistant" }], cursor: { next: null } }; },
+  });
+  const original = controller.refreshProcessLocalState;
+  controller.refreshProcessLocalState = async () => {};
+  try {
+    await controller.resync(false);
+    assert.equal(messageReads, 1, "a newer input snapshot must refresh the background transcript");
+    assert.equal(store.getState().sessionData[id].messages[0].id, "remote-answer");
+  } finally { controller.refreshProcessLocalState = original; restore(); }
+}
+
 const tests = [
+  testReconnectRefreshesBackgroundTranscriptAfterInputMoves,
+  testHeldQueueResumeKeepsIndividualPauses,
+  testSnapshotErrorUsesCanonicalField,
+  testInputSnapshotCannotRestoreSettledOptimism,
+  testAuthoritativeInputsOwnPromptPlacementAndRetirement,
+  testLateStopCannotRestoreWorking,
+  testNarrowResyncDuringResyncIsRetained,
   testSessionComposerDraftsStayScopedAndPersisted,
   testClearedNewSessionDraftIsRemovedFromPersistenceButStaysLive,
   testSettingsRouteAliasesHome,
