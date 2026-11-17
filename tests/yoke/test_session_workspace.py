@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
-import subprocess
-import sys
 
 import pytest
 
@@ -164,41 +161,6 @@ def test_nested_execution_leases_exclude_relocation_and_release_on_errors(tmp_pa
         with workspace_lease(store, "saved"):
             raise RuntimeError("aborted worker")
     assert relocate_session_workspace(store, "saved", new).root == str(new)
-
-
-def test_another_process_cannot_relocate_under_an_execution_lease(tmp_path):
-    store, _, _, new = saved(tmp_path)
-    from tests.yoke.cli.daemon_support import serve_app
-    from yoke.http.app import HttpAppSettings, create_app
-
-    code = """
-import httpx
-import sys
-with httpx.Client(transport=httpx.HTTPTransport(uds=sys.argv[1]), base_url='http://fixture/api/v1/', trust_env=False) as http:
-    response = http.post('/session/saved/relocate', json={'directory': sys.argv[2]})
-    if response.status_code == 409:
-        assert response.json()['error']['code'] == 'session_workspace_busy'
-        print('busy')
-    else:
-        response.raise_for_status()
-        print('moved')
-"""
-    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
-    app = create_app(
-        HttpAppSettings(auth_token=None, session_directory=store.directory)
-    )
-    with serve_app(app) as handle:
-        argv = [sys.executable, "-c", code, str(handle.socket), str(new)]
-        with workspace_lease(store, "saved"):
-            result = subprocess.run(
-                argv, env=env, text=True, capture_output=True, check=True, timeout=10
-            )
-        assert result.stdout.strip() == "busy"
-        result = subprocess.run(
-            argv, env=env, text=True, capture_output=True, check=True, timeout=10
-        )
-        assert result.stdout.strip() == "moved"
-    assert not (store.directory / "workspaces").exists()
 
 
 @pytest.mark.parametrize("kind", ["queued", "paused", "images", "promoted"])

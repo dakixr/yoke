@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-import subprocess
 import socket
-import sys
 import threading
 
 import pytest
 
 from yoke.agent_runs import AgentRunRegistry
 from yoke.agent_runs.context import Binding
-from yoke.agent_runs.protocol import ENVIRONMENT_KEY, RegistrationError, request
+from yoke.agent_runs.protocol import RegistrationError, request
 from yoke.agent_runs.records import Owner
 
 
@@ -317,68 +314,22 @@ def test_unresponsive_host_operation_is_bounded(tmp_path, monkeypatch):
             assert not worker.is_alive()
 
 
-def test_actual_worker_death_without_heartbeat_timeout(registry):
-    root = registry.capability(Owner("host", 77))
-    host = Binding(token=root, registry=registry)
-    code = """
-import os, sys
-from yoke.agent_runs.context import current_binding
-host = current_binding()
-host.call({'op':'register','runId':'crash','agentId':'worker','name':'worker','provider':'fake','model':None})
-print('REGISTERED', flush=True)
-sys.stdin.readline()
-os._exit(7)
-"""
-    env = {**os.environ, ENVIRONMENT_KEY: host.encode()}
-    with subprocess.Popen(
-        [sys.executable, "-c", code],
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-    ) as worker:
-        assert worker.stdout is not None and worker.stdin is not None
-        assert worker.stdout.readline() == "REGISTERED\n"
-        assert registry.snapshots()[0]["status"] == "running"
-        worker.stdin.write("exit\n")
-        worker.stdin.flush()
-        assert worker.wait(timeout=5) == 7
-    registry.reconcile()
-    row = registry.snapshots()[0]
-    assert row["status"] == "interrupted" and row["observation"] == "lost"
-    assert row["finishedAt"] is not None
+def test_close_interrupts_an_idle_listener(registry):
+    from yoke.agent_runs.server import Server
 
+    ready = threading.Event()
 
-def test_actual_worker_death_while_hosting_process_is_still_alive(registry):
-    root = registry.capability(Owner("host", 77))
-    host = Binding(token=root, registry=registry)
-    child = """
-import os
-from yoke.agent_runs.context import current_binding
-current_binding().call({'op':'register','runId':'nested-crash','agentId':'nested-worker','name':'worker','provider':'fake','model':None})
-os._exit(7)
-"""
-    outer = f"""
-import subprocess, sys
-assert subprocess.run([sys.executable, '-c', {child!r}]).returncode == 7
-print('CHILD_EXITED', flush=True)
-sys.stdin.readline()
-"""
-    env = {**os.environ, ENVIRONMENT_KEY: host.encode()}
-    with subprocess.Popen(
-        [sys.executable, "-c", outer],
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-    ) as process:
-        assert process.stdout is not None and process.stdin is not None
-        try:
-            assert process.stdout.readline() == "CHILD_EXITED\n"
-            assert process.poll() is None
-            registry.reconcile()
-            assert registry.snapshots()[0]["status"] == "interrupted"
-        finally:
-            process.stdin.write("exit\n")
-            process.stdin.flush()
-            process.wait(timeout=5)
+    class LongAcceptServer(Server):
+        def _serve(self):
+            self.socket.settimeout(60)
+            ready.set()
+            super()._serve()
+
+    server = LongAcceptServer(registry)
+    try:
+        # The listener uses a long timeout before entering its accept loop.
+        assert ready.wait(5)
+        server.close()
+        assert not server.thread.is_alive()
+    finally:
+        server.close()

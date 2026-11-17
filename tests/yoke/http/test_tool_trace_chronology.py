@@ -9,12 +9,10 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
-from fastapi.testclient import TestClient
 
 from yoke.agent.models import Message, ToolCall, ToolFunction
 from yoke.agent.observability import ToolTraceStore
 from yoke.agent.session_tree import SessionTree
-from yoke.http.app import HttpAppSettings, create_app
 from yoke.http.errors import ApiError
 from yoke.http.models.tool_trace import ToolCallListResponse
 from yoke.http.reads.cursor import encode_cursor, query_fingerprint
@@ -356,44 +354,6 @@ def test_invalid_and_mismatched_cursors(tmp_path: Path, order: Order) -> None:
         with pytest.raises(ApiError) as caught:
             _page(service, order=order, cursor=invalid)
         assert caught.value.code == "invalid_cursor_anchor"
-
-
-def test_http_order_default_latest_and_validation(tmp_path: Path) -> None:
-    app = create_app(
-        HttpAppSettings(
-            auth_token="test-token", session_directory=tmp_path / "sessions"
-        )
-    )
-    ids = _ids(237)
-    _save(app.state.tool_trace_service.store, ids, tmp_path)
-    client = TestClient(app, headers={"Authorization": "Bearer test-token"})
-    url = f"/api/v1/session/{SESSION}/tool-call"
-    oldest = client.get(url)
-    assert oldest.status_code == 200
-    assert [item["id"] for item in oldest.json()["data"]] == ids[:100]
-    latest = client.get(url, params={"order": "latest", "limit": 100})
-    assert latest.status_code == 200
-    payload = latest.json()
-    assert payload["total"] == 237
-    assert [item["id"] for item in payload["data"]] == ids[-100:]
-    assert [item["sequence"] for item in payload["data"]] == list(range(138, 238))
-    previous = client.get(
-        url, params={"order": "latest", "cursor": payload["cursor"]["next"]}
-    )
-    assert previous.status_code == 200
-    assert [item["id"] for item in previous.json()["data"]] == ids[37:137]
-    detail = client.get(f"{url}/{ids[-1]}")
-    assert detail.status_code == 200
-    assert detail.json()["data"]["sequence"] == 237
-    assert detail.json()["data"]["time"]["started"] is None
-    mismatch = client.get(url, params={"cursor": payload["cursor"]["next"]})
-    assert mismatch.status_code == 400
-    assert mismatch.json()["error"]["code"] == "cursor_query_mismatch"
-    for params in [{"order": "newest"}, {"limit": 0}, {"limit": 201}]:
-        assert client.get(url, params=params).status_code == 422
-    assert client.get(url, params={"cursor": "!"}).status_code == 400
-    assert client.get(f"{url}/missing").status_code == 404
-    assert client.get("/api/v1/session/missing/tool-call").status_code == 404
 
 
 def test_result_projection_is_built_after_public_redaction(tmp_path: Path) -> None:

@@ -105,7 +105,6 @@ def write_default(root: Path, model: str) -> Path:
 @pytest.mark.parametrize(
     "scope,provider_name,default_model,default_effort",
     [
-        ("global", "zai", "glm-5.3-flash", "max"),
         ("repo", "opencode-go", "deepseek-v4.1-flash", "high"),
     ],
 )

@@ -9,13 +9,8 @@ import pytest
 
 PROCESS_GROUPS = {
     "cli/test_headless_client.py": "daemon-processes",
-    "cli/test_interactive_daemon_restart.py": "daemon-processes",
     "daemon/test_process.py": "daemon-processes",
-    "daemon/test_adversarial_process.py": "daemon-controls",
-    "storage/test_concurrency.py": "managed-processes",
-    "storage/test_durability.py": "managed-processes",
-    "agent_runs/test_lifetimes.py": "managed-processes",
-    "http/test_agent_runs_end_to_end.py": "managed-processes",
+    "daemon/test_adversarial_process.py": "daemon-processes",
 }
 
 

@@ -10,7 +10,6 @@ from uuid import uuid4
 
 import pytest
 
-from yoke.agent_runs.server import Server
 from tests.yoke.tool_fixture import local_file_tools as local_file_tools
 from tests.yoke.scheduling import (
     pytest_collection_modifyitems as pytest_collection_modifyitems,
@@ -19,19 +18,6 @@ from tests.yoke.schema_fixture import (
     empty_schema as empty_schema,
     fresh_database_from_schema as fresh_database_from_schema,
 )
-
-
-class FixtureRunServer(Server):
-    """Use a short idle accept tick while preserving peer/auth/frame handling."""
-
-    def _serve(self) -> None:
-        self.socket.settimeout(0.005)
-        super()._serve()
-
-
-@pytest.fixture(autouse=True)
-def fast_run_listener(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("yoke.agent_runs.registry.Server", FixtureRunServer)
 
 
 @pytest.fixture(autouse=True)

@@ -795,8 +795,10 @@ def test_streamable_http_mcp_closes_blocked_sse_on_cancellation(
     class BlockingStream(httpx.SyncByteStream):
         def __init__(self) -> None:
             self.closed = threading.Event()
+            self.reading = threading.Event()
 
         def __iter__(self) -> Iterator[bytes]:
+            self.reading.set()
             self.closed.wait(timeout=5)
             yield b""
 
@@ -827,7 +829,7 @@ def test_streamable_http_mcp_closes_blocked_sse_on_cancellation(
         client.request(
             "tools/call",
             timeout=30,
-            cancel_requested=lambda: True,
+            cancel_requested=stream.reading.is_set,
         )
     http_client.close()
 

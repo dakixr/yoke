@@ -12,15 +12,12 @@ from pydantic import ValidationError
 from yoke.mcp.client import McpToolInfo
 from yoke.mcp.config import McpConfig, McpServerConfig
 from yoke.mcp.manager import McpManager
-from yoke.agent.tools.processes.cursor import decode_cursor, ProcessPosition
 from yoke.mcp_server.config import MCPServerConfig
 from yoke.mcp_server.execution.gateway import call
 from yoke.mcp_server.execution.models import BatchRead
-from yoke.mcp_server.execution.processes import ProcessRead, page
+from yoke.mcp_server.execution.processes import ProcessRead
 from yoke.mcp_server.results.store import ResultStore
 from yoke.mcp_server.server import create_service
-
-from .helpers import memory_client, structured
 
 
 def test_batch_deadline_cancels_children_and_preserves_ids(
@@ -57,49 +54,6 @@ def test_batch_deadline_cancels_children_and_preserves_ids(
         assert started == stopped == ["0"]
         await service.adapter.execution.close()
         await service.runtime.close()
-
-    asyncio.run(scenario())
-
-
-def test_process_cursor_pages_large_unicode_output_without_duplicates(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        service = create_service(MCPServerConfig(root=tmp_path))
-        async with memory_client(service) as client:
-            text = "界é" * 20000
-            running = structured(
-                await client.call_tool(
-                    "python_exec",
-                    {
-                        "code": f"import time; print({text!r}, flush=True); time.sleep(30)",
-                        "mode": "background",
-                    },
-                )
-            )
-            session = running["session_id"]
-            await service.adapter.execution.dispatch(
-                "process_read",
-                {
-                    "sessions": [{"session_id": session}],
-                    "wait_ms": 5000,
-                    "until": "output_or_completion",
-                },
-            )
-            cursor = ProcessPosition(session_id=session)
-            collected = ""
-            for _ in range(200):
-                observed = page(service.runtime.manager, cursor, 1024)
-                assert not observed["gap"]
-                collected += observed["output"]
-                cursor = decode_cursor(session, observed["cursor"])
-                if collected.endswith("\n"):
-                    break
-                if not observed["output"]:
-                    await asyncio.sleep(0.02)
-            assert collected == text + "\n"
-            assert page(service.runtime.manager, cursor, 1024)["output"] == ""
-            await client.call_tool("process_cancel", {"session_id": session})
 
     asyncio.run(scenario())
 

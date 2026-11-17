@@ -1,6 +1,6 @@
 [project]
 name = "yoke"
-version = "3.31.2"
+version = "3.32.0"
 description = "Native Python coding agent CLI and SDK."
 readme = "README.md"
 authors = [
@@ -43,7 +43,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-n 4 --dist loadgroup"
+addopts = "-n 6 --dist loadgroup"
 testpaths = ["tests"]
 pythonpath = ["src"]
 

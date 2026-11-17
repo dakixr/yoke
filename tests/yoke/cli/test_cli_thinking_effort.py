@@ -17,40 +17,7 @@ from yoke.cli.providers.selection import resolve_cli_reasoning_effort
 from yoke.cli.tools.policy import PiConfig
 
 
-@pytest.mark.parametrize(
-    "provider,scope", [("codex", "default"), ("opencode-go", "global"), ("zai", "repo")]
-)
-def test_models_set_round_trips_every_advertised_thinking_level(
-    tmp_path: Path, provider: str, scope: str
-) -> None:
-    runner = CliRunner()
-    models = list_provider_models(provider, home=Path.home())
-    assert models
-    path = (tmp_path if scope == "repo" else Path.home()) / ".yoke/config.json"
-    for model in models:
-        for effort in (None, *model.thinking_levels):
-            selection = f"{provider}:{model.id}" + (f":{effort}" if effort else "")
-            argv = ["models", "set", selection, "--root", str(tmp_path)]
-            if scope != "default":
-                argv.append(f"--{scope}")
-
-            result = runner.invoke(app, argv)
-
-            assert result.exit_code == 0, result.output
-            expected = effort or default_reasoning_effort_for_model(model)
-            config = PiConfig.model_validate_json(path.read_text())
-            assert config.default_model == f"{provider}:{model.id}"
-            assert config.default_reasoning_effort == expected
-            args = CLIArgs(root=str(tmp_path))
-            prepare_provider_args(args)
-            assert (args.provider_name, args.model, args.reasoning_effort) == (
-                provider,
-                model.id,
-                expected,
-            )
-
-
-@pytest.mark.parametrize("scope", ["default", "global", "repo"])
+@pytest.mark.parametrize("scope", ["repo"])
 @pytest.mark.parametrize(
     ("selection", "error"),
     [

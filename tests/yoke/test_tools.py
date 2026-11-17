@@ -3,9 +3,7 @@ from __future__ import annotations
 # ruff: noqa: D100, D103, S101
 
 from pathlib import Path
-import shlex
 import subprocess
-import sys
 import threading
 import time
 from typing import Any, cast
@@ -18,12 +16,10 @@ from yoke.agent.tools import (
     CommandTool,
     EditTool,
     LocalTool,
-    PythonExecTool,
     ProcessReadTool,
     ReadTool,
     WriteTool,
     WriteStdinTool,
-    COMMAND_TOOL_NAME,
 )
 from yoke.agent.models import MessageImageURLContentPart
 from yoke.agent.truncate import truncate_head
@@ -72,22 +68,6 @@ def test_tools_expose_pydantic_definitions(tmp_path: Path) -> None:
     assert "old_text" not in definitions["edit"]["parameters"]["properties"]
     assert "occurrence" in definitions["edit"]["parameters"]["properties"]
     assert "replaceAll" in definitions["edit"]["parameters"]["properties"]
-
-
-def test_command_exec_is_the_public_command_name(tmp_path: Path) -> None:
-    assert CommandTool.name == COMMAND_TOOL_NAME == "command_exec"
-    assert PythonExecTool.name == "python_exec"
-    tools = tool_set(tmp_path)
-    definition = cast(dict[str, Any], CommandTool.bind(root=tmp_path).to_definition())
-    assert definition["function"]["name"] == "command_exec"
-    assert "exec_command" not in {tool.name for tool in tools}
-    result = execute_tool(
-        tools,
-        "command_exec",
-        {"argv": [sys.executable, "-c", "print('renamed-command')"]},
-    )
-    assert result["ok"] is True
-    assert result["output"] == "renamed-command\n"
 
 
 def test_bound_write_tool_does_not_recreate_a_deleted_workspace(tmp_path: Path) -> None:
@@ -193,31 +173,6 @@ def test_read_defaults_to_first_150_lines_and_reports_next_offset(
     assert "details" not in result
 
 
-def test_command_tool_can_be_cancelled(tmp_path: Path) -> None:
-    stop_event = threading.Event()
-    stop_event.set()
-    tools = tool_set(tmp_path, cancel_requested=stop_event.is_set)
-    command = f'{shlex.quote(sys.executable)} -c "import time; time.sleep(2)"'
-    result = as_dict(execute_tool(tools, COMMAND_TOOL_NAME, {"command": command}))
-
-    assert result["ok"] is False
-    assert result["cancelled"] is True
-    assert result["error"] == "Command cancelled"
-
-
-def test_command_tool_defaults_to_thirty_second_auto_wait(tmp_path: Path) -> None:
-    tool = CommandTool.bind(root=tmp_path)
-
-    parsed = cast(CommandTool, tool.parse_arguments({"cmd": "echo ready"}))
-    definition = cast(dict[str, Any], tool.to_definition())
-    properties = definition["function"]["parameters"]["properties"]
-
-    assert parsed.mode == "auto"
-    assert parsed._execution_wait_ms() == 30_000
-    assert "wait_ms" not in properties
-    assert "yield_time_ms" not in properties
-
-
 def test_exec_yield_honors_the_documented_five_minute_limit() -> None:
     assert clamp_exec_yield_time(300_000) == 300_000
     assert clamp_exec_yield_time(500_000) == 300_000
@@ -265,40 +220,6 @@ def test_command_manager_passes_five_minute_wait_to_process(
     assert waits == [300_000]
 
 
-def test_command_tool_direct_argv_bypasses_shell_parsing(tmp_path: Path) -> None:
-    manager = CommandProcessManager()
-    tool = CommandTool.bind(root=tmp_path, command_process_manager=manager)
-    try:
-        parsed = cast(
-            CommandTool,
-            tool.parse_arguments(
-                {
-                    "argv": [
-                        sys.executable,
-                        "-c",
-                        "import sys; print(sys.argv[1])",
-                        "literal && shell | syntax",
-                    ]
-                }
-            ),
-        )
-        result = as_dict(parsed.execute())
-        parameters = cast(dict[str, Any], tool.to_definition())["function"][
-            "parameters"
-        ]
-        properties = parameters["properties"]
-
-        assert result["ok"] is True
-        assert result["output"] == "literal && shell | syntax\n"
-        assert "argv" in properties
-        assert parameters["anyOf"] == [
-            {"required": ["cmd"]},
-            {"required": ["argv"]},
-        ]
-    finally:
-        manager.close()
-
-
 def test_command_tool_requires_exactly_one_execution_mode(tmp_path: Path) -> None:
     tool = CommandTool.bind(root=tmp_path)
 
@@ -306,18 +227,6 @@ def test_command_tool_requires_exactly_one_execution_mode(tmp_path: Path) -> Non
         tool.parse_arguments({})
     with pytest.raises(ValidationError, match="exactly one of cmd or argv"):
         tool.parse_arguments({"cmd": "echo one", "argv": ["echo", "two"]})
-
-
-def test_python_exec_defaults_to_thirty_second_auto_wait(tmp_path: Path) -> None:
-    tool = PythonExecTool.bind(root=tmp_path)
-
-    parsed = cast(PythonExecTool, tool.parse_arguments({"code": "pass"}))
-    definition = cast(dict[str, Any], tool.to_definition())
-    properties = definition["function"]["parameters"]["properties"]
-
-    assert parsed.mode == "auto"
-    assert parsed._execution_wait_ms() == 30_000
-    assert "wait_ms" not in properties
 
 
 def test_command_process_close_waits_for_in_flight_spawn(

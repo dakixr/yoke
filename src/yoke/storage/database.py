@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
 from weakref import WeakValueDictionary, proxy
-from typing import cast
+from typing import Literal, cast
 
 BUSY_TIMEOUT_MS = 5_000
 
@@ -69,7 +69,12 @@ def schema_version() -> int:
 class Database:
     """Connections and transactions for one database file in this process."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self, path: Path, *, synchronous: Literal["NORMAL", "OFF"] = "NORMAL"
+    ) -> None:
+        if synchronous not in {"NORMAL", "OFF"}:
+            raise ValueError("synchronous must be NORMAL or OFF")
+        self._synchronous = synchronous
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -115,7 +120,7 @@ class Database:
         )
         connection.create_function("yoke_casefold", 1, str.casefold, deterministic=True)
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute(f"PRAGMA synchronous={self._synchronous}")
         if query_only:
             connection.execute("PRAGMA query_only=ON")
         return connection

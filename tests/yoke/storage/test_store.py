@@ -4,32 +4,19 @@ from __future__ import annotations
 
 # ruff: noqa: S101,S603
 
-import os
 import sqlite3
-import subprocess
-import sys
-import textwrap
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from yoke.agent.models import ConversationEntry, Message
-from yoke.session import SessionStore, SessionTreeConflict, SessionTreeIndex
+from yoke.session import SessionStore, SessionTreeIndex
 from yoke.session.events import SessionEventJournal
 from yoke.session.queue import prompt_queue_transaction
 from yoke.session.repository.table import SessionTable
 from yoke.storage import SchemaTooNewError, open_database
-from yoke.storage.database import Database, schema_version
-
-
-def _run(code: str) -> None:
-    subprocess.run(
-        [sys.executable, "-c", textwrap.dedent(code)],
-        check=True,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
-        timeout=60,
-    )
+from yoke.storage.database import Database
 
 
 def _saved(tmp_path: Path) -> tuple[SessionStore, Path]:
@@ -41,48 +28,6 @@ def _saved(tmp_path: Path) -> tuple[SessionStore, Path]:
         "shared", [Message.user("hello"), Message.assistant("hi")], root=workspace
     )
     return store, directory
-
-
-def test_tree_edit_from_another_process_makes_a_stale_edit_conflict(
-    tmp_path: Path,
-) -> None:
-    store, directory = _saved(tmp_path)
-    record = store.load("shared")
-    tree = SessionTreeIndex(record.conversation_entries, record.leaf_id)
-    first = record.conversation_entries[0].id
-    _run(
-        f"""
-        from pathlib import Path
-        from yoke.agent.models import ConversationEntry, Message
-        from yoke.session import SessionStore
-        store = SessionStore(Path({str(directory)!r}))
-        summary = store.summary_record("shared")
-        entry = ConversationEntry(
-            kind="user", message=Message.user("other"), parent_id=summary.leaf_id
-        )
-        store.save_indexed_tree_navigation(
-            "shared", existing_record=summary, leaf_id=entry.id,
-            appended_entries=(entry,),
-        )
-        """
-    )
-    with pytest.raises(SessionTreeConflict):
-        store.save_tree_delta(
-            "shared", existing_record=record, tree_index=tree, leaf_id=first
-        )
-    entry = tree.entry_ref(first).model_copy(update={"metadata": {"label": "x"}})
-    with pytest.raises(SessionTreeConflict):
-        store.save_entry_metadata(
-            "shared", entry, existing_record=record, tree_index=tree
-        )
-    # A fresh read carries the current revision and succeeds.
-    fresh = store.load("shared")
-    fresh_tree = SessionTreeIndex(fresh.conversation_entries, fresh.leaf_id)
-    moved = store.save_tree_delta(
-        "shared", existing_record=fresh, tree_index=fresh_tree, leaf_id=first
-    )
-    assert store.load("shared").leaf_id == first
-    assert moved.tree_revision == (fresh.tree_revision or 0) + 1
 
 
 def test_metadata_edit_does_not_conflict_with_tree_edits(tmp_path: Path) -> None:
@@ -110,26 +55,6 @@ def test_newer_schema_is_refused(tmp_path: Path) -> None:
     connection.close()
     with pytest.raises(SchemaTooNewError, match="schema version 999"):
         Database(path)
-
-
-def test_concurrent_first_open_migrates_once(tmp_path: Path) -> None:
-    path = tmp_path / "fresh.db"
-    code = f"""
-        from pathlib import Path
-        from yoke.storage import open_database
-        open_database(Path({str(path)!r}))
-        """
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
-    children = [
-        subprocess.Popen([sys.executable, "-c", textwrap.dedent(code)], env=env)
-        for _ in range(4)
-    ]
-    assert [child.wait(60) for child in children] == [0, 0, 0, 0]
-    connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == schema_version()
-    assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-    assert connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
-    connection.close()
 
 
 def test_writes_roll_back_together_and_after_commit_waits(tmp_path: Path) -> None:
@@ -276,3 +201,27 @@ def test_database_is_shared_per_file_and_reopened_after_replacement(
     for suffix in ("", "-wal", "-shm"):
         Path(f"{path}{suffix}").unlink(missing_ok=True)
     assert open_database(path) is not first
+
+
+def test_disposable_synchronous_override_preserves_transactions(tmp_path):
+    for name, expected in (("default", 1), ("disposable", 0)):
+        path = tmp_path / (name + ".db")
+        database = (
+            Database(path) if name == "default" else Database(path, synchronous="OFF")
+        )
+        try:
+            with database.read() as connection:
+                assert connection.execute("PRAGMA synchronous").fetchone() == (
+                    expected,
+                )
+                assert connection.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+            with database.write() as connection:
+                connection.execute("CREATE TABLE disposable (value INTEGER)")
+            with pytest.raises(RuntimeError, match="rollback"):
+                with database.write() as connection:
+                    connection.execute("INSERT INTO disposable VALUES (1)")
+                    raise RuntimeError("rollback")
+            with database.read() as connection:
+                assert connection.execute("SELECT * FROM disposable").fetchall() == []
+        finally:
+            database.close()

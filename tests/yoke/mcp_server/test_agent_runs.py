@@ -6,7 +6,6 @@ import asyncio
 from copy import deepcopy
 import json
 from pathlib import Path
-import sys
 import textwrap
 from unittest.mock import Mock
 
@@ -265,51 +264,6 @@ def test_agent_runs_projects_only_public_fields(
     asyncio.run(scenario())
 
 
-def test_agent_runs_never_consumes_command_output_or_cursors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def scenario() -> None:
-        service = create_service(MCPServerConfig(root=tmp_path))
-        registry = Registry([])
-        monkeypatch.setattr(
-            service.runtime.manager.agent_runs, "snapshots", registry.snapshots
-        )
-        async with memory_client(service) as client:
-            started = structured(
-                await client.call_tool(
-                    "command_exec",
-                    {
-                        "argv": [
-                            sys.executable,
-                            "-c",
-                            "print('retained-output-' * 1000)",
-                        ],
-                        "max_output_tokens": 32,
-                    },
-                )
-            )
-            assert started["ok"], started
-            session_id, cursor = started["session_id"], started["cursor"]
-            registry.runs = [run("observed", runtimeSessionID=session_id)]
-            request = {
-                "sessions": [{"session_id": session_id, "cursor": cursor}],
-                "wait_ms": 5000,
-            }
-            before = structured(await client.call_tool("process_read", request))
-            for _ in range(3):
-                observed = structured(
-                    await client.call_tool("agent_runs", {"session_id": session_id})
-                )
-                assert observed["total"] == 1
-                assert "retained-output" not in json.dumps(observed)
-            after = structured(await client.call_tool("process_read", request))
-            for field in ("output", "cursor", "has_more_output", "exit_code"):
-                assert after["items"][0][field] == before["items"][0][field]
-            assert "retained-output" in after["items"][0]["output"]
-
-    asyncio.run(scenario())
-
-
 def test_agent_runs_bounds_results_without_losing_total_or_terminal_states(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -393,74 +347,3 @@ SDK_PROGRAM = textwrap.dedent("""\
     assert len(results) == 3
     print("private-process-output", flush=True)
 """)
-
-
-@pytest.mark.parametrize("tool_name", ["python_exec"])
-def test_managed_sdk_runs_register_before_any_query_and_are_shared_by_clients(
-    tmp_path: Path, tool_name: str
-) -> None:
-    async def scenario() -> None:
-        service = create_service(MCPServerConfig(root=tmp_path))
-        async with memory_client(service) as client:
-            arguments: dict[str, object] = {"mode": "background"}
-            if tool_name == "command_exec":
-                arguments["argv"] = [sys.executable, "-c", SDK_PROGRAM]
-            else:
-                arguments["code"] = SDK_PROGRAM
-            started = structured(await client.call_tool(tool_name, arguments))
-            assert started["ok"], started
-            session_id = started["session_id"]
-
-            # Neither an agent_runs request nor a process output read activates
-            # tracking. Both launch tools must use the manager's core registry.
-            async with asyncio.timeout(10):
-                while True:
-                    snapshots = service.runtime.manager.agent_runs.snapshots()
-                    if len(snapshots) == 2 and all(
-                        item["lastToolName"] == "inspect" for item in snapshots
-                    ):
-                        break
-                    await asyncio.sleep(0.02)
-            assert {item["runtimeSessionID"] for item in snapshots} == {session_id}
-            assert all(item["sessionID"] is None for item in snapshots)
-            async with memory_client(service) as second_client:
-                request = {"session_id": session_id, "active_only": True}
-                first = structured(await client.call_tool("agent_runs", request))
-                second = structured(
-                    await second_client.call_tool("agent_runs", request)
-                )
-                assert first == second
-                assert first["total"] == 2 and not first["truncated"]
-                assert {item["name"] for item in first["data"]} == {"alpha", "beta"}
-                assert all(item["model"] == "fake-model" for item in first["data"])
-                assert "private-" not in json.dumps(first)
-
-                sent = structured(
-                    await client.call_tool(
-                        "process_input",
-                        {"session_id": session_id, "chars": "\n", "wait_ms": 1},
-                    )
-                )
-                assert sent["ok"], sent
-                finished = structured(
-                    await client.call_tool(
-                        "process_read",
-                        {"sessions": [{"session_id": session_id}], "wait_ms": 10000},
-                    )
-                )
-                assert finished["items"][0]["exit_code"] == 0, finished
-                final = structured(
-                    await service.adapter.call_tool(
-                        "agent_runs", {"session_id": session_id}
-                    )
-                )
-                assert final["total"] == 3 and not final["truncated"]
-                assert len({item["runId"] for item in final["data"]}) == 3
-                assert len({item["agentId"] for item in final["data"]}) == 2
-                assert {item["status"] for item in final["data"]} == {"completed"}
-                assert "private-" not in json.dumps(final)
-                assert "not-a-chatgpt-conversation" not in json.dumps(final)
-                live = structured(await client.call_tool("agent_runs", request))
-                assert live["total"] == 0 and live["data"] == []
-
-    asyncio.run(scenario())

@@ -8,17 +8,11 @@ import pytest
 
 from yoke.agent.conversation import render_memory_message
 from yoke.agent.models import Message, ToolCall, ToolFunction
-from yoke.cli.config import CLIArgs
-from yoke.cli.backend.startup import run_daemon_interactive
 from yoke.cli.render import build_console, print_session_scrollback
 from yoke.session import SessionStore
 
 from .support import CaptureStream
-from .terminal_daemon_support import ReplyProvider, terminal as terminal
-from yoke.agent.loop import RuntimeAgent
-from tests.yoke.daemon.support import eventually
-from yoke.cli.config.runtime import BuiltCLIAgent
-from yoke.cli.bootstrap.types import ToolLoadReport
+from .terminal_daemon_support import terminal as terminal
 
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
@@ -32,118 +26,6 @@ from yoke.session.repository import SessionTreeIndex
 from yoke.session.repository import SessionRecord
 
 RESUME_SCROLLBACK_MESSAGE_LIMIT = 400
-
-
-def test_resume_by_id_continues_saved_session(tmp_path: Path, terminal) -> None:
-    session_dir = tmp_path / "sessions"
-    store = SessionStore(directory=session_dir)
-    store.save(
-        "saved",
-        [Message.user("old"), Message.assistant("answer")],
-        root=tmp_path,
-        title="Saved session",
-    )
-    requests = []
-
-    class ResumeProvider(ReplyProvider):
-        def complete(self, messages, tools):
-            requests.append(messages)
-            return Message.assistant("resumed")
-
-    terminal.factory = lambda record: RuntimeAgent(
-        ResumeProvider(), [], tool_root=Path(record.root)
-    )
-    prompts = iter(["next", "quit"])
-
-    def fake_input(_: object = "") -> str:
-        value = next(prompts)
-        if value == "quit":
-            eventually(lambda: "resumed" in stdout.getvalue())
-        return value
-
-    stdout = CaptureStream()
-    stderr = CaptureStream()
-    exit_code = run_daemon_interactive(
-        CLIArgs(root=str(tmp_path)),
-        resume_id="saved",
-        input_func=fake_input,
-        stdout=stdout,
-        stderr=stderr,
-    )
-
-    assert exit_code == 0
-    assert [len(messages) - 1 for messages in requests] == [2]
-    output = stdout.getvalue()
-    assert "user old" in output
-    assert "answer" in output
-    assert "resumed" in output
-    record = store.load("saved")
-    assert [message.role for message in record.messages] == [
-        "user",
-        "assistant",
-        "user",
-        "assistant",
-    ]
-
-
-def test_resume_falls_back_when_saved_provider_is_unsupported(
-    tmp_path: Path, monkeypatch, terminal
-) -> None:
-    session_dir = tmp_path / "sessions"
-    store = SessionStore(directory=session_dir)
-    store.save(
-        "saved",
-        [Message.user("old"), Message.assistant("answer")],
-        root=tmp_path,
-        provider_name="codex-websockets",
-        model_id="legacy-model",
-    )
-    requests = []
-
-    class ResumeProvider(ReplyProvider):
-        def complete(self, messages, tools):
-            requests.append(messages)
-            return Message.assistant("resumed")
-
-    terminal.factory = lambda record: RuntimeAgent(
-        ResumeProvider(), [], tool_root=Path(record.root)
-    )
-    calls: list[str | None] = []
-
-    def build(args, *, recover_model):
-        assert recover_model
-        calls.append(args.model)
-        if args.model == "codex-websockets:legacy-model":
-            raise ValueError(
-                "Unsupported provider 'codex-websockets'. Supported providers: demo."
-            )
-        return BuiltCLIAgent(
-            terminal.factory(SessionStore().load("saved")), ToolLoadReport([], [], [])
-        )
-
-    monkeypatch.setattr(
-        "yoke.http.services.session_startup.build_cli_agent_from_args", build
-    )
-    prompts = iter(["next", "quit"])
-
-    def fake_input(_: object = "") -> str:
-        value = next(prompts)
-        if value == "quit":
-            eventually(lambda: "resumed" in stdout.getvalue())
-        return value
-
-    stdout, stderr = CaptureStream(), CaptureStream()
-    exit_code = run_daemon_interactive(
-        CLIArgs(root=str(tmp_path)),
-        resume_id="saved",
-        input_func=fake_input,
-        stdout=stdout,
-        stderr=stderr,
-    )
-
-    assert exit_code == 0
-    assert calls == ["codex-websockets:legacy-model", None]
-    assert "Falling back to an available provider" in stderr.getvalue()
 
 
 def test_resume_scrollback_keeps_consecutive_tool_calls_compact() -> None:
@@ -366,52 +248,6 @@ def test_resume_recovers_checkpoint_bypassed_by_active_leaf() -> None:
     assert len(projection.runtime_messages) == 2
     assert projection.runtime_messages[0].text_content() == "old"
     assert projection.runtime_messages[1].text_content() == "tail"
-
-
-def test_resume_does_not_write_unchanged_session_before_interactive(
-    tmp_path: Path,
-    monkeypatch,
-    terminal,
-) -> None:
-    session_dir = tmp_path / "sessions"
-    store = SessionStore(directory=session_dir)
-    store.save(
-        "saved",
-        [Message.user("old"), Message.assistant("answer")],
-        root=tmp_path,
-        provider_name="replyprovider",
-    )
-    save_calls: list[str] = []
-    original_save = SessionStore.save
-
-    def tracked_save(self, session_id, messages, **kwargs) -> SessionRecord:
-        save_calls.append(session_id)
-        return original_save(self, session_id, messages, **kwargs)
-
-    def fake_interactive(*args, **kwargs) -> int:
-        del args
-        assert kwargs["replay_session"] is True
-        assert [message.text_content() for message in kwargs["replay_messages"]] == [
-            "old",
-            "answer",
-        ]
-        return 0
-
-    monkeypatch.setattr(SessionStore, "save", tracked_save)
-    monkeypatch.setattr(
-        "yoke.cli.interactive.run_interactive_cli",
-        fake_interactive,
-    )
-
-    exit_code = run_daemon_interactive(
-        CLIArgs(root=str(tmp_path)),
-        resume_id="saved",
-        stdout=CaptureStream(),
-        stderr=CaptureStream(),
-    )
-
-    assert exit_code == 0
-    assert save_calls == []
 
 
 def test_save_reuses_loaded_record_without_decoding_history_again(

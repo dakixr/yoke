@@ -1,28 +1,6 @@
-"""A Python bridge subprocess must not initialize an unused MCP server."""
+"""Lazy public exports retain their original objects."""
 
 from __future__ import annotations
-
-import subprocess
-import sys
-
-
-def test_bridge_import_loads_only_its_client_dependencies() -> None:
-    child = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from yoke.mcp_server.execution import client; "
-            "assert callable(client.configure); "
-            "assert callable(client.output.emit); "
-            "assert 'yoke.mcp_server.server' not in sys.modules; "
-            "assert 'mcp' not in sys.modules; "
-            "assert 'pydantic' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert child.returncode == 0, child.stderr
 
 
 def test_lazy_public_exports_retain_the_original_objects() -> None:

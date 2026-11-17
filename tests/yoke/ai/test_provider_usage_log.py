@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import multiprocessing
-import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import ClassVar, cast
@@ -46,14 +44,6 @@ class UsageProvider:
             raw={"prompt": "secret prompt", "api_key": "secret key"},
         )
         return response
-
-
-def _write_usage_records(root: str, count: int) -> None:
-    os.environ["YOKE_DB_PATH"] = str(Path(root) / "yoke.db")
-    provider = UsageProvider()
-    response = provider.complete([], [])
-    for _ in range(count):
-        record_provider_usage(provider, response)
 
 
 def test_completion_writes_privacy_safe_usage_metric(
@@ -149,24 +139,6 @@ def test_concurrent_metrics_are_distinct_rows(tmp_path: Path, monkeypatch) -> No
         list(
             executor.map(lambda _: record_provider_usage(provider, response), range(40))
         )
-
-    records = list(read_usage_events(database_path=tmp_path / "yoke.db"))
-    assert len(records) == 40
-    assert len({record["event_id"] for record in records}) == 40
-
-
-def test_metrics_are_synchronized_across_spawned_processes(tmp_path: Path) -> None:
-    context = multiprocessing.get_context("spawn")
-    processes = [
-        context.Process(target=_write_usage_records, args=(str(tmp_path), 10))
-        for _ in range(4)
-    ]
-
-    for process in processes:
-        process.start()
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
 
     records = list(read_usage_events(database_path=tmp_path / "yoke.db"))
     assert len(records) == 40

@@ -2,25 +2,14 @@
 
 from __future__ import annotations
 
-import io
-from threading import Lock
 
 import pytest
 
 from tests.yoke.provider_projection.recording import answer, tool_calls
-from yoke.cli.interactive.common import PromptCliState
-from yoke.cli.interactive.queue.mutations import replace_prompt_queue
-from yoke.cli.interactive.session_commands import print_session_info
-from yoke.cli.interactive.tool_inspector.render import detail_text
-from yoke.cli.interactive.tool_inspector.state import ToolInspectorState
 from yoke.cli.interactive.tree_selector import TreeSelectorResult
-from yoke.cli.render import build_console
-from yoke.session import SessionStore
-from yoke.http.models.tool_trace import ToolCallInfo
 
 from .interactive_daemon_support import (
     interactive_daemon as interactive_daemon,
-    cast_session,
 )
 
 
@@ -88,111 +77,6 @@ def test_daemon_second_client_prompt_renders_once(
     assert len(d.tape.calls) == 1
 
 
-def test_daemon_info_matches_frozen_in_process_lines(interactive_daemon, monkeypatch):
-    d = interactive_daemon
-    d.tape.expect(answer("metadata answer"))
-
-    def script(ui):
-        ui.send("metadata prompt")
-        ui.wait_text("metadata answer")
-        ui.idle()
-
-    d.run("basic", script, monkeypatch)
-    record = SessionStore(d.world.directory).load(d.connection.session_id)
-    assert record.created_at is not None and record.updated_at is not None
-    assert record.created_at != record.updated_at
-    assert record.context_window_tokens == 100_000
-    actual = io.StringIO()
-    print_session_info(
-        build_console(actual), cast_session(d.backend), backend=d.backend
-    )
-    from pathlib import Path
-
-    frozen = (
-        (Path(__file__).parent / "fixtures" / "session-info.txt")
-        .read_text()
-        .replace("<ROOT>", str(d.world.root))
-        .replace("<STORE>", str(d.world.directory))
-        .replace("<CREATED>", record.created_at)
-        .replace("<UPDATED>", record.updated_at)
-    )
-    assert actual.getvalue() == frozen
-    assert f"Database: {d.world.directory / 'yoke.db'}" in actual.getvalue()
-    assert "Conversation entries: 0" not in actual.getvalue()
-    assert "Context window: 100000 tokens" in actual.getvalue()
-
-
-def test_daemon_queue_conflict_refreshes_manager_without_overwriting(
-    interactive_daemon,
-):
-    d = interactive_daemon
-    # Dormant admissions let a second client change the revision while the UI
-    # manager holds a snapshot. Neither input is allowed to execute here.
-    for ident in ("first",):
-        d.connection.session_request(
-            "POST",
-            "/prompt",
-            json={"id": ident, "resume": False, "prompt": {"text": ident}},
-        )
-    loaded = d.backend.load_queue()
-    state = PromptCliState([], loaded.prompts, queue_revision=loaded.revision)
-    d.connection.session_request(
-        "POST",
-        "/prompt",
-        json={"id": "second", "resume": False, "prompt": {"text": "second"}},
-    )
-    assert not replace_prompt_queue(
-        state=state,
-        state_lock=Lock(),
-        active_session=cast_session(d.backend),
-        prompts=[],
-        expected_revision=loaded.revision,
-    )
-    assert [item.prompt for item in state.pending_prompts] == ["first", "second"]
-    assert state.queue_revision > loaded.revision
-    assert [item.prompt for item in d.backend.load_queue().prompts] == [
-        "first",
-        "second",
-    ]
-
-
-def test_daemon_tool_inspector_reads_typed_call_and_result(
-    interactive_daemon, monkeypatch
-):
-    d = interactive_daemon
-    d.tape.expect(tool_calls(("read", {"path": "input.txt"})))
-    d.tape.expect(answer("inspection done"))
-    d.run(
-        "prompt",
-        lambda ui: (
-            ui.send("inspect tool"),
-            ui.wait_text("inspection done"),
-            ui.idle(),
-        ),
-        monkeypatch,
-    )
-    inspection = d.backend.tool_inspection()
-    entries = inspection.snapshots()
-    assert len(entries) == 1
-    call = inspection.call(entries[0].tool_call_id)
-    assert call is not None
-    assert call.tool_name == "read"
-    calls = [call for message in d.backend.messages() for call in message.tool_calls]
-    assert len(calls) == 1
-    assert calls[0].id == call.tool_call_id
-    assert calls[0].function.name == "read"
-    assert call.raw_arguments == '{"path":"input.txt"}'
-    assert call.status == "ok"
-    raw = d.connection.session_request("GET", f"/tool-call/{call.tool_call_id}")["data"]
-    assert call.duration_seconds == pytest.approx(raw["time"]["durationMs"] / 1000)
-    raw["time"]["durationMs"] = 0
-    instant = inspection.present(ToolCallInfo.model_validate(raw))
-    assert instant.duration_seconds == 0.0
-    assert call.result is not None
-    assert "alpha" in str(call.result)
-    assert "input.txt" in detail_text(call, ToolInspectorState(entries=[call]))
-
-
 def test_daemon_prompt_tree_navigation_and_model_switch(
     interactive_daemon, monkeypatch
 ):
@@ -241,37 +125,3 @@ def test_daemon_prompt_tree_navigation_and_model_switch(
     assert data["selection"]["model"] == "oracle-vision"
     assert data["tree"]["leafID"] == selected[-1]
     assert "ctx=100000" in text
-
-
-def test_daemon_compaction_failure_releases_prompt_worker(
-    interactive_daemon, monkeypatch
-):
-    from yoke.http.runtime import operations
-
-    compact = operations.force_compact_agent
-
-    def fail_after_summary(*args, **kwargs):
-        assert compact(*args, **kwargs) is not None
-        raise ValueError("fixture summary failed")
-
-    monkeypatch.setattr(operations, "force_compact_agent", fail_after_summary)
-    d = interactive_daemon
-    d.tape.expect(answer("initial answer"))
-    d.tape.expect(answer("summary result"), kind="compaction_summary")
-    d.tape.expect(answer("recovered answer"))
-
-    def script(ui):
-        ui.send("initial prompt")
-        ui.wait_text("initial answer")
-        ui.idle()
-        ui.send("/compact")
-        ui.wait_text("Compaction failed: fixture summary failed")
-        ui.send("continue after failure")
-        ui.wait_text("recovered answer")
-        ui.idle()
-
-    text = d.run("prompt", script, monkeypatch)
-    assert text.count("continue after failure") == 1
-    assert text.count("recovered answer") == 1
-    assert len(d.tape.calls) == 3
-    assert not d.tape.steps

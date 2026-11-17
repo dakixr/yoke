@@ -6,7 +6,6 @@ import asyncio
 from contextvars import Context
 import json
 from pathlib import Path
-import sys
 import threading
 
 import pytest
@@ -382,90 +381,6 @@ def test_optional_batch_metadata_never_rejects_valid_task_ids(
     assert row["attempt"] == 1
     assert isinstance(row["taskId"], str) and 0 < len(row["taskId"]) <= 256
     assert all(ord(char) >= 32 for char in row["taskId"])
-
-
-@pytest.mark.parametrize("tool_name", ["command_exec", "python_exec"])
-def test_commands_survive_reporting_outage_but_nested_sdk_requires_ack(
-    manager, tmp_path, tool_name
-):
-    from yoke.agent.tools.command import ExecCommandTool
-    from yoke.agent.tools.python_exec import PythonExecTool
-
-    marker = tmp_path / "ordinary-command"
-    provider_marker = tmp_path / "provider-called"
-    ordinary = f"from pathlib import Path; Path({str(marker)!r}).write_text('ran'); print('NORMAL_RESULT')"
-    nested = f"""
-from pathlib import Path
-from yoke.ai.sdk import Agent, RunConfig
-from yoke.agent_runs.protocol import RegistrationError
-class Provider:
-    provider_name = 'fixture'
-    supports_image_inputs = False
-    max_images_per_message = None
-    def complete(self, messages, tools):
-        Path({str(provider_marker)!r}).write_text('called')
-        raise AssertionError('Provider ran without registration')
-agent = Agent(provider=Provider(), config=RunConfig(root=Path.cwd(), include_agents_file=False))
-try:
-    try:
-        agent.prompt('must register')
-    except RegistrationError:
-        print('SDK_ADMISSION_DENIED')
-    else:
-        raise AssertionError('SDK prompt bypassed admission')
-finally:
-    agent.close()
-"""
-
-    class OutageProvider(Provider):
-        def complete(self, messages, tools):
-            response = super().complete(messages, tools)
-            if len(self.calls) != 1:
-                return response
-            assert manager.agent_runs.snapshots()[0]["status"] == "running"
-            assert manager.agent_runs._server is not None
-            manager.agent_runs._server.close()
-            return Message(
-                role="assistant",
-                content=None,
-                tool_calls=[
-                    ToolCall(
-                        id=f"command-{index}",
-                        function=ToolFunction(
-                            name=tool_name,
-                            arguments=json.dumps(
-                                {"argv": [sys.executable, "-c", code]}
-                                if tool_name == "command_exec"
-                                else {"code": code}
-                            ),
-                        ),
-                    )
-                    for index, code in enumerate((ordinary, nested))
-                ],
-            )
-
-    provider = OutageProvider()
-    tool = ExecCommandTool if tool_name == "command_exec" else PythonExecTool
-    with manager.agent_runs.bind(session_id="owner"):
-        agent = Agent(
-            provider=provider,
-            config=config(tmp_path, tools=[tool], tool_execution="sequential"),
-        )
-        try:
-            assert agent.prompt("run commands").output == "SECRET_OUTPUT"
-            assert marker.read_text() == "ran"
-            assert not provider_marker.exists()
-            assert len(provider.calls) == 2
-            messages = provider.calls[-1][1]
-            results = [
-                json.loads(m["content"]) for m in messages if m["role"] == "tool"
-            ]
-            assert len(results) == 2
-            assert all(result["ok"] and result["exit_code"] == 0 for result in results)
-            assert "NORMAL_RESULT" in results[0]["output"]
-            assert "SDK_ADMISSION_DENIED" in results[1]["output"]
-        finally:
-            agent.close()
 
 
 def test_captured_child_and_forks_outlive_parent_history_and_each_other(

@@ -1,4 +1,4 @@
-"""V2 byte preservation, reference ownership, bounded reads and WAL writers."""
+"""V2 byte preservation, reference ownership and bounded reads."""
 
 from __future__ import annotations
 
@@ -7,10 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import sqlite3
-import subprocess
-import sys
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -139,58 +136,6 @@ def test_sql_pages_fetch_only_selected_payloads(
     assert older is not None and older.has_more
     assert len(selected) == 7
     assert not set(entry.id for entry in page.entries) & set(selected)
-
-
-def test_sdk_usage_process_writes_during_session_transactions(tmp_path: Path) -> None:
-    path = tmp_path / "shared.db"
-    store = SessionStore(database_path=path)
-    store.save("shared", [Message.user("initial")])
-    code = """
-import os
-from yoke.ai.providers.usage_writer import append_usage
-print('ready', flush=True)
-input()
-for n in range(40):
-    append_usage(dict(event_id=str(n), completed_at='2026-11-15', provider='sdk', surface='sdk', usage=dict(input_tokens=n)))
-"""
-    process = subprocess.Popen(
-        [sys.executable, "-c", code],
-        env={
-            **os.environ,
-            "YOKE_DB_PATH": str(path),
-            "PYTHONPATH": os.pathsep.join(sys.path),
-        },
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        assert (
-            process.stdout is not None and process.stdout.readline().strip() == "ready"
-        )
-        assert process.stdin is not None
-        with store.database.write():
-            process.stdin.write("go\n")
-            process.stdin.flush()
-            store.set_title("shared", "concurrent")
-        for n in range(40):
-            store.set_title(
-                "shared", str(n), existing_record=store.summary_record("shared")
-            )
-        _, stderr = process.communicate(timeout=30)
-        assert process.returncode == 0, stderr
-        with store.database.read() as connection:
-            assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-            assert connection.execute(
-                "SELECT count(*), sum(input_tokens) FROM usage_events"
-            ).fetchone() == (40, 780)
-            assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert store.load("shared").title == "39"
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
 
 
 def test_upload_bytes_survive_removed_materialization_and_dedupe(

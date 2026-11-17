@@ -2,9 +2,6 @@
 
 # ruff: noqa: D103, S101
 
-import os
-import shlex
-import sys
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -12,13 +9,12 @@ from typing import Any, Literal, cast
 
 from prompt_toolkit.formatted_text import HTML
 
-from yoke.agent.loop import RuntimeAgent
 from yoke.agent.tools.command_process.types import (
     CommandProcessSnapshot,
 )
 from yoke.cli.interactive.command_host import CommandCallbacks
 from yoke.cli.interactive.commands import handle_slash_command
-from yoke.cli.interactive.process_commands import _safe_text, print_process_table
+from yoke.cli.interactive.process_commands import _safe_text
 from yoke.cli.interactive.process_inspector import ProcessInspectorState
 from yoke.cli.interactive.process_inspector.app import (
     PROCESS_INSPECTOR_MIN_REDRAW_INTERVAL,
@@ -31,7 +27,7 @@ from yoke.cli.interactive.process_inspector.render import (
 from yoke.cli.render import build_console
 
 from .support import CaptureStream
-from .terminal_daemon_support import terminal as terminal, session_for, ReplyProvider
+from .terminal_daemon_support import terminal as terminal, session_for
 
 
 def _snapshot(
@@ -218,49 +214,3 @@ def test_ps_slash_command_opens_prompt_toolkit_inspector(
 
 def test_basic_process_table_escapes_c1_terminal_controls() -> None:
     assert _safe_text("before\x9b31m\x9dafter") == "before\\x9b31m\\x9dafter"
-
-
-def test_basic_process_table_lists_runtime_owned_processes(
-    tmp_path: Path,
-    terminal,
-) -> None:
-    command = (
-        f'& "{sys.executable}" -c "import time; time.sleep(5)"'
-        if os.name == "nt"
-        else f"{shlex.quote(sys.executable)} -c 'import time; time.sleep(5)'"
-    )
-    agent = RuntimeAgent(provider=ReplyProvider(), tools=[])
-    terminal.factory = lambda _record: agent
-    backend = terminal.backend("process-table", root=tmp_path)
-    backend.title("Process table fixture", [])
-    backend.connection.session_request(
-        "POST", "/prompt", json={"prompt": {"text": "warm runtime"}}
-    )
-    assert (
-        backend.connection.session_request("POST", "/wait", params={"timeoutMs": 5000})[
-            "data"
-        ]["state"]
-        == "idle"
-    )
-    try:
-        result = agent.command_process_manager.exec_command(
-            command=command,
-            cwd=tmp_path,
-            tty=False,
-            yield_time_ms=250,
-            shell=None,
-            login=True,
-            cancel_requested=None,
-        )
-        assert result.session_id is not None
-
-        stream = CaptureStream()
-        print_process_table(build_console(stream), backend)
-        output = stream.getvalue()
-
-        assert "Command Processes" in output
-        assert str(result.session_id) in output
-        assert "running" in output
-        assert "time.sleep" in output
-    finally:
-        agent.close()

@@ -47,6 +47,8 @@ def fresh_database_from_schema(
                     os.link(source.name, path)
                 except FileExistsError:
                     pass
-        initialize(database, path)
+        # These disposable databases test higher-level behavior, not power-loss
+        # durability. Storage/migration/import/atomic-write cases stay NORMAL.
+        initialize(database, path, synchronous="OFF")
 
     monkeypatch.setattr(Database, "__init__", initialize_fresh)

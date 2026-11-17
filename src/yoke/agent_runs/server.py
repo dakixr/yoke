@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 import logging
 
 import os
@@ -96,6 +97,9 @@ class Server:
 
     def close(self) -> None:
         self.stopped.set()
+        # close() alone need not interrupt another thread blocked in accept().
+        with suppress(OSError):
+            self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
         if self.thread is not threading.current_thread():
             self.thread.join(timeout=OPERATION_TIMEOUT + 0.3)

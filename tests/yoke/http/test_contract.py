@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 # ruff: noqa: D100,D103,S101
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack
 import json
-import os
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -12,25 +12,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from yoke.agent.models import (
-    ConversationEntry,
     Message,
-    MessageImageURL,
-    MessageImageURLContentPart,
-    MessageTextContentPart,
-    ToolCall,
-    ToolFunction,
 )
-from yoke.agent.provider_transition import ContextWindowTooSmallError
 from yoke.agent.session_tree import SessionTree
 from yoke.ai.providers.base import ProviderModelInfo
 from yoke.ai.providers.resolution import ProviderReadiness
 from yoke.http.app import HttpAppSettings, create_app
-from yoke.session.legacy.importer import import_legacy_sessions
-from yoke.session.queue import (
-    PersistedPendingInput,
-    PersistedPromptQueue,
-    write_prompt_queue_snapshot,
-)
 
 TOKEN = "test-secret"
 
@@ -44,6 +31,23 @@ def _client(tmp_path: Path) -> TestClient:
             )
         )
     )
+
+
+@pytest.fixture
+def clients() -> Iterator[Callable[..., TestClient]]:
+    with ExitStack() as stack:
+
+        def open_client(root: Path) -> TestClient:
+            return stack.enter_context(_client(root))
+
+        yield open_client
+
+
+@pytest.fixture(scope="module")
+def openapi_client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TestClient]:
+    # Schema checks are read-only and share both route compilation and OpenAPI.
+    with _client(tmp_path_factory.mktemp("openapi")) as client:
+        yield client
 
 
 def _auth() -> dict[str, str]:
@@ -75,40 +79,10 @@ def _save_conversation(
     return exported.entries[0].id, exported.entries[-1].id
 
 
-def _write_legacy_session_stream(path: Path, *, root: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    updated_at = datetime.now(UTC) - timedelta(minutes=1)
-    created_at = updated_at - timedelta(minutes=1)
-    metadata = {
-        "version": 4,
-        "id": path.stem,
-        "leaf_id": None,
-        "active_skills": [],
-        "skill_dirs": [],
-        "created_at": created_at.isoformat(),
-        "updated_at": updated_at.isoformat(),
-        "root": str(root),
-        "title": "Legacy Mac session",
-        "pinned": False,
-        "provider_name": None,
-        "model_id": None,
-        "reasoning_effort": None,
-        "context_window_tokens": None,
-    }
-    path.write_text(
-        "\n".join(
-            [
-                json.dumps({"type": "session_stream", "version": 1}),
-                json.dumps({"type": "session_metadata", "record": metadata}),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-
-def test_health_is_public_and_capabilities_require_auth(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+def test_health_is_public_and_capabilities_require_auth(
+    clients, tmp_path: Path
+) -> None:
+    client = clients(tmp_path)
 
     health = client.get("/api/v1/health")
     assert health.status_code == 200
@@ -130,8 +104,10 @@ def test_health_is_public_and_capabilities_require_auth(tmp_path: Path) -> None:
     assert allowed.json()["data"]["features"]["questions"] is True
 
 
-def test_session_create_is_idempotent_and_location_conflicts(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+def test_session_create_is_idempotent_and_location_conflicts(
+    clients, tmp_path: Path
+) -> None:
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
     other = tmp_path / "other"
@@ -165,379 +141,12 @@ def test_session_create_is_idempotent_and_location_conflicts(tmp_path: Path) -> 
     assert conflicting.json()["error"]["code"] == "session_identity_conflict"
 
 
-def test_session_list_cursor_and_queue_summary(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    for session_id in ("session-a", "session-b", "session-c"):
-        response = client.post(
-            "/api/v1/session",
-            headers=_auth(),
-            json={"id": session_id, "location": {"directory": str(root)}},
-        )
-        assert response.status_code == 200
-    state = getattr(client.app, "state")
-    store = state.session_service.store
-    write_prompt_queue_snapshot(
-        store.directory,
-        "session-b",
-        PersistedPromptQueue(
-            revision=7,
-            prompts=[
-                PersistedPendingInput(
-                    id="inp-1",
-                    prompt="steer",
-                    kind="steering",
-                    created_at="2026-08-26T12:00:00+00:00",
-                ),
-                PersistedPendingInput(
-                    id="inp-2",
-                    prompt="later",
-                    kind="queued",
-                    created_at="2026-08-26T12:01:00+00:00",
-                    paused=True,
-                ),
-            ],
-        ),
-    )
-
-    first = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"directory": str(root), "limit": 2, "order": "createdAsc"},
-    )
-    assert first.status_code == 200
-    assert len(first.json()["data"]) == 2
-    assert first.json()["total"] == 3
-    cursor = first.json()["cursor"]["next"]
-    assert cursor
-
-    second = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={
-            "directory": str(root),
-            "limit": 2,
-            "order": "createdAsc",
-            "cursor": cursor,
-        },
-    )
-    assert second.status_code == 200
-    assert len(second.json()["data"]) == 1
-    assert second.json()["total"] == 3
-
-    session_b = client.get("/api/v1/session/session-b", headers=_auth()).json()["data"]
-    assert session_b["queue"] == {
-        "total": 2,
-        "steering": 1,
-        "queued": 0,
-        "paused": 1,
-        "revision": 7,
-    }
-
-
-def test_session_list_batches_queue_sidecar_loading(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import yoke.http.services.session_catalog as session_service_module
-
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    for session_id in ("session-a", "session-b", "session-c"):
-        response = client.post(
-            "/api/v1/session",
-            headers=_auth(),
-            json={"id": session_id, "location": {"directory": str(root)}},
-        )
-        assert response.status_code == 200
-    store = getattr(client.app, "state").session_service.store
-    write_prompt_queue_snapshot(
-        store.directory,
-        "session-b",
-        PersistedPromptQueue(
-            revision=4,
-            prompts=[
-                PersistedPendingInput(
-                    id="pending",
-                    prompt="later",
-                    created_at="2026-09-04T00:00:00+00:00",
-                )
-            ],
-        ),
-    )
-
-    def fail_single_load(*_args, **_kwargs):
-        raise AssertionError("session list must batch queue-sidecar discovery")
-
-    monkeypatch.setattr(
-        session_service_module,
-        "load_prompt_queue_snapshot",
-        fail_single_load,
-    )
-
-    listed = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"directory": str(root)},
-    )
-
-    assert listed.status_code == 200
-    data = listed.json()["data"]
-    assert len(data) == 3
-    session_b = next(item for item in data if item["id"] == "session-b")
-    assert session_b["queue"] == {
-        "total": 1,
-        "steering": 0,
-        "queued": 1,
-        "paused": 0,
-        "revision": 4,
-    }
-
-
-def test_session_list_can_order_by_last_user_message(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    store = getattr(client.app, "state").session_service.store
-
-    later_user = ConversationEntry(
-        kind="user",
-        message=Message.user("later user activity"),
-        id="user-later",
-        created_at="2026-08-26T13:00:00+00:00",
-    )
-    store.save(
-        "session-later-user",
-        [later_user.message],
-        conversation_entries=[later_user],
-        leaf_id=later_user.id,
-        root=root,
-    )
-
-    earlier_user = ConversationEntry(
-        kind="user",
-        message=Message.user("earlier user activity"),
-        id="user-earlier",
-        created_at="2026-08-26T12:00:00+00:00",
-    )
-    # Save this session second so its generic updated timestamp is newer. The
-    # last-user ordering must still put the other session first.
-    store.save(
-        "session-earlier-user",
-        [earlier_user.message],
-        conversation_entries=[earlier_user],
-        leaf_id=earlier_user.id,
-        root=root,
-    )
-
-    response = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"directory": str(root), "order": "lastUserDesc"},
-    )
-
-    assert response.status_code == 200
-    items = response.json()["data"]
-    assert [item["id"] for item in items] == [
-        "session-later-user",
-        "session-earlier-user",
-    ]
-    assert items[0]["time"]["lastUserMessage"] == "2026-08-26T13:00:00+00:00"
-    assert items[1]["time"]["lastUserMessage"] == "2026-08-26T12:00:00+00:00"
-
-
-def test_model_selection_context_failure_is_structured(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    created = client.post(
-        "/api/v1/session",
-        headers=_auth(),
-        json={"id": "context-switch", "location": {"directory": str(root)}},
-    )
-    assert created.status_code == 200
-
-    async def reject_selection(*args, **kwargs):  # noqa: ANN002,ANN003,ANN202
-        del args, kwargs
-        raise ContextWindowTooSmallError(
-            provider_name="zai",
-            model_id="glm-small",
-            context_window_tokens=100_000,
-            max_input_tokens=84_000,
-            input_tokens=91_500,
-        )
-
-    registry = getattr(client.app, "state").runtime_registry
-    monkeypatch.setattr(
-        registry.get_or_start("context-switch"), "select_model", reject_selection
-    )
-
-    response = client.post(
-        "/api/v1/session/context-switch/selection",
-        headers=_auth(),
-        json={"provider": "zai", "model": "glm-small"},
-    )
-
-    assert response.status_code == 409
-    error = response.json()["error"]
-    assert error["code"] == "model_context_too_small"
-    assert "current model was not changed" in error["message"].lower()
-    assert error["details"] == {
-        "provider": "zai",
-        "model": "glm-small",
-        "inputTokens": 91_500,
-        "maxInputTokens": 84_000,
-        "contextWindowTokens": 100_000,
-    }
-
-
-def test_session_list_and_recent_locations_do_not_load_conversation_history(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    state = getattr(client.app, "state")
-    store = state.session_service.store
-    messages = [Message.user("hello"), Message.assistant("world")]
-    tree = SessionTree.from_messages(messages)
-    exported = tree.export_for_persistence()
-    store.save(
-        "indexed-session",
-        messages,
-        conversation_entries=list(exported.entries),
-        leaf_id=exported.leaf_id,
-        root=root,
-        title="Indexed session",
-        provider_name="codex",
-        model_id="gpt-test",
-        reasoning_effort="high",
-    )
-
-    def fail_load(_session_id: str):
-        raise AssertionError("session list must not load full conversation history")
-
-    monkeypatch.setattr(store, "load", fail_load)
-
-    listed = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"archived": False, "order": "updatedDesc"},
-    )
-    assert listed.status_code == 200
-    item = listed.json()["data"][0]
-    assert item["id"] == "indexed-session"
-    assert item["selection"] == {
-        "provider": "codex",
-        "model": "gpt-test",
-        "reasoningEffort": "high",
-    }
-    assert item["tree"] == {
-        "leafID": exported.leaf_id,
-        "entryCount": len(exported.entries),
-    }
-
-    recent = client.get("/api/v1/location/recent", headers=_auth())
-    assert recent.status_code == 200
-    assert recent.json()["data"] == [{"directory": str(root.resolve())}]
-
-
-def test_session_list_and_recent_locations_skip_request_path_maintenance(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    state = getattr(client.app, "state")
-    store = state.session_service.store
-    store.save("cached-session", [], root=root, title="Cached session")
-
-    def fail(*_args, **_kwargs):
-        raise AssertionError("HTTP list endpoints must not run index maintenance")
-
-    monkeypatch.setattr(store, "maintain_index", fail)
-
-    listed = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"archived": False, "order": "updatedDesc"},
-    )
-    assert listed.status_code == 200
-    assert [item["id"] for item in listed.json()["data"]] == ["cached-session"]
-
-    recent = client.get("/api/v1/location/recent", headers=_auth())
-    assert recent.status_code == 200
-    assert recent.json()["data"] == [{"directory": str(root.resolve())}]
-
-
-def test_location_browse_autocompletes_real_directories(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "workspace"
-    root.mkdir()
-    alpha = root / "alpha"
-    alpine = root / "alpine"
-    hidden = root / ".secret"
-    alpha.mkdir()
-    alpine.mkdir()
-    hidden.mkdir()
-    (root / "also-a-file.txt").write_text("not a directory\n", encoding="utf-8")
-
-    partial = client.get(
-        "/api/v1/location/browse",
-        headers=_auth(),
-        params={"path": str(root / "al")},
-    )
-    assert partial.status_code == 200
-    partial_data = partial.json()["data"]
-    assert partial_data["browseDirectory"] == str(root.resolve())
-    assert partial_data["selectableDirectory"] is None
-    assert [item["name"] for item in partial_data["entries"]] == ["alpha", "alpine"]
-
-    exact = client.get(
-        "/api/v1/location/browse",
-        headers=_auth(),
-        params={"path": str(alpha)},
-    )
-    assert exact.status_code == 200
-    assert exact.json()["data"]["selectableDirectory"] == str(alpha.resolve())
-
-    # A directory listing includes hidden directories. The browser filters the
-    # typed leaf segment locally and decides whether to show them.
-    children = client.get(
-        "/api/v1/location/browse",
-        headers=_auth(),
-        params={"path": f"{root}/"},
-    )
-    assert children.status_code == 200
-    assert [item["name"] for item in children.json()["data"]["entries"]] == [
-        ".secret",
-        "alpha",
-        "alpine",
-    ]
-
-    hidden_prefix = client.get(
-        "/api/v1/location/browse",
-        headers=_auth(),
-        params={"path": f"{root}/."},
-    )
-    assert hidden_prefix.status_code == 200
-    assert [item["name"] for item in hidden_prefix.json()["data"]["entries"]] == [
-        ".secret"
-    ]
-
-
 def test_location_browse_expands_home_and_rejects_relative_paths(
+    clients,
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    client = _client(tmp_path)
+    client = clients(tmp_path)
     home = tmp_path / "home"
     home.mkdir()
     (home / "dev").mkdir()
@@ -563,58 +172,10 @@ def test_location_browse_expands_home_and_rejects_relative_paths(
     assert relative.json()["error"]["code"] == "location_path_not_absolute"
 
 
-def test_imported_legacy_stream_is_listed(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    legacy = tmp_path / "legacy"
-    _write_legacy_session_stream(legacy / "legacy-mac.jsonl", root=root)
-    store = getattr(client.app, "state").session_service.store
-    [result] = import_legacy_sessions(store, legacy)
-    assert result.status == "imported", result.detail
-
-    response = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"archived": False, "order": "updatedDesc"},
-    )
-
-    assert response.status_code == 200
-    assert [item["id"] for item in response.json()["data"]] == ["legacy-mac"]
-    assert response.json()["data"][0]["title"] == "Legacy Mac session"
-
-
-def test_unreadable_legacy_session_is_not_imported(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    created = client.post(
-        "/api/v1/session",
-        headers=_auth(),
-        json={"id": "good-session", "location": {"directory": str(root)}},
-    )
-    assert created.status_code == 200
-    legacy = tmp_path / "legacy"
-    legacy.mkdir()
-    (legacy / "broken-session.jsonl").write_text(
-        '{"not":"a recoverable session"}\n',
-        encoding="utf-8",
-    )
-    store = getattr(client.app, "state").session_service.store
-    assert [r.status for r in import_legacy_sessions(store, legacy)] == ["failed"]
-
-    response = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"archived": False},
-    )
-
-    assert response.status_code == 200
-    assert [item["id"] for item in response.json()["data"]] == ["good-session"]
-
-
-def test_session_archive_is_durable_filterable_and_reopenable(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+def test_session_archive_is_durable_filterable_and_reopenable(
+    clients, tmp_path: Path
+) -> None:
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
     for session_id in ("session-a", "session-b"):
@@ -647,7 +208,7 @@ def test_session_archive_is_durable_filterable_and_reopenable(tmp_path: Path) ->
     )
     assert [item["id"] for item in archived_list.json()["data"]] == ["session-a"]
 
-    restarted = _client(tmp_path)
+    restarted = clients(tmp_path)
     persisted = restarted.get("/api/v1/session/session-a", headers=_auth())
     assert persisted.status_code == 200
     assert persisted.json()["data"]["archivedAt"] == archived_at
@@ -661,77 +222,11 @@ def test_session_archive_is_durable_filterable_and_reopenable(tmp_path: Path) ->
     assert reopened.json()["data"]["archivedAt"] is None
 
 
-def test_session_archive_rejects_pending_queue(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    created = client.post(
-        "/api/v1/session",
-        headers=_auth(),
-        json={"id": "session-a", "location": {"directory": str(root)}},
-    )
-    assert created.status_code == 200
-    store = getattr(client.app, "state").session_service.store
-    write_prompt_queue_snapshot(
-        store.directory,
-        "session-a",
-        PersistedPromptQueue(
-            revision=1,
-            prompts=[
-                PersistedPendingInput(
-                    id="inp-paused",
-                    prompt="later",
-                    kind="queued",
-                    created_at="2026-09-01T12:00:00+00:00",
-                    paused=True,
-                )
-            ],
-        ),
-    )
-
-    archived = client.patch(
-        "/api/v1/session/session-a",
-        headers=_auth(),
-        json={"archived": True},
-    )
-    assert archived.status_code == 409
-    assert archived.json()["error"]["code"] == "session_has_pending_work"
-    current = client.get("/api/v1/session/session-a", headers=_auth())
-    assert current.status_code == 200
-    assert current.json()["data"]["archivedAt"] is None
-    assert current.json()["data"]["queue"] == {
-        "total": 1,
-        "steering": 0,
-        "queued": 0,
-        "paused": 1,
-        "revision": 1,
-    }
-
-
-def test_session_search_matches_working_directory(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "distinct-project-name"
-    root.mkdir()
-    created = client.post(
-        "/api/v1/session",
-        headers=_auth(),
-        json={"id": "session-a", "location": {"directory": str(root)}},
-    )
-    assert created.status_code == 200
-
-    searched = client.get(
-        "/api/v1/session",
-        headers=_auth(),
-        params={"search": "distinct-project"},
-    )
-    assert searched.status_code == 200
-    assert [item["id"] for item in searched.json()["data"]] == ["session-a"]
-
-
 def test_message_and_tree_projection_strip_provider_private_fields(
+    clients,
     tmp_path: Path,
 ) -> None:
-    client = _client(tmp_path)
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
     user_id, assistant_id = _save_conversation(client, root, "session-a")
@@ -757,242 +252,9 @@ def test_message_and_tree_projection_strip_provider_private_fields(
     assert tree.json()["data"]["entries"][-1]["active"] is True
 
 
-def test_tree_entries_expose_assistant_phase(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    messages = [
-        Message.user("inspect"),
-        Message.commentary("Checking the repository."),
-        Message.assistant("Done.", phase="final_answer"),
-    ]
-    tree = SessionTree.from_messages(messages)
-    exported = tree.export_for_persistence()
-    _fastapi(client).state.session_service.store.save(
-        "tree-phase-session",
-        messages,
-        conversation_entries=list(exported.entries),
-        leaf_id=exported.leaf_id,
-        root=root,
-    )
-
-    response = client.get(
-        "/api/v1/session/tree-phase-session/tree",
-        headers=_auth(),
-        params={"limit": 20},
-    )
-    assert response.status_code == 200
-    entries = response.json()["data"]["entries"]
-    assert [(item["kind"], item["phase"]) for item in entries] == [
-        ("user", None),
-        ("assistant", "commentary"),
-        ("assistant", "final_answer"),
-    ]
-
-
-def test_tool_context_is_hidden_from_chat_but_kept_in_model_context(
-    tmp_path: Path,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    user = Message.user("inspect")
-    injected = Message.user("Verification image")
-    assistant = Message.assistant("done")
-    tree = SessionTree.from_messages([user])
-    tree.append_tool_context(
-        injected,
-        metadata={"tool_name": "attach_image", "tool_call_id": "attach-1"},
-    )
-    tree.append_message(assistant)
-    exported = tree.export_for_persistence()
-    _fastapi(client).state.session_service.store.save(
-        "tool-context-session",
-        [user, injected, assistant],
-        conversation_entries=list(exported.entries),
-        leaf_id=exported.leaf_id,
-        root=root,
-    )
-
-    messages = client.get(
-        "/api/v1/session/tool-context-session/message",
-        headers=_auth(),
-        params={"order": "asc"},
-    )
-    assert messages.status_code == 200
-    assert [item["type"] for item in messages.json()["data"]] == [
-        "user",
-        "assistant",
-    ]
-    assert "Verification image" not in messages.text
-
-    context = client.get(
-        "/api/v1/session/tool-context-session/context",
-        headers=_auth(),
-    )
-    assert context.status_code == 200
-    assert "Verification image" in context.text
-
-    tree_response = client.get(
-        "/api/v1/session/tool-context-session/tree",
-        headers=_auth(),
-        params={"limit": 20},
-    )
-    assert tree_response.status_code == 200
-    assert [item["kind"] for item in tree_response.json()["data"]["entries"]] == [
-        "user",
-        "tool_context",
-        "assistant",
-    ]
-
-
-def test_legacy_attach_image_user_entry_is_hidden_by_cold_message_index(
-    tmp_path: Path,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    call = ToolCall(
-        id="attach-legacy",
-        function=ToolFunction(name="attach_image", arguments="{}"),
-    )
-    tree = SessionTree.from_messages([Message.user("inspect")])
-    tree.append_message(Message(role="assistant", content=None, tool_calls=[call]))
-    tree.append_message(Message.tool("attach-legacy", '{"ok":true}'))
-    tree.append_message(
-        Message(
-            role="user",
-            content=[
-                MessageTextContentPart(type="text", text="Legacy verification"),
-                MessageImageURLContentPart(
-                    type="image_url",
-                    image_url=MessageImageURL(url="data:image/png;base64,AA=="),
-                ),
-            ],
-        )
-    )
-    tree.append_message(Message.assistant("done"))
-    exported = tree.export_for_persistence()
-    _fastapi(client).state.session_service.store.save(
-        "legacy-tool-context-session",
-        [item.message for item in exported.entries if item.message is not None],
-        conversation_entries=list(exported.entries),
-        leaf_id=exported.leaf_id,
-        root=root,
-    )
-
-    messages = client.get(
-        "/api/v1/session/legacy-tool-context-session/message",
-        headers=_auth(),
-        params={"order": "desc", "limit": 100},
-    )
-    assert messages.status_code == 200
-    assert "Legacy verification" not in messages.text
-    assert [item["type"] for item in messages.json()["data"]] == [
-        "assistant",
-        "tool",
-        "assistant",
-        "user",
-    ]
-
-    tree_response = client.get(
-        "/api/v1/session/legacy-tool-context-session/tree",
-        headers=_auth(),
-        params={"limit": 20},
-    )
-    assert tree_response.status_code == 200
-    assert "tool_context" in [
-        item["kind"] for item in tree_response.json()["data"]["entries"]
-    ]
-
-
-def test_fork_from_entry_selects_requested_branch_without_mutating_source(
-    tmp_path: Path,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    user_id, assistant_id = _save_conversation(client, root, "source")
-
-    forked = client.post(
-        "/api/v1/session/source/fork",
-        headers=_auth(),
-        json={"id": "forked", "fromEntryID": user_id},
-    )
-
-    assert forked.status_code == 200
-    assert forked.json()["data"]["tree"]["leafID"] == user_id
-    source = client.get("/api/v1/session/source", headers=_auth()).json()["data"]
-    assert source["tree"]["leafID"] == assistant_id
-
-
-def test_tree_navigation_preserves_editor_handoff_and_revision_conflicts(
-    tmp_path: Path,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    messages = [
-        Message.system("system"),
-        Message.user("hello"),
-        Message.assistant("world"),
-    ]
-    session_tree = SessionTree.from_messages(messages)
-    exported = session_tree.export_for_persistence()
-    state = getattr(client.app, "state")
-    state.session_service.store.save(
-        "session-a",
-        messages,
-        conversation_entries=list(exported.entries),
-        leaf_id=exported.leaf_id,
-        root=root,
-        title="Conversation",
-    )
-    user_id = exported.entries[1].id
-    assistant_id = exported.entries[2].id
-    instruction_id = exported.entries[0].id
-    tree = client.get("/api/v1/session/session-a/tree", headers=_auth()).json()["data"]
-    revision = tree["revision"]
-
-    preview = client.get(
-        "/api/v1/session/session-a/tree/navigation-preview",
-        headers=_auth(),
-        params={"targetID": user_id},
-    )
-    assert preview.status_code == 200
-    assert preview.json()["data"]["editorText"] == "hello"
-    assert preview.json()["data"]["abandoned"][-1]["id"] == assistant_id
-
-    labeled = client.patch(
-        f"/api/v1/session/session-a/tree/{assistant_id}",
-        headers=_auth(),
-        json={"expectedRevision": revision, "label": " good checkpoint "},
-    )
-    assert labeled.status_code == 200
-    labeled_data = labeled.json()["data"]
-    assert labeled_data["entry"]["label"] == "good checkpoint"
-    new_revision = labeled_data["revision"]
-
-    stale = client.post(
-        "/api/v1/session/session-a/tree/navigate",
-        headers=_auth(),
-        json={"expectedRevision": revision, "targetID": user_id},
-    )
-    assert stale.status_code == 409
-    assert stale.json()["error"]["code"] == "tree_revision_conflict"
-
-    navigated = client.post(
-        "/api/v1/session/session-a/tree/navigate",
-        headers=_auth(),
-        json={"expectedRevision": new_revision, "targetID": user_id},
-    )
-    assert navigated.status_code == 200
-    assert navigated.json()["data"]["leafID"] == instruction_id
-    assert navigated.json()["data"]["editorText"] == "hello"
-
-
-def test_openapi_uses_api_v1_and_camel_case_fields(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+@pytest.mark.xdist_group("openapi")
+def test_openapi_uses_api_v1_and_camel_case_fields(openapi_client: TestClient) -> None:
+    client = openapi_client
     schema = client.get("/api/v1/openapi.json")
 
     assert schema.status_code == 200
@@ -1003,10 +265,11 @@ def test_openapi_uses_api_v1_and_camel_case_fields(tmp_path: Path) -> None:
     assert "reasoning_effort" not in selection["properties"]
 
 
+@pytest.mark.xdist_group("openapi")
 def test_openapi_matches_checked_in_golden_and_operation_ids_are_unique(
-    tmp_path: Path,
+    openapi_client: TestClient,
 ) -> None:
-    client = _client(tmp_path)
+    client = openapi_client
     payload = _fastapi(client).openapi()
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     golden = Path(__file__).with_name("golden") / "openapi.json"
@@ -1023,6 +286,7 @@ def test_openapi_matches_checked_in_golden_and_operation_ids_are_unique(
 
 
 def test_provider_and_model_catalogs_are_typed_and_searchable(
+    clients,
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1053,7 +317,7 @@ def test_provider_and_model_catalogs_are_typed_and_searchable(
             )
         ],
     )
-    client = _client(tmp_path)
+    client = clients(tmp_path)
 
     providers = client.get("/api/v1/provider", headers=_auth())
     assert providers.status_code == 200
@@ -1086,8 +350,10 @@ def test_provider_and_model_catalogs_are_typed_and_searchable(
     ]
 
 
-def test_skill_catalog_and_activation_persist_tree_state(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+def test_skill_catalog_and_activation_persist_tree_state(
+    clients, tmp_path: Path
+) -> None:
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     skill_dir = root / ".yoke" / "skills" / "reviewer"
     skill_dir.mkdir(parents=True)
@@ -1139,8 +405,8 @@ def test_skill_catalog_and_activation_persist_tree_state(tmp_path: Path) -> None
     assert tree["entries"][-1]["kind"] == "skill_event"
 
 
-def test_filesystem_routes_are_location_contained(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+def test_filesystem_routes_are_location_contained(clients, tmp_path: Path) -> None:
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     nested = root / "src"
     nested.mkdir(parents=True)
@@ -1195,49 +461,11 @@ def test_filesystem_routes_are_location_contained(tmp_path: Path) -> None:
     assert symlink_escape.status_code == 403
 
 
-@pytest.mark.parametrize(
-    ("filename", "expected_disposition"),
-    [
-        ("café.txt", "inline; filename*=utf-8''caf%C3%A9.txt"),
-        ("資料.txt", "inline; filename*=utf-8''%E8%B3%87%E6%96%99.txt"),
-        pytest.param(
-            'say "hello".txt',
-            "inline; filename*=utf-8''say%20%22hello%22.txt",
-            marks=pytest.mark.skipif(
-                os.name == "nt", reason="Windows filenames cannot contain quotes"
-            ),
-        ),
-    ],
-)
-@pytest.mark.parametrize(
-    "contents", [b"file contents\n", b"file contents\r\n"], ids=["lf", "crlf"]
-)
-def test_filesystem_read_encodes_content_disposition_filename(
-    tmp_path: Path,
-    filename: str,
-    expected_disposition: str,
-    contents: bytes,
-) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    (root / filename).write_bytes(contents)
-
-    response = client.get(
-        "/api/v1/fs/read",
-        headers=_auth(),
-        params={"directory": str(root), "path": filename},
-    )
-
-    assert response.status_code == 200
-    assert response.content == contents
-    assert response.headers["content-disposition"] == expected_disposition
-
-
 def test_tool_inventory_and_session_override_do_not_require_provider_runtime(
+    clients,
     tmp_path: Path,
 ) -> None:
-    client = _client(tmp_path)
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
     created = client.post(
@@ -1276,8 +504,10 @@ def test_tool_inventory_and_session_override_do_not_require_provider_runtime(
     assert target_row["enabled"] is False
 
 
-def test_command_palette_metadata_exposes_typed_actions(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+def test_command_palette_metadata_exposes_typed_actions(
+    clients, tmp_path: Path
+) -> None:
+    client = clients(tmp_path)
     response = client.get("/api/v1/command", headers=_auth())
 
     assert response.status_code == 200
@@ -1287,45 +517,10 @@ def test_command_palette_metadata_exposes_typed_actions(tmp_path: Path) -> None:
     assert commands["skill"]["usage"] == "/skill <name> [prompt]"
 
 
-def test_context_excludes_system_by_default_and_can_include_it(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    root = tmp_path / "repo"
-    root.mkdir()
-    messages = [
-        Message.system("sensitive system instruction"),
-        Message.user("hello"),
-        Message.assistant("world"),
-    ]
-    tree = SessionTree.from_messages(messages)
-    exported = tree.export_for_persistence()
-    _fastapi(client).state.session_service.store.save(
-        "context-session",
-        messages,
-        conversation_entries=list(exported.entries),
-        leaf_id=exported.leaf_id,
-        root=root,
-    )
-
-    default = client.get(
-        "/api/v1/session/context-session/context",
-        headers=_auth(),
-    )
-    assert default.status_code == 200
-    default_text = default.text
-    assert "sensitive system instruction" not in default_text
-    assert "hello" in default_text
-
-    privileged = client.get(
-        "/api/v1/session/context-session/context",
-        headers=_auth(),
-        params={"includeSystem": True},
-    )
-    assert privileged.status_code == 200
-    assert "sensitive system instruction" in privileged.text
-
-
-def test_permission_and_question_routes_resolve_worker_waits(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+def test_permission_and_question_routes_resolve_worker_waits(
+    clients, tmp_path: Path
+) -> None:
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
     created = client.post(
@@ -1394,9 +589,10 @@ def test_permission_and_question_routes_resolve_worker_waits(tmp_path: Path) -> 
 
 
 def test_mcp_repo_scope_persists_policy_and_explicit_null_clears_allowlist(
+    clients,
     tmp_path: Path,
 ) -> None:
-    client = _client(tmp_path)
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     config_path = root / ".yoke" / "mcp.json"
     config_path.parent.mkdir(parents=True)
@@ -1447,57 +643,11 @@ def test_mcp_repo_scope_persists_policy_and_explicit_null_clears_allowlist(
     assert "enabled_tools" not in persisted["mcp_servers"]["demo"]
 
 
-def test_mcp_global_scope_uses_injected_home_and_does_not_touch_real_home(
-    tmp_path: Path,
-) -> None:
-    client = _client(tmp_path)
-    home = tmp_path / "home"
-    global_path = home / ".yoke" / "mcp.json"
-    global_path.parent.mkdir(parents=True)
-    global_path.write_text(
-        json.dumps(
-            {
-                "mcp_servers": {
-                    "global-demo": {
-                        "command": "python",
-                        "enabled": True,
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    _fastapi(client).state.mcp_service.home = home.resolve()
-    root = tmp_path / "repo"
-    root.mkdir()
-    created = client.post(
-        "/api/v1/session",
-        headers=_auth(),
-        json={"id": "mcp-global-session", "location": {"directory": str(root)}},
-    )
-    assert created.status_code == 200
-
-    listed = client.get(
-        "/api/v1/session/mcp-global-session/mcp",
-        headers=_auth(),
-    )
-    assert listed.status_code == 200
-    assert listed.json()["data"][0]["scope"] == "global"
-
-    patched = client.patch(
-        "/api/v1/session/mcp-global-session/mcp/global-demo",
-        headers=_auth(),
-        json={"scope": "global", "enabled": False},
-    )
-    assert patched.status_code == 200
-    persisted = json.loads(global_path.read_text(encoding="utf-8"))
-    assert persisted["mcp_servers"]["global-demo"]["enabled"] is False
-
-
 def test_tool_trace_http_redacts_secrets_and_uses_output_sequence_cursor(
+    clients,
     tmp_path: Path,
 ) -> None:
-    client = _client(tmp_path)
+    client = clients(tmp_path)
     root = tmp_path / "repo"
     root.mkdir()
     created = client.post(

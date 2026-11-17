@@ -1,10 +1,9 @@
 # Tests
 
-Run the complete suite with `uv run pytest`. The default uses four xdist
-workers. Daemon lifecycle, daemon controls and managed-process batches each stay on
-one worker to bound simultaneous cold starts; short tests fill the other workers.
-Use `-n 0` for serial debugging. Every test runs by default; there are no
-separate opt-in integration or stress groups.
+Run the complete suite with `uv run pytest`. The default uses six xdist workers.
+The daemon spawn race, real transport authorization and headless entrypoint
+smoke share a worker to bound cold starts. Use `-n 0` for serial debugging.
+Every remaining test runs by default. There are no opt-in integration groups.
 
 Each test gets its own HOME, runtime directory and session directory through
 `conftest.py`. Subprocesses inherit that isolation. Each worker checks for
@@ -12,53 +11,53 @@ writes to the real database and detached daemons left by its own tests.
 Use ephemeral TCP ports or temporary Unix sockets. Never use a running user
 daemon as a fixture.
 
+The suite favors unit and service tests. Process/PTY integration coverage is
+limited to the daemon auto-spawn/flock race, Unix peer versus TCP bearer auth,
+one headless prompt, and one interactive PTY render smoke. The protected
+provider oracle also executes real tools where its frozen production path
+requires them. Process crash/restart, kill-9 durability, cross-process queue
+concurrency, agent issuer death and most process-tool lifecycle coverage were
+removed with owner approval. Do not infer coverage of those behaviors from the
+remaining unit tests.
+
+HTTP coverage retains representative auth, session, prompt admission, SSE,
+upload and tool-trace contracts and the unchanged OpenAPI golden. Most repeated
+HTTP runtime, attachment, recovery and load scenarios have been removed.
+Read models, repositories, queue transactions, security/privacy and runtime
+units remain. CLI tests retain distinct behavior checks; the repeated full
+catalog/effort CLI round-trip matrix was dropped. Configuration and provider
+units retain advertised effort validation.
+
 `yoke/fixture_server.py` keeps real HTTP and SSE transport while replacing
 uvicorn's polling and fixed shutdown sleeps with an event. Close clients and
 the event broker before stopping it. Application lifespan shutdown still
-drains runtimes and closes storage resources. Pure request validation tests
-should create a listener only when they reach daemon discovery.
+drains runtimes and closes storage resources. HTTP contract TestClients enter
+once per test; the two read-only OpenAPI tests share a module app/client.
+Agent-run listener cleanup uses production socket shutdown without a test-only
+accept-timeout patch.
 
-The agent-run reporting fixture shortens its idle socket accept tick while
-retaining peer credentials, capability authentication and frame handling.
-HTTPX transports share default CA setup per worker and protocol configuration;
-explicit TLS contexts, client certificates and certificate environment overrides
-use their normal setup. Connections and pools remain independent. FastAPI fields reuse immutable
-Pydantic adapters only when their full annotation, constraints, aliases,
-defaults and config match. Dynamic annotations use normal construction;
-applications, resolved dependency values and routes remain separate. Static
-Yoke HTTP dependency descriptions are also shared; they resolve services from
-each request's app state. A two-app test checks token and database isolation.
+Non-storage tests copy an empty schema into separate disposable database files
+and explicitly select SQLite `synchronous=OFF`. Migration, storage, atomic-write
+and legacy-import tests use normal initialization and `synchronous=NORMAL`, as
+do actual CLI subprocesses. Schema copies use independent inodes and atomic
+publication. WAL, transactions and rollback remain enabled.
 
-Non-storage tests copy an empty schema into separate database files. Migration,
-storage, atomic-write and legacy-import tests still initialize databases through
-the normal path, as do existing database files and actual CLI subprocesses.
-Schema copies use independent inodes and atomic publication.
+File-content, permission and UI projection fixtures run file tools in process.
+The tool stack imports only when one of those fixtures needs it. All 16 provider
+oracle scenarios, their original driver choices, storage-wire goldens and the
+runtime-request differential remain unchanged. Never regenerate frozen fixtures
+as part of performance work. Migrations, image reconstruction and reachability,
+in-process compactor resume/idempotence, fork sharing and verified legacy import
+remain covered.
 
-File-content, permission and UI projection fixtures run their file tools in
-process. The core tools oracle and dedicated tool-worker tests keep the
-real process boundary; all frozen provider bytes still match.
-
-Prefer operation counters, barriers and events to large inputs or fixed
-sleeps. The session performance fixture has 32 active entries and 224 inactive
-entries; scan and copy assertions detect accidental full-history work without
-requiring tens of thousands of rows. Queue concurrency deliberately forces a
-revision conflict. Durability kills a writer after each kind of acknowledged
-commit, then checks all acknowledged data and SQLite integrity.
-
-Keep the provider projection oracles and frozen fixtures, socket and bearer
-authorization, privacy diagnostics, schema migration, image reconstruction
-and garbage collection, compactor recovery, branch sharing and verified
-legacy import coverage. Keep one inexpensive test per public contract.
-Additional transport or frontend combinations should cover a distinct code
-path. Real subprocess tests are for process ownership, flock, restart,
-authorization and entrypoint smoke coverage.
-
-On hosts with a small `/tmp`, put temporary files under the home directory:
+Prefer operation counters, barriers and events to large inputs or fixed sleeps.
+For temporary files on this host:
 
 ```sh
-mkdir -p "$HOME/.yk-fast-work"
-TMPDIR="$HOME/.yk-fast-work" uv run pytest --basetemp="$HOME/.yk-fast-work/pytest"
+mkdir -p "$HOME/.yk-fast3-work/tmp"
+TMPDIR="$HOME/.yk-fast3-work/tmp" uv run pytest \
+  --basetemp="$HOME/.yk-fast3-work/pytest"
 ```
 
-Remove that temporary directory after the run. Keep the repository's required
-ruff, ty and pyright checks passing too.
+Remove that temporary directory after validation. Run the repository's required
+ruff, ty and pyright checks too.

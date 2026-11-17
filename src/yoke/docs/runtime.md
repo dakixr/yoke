@@ -54,3 +54,13 @@ call kinds and the configured Codex cache key across tools, parallel calls,
 skills, image capabilities, compaction, overflow, stop/continue and tree navigation.
 Keep the fixture unchanged during structural refactoring. The provider request
 contract and HTTP/compaction projection guards cover the lower layers too.
+
+Agent-run reporting closes its listening socket with `shutdown()` before
+`close()` so an idle `accept()` in the listener thread wakes immediately.
+Closing the registry no longer waits for the accept timeout.
+
+`storage.database.Database(path, *, synchronous="NORMAL")` keeps the normal
+SQLite durability policy by default. `synchronous="OFF"` is available for
+explicitly disposable databases. The non-storage test fixture uses that setting
+for its isolated schema copies; storage tests and production callers retain
+`NORMAL`.

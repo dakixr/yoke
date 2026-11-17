@@ -4,13 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from yoke.agent.tools import ExecCommandTool, ReadTool, RipgrepTool, WriteTool
-
 
 LOCAL_TOOL_FILES = {
+    "agent/test_tool_result_projection.py",
+    "loop/test_agent_runtime_core.py",
     "cli/test_interactive_daemon.py",
     "cli/test_headless_daemon_parity.py",
-    "http/test_client_session.py",
     "http/test_attachment_continuation.py",
     "loop/test_interactive_daemon_projection.py",
     "provider_projection/test_attached_cli.py",
@@ -29,5 +28,21 @@ def local_file_tools(
         == "parallel_tools"
     )
     if path in LOCAL_TOOL_FILES or parallel_oracle:
-        for tool in (ReadTool, WriteTool, RipgrepTool, ExecCommandTool):
+        from yoke.agent.tools import (
+            AttachImageTool,
+            ExecCommandTool,
+            FdTool,
+            ReadTool,
+            RipgrepTool,
+            WriteTool,
+        )
+
+        for tool in (
+            ReadTool,
+            WriteTool,
+            RipgrepTool,
+            ExecCommandTool,
+            AttachImageTool,
+            FdTool,
+        ):
             monkeypatch.setattr(tool, "execute_in_process", True)
