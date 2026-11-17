@@ -44,12 +44,13 @@ def test_interactive_pty_renders_banner_and_exits(terminal, tmp_path, monkeypatc
     def drive():
         sent = False
         while not stopped.is_set() or select.select([master], [], [], 0)[0]:
-            if not select.select([master], [], [], 0.05)[0]:
-                continue
-            chunk = os.read(master, 65536)
-            if not chunk:
-                return
-            rendered.extend(chunk)
+            if select.select([master], [], [], 0.05)[0]:
+                chunk = os.read(master, 65536)
+                if not chunk:
+                    return
+                rendered.extend(chunk)
+            # The banner can render before the application signals readiness;
+            # check on every tick, not only when new output arrives.
             if (
                 application_ready.is_set()
                 and __version__.encode() in rendered
